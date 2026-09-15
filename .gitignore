@@ -1,0 +1,9 @@
+*.log
+*.dmp
+*.mdmp
+_V67_OLD/
+_V*_OLD/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

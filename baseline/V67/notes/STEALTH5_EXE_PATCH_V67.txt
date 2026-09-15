@@ -1,0 +1,19 @@
+WoW 1.12.1 build 5875 x86 - V67 EXE Stealth hard 5s patch
+
+Entry patch:
+VA 0x006E12C0
+OLD: 55 8B EC 8B 45 14
+NEW: E9 3C C1 07 00 90
+      -> JMP 0x0075D401 + NOP
+
+Code cave:
+VA 0x0075D401 .. 0x0075D436
+- reads spellId from [esp+0x14]
+- accepts ranks 1784..1787 by masking low two bits
+- writes 5000 (0x1388) to [esp+0x10]
+- caps [esp+0x1C] to 5000
+- replays overwritten prologue
+- jumps back to 0x006E12C6
+
+Patched EXE SHA256:
+b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27

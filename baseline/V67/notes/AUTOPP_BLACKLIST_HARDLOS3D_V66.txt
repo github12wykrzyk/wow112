@@ -1,0 +1,43 @@
+V66 technical audit
+===================
+
+Empty-pockets blacklist
+- Hook: WoW.exe 5875 spell-failure callsite 0x006E73AC.
+- Expected downstream LongPP fail thunk: LongPP move hook RVA + 0xE0.
+- Spell 921 + failure 0x72 => current serialized AutoPP GUID -> fixed hash blacklist.
+- AutoPP send gate checks blacklist before downstream LongPP.
+- Blacklist removal condition: object is TYPEMASK_UNIT and descriptor UNIT_FIELD_HEALTH index 0x16 == 0.
+- Death scan period: 200 ms.
+- Capacity: 1024 GUID slots.
+- Manual PP is not blocked by this AutoPP blacklist.
+
+Deterministic failure ownership
+- Only one generated AutoPP transaction is allowed pending at a time.
+- Pending timeout: 900 ms.
+- This prevents scanner pressure from changing GUID ownership before the spell-fail callback.
+
+PP HARDLOS3D retry
+- Existing LongPP v0.9 remains downstream owner.
+- Current target position is re-read for each variant.
+- 56 variants = 7 Z groups x 8 XY/local-Z shapes.
+- Z groups: 0, +0.75, -0.75, +1.50, -1.50, +3.00, -3.00.
+- XY shapes: center, X +/-1.25, Y +/-1.25, local Z +/-0.50, diagonal +0.85/+0.85.
+- Server-visible endpoint remains within roughly 3.3 yd of current target XYZ.
+- On failure 0x2A LINE_OF_SIGHT, retry is scheduled after 75 ms using a saved copy of the same CMSG_CAST_SPELL packet.
+- Higher-priority player-target/Mining arbitration can defer the synthetic retry without consuming a variant.
+- Success/other failure/0x72 cancels the retry transaction.
+- Max 56 variants; then AUTOPP_HARDLOS_SWEEP_EXHAUSTED.
+
+Diagnostic exports
+- AutoPP_GetFailHookOk
+- AutoPP_GetBlacklistCount
+- AutoPP_GetBlacklistAdds
+- AutoPP_GetBlacklistBlocks
+- AutoPP_GetBlacklistDeathClears
+- AutoPP_GetPendingSerialBlocks
+- AutoPP_GetHardLOSArms
+- AutoPP_GetHardLOSLOSFailures
+- AutoPP_GetHardLOSOverrides
+- AutoPP_GetHardLOSRetrySent
+- AutoPP_GetHardLOSRetryExhausted
+- AutoPP_GetHardLOSRetryAttempts
