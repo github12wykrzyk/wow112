@@ -1,0 +1,56 @@
+--- WoWMovementCore_5875_v19_AUTOPP_BLACKLIST_HARDLOS3D_RETRY.c
++++ WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
+@@
+-/* V66 AutoPP per-life blacklist + PP HARDLOS3D state. */
++/* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
+@@
+-/* ---------------- V66 AutoPP blacklist + HARDLOS3D ---------------- */
++/* ---------------- V68 AutoPP blacklist + rear-only HARDLOS3D ---------------- */
++
++/* No CRT: x87 FSINCOS keeps the rear-sector calculation self-contained on x86. */
++static void SinCosF(float a,float*s,float*c)
++{
++    __asm {
++        fld a
++        fsincos
++        mov eax,c
++        fstp dword ptr [eax]
++        mov eax,s
++        fstp dword ptr [eax]
++    }
++}
+@@
+ static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
+ {
+-    PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;float x,y,z,zbase=0.0f,dx=0.0f,dy=0.0f,dz=0.0f;
++    PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;
++    float x,y,z,o,sn=0.0f,cs=1.0f,zbase=0.0f,dz=0.0f,back=2.75f,side=0.0f;
++    float fx,fy,rx,ry;
+@@
+-    t=ObjByGuid(lo,hi);if(!Ptr(t))return;x=*(float*)(t+OFF_UNIT_X);y=*(float*)(t+OFF_UNIT_Y);z=*(float*)(t+OFF_UNIT_Z);
++    t=ObjByGuid(lo,hi);if(!Ptr(t))return;
++    x=*(float*)(t+OFF_UNIT_X);y=*(float*)(t+OFF_UNIT_Y);z=*(float*)(t+OFF_UNIT_Z);o=*(float*)(t+OFF_UNIT_O);
++    SinCosF(o,&sn,&cs);fx=cs;fy=sn;rx=-fy;ry=fx;
+@@
+-    if(variant==1u)dx=1.25f;else if(variant==2u)dx=-1.25f;else if(variant==3u)dy=1.25f;else if(variant==4u)dy=-1.25f;else if(variant==5u)dz=0.50f;else if(variant==6u)dz=-0.50f;else if(variant==7u){dx=0.85f;dy=0.85f;}
+-    g_ppHardX=x+dx;g_ppHardY=y+dy;g_ppHardZ=z+zbase+dz;
++    if(variant==1u){back=2.55f;side=0.55f;}
++    else if(variant==2u){back=2.55f;side=-0.55f;}
++    else if(variant==3u){back=2.85f;side=0.95f;}
++    else if(variant==4u){back=2.85f;side=-0.95f;}
++    else if(variant==5u){back=2.20f;side=0.35f;dz=0.50f;}
++    else if(variant==6u){back=2.20f;side=-0.35f;dz=-0.50f;}
++    else if(variant==7u){back=3.05f;side=0.0f;}
++
++    g_ppHardX=x-(fx*back)+(rx*side);
++    g_ppHardY=y-(fy*back)+(ry*side);
++    g_ppHardZ=z+zbase+dz;
+@@
+-static const char g_chatReady[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[MovementCore V66]|r Mining HARD-LOS + PP death-blacklist + PP HARDLOS3D retry + F11 loaded') end";
++static const char g_chatReady[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[MovementCore V68]|r Mining HARD-LOS + PP death-blacklist + PP REAR-ONLY HARDLOS3D retry + F11 loaded') end";
+@@
+-    if(g_ppChainOk)GatherFileLog("AUTOPP_V66_BLACKLIST_HARDLOS3D_RETRY_READY",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_longPPBase);
++    if(g_ppChainOk)GatherFileLog("AUTOPP_V68_REARONLY_HARDLOS3D_RETRY_READY",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_longPPBase);
+@@
+-__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00100000u;}
++__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00110000u;}
