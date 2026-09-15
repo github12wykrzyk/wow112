@@ -1,0 +1,145 @@
+static float g_ppHardX=0.0f,g_ppHardY=0.0f,g_ppHardZ=0.0f;
+static volatile DWORD g_suppressed=0,g_hb=0,g_moveInfoFailures=0;
+static volatile DWORD g_worldLost=0,g_worldReadySince=0,g_worldGuardHits=0;
+static float g_x=0,g_y=0,g_z=0,g_o=0;
+
+/* NoFall state. */
+static volatile DWORD g_preLandGuard = 0;
+static volatile DWORD g_noFallPackets = 0;
+static volatile DWORD g_preLandHeartbeats = 0;
+
+/* AutoGather state. */
+static volatile DWORD g_gatherEnabled=1u,g_gatherActive=0u,g_gatherKey9=0u,g_gatherReadyChat=0u;
+static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrimed=0u;
+static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
+static volatile DWORD g_lastOpenChatLo=0u,g_lastOpenChatHi=0u,g_lastOpenChatTick=0u;
+static volatile DWORD g_hasMining=0u,g_hasHerbalism=0u,g_lastProfBits=0xFFFFFFFFu;
+static volatile DWORD g_gatherTargetLo=0u,g_gatherTargetHi=0u,g_gatherEntry=0u,g_gatherKind=0u;
+static volatile DWORD g_gatherAttempts=0u,g_gatherStart=0u,g_gatherLastHB=0u,g_gatherNextScan=0u,g_gatherLastStatusLog=0u;
+static volatile DWORD g_gatherScanVisible=0u,g_gatherScanNodes=0u,g_gatherScanProfMatch=0u,g_gatherScanInRange=0u,g_gatherScanPosFail=0u,g_gatherScanEligible=0u,g_gatherClicks=0u,g_gatherAborts=0u;
+static volatile DWORD g_gatherSpoof=0u,g_gatherClickPending=0u,g_gatherClickAt=0u,g_gatherPosSource=0u;
+static volatile DWORD g_gatherLootWait=0u,g_gatherLootWaitUntil=0u,g_gatherLootTargetGoneLogged=0u;
+static volatile DWORD g_gatherLootStart=0u,g_gatherLootSeenOpen=0u,g_gatherLootOpenLogged=0u;
+static volatile DWORD g_gatherSawCast=0u,g_gatherCastSeenLogged=0u;
+static volatile DWORD g_gatherStealthBreaks=0u,g_gatherStealthWaits=0u,g_gatherStealthPending=0u;
+static volatile DWORD g_mining3DRetryIndex=0u,g_mining3DRetryAt=0u,g_mining3DRetryActive=0u,g_mining3DRetries=0u,g_mining3DSweepsExhausted=0u;
+static float g_mining3DDx=0.0f,g_mining3DDy=0.0f,g_mining3DDz=0.0f;
+static float g_miningServerDx=0.0f,g_miningServerDy=0.0f,g_miningServerDz=0.0f;
+static float g_gatherNodeX=0.0f,g_gatherNodeY=0.0f,g_gatherNodeZ=0.0f;
+static volatile DWORD g_ppPriorityAborts=0u,g_foreignCastAborts=0u,g_gatherPacketRewrites=0u;
+static float g_gatherX=0,g_gatherY=0,g_gatherZ=0,g_gatherDistSq=0;
+/* Nearest Copper Vein diagnostics from the latest scan. */
+static volatile DWORD g_diagEntry=0u,g_diagObj=0u,g_diagPosSource=0u;
+static float g_diagX=0,g_diagY=0,g_diagZ=0,g_diagD2=0;
+static float g_diagDescX=0,g_diagDescY=0,g_diagDescZ=0;
+static float g_diagMoveX=0,g_diagMoveY=0,g_diagMoveZ=0;
+static float g_diagLegacyX=0,g_diagLegacyY=0,g_diagLegacyZ=0;
+static const char g_gatherLogName[]="AutoGather_debug.log";
+static DWORD GatherHasStealth(BYTE*p);
+
+static VirtualProtect_t VP(void){return *(VirtualProtect_t*)WOW_IAT_VIRTUALPROTECT;}
+static FlushInstructionCache_t FIC(void){return *(FlushInstructionCache_t*)WOW_IAT_FLUSHICACHE;}
+static GetCurrentProcess_t GCP(void){return *(GetCurrentProcess_t*)WOW_IAT_GETCURRENTPROCESS;}
+static GetTickCount_t GT(void){return *(GetTickCount_t*)WOW_IAT_GETTICKCOUNT;}
+static GetAsyncKeyState_t GK(void){return *(GetAsyncKeyState_t*)WOW_IAT_GETASYNCKEYSTATE;}
+static SetTimer_t ST(void){return *(SetTimer_t*)WOW_IAT_SETTIMER;}
+static KillTimer_t KT(void){return *(KillTimer_t*)WOW_IAT_KILLTIMER;}
+static CreateFileA_t CF(void){return *(CreateFileA_t*)WOW_IAT_CREATEFILEA;}
+static WriteFile_t WF(void){return *(WriteFile_t*)WOW_IAT_WRITEFILE;}
+static SetFilePointer_t SFP(void){return *(SetFilePointer_t*)WOW_IAT_SETFILEPOINTER;}
+static GetFileSize_t GFS(void){return *(GetFileSize_t*)WOW_IAT_GETFILESIZE;}
+static SetEndOfFile_t SEOF(void){return *(SetEndOfFile_t*)WOW_IAT_SETENDOFFILE;}
+static CloseHandle_t CH(void){return *(CloseHandle_t*)WOW_IAT_CLOSEHANDLE;}
+
+static BOOL Ptr(const void* p){DWORD v=(DWORD)p; return v>=0x10000u && v<=0x7FFDFFFFu && !(v&1u);}
+static BOOL WMem(BYTE* d,const BYTE* s,DWORD n){DWORD o=0,t=0,i; if(!VP()||!FIC()||!GCP()||!VP()(d,n,PAGE_EXECUTE_READWRITE,&o))return FALSE; for(i=0;i<n;i++)d[i]=s[i]; FIC()(GCP(),d,n); VP()(d,n,o,&t); return TRUE;}
+static DWORD DCall(DWORD site){LONG r;if(*(BYTE*)site!=0xE8)return 0;r=*(LONG*)(site+1);return site+5u+r;}
+static BOOL PCall(DWORD site,DWORD target){BYTE p[5];LONG r=(LONG)(target-(site+5u));p[0]=0xE8;p[1]=(BYTE)r;p[2]=(BYTE)(r>>8);p[3]=(BYTE)(r>>16);p[4]=(BYTE)(r>>24);return WMem((BYTE*)site,p,5);}
+static DWORD DJump(DWORD site){LONG r;if(*(BYTE*)site!=0xE9)return 0;r=*(LONG*)(site+1);return site+5u+r;}
+static BOOL PJump(DWORD site,DWORD target){BYTE p[5];LONG r=(LONG)(target-(site+5u));p[0]=0xE9;p[1]=(BYTE)r;p[2]=(BYTE)(r>>8);p[3]=(BYTE)(r>>16);p[4]=(BYTE)(r>>24);return WMem((BYTE*)site,p,5);}
+
+/* LongPickPocket v0.8-facing integration.  With the supported load order the
+ * movement callsite points at LongPP RVA 0x1970 and ClientServices::Send
+ * entry points at LongPP RVA 0x1A70.  The state DWORD at RVA 0x502C is the
+ * exact flag used by LongPP movement hook before rewriting packet XYZ. */
+static DWORD DecodeLongPPMoveHook(DWORD t,DWORD*activePtr,DWORD*injectPtr)
+{
+    BYTE*b=(BYTE*)t;DWORD a=0u,i=0u;
+    if(activePtr)*activePtr=0u;if(injectPtr)*injectPtr=0u;
+    if(!Ptr(b)||!Ptr(b+0x20))return 0u;
+    /* v0.8 hook prologue plus the two absolute state tests:
+       +0x0A: 83 3D <injectPtr> 00 75
+       +0x18: 83 3D <activePtr> 00 74 */
+    if(!(b[0]==0x57&&b[1]==0x56&&b[2]==0x89&&b[3]==0xCE&&b[4]==0x8B&&b[5]==0x3D&&
+         b[10]==0x83&&b[11]==0x3D&&b[16]==0x00&&b[17]==0x75&&
+         b[24]==0x83&&b[25]==0x3D&&b[30]==0x00&&b[31]==0x74))return 0u;
+    i=*(DWORD*)(b+12);a=*(DWORD*)(b+26);
+    if(!Ptr((void*)i)||!Ptr((void*)a))return 0u;
+    if(activePtr)*activePtr=a;if(injectPtr)*injectPtr=i;return 1u;
+}
+static DWORD IsLongPPSendHook(DWORD t)
+{
+    BYTE*b=(BYTE*)t;if(!Ptr(b)||!Ptr(b+0x20))return 0u;
+    return b[0]==0x9C&&b[1]==0x60&&b[2]==0x51&&b[3]==0xE8&&b[8]==0x83&&b[9]==0xC4&&
+           b[10]==0x04&&b[11]==0xA3&&b[16]==0x61&&b[17]==0x9D ? 1u:0u;
+}
+static DWORD LongPPActive(void)
+{
+    if(!g_ppChainOk||!Ptr((void*)g_ppActivePtr))return 0u;
+    return (*(DWORD*)g_ppActivePtr)!=0u ? 1u:0u;
+}
+static DWORD LongPPInjecting(void)
+{
+    if(!g_ppChainOk||!Ptr((void*)g_ppInjectPtr))return 0u;
+    return (*(DWORD*)g_ppInjectPtr)!=0u ? 1u:0u;
+}
+
+/* ----------------------------- NoFall ----------------------------- */
+static BYTE* PacketRawBase(DataStore5875* p)
+{
+    if(!p || !p->dataPtr) return (BYTE*)0;
+    if(p->backOffset > 0x01000000u) return (BYTE*)0;
+    return p->dataPtr - p->backOffset;
+}
+
+static DWORD ComputeFallTimeOffset(const BYTE* raw,DWORD packetSize)
+{
+    DWORD flags,off=0x1Cu;
+    if(!raw || packetSize<0x20u) return 0u;
+    flags=*(const DWORD*)(raw+0x04u);
+    if(flags&MOVEFLAG_ONTRANSPORT) off+=0x18u;
+    if(flags&MOVEFLAG_SWIMMING) off+=0x04u;
+    if(off>packetSize || packetSize-off<4u) return 0u;
+    return off;
+}
+
+static void DirectClientSend(DataStore5875* packet)
+{
+    ((ClientSend_t)ADDR_CLIENT_SEND)((void*)packet);
+}
+
+static void SendPreLandHeartbeat(const BYTE* raw,DWORD packetSize)
+{
+    BYTE cloneBuf[CLONE_CAPACITY];
+    DataStore5875 clone;
+    DWORD i,fallOff;
+    if(!raw || packetSize<0x20u || packetSize>CLONE_CAPACITY) return;
+    for(i=0;i<packetSize;i++) cloneBuf[i]=raw[i];
+    *(DWORD*)(cloneBuf+0x00u)=MSG_MOVE_HEARTBEAT;
+    fallOff=ComputeFallTimeOffset(cloneBuf,packetSize);
+    if(!fallOff) return;
+    *(DWORD*)(cloneBuf+fallOff)=0u;
+    clone.vtable=ADDR_DATASTORE_VTABLE;
+    clone.dataPtr=cloneBuf;
+    clone.backOffset=0u;
+    clone.capacity=CLONE_CAPACITY;
+    clone.size=packetSize;
+    clone.unk14=0u;
+    g_preLandGuard=1u;
+    DirectClientSend(&clone);
+    g_preLandGuard=0u;
+    ++g_preLandHeartbeats;
+}
+
+static void __cdecl NoFall_ProcessMovementPacket(DataStore5875* packet)
+{
