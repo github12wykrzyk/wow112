@@ -1,0 +1,7 @@
+## Interface: 11200
+## Title: !AutoJunkLock
+## Notes: Robust automatic junkbox lockpicking/opening for WoW 1.12
+## Version: 3.0
+## SavedVariables: AJL_Config
+
+AutoJunkLock.lua
