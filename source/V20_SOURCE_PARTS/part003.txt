@@ -1,0 +1,145 @@
+    BYTE* raw; DWORD size,opcode,fallOff;
+    if(!packet) return;
+    size=packet->size;
+    if(size<0x20u || size>MAX_PACKET_SIZE) return;
+    raw=PacketRawBase(packet);
+    if(!raw) return;
+    fallOff=ComputeFallTimeOffset(raw,size);
+    if(!fallOff) return;
+    *(DWORD*)(raw+fallOff)=0u;
+    ++g_noFallPackets;
+    opcode=*(DWORD*)(raw+0x00u);
+    if(opcode==MSG_MOVE_FALL_LAND && !g_preLandGuard){
+        DWORD now=GT()?GT()():0u;
+        /* SendPreLandHeartbeat uses ClientSend directly and therefore bypasses the
+         * movement callsite where LongPP normally rewrites XYZ.  Never inject that
+         * extra packet while PP owns, or has just claimed, the movement timeline. */
+        if(g_gatherSpoof&&(g_gatherActive||g_gatherLootWait)){
+            /* The direct clone bypasses the movement callsite, so it would leak
+               real XYZ while AutoGather is intentionally holding server position. */
+            ++g_gatherNoFallYields;
+        }else if(LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET||((LONG)(g_ppQuietUntil-now)>0)){
+            ++g_ppNoFallYields;
+        }else SendPreLandHeartbeat(raw,size);
+    }
+}
+
+/* --------------------------- SafeBreak ---------------------------- */
+static BYTE* LocalPlayer(void)
+{
+    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o;DWORD lo,hi,i;
+    if(!Ptr(m))return 0;
+    lo=*(DWORD*)(m+OFF_OM_LOCAL_GUID_LOW);hi=*(DWORD*)(m+OFF_OM_LOCAL_GUID_HIGH);
+    if((lo|hi)==0)return 0;
+    o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);
+    for(i=0;i<4095&&Ptr(o);i++){BYTE*n;if(*(DWORD*)(o+OFF_OBJ_GUID_LOW)==lo&&*(DWORD*)(o+OFF_OBJ_GUID_HIGH)==hi)return o;n=*(BYTE**)(o+OFF_OBJ_NEXT);if(n==o)break;o=n;}
+    return 0;
+}
+
+static BYTE* ObjByGuid(DWORD lo,DWORD hi)
+{
+    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o;DWORD i;
+    if(!Ptr(m)||(lo|hi)==0)return 0;
+    o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);
+    for(i=0;i<4095&&Ptr(o);i++){BYTE*n;if(*(DWORD*)(o+OFF_OBJ_GUID_LOW)==lo&&*(DWORD*)(o+OFF_OBJ_GUID_HIGH)==hi)return o;n=*(BYTE**)(o+OFF_OBJ_NEXT);if(n==o)break;o=n;}
+    return 0;
+}
+
+static DWORD Combat(BYTE*p){DWORD*d;if(!Ptr(p))return 0;d=*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR);if(!Ptr(d))return 0;return(d[UNIT_FIELD_FLAGS_INDEX]&UNIT_FLAG_IN_COMBAT)?1u:0u;}
+static DWORD CurrentTargetIsPlayer(void)
+{
+    DWORD lo=*(DWORD*)ADDR_SELECTED_GUID_LOW,hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;BYTE*t;DWORD*d;
+    if((lo|hi)==0u)return 0u;
+    t=ObjByGuid(lo,hi);if(!Ptr(t))return 0u;
+    d=*(DWORD**)(t+OFF_OBJ_DESCRIPTOR_PTR);if(!Ptr(d))return 0u;
+    return (d[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_PLAYER)?1u:0u;
+}
+
+static void GatherFileLog(const char*ev,DWORD now,DWORD entry,DWORD lo,DWORD hi,float distSq,DWORD attempts,DWORD aux);
+
+/* ---------------- V68 AutoPP blacklist + rear-only HARDLOS3D ---------------- */
+static DWORD PPHash(DWORD lo,DWORD hi,DWORD mask){DWORD h=lo*2654435761u;h^=hi*2246822519u;h^=h>>16;return h&mask;}
+static DWORD PPBlackFind(DWORD lo,DWORD hi)
+{
+    DWORD i,h;if((lo|hi)==0u)return 0u;h=PPHash(lo,hi,PP_BLACK_CAP-1u);
+    for(i=0u;i<PP_BLACK_CAP;i++){PPBlackSlot*b=&g_ppBlack[(h+i)&(PP_BLACK_CAP-1u)];if(b->state==0u)return 0u;if(b->state==1u&&b->lo==lo&&b->hi==hi)return 1u;}return 0u;
+}
+static DWORD PPBlackAdd(DWORD lo,DWORD hi)
+{
+    DWORD i,h,firstT=0xFFFFFFFFu;if((lo|hi)==0u)return 0u;h=PPHash(lo,hi,PP_BLACK_CAP-1u);
+    for(i=0u;i<PP_BLACK_CAP;i++){DWORD k=(h+i)&(PP_BLACK_CAP-1u);PPBlackSlot*b=&g_ppBlack[k];if(b->state==1u&&b->lo==lo&&b->hi==hi)return 0u;if(b->state==2u&&firstT==0xFFFFFFFFu)firstT=k;if(b->state==0u){if(firstT!=0xFFFFFFFFu)b=&g_ppBlack[firstT];b->lo=lo;b->hi=hi;b->state=1u;++g_ppBlackCount;++g_ppBlackAdds;return 1u;}}
+    if(firstT!=0xFFFFFFFFu){PPBlackSlot*b=&g_ppBlack[firstT];b->lo=lo;b->hi=hi;b->state=1u;++g_ppBlackCount;++g_ppBlackAdds;return 1u;}return 0u;
+}
+static DWORD PPBlackRemove(DWORD lo,DWORD hi)
+{
+    DWORD i,h;if((lo|hi)==0u)return 0u;h=PPHash(lo,hi,PP_BLACK_CAP-1u);
+    for(i=0u;i<PP_BLACK_CAP;i++){PPBlackSlot*b=&g_ppBlack[(h+i)&(PP_BLACK_CAP-1u)];if(b->state==0u)return 0u;if(b->state==1u&&b->lo==lo&&b->hi==hi){b->state=2u;b->lo=b->hi=0u;if(g_ppBlackCount)--g_ppBlackCount;return 1u;}}return 0u;
+}
+static PPSweepSlot* PPSweepGet(DWORD lo,DWORD hi)
+{
+    DWORD i,h,firstT=0xFFFFFFFFu;if((lo|hi)==0u)return (PPSweepSlot*)0;h=PPHash(lo,hi,PP_SWEEP_CAP-1u);
+    for(i=0u;i<PP_SWEEP_CAP;i++){DWORD k=(h+i)&(PP_SWEEP_CAP-1u);PPSweepSlot*b=&g_ppSweep[k];if(b->state==1u&&b->lo==lo&&b->hi==hi)return b;if(b->state==2u&&firstT==0xFFFFFFFFu)firstT=k;if(b->state==0u){if(firstT!=0xFFFFFFFFu)b=&g_ppSweep[firstT];b->lo=lo;b->hi=hi;b->index=0u;b->state=1u;return b;}}return (PPSweepSlot*)0;
+}
+static void PPSweepRemove(DWORD lo,DWORD hi)
+{
+    DWORD i,h;if((lo|hi)==0u)return;h=PPHash(lo,hi,PP_SWEEP_CAP-1u);
+    for(i=0u;i<PP_SWEEP_CAP;i++){PPSweepSlot*b=&g_ppSweep[(h+i)&(PP_SWEEP_CAP-1u)];if(b->state==0u)return;if(b->state==1u&&b->lo==lo&&b->hi==hi){b->state=2u;b->lo=b->hi=b->index=0u;return;}}
+}
+static DWORD PPDecodeTargetGuid(DataStore5875*packet,DWORD*olo,DWORD*ohi)
+{
+    BYTE*raw;DWORD avail,pos=1u,i,lo=0u,hi=0u;BYTE mask,b;
+    if(olo)*olo=0u;if(ohi)*ohi=0u;if(!packet||packet->size<11u)return 0u;raw=PacketRawBase(packet);if(!raw)return 0u;
+    /* 5875 CMSG_CAST_SPELL: opcode[0..3], spell[4..7], targetMask[8..9], packed GUID[10..]. */
+    avail=packet->size-10u;mask=raw[10];
+    for(i=0u;i<8u;i++)if(mask&(1u<<i)){if(pos>=avail)return 0u;b=raw[10u+pos++];if(i<4u)lo|=((DWORD)b)<<(i*8u);else hi|=((DWORD)b)<<((i-4u)*8u);}
+    if((lo|hi)==0u){lo=*(DWORD*)ADDR_SELECTED_GUID_LOW;hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;}
+    if(olo)*olo=lo;if(ohi)*ohi=hi;return (lo|hi)?1u:0u;
+}
+/* No CRT: x87 FSINCOS keeps the rear-sector calculation self-contained on x86. */
+static void SinCosF(float a,float*s,float*c)
+{
+    __asm {
+        fld a
+        fsincos
+        mov eax,c
+        fstp dword ptr [eax]
+        mov eax,s
+        fstp dword ptr [eax]
+    }
+}
+
+static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
+{
+    PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;
+    float x,y,z,o,sn=0.0f,cs=1.0f,zbase=0.0f,dz=0.0f,back=2.75f,side=0.0f;
+    float fx,fy,rx,ry;
+    g_ppHardArmed=0u;if(variantOut)*variantOut=0u;ss=PPSweepGet(lo,hi);if(!ss)return;idx=ss->index%PP_HARDLOS_VARIANTS;ss->index=(idx+1u)%PP_HARDLOS_VARIANTS;group=idx/8u;variant=idx%8u;
+    t=ObjByGuid(lo,hi);if(!Ptr(t))return;
+    x=*(float*)(t+OFF_UNIT_X);y=*(float*)(t+OFF_UNIT_Y);z=*(float*)(t+OFF_UNIT_Z);o=*(float*)(t+OFF_UNIT_O);
+    SinCosF(o,&sn,&cs);fx=cs;fy=sn;rx=-fy;ry=fx;
+
+    /*
+     * V68: every PP HARDLOS candidate is in the target's REAR hemisphere.
+     * Never fall back to exact target XYZ or world-axis +/-X/Y points, because
+     * those can put the spoofed rogue in front of the mob.  Eight horizontal
+     * candidates stay within ~3.1 yd and sweep a narrow rear sector; seven Z
+     * groups preserve the old 56-point HARDLOS retry budget.
+     */
+    if(group==1u)zbase=0.75f;else if(group==2u)zbase=-0.75f;else if(group==3u)zbase=1.50f;else if(group==4u)zbase=-1.50f;else if(group==5u)zbase=3.00f;else if(group==6u)zbase=-3.00f;
+
+    if(variant==1u){back=2.55f;side=0.55f;}
+    else if(variant==2u){back=2.55f;side=-0.55f;}
+    else if(variant==3u){back=2.85f;side=0.95f;}
+    else if(variant==4u){back=2.85f;side=-0.95f;}
+    else if(variant==5u){back=2.20f;side=0.35f;dz=0.50f;}
+    else if(variant==6u){back=2.20f;side=-0.35f;dz=-0.50f;}
+    else if(variant==7u){back=3.05f;side=0.0f;}
+
+    g_ppHardX=x-(fx*back)+(rx*side);
+    g_ppHardY=y-(fy*back)+(ry*side);
+    g_ppHardZ=z+zbase+dz;
+    g_ppHardLo=lo;g_ppHardHi=hi;g_ppHardArmed=1u;g_ppFailPendingVariant=idx;++g_ppHardLOSArms;if(variantOut)*variantOut=idx;
+}
+static void PPHardApplySpoof(void)
+{
+    if(!g_ppHardArmed||!g_ppChainOk||!LongPPActive())return;
