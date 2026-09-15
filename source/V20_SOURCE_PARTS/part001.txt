@@ -1,0 +1,141 @@
+#define LEGACY_FAST_MS              2600u
+#define LEGACY_FAST_GAP_MS          360u
+#define LOCAL_STRONG_DISTANCE       260.0f
+#define LOCAL_STRONG_Z_DOWN         25.0f
+#define LOCAL_STRONG_MS             3600u
+#define LOCAL_STRONG_GAP_MS         150u
+#define PURSUIT_DISTANCE            200.0f
+#define PURSUIT_Z_DOWN              0.0f
+#define PURSUIT_MS                  17000u
+#define PURSUIT_GAP_MS              360u
+#define INSTANCE_Z_UP               30.0f
+#define INSTANCE_MS                 4500u
+#define INSTANCE_GAP_MS             75u
+#define TIMER_MS                    15u
+#define CLEAR_SETTLE_MS             300u
+
+/* AutoGather experimental defaults. */
+#define GATHER_SCAN_RANGE             300.0f
+#define GATHER_SCAN_RANGE_SQ        90000.0f
+#define GATHER_NODE_OFFSET             1.5f
+#define GATHER_NEAR_RANGE_SQ          16.0f  /* <=4 yd native; 4+ yd uses spoof (server interaction baseline is ~5 yd) */
+#define GATHER_FAR_CLICK_DELAY_MS      160u
+#define GATHER_TIMER_SCAN_MS          250u
+#define GATHER_STATUS_LOG_MS         2000u
+#define GATHER_HB_GAP_MS              150u
+#define GATHER_HERB_HOLD_MS          6200u  /* fallback only if cast-state is not observed */
+#define GATHER_MINING_HOLD_MS       18000u  /* HARD LOS sweep, combat-safe Mining */
+#define MINING_3D_RETRY_FIRST_MS       300u
+#define MINING_3D_RETRY_GAP_MS         180u
+#define MINING_3D_RETRY_SETTLE_MS       90u
+#define MINING_3D_RETRY_COUNT           56u
+#define MINING_3D_XY_SHIFT              6.0f
+#define MINING_SERVER_XY_STEP            1.25f
+#define MINING_SERVER_Z_STEP             0.75f
+#define GATHER_RESCAN_DELAY_MS         60u
+#define GATHER_LOOT_OPEN_GRACE_MS      1200u
+#define GATHER_LOOT_MIN_OPEN_MS         120u
+#define PP_POST_CAST_QUIET_MS          1200u
+#define PP_FAIL_PENDING_MS               900u
+#define PP_BLACK_DEATH_SCAN_MS           200u
+#define PP_BLACK_CAP                    1024u
+#define PP_SWEEP_CAP                     512u
+#define PP_HARDLOS_VARIANTS               56u
+#define PP_HARDLOS_RETRY_DELAY_MS          75u
+#define PP_HARDLOS_PACKET_CAP             128u
+#define PP_FAIL_SENTINEL                 0xFFu
+#define SPELL_FAILED_LINE_OF_SIGHT       0x2Au
+#define SPELL_FAILED_TARGET_NO_POCKETS   0x72u
+#define MINING_PRIORITY_SCAN_MS           90u
+#define MINING_PRIORITY_HOLD_MS          360u
+#define SPELL_MINING                    2575u
+#define SPELL_HERBALISM                 2366u
+#define SPELL_PICK_POCKET                921u
+#define SPELL_PICK_LOCK                  1804u
+#define SPELL_STEALTH_R1                 1784u
+#define SPELL_STEALTH_R2                 1785u
+#define SPELL_STEALTH_R3                 1786u
+#define SPELL_STEALTH_R4                 1787u
+#define SPELL_VANISH_STEALTH_R1         11327u
+#define SPELL_VANISH_STEALTH_R2         11329u
+#define GATHER_STEALTH_BREAK_DELAY_MS      180u
+#define AUTOOPEN_PICKLOCK_SETTLE_MS          90u
+#define AUTOOPEN_HOLD_MS                    5600u
+#define AUTOOPEN_CHAT_REPEAT_MS             10000u
+#define GATHER_LOG_MAX_BYTES       4194304u
+
+#define GENERIC_WRITE            0x40000000u
+#define FILE_SHARE_READ          0x00000001u
+#define FILE_SHARE_WRITE         0x00000002u
+#define OPEN_ALWAYS                       4u
+#define FILE_ATTRIBUTE_NORMAL    0x00000080u
+#define FILE_BEGIN                         0u
+#define FILE_END                           2u
+#define INVALID_HANDLE_VALUE    ((HANDLE)(LONG)-1)
+
+/* A short re-acquire delay is used only after an ACTIVE SafeBreak mode loses
+ * and then regains LocalPlayer during a world transition. Normal movement and
+ * NoFall are not delayed by this guard. */
+#define WORLD_REACQUIRE_MS          750u
+
+typedef BOOL (__stdcall *VirtualProtect_t)(LPVOID,DWORD,DWORD,DWORD*);
+typedef BOOL (__stdcall *FlushInstructionCache_t)(HANDLE,const void*,DWORD);
+typedef HANDLE (__stdcall *GetCurrentProcess_t)(void);
+typedef DWORD (__stdcall *GetTickCount_t)(void);
+typedef short (__stdcall *GetAsyncKeyState_t)(int);
+typedef void (__stdcall *TimerProc_t)(HWND,UINT,UINT_PTR,DWORD);
+typedef UINT_PTR (__stdcall *SetTimer_t)(HWND,UINT_PTR,UINT,TimerProc_t);
+typedef BOOL (__stdcall *KillTimer_t)(HWND,UINT_PTR);
+typedef HANDLE (__stdcall *CreateFileA_t)(const char*,DWORD,DWORD,LPVOID,DWORD,DWORD,HANDLE);
+typedef BOOL (__stdcall *WriteFile_t)(HANDLE,const void*,DWORD,DWORD*,LPVOID);
+typedef DWORD (__stdcall *SetFilePointer_t)(HANDLE,LONG,LONG*,DWORD);
+typedef DWORD (__stdcall *GetFileSize_t)(HANDLE,DWORD*);
+typedef BOOL (__stdcall *SetEndOfFile_t)(HANDLE);
+typedef BOOL (__stdcall *CloseHandle_t)(HANDLE);
+typedef void (__thiscall *SendMove_t)(void*,DWORD);
+typedef void (__thiscall *ClientSend_t)(void*);
+typedef void (__thiscall *RightClickObject_t)(void*,int);
+
+typedef struct DataStore5875 {
+    DWORD vtable;
+    BYTE* dataPtr;
+    DWORD backOffset;
+    DWORD capacity;
+    DWORD size;
+    DWORD unk14;
+} DataStore5875;
+
+/* Unified hook state. */
+static volatile DWORD g_installed = 0;
+static volatile DWORD g_nextMoveTarget = 0;
+static volatile DWORD g_nextSendTarget = 0;
+static volatile DWORD g_status = 0;
+static volatile DWORD g_ppChainOk=0u,g_ppActivePtr=0u,g_ppInjectPtr=0u;
+static volatile DWORD g_ppQuietUntil=0u,g_ppTxPreempts=0u,g_ppStateYields=0u,g_ppMoveBypasses=0u;
+static volatile DWORD g_ppSendRecursion=0u,g_foreignLootPauses=0u,g_foreignLootLogged=0u;
+static volatile DWORD g_ppPendingEvent=0u,g_ppPendingTick=0u,g_ppPendingEntry=0u,g_ppPendingLo=0u,g_ppPendingHi=0u,g_ppPendingAttempts=0u;
+static volatile DWORD g_ppFastNoTouch=0u,g_ppRealResets=0u,g_ppInjectYields=0u,g_ppResetInProgress=0u;
+static volatile DWORD g_ppNoFallYields=0u,g_ppSafeBreakYields=0u,g_gatherNoFallYields=0u;
+static volatile DWORD g_ppForward=1u,g_miningPriorityBlocks=0u,g_miningPriorityScans=0u;
+static volatile DWORD g_miningPriorityValidUntil=0u,g_miningPriorityNextScan=0u,g_miningPriorityEntry=0u,g_miningPriorityLo=0u,g_miningPriorityHi=0u;
+static float g_miningPriorityD2=0.0f;
+static float g_ppPendingD2=0.0f;
+
+/* SafeBreak v13 state. */
+static volatile DWORD g_mode=0,g_started=0,g_lastInject=0,g_injecting=0,g_forwardCurrent=1,g_timerId=0;
+static volatile DWORD g_seenCombat=0,g_clearTick=0,g_key7=0,g_key8=0,g_keyAlt=0,g_key10=0,g_key11=0;
+static volatile DWORD g_autoPPEnabled=1u,g_autoPPBlocked=0u,g_autoPPManualPass=0u,g_autoPPTargetPlayerBlocks=0u;
+/* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
+typedef struct PPBlackSlot { DWORD lo,hi; BYTE state; BYTE pad0,pad1,pad2; } PPBlackSlot;
+typedef struct PPSweepSlot { DWORD lo,hi,index; BYTE state; BYTE pad0,pad1,pad2; } PPSweepSlot;
+static PPBlackSlot g_ppBlack[PP_BLACK_CAP];
+static PPSweepSlot g_ppSweep[PP_SWEEP_CAP];
+static volatile DWORD g_ppBlackCount=0u,g_ppBlackAdds=0u,g_ppBlackBlocks=0u,g_ppBlackDeathClears=0u,g_ppBlackNextDeathScan=0u;
+static volatile DWORD g_ppFailPendingAuto=0u,g_ppFailPendingLo=0u,g_ppFailPendingHi=0u,g_ppFailPendingUntil=0u,g_ppFailPendingVariant=0u,g_ppFailPendingSawActive=0u,g_ppPendingSerialBlocks=0u;
+static volatile DWORD g_ppHardLOSArms=0u,g_ppHardLOSLOSFailures=0u,g_ppHardLOSOverrides=0u;
+static BYTE g_ppHardRetryPacket[PP_HARDLOS_PACKET_CAP];
+static volatile DWORD g_ppHardRetryActive=0u,g_ppHardRetryScheduled=0u,g_ppHardRetryInjecting=0u,g_ppHardRetryDue=0u,g_ppHardRetrySize=0u,g_ppHardRetryAttempts=0u,g_ppHardRetrySent=0u,g_ppHardRetryExhausted=0u;
+static volatile DWORD g_ppHardRetryLo=0u,g_ppHardRetryHi=0u;
+static volatile DWORD g_longPPBase=0u,g_longPPReasonPtr=0u,g_longPPGuidLoPtr=0u,g_longPPGuidHiPtr=0u,g_longPPSpoofXPtr=0u,g_longPPSpoofYPtr=0u,g_longPPSpoofZPtr=0u;
+static volatile DWORD g_nextPPFailTarget=0u,g_ppFailHookOk=0u,g_ppFailLogEvent=0u,g_ppFailLogLo=0u,g_ppFailLogHi=0u,g_ppFailLogVariant=0u;
+static volatile DWORD g_ppHardArmed=0u,g_ppHardLo=0u,g_ppHardHi=0u;
