@@ -1,0 +1,124 @@
+--- /mnt/data/WoW112_V68_AUTOPP_REARONLY_HARDLOS3D/source/WoWMovementCore_5875_v19_AUTOPP_BLACKLIST_HARDLOS3D_RETRY.c	2026-09-15 19:50:54.000000000 +0000
++++ /mnt/data/WoW112_V68_AUTOPP_REARONLY_HARDLOS3D/source/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c	2026-09-15 21:31:44.910541162 +0000
+@@ -1,5 +1,5 @@
+ /*
+- * WoWMovementCore_5875_v19_AUTOPP_BLACKLIST_HARDLOS3D_RETRY.c
++ * WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
+  * World of Warcraft 1.12.1 build 5875 x86
+  *
+  * V62 Mining-first + HARD server/client LOS retry + combat Mining build:
+@@ -64,6 +64,13 @@
+ 
+ int _fltused = 0x9875;
+ 
++/* clang may lower some structure/byte copies to memcpy even with /Zl. */
++void* __cdecl memcpy(void*d,const void*s,unsigned int n)
++{
++    BYTE*dd=(BYTE*)d;const BYTE*ss=(const BYTE*)s;unsigned int i;
++    for(i=0u;i<n;i++)dd[i]=ss[i];return d;
++}
++
+ /* Shared / verified client addresses. */
+ #define ADDR_MOVE_SEND_CALL        0x00600ACAu
+ #define ADDR_MOVE_SEND_NEXT        0x00600ACFu
+@@ -290,7 +297,7 @@
+ static volatile DWORD g_mode=0,g_started=0,g_lastInject=0,g_injecting=0,g_forwardCurrent=1,g_timerId=0;
+ static volatile DWORD g_seenCombat=0,g_clearTick=0,g_key7=0,g_key8=0,g_keyAlt=0,g_key10=0,g_key11=0;
+ static volatile DWORD g_autoPPEnabled=1u,g_autoPPBlocked=0u,g_autoPPManualPass=0u,g_autoPPTargetPlayerBlocks=0u;
+-/* V66 AutoPP per-life blacklist + PP HARDLOS3D state. */
++/* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
+ typedef struct PPBlackSlot { DWORD lo,hi; BYTE state; BYTE pad0,pad1,pad2; } PPBlackSlot;
+ typedef struct PPSweepSlot { DWORD lo,hi,index; BYTE state; BYTE pad0,pad1,pad2; } PPSweepSlot;
+ static PPBlackSlot g_ppBlack[PP_BLACK_CAP];
+@@ -508,7 +515,7 @@
+ 
+ static void GatherFileLog(const char*ev,DWORD now,DWORD entry,DWORD lo,DWORD hi,float distSq,DWORD attempts,DWORD aux);
+ 
+-/* ---------------- V66 AutoPP blacklist + HARDLOS3D ---------------- */
++/* ---------------- V68 AutoPP blacklist + rear-only HARDLOS3D ---------------- */
+ static DWORD PPHash(DWORD lo,DWORD hi,DWORD mask){DWORD h=lo*2654435761u;h^=hi*2246822519u;h^=h>>16;return h&mask;}
+ static DWORD PPBlackFind(DWORD lo,DWORD hi)
+ {
+@@ -546,15 +553,50 @@
+     if((lo|hi)==0u){lo=*(DWORD*)ADDR_SELECTED_GUID_LOW;hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;}
+     if(olo)*olo=lo;if(ohi)*ohi=hi;return (lo|hi)?1u:0u;
+ }
++/* No CRT: x87 FSINCOS keeps the rear-sector calculation self-contained on x86. */
++static void SinCosF(float a,float*s,float*c)
++{
++    __asm {
++        fld a
++        fsincos
++        mov eax,c
++        fstp dword ptr [eax]
++        mov eax,s
++        fstp dword ptr [eax]
++    }
++}
++
+ static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
+ {
+-    PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;float x,y,z,zbase=0.0f,dx=0.0f,dy=0.0f,dz=0.0f;
++    PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;
++    float x,y,z,o,sn=0.0f,cs=1.0f,zbase=0.0f,dz=0.0f,back=2.75f,side=0.0f;
++    float fx,fy,rx,ry;
+     g_ppHardArmed=0u;if(variantOut)*variantOut=0u;ss=PPSweepGet(lo,hi);if(!ss)return;idx=ss->index%PP_HARDLOS_VARIANTS;ss->index=(idx+1u)%PP_HARDLOS_VARIANTS;group=idx/8u;variant=idx%8u;
+-    t=ObjByGuid(lo,hi);if(!Ptr(t))return;x=*(float*)(t+OFF_UNIT_X);y=*(float*)(t+OFF_UNIT_Y);z=*(float*)(t+OFF_UNIT_Z);
+-    /* 56 server-visible approach points, all within ~3.3 yd of real target. First point is exact target XYZ. */
++    t=ObjByGuid(lo,hi);if(!Ptr(t))return;
++    x=*(float*)(t+OFF_UNIT_X);y=*(float*)(t+OFF_UNIT_Y);z=*(float*)(t+OFF_UNIT_Z);o=*(float*)(t+OFF_UNIT_O);
++    SinCosF(o,&sn,&cs);fx=cs;fy=sn;rx=-fy;ry=fx;
++
++    /*
++     * V68: every PP HARDLOS candidate is in the target's REAR hemisphere.
++     * Never fall back to exact target XYZ or world-axis +/-X/Y points, because
++     * those can put the spoofed rogue in front of the mob.  Eight horizontal
++     * candidates stay within ~3.1 yd and sweep a narrow rear sector; seven Z
++     * groups preserve the old 56-point HARDLOS retry budget.
++     */
+     if(group==1u)zbase=0.75f;else if(group==2u)zbase=-0.75f;else if(group==3u)zbase=1.50f;else if(group==4u)zbase=-1.50f;else if(group==5u)zbase=3.00f;else if(group==6u)zbase=-3.00f;
+-    if(variant==1u)dx=1.25f;else if(variant==2u)dx=-1.25f;else if(variant==3u)dy=1.25f;else if(variant==4u)dy=-1.25f;else if(variant==5u)dz=0.50f;else if(variant==6u)dz=-0.50f;else if(variant==7u){dx=0.85f;dy=0.85f;}
+-    g_ppHardX=x+dx;g_ppHardY=y+dy;g_ppHardZ=z+zbase+dz;g_ppHardLo=lo;g_ppHardHi=hi;g_ppHardArmed=1u;g_ppFailPendingVariant=idx;++g_ppHardLOSArms;if(variantOut)*variantOut=idx;
++
++    if(variant==1u){back=2.55f;side=0.55f;}
++    else if(variant==2u){back=2.55f;side=-0.55f;}
++    else if(variant==3u){back=2.85f;side=0.95f;}
++    else if(variant==4u){back=2.85f;side=-0.95f;}
++    else if(variant==5u){back=2.20f;side=0.35f;dz=0.50f;}
++    else if(variant==6u){back=2.20f;side=-0.35f;dz=-0.50f;}
++    else if(variant==7u){back=3.05f;side=0.0f;}
++
++    g_ppHardX=x-(fx*back)+(rx*side);
++    g_ppHardY=y-(fy*back)+(ry*side);
++    g_ppHardZ=z+zbase+dz;
++    g_ppHardLo=lo;g_ppHardHi=hi;g_ppHardArmed=1u;g_ppFailPendingVariant=idx;++g_ppHardLOSArms;if(variantOut)*variantOut=idx;
+ }
+ static void PPHardApplySpoof(void)
+ {
+@@ -679,7 +721,7 @@
+         pop ebx
+     }
+ }
+-static const char g_chatReady[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[MovementCore V66]|r Mining HARD-LOS + PP death-blacklist + PP HARDLOS3D retry + F11 loaded') end";
++static const char g_chatReady[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[MovementCore V68]|r Mining HARD-LOS + PP death-blacklist + PP REAR-ONLY HARDLOS3D retry + F11 loaded') end";
+ static const char g_chatPPOn[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[AutoPP]|r ON - F11 toggle') end";
+ static const char g_chatPPOff[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[AutoPP]|r OFF - manual Pick Pocket still works') end";
+ static const char g_chatChainBad[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff3333[AutoGather]|r LongPickPocket chain/order invalid - AutoGather blocked to protect PP') end";
+@@ -1611,7 +1653,7 @@
+     GatherFileLog("CHAIN_MOVE_NEXT",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_nextMoveTarget);
+     GatherFileLog("CHAIN_SEND_NEXT",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_nextSendTarget);
+     GatherFileLog(g_ppChainOk?"PPCHAIN_OK":"PPCHAIN_BAD_GATHER_BLOCKED",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_ppChainOk);
+-    if(g_ppChainOk)GatherFileLog("AUTOPP_V66_BLACKLIST_HARDLOS3D_RETRY_READY",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_longPPBase);
++    if(g_ppChainOk)GatherFileLog("AUTOPP_V68_REARONLY_HARDLOS3D_RETRY_READY",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_longPPBase);
+     GatherFileLog(g_ppFailHookOk?"AUTOPP_FAILHOOK_OK":"AUTOPP_FAILHOOK_BAD",GT()?GT()():0u,0u,0u,0u,0.0f,0u,g_nextPPFailTarget);
+     return TRUE;
+ }
+@@ -1639,7 +1681,7 @@
+ __declspec(dllexport) DWORD __stdcall WoWNoFall_GetVersion(void){return 0x00010000u;}
+ 
+ /* V43 diagnostics. */
+-__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00100000u;}
++__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00110000u;}
+ __declspec(dllexport) DWORD __stdcall MovementCore_GetStatus(void){return g_status;}
+ __declspec(dllexport) DWORD __stdcall MovementCore_GetNextHook(void){return g_nextMoveTarget;}
+ __declspec(dllexport) DWORD __stdcall MovementCore_GetNoFallPackets(void){return g_noFallPackets;}
