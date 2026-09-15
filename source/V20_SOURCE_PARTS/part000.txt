@@ -1,0 +1,172 @@
+/*
+ * WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
+ * World of Warcraft 1.12.1 build 5875 x86
+ *
+ * V62 Mining-first + HARD server/client LOS retry + combat Mining build:
+ *   - V43 NoFall + SafeBreak preserved
+ *   - adds AutoGather for vanilla Mining/Herbalism nodes visible to client
+ *   - 300 yd client-side scan cap; server visibility still limits loaded GO set
+ *   - detailed file logging: AutoGather_debug.log
+ *   - NO automatic looting; waits for manual loot window and resumes after close
+ *   - no max-attempt blacklist: matching Mining nodes are retried until depleted/gone
+ *   - only real profession casts count as gather (all Vanilla Mining/Herbalism rank IDs)
+ *   - Mining has priority over automatic Pick Pocket when a valid Mining node is visible within 300 yd
+ *   - Mining HARD LOS retry: after a normal interaction fails, retries BOTH the server-side
+ *     near-node approach point and the local interaction ray.  The first retry is the exact
+ *     node XYZ (zero-range approach), then +/-X/Y and small +/-Z points; each approach is
+ *     repeated through local world translations up to +/-35 yd.
+ *   - Mining is allowed to continue/start while UNIT_FLAG_IN_COMBAT is set.  Herb/AutoOpen
+ *     keep their previous combat-safe behavior.
+ *   - without a valid Mining node, Pick Pocket keeps the existing fast path and priority over Herb/other gather state
+ *   - LongPickPocket v0.8 is verified as downstream owner of PP spoofing
+ *   - outgoing Pick Pocket (921) is intercepted BEFORE LongPickPocket; only if a FAR
+ *     gather spoof was actually active do we release it and send real heartbeats
+ *   - LongPickPocket active state is read through the verified downstream-hook layout;
+ *     AutoGather never rewrites movement while LongPP owns spoof state
+ *   - PP send-hook fast path does no file I/O and does not scan LocalPlayer unless a
+ *     real gather spoof must be released; diagnostic logging is deferred to timer
+ *   - startup fail-safe blocks AutoGather if the expected LongPP chain/order is missing
+ *   - global loot-window pause prevents gathering from fighting PP/corpse loot
+ *   - rogue Stealth/Vanish is explicitly cancelled immediately before a gather interaction
+ *     (Vanilla 1.12 does not auto-unstealth for otherwise unavailable actions)
+ *
+ * Previous V43 basis:
+ *   - source-level merge of WoWNoFall_5875_v1 and
+ *     WoWManualSafeBreak_5875_v13_LALT_INSTANCE_UNREACHABLE
+ *   - ONE owner of callsite 0x00600ACA instead of two chained DLLs
+ *   - preserves V42 logical order inside the hook:
+ *       NoFall packet transform -> SafeBreak suppress decision -> previous hook target
+ *   - LongPickPocket / PositionalSpoof remain separate and are chained downstream.
+ *
+ * No CRT. Uses verified WoW.exe IAT slots for build 5875.
+ */
+#if !defined(_M_IX86) && !defined(__i386__)
+#error This DLL is x86-only.
+#endif
+
+typedef unsigned char BYTE;
+typedef unsigned short WORD;
+typedef unsigned long DWORD;
+typedef signed long LONG;
+typedef unsigned int UINT;
+typedef int BOOL;
+typedef void* HANDLE;
+typedef void* HINSTANCE;
+typedef void* HWND;
+typedef void* LPVOID;
+typedef DWORD UINT_PTR;
+
+#define TRUE 1
+#define FALSE 0
+#define DLL_PROCESS_ATTACH 1
+#define DLL_PROCESS_DETACH 0
+#define PAGE_EXECUTE_READWRITE 0x40u
+
+int _fltused = 0x9875;
+
+/* clang may lower some structure/byte copies to memcpy even with /Zl. */
+void* __cdecl memcpy(void*d,const void*s,unsigned int n)
+{
+    BYTE*dd=(BYTE*)d;const BYTE*ss=(const BYTE*)s;unsigned int i;
+    for(i=0u;i<n;i++)dd[i]=ss[i];return d;
+}
+
+/* Shared / verified client addresses. */
+#define ADDR_MOVE_SEND_CALL        0x00600ACAu
+#define ADDR_MOVE_SEND_NEXT        0x00600ACFu
+#define ADDR_SEND_MOVE             0x00600A10u
+#define ADDR_CLIENT_SEND           0x005AB630u
+#define ADDR_PP_FAIL_CALL          0x006E73ACu
+#define ADDR_DATASTORE_VTABLE      0x007FF9E4u
+#define ADDR_OBJMGR_GLOBAL         0x00B41414u
+#define ADDR_SELECTED_GUID_LOW     0x00B4E2D8u
+#define ADDR_SELECTED_GUID_HIGH    0x00B4E2DCu
+#define ADDR_ONRIGHTCLICK_OBJECT   0x005F8660u
+#define ADDR_FRAMESCRIPT_EXECUTE   0x00704CD0u
+#define ADDR_CASTING_SPELLID       0x00CECA88u
+#define ADDR_IS_LOOTING_STATE      0x00B71B48u
+
+/* Object manager / unit offsets from MSB13. */
+#define OFF_OM_FIRST_OBJECT        0x00ACu
+#define OFF_OM_LOCAL_GUID_LOW      0x00C0u
+#define OFF_OM_LOCAL_GUID_HIGH     0x00C4u
+#define OFF_OBJ_DESCRIPTOR_PTR     0x0008u
+#define OFF_OBJ_GUID_LOW           0x0030u
+#define OFF_OBJ_GUID_HIGH          0x0034u
+#define OFF_OBJ_NEXT               0x003Cu
+#define OFF_UNIT_X                 0x09B8u
+#define OFF_UNIT_Y                 0x09BCu
+#define OFF_UNIT_Z                 0x09C0u
+#define OFF_UNIT_O                 0x09C4u
+#define OFF_PLAYER_MOVEINFO_PTR    0x0118u
+#define OFF_MOVEINFO_FLAGS         0x0040u
+#define UNIT_FIELD_HEALTH_INDEX    0x0016u
+#define UNIT_FIELD_FLAGS_INDEX     0x002Eu
+#define UNIT_FIELD_AURA_INDEX      0x002Fu
+#define UNIT_FIELD_AURA_SLOTS      48u
+#define UNIT_FLAG_IN_COMBAT        0x00080000u
+
+/* Update-field / GameObject data for 1.12.1 build 5875. */
+#define OBJECT_FIELD_TYPE_INDEX       0x0002u
+#define OBJECT_FIELD_ENTRY_INDEX      0x0003u
+#define TYPEMASK_UNIT                 0x00000008u
+#define TYPEMASK_PLAYER               0x00000010u
+#define TYPEMASK_GAMEOBJECT           0x00000020u
+#define PLAYER_SKILL_INFO_BASE_INDEX  0x02CEu
+#define PLAYER_SKILL_SLOT_STRIDE       3u
+#define PLAYER_SKILL_SLOT_COUNT      128u
+#define SKILL_HERBALISM              182u
+#define SKILL_MINING                 186u
+/* GameObject positions are update fields in vanilla.  OBJECT_END=0x06 and
+ * GAMEOBJECT_POS_X/Y/Z are +0x09/+0x0A/+0x0B => indices 0x0F..0x11.
+ * Keep the older client-struct offsets only as diagnostics/fallback. */
+#define GAMEOBJECT_POS_X_INDEX       0x000Fu
+#define GAMEOBJECT_POS_Y_INDEX       0x0010u
+#define GAMEOBJECT_POS_Z_INDEX       0x0011u
+#define OFF_OBJ_MOVEMENT_DATA        0x0118u
+#define OFF_OBJMOVE_POS_X            0x0010u
+#define OFF_OBJMOVE_POS_Y            0x0014u
+#define OFF_OBJMOVE_POS_Z            0x0018u
+#define OFF_GO_LEGACY_X              0x0240u
+#define OFF_GO_LEGACY_Y              0x0244u
+#define OFF_GO_LEGACY_Z              0x0248u
+
+/* Movement constants. */
+#define MSG_MOVE_FALL_LAND         0x000000C9u
+#define MSG_MOVE_HEARTBEAT         0x000000EEu
+#define MOVEFLAG_FLYING            0x00000800u
+#define MOVEFLAG_SWIMMING          0x00200000u
+#define MOVEFLAG_ONTRANSPORT       0x02000000u
+#define MAX_PACKET_SIZE            0x1000u
+#define CLONE_CAPACITY             0x80u
+
+/* Existing Win32 imports in WoW.exe. */
+#define WOW_IAT_VIRTUALPROTECT         0x007FF35Cu
+#define WOW_IAT_FLUSHICACHE            0x007FF320u
+#define WOW_IAT_GETCURRENTPROCESS      0x007FF390u
+#define WOW_IAT_GETTICKCOUNT           0x007FF310u
+#define WOW_IAT_GETASYNCKEYSTATE       0x007FF644u
+#define WOW_IAT_SETTIMER               0x007FF4F4u
+#define WOW_IAT_KILLTIMER              0x007FF4F8u
+#define WOW_IAT_CLOSEHANDLE            0x007FF15Cu
+#define WOW_IAT_SETFILEPOINTER         0x007FF190u
+#define WOW_IAT_GETFILESIZE            0x007FF194u
+#define WOW_IAT_SETENDOFFILE           0x007FF1A0u
+#define WOW_IAT_CREATEFILEA            0x007FF1D4u
+#define WOW_IAT_WRITEFILE              0x007FF2ECu
+
+/* SafeBreak keys / modes -- unchanged from v13. */
+#define VK_F7       0x76
+#define VK_F8       0x77
+#define VK_LMENU    0xA4
+#define VK_F10      0x79
+#define VK_F11      0x7A
+#define VK_F9       0x78
+#define VK_F12      0x7B
+#define MODE_OFF                    0u
+#define MODE_LEGACY_FAST            1u
+#define MODE_LOCAL_STRONG           2u
+#define MODE_PURSUIT                3u
+#define MODE_INSTANCE_UNREACHABLE   4u
+#define LEGACY_FAST_DISTANCE        200.0f
+#define LEGACY_FAST_Z_DOWN          0.0f
