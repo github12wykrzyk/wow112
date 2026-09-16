@@ -15,7 +15,11 @@
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
       "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e",
-      "source_state": "not_indexed_in_repo"
+      "source_state": "normal_source",
+      "source_origin": "reconstructed_from_binary",
+      "source_path": "src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG_RECONSTRUCTED.c",
+      "source_sha256": "fe74f51c8abffa13418672fd044f65bf1d523bd66f5b813a02762fbd550d01f6",
+      "verification": "final DLL disassembled; exact exports/RVAs, hook semantics, watchdog constants, foreign-chain behavior and log contract reproduced; rebuild static/binary verified but not byte-identical"
     },
     {
       "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
