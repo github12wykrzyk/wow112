@@ -1,0 +1,14 @@
+WoWControlHub stable runtime is the exact in-game-tested candidate binary from work commit 112447c102226415bdd0d06de7c1e4c7c4946c54.
+
+The candidate builder compiled src/WoWControlHub/WoWControlHub_v1.c and then applied two deterministic same-length binary patches:
+1. hotkey compare/transform site at file offset 43958: 83 f1 79 09 c1 -> 83 f1 2d 09 c1 (F10 -> Insert)
+2. panel label at file offset 46615: "WoWControlHub V1   [F10]" -> "WoWControlHub V1   [INS]"
+
+Resulting tested DLL:
+SHA256 f444a7c0c4769cc2f9546847fef54d41a0ccb79e823d132b73277e858571cf89
+size 49152
+PE machine 0x014C
+entrypoint RVA 0x1000
+Win32 import directory present.
+
+This provenance is explicit: the runtime binary is not claimed to be byte-for-byte produced directly from the unpatched source file.

@@ -1,0 +1,7 @@
+Restored runtime hashes:
+SpeedFloor DLL: a4dd0b0c44ecb4863231e0c92bab6767f3336003980fb552dc173448ab4b239c (9728 bytes)
+ControlHub DLL: f444a7c0c4769cc2f9546847fef54d41a0ccb79e823d132b73277e858571cf89 (49152 bytes)
+
+Expected XZ hashes after binary blob replacement:
+SpeedFloor XZ: b4c2495a38a6076c592318b717f65b0fbc2b671b6d9fe98980c1d77fda9d1269 (3540 bytes)
+ControlHub XZ: 48a3bcb1cd956500d358c433a2654c9507c191d864066ad5f3b8c0e2d91e564b (9616 bytes)

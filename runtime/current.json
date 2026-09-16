@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline": "V68",
+  "baseline": "V69",
   "wow_build": 5875,
   "exe": {
     "name": "WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe",
@@ -12,9 +12,9 @@
       "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
       "source_state": "binary_verified_reconstruction",
       "source_origin": "binary_patch_lineage_from_exact_ancestor",
+      "source_path": "src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c",
       "source_sha256": "bf4e738330d936c1af62db606a21d3e53bedc0b84d5b7864dc655369c127bbe2",
       "source_size": 53725,
-      "source_archive": "artifacts/PositionalSpoof/WoWPositionalSpoof_v0_36_FINAL_RECONSTRUCTED.c.xz.b64",
       "source_restore_doc": "artifacts/PositionalSpoof/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/PositionalSpoof/FINAL_BINARY_PATCH_AUDIT.txt",
       "binary_reproducer": "artifacts/PositionalSpoof/patch_WotFRetry5_to_final.py",
@@ -24,7 +24,6 @@
         "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
         "size": 45056
       },
-      "source_path": "src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c",
       "build_recipe": {
         "tool": "tools/build_active_module.py",
         "profile": "clangcl_i686_crtless",
@@ -39,11 +38,6 @@
       "source_path": "src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c",
       "source_sha256": "17a58f88df31dfeff3ac52921b91e60c749b346aec1a62a31ae9fee970acb52a",
       "source_size": 11497,
-      "candidate_build": {
-        "kind": "ai_workflow_smoke",
-        "workflow": ".github/workflows/build_work_candidate.yml",
-        "sha256": "640144099f012b9059abafbd582e219715daf983808f6670387bdf6d6a2f63c5"
-      },
       "binary_artifact": {
         "kind": "xz",
         "path": "artifacts/runtime_cache/640144099f012b9059abafbd582e219715daf983808f6670387bdf6d6a2f63c5.dll.xz",
@@ -58,19 +52,19 @@
     },
     {
       "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
-      "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db",
+      "sha256": "a4dd0b0c44ecb4863231e0c92bab6767f3336003980fb552dc173448ab4b239c",
       "source_state": "functionally_equivalent_reconstruction",
-      "source_origin": "static_reverse_engineering_from_final_dll",
+      "source_origin": "static_reverse_engineering_from_final_dll_plus_W112_CONTROL_API_V1_extension",
       "source_path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-      "source_sha256": "f1a446d0384f37888675f765327ab019a74ab9a9a9743ed95597b7bb24b4b69f",
-      "source_size": 14417,
+      "source_sha256": "411012697343fae738007fd0a8f8fa19e7ad0b28978667a8316704133757dfee",
+      "source_size": 20466,
       "source_restore_doc": "artifacts/SpeedFloor/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/SpeedFloor/BINARY_REVERSE_AUDIT.txt",
       "binary_artifact": {
         "kind": "xz",
-        "path": "artifacts/runtime_cache/39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db.dll.xz",
-        "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db",
-        "size": 10240
+        "path": "artifacts/V69/runtime/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll.xz",
+        "sha256": "a4dd0b0c44ecb4863231e0c92bab6767f3336003980fb552dc173448ab4b239c",
+        "size": 9728
       },
       "build_recipe": {
         "tool": "tools/build_active_module.py",
@@ -167,9 +161,9 @@
       "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
       "source_state": "normal_source",
       "source_origin": "original_source",
+      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
       "source_sha256": "c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63",
       "source_size": 81294,
-      "source_archive_prefix": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part",
       "source_restore_doc": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.README",
       "source_restore_tool": "tools/RESTORE_PLAYERESP_SOURCE.py",
       "binary_artifact": {
@@ -178,7 +172,6 @@
         "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
         "size": 31744
       },
-      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
       "build_recipe": {
         "tool": "tools/build_active_module.py",
         "profile": "clangcl_i686_win32imports",

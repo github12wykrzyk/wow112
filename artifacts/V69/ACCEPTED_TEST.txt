@@ -1,0 +1,11 @@
+Accepted in-game TEST(work) candidate: commit 112447c102226415bdd0d06de7c1e4c7c4946c54
+Artifact ID: 10457293777
+Inner package SHA256: 9f295803d0c305346407c6114dde3535eed3bfefe7c733ce0924e7d239352291
+
+Promoted V69 intentionally isolates only the accepted ControlHub + ABI-enabled SpeedFloor pair from that test. Concurrent PickPocket/MovementCore experiments are not promoted by this baseline.
+
+Accepted runtime identities:
+- WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll SHA256 a4dd0b0c44ecb4863231e0c92bab6767f3336003980fb552dc173448ab4b239c size 9728
+- WoWControlHub.dll SHA256 f444a7c0c4769cc2f9546847fef54d41a0ccb79e823d132b73277e858571cf89 size 49152
+- GUI toggle: Insert
+- Loader manifest: dlls.txt includes WoWControlHub.dll
