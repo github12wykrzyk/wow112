@@ -49,9 +49,16 @@
       "source_size": 9319
     },
     {
-      "name": "WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll",
-      "sha256": "641b64187e387fabfea41426962734ff3c1e5d0c2bbc4652e7df823d51e20a73",
-      "source_state": "not_indexed_in_repo"
+      "name": "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
+      "sha256": "05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845",
+      "source_state": "functionally_equivalent_reconstruction",
+      "source_origin": "static_reverse_engineering_plus_exact_v013_binary_patch_lineage",
+      "source_path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
+      "source_sha256": "e0557074b3e0176f5636a80a5ed6d52d3cb9be539a2851aa6fa9cd4ceb64e6c8",
+      "source_size": 25566,
+      "source_restore_doc": "artifacts/AutoLootPP/README_RECOVERY.md",
+      "binary_patch_audit": "artifacts/AutoLootPP/BINARY_PATCH_AUDIT.txt",
+      "binary_reproducer": "artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py"
     },
     {
       "name": "WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll",
