@@ -6,7 +6,7 @@ on:
       - work
     paths:
       - 'src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c'
-      - 'tools/build_stealthcdguardian.cmd'
+      - 'tools/build_active_module.py'
       - 'tools/package_current.py'
       - 'tools/verify_runtime_artifacts.py'
       - 'artifacts/runtime_cache/**'
@@ -33,9 +33,12 @@ jobs:
       - name: Verify exact runtime cache
         run: python tools/verify_runtime_artifacts.py
 
-      - name: Build StealthCDGuardian x86
+      - name: Build StealthCDGuardian x86 through verified runtime recipe
         shell: cmd
-        run: tools\build_stealthcdguardian.cmd
+        run: >-
+          python tools\build_active_module.py
+          --name "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
+          --output "build\WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
 
       - name: Package current active stack with candidate
         shell: pwsh
