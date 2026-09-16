@@ -11,6 +11,7 @@
     - reproduces the user's known-working Vanilla macro semantics;
     - runs only while a LocalPlayer exists, is out of combat, and has remained
       physically stationary for a short settle window;
+    - refuses to dispatch while rogue Stealth/Vanish aura is active;
     - does not run while the client reports another spell cast or an open loot
       window;
     - no SlashCmdList/bootstrap dependency, so loading on the login screen is safe;
@@ -71,7 +72,17 @@ typedef BOOL   (__stdcall *KillTimer_t)(HWND, UINT_PTR);
 #define OBJ_Y_OFF                  0x09BCu
 #define OBJ_Z_OFF                  0x09C0u
 #define UNIT_FIELD_FLAGS_INDEX     0x002Eu
+#define UNIT_FIELD_AURA_INDEX      0x002Fu
+#define UNIT_FIELD_AURA_SLOTS      48u
 #define UNIT_FLAG_IN_COMBAT        0x00080000u
+
+/* Rogue stealth aura family verified in the active MovementCore lineage. */
+#define SPELL_STEALTH_R1           1784u
+#define SPELL_STEALTH_R2           1785u
+#define SPELL_STEALTH_R3           1786u
+#define SPELL_STEALTH_R4           1787u
+#define SPELL_VANISH_STEALTH_R1   11327u
+#define SPELL_VANISH_STEALTH_R2   11329u
 
 /* Current canonical MovementCore uses these globals for arbitration. */
 #define WOW_CASTING_SPELLID        0x00CECA88u
@@ -262,6 +273,32 @@ static BOOL PlayerInCombat(BYTE* player)
     return (descriptors[UNIT_FIELD_FLAGS_INDEX] & UNIT_FLAG_IN_COMBAT) ? TRUE : FALSE;
 }
 
+static BOOL IsStealthSpell(DWORD spellId)
+{
+    return spellId == SPELL_STEALTH_R1 ||
+           spellId == SPELL_STEALTH_R2 ||
+           spellId == SPELL_STEALTH_R3 ||
+           spellId == SPELL_STEALTH_R4 ||
+           spellId == SPELL_VANISH_STEALTH_R1 ||
+           spellId == SPELL_VANISH_STEALTH_R2;
+}
+
+static BOOL PlayerHasStealth(BYTE* player)
+{
+    DWORD* descriptors;
+    DWORD i, spellId;
+
+    if (!Ptr(player)) return FALSE;
+    descriptors = *(DWORD**)(player + OBJ_DESCRIPTOR_PTR_OFF);
+    if (!Ptr(descriptors)) return FALSE;
+
+    for (i = 0u; i < UNIT_FIELD_AURA_SLOTS; ++i) {
+        spellId = descriptors[UNIT_FIELD_AURA_INDEX + i];
+        if (spellId && IsStealthSpell(spellId)) return TRUE;
+    }
+    return FALSE;
+}
+
 static void ResetStationaryState(void)
 {
     g_havePosition = 0u;
@@ -321,6 +358,13 @@ static void __stdcall AutoJunkboxTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWO
 
     player = LocalPlayer();
     if (!player) {
+        ResetStationaryState();
+        return;
+    }
+
+    /* Never break rogue stealth for a bag lockbox.  Reset the settle state so
+       leaving stealth requires a fresh stationary window before automation. */
+    if (PlayerHasStealth(player)) {
         ResetStationaryState();
         return;
     }
@@ -537,7 +581,7 @@ __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetAutoJunkboxDispatch
 
 __declspec(dllexport) const char* __stdcall PickPocketSelective_GetBuildTag(void)
 {
-    return "AUTOJUNKBOX_MACRO_STATIONARY_V1_20260916";
+    return "AUTOJUNKBOX_MACRO_STATIONARY_STEALTHSAFE_V2_20260916";
 }
 
 BOOL __stdcall DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
