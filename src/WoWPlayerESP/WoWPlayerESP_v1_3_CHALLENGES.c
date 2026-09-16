@@ -15,6 +15,14 @@
   FrameScript addresses are exact-build 5875 addresses.
   Challenge Lua is deliberately world-state guarded because GlueXML/login and
   BG/world transitions can temporarily expose a different Lua global set.
+
+  Hook lifecycle rule:
+    the v1.2 base owns the primary game-window WndProc subclass. This wrapper
+    adds one secondary subclass only while it can prove that its saved HWND is
+    still the base module's current game window and that our proc is actually
+    installed. World/BG transitions may cause v1.2 to restore/recreate its
+    subclass; stale challenge-hook state is therefore reconciled instead of
+    blindly trusting a one-time g_challenge_hooked flag.
 */
 
 #define DllMain W112_PlayerESP_Base_DllMain
@@ -30,6 +38,7 @@
 #define FN_FRAMESCRIPT_GETTEXT 0x00703BF0u
 
 __declspec(dllimport) BOOL WINAPI PostMessageA(HWND, UINT, DWORD, LONG);
+__declspec(dllimport) LONG WINAPI GetWindowLongA(HWND, int);
 
 typedef void        (__fastcall *FrameScriptExecuteFn)(const char* code, const char* codeAgain);
 typedef const char* (__fastcall *FrameScriptGetTextFn)(const char* key, int playerGender, DWORD pluralCount);
@@ -46,6 +55,7 @@ struct ChallengeInfo {
 
 static struct ChallengeInfo g_challenges[CHALLENGE_CACHE_SIZE];
 static WNDPROC32 g_challenge_prev_wndproc = NULL;
+static HWND g_challenge_hwnd = NULL;
 static BOOL g_challenge_hooked = FALSE;
 static DWORD g_next_challenge_post_frame = 0u;
 static BOOL g_challenge_logged = FALSE;
@@ -256,21 +266,60 @@ static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPa
     return 0;
 }
 
+static void chal_clear_hook_tracking(void) {
+    g_challenge_hooked = FALSE;
+    g_challenge_hwnd = NULL;
+    g_challenge_prev_wndproc = NULL;
+}
+
+static BOOL chal_hook_is_current(void) {
+    LONG current;
+    if (!g_challenge_hooked || !g_challenge_hwnd || !g_challenge_prev_wndproc) return FALSE;
+    if (g_challenge_hwnd != g_hooked_game_hwnd || !IsWindow(g_challenge_hwnd)) return FALSE;
+    current = GetWindowLongA(g_challenge_hwnd, GWL_WNDPROC);
+    return (WNDPROC32)(DWORD)current == chal_game_wndproc;
+}
+
+/* Restore only if our proc is still the actual top-level WndProc.  If v1.2 or
+   another owner already rebuilt the chain, writing our stale predecessor back
+   would clobber that newer hook and is exactly what this guard avoids. */
+static void chal_remove_hook(void) {
+    LONG current;
+    if (g_challenge_hooked && g_challenge_hwnd && g_challenge_prev_wndproc && IsWindow(g_challenge_hwnd)) {
+        current = GetWindowLongA(g_challenge_hwnd, GWL_WNDPROC);
+        if ((WNDPROC32)(DWORD)current == chal_game_wndproc)
+            SetWindowLongA(g_challenge_hwnd, GWL_WNDPROC, (LONG)(DWORD)g_challenge_prev_wndproc);
+    }
+    chal_clear_hook_tracking();
+}
+
 static BOOL chal_try_install_hook(void) {
     LONG oldProc;
-    if (g_challenge_hooked) return TRUE;
+
+    if (chal_hook_is_current()) return TRUE;
+
+    /* A transition can invalidate either the HWND or the base v1.2 subclass.
+       Only undo our old hook when it is demonstrably still on top; otherwise
+       discard stale bookkeeping and let the new current chain remain intact. */
+    chal_remove_hook();
+
     if (!g_hooked_game_hwnd || !g_old_game_wndproc || !IsWindow(g_hooked_game_hwnd)) return FALSE;
+    oldProc = GetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC);
+    if (!oldProc) return FALSE;
+    if ((WNDPROC32)(DWORD)oldProc == chal_game_wndproc) return FALSE;
+
     oldProc = SetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC, (LONG)(DWORD)chal_game_wndproc);
     if (!oldProc) return FALSE;
     g_challenge_prev_wndproc = (WNDPROC32)(DWORD)oldProc;
+    g_challenge_hwnd = g_hooked_game_hwnd;
     g_challenge_hooked = TRUE;
-    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active");
+    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active transition_safe=1");
     return TRUE;
 }
 
 static void chal_schedule_query(void) {
     DWORD i;
-    if (!g_challenge_hooked || !g_hooked_game_hwnd) return;
+    if (!chal_hook_is_current()) return;
     if (g_render_frame < g_next_challenge_post_frame) return;
 
     for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
@@ -280,7 +329,7 @@ static void chal_schedule_query(void) {
         c = chal_find_or_create(g_tracked[i].guidLo, g_tracked[i].guidHi, g_tracked[i].name);
         if (!c || c->known) continue;
         if (c->lastQueryFrame != 0u && (g_render_frame - c->lastQueryFrame) < CHALLENGE_REQUERY_FRAMES) continue;
-        if (PostMessageA(g_hooked_game_hwnd, WM_W112_ESP_CHALLENGE, c->guidLo, (LONG)c->guidHi)) {
+        if (PostMessageA(g_challenge_hwnd, WM_W112_ESP_CHALLENGE, c->guidLo, (LONG)c->guidHi)) {
             c->lastQueryFrame = g_render_frame;
             g_next_challenge_post_frame = g_render_frame + CHALLENGE_POST_GAP_FRAMES;
         }
@@ -291,8 +340,8 @@ static void chal_schedule_query(void) {
 static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
     (void)ignored;
     while (!g_stop) {
-        if (!g_challenge_hooked) chal_try_install_hook();
-        if (g_challenge_hooked) {
+        if (!chal_hook_is_current()) chal_try_install_hook();
+        if (chal_hook_is_current()) {
             chal_apply_known_names();
             chal_schedule_query();
         }
@@ -304,6 +353,15 @@ static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
 BOOL WINAPI DllMain(HMODULE hinst, DWORD reason, LPVOID reserved) {
     HANDLE th;
     BOOL ok;
+
+    /* Remove the secondary subclass before v1.2 tears down its primary hook.
+       The conditional restore above prevents stale-chain writes. */
+    if (reason == DLL_PROCESS_DETACH) {
+        g_stop = 1;
+        chal_remove_hook();
+        return W112_PlayerESP_Base_DllMain(hinst, reason, reserved);
+    }
+
     ok = W112_PlayerESP_Base_DllMain(hinst, reason, reserved);
     if (!ok) return FALSE;
     if (reason == DLL_PROCESS_ATTACH) {
