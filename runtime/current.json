@@ -54,8 +54,8 @@
       "source_state": "functionally_equivalent_reconstruction",
       "source_origin": "static_reverse_engineering_plus_exact_v013_binary_patch_lineage",
       "source_path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
-      "source_sha256": "e0557074b3e0176f5636a80a5ed6d52d3cb9be539a2851aa6fa9cd4ceb64e6c8",
-      "source_size": 25566,
+      "source_sha256": "8b1d59ce8c3b56ef2eecd8477a22119223e6b05a5fed6a5597ae32e96c945802",
+      "source_size": 24513,
       "source_restore_doc": "artifacts/AutoLootPP/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/AutoLootPP/BINARY_PATCH_AUDIT.txt",
       "binary_reproducer": "artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py"
@@ -66,6 +66,7 @@
       "source_state": "functionally_equivalent_reconstruction",
       "source_origin": "static_reverse_engineering_plus_exact_v09_binary_patch_lineage",
       "source_path": "src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c",
+      "source_sha256": "303ae0b2a4571044ca1d506f852448986dcfa94bbb987f3db43070ad20878da3",
       "source_size": 22118,
       "source_restore_doc": "artifacts/LongPickPocket/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/LongPickPocket/BINARY_PATCH_AUDIT.txt",
