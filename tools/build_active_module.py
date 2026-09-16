@@ -89,8 +89,9 @@ def capture_vcvars_env(vcvars):
     t0 = time.perf_counter()
     command = f'call "{vcvars}" >nul && set'
     proc = subprocess.run(
-        ["cmd.exe", "/d", "/s", "/c", command],
+        command,
         cwd=str(ROOT),
+        shell=True,
         capture_output=True,
         text=True,
     )
