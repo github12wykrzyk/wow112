@@ -24,7 +24,7 @@ jobs:
           p=Path('src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c')
           s=p.read_text(encoding='utf-8')
           old='    __asm { mov eax, fs:[30h] mov peb, eax }'
-          new='    __asm { mov eax, fs:[30h] ; mov peb, eax }'
+          new='    __asm mov eax, fs:[30h]\n    __asm mov peb, eax'
           if s.count(old)!=1:
               raise SystemExit('expected exact one-line clang asm pattern not found once')
           p.write_text(s.replace(old,new),encoding='utf-8',newline='\n')
