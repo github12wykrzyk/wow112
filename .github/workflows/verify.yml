@@ -36,11 +36,11 @@ jobs:
             exit 1
           fi
 
+      - name: Print compact AI status and source hashes
+        run: python3 tools/ai_status.py
+
       - name: Verify canonical current state
         run: python3 tools/verify_current.py
-
-      - name: Print compact AI status
-        run: python3 tools/ai_status.py
 
   deep-baseline-audit:
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
