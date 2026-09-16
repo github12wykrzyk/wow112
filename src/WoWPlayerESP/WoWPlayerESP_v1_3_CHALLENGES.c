@@ -1,0 +1,308 @@
+/*
+  WoWPlayerESP v1.3 CHALLENGES wrapper
+  Target: World of Warcraft 1.12.1 build 5875, Windows x86.
+
+  Keeps the complete v1.2 range_sweep implementation unchanged, renames its
+  DllMain inside this translation unit, then adds a small Turtle/SuperWoW
+  challenge bridge. Active challenges are learned from the same server protocol
+  used by Turtle's TargetFrame tooltip and appended to the ESP player name,
+  e.g. "Thunderboy [War Mode]".
+
+  Protocol verified against Turtle UI source:
+    request:  SendAddonMessage("TW_UI", "REQUEST_PLAYER_CHALLENGES;<guid>", "GUILD")
+    response: CHAT_MSG_ADDON prefix RESPONSE_PLAYER_CHALLENGES, body <guid>:<mask>
+
+  FrameScript addresses are exact-build 5875 addresses.
+*/
+
+#define DllMain W112_PlayerESP_Base_DllMain
+#include "WoWPlayerESP_v1_2_range_sweep.c"
+#undef DllMain
+
+#define WM_W112_ESP_CHALLENGE (0x8000u + 0x0112u)
+#define CHALLENGE_CACHE_SIZE 256u
+#define CHALLENGE_REQUERY_FRAMES 60u
+#define CHALLENGE_POST_GAP_FRAMES 15u
+
+#define FN_FRAMESCRIPT_EXECUTE 0x00704CD0u
+#define FN_FRAMESCRIPT_GETTEXT 0x00703BF0u
+
+__declspec(dllimport) BOOL WINAPI PostMessageA(HWND, UINT, DWORD, LONG);
+
+typedef void        (__fastcall *FrameScriptExecuteFn)(const char* code, const char* codeAgain);
+typedef const char* (__fastcall *FrameScriptGetTextFn)(const char* key, int playerGender, DWORD pluralCount);
+
+struct ChallengeInfo {
+    BYTE used;
+    volatile BYTE known;
+    DWORD guidLo;
+    DWORD guidHi;
+    DWORD lastQueryFrame;
+    char text[64];
+    char baseName[MAX_PLAYER_NAME + 1u];
+};
+
+static struct ChallengeInfo g_challenges[CHALLENGE_CACHE_SIZE];
+static WNDPROC32 g_challenge_prev_wndproc = NULL;
+static BOOL g_challenge_hooked = FALSE;
+static BOOL g_challenge_lua_ready = FALSE;
+static DWORD g_next_challenge_post_frame = 0u;
+static BOOL g_challenge_logged = FALSE;
+
+static DWORD chal_strlen(const char* s) {
+    DWORD n = 0u;
+    if (!s) return 0u;
+    while (s[n] && n < 4095u) n++;
+    return n;
+}
+
+static void chal_copy(char* dst, DWORD cap, const char* src) {
+    DWORD i = 0u;
+    if (!dst || cap == 0u) return;
+    if (src) {
+        while (src[i] && i + 1u < cap) {
+            dst[i] = src[i];
+            i++;
+        }
+    }
+    dst[i] = 0;
+}
+
+static BOOL chal_has_suffix(const char* s) {
+    DWORD i = 0u;
+    if (!s) return FALSE;
+    while (s[i] && i < MAX_PLAYER_NAME) {
+        if (s[i] == ' ' && s[i + 1u] == '[') return TRUE;
+        i++;
+    }
+    return FALSE;
+}
+
+static void chal_guid_token(char out[19], DWORD lo, DWORD hi) {
+    static const char hex[] = "0123456789ABCDEF";
+    int i;
+    out[0] = '0'; out[1] = 'x';
+    for (i = 0; i < 8; ++i) out[2 + i] = hex[(hi >> ((7 - i) * 4)) & 0xFu];
+    for (i = 0; i < 8; ++i) out[10 + i] = hex[(lo >> ((7 - i) * 4)) & 0xFu];
+    out[18] = 0;
+}
+
+static struct ChallengeInfo* chal_find(DWORD lo, DWORD hi) {
+    DWORD i;
+    for (i = 0u; i < CHALLENGE_CACHE_SIZE; ++i) {
+        if (g_challenges[i].used && g_challenges[i].guidLo == lo && g_challenges[i].guidHi == hi)
+            return &g_challenges[i];
+    }
+    return NULL;
+}
+
+static struct ChallengeInfo* chal_find_or_create(DWORD lo, DWORD hi, const char* currentName) {
+    DWORD i;
+    struct ChallengeInfo* c = chal_find(lo, hi);
+    if (c) {
+        if (currentName && currentName[0] && !chal_has_suffix(currentName) && !c->baseName[0])
+            chal_copy(c->baseName, sizeof(c->baseName), currentName);
+        return c;
+    }
+    for (i = 0u; i < CHALLENGE_CACHE_SIZE; ++i) {
+        if (!g_challenges[i].used) {
+            c = &g_challenges[i];
+            c->used = 1u;
+            c->known = 0u;
+            c->guidLo = lo;
+            c->guidHi = hi;
+            c->lastQueryFrame = 0u;
+            c->text[0] = 0;
+            c->baseName[0] = 0;
+            if (currentName && currentName[0] && !chal_has_suffix(currentName))
+                chal_copy(c->baseName, sizeof(c->baseName), currentName);
+            return c;
+        }
+    }
+    return NULL;
+}
+
+static void chal_make_name(char out[MAX_PLAYER_NAME + 1u], const char* base, const char* challenge) {
+    DWORD n = 0u, i = 0u;
+    if (!out) return;
+    out[0] = 0;
+    if (!base || !base[0]) base = "Unknown";
+    while (base[i] && n < MAX_PLAYER_NAME) out[n++] = base[i++];
+    if (challenge && challenge[0] && challenge[0] != '-' && n + 4u <= MAX_PLAYER_NAME) {
+        out[n++] = ' ';
+        out[n++] = '[';
+        i = 0u;
+        /* Reserve one byte for the closing bracket and one for NUL. */
+        while (challenge[i] && n < (MAX_PLAYER_NAME - 1u)) out[n++] = challenge[i++];
+        out[n++] = ']';
+    }
+    out[n] = 0;
+}
+
+static void chal_invalidate_label(DWORD lo, DWORD hi) {
+    DWORD i;
+    for (i = 0u; i < MAX_ESP_PLAYERS; ++i) {
+        if (g_labels[i].contentValid && g_labels[i].lastGuidLo == lo && g_labels[i].lastGuidHi == hi)
+            g_labels[i].contentValid = FALSE;
+    }
+}
+
+static BOOL chal_apply_to_buffer(char* name, struct ChallengeInfo* c) {
+    char decorated[MAX_PLAYER_NAME + 1u];
+    DWORD i = 0u;
+    if (!name || !c || !c->known || !c->text[0] || c->text[0] == '-') return FALSE;
+
+    if (!chal_has_suffix(name)) {
+        if (!c->baseName[0] && name[0]) chal_copy(c->baseName, sizeof(c->baseName), name);
+        chal_make_name(decorated, c->baseName[0] ? c->baseName : name, c->text);
+        while (decorated[i] == name[i] && decorated[i]) i++;
+        if (decorated[i] != name[i]) {
+            copy_name_small(name, decorated);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void chal_apply_known_names(void) {
+    DWORD i, j;
+    for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
+        struct ChallengeInfo* c;
+        BOOL changed = FALSE;
+        if (!g_tracked[i].used) continue;
+        c = chal_find_or_create(g_tracked[i].guidLo, g_tracked[i].guidHi, g_tracked[i].name);
+        if (!c || !c->known) continue;
+        changed = chal_apply_to_buffer(g_tracked[i].name, c);
+
+        for (j = 0u; j < g_esp_cache_count; ++j) {
+            if (g_esp_cache[j].guidLo == c->guidLo && g_esp_cache[j].guidHi == c->guidHi) {
+                if (chal_apply_to_buffer(g_esp_cache[j].name, c)) changed = TRUE;
+            }
+        }
+        if (changed) chal_invalidate_label(c->guidLo, c->guidHi);
+    }
+}
+
+static void chal_lua_init(void) {
+    static const char initScript[] =
+        "if not W112_ESP_CHAL_FRAME then "
+        "W112_ESP_CHAL_CACHE={};W112_ESP_CHAL_SENT={};W112_ESP_CHAL_LAST={};"
+        "W112_ESP_CHAL_NAMES={'Slow&Steady','Exhaustion','War Mode','Hardcore','Vagrant','Boaring','Lvl1','Craftmaster','Brewmaster','Heroism','Samurai','Together','True HC'};"
+        "W112_ESP_CHAL_FRAME=CreateFrame('Frame');W112_ESP_CHAL_FRAME:RegisterEvent('CHAT_MSG_ADDON');"
+        "W112_ESP_CHAL_FRAME:SetScript('OnEvent',function() "
+        "if event=='CHAT_MSG_ADDON' and arg1=='RESPONSE_PLAYER_CHALLENGES' then "
+        "local _,_,g,m=string.find(arg2 or '', '^(.+):(%d*)$');"
+        "if g then W112_ESP_CHAL_CACHE[g]=tonumber(m) or 0 end end end);end;"
+        "W112_ESP_CHAL_RESULT=''";
+    FrameScriptExecuteFn exec = (FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
+    exec(initScript, initScript);
+    g_challenge_lua_ready = TRUE;
+}
+
+static void chal_query_main_thread(DWORD lo, DWORD hi) {
+    char guid[19];
+    char script[1800];
+    char* p = script;
+    const char* result;
+    struct ChallengeInfo* c;
+    FrameScriptExecuteFn exec = (FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
+    FrameScriptGetTextFn getText = (FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
+
+    c = chal_find(lo, hi);
+    if (!c) return;
+    if (!g_challenge_lua_ready) chal_lua_init();
+
+    chal_guid_token(guid, lo, hi);
+    p = app_str(p, "W112_ESP_CHAL_RESULT='';do local u='");
+    p = app_str(p, guid);
+    p = app_str(p, "';local _,g=UnitExists(u);if not g then g=u end;local m=W112_ESP_CHAL_CACHE[g];");
+    p = app_str(p, "if m==nil then local r=GetRealmName();local t=Turtle_ChallengesCache and Turtle_ChallengesCache[r];");
+    p = app_str(p, "if t and t[g] and t[g]>0 then m=t[g];W112_ESP_CHAL_CACHE[g]=m end end;");
+    p = app_str(p, "if m~=nil then if m==0 then W112_ESP_CHAL_RESULT='-' else local o='';local b=1;");
+    p = app_str(p, "for i=1,table.getn(W112_ESP_CHAL_NAMES) do if mod(m,b*2)>=b then if o~='' then o=o..'/' end;o=o..W112_ESP_CHAL_NAMES[i] end;b=b*2 end;");
+    p = app_str(p, "if o=='' then o='Challenge' end;W112_ESP_CHAL_RESULT=o end else local s=W112_ESP_CHAL_SENT[g] or 0;local n=GetTime();local l=W112_ESP_CHAL_LAST[g] or -999;");
+    p = app_str(p, "if s<2 and n-l>2 then W112_ESP_CHAL_SENT[g]=s+1;W112_ESP_CHAL_LAST[g]=n;SendAddonMessage('TW_UI','REQUEST_PLAYER_CHALLENGES;'..g,'GUILD') end end end");
+    *p = 0;
+
+    exec(script, script);
+    result = getText("W112_ESP_CHAL_RESULT", -1, 0u);
+    if (!result || !result[0]) return;
+
+    c->known = 0u;
+    chal_copy(c->text, sizeof(c->text), result);
+    c->known = 1u;
+    if (!g_challenge_logged && c->text[0] != '-') {
+        char b[160]; char* q = b;
+        q = app_str(q, "CHALLENGE_BRIDGE_OK guid="); q = app_str(q, guid);
+        q = app_str(q, " value="); q = app_str(q, c->text); *q = 0;
+        log_line(b);
+        g_challenge_logged = TRUE;
+    }
+}
+
+static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
+    if (msg == WM_W112_ESP_CHALLENGE) {
+        chal_query_main_thread((DWORD)wParam, (DWORD)lParam);
+        return 0;
+    }
+    if (g_challenge_prev_wndproc)
+        return CallWindowProcA(g_challenge_prev_wndproc, hwnd, msg, wParam, lParam);
+    return 0;
+}
+
+static BOOL chal_try_install_hook(void) {
+    LONG oldProc;
+    if (g_challenge_hooked) return TRUE;
+    if (!g_hooked_game_hwnd || !g_old_game_wndproc || !IsWindow(g_hooked_game_hwnd)) return FALSE;
+    oldProc = SetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC, (LONG)(DWORD)chal_game_wndproc);
+    if (!oldProc) return FALSE;
+    g_challenge_prev_wndproc = (WNDPROC32)(DWORD)oldProc;
+    g_challenge_hooked = TRUE;
+    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active");
+    return TRUE;
+}
+
+static void chal_schedule_query(void) {
+    DWORD i;
+    if (!g_challenge_hooked || !g_hooked_game_hwnd) return;
+    if (g_render_frame < g_next_challenge_post_frame) return;
+
+    for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
+        struct ChallengeInfo* c;
+        if (!g_tracked[i].used) continue;
+        if (!(g_tracked[i].reaction >= 1 && g_tracked[i].reaction <= 3)) continue;
+        c = chal_find_or_create(g_tracked[i].guidLo, g_tracked[i].guidHi, g_tracked[i].name);
+        if (!c || c->known) continue;
+        if (c->lastQueryFrame != 0u && (g_render_frame - c->lastQueryFrame) < CHALLENGE_REQUERY_FRAMES) continue;
+        if (PostMessageA(g_hooked_game_hwnd, WM_W112_ESP_CHALLENGE, c->guidLo, (LONG)c->guidHi)) {
+            c->lastQueryFrame = g_render_frame;
+            g_next_challenge_post_frame = g_render_frame + CHALLENGE_POST_GAP_FRAMES;
+        }
+        break;
+    }
+}
+
+static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
+    (void)ignored;
+    while (!g_stop) {
+        if (!g_challenge_hooked) chal_try_install_hook();
+        if (g_challenge_hooked) {
+            chal_apply_known_names();
+            chal_schedule_query();
+        }
+        Sleep(100u);
+    }
+    return 0u;
+}
+
+BOOL WINAPI DllMain(HMODULE hinst, DWORD reason, LPVOID reserved) {
+    HANDLE th;
+    BOOL ok;
+    ok = W112_PlayerESP_Base_DllMain(hinst, reason, reserved);
+    if (!ok) return FALSE;
+    if (reason == DLL_PROCESS_ATTACH) {
+        th = CreateThread(NULL, 0u, ChallengeWorker, NULL, 0u, NULL);
+        if (th) CloseHandle(th);
+    }
+    return TRUE;
+}
