@@ -18,6 +18,13 @@ HUB_NAME = "WoWControlHub.dll"
 DLL_LIST_NAME = "dlls.txt"
 HUB_PROFILE = "clangcl_i686_win32imports"
 SPEED_NAME = "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
+HOTKEY_NAME = "Insert"
+# Candidate-only deterministic binary patch. Canonical source still documents the
+# original F10 pilot until the in-game path is accepted and promoted cleanly.
+HOTKEY_CODE_FROM = b"\x83\xf1\x79\x09\xc1"  # xor ecx,0x79 ; or ecx,eax
+HOTKEY_CODE_TO = b"\x83\xf1\x2d\x09\xc1"    # xor ecx,0x2d ; or ecx,eax
+HOTKEY_LABEL_FROM = b"WoWControlHub V1   [F10]"
+HOTKEY_LABEL_TO = b"WoWControlHub V1   [INS]"
 
 
 def loader_manifest_bytes(names):
@@ -34,6 +41,35 @@ def loader_manifest_bytes(names):
     if HUB_NAME.lower() not in seen:
         dlls.append(HUB_NAME)
     return ("\r\n".join(dlls) + "\r\n").encode("ascii"), dlls
+
+
+def patch_controlhub_hotkey(path):
+    path = Path(path)
+    data = bytearray(path.read_bytes())
+    patches = []
+    for label, before, after in (
+        ("wndproc_virtual_key", HOTKEY_CODE_FROM, HOTKEY_CODE_TO),
+        ("panel_hotkey_label", HOTKEY_LABEL_FROM, HOTKEY_LABEL_TO),
+    ):
+        if len(before) != len(after):
+            raise SystemExit(f"ControlHub hotkey patch length mismatch: {label}")
+        count = data.count(before)
+        if count != 1:
+            raise SystemExit(f"ControlHub hotkey patch expected one {label} site, found {count}")
+        offset = data.find(before)
+        data[offset:offset + len(before)] = after
+        patches.append({
+            "label": label,
+            "file_offset": offset,
+            "before_hex": before.hex(),
+            "after_hex": after.hex(),
+        })
+    path.write_bytes(data)
+    if data.count(HOTKEY_CODE_FROM) or data.count(HOTKEY_LABEL_FROM):
+        raise SystemExit("ControlHub F10 bytes remain after candidate hotkey patch")
+    if data.count(HOTKEY_CODE_TO) != 1 or data.count(HOTKEY_LABEL_TO) != 1:
+        raise SystemExit("ControlHub Insert hotkey patch verification failed")
+    return patches
 
 
 def deterministic_repack(package, extra_path):
@@ -128,12 +164,14 @@ def main():
 
     obj = output.with_suffix(".obj")
     timing, pe = build_one(HUB_PROFILE, HUB_SOURCE, obj, output)
-    digest = sha256_file(output)
 
     if pe.get("machine_hex") != "0x014C" or pe.get("entrypoint_rva") == 0:
         raise SystemExit("ControlHub PE32/x86/entrypoint verification failed")
     if not pe.get("has_import_directory"):
         raise SystemExit("ControlHub Win32-import profile unexpectedly produced no import directory")
+
+    hotkey_patch = patch_controlhub_hotkey(output)
+    digest = sha256_file(output)
 
     hub_meta = {
         "name": HUB_NAME,
@@ -147,6 +185,8 @@ def main():
         "entrypoint_rva": pe.get("entrypoint_rva"),
         "has_import_directory": pe.get("has_import_directory"),
         "speedfloor_optional_dependency_verified": not bool(speed_row.get("has_import_directory")),
+        "candidate_hotkey": HOTKEY_NAME,
+        "candidate_hotkey_binary_patch": hotkey_patch,
         "timings_ms": timing,
     }
 
@@ -193,9 +233,10 @@ def main():
         "optional": True,
         "provider": SPEED_NAME,
         "provider_has_import_directory": bool(speed_row.get("has_import_directory")),
-        "gui_toggle": "F10",
+        "gui_toggle": HOTKEY_NAME,
         "render_input": "Win32 layered overlay + game WndProc subclass",
         "loader_manifest": DLL_LIST_NAME,
+        "hotkey_conflict_avoided": "MovementCore F10 MODE_PURSUIT",
     }
     package_metadata_path.write_text(json.dumps(package_meta, indent=2) + "\n", encoding="utf-8")
 
@@ -215,6 +256,7 @@ def main():
         and not speed_row.get("has_import_directory")
         and pe.get("machine_hex") == "0x014C"
         and pe.get("entrypoint_rva") != 0
+        and len(hotkey_patch) == 2
     )
     summary["result"] = "PASS" if summary["ready_for_test"] else "FAIL"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
