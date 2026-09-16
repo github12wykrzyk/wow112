@@ -29,7 +29,9 @@
     "project_rules": "PROJECT_INSTRUCTIONS.md",
     "runtime_binary_cache": "artifacts/runtime_cache",
     "runtime_packager": "tools/package_current.py",
-    "active_builder": "tools/build_active_module.py"
+    "active_builder": "tools/build_active_module.py",
+    "candidate_builder": "tools/build_changed_active.py",
+    "source_metadata_sync": "tools/sync_source_metadata.py"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
@@ -39,7 +41,10 @@
     "runtime_verify": "python tools/verify_runtime_artifacts.py",
     "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json",
     "build_active_list": "python tools/build_active_module.py --list",
-    "build_active_one": "python tools/build_active_module.py --name <runtime-dll-name>"
+    "build_active_one": "python tools/build_active_module.py --name <runtime-dll-name>",
+    "build_changed_candidate": "python tools/build_changed_active.py --base <previous-git-sha> --package dist/WoW112_WORK_CANDIDATE.zip --package-metadata dist/candidate_metadata.json",
+    "sync_source_metadata": "python tools/sync_source_metadata.py",
+    "check_source_metadata": "python tools/sync_source_metadata.py --check"
   },
   "directories": {
     "src": "canonical editable source and source evidence grouped by module",
@@ -67,6 +72,9 @@
     "work must be synchronized with current main before a new iteration",
     "main contains only accepted stable state",
     "stable baseline numbers are rollback points, not experiment counters",
+    "normal work candidates may temporarily have stale source_sha256/source_size promotion fingerprints; the fast verifier warns and candidate build metadata records the exact source used",
+    "run source_metadata_sync before stable promotion so deep verification sees exact source fingerprints",
+    "when GitHub git-data tools are available, group one logical multi-file iteration into one commit to avoid duplicate CI runs",
     "the AI owns routine GitHub housekeeping; the user should mainly describe behavior and test in game",
     "never mix TBC/Wrath/Retail APIs or assumptions into build 5875 code"
   ]

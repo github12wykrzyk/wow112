@@ -15,6 +15,8 @@
   "deep_verifier": "tools/verify_repo.py",
   "runtime_packager": "tools/package_current.py",
   "runtime_binary_cache": "artifacts/runtime_cache",
+  "candidate_builder": "tools/build_changed_active.py",
+  "source_metadata_sync": "tools/sync_source_metadata.py",
   "baseline_dir": "baseline/V68",
   "active_dll_list": "baseline/V68/dlls.txt",
   "runtime_manifest": "runtime/current.json",

@@ -36,14 +36,14 @@ For normal development:
 
 1. Start from current `main`, with `work` synchronized to it.
 2. Locate the module through `runtime/current.json` instead of global repository search.
-3. Change the smallest possible source/runtime surface.
+3. Change the smallest possible canonical source/runtime surface.
 4. Keep source provenance explicit (`original_source`, reconstruction, binary-patch lineage, etc.).
-5. Update metadata/hashes that the change actually invalidates.
+5. Do not manually recalculate `source_sha256` / `source_size` after every source-only experiment. On `work` these are promotion fingerprints: `verify_current.py` warns if they lag, while candidate build metadata records the exact source hash actually compiled.
 6. Run `python tools/verify_current.py`.
-7. Commit the complete candidate to `work`.
-8. Prepare a runnable test artifact/package when the user needs one.
+7. Commit one logical iteration to `work`. When GitHub git-data tools are available, group multi-file edits into one tree/commit instead of creating one commit per file.
+8. `.github/workflows/build_work_candidate.yml` automatically detects which active `source_path` files changed, builds only those DLLs, and packages one complete candidate ZIP. Changes to the builder/runtime routing itself trigger a full active-stack build audit.
 9. User tests the candidate in game and reports the result.
-10. Only after a working state is accepted, promote it to `main` and create/update the next stable baseline metadata when appropriate.
+10. Before stable promotion run `python tools/sync_source_metadata.py`, then the normal/deep verification gates. Only then promote to `main` and update the next stable baseline metadata when appropriate.
 
 Do not create a new stable baseline for every experimental edit. Multiple candidate iterations may happen on `work`; stable baseline numbers are rollback points, not chat-message counters.
 
@@ -55,11 +55,20 @@ Fast gate used during repeated iterations:
 python tools/verify_current.py
 ```
 
+A stale `source_sha256` / `source_size` on a candidate source is a warning, not a gameplay/runtime-integrity failure. All runtime binary hashes, cache artifacts, paths, recipes and structural invariants remain strict.
+
 Human/AI status summary:
 
 ```text
 python tools/ai_status.py
 python tools/ai_status.py --json
+```
+
+Promotion fingerprint synchronization:
+
+```text
+python tools/sync_source_metadata.py
+python tools/sync_source_metadata.py --check
 ```
 
 Deep baseline/recovery audit:
@@ -68,25 +77,40 @@ Deep baseline/recovery audit:
 python tools/verify_repo.py
 ```
 
-The fast gate follows current metadata and is intended to remain valid across V69, V70 and later. Deep recovery scripts may be baseline-specific and are primarily required when promoting or auditing a stable release.
+The fast gate follows current metadata and is intended to remain cheap across V69, V70 and later. Deep recovery checks and exact source-fingerprint checks are primarily promotion/stable-release gates.
 
-## Where to edit
+## Where to edit and build
 
 Always follow `runtime/current.json -> active_dlls[*].source_path` when it exists. A module directory may contain reconstructed/evidence files in addition to the canonical source; `source_path` decides which file is authoritative for the current runtime lineage.
 
-For modules whose exact source is still stored only as a lossless recovery archive, follow the `source_restore_doc` / `source_archive` / `source_archive_prefix` metadata instead of guessing.
+For modules whose exact source is stored with recovery evidence, follow the recorded `source_restore_doc` / archive / reproducer metadata instead of guessing.
 
-For active modules with `build_recipe`, build through `python tools/build_active_module.py --name <runtime-dll-name>`; the tool reads the verified compiler/link profile from `runtime/current.json` instead of rediscovering flags.
+For one active DLL with `build_recipe`, build through:
+
+```text
+python tools/build_active_module.py --name <runtime-dll-name>
+```
+
+For a normal candidate iteration, prefer the generic changed-module route:
+
+```text
+python tools/build_changed_active.py --base <previous-git-sha>
+```
+
+It resolves active sources from `runtime/current.json`, builds only affected active DLLs, passes them as candidate overrides to `tools/package_current.py`, and emits candidate/build metadata.
 
 ## Definition of done for an AI iteration
 
 A candidate is ready for testing when:
 
-- the requested change is implemented,
+- the requested behavior is implemented,
 - unrelated modules were not modified,
-- metadata points to the correct source/runtime lineage,
-- `tools/verify_current.py` returns `PASS`,
+- canonical source path/provenance is correct,
+- `tools/verify_current.py` returns `PASS` (candidate source-fingerprint warnings are allowed after an intentional source edit),
+- the changed active DLLs build as x86 through their verified recipes,
+- one complete runnable ZIP is produced when needed,
 - rollback remains available,
 - the candidate is committed to `work`,
-- a runnable test package is prepared when needed,
 - the commit message states the functional change rather than only a version number.
+
+Before stable promotion, source fingerprints must be synchronized and the deep audit must pass.

@@ -1,19 +1,18 @@
-name: Build work StealthCDGuardian candidate
+name: Build work candidate
 
 on:
   push:
     branches:
       - work
     paths:
-      - 'src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c'
-      - 'tools/build_active_module.py'
-      - 'tools/package_current.py'
-      - 'tools/verify_runtime_artifacts.py'
-      - 'artifacts/runtime_cache/**'
-      - '.github/workflows/build_work_candidate.yml'
+      - 'src/**'
       - 'runtime/current.json'
       - 'CURRENT.json'
-      - 'manifests/SHA256SUMS_WORK.txt'
+      - 'tools/build_active_module.py'
+      - 'tools/build_changed_active.py'
+      - 'tools/package_current.py'
+      - 'artifacts/runtime_cache/**'
+      - '.github/workflows/build_work_candidate.yml'
   workflow_dispatch:
 
 permissions:
@@ -29,37 +28,34 @@ jobs:
     steps:
       - name: Checkout current work tree
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
-      - name: Verify exact runtime cache
-        run: python tools/verify_runtime_artifacts.py
-
-      - name: Build StealthCDGuardian x86 through verified runtime recipe
-        shell: cmd
-        run: >-
-          python tools\build_active_module.py
-          --name "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
-          --output "build\WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
-
-      - name: Package current active stack with candidate
+      - name: Build changed active modules and package candidate
+        if: github.event_name == 'push'
         shell: pwsh
-        run: |
-          python tools/package_current.py `
-            --override "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll=build/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll" `
-            --output dist/WoW112_WORK_SMOKE_STEALTH_DIAG.zip `
-            --metadata dist/candidate_metadata.json
+        run: >-
+          python tools/build_changed_active.py
+          --base "${{ github.event.before }}"
+          --output-dir build
+          --package dist/WoW112_WORK_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --summary dist/candidate_summary.json
 
-      - name: Print AI status
-        run: python tools/ai_status.py
+      - name: Full active-stack build/package audit
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: >-
+          python tools/build_changed_active.py
+          --all
+          --output-dir build
+          --package dist/WoW112_WORK_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --summary dist/candidate_summary.json
 
-      - name: Verify current repository state
-        run: python tools/verify_current.py
-
-      - name: Deep repository verification
-        run: python tools/verify_repo.py
-
-      - name: Upload test package and build metadata
+      - name: Upload candidate package and build metadata
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112-WORK-SMOKE-${{ github.sha }}
+          name: WoW112-WORK-CANDIDATE-${{ github.sha }}
           path: dist/
           if-no-files-found: error

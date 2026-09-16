@@ -12,12 +12,12 @@ The normal interaction model is:
 2. The AI inspects the current repository state through GitHub.
 3. The AI identifies the smallest relevant module and canonical source/recovery path.
 4. The AI implements the change on `work`.
-5. The AI updates all metadata/hashes made stale by that change.
+5. The AI updates only metadata that must be exact for the candidate; source promotion fingerprints may intentionally lag during source-only experiments.
 6. The AI runs repository verification/CI.
 7. The AI reports a concise test plan and, when appropriate, prepares the test artifact/package.
 8. The user only performs in-game testing and reports the observed result.
 9. The AI iterates until accepted.
-10. Accepted stable state is promoted to `main` and receives the next stable baseline when appropriate.
+10. Accepted stable state is synchronized, deeply verified, promoted to `main` and receives the next stable baseline when appropriate.
 
 Do not make the user perform repository housekeeping that the AI can perform through GitHub.
 
@@ -39,15 +39,18 @@ Do not begin by scanning the whole repository. Do not infer the active version f
 Authority order:
 
 1. `CURRENT.json` — current stable baseline and canonical pointers.
-2. `runtime/current.json` — exact active EXE/DLL stack and per-module source provenance.
+2. `runtime/current.json` — exact active EXE/DLL stack and per-module source provenance/routing.
 3. `src/<Module>/...` — canonical editable source when `source_path` points there.
-4. `manifests/` and baseline metadata — hashes and rollback identity.
-5. `artifacts/` — recovery, binary audits and deterministic reproducers.
-6. `archives/`, `src/history/`, old baselines and legacy `source/` — historical evidence only unless the task explicitly requires recovery/rollback/reconstruction.
+4. candidate build metadata — exact hash/size of the source and DLL actually built for a work candidate.
+5. `manifests/` and baseline metadata — hashes and rollback identity.
+6. `artifacts/` — recovery, binary audits and deterministic reproducers.
+7. `archives/`, `src/history/`, old baselines and legacy `source/` — historical evidence only unless the task explicitly requires recovery/rollback/reconstruction.
 
-If documentation conflicts with current machine-readable metadata, stop treating the prose as authoritative and reconcile the inconsistency before continuing.
+`source_sha256` / `source_size` in current routing are promotion fingerprints. During an intentional source-only experiment on `work` they may temporarily describe the last synchronized source snapshot; the fast verifier warns about that condition. Before stable promotion they must be synchronized with `python tools/sync_source_metadata.py` and checked by the deep gate.
 
-## 4. Git branch protocol
+If documentation conflicts with current machine-readable routing, stop treating the prose as authoritative and reconcile the inconsistency before continuing.
+
+## 4. Git branch and commit protocol
 
 - `main` = last accepted stable state.
 - `work` = active development candidate.
@@ -56,6 +59,7 @@ If documentation conflicts with current machine-readable metadata, stop treating
 - If `work` is stale/diverged, preserve any unique useful state under an archive branch if needed, then resynchronize `work` to `main`.
 - Do not create a new stable baseline number for every experiment.
 - Promote to `main` only after verification passes and the candidate is accepted as stable.
+- When GitHub git-data tools are available, group one logical multi-file iteration into one tree/commit instead of using one Contents-API commit per file. This avoids duplicate CI runs and keeps rollback points meaningful.
 
 The AI owns routine branch synchronization and commit hygiene. Do not ask the user to merge, rebase or resolve routine repository state manually when GitHub tools can do it.
 
@@ -94,7 +98,7 @@ If an active module lacks a direct editable source file, first use its recorded 
 
 ## 7. Metadata responsibility
 
-Whenever a change invalidates metadata, the AI must update it in the same candidate rather than leaving manual cleanup for later.
+Whenever a change invalidates runtime/baseline identity, the AI must update that metadata in the same candidate rather than leaving manual cleanup for later.
 
 Potentially affected files include:
 
@@ -106,9 +110,16 @@ Potentially affected files include:
 - recovery/reproducer references,
 - current-version documentation.
 
+For high-frequency source-only experiments, do **not** manually recalculate source fingerprints on every attempt. Let candidate build metadata record the exact source compiled. Before stable promotion run:
+
+```text
+python tools/sync_source_metadata.py
+python tools/sync_source_metadata.py --check
+```
+
 Do not update unrelated hashes or baseline records merely to make CI green. Fix the underlying inconsistency.
 
-## 8. Verification protocol
+## 8. Verification and build protocol
 
 Normal iteration gate:
 
@@ -123,13 +134,29 @@ python tools/ai_status.py
 python tools/ai_status.py --json
 ```
 
+Build one explicitly selected active module:
+
+```text
+python tools/build_active_module.py --name <runtime-dll-name>
+```
+
+Normal generic candidate route:
+
+```text
+python tools/build_changed_active.py --base <previous-git-sha>
+```
+
+This detects changed active `source_path` files, builds only those modules, and packages one candidate stack. Changes to the generic builder/runtime routing cause a full active-stack build audit.
+
 Deep stable/recovery audit:
 
 ```text
 python tools/verify_repo.py
 ```
 
-A candidate is not ready for user testing until the fast gate passes. A stable promotion should also pass the deep audit when applicable.
+A candidate is not ready for user testing until the fast gate passes and changed active modules build successfully. Stale source promotion fingerprints after an intentional source edit are warnings on `work`, not runtime-integrity failures.
+
+A stable promotion requires synchronized source fingerprints and the deep audit when applicable.
 
 If verification fails, inspect the failure, fix the actual repository inconsistency and rerun. Do not weaken checks simply to force a pass unless the check itself is demonstrably wrong.
 
@@ -139,12 +166,15 @@ This project may undergo tens or hundreds of iterations. Optimize for low contex
 
 - use current machine-readable routing instead of repeatedly rediscovering the repo,
 - keep commits focused and meaningfully named,
+- prefer one logical multi-file commit over serial per-file commits,
 - avoid duplicated living documentation,
 - keep historical evidence out of the normal read path,
 - prefer deterministic scripts over manual reconstruction steps,
+- build only changed active modules during ordinary iterations,
 - preserve stable rollback points,
 - do not accumulate temporary debug files/logs in Git,
-- do not create throwaway version-number churn for every test.
+- do not create throwaway version-number churn for every test,
+- do not run deep recovery audits on every work experiment when the fast gate is sufficient.
 
 When several experiments are required, keep them on `work` as candidate commits until a tested stable result is chosen.
 
@@ -155,6 +185,8 @@ When the user needs a runnable test package, the AI should prepare it rather tha
 For this project, when a package contains the active WoW executable, keep the `.exe` in the ZIP root next to the active DLLs unless a specific different layout is required.
 
 Include only what the user needs to test plus concise instructions when necessary. Do not bury the active executable or DLL set inside unnecessary nested folders.
+
+The generic candidate workflow should produce one complete ZIP and machine-readable candidate/build metadata so future AI does not need to reconstruct what was built from CI logs.
 
 ## 11. Communication with the user
 
@@ -178,16 +210,19 @@ For an experimental candidate:
 
 - requested behavior is implemented,
 - unrelated modules are untouched unless required,
-- canonical source/provenance is correct,
-- invalidated metadata is updated,
+- canonical source path/provenance is correct,
+- runtime identity metadata remains consistent,
 - rollback remains possible,
-- `tools/verify_current.py` passes,
+- `tools/verify_current.py` passes (candidate source-fingerprint warnings are acceptable after an intentional source edit),
+- changed active modules build through their verified x86 recipes,
 - candidate is committed to `work`,
+- a runnable test package is prepared when needed,
 - user receives a clear test instruction/artifact when needed.
 
 For a stable release additionally:
 
 - user has accepted the behavior or explicitly requested promotion,
+- `tools/sync_source_metadata.py --check` passes,
 - deep audit passes when applicable,
 - `main` is updated,
 - stable baseline/version metadata is updated if the runtime changed,
