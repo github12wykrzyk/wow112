@@ -7,8 +7,9 @@ on:
     paths:
       - 'src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c'
       - 'tools/build_stealthcdguardian.cmd'
-      - 'tools/package_work_candidate.py'
-      - 'tools/recover_positional_from_v68.py'
+      - 'tools/package_current.py'
+      - 'tools/verify_runtime_artifacts.py'
+      - 'artifacts/runtime_cache/**'
       - '.github/workflows/build_work_candidate.yml'
       - 'runtime/current.json'
       - 'CURRENT.json'
@@ -26,10 +27,11 @@ jobs:
   build-package:
     runs-on: windows-2022
     steps:
-      - name: Checkout full recovery history
+      - name: Checkout current work tree
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+
+      - name: Verify exact runtime cache
+        run: python tools/verify_runtime_artifacts.py
 
       - name: Build StealthCDGuardian x86
         shell: cmd
@@ -38,8 +40,8 @@ jobs:
       - name: Package current active stack with candidate
         shell: pwsh
         run: |
-          python tools/package_work_candidate.py `
-            --candidate-dll build/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll `
+          python tools/package_current.py `
+            --override "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll=build/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll" `
             --output dist/WoW112_WORK_SMOKE_STEALTH_DIAG.zip `
             --metadata dist/candidate_metadata.json
 

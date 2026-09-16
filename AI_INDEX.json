@@ -26,13 +26,17 @@
     "source_inventory": "docs/SOURCE_INVENTORY.md",
     "baseline_root": "baseline",
     "manifest_root": "manifests",
-    "project_rules": "PROJECT_INSTRUCTIONS.md"
+    "project_rules": "PROJECT_INSTRUCTIONS.md",
+    "runtime_binary_cache": "artifacts/runtime_cache",
+    "runtime_packager": "tools/package_current.py"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
     "deep_verify": "python tools/verify_repo.py",
     "status": "python tools/ai_status.py",
-    "status_json": "python tools/ai_status.py --json"
+    "status_json": "python tools/ai_status.py --json",
+    "runtime_verify": "python tools/verify_runtime_artifacts.py",
+    "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json"
   },
   "directories": {
     "src": "canonical editable source and source evidence grouped by module",
@@ -40,10 +44,11 @@
     "runtime": "machine-readable active runtime metadata",
     "baseline": "stable rollback metadata",
     "manifests": "reference hashes",
-    "artifacts": "recovery, binary audits and deterministic reproducers",
+    "artifacts": "recovery, exact runtime binary cache, binary audits and deterministic reproducers",
+    "artifacts/runtime_cache": "content-addressed exact DLL bytes for fast current-runtime packaging",
     "archives": "deprecated/intermediate archive experiments; do not scan by default",
     "docs": "workflow, provenance and retention documentation",
-    "tools": "verification, restore and maintenance scripts"
+    "tools": "verification, restore, packaging and maintenance scripts"
   },
   "do_not_scan_by_default": [
     "archives",
@@ -54,6 +59,7 @@
   "rules": [
     "AGENTS.md defines the AI operating contract",
     "runtime/current.json decides the active stack and canonical source provenance",
+    "active DLL binary_artifact entries provide the normal exact-byte packaging path",
     "prefer targeted module reads over repository-wide search",
     "work must be synchronized with current main before a new iteration",
     "main contains only accepted stable state",

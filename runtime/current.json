@@ -17,7 +17,13 @@
       "source_archive": "artifacts/PositionalSpoof/WoWPositionalSpoof_v0_36_FINAL_RECONSTRUCTED.c.xz.b64",
       "source_restore_doc": "artifacts/PositionalSpoof/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/PositionalSpoof/FINAL_BINARY_PATCH_AUDIT.txt",
-      "binary_reproducer": "artifacts/PositionalSpoof/patch_WotFRetry5_to_final.py"
+      "binary_reproducer": "artifacts/PositionalSpoof/patch_WotFRetry5_to_final.py",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b.dll.xz",
+        "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
+        "size": 45056
+      }
     },
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
@@ -31,6 +37,12 @@
         "kind": "ai_workflow_smoke",
         "workflow": ".github/workflows/build_work_candidate.yml",
         "sha256": "640144099f012b9059abafbd582e219715daf983808f6670387bdf6d6a2f63c5"
+      },
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/640144099f012b9059abafbd582e219715daf983808f6670387bdf6d6a2f63c5.dll.xz",
+        "sha256": "640144099f012b9059abafbd582e219715daf983808f6670387bdf6d6a2f63c5",
+        "size": 6144
       }
     },
     {
@@ -42,7 +54,13 @@
       "source_sha256": "f1a446d0384f37888675f765327ab019a74ab9a9a9743ed95597b7bb24b4b69f",
       "source_size": 14417,
       "source_restore_doc": "artifacts/SpeedFloor/README_RECOVERY.md",
-      "binary_patch_audit": "artifacts/SpeedFloor/BINARY_REVERSE_AUDIT.txt"
+      "binary_patch_audit": "artifacts/SpeedFloor/BINARY_REVERSE_AUDIT.txt",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db.dll.xz",
+        "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db",
+        "size": 10240
+      }
     },
     {
       "name": "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
@@ -51,7 +69,13 @@
       "source_origin": "original_source",
       "source_path": "src/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c",
       "source_sha256": "80130b9cb988dc9c60345aa764f9465a1d6e515bcfd9ff5e2128bb865d91206a",
-      "source_size": 9319
+      "source_size": 9319,
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba.dll.xz",
+        "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba",
+        "size": 4096
+      }
     },
     {
       "name": "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
@@ -63,7 +87,13 @@
       "source_size": 24513,
       "source_restore_doc": "artifacts/AutoLootPP/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/AutoLootPP/BINARY_PATCH_AUDIT.txt",
-      "binary_reproducer": "artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py"
+      "binary_reproducer": "artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845.dll.xz",
+        "sha256": "05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845",
+        "size": 20992
+      }
     },
     {
       "name": "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll",
@@ -75,14 +105,26 @@
       "source_size": 22118,
       "source_restore_doc": "artifacts/LongPickPocket/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/LongPickPocket/BINARY_PATCH_AUDIT.txt",
-      "binary_reproducer": "artifacts/LongPickPocket/patch_v09_FacingOnly_to_v10_ALLRANGE_360FACING.py"
+      "binary_reproducer": "artifacts/LongPickPocket/patch_v09_FacingOnly_to_v10_ALLRANGE_360FACING.py",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2.dll.xz",
+        "sha256": "dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2",
+        "size": 14336
+      }
     },
     {
       "name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
       "sha256": "044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b",
       "source_state": "normal_source",
       "source_path": "src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c",
-      "source_sha256": "764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888"
+      "source_sha256": "764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b.dll.xz",
+        "sha256": "044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b",
+        "size": 61440
+      }
     },
     {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
@@ -93,7 +135,13 @@
       "source_size": 81294,
       "source_archive_prefix": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part",
       "source_restore_doc": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.README",
-      "source_restore_tool": "tools/RESTORE_PLAYERESP_SOURCE.py"
+      "source_restore_tool": "tools/RESTORE_PLAYERESP_SOURCE.py",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5.dll.xz",
+        "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
+        "size": 31744
+      }
     }
   ]
 }

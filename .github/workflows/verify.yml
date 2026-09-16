@@ -21,26 +21,33 @@ jobs:
   fast-current-state:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout full history
+      - name: Checkout current tree
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Reject stale or diverged work branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/work'
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          git fetch origin main
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            echo "ERROR: work does not contain current main. Synchronize work to main before continuing."
-            exit 1
-          fi
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${GITHUB_SHA}" --jq '.status')"
+          echo "main...work status: ${status}"
+          case "${status}" in
+            ahead|identical) ;;
+            *)
+              echo "ERROR: work does not contain current main. Synchronize work to main before continuing."
+              exit 1
+              ;;
+          esac
 
       - name: Print compact AI status and source hashes
         run: python3 tools/ai_status.py
 
       - name: Verify canonical current state
         run: python3 tools/verify_current.py
+
+      - name: Verify exact current runtime artifacts
+        run: python3 tools/verify_runtime_artifacts.py
 
   deep-baseline-audit:
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
