@@ -296,6 +296,7 @@ static float g_ppPendingD2=0.0f;
 /* SafeBreak v13 state. */
 static volatile DWORD g_mode=0,g_started=0,g_lastInject=0,g_injecting=0,g_forwardCurrent=1,g_timerId=0;
 static volatile DWORD g_safeBreakPauseTick=0u,g_safeBreakPauseMs=0u,g_safeBreakResumes=0u;
+static volatile DWORD g_safeBreakPauseTick=0u,g_safeBreakPauseMs=0u,g_safeBreakResumes=0u;
 static volatile DWORD g_seenCombat=0,g_clearTick=0,g_key7=0,g_key8=0,g_keyAlt=0,g_key10=0,g_key11=0;
 static volatile DWORD g_autoPPEnabled=1u,g_autoPPBlocked=0u,g_autoPPManualPass=0u,g_autoPPTargetPlayerBlocks=0u;
 /* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
