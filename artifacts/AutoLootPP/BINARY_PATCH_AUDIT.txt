@@ -1,0 +1,139 @@
+AutoLootPP v0.14 recovery audit
+===============================
+Target: World of Warcraft 1.12.1 build 5875, Windows x86
+
+FINAL DLL
+---------
+Name: WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll
+Size: 20992 bytes
+SHA256: 05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845
+Format: PE32 / Intel i386 DLL
+ImageBase: 0x10000000
+Entry RVA: 0x00002330
+PE timestamp: 2026-09-11 21:27:04 UTC
+Linker: 14.0
+Sections: .text, .rdata, .data, .reloc
+
+PRESERVED PREDECESSOR
+---------------------
+Name: WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll
+Size: 20992 bytes
+SHA256: 641b64187e387fabfea41426962734ff3c1e5d0c2bbc4652e7df823d51e20a73
+Repository preservation:
+  artifacts/V67/runtime/WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll.xz.b64.part000..004
+
+EXACT v0.13 -> v0.14 BINARY DIFF
+--------------------------------
+File sizes are identical.
+Total changed byte runs: 1
+Total changed bytes: 3
+
+file offset 0x00000F07, RVA 0x00001B07, VA 0x10001B07
+  v0.13: 0F 93 C4        setae ah
+  v0.14: 30 E4 90        xor ah, ah ; nop
+
+Surrounding control flow:
+
+v0.13 ONESHOT:
+  test  ecx, ecx
+  sete  al
+  mov   ebp, dword ptr [0x1000EAE4]
+  cmp   ebp, 1
+  setae ah
+  or    ah, al
+  jne   skip_path
+
+v0.14 NOSKIP:
+  test  ecx, ecx
+  sete  al
+  mov   ebp, dword ptr [0x1000EAE4]
+  cmp   ebp, 1
+  xor   ah, ah
+  nop
+  or    ah, al
+  jne   skip_path
+
+The global at 0x1000EAE4 is the PP send-attempt counter. The sender increments it after a Pick Pocket packet is emitted and stores the tracked GUID/timestamp/life marker in adjacent globals.
+
+Therefore the selector/tracked-target skip logic is:
+  v0.13: skip when tracked_guid_hi == 0 OR pp_send_count >= 1
+  v0.14: skip when tracked_guid_hi == 0
+
+This is the exact ONESHOT -> NOSKIP behavioral change. No other byte in the DLL changed.
+
+BINARY REPRODUCTION
+-------------------
+Reproducer:
+  artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py
+
+Expected transition:
+  input SHA256 : 641b64187e387fabfea41426962734ff3c1e5d0c2bbc4652e7df823d51e20a73
+  patch        : file+0x00000F07 0F93C4 -> 30E490
+  output SHA256: 05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845
+
+Local verification performed during recovery:
+  reproducer output SHA256 matched the supplied v0.14 SHA256
+  cmp against the supplied v0.14 DLL: BYTE IDENTICAL
+
+FINAL-BINARY REVERSE FINDINGS USED BY THE C RECONSTRUCTION
+----------------------------------------------------------
+WoW absolute addresses / hooks:
+  object manager pointer : 0x00B41414
+  target GUID low/high   : 0x00B71B48 / 0x00B71B4C
+  loot state global      : 0x00B71B44
+  native LootAll         : 0x004C1FA0
+  native CloseLoot       : 0x0048F200
+  loot-window/status fn  : 0x004C2A70
+  creature-type fn       : 0x00605570
+  attackable fn          : 0x00606980
+  network send fn        : 0x005AB630
+  send-this global       : 0x007FF9E4
+  loot-error hook site   : 0x005EBA07
+  hook return            : 0x005EBA0E
+
+Original hook bytes at 0x005EBA07:
+  0F B6 45 0F 83 C0 FC
+Final hook writes E9 rel32 + two NOPs and resumes at 0x005EBA0E.
+
+Relevant object offsets:
+  object manager first object +0xAC
+  object manager player GUID   +0xC0/+0xC4
+  descriptor pointer           +0x08
+  object type                  +0x14
+  GUID                         +0x30/+0x34
+  next object                  +0x3C
+  unit auxiliary pointer       +0x110
+  coordinates                  +0x9B8/+0x9BC/+0x9C0
+  descriptor health            +0x58
+  descriptor bounding radius   +0x208
+  auxiliary level              +0x70
+  PP life marker               descriptor +0x1260
+
+Selector behavior recovered from final machine code:
+  unit object type == 3
+  alive
+  creature type == 6 or 7 (Undead / Humanoid)
+  attackable
+  target level < player level + 3
+  nearest candidate inside 300 yd scan radius
+  per-GUID backoff
+
+Pick Pocket packet path:
+  opcode 0x012E
+  subop  0x0399
+  kind   0x0002
+  compressed GUID payload
+
+Timing/state constants recovered/retained:
+  timer callback: 5 ms
+  PP life scan: 100 ms
+  embedded final READY string: world_scan_ms=80
+  loot open timeout: 450 ms
+  drain retry: 250 ms
+  request margin: 0.65 yd
+
+SOURCE CLASSIFICATION
+---------------------
+FUNCTIONALLY EQUIVALENT RECONSTRUCTION
+
+Reason: the normal C file was reconstructed from final machine code plus preserved binary lineage, not recovered as the exact source file used to build v0.14. The exact three-byte binary transition is byte-verified, but the reconstructed C compiler layout is not claimed to be original or byte-identical.
