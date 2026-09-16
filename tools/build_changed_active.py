@@ -62,10 +62,10 @@ def run_checked(cmd):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Build only changed active WoW 1.12.1/5875 x86 modules, then package one candidate stack."
+        description="Build changed active WoW 1.12.1/5875 x86 modules and package one candidate stack."
     )
     ap.add_argument("--base", help="Previous commit SHA used to detect changed active sources.")
-    ap.add_argument("--all", action="store_true", help="Build every active DLL with a verified direct recipe.")
+    ap.add_argument("--all", action="store_true", help="Audit-build every active DLL; unchanged modules are not candidate overrides.")
     ap.add_argument("--output-dir", default="build")
     ap.add_argument("--package", default="dist/WoW112_WORK_CANDIDATE.zip")
     ap.add_argument("--package-metadata", default="dist/candidate_metadata.json")
@@ -81,6 +81,8 @@ def main():
     }
 
     changed, resolved_base = changed_files(args.base)
+    source_selected = [by_source[p] for p in changed if p in by_source]
+
     force_all_paths = {
         "tools/build_active_module.py",
         "tools/build_changed_active.py",
@@ -88,11 +90,7 @@ def main():
         "runtime/current.json",
     }
     force_all = args.all or bool(force_all_paths.intersection(changed))
-
-    if force_all:
-        selected = list(by_source.values())
-    else:
-        selected = [by_source[p] for p in changed if p in by_source]
+    audit_selected = list(by_source.values()) if force_all else list(source_selected)
 
     relevant_infra = {
         "tools/build_active_module.py",
@@ -102,7 +100,7 @@ def main():
         "CURRENT.json",
         ".github/workflows/build_work_candidate.yml",
     }
-    relevant = bool(selected) or bool(relevant_infra.intersection(changed)) or any(
+    relevant = bool(audit_selected) or bool(relevant_infra.intersection(changed)) or any(
         p.startswith("artifacts/runtime_cache/") for p in changed
     ) or args.all
 
@@ -113,10 +111,11 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
+    source_override_names = {x["name"] for x in source_selected}
     built = []
     overrides = []
     if relevant:
-        for item in selected:
+        for item in audit_selected:
             name = item["name"]
             out = output_dir / name
             meta = output_dir / (safe_name(name) + ".json")
@@ -134,7 +133,8 @@ def main():
             )
             build_meta = json.loads(meta.read_text(encoding="utf-8"))
             built.append(build_meta)
-            overrides.append((name, out))
+            if name in source_override_names:
+                overrides.append((name, out))
 
         package_cmd = [
             sys.executable,
@@ -155,9 +155,11 @@ def main():
         "changed_files": changed,
         "force_all": force_all,
         "relevant": relevant,
-        "active_source_changes": [x["name"] for x in selected],
-        "built_count": len(built),
-        "built": built,
+        "active_source_changes": [x["name"] for x in source_selected],
+        "audit_build_count": len(built),
+        "audit_builds": built,
+        "candidate_override_count": len(overrides),
+        "candidate_overrides": [name for name, _ in overrides],
         "package": str(package.relative_to(ROOT)) if relevant else None,
         "package_sha256": sha256_file(package) if relevant and package.is_file() else None,
         "package_metadata": str(package_metadata.relative_to(ROOT)) if relevant else None,
