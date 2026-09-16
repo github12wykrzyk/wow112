@@ -15,7 +15,11 @@
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
       "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e",
-      "source_state": "not_indexed_in_repo"
+      "source_state": "normal_source",
+      "source_origin": "original_source",
+      "source_path": "source/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c",
+      "source_sha256": "c90f160ee4ae837e70c09b24dad2383c9a73621fa7b40df88639de95544e78f4",
+      "source_size": 11487
     },
     {
       "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
@@ -26,10 +30,10 @@
       "name": "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
       "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba",
       "source_state": "normal_source",
-      "source_origin": "reconstructed_from_binary",
-      "source_path": "src/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD_RECONSTRUCTED.c",
-      "source_sha256": "1ef439064a2184eae79013780a2e99ac6bbc592c2ab641a45b6a0097fe7b8b8e",
-      "verification": "rebuilt .text byte-identical; full DLL differs only in PE timestamp"
+      "source_origin": "original_source",
+      "source_path": "source/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c",
+      "source_sha256": "80130b9cb988dc9c60345aa764f9465a1d6e515bcfd9ff5e2128bb865d91206a",
+      "source_size": 9319
     },
     {
       "name": "WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll",
