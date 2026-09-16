@@ -1,0 +1,63 @@
+name: Build stable candidate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'runtime/current.json'
+      - 'CURRENT.json'
+      - 'baseline/**'
+      - 'manifests/**'
+      - 'tools/build_active_module.py'
+      - 'tools/build_changed_active.py'
+      - 'tools/package_current.py'
+      - 'tools/verify_current.py'
+      - 'tools/verify_repo.py'
+      - 'artifacts/runtime_cache/**'
+      - '.github/workflows/build_stable_candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-stable-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-stable:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout stable tree
+        uses: actions/checkout@v5
+
+      - name: Verify current stable state
+        shell: pwsh
+        run: python tools/verify_current.py
+
+      - name: Deep repository audit
+        shell: pwsh
+        run: python tools/verify_repo.py
+
+      - name: Build full active x86 stack and package stable artifact
+        shell: pwsh
+        run: >-
+          python tools/build_changed_active.py
+          --all
+          --output-dir build
+          --package dist/WoW112_STABLE_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --summary dist/candidate_summary.json
+
+      - name: Upload stable runnable ZIP and metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-STABLE-CANDIDATE-${{ github.sha }}
+          path: |
+            dist/WoW112_STABLE_CANDIDATE.zip
+            dist/candidate_metadata.json
+            dist/candidate_summary.json
+          if-no-files-found: error
+          compression-level: 0

@@ -23,6 +23,10 @@ jobs:
       - name: Checkout current work tree
         uses: actions/checkout@v5
 
+      - name: Verify current repository state
+        shell: pwsh
+        run: python tools/verify_current.py
+
       - name: Compile WinForms updater x86
         shell: pwsh
         run: |
@@ -71,6 +75,8 @@ jobs:
               raise SystemExit(f'expected x86 machine 0x014C, got 0x{machine:04X}')
           meta = {
               'name': p.name,
+              'updater_version': '1.1',
+              'self_update_protocol': 1,
               'sha256': hashlib.sha256(data).hexdigest(),
               'size': len(data),
               'pe_machine': '0x014C',
