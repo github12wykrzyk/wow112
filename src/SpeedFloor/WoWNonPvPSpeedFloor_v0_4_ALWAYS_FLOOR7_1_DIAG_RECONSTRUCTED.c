@@ -52,7 +52,10 @@ typedef u32            UINT_PTR32;
 #define FILE_END32            2u
 
 #define WOW_OBJECT_MANAGER_PTR 0x00B41414u
+#define WOW_SELECTED_GUID_LO   0x00B4E2D8u
+#define WOW_SELECTED_GUID_HI   0x00B4E2DCu
 #define WOW_PVP_STATE_FN       0x00605FF0u
+#define WOW_UNIT_REACTION_FN   0x006061E0u
 #define WOW_SPEED_RECALC_FN    0x007C5C20u
 
 /* Hardcoded WoW.exe IAT slots observed in the final DLL. */
@@ -69,9 +72,11 @@ typedef u32            UINT_PTR32;
 #define OM_PLAYER_GUID_LO_OFF   0x00C0u
 #define OM_PLAYER_GUID_HI_OFF   0x00C4u
 #define OBJ_DESCRIPTOR_PTR_OFF  0x0008u
+#define OBJ_TYPE_ID_OFF         0x0014u
 #define OBJ_GUID_LO_OFF         0x0030u
 #define OBJ_GUID_HI_OFF         0x0034u
 #define OBJ_NEXT_OFF            0x003Cu
+#define TYPEID_PLAYER           4u
 
 /* Active stealth spell-id scan inside the descriptor block. */
 #define DESC_STEALTH_FIRST_OFF  0x00BCu
@@ -108,10 +113,12 @@ typedef BOOL32 (STDCALL *WriteFileFn)(HANDLE32, const void *, u32, u32 *, void *
 typedef BOOL32 (STDCALL *CloseHandleFn)(HANDLE32);
 typedef u32 (STDCALL *GetTickCountFn)(void);
 typedef u32 (THISCALL *PvpStateFn)(void *player);
+typedef s32 (THISCALL *UnitReactionFn)(uptr32 selfObj, uptr32 targetObj);
 typedef void (THISCALL *SpeedRecalcFn)(void *movementThis, u32 zero);
 
 static volatile u32 g_prevPvp = 0xFFFFFFFFu;
 static volatile u32 g_prevStealth = 0xFFFFFFFFu;
+static volatile u32 g_prevTargetHostile = 0xFFFFFFFFu;
 static volatile u32 g_status = STATUS_DETACHED;
 static volatile u32 g_applyCount = 0u;
 static volatile UINT_PTR32 g_timerId = 0u;
@@ -125,6 +132,8 @@ static const char kEventApply[] = "FLOOR_APPLY";
 static const char kEventHealth[] = "SPEED_HEALTH";
 static const char kEventPvp[] = "PVP_STATE";
 static const char kEventStealth[] = "STEALTH_STATE";
+static const char kEventTargetHostile0[] = "TARGET_HOSTILE_PLAYER=0";
+static const char kEventTargetHostile1[] = "TARGET_HOSTILE_PLAYER=1";
 static const char kEventNeeded[] = "FLOOR_NEEDED";
 static const char kEventLoad[] = "LOAD_ALWAYS_FLOOR71_DIAG_V04";
 
@@ -266,7 +275,7 @@ static void log_event(const char *eventName,
     p = append_u32_dec(p, g_applyCount);
     p = append_str(p, " apply_delta=");
     p = append_u32_dec(p, applyDelta);
-    p = append_str(p, " floor_x100=710 pvp_gate=DISABLED method=SAFE_DIRECT_RECALC_ONLY\r\n");
+    p = append_str(p, " floor_x100=710 target_gate=HOSTILE_PLAYER_ONLY method=SAFE_DIRECT_RECALC_ONLY\r\n");
 
     h = createFile(kLogName,
                    GENERIC_WRITE32,
@@ -304,17 +313,13 @@ static u32 detect_stealth(uptr32 player)
     return 0u;
 }
 
-static uptr32 find_player_object(void)
+static uptr32 find_object_by_guid(u32 guidLo, u32 guidHi)
 {
     uptr32 mgr = read_u32(WOW_OBJECT_MANAGER_PTR);
-    u32 guidLo, guidHi;
     uptr32 obj;
     u32 guard = MAX_OBJECT_STEPS;
 
     if (!sane_ptr(mgr)) return 0u;
-
-    guidLo = read_u32(mgr + OM_PLAYER_GUID_LO_OFF);
-    guidHi = read_u32(mgr + OM_PLAYER_GUID_HI_OFF);
     if ((guidLo | guidHi) == 0u) return 0u;
 
     obj = read_u32(mgr + OM_FIRST_OBJECT_OFF);
@@ -330,6 +335,39 @@ static uptr32 find_player_object(void)
         obj = next;
     }
     return 0u;
+}
+
+static uptr32 find_player_object(void)
+{
+    uptr32 mgr = read_u32(WOW_OBJECT_MANAGER_PTR);
+    u32 guidLo, guidHi;
+
+    if (!sane_ptr(mgr)) return 0u;
+
+    guidLo = read_u32(mgr + OM_PLAYER_GUID_LO_OFF);
+    guidHi = read_u32(mgr + OM_PLAYER_GUID_HI_OFF);
+    return find_object_by_guid(guidLo, guidHi);
+}
+
+static u32 current_target_is_hostile_player(uptr32 player)
+{
+    u32 guidLo = read_u32(WOW_SELECTED_GUID_LO);
+    u32 guidHi = read_u32(WOW_SELECTED_GUID_HI);
+    uptr32 target;
+    s32 reaction;
+    UnitReactionFn fn;
+
+    if ((guidLo | guidHi) == 0u) return 0u;
+
+    target = find_object_by_guid(guidLo, guidHi);
+    if (!target) return 0u;
+    if (read_u32(target + OBJ_TYPE_ID_OFF) != TYPEID_PLAYER) return 0u;
+
+    fn = (UnitReactionFn)(uptr32)WOW_UNIT_REACTION_FN;
+    reaction = fn(player, target);
+
+    /* PlayerESP's verified build-5875 classifier treats reactions 1..3 as enemy/hostile. */
+    return (reaction >= 1 && reaction <= 3) ? 1u : 0u;
 }
 
 static u32 query_pvp(uptr32 player)
@@ -349,6 +387,7 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     uptr32 player;
     u32 pvp;
     u32 stealth;
+    u32 targetHostile;
     float curBefore;
     float runBefore;
     float curAfter;
@@ -367,6 +406,7 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
 
     pvp = query_pvp(player);
     stealth = detect_stealth(player);
+    targetHostile = current_target_is_hostile_player(player);
     curBefore = read_f32(player + PLAYER_CURRENT_SPEED_OFF);
     runBefore = read_f32(player + PLAYER_RUN_SPEED_OFF);
     curAfter = curBefore;
@@ -384,8 +424,15 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
                   runBefore, curBefore, runBefore, curBefore, 0u);
     }
 
-    /* v0.4 has no PvP gate: the floor applies in PvP and non-PvP alike. */
-    if (runBefore > SPEED_MIN_VALID && runBefore < SPEED_FLOOR) {
+    if (g_prevTargetHostile != targetHostile) {
+        g_prevTargetHostile = targetHostile;
+        log_event(targetHostile ? kEventTargetHostile1 : kEventTargetHostile0,
+                  pvp, stealth, player,
+                  runBefore, curBefore, runBefore, curBefore, 0u);
+    }
+
+    /* The only floor gate is the current selected target being a hostile player. */
+    if (!targetHostile && runBefore > SPEED_MIN_VALID && runBefore < SPEED_FLOOR) {
         log_event(kEventNeeded, pvp, stealth, player,
                   runBefore, curBefore, runBefore, curBefore, 0u);
 
