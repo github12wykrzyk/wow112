@@ -16,7 +16,8 @@ Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater
 - Tracks updater-managed files in `.wow112_updater/installed.json`; later updates can remove stale managed files safely.
 - `ROLLBACK` restores the newest updater backup.
 - `URUCHOM WOW` starts the installed WoW executable with the game directory as working directory.
-- Updates are blocked while a process executable from the selected game directory is running.
+- Updates are blocked only while an actual WoW game executable (`WoW.exe` or the project `WoW_*.exe`) from the selected directory is running.
+- `WoW112Updater.exe` may safely be stored and launched directly from the WoW directory; it is excluded from the running-game guard and from the launch fallback.
 
 ## Private repository authentication
 
@@ -31,6 +32,8 @@ The token is stored only on the local PC, protected with Windows DPAPI (`Current
 
 - `TEST (work)` is active now and consumes the existing work-candidate pipeline.
 - `STABLE (main)` is already represented in the GUI but intentionally reports unavailable until a stable-package workflow is promoted to `main`. This prevents the updater from pretending an unverified stable package exists.
+
+`TEST (work)` always means the newest successful aggregate `work` candidate. If several independent experiments are pushed to `work`, the updater intentionally follows the newest successful aggregate build rather than a package tied to one chat. Candidate pinning/history selection is a planned follow-up if isolated concurrent tests become necessary.
 
 ## Build
 

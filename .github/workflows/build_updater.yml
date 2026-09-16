@@ -49,7 +49,8 @@ jobs:
             /reference:"$ref\System.IO.Compression.FileSystem.dll" `
             /reference:"$ref\System.Security.dll" `
             /reference:"$ref\System.Web.Extensions.dll" `
-            tools\updater\WoW112Updater.cs
+            tools\updater\WoW112Updater.cs `
+            tools\updater\UpdaterProcessGuard.cs
           if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
 
       - name: Verify updater PE32 x86 and hash
