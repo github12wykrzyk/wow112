@@ -10,10 +10,10 @@ for %%F in (MovementCore_*.dll) do if exist "%%F" (
   if /I not "%%~nxF"=="MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll" call :moveone "%%F"
 )
 for %%F in (WoWLongPickPocket_*.dll) do if exist "%%F" (
-  if /I not "%%~nxF"=="WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll" call :moveone "%%F"
+  if /I not "%%~nxF"=="WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll" call :moveone "%%F"
 )
 for %%F in (WoWAutoLootPP_*.dll) do if exist "%%F" (
-  if /I not "%%~nxF"=="WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll" call :moveone "%%F"
+  if /I not "%%~nxF"=="WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll" call :moveone "%%F"
 )
 for %%F in (WoWStealthCDGuardian_*.dll) do if exist "%%F" (
   if /I not "%%~nxF"=="WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll" call :moveone "%%F"
