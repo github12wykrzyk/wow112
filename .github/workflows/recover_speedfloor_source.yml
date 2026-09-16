@@ -17,170 +17,160 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Recover exact source from retained archive experiments
+      - name: Recover exact source from coherent repository snapshots
         shell: python
         run: |
-          import base64, hashlib, io, lzma, pathlib, re, subprocess, tarfile, zipfile
+          import base64, hashlib, io, itertools, lzma, pathlib, re, subprocess, tarfile, zipfile
 
-          TARGET = 'WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.c'
-          WANT = '4766f7057415cc41458b33ba8e07221906c955b3abc602a53f818d914fc870a3'
-          OUT = pathlib.Path('recovery_out')
-          OUT.mkdir(exist_ok=True)
-          report = []
+          TARGET='WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.c'
+          WANT='4766f7057415cc41458b33ba8e07221906c955b3abc602a53f818d914fc870a3'
+          OUT=pathlib.Path('recovery_out'); OUT.mkdir(exist_ok=True)
+          report=[]; tested=set()
+          DIRS=['archives/V68_FULL_NO_EXE_BUNDLE_B64','archives/V68_FULL_NOEXE','artifacts/V68/bundle']
 
-          def natural_key(p):
-              return [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', p.name)]
-
+          def sh(*args, text=False):
+              return subprocess.check_output(list(args), text=text, stderr=subprocess.DEVNULL)
+          def nkey(s):
+              return [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', pathlib.PurePosixPath(s).name)]
           def clean64(s):
               return ''.join(ch for ch in s if ch in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
-
-          def b64(s):
-              s = clean64(s)
-              s += '=' * ((-len(s)) % 4)
-              return base64.b64decode(s, validate=False)
-
-          def decode_padding_blocks(text):
-              s = clean64(text)
-              groups=[]; start=0; i=0
-              while i < len(s):
-                  if s[i] == '=':
+          def dec64(s):
+              s=clean64(s); s += '='*((-len(s))%4); return base64.b64decode(s, validate=False)
+          def blocks64(s):
+              s=clean64(s); out=[]; start=0; i=0
+              while i<len(s):
+                  if s[i]=='=':
                       j=i
-                      while j+1 < len(s) and s[j+1] == '=':
-                          j += 1
-                      groups.append(s[start:j+1])
-                      start=j+1
-                      i=j+1
-                  else:
-                      i += 1
-              if start < len(s):
-                  groups.append(s[start:])
-              out=[]
-              for idx,g in enumerate(groups):
-                  if not g: continue
-                  try:
-                      out.append(b64(g))
-                  except Exception as e:
-                      report.append(f'B64_BLOCK_FAIL index={idx} chars={len(g)} err={e!r}')
-                      return None, groups
-              return b''.join(out), groups
-
+                      while j+1<len(s) and s[j+1]=='=': j+=1
+                      out.append(dec64(s[start:j+1])); start=j+1; i=j+1
+                  else: i+=1
+              if start<len(s): out.append(dec64(s[start:]))
+              return b''.join(out)
           def accept(data, origin):
-              got = hashlib.sha256(data).hexdigest()
+              got=hashlib.sha256(data).hexdigest()
               report.append(f'CANDIDATE {origin} size={len(data)} sha256={got}')
-              if got == WANT:
-                  (OUT / TARGET).write_bytes(data)
-                  report.append(f'EXACT_MATCH {origin}')
-                  return True
+              if got==WANT:
+                  (OUT/TARGET).write_bytes(data); report.append(f'EXACT_MATCH {origin}'); return True
               return False
-
-          def search_container(blob, label):
+          def inspect(blob,label):
+              h=hashlib.sha256(blob).hexdigest()
+              if h in tested: return False
+              tested.add(h)
+              original=blob
               if blob.startswith(b'\xfd7zXZ\x00'):
                   try:
-                      dec = lzma.decompress(blob)
-                      report.append(f'XZ_OK {label} compressed={len(blob)} decompressed={len(dec)} magic={dec[:8].hex()}')
-                      blob = dec
+                      blob=lzma.decompress(blob)
+                      report.append(f'XZ_OK {label} in={len(original)} out={len(blob)} magic={blob[:8].hex()}')
                   except Exception as e:
-                      report.append(f'XZ_FAIL {label}: {e!r}')
                       return False
-
+              # Some experiments may themselves contain a base64 text file after XZ.
               if zipfile.is_zipfile(io.BytesIO(blob)):
                   with zipfile.ZipFile(io.BytesIO(blob)) as z:
-                      names = z.namelist()
-                      report.append(f'ZIP_OK {label} members={len(names)}')
-                      report.append('ZIP_SPEEDFLOOR_NAMES ' + '|'.join(n for n in names if 'SpeedFloor' in n or 'NonPvP' in n))
+                      names=z.namelist()
+                      speed=[n for n in names if 'SpeedFloor' in n or 'NonPvP' in n]
+                      report.append(f'ZIP_OK {label} members={len(names)} speed={"|".join(speed)}')
                       for n in names:
-                          if pathlib.PurePosixPath(n).name == TARGET:
-                              if accept(z.read(n), f'{label}:{n}'):
-                                  return True
+                          if pathlib.PurePosixPath(n).name==TARGET and accept(z.read(n),f'{label}:{n}'): return True
                   return False
-
               try:
-                  with tarfile.open(fileobj=io.BytesIO(blob), mode='r:*') as t:
-                      members = t.getmembers()
-                      report.append(f'TAR_OK {label} members={len(members)}')
-                      report.append('TAR_SPEEDFLOOR_NAMES ' + '|'.join(m.name for m in members if 'SpeedFloor' in m.name or 'NonPvP' in m.name))
-                      for m in members:
-                          if m.isfile() and pathlib.PurePosixPath(m.name).name == TARGET:
-                              f = t.extractfile(m)
-                              if f and accept(f.read(), f'{label}:{m.name}'):
-                                  return True
+                  with tarfile.open(fileobj=io.BytesIO(blob),mode='r:*') as t:
+                      mem=t.getmembers(); speed=[m.name for m in mem if 'SpeedFloor' in m.name or 'NonPvP' in m.name]
+                      report.append(f'TAR_OK {label} members={len(mem)} speed={"|".join(speed)}')
+                      for m in mem:
+                          if m.isfile() and pathlib.PurePosixPath(m.name).name==TARGET:
+                              f=t.extractfile(m)
+                              if f and accept(f.read(),f'{label}:{m.name}'): return True
                       return False
               except Exception:
                   pass
-
-              off = blob.find(b'PK\x03\x04')
-              if off > 0 and zipfile.is_zipfile(io.BytesIO(blob[off:])):
-                  return search_container(blob[off:], label + f':embedded_zip@{off}')
-
-              report.append(f'UNKNOWN_CONTAINER {label} size={len(blob)} magic={blob[:16].hex()}')
+              # Direct source candidate after decompression.
+              if TARGET.encode() in blob or b'WoWNonPvPSpeedFloor' in blob:
+                  report.append(f'RAW_SPEEDFLOOR_TEXT {label} size={len(blob)}')
               return False
 
-          found = False
-
-          for p in pathlib.Path('.').rglob(TARGET):
-              if '.git' not in p.parts and accept(p.read_bytes(), f'repo:{p}'):
-                  found = True
-                  break
-
-          if not found:
-              dirs = [
-                  pathlib.Path('archives/V68_FULL_NO_EXE_BUNDLE_B64'),
-                  pathlib.Path('archives/V68_FULL_NOEXE'),
-                  pathlib.Path('artifacts/V68/bundle'),
-              ]
-              for d in dirs:
-                  if not d.is_dir(): continue
-                  parts = sorted([p for p in d.iterdir() if p.is_file() and 'part' in p.name], key=natural_key)
-                  texts = [p.read_text(encoding='utf-8').strip() for p in parts]
-                  joined=''.join(texts)
-                  report.append(f'PARTSET {d} count={len(parts)} names={",".join(p.name for p in parts)}')
-                  report.append('PART_DETAILS ' + '|'.join(f'{p.name}:{len(clean64(t))}:eq={clean64(t).count("=")}' for p,t in zip(parts,texts)))
-                  variants=[]
-                  try: variants.append(('joined-base64', b64(joined)))
-                  except Exception as e: report.append(f'B64_JOIN_FAIL {d}: {e!r}')
-                  try: variants.append(('per-part-base64', b''.join(b64(t) for t in texts)))
-                  except Exception as e: report.append(f'B64_PERPART_FAIL {d}: {e!r}')
-                  try:
-                      block_blob, groups = decode_padding_blocks(joined)
-                      report.append(f'B64_BLOCKS {d} groups={len(groups)} lens={",".join(str(len(g)) for g in groups)}')
-                      if block_blob is not None: variants.append(('padding-blocks', block_blob))
-                  except Exception as e: report.append(f'B64_BLOCKS_FAIL {d}: {e!r}')
-                  seen_hashes=set()
-                  for mode,blob in variants:
-                      h=hashlib.sha256(blob).hexdigest()
-                      if h in seen_hashes: continue
-                      seen_hashes.add(h)
-                      report.append(f'B64_VARIANT {d} mode={mode} bytes={len(blob)} sha256={h}')
-                      if search_container(blob, f'{d}:{mode}'):
-                          found=True; break
-                  if found: break
-
-          if not found:
-              revs=subprocess.check_output(['git','rev-list','--all'], text=True).splitlines()
-              report.append(f'HISTORY_REVS {len(revs)}')
-              seen=set()
-              for rev in revs:
-                  try: names=subprocess.check_output(['git','ls-tree','-r','--name-only',rev], text=True, stderr=subprocess.DEVNULL).splitlines()
-                  except Exception: continue
-                  for n in names:
-                      if pathlib.PurePosixPath(n).name != TARGET: continue
-                      key=(rev,n)
-                      if key in seen: continue
-                      seen.add(key)
-                      try: data=subprocess.check_output(['git','show',f'{rev}:{n}'], stderr=subprocess.DEVNULL)
+          # Search any directly committed exact source first.
+          revs=sh('git','rev-list','--all',text=True).splitlines()
+          report.append(f'HISTORY_REVS {len(revs)}')
+          for rev in revs:
+              names=sh('git','ls-tree','-r','--name-only',rev,text=True).splitlines()
+              for n in names:
+                  if pathlib.PurePosixPath(n).name==TARGET:
+                      try: data=sh('git','show',f'{rev}:{n}')
                       except Exception: continue
-                      if accept(data, f'git:{rev}:{n}'):
-                          found=True; break
-                  if found: break
+                      if accept(data,f'git:{rev}:{n}'):
+                          break
+              if (OUT/TARGET).exists(): break
 
-          rp=OUT/'RECOVERY_REPORT.txt'
-          rp.write_text('\n'.join(report)+'\n', encoding='utf-8')
+          # Reconstruct each archive exactly as it existed at every commit snapshot.
+          if not (OUT/TARGET).exists():
+              for rev in revs:
+                  for d in DIRS:
+                      try:
+                          paths=sh('git','ls-tree','-r','--name-only',rev,d,text=True).splitlines()
+                      except Exception:
+                          continue
+                      parts=sorted([p for p in paths if 'part' in pathlib.PurePosixPath(p).name],key=nkey)
+                      if not parts: continue
+                      key=(d,tuple((p,sh('git','rev-parse',f'{rev}:{p}',text=True).strip()) for p in parts))
+                      # tested source bytes dedupe below makes repeated snapshots cheap.
+                      try:
+                          texts=[sh('git','show',f'{rev}:{p}').decode('utf-8').strip() for p in parts]
+                      except Exception:
+                          continue
+                      joined=''.join(texts)
+                      variants=[]
+                      try: variants.append(('joined',dec64(joined)))
+                      except Exception: pass
+                      try: variants.append(('padding-blocks',blocks64(joined)))
+                      except Exception: pass
+                      # Also test every prefix ending in a padded chunk. This recovers snapshots where later unrelated parts were appended.
+                      acc=''
+                      for i,t in enumerate(texts):
+                          acc += t
+                          if '=' in clean64(t):
+                              try: variants.append((f'prefix0-{i:03d}',dec64(acc)))
+                              except Exception: pass
+                      for mode,blob in variants:
+                          if inspect(blob,f'snapshot={rev[:12]} dir={d} parts={len(parts)} mode={mode}'):
+                              break
+                      if (OUT/TARGET).exists(): break
+                  if (OUT/TARGET).exists(): break
+
+          # Finally enumerate historical versions of each chunk and search small variant spaces coherently.
+          # This handles a bundle that was never simultaneously correct in one commit but whose correct chunks all survive in history.
+          if not (OUT/TARGET).exists():
+              d='archives/V68_FULL_NO_EXE_BUNDLE_B64'
+              current=sh('git','ls-tree','-r','--name-only','HEAD',d,text=True).splitlines()
+              parts=sorted([p for p in current if 'part' in pathlib.PurePosixPath(p).name],key=nkey)
+              variants_per=[]
+              for p in parts:
+                  commits=sh('git','log','--all','--format=%H','--',p,text=True).splitlines()
+                  vals=[]; seen=set()
+                  for rev in commits+['HEAD']:
+                      try: v=sh('git','show',f'{rev}:{p}').decode('utf-8').strip()
+                      except Exception: continue
+                      hv=hashlib.sha256(v.encode()).hexdigest()
+                      if hv not in seen: seen.add(hv); vals.append(v)
+                  variants_per.append(vals)
+                  report.append(f'CHUNK_VARIANTS {p} count={len(vals)} lens={",".join(str(len(v)) for v in vals)}')
+              product=1
+              for v in variants_per: product*=max(1,len(v))
+              report.append(f'CHUNK_COMBINATION_SPACE {product}')
+              if product<=200000:
+                  for idx,combo in enumerate(itertools.product(*variants_per)):
+                      joined=''.join(combo)
+                      try: blob=dec64(joined)
+                      except Exception: continue
+                      if inspect(blob,f'historical-combo={idx} parts={len(parts)}'):
+                          break
+
+          rp=OUT/'RECOVERY_REPORT.txt'; rp.write_text('\n'.join(report)+'\n',encoding='utf-8')
           print(rp.read_text())
           target=OUT/TARGET
-          if not target.exists(): raise SystemExit('Exact source not recovered from retained repository material')
+          if not target.exists(): raise SystemExit('Exact source not recovered')
           got=hashlib.sha256(target.read_bytes()).hexdigest()
-          if got != WANT: raise SystemExit(f'hash mismatch: {got}')
           print(f'VERIFIED_EXACT_SOURCE sha256={got} size={target.stat().st_size}')
+          if got!=WANT: raise SystemExit('Unexpected recovered hash')
 
       - name: Upload recovered exact source
         if: always()
