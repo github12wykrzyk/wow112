@@ -12,7 +12,10 @@ on:
       - 'tools/build_changed_active.py'
       - 'tools/build_controlhub_candidate.py'
       - 'tools/package_current.py'
+      - 'tools/verify_current.py'
+      - 'tools/verify_runtime_artifacts.py'
       - 'tools/verify_verified_symbols.py'
+      - 'tools/write_candidate_test_card.py'
       - 'runtime/verified_symbols_5875.json'
       - 'artifacts/runtime_cache/**'
       - '.github/workflows/build_work_candidate.yml'
@@ -32,7 +35,7 @@ jobs:
       - name: Checkout current work tree
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Build changed active modules and package candidate
         if: github.event_name == 'push'
