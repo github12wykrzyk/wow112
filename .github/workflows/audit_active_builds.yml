@@ -29,15 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure x86 and compile with clang-cl
+      - name: Configure x86 and compile with clang-cl i686
         shell: cmd
         run: |
           call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
           if errorlevel 1 exit /b 1
-          clang-cl --version
+          clang-cl --target=i686-pc-windows-msvc --version
           if errorlevel 1 exit /b 1
           if not exist build_audit mkdir build_audit
-          clang-cl /nologo /c /O2 /GS- /GR- /EHsc- /Zl /Brepro /clang:-fno-builtin /Fo"build_audit\${{ matrix.id }}.obj" "${{ matrix.source }}"
+          clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /GS- /GR- /EHsc- /Zl /Brepro /clang:-fno-builtin /Fo"build_audit\${{ matrix.id }}.obj" "${{ matrix.source }}"
           if errorlevel 1 exit /b 1
           link /nologo /DLL /MACHINE:X86 /NODEFAULTLIB /ENTRY:DllMain@12 /Brepro /OUT:"build_audit\${{ matrix.id }}.dll" "build_audit\${{ matrix.id }}.obj"
           if errorlevel 1 exit /b 1
