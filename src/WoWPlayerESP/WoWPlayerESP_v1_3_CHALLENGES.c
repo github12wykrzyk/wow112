@@ -23,6 +23,11 @@
     installed. World/BG transitions may cause v1.2 to restore/recreate its
     subclass; stale challenge-hook state is therefore reconciled instead of
     blindly trusting a one-time g_challenge_hooked flag.
+
+  Hotkey ownership rule:
+    F8 belongs to MovementCore SafeBreak in the active stack. The legacy v1.2
+    ESP range-sweep F8 toggle is suppressed here so one key press cannot start
+    two independent position-spoof systems at once.
 */
 
 #define DllMain W112_PlayerESP_Base_DllMain
@@ -257,6 +262,20 @@ static void chal_query_main_thread(DWORD lo, DWORD hi) {
 }
 
 static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
+    /* v1.2 consumes F8 to toggle its range sweep. In the aggregate active stack
+       MovementCore also owns physical F8 for SafeBreak. Let the existing WndProc
+       chain process the key, then force the ESP sweep back off before its next
+       render tick can start spoofing position. */
+    if (msg == WM_KEYDOWN && wParam == VK_F8) {
+        LONG result = 0;
+        if (g_challenge_prev_wndproc)
+            result = CallWindowProcA(g_challenge_prev_wndproc, hwnd, msg, wParam, lParam);
+        if (g_range_sweep_enabled) {
+            g_range_sweep_enabled = 0u;
+            log_line("RANGE_SWEEP_BLOCKED reason=F8_reserved_for_MovementCore_SafeBreak");
+        }
+        return result;
+    }
     if (msg == WM_W112_ESP_CHALLENGE) {
         chal_query_main_thread((DWORD)wParam, (DWORD)lParam);
         return 0;
