@@ -54,6 +54,7 @@ jobs:
             /reference:"$ref\System.Security.dll" `
             /reference:"$ref\System.Web.Extensions.dll" `
             tools\updater\WoW112Updater.cs `
+            tools\updater\UpdaterNetworkCompat.cs `
             tools\updater\UpdaterProcessGuard.cs
           if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
 
