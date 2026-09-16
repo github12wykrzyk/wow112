@@ -19,6 +19,7 @@ Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater
 - `URUCHOM WOW` starts the installed WoW executable with the game directory as working directory.
 - Updates are blocked only while an actual WoW game executable (`WoW.exe` or the project `WoW_*.exe`) from the selected directory is running.
 - `WoW112Updater.exe` may safely be stored and launched directly from the WoW directory; it is excluded from the running-game guard and from the launch fallback.
+- Realmlist selector reads and writes `<game>/realmlist.wtf` without touching unrelated lines. Two presets are included: `SET realmList "play.octowow.st"` and `SET realmList "logon.ravencraft.io"`. Selecting a preset applies it immediately; `USTAW REALMLIST` reapplies the current selection.
 
 ## Private repository authentication
 
@@ -40,4 +41,4 @@ The token is stored only on the local PC, protected with Windows DPAPI (`Current
 
 `.github/workflows/build_updater.yml` first runs `python tools/verify_current.py`, then compiles `WoW112Updater.exe` as a Windows x86 .NET Framework 4.8 WinForms executable and performs a PE32/x86 smoke check.
 
-`updater_build.json` records `updater_version: 1.1`, SHA256, source commit and `self_update_protocol: 1`. This metadata is the contract for the next self-update step. Automatic replacement of the running updater executable is not implemented yet; it requires a small bootstrap/helper so the old process can exit before its EXE is atomically replaced.
+`updater_build.json` records updater version metadata, SHA256, source commit and `self_update_protocol: 1`. Automatic replacement of the running updater executable is not implemented yet; it requires a small bootstrap/helper so the old process can exit before its EXE is atomically replaced.
