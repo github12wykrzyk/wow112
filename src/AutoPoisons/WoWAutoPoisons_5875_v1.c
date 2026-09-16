@@ -15,7 +15,7 @@
  *     poison actually entered spell-targeting mode, preventing the classic
  *     failure mode where a weapon is accidentally picked up while mounted or
  *     otherwise unable to use the poison;
- *   - combat, occupied cursor and existing spell-targeting states are skipped;
+ *   - combat, movement, occupied cursor and existing spell-targeting states are skipped;
  *   - W112_CONTROL_API_V1 exposes all user-facing configuration live to
  *     WoWControlHub.
  */
@@ -124,10 +124,15 @@ static const char kScriptName[] = "W112 AutoPoisons";
  * each list backwards so the highest rank present in bags wins automatically.
  * The top-level guard is intentionally idempotent: executing this bootstrap
  * every timer tick safely recreates W112AP after Lua-state/world transitions.
+ *
+ * Vanilla 1.12 has no stock IsPlayerMoving/GetUnitSpeed API. Movement is
+ * therefore sampled through GetPlayerMapPosition. If coordinates cannot be
+ * made reliable (for example on an unmapped instance map), the guard fails
+ * closed and AutoPoisons waits rather than risking an application in motion.
  */
 static const char kBootstrapLua[] =
 "if type(UnitExists)=='function' and UnitExists('player') and not W112AP then "
-"W112AP={last=0,pmh=-1,poh=-1,pen=0};"
+"W112AP={last=0,pmh=-1,poh=-1,pen=0,mx=nil,my=nil,moveUntil=0};"
 "W112AP.ids={"
 "[1]={6947,6949,6950,8926,8927,8928},"
 "[2]={2892,2893,8984,8985,20844},"
@@ -141,6 +146,20 @@ static const char kBootstrapLua[] =
 "local l=GetContainerItemLink(b,s);"
 "if l then local _,_,id=string.find(l,'item:(%d+)');"
 "if id and tonumber(id)==want then return b,s end end end end end end;"
+"function W112AP_Moving(t) "
+"if type(GetPlayerMapPosition)~='function' then W112AP.moveUntil=t+1;return 1 end;"
+"local x,y=GetPlayerMapPosition('player');"
+"if (not x) or (not y) or (x==0 and y==0) then "
+"local shown=(WorldMapFrame and WorldMapFrame.IsVisible and WorldMapFrame:IsVisible());"
+"if type(SetMapToCurrentZone)=='function' and not shown then "
+"SetMapToCurrentZone();x,y=GetPlayerMapPosition('player');end end;"
+"if (not x) or (not y) or (x==0 and y==0) then "
+"W112AP.mx=nil;W112AP.my=nil;W112AP.moveUntil=t+1;return 1 end;"
+"if not W112AP.mx or not W112AP.my then "
+"W112AP.mx=x;W112AP.my=y;W112AP.moveUntil=t+1;return 1 end;"
+"local dx=x-W112AP.mx;local dy=y-W112AP.my;W112AP.mx=x;W112AP.my=y;"
+"if dx*dx+dy*dy>0.0000000025 then W112AP.moveUntil=t+1;return 1 end;"
+"if W112AP.moveUntil and t<W112AP.moveUntil then return 1 end;return 0 end;"
 "function W112AP_Apply(slot,k) "
 "if CursorHasItem() or SpellIsTargeting() then return -1 end;"
 "local b,s=W112AP_Find(k);if not s then return 0 end;"
@@ -150,10 +169,11 @@ static const char kBootstrapLua[] =
 "if SpellIsTargeting() then SpellStopTargeting();ClearCursor();return -1 end;"
 "ReplaceEnchant();ClearCursor();return 1 end;"
 "function W112AP_Tick(en,mh,oh,th) "
-"if en~=1 then W112AP.pen=0;return end;"
+"if en~=1 then W112AP.pen=0;W112AP.mx=nil;W112AP.my=nil;W112AP.moveUntil=0;return end;"
 "if UnitAffectingCombat('player') then return end;"
 "if CursorHasItem() or SpellIsTargeting() then return end;"
-"local t=GetTime();if W112AP.last and t-W112AP.last<4 then return end;"
+"local t=GetTime();if W112AP_Moving(t)==1 then return end;"
+"if W112AP.last and t-W112AP.last<4 then return end;"
 "local hm,em,cm,ho,eo,co=GetWeaponEnchantInfo();"
 "local fm=(W112AP.pmh~=mh) or (W112AP.pen~=1);"
 "local fo=(W112AP.poh~=oh) or (W112AP.pen~=1);W112AP.pen=1;"
