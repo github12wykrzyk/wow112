@@ -101,7 +101,7 @@ def capture_vcvars_env(vcvars):
     for raw in proc.stdout.splitlines():
         if "=" in raw:
             key, value = raw.split("=", 1)
-            env[key] = value
+            env[key.upper()] = value
     return env, (time.perf_counter() - t0) * 1000.0
 
 
