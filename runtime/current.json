@@ -51,7 +51,13 @@
     {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
       "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
-      "source_state": "not_indexed_in_repo"
+      "source_state": "exact_source_archived",
+      "source_origin": "original_source",
+      "source_sha256": "c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63",
+      "source_size": 81294,
+      "source_archive_prefix": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part",
+      "source_restore_doc": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.README",
+      "source_restore_tool": "tools/RESTORE_PLAYERESP_SOURCE.py"
     }
   ]
 }
