@@ -13,6 +13,13 @@
   "runtime_manifest": "runtime/current.json",
   "sha256_manifest": "manifests/SHA256SUMS_V68.txt",
   "current_version_doc": "CURRENT_VERSION.md",
+  "exe": {
+    "name": "WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe",
+    "path": "WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe",
+    "sha256": "b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27",
+    "size": 4907008,
+    "storage": "direct_binary"
+  },
   "movementcore": {
     "runtime_name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
     "source_state": "normal_source",
