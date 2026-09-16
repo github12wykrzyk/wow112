@@ -26,17 +26,41 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def _decode_b64(text):
+    clean = "".join(text.split())
+    clean += "=" * ((-len(clean)) % 4)
+    return base64.b64decode(clean, validate=True)
+
+
 def b64_xz_from_parts(pattern):
     parts = sorted(ROOT.glob(pattern))
     if not parts:
         raise RuntimeError(f"missing recovery parts: {pattern}")
-    text = "".join("".join(p.read_text(encoding="ascii").split()) for p in parts)
-    return lzma.decompress(base64.b64decode(text, validate=True))
+    texts = [p.read_text(encoding="ascii") for p in parts]
+    attempts = []
+    try:
+        attempts.append(("continuous-base64", _decode_b64("".join(texts))))
+    except Exception as exc:
+        attempts.append(("continuous-base64-error", exc))
+    try:
+        attempts.append(("independent-base64-chunks", b"".join(_decode_b64(x) for x in texts)))
+    except Exception as exc:
+        attempts.append(("independent-base64-chunks-error", exc))
+
+    errors = []
+    for mode, payload in attempts:
+        if isinstance(payload, Exception):
+            errors.append(f"{mode}: {payload}")
+            continue
+        try:
+            return lzma.decompress(payload)
+        except Exception as exc:
+            errors.append(f"{mode}: {exc}")
+    raise RuntimeError(f"cannot decode XZ recovery parts {pattern}: {' | '.join(errors)}")
 
 
 def b64_xz_single(rel):
-    text = "".join((ROOT / rel).read_text(encoding="ascii").split())
-    return lzma.decompress(base64.b64decode(text, validate=True))
+    return lzma.decompress(_decode_b64((ROOT / rel).read_text(encoding="ascii")))
 
 
 def write_bytes(path, data):
