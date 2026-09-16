@@ -22,12 +22,12 @@ jobs:
       - name: Apply deterministic source patch
         run: python tools/patch_movementcore_pp360_once.py
 
-      - name: Commit source fix and remove one-shot helpers
+      - name: Commit only the MovementCore source fix
         shell: bash
         run: |
           set -euo pipefail
-          git rm tools/patch_movementcore_pp360_once.py .github/workflows/oneshot_patch_movementcore_pp360.yml
-          git add src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c .github/workflows/build_work_candidate.yml
+          git restore .github/workflows/build_work_candidate.yml
+          git add src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix: align PickPocket facing with MovementCore rear spoof"
