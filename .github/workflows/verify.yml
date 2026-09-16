@@ -49,5 +49,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify synchronized source fingerprints
+        run: python3 tools/sync_source_metadata.py --check
+
       - name: Verify deep baseline and recovery state
         run: python3 tools/verify_repo.py

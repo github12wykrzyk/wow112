@@ -1,0 +1,1 @@
+Runtime .xz files in this directory are binary Git blobs. Do not treat them as base64 text. SHA256 values in README.md refer to the exact XZ bytes and restored DLL bytes.
