@@ -17,10 +17,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Recover exact source from natural repaired 015 split
+      - name: Extract exact source from partial decompressed archive
         shell: python
         run: |
-          import base64, hashlib, io, lzma, pathlib, subprocess, tarfile, zipfile
+          import base64, binascii, hashlib, lzma, pathlib, struct, subprocess, zlib
 
           TARGET='WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.c'
           WANT='4766f7057415cc41458b33ba8e07221906c955b3abc602a53f818d914fc870a3'
@@ -36,81 +36,94 @@ jobs:
               if h==WANT:
                   (OUT/TARGET).write_bytes(data); report.append(f'EXACT_MATCH {origin}'); return True
               return False
-          def inspect(blob,label):
-              report.append(f'DECOMPRESSED {label} size={len(blob)} magic={blob[:16].hex()}')
-              if zipfile.is_zipfile(io.BytesIO(blob)):
-                  with zipfile.ZipFile(io.BytesIO(blob)) as z:
-                      names=z.namelist(); report.append(f'ZIP members={len(names)}')
-                      report.append('ZIP_SPEED='+'|'.join(n for n in names if 'SpeedFloor' in n or 'NonPvP' in n))
-                      for n in names:
-                          if pathlib.PurePosixPath(n).name==TARGET and accept(z.read(n),label+':'+n): return True
-              try:
-                  with tarfile.open(fileobj=io.BytesIO(blob),mode='r:*') as t:
-                      ms=t.getmembers(); report.append(f'TAR members={len(ms)}')
-                      report.append('TAR_SPEED='+'|'.join(m.name for m in ms if 'SpeedFloor' in m.name or 'NonPvP' in m.name))
-                      for m in ms:
-                          if m.isfile() and pathlib.PurePosixPath(m.name).name==TARGET:
-                              f=t.extractfile(m)
-                              if f and accept(f.read(),label+':'+m.name): return True
-              except Exception as e:
-                  report.append(f'NOT_TAR {label} {type(e).__name__}')
+
+          def scan_zip_locals(blob,label):
+              sig=b'PK\x03\x04'; pos=0; count=0; names=[]
+              while True:
+                  p=blob.find(sig,pos)
+                  if p<0: break
+                  pos=p+1
+                  if p+30>len(blob): continue
+                  try:
+                      (signature,ver,flags,method,mtime,mdate,crc,csize,usize,nlen,xlen)=struct.unpack_from('<IHHHHHIIIHH',blob,p)
+                  except struct.error: continue
+                  if signature!=0x04034B50 or nlen>4096 or xlen>65535: continue
+                  ns=p+30; ne=ns+nlen; ds=ne+xlen
+                  if ds>len(blob): continue
+                  nb=blob[ns:ne]
+                  try: name=nb.decode('utf-8')
+                  except UnicodeDecodeError:
+                      try: name=nb.decode('cp437')
+                      except Exception: continue
+                  count+=1
+                  if 'SpeedFloor' in name or 'NonPvP' in name: names.append(name)
+                  if pathlib.PurePosixPath(name).name!=TARGET: continue
+                  report.append(f'TARGET_LOCAL {label} off={p} flags=0x{flags:04x} method={method} crc=0x{crc:08x} csize={csize} usize={usize} data={ds}')
+                  data=None
+                  try:
+                      if method==0:
+                          if csize and ds+csize<=len(blob): data=blob[ds:ds+csize]
+                      elif method==8:
+                          if csize and ds+csize<=len(blob):
+                              data=zlib.decompress(blob[ds:ds+csize],-15)
+                          else:
+                              zd=zlib.decompressobj(-15)
+                              data=zd.decompress(blob[ds:])
+                              if not zd.eof: data=None
+                  except Exception as e:
+                      report.append(f'TARGET_DECOMP_FAIL {label} {type(e).__name__}: {e}')
+                      data=None
+                  if data is not None:
+                      calc=binascii.crc32(data)&0xffffffff
+                      report.append(f'TARGET_RECOVERED {label} size={len(data)} crc=0x{calc:08x}')
+                      if accept(data,label+':'+name): return True
+              report.append(f'ZIP_LOCAL_SCAN {label} locals={count} speed={"|".join(names)}')
               return False
-          def test(label,stream):
-              s=clean(stream)
-              # tolerate historical redundant trailing '=' but never padding in the middle
-              first=s.find('=')
-              if first!=-1 and any(c!='=' for c in s[first:]):
-                  report.append(f'REJECT_MIDPAD {label} len={len(s)} firsteq={first}'); return False
-              try: raw=base64.b64decode(s,validate=False)
-              except Exception as e:
-                  report.append(f'B64_FAIL {label} len={len(s)} {type(e).__name__}'); return False
-              report.append(f'B64_OK {label} chars={len(s)} raw={len(raw)} tail={s[-8:]}')
-              if not raw.startswith(b'\xfd7zXZ\x00'): return False
-              try:
-                  d=lzma.LZMADecompressor(format=lzma.FORMAT_XZ); blob=d.decompress(raw)
-              except Exception as e:
-                  report.append(f'XZ_FAIL {label} {type(e).__name__}'); return False
-              report.append(f'XZ_STATE {label} eof={d.eof} out={len(blob)} unused={len(d.unused_data)}')
-              if not d.eof or d.unused_data: return False
-              return inspect(blob,label)
 
           prefix=''.join(clean(sh('git','show',f'HEAD:{D}/part{i:03d}.txt').decode()) for i in range(15))
           fix=clean(sh('git','show','HEAD:'+FIX).decode())
           p15=f'{D}/part015.txt'
           revs=sh('git','log','--all','--format=%H','--',p15,text=True).splitlines()+['HEAD']
-          variants=[]; seen=set()
+          bylen={}
           for rev in revs:
               try: v=clean(sh('git','show',f'{rev}:{p15}').decode())
               except Exception: continue
-              h=hashlib.sha256(v.encode()).hexdigest()
-              if h not in seen: seen.add(h); variants.append((rev,v))
-          report.append(f'prefix={len(prefix)} fix={len(fix)}')
-          report.append('variants='+'|'.join(f'{r[:12]}:{len(v)}:eq={[i for i,c in enumerate(v) if c=="="]}' for r,v in variants))
+              bylen.setdefault(len(v),(rev,v))
+          report.append(f'prefix={len(prefix)} fix={len(fix)} variants={[(k,v[0][:12]) for k,v in sorted(bylen.items())]}')
 
-          exact=[]
-          for rev,v in variants:
-              tag=rev[:8]
-              if len(v)>=5000:
-                  exact.append((f'fix+v[5000:]:{tag}',prefix+fix+v[5000:]))
-              if len(v)>=5001:
-                  exact.append((f'fix+v[5000:-1]:{tag}',prefix+fix+v[5000:-1]))
-                  exact.append((f'fix+v[5001:]:{tag}',prefix+fix+v[5001:]))
-              if len(v)>=10004:
-                  exact.append((f'fix+v[5000:10004]:{tag}',prefix+fix+v[5000:10004]))
-                  exact.append((f'fix+v[-5004:]:{tag}',prefix+fix+v[-5004:]))
-              if len(v)>=10005:
-                  exact.append((f'fix+v[5000:10005]:{tag}',prefix+fix+v[5000:10005]))
+          specs=[]
+          if 10005 in bylen:
+              rev,v=bylen[10005]
+              for off in (2702,2936,3667,5000): specs.append((f'cur10005_off{off}',fix+v[off:off+5000]))
+          if 10593 in bylen:
+              rev,v=bylen[10593]
+              specs.append(('old10593_off5148',fix+v[5148:5148+5000]))
 
-          dedup=set(); recovered=False
-          for label,stream in exact:
-              h=hashlib.sha256(clean(stream).encode()).hexdigest()
-              if h in dedup: continue
-              dedup.add(h)
-              if test(label,stream): recovered=True; break
+          recovered=False
+          for label,c15 in specs:
+              if len(c15)!=10000 or '=' in c15:
+                  report.append(f'SKIP {label} c15len={len(c15)} eq={c15.count("=")}'); continue
+              stream=prefix+c15
+              try: raw=base64.b64decode(stream,validate=True)
+              except Exception as e:
+                  report.append(f'B64_FAIL {label} {e}'); continue
+              try:
+                  d=lzma.LZMADecompressor(format=lzma.FORMAT_XZ); blob=d.decompress(raw)
+              except Exception as e:
+                  report.append(f'XZ_FAIL {label} {type(e).__name__}'); continue
+              report.append(f'PARTIAL {label} raw={len(raw)} out={len(blob)} eof={d.eof} magic={blob[:16].hex()} pk={blob.count(b"PK\\x03\\x04")} target_name={blob.count(TARGET.encode())} speed_token={blob.count(b"SpeedFloor")}')
+              # Save only compact diagnostic tails, never the megabyte blob.
+              printable=''.join(chr(b) if 32<=b<127 else '.' for b in blob[-512:])
+              report.append(f'TAIL {label} {printable}')
+              if scan_zip_locals(blob,label): recovered=True; break
+              # If the decompressed stream is a TAR-ish/raw archive, at least locate exact filename context.
+              q=blob.find(TARGET.encode())
+              if q>=0:
+                  report.append(f'RAW_TARGET_NAME {label} off={q} context={blob[max(0,q-100):q+len(TARGET)+100]!r}')
 
           rp=OUT/'RECOVERY_REPORT.txt'; rp.write_text('\n'.join(report)+'\n',encoding='utf-8'); print(rp.read_text())
           target=OUT/TARGET
-          if not target.exists(): raise SystemExit('Natural 015a+015b variants did not recover exact source')
+          if not target.exists(): raise SystemExit('Exact source not recovered from partial XZ records')
           h=hashlib.sha256(target.read_bytes()).hexdigest(); print(f'VERIFIED_EXACT_SOURCE sha256={h} size={target.stat().st_size}')
           if h!=WANT: raise SystemExit('hash mismatch')
 
