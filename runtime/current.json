@@ -10,7 +10,14 @@
     {
       "name": "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
       "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
-      "source_state": "not_indexed_in_repo"
+      "source_state": "binary_verified_reconstruction",
+      "source_origin": "binary_patch_lineage_from_exact_ancestor",
+      "source_sha256": "bf4e738330d936c1af62db606a21d3e53bedc0b84d5b7864dc655369c127bbe2",
+      "source_size": 53725,
+      "source_archive": "artifacts/PositionalSpoof/WoWPositionalSpoof_v0_36_FINAL_RECONSTRUCTED.c.xz.b64",
+      "source_restore_doc": "artifacts/PositionalSpoof/README_RECOVERY.md",
+      "binary_patch_audit": "artifacts/PositionalSpoof/FINAL_BINARY_PATCH_AUDIT.txt",
+      "binary_reproducer": "artifacts/PositionalSpoof/patch_WotFRetry5_to_final.py"
     },
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
