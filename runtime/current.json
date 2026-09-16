@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "baseline": "V68",
+  "wow_build": 5875,
+  "exe": {
+    "name": "WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe",
+    "sha256": "b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27"
+  },
+  "active_dlls": [
+    {
+      "name": "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
+      "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b"
+    },
+    {
+      "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
+      "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e"
+    },
+    {
+      "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
+      "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db"
+    },
+    {
+      "name": "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+      "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba"
+    },
+    {
+      "name": "WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll",
+      "sha256": "641b64187e387fabfea41426962734ff3c1e5d0c2bbc4652e7df823d51e20a73"
+    },
+    {
+      "name": "WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll",
+      "sha256": "764605590462e4161b4c4badb37db990a33a8ae0037e730e03db78233d2c3717"
+    },
+    {
+      "name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
+      "sha256": "044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b",
+      "source_state": "archived_compressed_verified",
+      "source_restore_doc": "artifacts/V68/source/README_RESTORE.md"
+    },
+    {
+      "name": "WoWPlayerESP_v1_2_range_sweep.dll",
+      "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5"
+    }
+  ]
+}
