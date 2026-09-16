@@ -193,17 +193,27 @@ def verify_canonical_exe(current, runtime, sha_manifest):
 
 
 def verify_source_inventory(runtime_dlls):
-    allowed = {"normal_source", "not_indexed_in_repo"}
+    allowed = {
+        "normal_source",
+        "not_indexed_in_repo",
+        "binary_verified_reconstruction",
+        "functionally_equivalent_reconstruction",
+        "exact_source_archived",
+    }
     normal = []
+    reconstructed = []
     not_indexed = []
+
     for item in runtime_dlls:
         if not isinstance(item, dict):
             continue
+
         name = item.get("name", "<unnamed>")
         state = item.get("source_state")
         if state not in allowed:
             error("active DLL has missing/invalid source_state: %s (%r)" % (name, state))
             continue
+
         if state == "normal_source":
             normal.append(name)
             source_path = item.get("source_path")
@@ -214,15 +224,46 @@ def verify_source_inventory(runtime_dlls):
                 error("normal_source DLL source file missing: %s -> %s" % (name, source_path))
             if len(source_hash) != 64:
                 error("normal_source DLL missing/invalid source_sha256: %s" % name)
-        else:
+            continue
+
+        if state == "not_indexed_in_repo":
             not_indexed.append(name)
+            continue
+
+        reconstructed.append(name)
+
+        source_path = item.get("source_path")
+        if source_path and not (ROOT / source_path).is_file():
+            error("reconstructed source file missing: %s -> %s" % (name, source_path))
+
+        restore_doc = item.get("source_restore_doc")
+        if restore_doc and not (ROOT / restore_doc).is_file():
+            error("source restore doc missing: %s -> %s" % (name, restore_doc))
+
+        binary_audit = item.get("binary_patch_audit")
+        if binary_audit and not (ROOT / binary_audit).is_file():
+            error("binary audit missing: %s -> %s" % (name, binary_audit))
+
+        reproducer = item.get("binary_reproducer")
+        if reproducer and not (ROOT / reproducer).is_file():
+            error("binary reproducer missing: %s -> %s" % (name, reproducer))
+
+        archive = item.get("source_archive")
+        if archive and not (ROOT / archive).is_file():
+            error("source archive missing: %s -> %s" % (name, archive))
+
+        archive_prefix = item.get("source_archive_prefix")
+        if archive_prefix:
+            matches = list(ROOT.glob(archive_prefix + "*"))
+            if not matches:
+                error("source archive parts missing: %s -> %s*" % (name, archive_prefix))
 
     require_path("docs/SOURCE_INVENTORY.md")
     if not_indexed:
-        warning("%d/%d active DLLs do not yet have indexed normal source; see docs/SOURCE_INVENTORY.md" % (
+        warning("%d/%d active DLLs do not yet have indexed source; see docs/SOURCE_INVENTORY.md" % (
             len(not_indexed), len(runtime_dlls)
         ))
-    return len(normal), len(not_indexed)
+    return len(normal), len(reconstructed), len(not_indexed)
 
 
 def main():
@@ -305,7 +346,7 @@ def main():
 
     verify_movementcore_archive()
     verify_movementcore_source(mc, runtime_dlls)
-    source_normal, source_missing = verify_source_inventory(runtime_dlls)
+    source_normal, source_reconstructed, source_missing = verify_source_inventory(runtime_dlls)
 
     legacy_dir = mc.get("legacy_partial_source_dir")
     if legacy_dir and (ROOT / legacy_dir).is_dir():
@@ -321,6 +362,7 @@ def main():
     print("  active DLLs: %d" % len(runtime_dlls))
     print("  canonical EXE: direct binary verified")
     print("  indexed normal sources: %d" % source_normal)
+    print("  reconstructed/archived sources: %d" % source_reconstructed)
     print("  source not indexed: %d" % source_missing)
     print("  MovementCore source: normal .c + verified archive")
     print("  warnings: %d" % len(WARNINGS))
