@@ -8,16 +8,46 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  fast-current-state:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject stale or diverged work branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/work'
+        shell: bash
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "ERROR: work does not contain current main. Synchronize work to main before continuing."
+            exit 1
+          fi
+
+      - name: Verify canonical current state
+        run: python3 tools/verify_current.py
+
+      - name: Print compact AI status
+        run: python3 tools/ai_status.py
+
+  deep-baseline-audit:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify manifests and active runtime
+      - name: Verify deep baseline and recovery state
         run: python3 tools/verify_repo.py

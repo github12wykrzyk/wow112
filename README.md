@@ -1,66 +1,81 @@
 # wow112
 
-Prywatne repozytorium robocze projektu **World of Warcraft 1.12.1 (build 5875, x86)**.
+Prywatne repozytorium projektu **World of Warcraft 1.12.1 build 5875, Windows x86** zoptymalizowane pod wielokrotne iteracje AI-assisted development.
 
-## Aktualny baseline
+## AI / szybki start
+
+**Zawsze zaczynaj od `AI_START_HERE.md`.**
+
+Minimalny zestaw do odczytu na początku zadania:
+
+1. `AI_INDEX.json`
+2. `CURRENT.json`
+3. `runtime/current.json`
+4. tylko kod modułu potrzebnego do danej zmiany
+
+Nie trzeba przeszukiwać całego repo przy każdej rozmowie. `archives/`, historyczne baseline i recovery chunks są materiałem on-demand.
+
+## Aktualny stabilny baseline
 
 **V68 — AutoPP rear-only HARDLOS3D + V67 feature stack**
 
-Stabilny stan pozostaje na `main`. Biezaca praca rozwojowa odbywa sie na branchu `work` i dopiero po weryfikacji trafia do `main`.
+- `main` — ostatni zaakceptowany stabilny stan.
+- `work` — bieżący kandydat rozwojowy; musi być zsynchronizowany z aktualnym `main` przed rozpoczęciem nowej iteracji.
+- poprzednie stabilne baseline pozostają dostępne jako rollback.
 
-Aktualna dokumentacja baseline znajduje sie w `baseline/V68/`. V67 pozostaje bezposrednim rollbackiem w `baseline/V67/`.
+Canonical state:
 
-Nie modyfikujemy plikow baseline w miejscu bez wyraznej potrzeby. Kolejne zmiany powinny byc widoczne w historii Git, z opisem celu i rollbacku.
+- `CURRENT.json` — główny wskaźnik stanu,
+- `runtime/current.json` — dokładny aktywny EXE/DLL stack + SHA256 + source provenance,
+- `baseline/V68/dlls.txt` — kolejność aktywnych DLL,
+- `manifests/SHA256SUMS_V68.txt` — referencyjne hashe,
+- `CURRENT_VERSION.md` — opis bieżącej stabilnej wersji.
 
-## Jednoznaczny stan projektu
+## Source layout
 
-- `CURRENT.json` — maszynowy wskaznik aktualnego baseline, runtime i manifestow.
-- `runtime/current.json` — dokladny aktywny EXE/DLL stack wraz z SHA256 i powiazaniem MovementCore -> source.
-- `CURRENT_VERSION.md` — opis aktualnej wersji dla czlowieka.
-- `baseline/V68/dlls.txt` — aktywna lista DLL V68; jej kolejnosc musi zgadzac sie z `runtime/current.json`.
-- `manifests/SHA256SUMS_V68.txt` — referencyjne SHA256 V68.
+`src/` jest jedynym normalnym **canonical editable source root**.
 
-## Canonical source
+Aktywny plik dla konkretnego DLL wybiera pole `source_path` w `runtime/current.json`. Jeżeli moduł ma tylko lossless recovery archive, runtime metadata wskazuje restore doc/tool/artifact.
 
-Canonicalne zrodlo MovementCore V68 jest normalnym plikiem:
+`source/` jest katalogiem legacy/history. Nie należy dodawać tam nowych aktywnych źródeł ani wskazywać go jako canonical `source_path`.
 
-`src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c`
+## Szybka weryfikacja
 
-Referencyjny source ma:
+Dla codziennych iteracji:
 
-- rozmiar `107833` B,
-- SHA256 `764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888`.
+```text
+python tools/verify_current.py
+```
 
-`artifacts/V68/source/` pozostaje niezaleznym, zweryfikowanym backupem/recovery path w postaci XZ/Base64. `tools/restore_movementcore_source.py` odtwarza go deterministycznie i potwierdza ten sam hash.
+Kompaktowy stan repo:
 
-**UWAGA:** `source/V20_SOURCE_PARTS/` jest stara, niepelna reprezentacja pomocnicza i nie moze byc traktowana jako canonical source.
+```text
+python tools/ai_status.py
+python tools/ai_status.py --json
+```
 
-## Automatyczna weryfikacja
+Głęboki audit obecnego baseline/recovery:
 
-`tools/verify_repo.py` sprawdza spojnosc baseline, listy aktywnych DLL, manifestow SHA256, EXE oraz canonical source MovementCore.
+```text
+python tools/verify_repo.py
+```
 
-Verifier sprawdza rownoczesnie normalny plik `.c` oraz backup XZ/Base64. Obie reprezentacje musza prowadzic do tego samego oczekiwanego SHA256 source.
+GitHub Actions wykonuje szybki gate na `work` i `main`; dodatkowe głębokie kontrole są przeznaczone dla stabilnej promocji/audytu.
 
-GitHub Actions uruchamia `.github/workflows/verify.yml` przy pushu na `work`/`main` oraz przy pull requescie do `main`.
+## Iteracje i wersjonowanie
 
-`.gitattributes` wymusza deterministyczne konce linii dla source/metadanych, aby hash nie zmienial sie przez ustawienia `core.autocrlf` na Windows.
+Nie tworzymy nowego baseline dla każdej eksperymentalnej poprawki. Kilka lub kilkadziesiąt prób może żyć na `work`. Gdy użytkownik zaakceptuje działający stan, dopiero wtedy powstaje kolejny stabilny rollback point (`V69`, `V70`, ...), poprzedni baseline zostaje zachowany, a `work` jest synchronizowany do nowego `main`.
 
-## Najwazniejsze pliki
+Pełny workflow: `docs/AI_ITERATION_WORKFLOW.md`.
 
-- `PROJECT_INSTRUCTIONS.md` — zasady pracy nad projektem.
-- `docs/VERSION_RETENTION.md` — zasada zachowywania pelnej historii wersji bez sztywnego limitu.
-- `docs/DEVELOPMENT_WORKFLOW.md` — workflow `work -> verify -> main`.
-- `baseline/V68/README_V68_PL.txt` — opis zmian V68.
-- `artifacts/V68/runtime/` — zweryfikowana delta runtime V68.
-- `artifacts/V68/source/` — zweryfikowany recovery source V68.
-- `tools/restore_movementcore_source.py` — deterministyczne odtwarzanie source.
-- `tools/VERIFY_V68.bat` — starsza lokalna weryfikacja V68.
-- `tools/CLEAN_OLD_STACK_V68.bat` — cleanup starego stacku przed uruchomieniem V68.
+## Najważniejsze dokumenty
 
-## Zasada wersjonowania i historii
+- `AI_START_HERE.md` — najszybszy punkt wejścia dla AI,
+- `AI_INDEX.json` — machine-readable routing index,
+- `PROJECT_INSTRUCTIONS.md` — twarde zasady projektu,
+- `docs/AI_ITERATION_WORKFLOW.md` — workflow setek kolejnych iteracji,
+- `docs/SOURCE_INVENTORY.md` — provenance aktywnych źródeł,
+- `docs/VERSION_RETENTION.md` — polityka rollbacków,
+- `CURRENT_VERSION.md` — bieżąca stabilna wersja.
 
-Kazda funkcjonalna zmiana powinna miec osobny commit. Przy zmianach ryzykownych zachowujemy poprzedni dzialajacy stan przez historie Git i/lub jawny rollback w repo.
-
-Repo zachowuje wszystkie kolejne stabilne baseline'y bez automatycznego kasowania starszych wersji. V69, V70 itd. maja pozostawac obok poprzednich wersji jako rollback i material porownawczy.
-
-Nie zakladamy zgodnosci z TBC/Wrath/Retail. Projekt dotyczy tylko WoW 1.12.1 build 5875.
+Projekt nie zakłada zgodności z TBC/Wrath/Retail.

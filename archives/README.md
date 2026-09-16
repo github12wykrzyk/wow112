@@ -1,17 +1,25 @@
 # Archives
 
-This directory contains intermediate connector-era archive experiments.
+This directory contains deprecated/intermediate connector-era archive experiments.
 
-## Important
+## AI rule
 
-Do **not** use `archives/V68_FULL_NO_EXE_BUNDLE_B64/` or other V68 full-bundle chunk experiments as the canonical V68 source.
+Do **not** scan or use `archives/` during normal development. Start from `AI_START_HERE.md`, `CURRENT.json` and `runtime/current.json` instead.
 
-Canonical V68 is represented as a verified delta against V67:
+Do **not** use `archives/V68_FULL_NO_EXE_BUNDLE_B64/` or other V68 full-bundle chunk experiments as canonical V68 source/runtime.
+
+Canonical current state is represented by:
+
+- `CURRENT.json`
+- `runtime/current.json`
+- `baseline/<current>/`
+- current SHA256 manifest
+- `CURRENT_VERSION.md`
+
+For V68-specific recovery evidence use:
 
 - runtime delta: `artifacts/V68/runtime/`
-- source: `artifacts/V68/source/`
-- baseline metadata: `baseline/V68/`
-- current status: `CURRENT_VERSION.md`
+- source recovery: `artifacts/V68/source/`
 
 Verified V68 hashes:
 
@@ -20,4 +28,8 @@ Verified V68 hashes:
 - v20 source SHA256: `764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888`
 - source XZ SHA256: `ca4acf000c84b42172e124fdf10876170a96773ad54fab9d6b88799113e47f48`
 
-Repository retention policy: keep at most the latest 10 working versions. Archive experiments are not counted as working baselines.
+## Retention
+
+There is **no automatic numeric retention limit** for stable working baselines. Stable versions remain available for rollback/comparison. Archive experiments may be deleted only deliberately when they are duplicated, damaged or technically useless.
+
+The authoritative retention policy is `docs/VERSION_RETENTION.md`.

@@ -24,7 +24,7 @@
       "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e",
       "source_state": "normal_source",
       "source_origin": "original_source",
-      "source_path": "source/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c",
+      "source_path": "src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c",
       "source_sha256": "c90f160ee4ae837e70c09b24dad2383c9a73621fa7b40df88639de95544e78f4",
       "source_size": 11487
     },
@@ -44,7 +44,7 @@
       "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba",
       "source_state": "normal_source",
       "source_origin": "original_source",
-      "source_path": "source/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c",
+      "source_path": "src/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c",
       "source_sha256": "80130b9cb988dc9c60345aa764f9465a1d6e515bcfd9ff5e2128bb865d91206a",
       "source_size": 9319
     },

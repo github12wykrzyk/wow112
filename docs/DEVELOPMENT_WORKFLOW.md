@@ -1,80 +1,77 @@
 # Development workflow
 
-## Cel
+The detailed high-frequency AI loop is documented in `docs/AI_ITERATION_WORKFLOW.md`. This file defines the repository-level contract.
 
-`main` ma zawsze reprezentowac ostatni sprawdzony stabilny stan projektu. Zmiany rozwojowe wykonujemy na `work`.
+## Branches
 
-## Standardowy przebieg
+- `main` — last accepted stable state.
+- `work` — current development candidate.
 
-1. Punkt startowy: aktualny `main`.
-2. Zmiana trafia na `work` jako osobny, opisany commit.
-3. GitHub Actions uruchamia `tools/verify_repo.py`.
-4. Weryfikacja musi zakonczyc sie `PASS`.
-5. Dopiero wtedy zmiana moze zostac scalona do `main`.
-6. Po uznaniu nowej wersji za stabilna tworzymy kolejny baseline (`V69`, `V70`, ...), aktualizujemy `CURRENT.json`, `runtime/current.json`, `CURRENT_VERSION.md` i manifest SHA256.
+`work` must contain current `main` before a new iteration. GitHub Actions checks this relationship on pushes to `work` so long-lived divergence does not silently accumulate.
 
-## Co sprawdza verifier
+## Normal candidate flow
 
-- zgodnosc WoW 1.12.1 / build 5875 / x86,
-- zgodnosc wskazanego baseline z runtime manifestem,
-- identyczna kolejnosc i zawartosc `dlls.txt` oraz `runtime/current.json`,
-- obecnosc wszystkich aktywnych DLL w manifeście SHA256,
-- zgodnosc hashy zapisanych w runtime z manifestem,
-- zgodnosc EXE z manifestem,
-- obecnosc canonicalnego pliku `.c` MovementCore,
-- SHA256 i rozmiar canonicalnego `.c`,
-- odtworzenie niezaleznego backupu MovementCore z XZ/Base64 i weryfikacje jego rozmiaru/SHA256,
-- zgodnosc powiazania MovementCore source miedzy `CURRENT.json` i `runtime/current.json`,
-- brak sledzonych plikow `.log`, `.dmp`, `.mdmp`.
+1. Synchronize `work` to current `main`.
+2. Read `AI_START_HERE.md`, `CURRENT.json` and `runtime/current.json`.
+3. Modify the smallest relevant module surface.
+4. Keep current-branch metadata internally consistent.
+5. Run `python tools/verify_current.py`.
+6. Commit the candidate to `work`.
+7. Test in the actual WoW 1.12.1 build 5875 environment.
+8. Repeat on `work` until the candidate is accepted.
 
-## MovementCore source
+A candidate does not need a new stable baseline number for every failed/experimental attempt.
 
-Canonical V68 source jest normalnym plikiem:
+## Stable promotion
 
-`src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c`
+When a candidate is accepted:
 
-Referencyjne parametry source:
+1. assign the next baseline (`V69`, `V70`, ...),
+2. create the new `baseline/<version>/` metadata,
+3. create/update the SHA256 manifest for that stable version,
+4. update `CURRENT.json`, `runtime/current.json`, `CURRENT_VERSION.md` and changelog,
+5. preserve the previous baseline unchanged,
+6. run `python tools/verify_current.py`,
+7. run applicable deep recovery/baseline checks (`python tools/verify_repo.py` plus module-specific restore/audit tools when relevant),
+8. promote to `main`,
+9. synchronize `work` to the new `main`.
 
-- source size: 107833 B,
-- source SHA256: `764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888`.
+## Verification split
 
-Niezalezny recovery path pozostaje w `artifacts/V68/source/` jako cztery czesci Base64 zawierajace archiwum XZ.
+### Fast/current gate
 
-Odtworzenie i weryfikacja backupu bez zapisu:
+`tools/verify_current.py` is version-agnostic. It follows pointers in `CURRENT.json` and `runtime/current.json` and checks:
 
-```bash
-python tools/restore_movementcore_source.py --verify-only
-```
+- WoW 1.12.1 / build 5875 / x86 invariants,
+- AI routing contract,
+- current baseline/runtime agreement,
+- DLL list order,
+- SHA256 manifest agreement,
+- direct canonical EXE hash/size,
+- canonical source existence and source hashes/sizes when recorded,
+- canonical source paths under `src/`,
+- referenced recovery/audit/reproducer files,
+- absence of tracked `.log`, `.dmp` and `.mdmp` files.
 
-Odtworzenie do domyslnego katalogu `generated/`:
+### Deep baseline/recovery gate
 
-```bash
-python tools/restore_movementcore_source.py
-```
+`tools/verify_repo.py` preserves deeper V68-era recovery checks, including MovementCore recovery archive verification. Deep checks are valuable when auditing/promoting a stable baseline, but should not be the only mechanism used for daily iteration because they can be baseline-specific.
 
-Skrypt akceptuje backup tylko wtedy, gdy zgadzaja sie jednoczesnie:
+## Source rules
 
-- XZ size: 23480 B,
-- XZ SHA256: `ca4acf000c84b42172e124fdf10876170a96773ad54fab9d6b88799113e47f48`,
-- source size: 107833 B,
-- source SHA256: `764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888`.
+`runtime/current.json` is authoritative for source provenance. New canonical source paths belong under `src/<Module>/`.
 
-`source/V20_SOURCE_PARTS/` jest niepelne i pozostaje tylko materialem historycznym. Nie budujemy z niego DLL.
+`source/` is retained as legacy/history only. `source/V20_SOURCE_PARTS/` remains explicitly non-canonical.
 
-## Zasada zmian binarnych
+`.gitattributes` keeps deterministic source/metadata line endings so hashes do not depend on Windows `core.autocrlf` behavior.
 
-Przy zmianie DLL/EXE zachowujemy:
+## Binary-change rule
 
-- poprzedni stabilny baseline,
-- nowy hash SHA256,
-- opis funkcjonalnej zmiany,
-- source/diff albo jednoznaczna sciezke rekonstrukcji,
-- sposob rollbacku.
+For a DLL/EXE change preserve:
 
-## Zasada pracy ze source
-
-Zmiany MovementCore wykonujemy od teraz na normalnym pliku w `src/MovementCore/`. Git pokazuje zwykly diff kodu i historia linii pozostaje czytelna.
-
-Po zmianie source nie nadpisujemy starego V68 recovery archive. Dla nowego stabilnego baseline tworzymy nowy source/runtime manifest i nowy recovery artifact, dzieki czemu V68 nadal pozostaje byte-for-byte rollbackiem.
-
-`.gitattributes` wymusza LF dla source/metadanych, zeby ustawienia Windows `core.autocrlf` nie zmienialy canonicalnego hasha.
+- previous stable rollback,
+- new runtime SHA256,
+- functional description,
+- source/diff or explicit reconstruction/binary-patch lineage,
+- rollback method,
+- exactness claim only at the level actually verified.
