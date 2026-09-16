@@ -104,7 +104,7 @@ static BYTE g_restore[6]={0};
 static BYTE g_patch[6]={0};
 static const BYTE g_expected[6]={0x55,0x8B,0xEC,0x8B,0x45,0x14};
 static const char g_logName[]="WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.log";
-static const char g_chatScript[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[StealthCDGuardian v2][AI-SMOKE]|r HARD 5.0s + hook watchdog active') end";
+static const char g_chatScript[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[StealthCDGuardian v2][AI-PERF] |r HARD 5.0s + hook watchdog active') end";
 
 static VirtualProtect_t VP(void){return *(VirtualProtect_t*)WOW_IAT_VIRTUALPROTECT;}
 static FlushInstructionCache_t FIC(void){return *(FlushInstructionCache_t*)WOW_IAT_FLUSHICACHE;}
@@ -255,9 +255,9 @@ static void __stdcall Tick(HWND hwnd,UINT msg,UINT_PTR id,DWORD now)
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetVersion(void){return 0x00020000u;}
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetStatus(void){return g_status;}
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetHookHits(void){return g_hookHits;}
-__declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetHookLost(void){return g_hookLost;}
-__declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetHookRepairs(void){return g_hookRepairs;}
-__declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetForeignChains(void){return g_foreignChains;}
+__declspec(dlexport) DWORD __stdcall StealthCDGuardian_GetHookLost(void){return g_hookLost;}
+__declspec(dlexport) DWORD __stdcall StealthCDGuardian_GetHookRepairs(void){return g_hookRepairs;}
+__declspec(dlexport) DWORD __stdcall StealthCDGuardian_GetForeignChains(void){return g_foreignChains;}
 
 BOOL __stdcall DllMain(HINSTANCE h,DWORD reason,LPVOID reserved)
 {

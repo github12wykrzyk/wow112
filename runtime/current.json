@@ -37,7 +37,7 @@
       "source_state": "normal_source",
       "source_origin": "original_source",
       "source_path": "src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c",
-      "source_sha256": "e021f3769ba43c73ef1138a7f32c46b45f02305f26de8b871bf1c051924e30ef",
+      "source_sha256": "17a58f88df31dfeff3ac52921b91e60c749b346aec1a62a31ae9fee970acb52a",
       "source_size": 11497,
       "candidate_build": {
         "kind": "ai_workflow_smoke",
