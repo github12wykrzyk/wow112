@@ -5,5 +5,5 @@
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
   ],
-  "note": "Aggregate TEST(work) must keep the AutoJunkbox macro-driven PickLock candidate plus the ABI-enabled SpeedFloor companion required by the WoWControlHub V1 pilot until either experiment is accepted, replaced, or explicitly removed. Other active modules come from exact runtime/current.json binaries unless their canonical source changed in the current iteration."
+  "note": "Aggregate TEST(work) keeps only the AutoJunkbox PickLock candidate and the ControlHub-compatible SpeedFloor candidate. After the AutoPP cast/channel startup regression, AutoLootPP and MovementCore are intentionally taken from the exact runtime/current.json binaries until the regression is isolated and reintroduced safely."
 }
