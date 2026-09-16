@@ -2,22 +2,25 @@
 
 This repository is optimized for repeated AI-assisted development of **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
-The goal of this file is routing, not duplication. Never infer the active stack from filenames, old ZIPs or archive folders.
+`AGENTS.md` is the repository-wide operating contract for AI agents. This file is the fast routing entrypoint. The goal is to minimize context cost and avoid rediscovering the repository on every task.
+
+Never infer the active stack from filenames, old ZIPs, chat history or archive folders when current repository metadata is available.
 
 ## Read order for every new task
 
-1. `AI_INDEX.json` — machine-readable map of the repository.
-2. `CURRENT.json` — current baseline, branches and canonical pointers.
-3. `runtime/current.json` — exact active EXE/DLL stack, hashes and source provenance.
-4. Read only the source/module files relevant to the requested change.
-5. Read `docs/SOURCE_INVENTORY.md` only when source provenance/recovery matters.
+1. `AGENTS.md` — operating contract: how the AI must work, use GitHub, verify, package and communicate.
+2. `AI_INDEX.json` — machine-readable map of the repository.
+3. `CURRENT.json` — current baseline, branches and canonical pointers.
+4. `runtime/current.json` — exact active EXE/DLL stack, hashes and source provenance.
+5. Read only the source/module files relevant to the requested change.
+6. Read `docs/SOURCE_INVENTORY.md` only when source provenance/recovery matters.
 
 Do **not** scan `archives/`, old baseline artifacts, `src/history/` or recovery chunks unless the task explicitly requires history, rollback or reconstruction.
 
 ## Hard invariants
 
 - Target only WoW `1.12.1`, build `5875`, `x86`.
-- `main` is the last stable state.
+- `main` is the last accepted stable state.
 - `work` is the only normal development branch.
 - `work` must start from current `main`; do not develop on a stale/diverged `work`.
 - `runtime/current.json` is authoritative for the active runtime and each module's source provenance.
@@ -25,6 +28,7 @@ Do **not** scan `archives/`, old baseline artifacts, `src/history/` or recovery 
 - `source/` is legacy/historical material only and must not contain an active canonical `source_path`.
 - Never treat a DLL filename as proof of behavior; verify source, binary audit, reproducer or test evidence.
 - Never silently replace an original source with a reconstruction.
+- Routine GitHub housekeeping belongs to the AI. The user should mainly describe desired behavior and perform in-game tests.
 
 ## Fast iteration protocol
 
@@ -37,8 +41,9 @@ For normal development:
 5. Update metadata/hashes that the change actually invalidates.
 6. Run `python tools/verify_current.py`.
 7. Commit the complete candidate to `work`.
-8. User tests the candidate.
-9. Only after a working state is accepted, promote it to `main` and create/update the next stable baseline metadata.
+8. Prepare a runnable test artifact/package when the user needs one.
+9. User tests the candidate in game and reports the result.
+10. Only after a working state is accepted, promote it to `main` and create/update the next stable baseline metadata when appropriate.
 
 Do not create a new stable baseline for every experimental edit. Multiple candidate iterations may happen on `work`; stable baseline numbers are rollback points, not chat-message counters.
 
@@ -80,4 +85,6 @@ A candidate is ready for testing when:
 - metadata points to the correct source/runtime lineage,
 - `tools/verify_current.py` returns `PASS`,
 - rollback remains available,
+- the candidate is committed to `work`,
+- a runnable test package is prepared when needed,
 - the commit message states the functional change rather than only a version number.
