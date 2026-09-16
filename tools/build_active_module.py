@@ -86,22 +86,25 @@ def cmd_quote(path):
 
 
 def run_build(vcvars, profile, source, obj, output):
+    extra_libs = ""
     if profile == "msvc_x86_crtless":
         compile_cmd = (
             f'cl /nologo /c /O2 /GS- /GR- /EHsc- /Zl /Brepro '
             f'/Fo{cmd_quote(obj)} {cmd_quote(source)}'
         )
-    elif profile == "clangcl_i686_crtless":
+    elif profile in ("clangcl_i686_crtless", "clangcl_i686_win32imports"):
         compile_cmd = (
             f'clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /GS- /GR- /EHsc- '
             f'/Zl /Brepro /clang:-fno-builtin /Fo{cmd_quote(obj)} {cmd_quote(source)}'
         )
+        if profile == "clangcl_i686_win32imports":
+            extra_libs = " kernel32.lib user32.lib gdi32.lib"
     else:
         die(f"unsupported build profile: {profile}")
 
     link_cmd = (
         f'link /nologo /DLL /MACHINE:X86 /NODEFAULTLIB /ENTRY:DllMain@12 /Brepro '
-        f'/OUT:{cmd_quote(output)} {cmd_quote(obj)}'
+        f'/OUT:{cmd_quote(output)} {cmd_quote(obj)}{extra_libs}'
     )
     command = f'call {cmd_quote(vcvars)} >nul && {compile_cmd} && {link_cmd}'
     print(f"BUILD_PROFILE={profile}")
@@ -163,7 +166,7 @@ def main():
     digest = sha256_file(out)
     current = str(item.get("sha256", "")).lower()
     matches = digest == current
-    print(f"PE_MACHINE=x86")
+    print("PE_MACHINE=x86")
     print(f"SIZE={size}")
     print(f"SHA256={digest}")
     print(f"CURRENT_RUNTIME_SHA256={current}")
