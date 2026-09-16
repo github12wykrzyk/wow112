@@ -2,11 +2,13 @@
 import argparse
 import base64
 import hashlib
+import io
 import json
 import lzma
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
@@ -14,10 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STEALTH_NAME = "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
 STEALTH_SOURCE = "src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c"
-
-
-def sha256_bytes(data):
-    return hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path):
@@ -31,7 +29,7 @@ def sha256_file(path):
 def b64_xz_from_parts(pattern):
     parts = sorted(ROOT.glob(pattern))
     if not parts:
-        raise SystemExit(f"missing recovery parts: {pattern}")
+        raise RuntimeError(f"missing recovery parts: {pattern}")
     text = "".join("".join(p.read_text(encoding="ascii").split()) for p in parts)
     return lzma.decompress(base64.b64decode(text, validate=True))
 
@@ -48,6 +46,47 @@ def write_bytes(path, data):
 
 def run_patch(script_rel, src, dst):
     subprocess.run([sys.executable, str(ROOT / script_rel), str(src), str(dst)], cwd=str(ROOT), check=True)
+
+
+def archive_member_by_basename(payload, wanted):
+    bio = io.BytesIO(payload)
+    if zipfile.is_zipfile(bio):
+        with zipfile.ZipFile(bio, "r") as zf:
+            matches = [n for n in zf.namelist() if Path(n).name == wanted]
+            if len(matches) != 1:
+                raise RuntimeError(f"bundle ZIP expected one {wanted}, found {matches}")
+            return zf.read(matches[0])
+    bio.seek(0)
+    try:
+        with tarfile.open(fileobj=bio, mode="r:*") as tf:
+            matches = [m for m in tf.getmembers() if m.isfile() and Path(m.name).name == wanted]
+            if len(matches) != 1:
+                raise RuntimeError(f"bundle TAR expected one {wanted}, found {[m.name for m in matches]}")
+            f = tf.extractfile(matches[0])
+            if f is None:
+                raise RuntimeError(f"cannot extract {wanted} from TAR")
+            return f.read()
+    except tarfile.TarError as exc:
+        raise RuntimeError("decoded V68 bundle is neither ZIP nor TAR") from exc
+
+
+def recover_from_v68_bundle(wanted, expected_hash):
+    candidates = [
+        ("artifacts/V68/bundle/part*.b64", "artifacts/V68/bundle"),
+        ("archives/V68_FULL_NO_EXE_BUNDLE_B64/part*.txt", "archives/V68_FULL_NO_EXE_BUNDLE_B64 (deprecated fallback)"),
+    ]
+    errors = []
+    for pattern, label in candidates:
+        try:
+            payload = b64_xz_from_parts(pattern)
+            data = archive_member_by_basename(payload, wanted)
+            got = hashlib.sha256(data).hexdigest()
+            if got != expected_hash:
+                raise RuntimeError(f"{wanted} hash {got} != {expected_hash}")
+            return data, label
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+    raise RuntimeError("V68 bundle recovery failed for %s: %s" % (wanted, " | ".join(errors)))
 
 
 def deterministic_zip(output, files):
@@ -80,19 +119,19 @@ def main():
         raise SystemExit(f"candidate DLL missing: {candidate}")
     candidate_hash = sha256_file(candidate)
     candidate_size = candidate.stat().st_size
+    if candidate_hash != expected[STEALTH_NAME]:
+        raise SystemExit(f"candidate DLL hash mismatch: built={candidate_hash} runtime={expected[STEALTH_NAME]}")
 
-    stealth_item = next(x for x in items if x.get("name") == STEALTH_NAME)
-    build_meta = stealth_item.get("candidate_build") or {}
-    pinned_hash = str(build_meta.get("sha256", "")).lower()
-    if pinned_hash and candidate_hash != pinned_hash:
-        raise SystemExit(f"candidate DLL hash mismatch: built={candidate_hash} metadata={pinned_hash}")
-
+    recovery_sources = {}
     with tempfile.TemporaryDirectory(prefix="wow112-work-package-") as tmp:
         stage = Path(tmp)
 
-        restore = {
-            "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll":
-                b64_xz_from_parts("artifacts/V67/runtime/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll.xz.b64.part*"),
+        positional = "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll"
+        data, source = recover_from_v68_bundle(positional, expected[positional])
+        write_bytes(stage / positional, data)
+        recovery_sources[positional] = source
+
+        direct = {
             "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll":
                 b64_xz_from_parts("artifacts/V67/runtime/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll.xz.b64.part*"),
             "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll":
@@ -102,32 +141,34 @@ def main():
             "WoWPlayerESP_v1_2_range_sweep.dll":
                 lzma.decompress((ROOT / "artifacts/V67/runtime/WoWPlayerESP_v1_2_range_sweep.dll.xz").read_bytes()),
         }
-        for name, data in restore.items():
-            write_bytes(stage / name, data)
+        for name, blob in direct.items():
+            write_bytes(stage / name, blob)
+            recovery_sources[name] = "canonical runtime artifact"
 
         v13 = stage / "WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll"
         write_bytes(v13, b64_xz_from_parts("artifacts/V67/runtime/WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll.xz.b64.part*"))
         auto_name = "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll"
         run_patch("artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py", v13, stage / auto_name)
         v13.unlink()
+        recovery_sources[auto_name] = "v0.13 artifact + deterministic reproducer"
 
         v09 = stage / "WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll"
         write_bytes(v09, b64_xz_from_parts("artifacts/V67/runtime/WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll.xz.b64.part*"))
         long_name = "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
         run_patch("artifacts/LongPickPocket/patch_v09_FacingOnly_to_v10_ALLRANGE_360FACING.py", v09, stage / long_name)
         v09.unlink()
+        recovery_sources[long_name] = "v0.9 artifact + deterministic reproducer"
 
         shutil.copy2(candidate, stage / STEALTH_NAME)
+        recovery_sources[STEALTH_NAME] = "fresh deterministic x86 build"
 
         for name in names:
             path = stage / name
             if not path.is_file():
                 raise SystemExit(f"active DLL not reconstructed: {name}")
             got = sha256_file(path)
-            if name != STEALTH_NAME and got != expected[name]:
+            if got != expected[name]:
                 raise SystemExit(f"runtime hash mismatch for {name}: got={got} expected={expected[name]}")
-            if name == STEALTH_NAME and pinned_hash and got != expected[name]:
-                raise SystemExit(f"runtime/current.json Stealth hash does not match pinned candidate: got={got} runtime={expected[name]}")
 
         exe_name = runtime["exe"]["name"]
         exe_src = ROOT / current["exe"]["path"]
@@ -149,12 +190,12 @@ def main():
         "source_path": STEALTH_SOURCE,
         "source_sha256": sha256_file(source),
         "source_size": source.stat().st_size,
-        "runtime_expected_before_or_after_build": expected[STEALTH_NAME],
         "package": str(Path(args.output).name),
         "package_sha256": sha256_file(Path(args.output).resolve()),
         "package_size": Path(args.output).resolve().stat().st_size,
         "active_dll_count": len(names),
         "exe": runtime["exe"]["name"],
+        "recovery_sources": recovery_sources,
     }
     meta_path = Path(args.metadata).resolve()
     meta_path.parent.mkdir(parents=True, exist_ok=True)

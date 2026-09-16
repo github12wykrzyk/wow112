@@ -46,6 +46,9 @@ jobs:
       - name: Verify current repository state
         run: python tools/verify_current.py
 
+      - name: Deep repository verification
+        run: python tools/verify_repo.py
+
       - name: Upload test package and build metadata
         uses: actions/upload-artifact@v4
         with:
