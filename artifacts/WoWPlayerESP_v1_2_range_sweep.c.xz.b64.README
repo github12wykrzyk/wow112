@@ -1,1 +1,57 @@
-PLACEHOLDER README
+# WoWPlayerESP v1.2 canonical source recovery
+
+Canonical source:
+`WoWPlayerESP_v1_2_range_sweep.c`
+
+Target:
+World of Warcraft 1.12.1 build 5875 x86
+
+Source status:
+EXACT ORIGINAL SOURCE FOUND
+
+Original source size:
+81294 bytes
+
+Original source SHA256:
+`c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63`
+
+Matching runtime DLL:
+`WoWPlayerESP_v1_2_range_sweep.dll`
+
+Runtime DLL SHA256:
+`d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5`
+
+The exact source is stored losslessly as an XZ-compressed Base64 archive split into five parts:
+
+- `WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part000`
+- `WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part001`
+- `WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part002`
+- `WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part003`
+- `WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part004`
+
+Part sizes are 5000, 5000, 5000, 5000 and 2216 bytes respectively.
+
+## Restore with Python 3
+
+Run from the repository root:
+
+```python
+from pathlib import Path
+import base64
+import lzma
+
+base = Path("artifacts")
+prefix = "WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part"
+b64 = b"".join((base / (prefix + "%03d" % i)).read_bytes() for i in range(5))
+source = lzma.decompress(base64.b64decode(b64))
+Path("WoWPlayerESP_v1_2_range_sweep.c").write_bytes(source)
+```
+
+Verify:
+
+```text
+SHA256 c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63
+SIZE   81294
+```
+
+This archive is byte-exact recovery storage for the canonical source, not a reconstruction or decompilation.
