@@ -1,0 +1,36 @@
+name: Materialize verified MovementCore source
+
+on:
+  push:
+    branches:
+      - work
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: work
+
+      - name: Restore verified source
+        run: >-
+          python3 tools/restore_movementcore_source.py
+          --output src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
+
+      - name: Commit source if missing
+        shell: bash
+        run: |
+          git add src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
+          if git diff --cached --quiet; then
+            echo "Canonical source already materialized; no commit needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Materialize verified MovementCore V68 source"
+          git push origin HEAD:work
