@@ -1,81 +1,90 @@
 # Active runtime source inventory
 
-Stan dla stabilnego baseline **V68**.
+Stan repozytorium dla stabilnego baseline **V68** po odzyskaniu i weryfikacji kolejnych oryginalnych source.
 
-## Canonical normal source
+## Exact / normal source secured
 
-| Runtime module | Source status | Canonical path |
+| Runtime module | Source status | Canonical storage |
 | --- | --- | --- |
 | `MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll` | NORMAL SOURCE | `src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c` |
-| `PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll` | RECONSTRUCTED + BINARY VERIFIED | `src/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD_RECONSTRUCTED.c` |
+| `PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll` | EXACT ORIGINAL SOURCE | `source/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c` |
+| `WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll` | EXACT ORIGINAL SOURCE | `source/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c` |
+| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | `artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part000..004` |
 
-MovementCore source jest zweryfikowany przez rozmiar i SHA256 oraz ma niezalezny recovery archive w `artifacts/V68/source/`.
+### WoWPlayerESP v1.2 verification
 
-PickPocketSelectiveRange v10 zostal odtworzony z finalnej DLL i zweryfikowany przez rebuild: sekcja `.text` jest byte-identical z runtime reference (0 roznic / 1634 bajtow), a przy zgodnej nazwie i flagach PE caly 4096-bajtowy DLL rozni sie tylko 3 bajtami timestampu COFF. Szczegoly: `src/PickPocketSelectiveRange/README_RECOVERY.md`.
+Canonical source name:
+`WoWPlayerESP_v1_2_range_sweep.c`
 
-## Active modules without indexed normal source
+Source SHA256:
+`c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63`
 
-Ponizsze DLL sa aktywne w V68 i maja zweryfikowane runtime SHA256, ale pelne normalne source `.c/.cpp` nie jest obecnie indeksowane w repo:
+Source size:
+`81294` bytes
 
-| Runtime module | Repository state | History / recovery evidence |
+Matching runtime DLL SHA256:
+`d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5`
+
+Restore documentation:
+`artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.README`
+
+Automatic restore + SHA256 verification:
+`tools/RESTORE_PLAYERESP_SOURCE.py`
+
+This is the original source recovered from project files and matched to the canonical V67/V68 source hash. It is not reconstructed/decompiled source.
+
+### PickPocketSelectiveRange v10 verification
+
+Original source SHA256:
+`80130b9cb988dc9c60345aa764f9465a1d6e515bcfd9ff5e2128bb865d91206a`
+
+Runtime DLL SHA256:
+`efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba`
+
+The older reconstructed source under `src/PickPocketSelectiveRange/` remains useful as independent binary-verification evidence, but is no longer the canonical source now that the original file has been recovered.
+
+### StealthCDGuardian v2 verification
+
+Original source SHA256:
+`c90f160ee4ae837e70c09b24dad2383c9a73621fa7b40df88639de95544e78f4`
+
+Runtime DLL SHA256:
+`2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e`
+
+## Active modules still without final indexed original source
+
+| Runtime module | Repository state | Best recovery evidence |
 | --- | --- | --- |
-| `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll` | SOURCE INCOMPLETE / BINARY-PATCHED LINEAGE | V67 audit klasyfikuje aktywny wariant StealthCDSafe/NoFailHook jako source-incomplete; runtime recovery exists |
-| `WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll` | SOURCE CONFIRMED, NOT INDEXED | V67 audit potwierdza kompletne source v2; runtime binary recovery jest zachowany w repo |
-| `WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll` | SOURCE CONFIRMED, NOT INDEXED | V67 audit potwierdza kompletne source v0.4; runtime binary recovery jest zachowany w repo |
-| `WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll` | SOURCE INCOMPLETE / BINARY-PATCHED LINEAGE | V67 audit klasyfikuje v0.13 jako binary-patched/source-incomplete; starsze V39/V43 maja binaria i patch notes |
-| `WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll` | SOURCE INCOMPLETE / BINARY-PATCHED LINEAGE | V67 audit klasyfikuje v0.9 jako binary-patched/source-incomplete; V43 zachowuje starszy v0.8 runtime |
-| `WoWPlayerESP_v1_2_range_sweep.dll` | SOURCE CONFIRMED, NOT INDEXED | pelny standalone source v1.2 zostal znaleziony w Project Library; trzeba przeniesc go byte-safe do Git |
-
-`NOT INDEXED` nie oznacza, ze source nie istnieje. Oznacza, ze nie ma go obecnie jako normalnego pliku w drzewie Git.
+| `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll` | SOURCE INCOMPLETE / BINARY-PATCHED LINEAGE | final runtime recovery + older full source lineage |
+| `WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll` | EXACT SOURCE EXISTENCE CONFIRMED, BYTES NOT YET INDEXED | V67 source manifest contains exact source SHA256; runtime recovery preserved |
+| `WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll` | SOURCE INCOMPLETE / BINARY-PATCHED LINEAGE | final runtime + patch audit + older full source |
+| `WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll` | SOURCE INCOMPLETE / BINARY-PATCHED LINEAGE | final runtime + v0.8 rollback + older full source |
 
 ## Confirmed historical source lead: PickPocketSelectiveRange
 
-Zweryfikowany source przodka v8 z paczek V39/V43 jest zachowany w repo jako material historyczny:
+Verified ancestor source from V39/V43 is retained as:
 
 `src/history/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v8_10YD.c`
 
-Parametry oryginalnego pliku i pliku w Git sa identyczne:
+- size: `8658` B
+- SHA256: `2d9e182f1a203f9a8b6247684edbe074f35dedf61f9795db40cfbbf1a50df0f4`
 
-- size: `8658` B,
-- SHA256: `2d9e182f1a203f9a8b6247684edbe074f35dedf61f9795db40cfbbf1a50df0f4`.
-
-Towarzyszace patch notes sa w:
-
+Patch notes:
 `src/history/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v8_10YD_BINARY_PATCH_NOTES.txt`
-
-- size: `439` B,
-- SHA256: `7052f73f423271ce6d5c55c33d09f0558a7b469ee695b2fafe0aeecae7e54c18`.
-
-V8 nie jest canonicalnym source obecnego v10. Jest zweryfikowanym przodkiem i materialem porownawczym. Obecne v10 zostalo juz niezaleznie odtworzone z finalnej binarki i zweryfikowane przez kompilacje.
-
-## Confirmed V39/V43 lineage findings
-
-Bezposrednia inspekcja dostarczonych paczek V39 i V43 potwierdzila:
-
-- wspolne runtime `WoWPositionalSpoof ... WotFRetry5`, `WoWNonPvPSpeedFloor v0.1`, `PickPocketSelectiveRange v8` i `WoWLongPickPocket v0.8` sa bit-identyczne pomiedzy V39 i V43;
-- V43 dodaje pelny source `WoWMovementCore_5875_v1_NOFALL_SAFEBREAK.c`, source `WoWAutoStealth_5875_v5_CHANNEL_KILLGRACE.c`, source `WoWNoFall_5875_v1.c` oraz binary patch notes dla AutoPP v0.11;
-- V43 wprost dokumentuje, ze LongPickPocket i PositionalSpoof nie byly wtedy scalane z powodu braku pelnego biezacego source C;
-- V39/V43 nie zawieraja finalnych aktywnych wersji v10/v0.4/v2/v1.2/v0.13/v0.9 ani wariantow `StealthCDSafe`/`NoFailHook`.
-
-Wniosek: V39/V43 sa cennym lineage/reference, ale nie sa zrodlem finalnych brakujacych source dla V67/V68.
 
 ## Recovery priority
 
-Aktualny priorytet:
+1. `WoWNonPvPSpeedFloor v0.4` — exact source is confirmed by manifest; recover original bytes.
+2. `WoWPositionalSpoof` — recover final StealthCDSafe/NoFailHook source lineage.
+3. `WoWAutoLootPP` and `WoWLongPickPocket` — recover current source lineage from final binaries plus earlier sources and patch notes.
 
-1. `WoWStealthCDGuardian v2` — runtime binary recovery jest w Git; dobry kandydat do rekonstrukcji z DLL.
-2. `WoWNonPvPSpeedFloor v0.4` — runtime binary recovery jest w Git; dobry kandydat do rekonstrukcji z DLL.
-3. `WoWPlayerESP v1.2` — pelny source juz istnieje w Project Library; trzeba tylko przeniesc go do Git.
-4. `WoWAutoLootPP v0.13`, `WoWLongPickPocket v0.9`, `WoWPositionalSpoof` — rekonstrukcja z binarki wsparta starszymi source/patch notes.
+## Repository rule
 
-## Zasada migracji
+For every active module:
 
-Dla kazdego odzyskanego modulu:
-
-1. ustalic dokladny source lub zrekonstruowac go z finalnej DLL,
-2. zapisac go jako normalny plik pod `src/<Module>/`,
-3. zapisac source SHA256 i status w `runtime/current.json`,
-4. zachowac runtime artifact jako rollback/recovery,
-5. jezeli mozliwe, zbudowac DLL tym samym toolchainem i porownac wynikowy kod maszynowy z referencyjnym DLL,
-6. jasno oznaczyc `RECONSTRUCTED` vs original source,
-7. dopiero potem wykonywac funkcjonalne refaktory.
+1. preserve the exact runtime DLL or lossless recovery artifact,
+2. preserve original source when available,
+3. store source SHA256 and runtime SHA256,
+4. explicitly distinguish ORIGINAL SOURCE from RECONSTRUCTED SOURCE,
+5. retain older stable versions for rollback and comparison,
+6. update `runtime/current.json` whenever source status changes.
