@@ -143,6 +143,55 @@ def verify_movementcore_source(mc, runtime_dlls):
         error("MovementCore source_sha256 mismatch between CURRENT.json and runtime/current.json")
 
 
+def verify_canonical_exe(current, runtime, sha_manifest):
+    current_exe = current.get("exe", {})
+    runtime_exe = runtime.get("exe", {})
+
+    name = current_exe.get("name")
+    rel = current_exe.get("path")
+    expected_hash = str(current_exe.get("sha256", "")).lower()
+    expected_size = current_exe.get("size")
+    storage = current_exe.get("storage")
+
+    if not name:
+        error("CURRENT.json canonical EXE name is missing")
+        return
+    if not rel:
+        error("CURRENT.json canonical EXE path is missing")
+        return
+    if Path(rel).name != name:
+        error("CURRENT.json EXE path/name mismatch")
+    if len(expected_hash) != 64:
+        error("CURRENT.json canonical EXE SHA256 is invalid")
+    if not isinstance(expected_size, int) or expected_size <= 0:
+        error("CURRENT.json canonical EXE size is invalid")
+    if storage != "direct_binary":
+        error("CURRENT.json canonical EXE storage must be direct_binary")
+
+    if runtime_exe.get("name") != name:
+        error("EXE name mismatch between CURRENT.json and runtime/current.json")
+    if str(runtime_exe.get("sha256", "")).lower() != expected_hash:
+        error("EXE SHA256 mismatch between CURRENT.json and runtime/current.json")
+
+    manifest_hash = sha_manifest.get(name)
+    if manifest_hash is None:
+        error("canonical EXE missing from SHA256 manifest: %s" % name)
+    elif manifest_hash != expected_hash:
+        error("canonical EXE SHA256 mismatch between CURRENT.json and SHA256 manifest")
+
+    path = ROOT / rel
+    if not path.is_file():
+        error("canonical EXE binary missing: %s" % rel)
+        return
+
+    data = path.read_bytes()
+    actual_hash = hashlib.sha256(data).hexdigest()
+    if len(expected_hash) == 64 and actual_hash != expected_hash:
+        error("canonical EXE file SHA256 mismatch: got %s expected %s" % (actual_hash, expected_hash))
+    if isinstance(expected_size, int) and expected_size > 0 and len(data) != expected_size:
+        error("canonical EXE file size mismatch: got %d expected %d" % (len(data), expected_size))
+
+
 def verify_source_inventory(runtime_dlls):
     allowed = {"normal_source", "not_indexed_in_repo"}
     normal = []
@@ -188,6 +237,7 @@ def main():
         "active_dll_list",
         "runtime_manifest",
         "sha256_manifest",
+        "exe",
     ]
     for key in required_current:
         if not current.get(key):
@@ -246,6 +296,8 @@ def main():
         elif manifest_hash != exe_hash:
             error("EXE SHA256 mismatch in manifests: %s" % exe_name)
 
+    verify_canonical_exe(current, runtime, sha)
+
     mc = current.get("movementcore", {})
     restore_doc = mc.get("source_restore_doc")
     if restore_doc:
@@ -267,6 +319,7 @@ def main():
     print("\nRepository verification summary")
     print("  baseline: %s" % current.get("stable_baseline"))
     print("  active DLLs: %d" % len(runtime_dlls))
+    print("  canonical EXE: direct binary verified")
     print("  indexed normal sources: %d" % source_normal)
     print("  source not indexed: %d" % source_missing)
     print("  MovementCore source: normal .c + verified archive")
