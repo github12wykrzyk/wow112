@@ -1,0 +1,96 @@
+name: Build WoW112 updater
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - 'tools/updater/**'
+      - '.github/workflows/build_updater.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-wow112-updater-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-updater:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout current work tree
+        uses: actions/checkout@v5
+
+      - name: Compile WinForms updater x86
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
+          $vs = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vs) { throw "Visual Studio/MSBuild installation not found" }
+          $csc = Join-Path $vs 'MSBuild\Current\Bin\Roslyn\csc.exe'
+          if (-not (Test-Path $csc)) { throw "Roslyn csc.exe not found: $csc" }
+          $ref = "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8"
+          if (-not (Test-Path $ref)) { throw ".NET Framework 4.8 reference assemblies not found" }
+
+          & $csc /nologo /target:winexe /platform:x86 /optimize+ /langversion:latest `
+            /out:dist\WoW112Updater.exe `
+            /reference:"$ref\mscorlib.dll" `
+            /reference:"$ref\System.dll" `
+            /reference:"$ref\System.Core.dll" `
+            /reference:"$ref\System.Drawing.dll" `
+            /reference:"$ref\System.Windows.Forms.dll" `
+            /reference:"$ref\System.Net.Http.dll" `
+            /reference:"$ref\System.IO.Compression.dll" `
+            /reference:"$ref\System.IO.Compression.FileSystem.dll" `
+            /reference:"$ref\System.Security.dll" `
+            /reference:"$ref\System.Web.Extensions.dll" `
+            tools\updater\WoW112Updater.cs
+          if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
+
+      - name: Verify updater PE32 x86 and hash
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, json, struct
+          from pathlib import Path
+          p = Path('dist/WoW112Updater.exe')
+          data = p.read_bytes()
+          if data[:2] != b'MZ':
+              raise SystemExit('not an MZ executable')
+          pe = struct.unpack_from('<I', data, 0x3C)[0]
+          if data[pe:pe+4] != b'PE\0\0':
+              raise SystemExit('missing PE signature')
+          machine = struct.unpack_from('<H', data, pe + 4)[0]
+          if machine != 0x014C:
+              raise SystemExit(f'expected x86 machine 0x014C, got 0x{machine:04X}')
+          meta = {
+              'name': p.name,
+              'sha256': hashlib.sha256(data).hexdigest(),
+              'size': len(data),
+              'pe_machine': '0x014C',
+              'git_sha': '${{ github.sha }}',
+              'channel': 'work',
+          }
+          Path('dist/updater_build.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(meta, indent=2))
+          '@ | python -
+
+      - name: Copy updater README
+        shell: pwsh
+        run: Copy-Item tools\updater\README.md dist\README_UPDATER.md
+
+      - name: Upload updater
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112Updater-${{ github.sha }}
+          path: |
+            dist/WoW112Updater.exe
+            dist/updater_build.json
+            dist/README_UPDATER.md
+          if-no-files-found: error
+          compression-level: 0
