@@ -1,0 +1,39 @@
+name: Apply updater QoL once
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - '.github/workflows/apply_updater_qol_once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout work
+        uses: actions/checkout@v5
+        with:
+          ref: work
+          fetch-depth: 2
+
+      - name: Apply updater QoL patch
+        shell: pwsh
+        run: python tools/apply_updater_qol_once.py
+
+      - name: Verify patched repository
+        shell: pwsh
+        run: python tools/verify_current.py
+
+      - name: Commit implementation and remove one-shot helpers
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm tools/apply_updater_qol_once.py .github/workflows/apply_updater_qol_once.yml
+          git add tools/updater/WoW112Updater.cs
+          git commit -m "Updater: add one-click test loop and rollback history"
+          git push origin HEAD:work
