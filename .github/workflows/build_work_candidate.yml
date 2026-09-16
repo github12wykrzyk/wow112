@@ -38,12 +38,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build changed active modules and package candidate
+      - name: Build full active stack for PP360 source candidate
         if: github.event_name == 'push'
         shell: pwsh
         run: >-
           python tools/build_changed_active.py
-          --base "${{ github.event.before }}"
+          --all
           --output-dir build
           --package dist/WoW112_WORK_CANDIDATE.zip
           --package-metadata dist/candidate_metadata.json
@@ -87,6 +87,5 @@ jobs:
             dist/candidate_metadata.json
             dist/candidate_summary.json
             dist/controlhub_build.json
-            src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
           if-no-files-found: error
           compression-level: 0
