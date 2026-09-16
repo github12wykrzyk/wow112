@@ -61,7 +61,7 @@
       "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db",
       "source_state": "functionally_equivalent_reconstruction",
       "source_origin": "static_reverse_engineering_from_final_dll",
-      "source_path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
+      "source_path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_5_CONTROL_API_V1.c",
       "source_sha256": "f1a446d0384f37888675f765327ab019a74ab9a9a9743ed95597b7bb24b4b69f",
       "source_size": 14417,
       "source_restore_doc": "artifacts/SpeedFloor/README_RECOVERY.md",

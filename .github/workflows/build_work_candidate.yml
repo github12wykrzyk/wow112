@@ -10,6 +10,7 @@ on:
       - 'CURRENT.json'
       - 'tools/build_active_module.py'
       - 'tools/build_changed_active.py'
+      - 'tools/build_controlhub_candidate.py'
       - 'tools/package_current.py'
       - 'tools/verify_verified_symbols.py'
       - 'runtime/verified_symbols_5875.json'
@@ -55,6 +56,16 @@ jobs:
           --package-metadata dist/candidate_metadata.json
           --summary dist/candidate_summary.json
 
+      - name: Build ControlHub pilot and append to candidate
+        shell: pwsh
+        run: >-
+          python tools/build_controlhub_candidate.py
+          --package dist/WoW112_WORK_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --summary dist/candidate_summary.json
+          --build-metadata dist/controlhub_build.json
+          --output build/WoWControlHub.dll
+
       - name: Upload runnable ZIP and machine-readable verdict
         uses: actions/upload-artifact@v4
         with:
@@ -63,5 +74,6 @@ jobs:
             dist/WoW112_WORK_CANDIDATE.zip
             dist/candidate_metadata.json
             dist/candidate_summary.json
+            dist/controlhub_build.json
           if-no-files-found: error
           compression-level: 0
