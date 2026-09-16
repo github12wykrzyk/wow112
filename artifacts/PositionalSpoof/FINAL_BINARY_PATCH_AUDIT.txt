@@ -1,0 +1,82 @@
+WoWPositionalSpoof v0.36 FINAL BINARY PATCH AUDIT
+==================================================
+Target: World of Warcraft 1.12.1 build 5875 x86
+
+FINAL DLL
+WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll
+size: 45056 bytes
+SHA256: deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b
+
+EXACT SOURCE ANCESTOR
+WoWPositionalSpoof_v0_36_NoPP_SmartEnergy700_SmoothStealth_GateGCDFix.c
+The ancestor is a complete 1002-line source file from the project archive.
+
+PRESERVED RUNTIME ANCESTORS
+1) pre-WotF retryfix DLL
+   SHA256 6185a3a2eae62fe99a6a33e7699ba9e4aeb47ed0b6e9497502b639ecb9d0cf46
+2) WotFRetry5 DLL
+   SHA256 767130d6f02ea26664d116fad34c6b1c0ea52b53bbbef821e4e35b93be0c93f5
+
+A. pre-WotF -> WotFRetry5
+----------------------------
+Only 9 bytes differ in four runs, all in .text:
+
+file 0x0D64 / RVA 0x1964 / VA 0x10001964
+  03 -> 05
+  semantic mapping: WOTF_MAX_ATTEMPTS 3 -> 5
+
+file 0x4463-0x4468 / RVA 0x5063 / VA 0x10005063
+  0F 85 48 01 00 00 -> 90 90 90 90 90 90
+  semantic mapping: removes the reason==0x61 gate, so retry scheduling is no longer
+  restricted to SPELL_IN_PROGRESS; remaining attempts may retry any WotF failure.
+
+file 0x446F / RVA 0x506F / VA 0x1000506F
+  02 -> 04
+  semantic mapping: compiler form of attempts < 3 becomes attempts < 5.
+
+file 0x4484 / RVA 0x5084 / VA 0x10005084
+  5A -> 3C
+  semantic mapping: WOTF_RETRY_DELAY_MS 90 -> 60.
+
+B. WotFRetry5 -> FINAL StealthCDSafe/NoFailHook
+------------------------------------------------
+Only 21 bytes differ in five runs, all in .text:
+
+file 0x0B7F-0x0B83 / RVA 0x177F / VA 0x1000177F
+  E8 9C 08 00 00 -> 90 90 90 90 90
+  semantic mapping: NOP applyStealthSpeed() call from SpeedTimerProc.
+
+file 0x3F2B-0x3F2F / RVA 0x4B2B / VA 0x10004B2B
+  E8 F0 D4 FF FF -> 90 90 90 90 90
+  semantic mapping: NOP applyStealthSpeed() call from PrepareMovementSend.
+
+file 0x4E81-0x4E85 / RVA 0x5A81 / VA 0x10005A81
+  E8 9A C5 FF FF -> 90 90 90 90 90
+  semantic mapping: NOP applyStealthSpeed() call from LogSpellGo Stealth branch.
+
+file 0x59D9-0x59DB and 0x59DD-0x59DF / RVA 0x65D9... / VA 0x100065D9...
+  original sequence starts: C7 04 24 00 70 6E 00 ...
+  patched sequence starts:  E9 61 00 00 00 90 90 ...
+  semantic mapping: unconditional JMP skips the CAST_FAIL_SITE hook-install block.
+  This is the NoFailHook change. The existing fail-site signature check and legacy
+  restore path were NOT patched out in the final binary.
+
+RECONSTRUCTED SOURCE
+--------------------
+WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c
+
+The source applies exactly the observed semantic changes above to the exact v0.36
+ancestor source. Old log/PATCH_OK strings are deliberately retained because the final
+runtime DLL also retains them; that is direct evidence that the final lineage was made
+with surgical binary patches rather than a full source rebuild.
+
+Status: BINARY-VERIFIED SOURCE RECONSTRUCTION
+Not claimed: original final .c file.
+
+BUILD SANITY
+------------
+The reconstructed file compiles successfully as i686 MSVC-style C with clang-cl 17.
+A no-CRT test DLL also links successfully with lld-link when clang builtin folding is
+disabled (-fno-builtin). This verifies source completeness/syntax, not byte identity.
+The original runtime used a different MSVC/linker code-generation path, so a clang-built
+DLL is not expected to be byte-identical.
