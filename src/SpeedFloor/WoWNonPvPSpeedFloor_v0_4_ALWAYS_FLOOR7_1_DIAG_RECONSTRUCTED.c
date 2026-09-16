@@ -13,6 +13,7 @@
  * scan, speed write/recalc path, exported status interface and diagnostic
  * behaviour below were reconstructed from the final PE32/x86 machine code.
  */
+/* Workflow latency benchmark marker: source-only comment; no runtime semantic change. */
 
 #if !defined(_M_IX86) && !defined(__i386__)
 #error This module is for 32-bit x86 only.
