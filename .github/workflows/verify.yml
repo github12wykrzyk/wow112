@@ -49,6 +49,9 @@ jobs:
       - name: Verify exact current runtime artifacts
         run: python3 tools/verify_runtime_artifacts.py
 
+      - name: Verify shared build-5875 symbol registry
+        run: python3 tools/verify_verified_symbols.py
+
   deep-baseline-audit:
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest

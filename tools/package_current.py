@@ -6,9 +6,11 @@ import lzma
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
+PROCESS_START = time.perf_counter()
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -68,12 +70,16 @@ def restore_dll(item, overrides):
     expected = str(item["sha256"]).lower()
 
     if name in overrides:
+        t0 = time.perf_counter()
         path = overrides[name]
         if not path.is_file():
             raise SystemExit(f"override DLL missing: {name} -> {path}")
         data = path.read_bytes()
         source = f"override:{path}"
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        source_kind = "candidate_override"
     else:
+        t0 = time.perf_counter()
         artifact = item.get("binary_artifact")
         if not isinstance(artifact, dict):
             raise SystemExit(f"active DLL has no binary_artifact and no override: {name}")
@@ -94,11 +100,13 @@ def restore_dll(item, overrides):
                 f"binary_artifact size mismatch: {name} got={len(data)} expected={expected_size}"
             )
         source = rel
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        source_kind = "exact_byte_cache"
 
     got = sha256_bytes(data)
     if name not in overrides and got != expected:
         raise SystemExit(f"runtime hash mismatch for {name}: got={got} expected={expected}")
-    return data, source
+    return data, source, source_kind, elapsed_ms
 
 
 def main():
@@ -134,26 +142,40 @@ def main():
     metadata_path = Path(args.metadata).resolve()
     restore_sources = {}
     dll_meta = []
+    cache_names = []
+    override_names = []
+    cache_restore_ms = 0.0
+    override_read_ms = 0.0
 
     with tempfile.TemporaryDirectory(prefix="wow112-package-") as td:
         stage = Path(td)
 
         for item in items:
             name = item["name"]
-            data, source = restore_dll(item, overrides)
+            data, source, source_kind, elapsed_ms = restore_dll(item, overrides)
             dst = stage / name
             dst.write_bytes(data)
             restore_sources[name] = source
+            if source_kind == "exact_byte_cache":
+                cache_names.append(name)
+                cache_restore_ms += elapsed_ms
+            else:
+                override_names.append(name)
+                override_read_ms += elapsed_ms
             dll_meta.append(
                 {
                     "name": name,
                     "sha256": sha256_bytes(data),
+                    "stable_current_sha256": str(item["sha256"]).lower(),
                     "size": len(data),
                     "source": source,
+                    "source_kind": source_kind,
                     "override": name in overrides,
+                    "byte_identical_current": sha256_bytes(data) == str(item["sha256"]).lower(),
                 }
             )
 
+        t_exe = time.perf_counter()
         exe_name = runtime.get("exe", {}).get("name")
         exe_hash = str(runtime.get("exe", {}).get("sha256", "")).lower()
         current_exe = current.get("exe", {})
@@ -172,27 +194,49 @@ def main():
             raise SystemExit(f"canonical EXE hash mismatch: got={got_exe} expected={exe_hash}")
         exe_dst = stage / exe_name
         shutil.copy2(exe_src, exe_dst)
+        exe_prepare_ms = (time.perf_counter() - t_exe) * 1000.0
 
         files = [exe_dst] + [stage / name for name in names]
+        t_zip = time.perf_counter()
         deterministic_zip(output, files)
+        zip_ms = (time.perf_counter() - t_zip) * 1000.0
 
+    t_meta = time.perf_counter()
+    zip_root_entries = [exe_name] + names
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "git_head": git_head(),
         "baseline": runtime.get("baseline"),
         "wow_build": runtime.get("wow_build"),
         "package": output.name,
         "package_sha256": sha256_file(output),
         "package_size": output.stat().st_size,
+        "zip_root_entries": zip_root_entries,
         "exe": {
             "name": exe_name,
             "sha256": exe_hash,
             "size": (ROOT / current_exe["path"]).stat().st_size,
+            "in_zip_root": exe_name in zip_root_entries,
         },
         "active_dll_count": len(items),
         "active_dlls": dll_meta,
+        "all_active_dlls_in_zip_root": all(name in zip_root_entries for name in names),
+        "candidate_override_count": len(override_names),
+        "candidate_override_names": override_names,
+        "exact_byte_cache_count": len(cache_names),
+        "exact_byte_cache_names": cache_names,
         "restore_sources": restore_sources,
+        "timings_ms": {
+            "exact_byte_cache_restore": cache_restore_ms,
+            "candidate_override_read": override_read_ms,
+            "exe_verify_and_stage": exe_prepare_ms,
+            "zip_creation": zip_ms,
+            "metadata_generation": 0.0,
+            "process_total": 0.0,
+        },
     }
+    metadata["timings_ms"]["metadata_generation"] = (time.perf_counter() - t_meta) * 1000.0
+    metadata["timings_ms"]["process_total"] = (time.perf_counter() - PROCESS_START) * 1000.0
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(metadata, indent=2))

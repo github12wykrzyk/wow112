@@ -18,10 +18,14 @@
     "CURRENT.json",
     "runtime/current.json"
   ],
+  "conditional_fast_indexes": {
+    "shared_native_primitives": "runtime/verified_symbols_5875.json"
+  },
   "canonical": {
     "operating_contract": "AGENTS.md",
     "current_state": "CURRENT.json",
     "runtime_manifest": "runtime/current.json",
+    "verified_symbols_registry": "runtime/verified_symbols_5875.json",
     "source_root": "src",
     "source_inventory": "docs/SOURCE_INVENTORY.md",
     "baseline_root": "baseline",
@@ -39,6 +43,7 @@
     "status": "python tools/ai_status.py",
     "status_json": "python tools/ai_status.py --json",
     "runtime_verify": "python tools/verify_runtime_artifacts.py",
+    "verified_symbols_verify": "python tools/verify_verified_symbols.py",
     "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json",
     "build_active_list": "python tools/build_active_module.py --list",
     "build_active_one": "python tools/build_active_module.py --name <runtime-dll-name>",
@@ -49,7 +54,7 @@
   "directories": {
     "src": "canonical editable source and source evidence grouped by module",
     "source": "legacy/historical material only; never an active canonical source_path",
-    "runtime": "machine-readable active runtime metadata",
+    "runtime": "machine-readable active runtime metadata and verified fast indexes",
     "baseline": "stable rollback metadata",
     "manifests": "reference hashes",
     "artifacts": "recovery, exact runtime binary cache, binary audits and deterministic reproducers",
@@ -67,6 +72,9 @@
   "rules": [
     "AGENTS.md defines the AI operating contract",
     "runtime/current.json decides the active stack and canonical source provenance",
+    "runtime/verified_symbols_5875.json is a derived fast index only; its listed provenance remains authoritative",
+    "when a task needs shared build-5875 native primitives, consult the verified-symbol registry before opening unrelated large module sources",
+    "never use an omitted/unresolved registry topic as verified evidence",
     "active DLL binary_artifact entries provide the normal exact-byte packaging path",
     "prefer targeted module reads over repository-wide search",
     "work must be synchronized with current main before a new iteration",

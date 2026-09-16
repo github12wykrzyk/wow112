@@ -11,6 +11,8 @@ on:
       - 'tools/build_active_module.py'
       - 'tools/build_changed_active.py'
       - 'tools/package_current.py'
+      - 'tools/verify_verified_symbols.py'
+      - 'runtime/verified_symbols_5875.json'
       - 'artifacts/runtime_cache/**'
       - '.github/workflows/build_work_candidate.yml'
   workflow_dispatch:
@@ -53,9 +55,13 @@ jobs:
           --package-metadata dist/candidate_metadata.json
           --summary dist/candidate_summary.json
 
-      - name: Upload candidate package and build metadata
+      - name: Upload runnable ZIP and machine-readable verdict
         uses: actions/upload-artifact@v4
         with:
           name: WoW112-WORK-CANDIDATE-${{ github.sha }}
-          path: dist/
+          path: |
+            dist/WoW112_WORK_CANDIDATE.zip
+            dist/candidate_metadata.json
+            dist/candidate_summary.json
           if-no-files-found: error
+          compression-level: 0
