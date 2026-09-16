@@ -160,10 +160,8 @@
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
       "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
       "source_state": "normal_source",
-      "source_origin": "original_source",
-      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
-      "source_sha256": "c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63",
-      "source_size": 81294,
+      "source_origin": "v1_2_original_source_plus_v1_3_challenge_wrapper",
+      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_3_CHALLENGES.c",
       "source_restore_doc": "artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.README",
       "source_restore_tool": "tools/RESTORE_PLAYERESP_SOURCE.py",
       "binary_artifact": {
