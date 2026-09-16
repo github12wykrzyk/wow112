@@ -1,0 +1,42 @@
+name: One-shot AutoPP cast/channel guard source patch
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - '.github/workflows/oneshot_patch_autopp_cast_channel_guard.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout work
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Rebase patch base to latest work
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin work
+          git reset --hard origin/work
+
+      - name: Apply deterministic source patch
+        run: python tools/patch_autopp_cast_channel_guard_once.py
+
+      - name: Commit AutoPP cast/channel guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c \
+            src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "PickPocket: yield to player casts and channels"
+          git push origin HEAD:work || { git pull --rebase origin work && git push origin HEAD:work; }
