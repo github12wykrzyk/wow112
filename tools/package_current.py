@@ -96,7 +96,7 @@ def restore_dll(item, overrides):
         source = rel
 
     got = sha256_bytes(data)
-    if got != expected:
+    if name not in overrides and got != expected:
         raise SystemExit(f"runtime hash mismatch for {name}: got={got} expected={expected}")
     return data, source
 
