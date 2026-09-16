@@ -9,27 +9,33 @@
   "active_dlls": [
     {
       "name": "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
-      "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b"
+      "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
+      "source_state": "not_indexed_in_repo"
     },
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
-      "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e"
+      "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e",
+      "source_state": "not_indexed_in_repo"
     },
     {
       "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
-      "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db"
+      "sha256": "39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db",
+      "source_state": "not_indexed_in_repo"
     },
     {
       "name": "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
-      "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba"
+      "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba",
+      "source_state": "not_indexed_in_repo"
     },
     {
       "name": "WoWAutoLootPP_v0_13_PP300YD_HU_ATTACKABLE_LEVELGATE3_ONESHOT_SELECTORCHECK.dll",
-      "sha256": "641b64187e387fabfea41426962734ff3c1e5d0c2bbc4652e7df823d51e20a73"
+      "sha256": "641b64187e387fabfea41426962734ff3c1e5d0c2bbc4652e7df823d51e20a73",
+      "source_state": "not_indexed_in_repo"
     },
     {
       "name": "WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll",
-      "sha256": "764605590462e4161b4c4badb37db990a33a8ae0037e730e03db78233d2c3717"
+      "sha256": "764605590462e4161b4c4badb37db990a33a8ae0037e730e03db78233d2c3717",
+      "source_state": "not_indexed_in_repo"
     },
     {
       "name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
@@ -40,7 +46,8 @@
     },
     {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
-      "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5"
+      "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
+      "source_state": "not_indexed_in_repo"
     }
   ]
 }
