@@ -312,6 +312,11 @@ __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetPickLockHitCount(vo
     return g_pickLockHits;
 }
 
+__declspec(dllexport) const char* __stdcall PickPocketSelective_GetBuildTag(void)
+{
+    return "AI_E2E_WORKFLOW_20260916";
+}
+
 BOOL __stdcall DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
 {
     (void)hinst;
