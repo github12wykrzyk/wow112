@@ -37,6 +37,14 @@ New SHA256:
 
 Size remains 4,907,008 bytes.
 
+Applied on work
+---------------
+Binary/metadata commit:
+  4d5a409b1dc618acbb901cbc1bdff05508d195e2
+
+One-shot patch + fast verification run:
+  GitHub Actions run 35130857684 — SUCCESS
+
 Reproducer / verification
 -------------------------
   python tools/patch_stealth5_exe_argfix.py
