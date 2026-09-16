@@ -21,9 +21,27 @@ SHA256: `b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27`
 8. `WoWPlayerESP_v1_2_range_sweep.dll`
 
 ### V68 change
-`PPHardSelect()` now generates HARDLOS retry candidates relative to target orientation and accepts only the rear hemisphere. It no longer falls back to front-side world-axis candidates. The spoofed player orientation still faces the target for Pick Pocket.
+`PPHardSelect()` generates HARDLOS retry candidates relative to target orientation and accepts only the rear hemisphere. There is no front-side fallback. Spoofed player orientation still faces the target for Pick Pocket.
 
-### Repository binary format
-DLL snapshots are stored as UTF-8 Base64 under `artifacts/V67` and `artifacts/V68` so the GitHub connector can read them. Run `tools/RESTORE_ARTIFACTS.bat` in a checkout to reconstruct the DLL files byte-for-byte.
+### Canonical repository representation
+V68 is stored as a delta against V67.
 
-The large client EXE is represented by a deterministic patch from the V66 executable. Run `tools/PATCH_EXE_STEALTH5_V67.bat` and verify SHA256.
+Verified runtime delta:
+- `artifacts/V68/runtime/`
+- restored MovementCore SHA256: `044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b`
+- runtime XZ SHA256: `b676a359abc681009bdbe5a1dddad851eef8e914343f0d2338838e6e2743726a`
+
+Verified source:
+- `artifacts/V68/source/`
+- restored v20 source SHA256: `764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888`
+- source XZ SHA256: `ca4acf000c84b42172e124fdf10876170a96773ad54fab9d6b88799113e47f48`
+
+Both artifact directories contain `README_RESTORE.md` with reconstruction commands. All eight Base64-part Git blob SHAs were verified against the local V68 build.
+
+The old full-bundle chunks under `archives/` are deprecated and must not be treated as canonical.
+
+### EXE
+The large client EXE is represented by the existing deterministic V66 -> V67/V68 Stealth5 patch path and its SHA256 documentation. V68 does not change the EXE relative to V67.
+
+### Retention
+Keep at most the latest 10 working versions in the repository. With current V68 the retention window is V59-V68; after adding a new version, drop the oldest retained version once the count exceeds 10.
