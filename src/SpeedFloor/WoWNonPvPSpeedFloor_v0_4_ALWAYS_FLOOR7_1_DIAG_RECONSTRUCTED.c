@@ -463,9 +463,17 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
                   runBefore, curBefore, runBefore, curBefore, 0u);
     }
 
+    /*
+     * Floor only when BOTH the base run field and the currently effective
+     * speed are below the configured minimum.  A buff such as Sprint may
+     * legitimately raise current speed above the floor while the base run
+     * field remains below it; in that case stay completely hands-off so the
+     * periodic recalc cannot collapse the buff back toward 7.1.
+     */
     if (g_cfgEnabled &&
         (!g_cfgDisableOnHostilePlayer || !targetHostile) &&
-        runBefore > SPEED_MIN_VALID && runBefore < floorValue) {
+        runBefore > SPEED_MIN_VALID && runBefore < floorValue &&
+        curBefore < floorValue) {
         log_event(kEventNeeded, pvp, stealth, player,
                   runBefore, curBefore, runBefore, curBefore, 0u);
 
