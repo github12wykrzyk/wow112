@@ -1,0 +1,54 @@
+name: Build work StealthCDGuardian candidate
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - 'src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c'
+      - 'tools/build_stealthcdguardian.cmd'
+      - 'tools/package_work_candidate.py'
+      - '.github/workflows/build_work_candidate.yml'
+      - 'runtime/current.json'
+      - 'CURRENT.json'
+      - 'manifests/SHA256SUMS_WORK.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-work-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-package:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build StealthCDGuardian x86
+        shell: cmd
+        run: tools\build_stealthcdguardian.cmd
+
+      - name: Package current active stack with candidate
+        shell: pwsh
+        run: |
+          python tools/package_work_candidate.py `
+            --candidate-dll build/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll `
+            --output dist/WoW112_WORK_SMOKE_STEALTH_DIAG.zip `
+            --metadata dist/candidate_metadata.json
+
+      - name: Print AI status
+        run: python tools/ai_status.py
+
+      - name: Verify current repository state
+        run: python tools/verify_current.py
+
+      - name: Upload test package and build metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-WORK-SMOKE-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error

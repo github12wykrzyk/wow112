@@ -25,8 +25,8 @@
       "source_state": "normal_source",
       "source_origin": "original_source",
       "source_path": "src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c",
-      "source_sha256": "c90f160ee4ae837e70c09b24dad2383c9a73621fa7b40df88639de95544e78f4",
-      "source_size": 11487
+      "source_sha256": "e021f3769ba43c73ef1138a7f32c46b45f02305f26de8b871bf1c051924e30ef",
+      "source_size": 11497
     },
     {
       "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",

@@ -104,7 +104,7 @@ static BYTE g_restore[6]={0};
 static BYTE g_patch[6]={0};
 static const BYTE g_expected[6]={0x55,0x8B,0xEC,0x8B,0x45,0x14};
 static const char g_logName[]="WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.log";
-static const char g_chatScript[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[StealthCDGuardian v2]|r HARD 5.0s + hook watchdog active') end";
+static const char g_chatScript[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[StealthCDGuardian v2][AI-SMOKE]|r HARD 5.0s + hook watchdog active') end";
 
 static VirtualProtect_t VP(void){return *(VirtualProtect_t*)WOW_IAT_VIRTUALPROTECT;}
 static FlushInstructionCache_t FIC(void){return *(FlushInstructionCache_t*)WOW_IAT_FLUSHICACHE;}

@@ -5,7 +5,7 @@
   "wow_build": 5875,
   "architecture": "x86",
   "stable_baseline": "V68",
-  "status": "stable",
+  "status": "candidate",
   "working_branch": "work",
   "stable_branch": "main",
   "ai_entrypoint": "AI_START_HERE.md",
@@ -16,7 +16,7 @@
   "baseline_dir": "baseline/V68",
   "active_dll_list": "baseline/V68/dlls.txt",
   "runtime_manifest": "runtime/current.json",
-  "sha256_manifest": "manifests/SHA256SUMS_V68.txt",
+  "sha256_manifest": "manifests/SHA256SUMS_WORK.txt",
   "current_version_doc": "CURRENT_VERSION.md",
   "exe": {
     "name": "WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe",
