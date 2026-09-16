@@ -235,7 +235,8 @@ static uptr get_peb(void)
 {
     uptr peb;
 # if defined(__clang__)
-    __asm { mov eax, fs:[30h] mov peb, eax }
+    __asm mov eax, fs:[30h]
+    __asm mov peb, eax
 # else
     __asm mov eax, fs:[30h]
     __asm mov peb, eax
