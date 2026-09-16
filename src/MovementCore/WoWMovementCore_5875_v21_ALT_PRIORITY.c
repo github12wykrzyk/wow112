@@ -31,6 +31,10 @@ static volatile DWORD g_altPriorityDirectPackets=0u;
 static volatile DWORD g_altPriorityDirectRestores=0u;
 static volatile DWORD g_altPriorityQuietBypasses=0u;
 static volatile DWORD g_altPriorityForceDirect=0u;
+/* clang-cl's inline-asm parser does not reliably bind an internal naked
+ * function when referenced as `offset symbol`. Keep the V20 send-wrapper
+ * address in a normal data symbol and jump through that instead. */
+static DWORD g_altPriorityBaseSendWrapper=0u;
 
 static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
 {
@@ -68,7 +72,7 @@ __declspec(naked) static void AltPriority_SendWrapper(void)
         popfd
         cmp  dword ptr [g_altPriorityBlockCurrent],0
         jne  alt_pp_blocked
-        mov  eax,offset PPArbiter_SendWrapper
+        mov  eax,dword ptr [g_altPriorityBaseSendWrapper]
         jmp  eax
 alt_pp_blocked:
         xor  eax,eax
@@ -264,10 +268,11 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 static BOOL AltPriority_Install(void)
 {
     DWORD oldMove=DCall(ADDR_MOVE_SEND_CALL),oldSend=DJump(ADDR_CLIENT_SEND);
-    if(!g_installed||oldMove!=(DWORD)(LPVOID)&MovementCore_MoveWrapper)return FALSE;
+    g_altPriorityBaseSendWrapper=(DWORD)(LPVOID)&PPArbiter_SendWrapper;
+    if(!g_altPriorityBaseSendWrapper||!g_installed||oldMove!=(DWORD)(LPVOID)&MovementCore_MoveWrapper)return FALSE;
     if(!PCall(ADDR_MOVE_SEND_CALL,(DWORD)(LPVOID)&AltPriority_MoveWrapper))return FALSE;
     if(g_ppChainOk){
-        if(oldSend!=(DWORD)(LPVOID)&PPArbiter_SendWrapper||!PJump(ADDR_CLIENT_SEND,(DWORD)(LPVOID)&AltPriority_SendWrapper)){
+        if(oldSend!=g_altPriorityBaseSendWrapper||!PJump(ADDR_CLIENT_SEND,(DWORD)(LPVOID)&AltPriority_SendWrapper)){
             PCall(ADDR_MOVE_SEND_CALL,(DWORD)(LPVOID)&MovementCore_MoveWrapper);
             return FALSE;
         }
@@ -276,7 +281,7 @@ static BOOL AltPriority_Install(void)
     g_timerId=0u;
     if(ST())g_timerId=(DWORD)ST()((HWND)0,(UINT_PTR)0,TIMER_MS,AltPriority_TimerProc);
     if(!g_timerId){
-        if(g_ppChainOk&&DJump(ADDR_CLIENT_SEND)==(DWORD)(LPVOID)&AltPriority_SendWrapper)PJump(ADDR_CLIENT_SEND,(DWORD)(LPVOID)&PPArbiter_SendWrapper);
+        if(g_ppChainOk&&DJump(ADDR_CLIENT_SEND)==(DWORD)(LPVOID)&AltPriority_SendWrapper)PJump(ADDR_CLIENT_SEND,g_altPriorityBaseSendWrapper);
         if(DCall(ADDR_MOVE_SEND_CALL)==(DWORD)(LPVOID)&AltPriority_MoveWrapper)PCall(ADDR_MOVE_SEND_CALL,(DWORD)(LPVOID)&MovementCore_MoveWrapper);
         if(ST())g_timerId=(DWORD)ST()((HWND)0,(UINT_PTR)0,TIMER_MS,TimerProc);
         return FALSE;
@@ -290,9 +295,10 @@ static void AltPriority_Remove(void)
 {
     if(g_timerId&&KT())KT()((HWND)0,(UINT_PTR)g_timerId);
     g_timerId=0u;
-    if(g_ppChainOk&&DJump(ADDR_CLIENT_SEND)==(DWORD)(LPVOID)&AltPriority_SendWrapper)PJump(ADDR_CLIENT_SEND,(DWORD)(LPVOID)&PPArbiter_SendWrapper);
+    if(g_ppChainOk&&DJump(ADDR_CLIENT_SEND)==(DWORD)(LPVOID)&AltPriority_SendWrapper&&g_altPriorityBaseSendWrapper)PJump(ADDR_CLIENT_SEND,g_altPriorityBaseSendWrapper);
     if(DCall(ADDR_MOVE_SEND_CALL)==(DWORD)(LPVOID)&AltPriority_MoveWrapper)PCall(ADDR_MOVE_SEND_CALL,(DWORD)(LPVOID)&MovementCore_MoveWrapper);
     g_altPriorityInstalled=0u;
+    g_altPriorityBaseSendWrapper=0u;
 }
 
 __declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}
