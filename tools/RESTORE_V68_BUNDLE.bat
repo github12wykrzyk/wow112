@@ -2,19 +2,16 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 set "LOG=%~dp0RESTORE_V68_BUNDLE.log"
-echo [%date% %time%] Starting V68 restore>"%LOG%"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0RESTORE_V68_BUNDLE.ps1" >>"%LOG%" 2>&1
-if errorlevel 1 (
-  echo.
-  echo [ERROR] Restore failed. See:
-  echo %LOG%
-  type "%LOG%"
-  pause
-  exit /b 1
-)
-echo.
+(
+  echo [%date% %time%] RESTORE_V68_BUNDLE is deprecated.
+  echo Canonical V68 is stored as a delta against V67.
+  echo Runtime: artifacts\V68\runtime\
+  echo Source : artifacts\V68\source\
+  echo See README_RESTORE.md in both directories.
+  echo Do NOT use archives\V68_FULL_NO_EXE_BUNDLE_B64 as source of truth.
+)>"%LOG%"
 type "%LOG%"
 echo.
-echo [OK] V68 bundle restored.
+echo [STOP] Deprecated restore path intentionally disabled.
 pause
-exit /b 0
+exit /b 2
