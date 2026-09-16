@@ -3,7 +3,9 @@
   "purpose": "Persistent source overrides for the aggregate TEST (work) updater candidate. These are experimental work-only binaries and do not change stable runtime/current.json identity.",
   "source_overrides": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
-    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
+    "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
+    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "Aggregate TEST(work) must keep the AutoJunkbox macro-driven PickLock candidate plus the ABI-enabled SpeedFloor companion required by the WoWControlHub V1 pilot until either experiment is accepted, replaced, or explicitly removed. Other active modules come from exact runtime/current.json binaries unless their canonical source changed in the current iteration."
+  "note": "Aggregate TEST(work) keeps the AutoJunkbox PickLock candidate, ControlHub-compatible SpeedFloor candidate, and the AutoPP cast/channel guard in AutoLootPP + MovementCore until accepted, replaced, or explicitly removed. Other active modules come from exact runtime/current.json binaries unless their canonical source changed in the current iteration."
 }
