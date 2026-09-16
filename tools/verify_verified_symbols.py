@@ -52,14 +52,40 @@ def verify_provenance(owner, rows, active_sources):
                 error(f"{owner}: evidence not found in {rel}: {snippet!r}")
 
 
+def local_source_includes(rel):
+    path = ROOT / rel
+    if not path.is_file():
+        return []
+    out = []
+    parent = path.parent
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line.startswith('#include "'):
+            continue
+        end = line.find('"', len('#include "'))
+        if end < 0:
+            continue
+        name = line[len('#include "'):end]
+        resolved = (parent / name).resolve()
+        try:
+            child = resolved.relative_to(ROOT.resolve()).as_posix()
+        except ValueError:
+            continue
+        if child.startswith("src/") and resolved.is_file():
+            out.append(child)
+    return out
+
+
 def collect_active_sources(runtime):
     active = set()
+    pending = []
     for item in runtime.get("active_dlls", []):
         if not isinstance(item, dict):
             continue
         source_path = item.get("source_path")
         if source_path:
             active.add(source_path)
+            pending.append(source_path)
         includes = item.get("source_includes", [])
         if includes is None:
             includes = []
@@ -76,7 +102,19 @@ def collect_active_sources(runtime):
             if not (ROOT / rel).is_file():
                 error(f"{item.get('name', '<unnamed>')}: source include missing: {rel}")
                 continue
-            active.add(rel)
+            if rel not in active:
+                active.add(rel)
+                pending.append(rel)
+
+    # A canonical wrapper source may directly include its exact ancestor source.
+    # Follow only repository-local quoted includes under src/, so provenance stays
+    # tied to files that actually participate in the candidate translation unit.
+    while pending:
+        parent = pending.pop()
+        for child in local_source_includes(parent):
+            if child not in active:
+                active.add(child)
+                pending.append(child)
     return active
 
 
