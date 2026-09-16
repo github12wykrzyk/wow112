@@ -143,8 +143,9 @@ __declspec(dllimport) BOOL   WINAPI DisableThreadLibraryCalls(HMODULE);
 __declspec(dllimport) DWORD  WINAPI GetTickCount(void);
 __declspec(dllimport) DWORD  WINAPI GetCurrentProcessId(void);
 __declspec(dllimport) HANDLE WINAPI CreateToolhelp32Snapshot(DWORD, DWORD);
-__declspec(dllimport) BOOL   WINAPI Module32FirstA(HANDLE, struct MODULEENTRY32A_LOCAL*);
-__declspec(dllimport) BOOL   WINAPI Module32NextA(HANDLE, struct MODULEENTRY32A_LOCAL*);
+/* Toolhelp ANSI entry points are exported unsuffixed by kernel32. */
+__declspec(dllimport) BOOL   WINAPI Module32First(HANDLE, struct MODULEENTRY32A_LOCAL*);
+__declspec(dllimport) BOOL   WINAPI Module32Next(HANDLE, struct MODULEENTRY32A_LOCAL*);
 __declspec(dllimport) LPVOID WINAPI GetProcAddress(HMODULE, LPCSTR);
 
 __declspec(dllimport) BOOL   WINAPI GetClientRect(HWND, struct RECT32*);
@@ -418,7 +419,7 @@ static void refresh_modules(void)
     if (snap == INVALID_HANDLE_VALUE) return;
 
     me.dwSize = (DWORD)sizeof(me);
-    if (Module32FirstA(snap, &me)) {
+    if (Module32First(snap, &me)) {
         do {
             getApi = find_provider_export(me.hModule);
             if (getApi) {
@@ -430,7 +431,7 @@ static void refresh_modules(void)
                 }
             }
             me.dwSize = (DWORD)sizeof(me);
-        } while (count < MAX_MODULES && Module32NextA(snap, &me));
+        } while (count < MAX_MODULES && Module32Next(snap, &me));
     }
     CloseHandle(snap);
     g_moduleCount = count;
