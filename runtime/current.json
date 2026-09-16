@@ -61,9 +61,15 @@
       "binary_reproducer": "artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py"
     },
     {
-      "name": "WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll",
-      "sha256": "764605590462e4161b4c4badb37db990a33a8ae0037e730e03db78233d2c3717",
-      "source_state": "not_indexed_in_repo"
+      "name": "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll",
+      "sha256": "dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2",
+      "source_state": "functionally_equivalent_reconstruction",
+      "source_origin": "static_reverse_engineering_plus_exact_v09_binary_patch_lineage",
+      "source_path": "src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c",
+      "source_size": 22118,
+      "source_restore_doc": "artifacts/LongPickPocket/README_RECOVERY.md",
+      "binary_patch_audit": "artifacts/LongPickPocket/BINARY_PATCH_AUDIT.txt",
+      "binary_reproducer": "artifacts/LongPickPocket/patch_v09_FacingOnly_to_v10_ALLRANGE_360FACING.py"
     },
     {
       "name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
