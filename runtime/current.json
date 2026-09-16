@@ -176,6 +176,28 @@
         "profile": "clangcl_i686_win32imports",
         "status": "verified_x86_candidate_build"
       }
+    },
+    {
+      "name": "WoWControlHub.dll",
+      "sha256": "f444a7c0c4769cc2f9546847fef54d41a0ccb79e823d132b73277e858571cf89",
+      "source_state": "normal_source",
+      "source_origin": "accepted_v1_binary_plus_v2_paging_runtime_health_candidate_source",
+      "source_path": "src/WoWControlHub/WoWControlHub_v2.c",
+      "source_sha256": "7a8c22a5ac0a28667080367d20c42a0933abbc6ba7d7c632c300757b023d19ca",
+      "source_size": 34532,
+      "binary_patch_audit": "artifacts/V69/runtime/CONTROLHUB_BINARY_PATCH.txt",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/V69/runtime/WoWControlHub.dll.xz",
+        "sha256": "f444a7c0c4769cc2f9546847fef54d41a0ccb79e823d132b73277e858571cf89",
+        "size": 49152
+      },
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "clangcl_i686_win32imports",
+        "status": "verified_x86_candidate_build"
+      },
+      "gui_toggle": "Insert"
     }
   ]
 }
