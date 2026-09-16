@@ -6,14 +6,14 @@ Canonical active runtime is defined by `runtime/current.json`. This document is 
 
 | Runtime module | Source state | Canonical editable / recovery location |
 | --- | --- | --- |
-| `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll` | BINARY-VERIFIED RECONSTRUCTION / exact binary-patch lineage | recovery + audit under `artifacts/PositionalSpoof/`; no direct active `source_path` yet |
+| `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll` | BINARY-VERIFIED RECONSTRUCTION / exact binary-patch lineage | `src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c` |
 | `WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll` | EXACT ORIGINAL SOURCE | `src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c` |
 | `WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll` | FUNCTIONALLY EQUIVALENT RECONSTRUCTION | `src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c` |
 | `PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll` | EXACT ORIGINAL SOURCE | `src/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c` |
 | `WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll` | FUNCTIONALLY EQUIVALENT RECONSTRUCTION + exact v0.13 binary-patch lineage | `src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c` |
 | `WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll` | FUNCTIONALLY EQUIVALENT RECONSTRUCTION + exact v0.9 binary-patch lineage | `src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c` |
 | `MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll` | NORMAL SOURCE | `src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c` |
-| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | restore metadata/tool points to `artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part*` |
+| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | `src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c` |
 
 ## AI routing rule
 

@@ -23,7 +23,8 @@
         "path": "artifacts/runtime_cache/deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b.dll.xz",
         "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
         "size": 45056
-      }
+      },
+      "source_path": "src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c"
     },
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
@@ -171,7 +172,8 @@
         "path": "artifacts/runtime_cache/d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5.dll.xz",
         "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
         "size": 31744
-      }
+      },
+      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c"
     }
   ]
 }
