@@ -2,7 +2,8 @@
   "schema_version": 1,
   "purpose": "Persistent source overrides for the aggregate TEST (work) updater candidate. These are experimental work-only binaries and do not change stable runtime/current.json identity.",
   "source_overrides": [
-    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll"
+    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
   ],
-  "note": "LockboxLab Modes4 experiment must remain in every TEST(work) aggregate candidate until accepted, replaced, or explicitly removed. Other active modules come from exact runtime/current.json binaries unless their canonical source changed in the current iteration."
+  "note": "Aggregate TEST(work) must keep the LockboxLab Modes4 experiment plus the ABI-enabled SpeedFloor companion required by the WoWControlHub V1 pilot until either experiment is accepted, replaced, or explicitly removed. Other active modules come from exact runtime/current.json binaries unless their canonical source changed in the current iteration."
 }
