@@ -1,0 +1,5 @@
+V8_10YD was derived from the verified V7 PE32 binary by a controlled data-only patch:
+- .rdata RVA 0x2000 / file offset 0x800: 20.0f 00 00 A0 41 -> 10.0f 00 00 20 41.
+- Embedded module-name string changed v7 -> v8 (same byte length).
+No code bytes, callsites, resolver wrapper logic, or PP Spell ID 921 handling were changed.
+At runtime the DLL still validates original EXE floor == 300.0f, writes 10.0f, and forces PP maxRange == 300.0f.
