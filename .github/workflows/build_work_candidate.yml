@@ -8,6 +8,7 @@ on:
       - 'src/StealthCDGuardian/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.c'
       - 'tools/build_stealthcdguardian.cmd'
       - 'tools/package_work_candidate.py'
+      - 'tools/recover_positional_from_v68.py'
       - '.github/workflows/build_work_candidate.yml'
       - 'runtime/current.json'
       - 'CURRENT.json'
@@ -25,8 +26,10 @@ jobs:
   build-package:
     runs-on: windows-2022
     steps:
-      - name: Checkout
+      - name: Checkout full recovery history
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Build StealthCDGuardian x86
         shell: cmd
