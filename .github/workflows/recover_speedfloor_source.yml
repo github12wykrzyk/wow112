@@ -1,0 +1,156 @@
+name: Recover SpeedFloor v0.4 source
+
+on:
+  push:
+    paths:
+      - '.github/workflows/recover_speedfloor_source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Recover exact source from retained archive experiments
+        shell: python
+        run: |
+          import base64, hashlib, io, lzma, os, pathlib, re, tarfile, zipfile
+
+          TARGET = 'WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.c'
+          WANT = '4766f7057415cc41458b33ba8e07221906c955b3abc602a53f818d914fc870a3'
+          OUT = pathlib.Path('recovery_out')
+          OUT.mkdir(exist_ok=True)
+          report = []
+
+          def natural_key(p):
+              return [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', p.name)]
+
+          def accept(data, origin):
+              got = hashlib.sha256(data).hexdigest()
+              report.append(f'CANDIDATE {origin} size={len(data)} sha256={got}')
+              if got == WANT:
+                  (OUT / TARGET).write_bytes(data)
+                  report.append(f'EXACT_MATCH {origin}')
+                  return True
+              return False
+
+          def search_container(blob, label):
+              # Direct XZ stream, if present.
+              if blob.startswith(b'\xfd7zXZ\x00'):
+                  try:
+                      dec = lzma.decompress(blob)
+                      report.append(f'XZ_OK {label} compressed={len(blob)} decompressed={len(dec)} magic={dec[:8].hex()}')
+                      blob = dec
+                  except Exception as e:
+                      report.append(f'XZ_FAIL {label}: {e!r}')
+                      return False
+
+              if zipfile.is_zipfile(io.BytesIO(blob)):
+                  with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                      report.append(f'ZIP_OK {label} members={len(z.namelist())}')
+                      for n in z.namelist():
+                          if pathlib.PurePosixPath(n).name == TARGET:
+                              if accept(z.read(n), f'{label}:{n}'):
+                                  return True
+                  return False
+
+              try:
+                  with tarfile.open(fileobj=io.BytesIO(blob), mode='r:*') as t:
+                      members = t.getmembers()
+                      report.append(f'TAR_OK {label} members={len(members)}')
+                      for m in members:
+                          if m.isfile() and pathlib.PurePosixPath(m.name).name == TARGET:
+                              f = t.extractfile(m)
+                              if f and accept(f.read(), f'{label}:{m.name}'):
+                                  return True
+                      return False
+              except Exception:
+                  pass
+
+              # Last resort: nested ZIP after a textual/prefix wrapper.
+              off = blob.find(b'PK\x03\x04')
+              if off > 0 and zipfile.is_zipfile(io.BytesIO(blob[off:])):
+                  return search_container(blob[off:], label + f':embedded_zip@{off}')
+
+              report.append(f'UNKNOWN_CONTAINER {label} size={len(blob)} magic={blob[:16].hex()}')
+              return False
+
+          # 1. Search ordinary tracked files/history first.
+          for p in pathlib.Path('.').rglob(TARGET):
+              if '.git' not in p.parts and accept(p.read_bytes(), f'repo:{p}'):
+                  break
+          else:
+              # 2. Recover deprecated full-bundle experiments retained in repo.
+              dirs = [
+                  pathlib.Path('archives/V68_FULL_NO_EXE_BUNDLE_B64'),
+                  pathlib.Path('archives/V68_FULL_NOEXE'),
+                  pathlib.Path('artifacts/V68/bundle'),
+              ]
+              found = False
+              for d in dirs:
+                  if not d.is_dir():
+                      continue
+                  parts = sorted([p for p in d.iterdir() if p.is_file() and ('part' in p.name)], key=natural_key)
+                  report.append(f'PARTSET {d} count={len(parts)} names={",".join(p.name for p in parts)}')
+                  joined_text = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+                  try:
+                      blob = base64.b64decode(joined_text, validate=False)
+                      report.append(f'B64_OK {d} chars={len(joined_text)} bytes={len(blob)}')
+                  except Exception as e:
+                      report.append(f'B64_FAIL {d}: {e!r}')
+                      continue
+                  if search_container(blob, str(d)):
+                      found = True
+                      break
+
+              # 3. Search every historical revision's tree for the exact path/name.
+              if not found:
+                  import subprocess
+                  revs = subprocess.check_output(['git','rev-list','--all'], text=True).splitlines()
+                  report.append(f'HISTORY_REVS {len(revs)}')
+                  seen = set()
+                  for rev in revs:
+                      try:
+                          names = subprocess.check_output(['git','ls-tree','-r','--name-only',rev], text=True, stderr=subprocess.DEVNULL).splitlines()
+                      except Exception:
+                          continue
+                      for n in names:
+                          if pathlib.PurePosixPath(n).name != TARGET:
+                              continue
+                          key=(rev,n)
+                          if key in seen: continue
+                          seen.add(key)
+                          try:
+                              data = subprocess.check_output(['git','show',f'{rev}:{n}'], stderr=subprocess.DEVNULL)
+                          except Exception:
+                              continue
+                          if accept(data, f'git:{rev}:{n}'):
+                              found=True
+                              break
+                      if found: break
+
+          rp = OUT / 'RECOVERY_REPORT.txt'
+          rp.write_text('\n'.join(report) + '\n', encoding='utf-8')
+          print(rp.read_text())
+
+          target = OUT / TARGET
+          if not target.exists():
+              raise SystemExit('Exact source not recovered from retained repository material')
+          got = hashlib.sha256(target.read_bytes()).hexdigest()
+          if got != WANT:
+              raise SystemExit(f'hash mismatch: {got}')
+          print(f'VERIFIED_EXACT_SOURCE sha256={got} size={target.stat().st_size}')
+
+      - name: Upload recovered exact source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpeedFloor-v0.4-source-recovery
+          path: recovery_out/
+          if-no-files-found: warn
