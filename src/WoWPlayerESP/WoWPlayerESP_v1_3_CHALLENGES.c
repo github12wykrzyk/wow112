@@ -13,6 +13,8 @@
     response: CHAT_MSG_ADDON prefix RESPONSE_PLAYER_CHALLENGES, body <guid>:<mask>
 
   FrameScript addresses are exact-build 5875 addresses.
+  Challenge Lua is deliberately world-state guarded because GlueXML/login and
+  BG/world transitions can temporarily expose a different Lua global set.
 */
 
 #define DllMain W112_PlayerESP_Base_DllMain
