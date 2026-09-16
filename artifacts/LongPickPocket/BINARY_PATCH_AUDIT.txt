@@ -1,0 +1,104 @@
+WoWLongPickPocket v1.0 - binary reverse / patch lineage audit
+Target: World of Warcraft 1.12.1 build 5875, Windows x86
+
+FINAL DLL
+  Name:   WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll
+  Size:   14336 bytes
+  SHA256: dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2
+  PE:     PE32 / i386, ImageBase 0x10000000, no normal import/export table
+
+EXACT PRESERVED ANCESTORS
+  v0.8 WoWLongPickPocket_v0_8_FacingOnly.dll
+       SHA256 aa7db3a6191c4675d8dbdacd24a70c558d516dd67573e7e7231381553c11312c
+       Size 14336
+  v0.9 WoWLongPickPocket_v0_9_HARDLOS025_FacingOnly.dll
+       SHA256 764605590462e4161b4c4badb37db990a33a8ae0037e730e03db78233d2c3717
+       Size 14336
+
+EXACT v0.8 -> v0.9 HARDLOS025 PATCH
+  Total changed bytes: 5
+  file 0x2EBE..0x2EBF: 40 40 -> 80 3E
+    This changes the float at RVA 0x40BC from 3.00f to 0.25f.
+  file 0x30E2:            33 -> 30
+  file 0x30E4..0x30E5:   30 30 -> 32 35
+    These text bytes change diagnostic spoof_yd=3.00 -> spoof_yd=0.25.
+  No other bytes differ.
+
+EXACT v0.9 -> v1.0 ALLRANGE / 360FACING PATCH
+  Total changed bytes: 6
+  file offset: 0x1497..0x149C
+  VA:          0x10002097..0x1000209C
+  v0.9:        0F 83 CF 01 00 00  (JAE 0x1000226C)
+  v1.0:        90 90 90 90 90 90  (NOP x6)
+
+  Immediately before this branch the code has computed the true 3D player to
+  target distance and compares it against 4.5f at RVA 0x40B4. In v0.9,
+  distance <= 4.5 yd branches to the PP_NORMAL_RANGE fallback. v1.0 removes
+  exactly that branch. The following 0.1f degenerate-distance safety gate is
+  untouched. The 0.25f HARDLOS spoof distance is untouched.
+
+  Semantics:
+    v0.9: close targets use the native/no-spoof path; farther targets use
+          the spoof/facing path.
+    v1.0: valid close and far targets both use the spoof/facing path.
+
+  This is the exact machine-code lineage behind the final filename tokens
+  ALLRANGE and 360FACING.
+
+REPRODUCER
+  artifacts/LongPickPocket/patch_v09_FacingOnly_to_v10_ALLRANGE_360FACING.py
+  Patcher SHA256 e561255c882397c2659860a1e5b32310a4d4a03badd4f3e0ae38d54f0cc01a99
+  Applying it to exact v0.9 yields the exact final v1.0 SHA256 above.
+  Local cmp against the user-supplied final v1.0: BYTE IDENTICAL.
+
+RECONSTRUCTED RUNTIME SEMANTICS
+  Hooks / callsites recovered from v1.0:
+    ClientServices::Send entry 0x005AB630
+      original entry call target 0x005AB490; continuation 0x005AB635
+    movement callsite 0x00600ACA
+    spell-fail callsite 0x006E73AC
+    loot response entry 0x005EB900; original continuation 0x005EB906
+    movement heartbeat/update function 0x00600A10, event argument 0xEE
+    object manager pointer 0x00B41414
+
+  Object layout:
+    manager first object +0xAC; player GUID +0xC0/+0xC4
+    object descriptor +0x08; GUID +0x30/+0x34; next +0x3C
+    X/Y/Z/O +0x9B8/+0x9BC/+0x9C0/+0x9C4
+    descriptor coinage +0x1260
+
+  Pick Pocket send path:
+    CMSG_CAST_SPELL opcode 0x12E, spell id 0x399 / 921
+    packed target GUID parsed from packet; WoW fallback GUID globals retained
+    target and local player resolved through object manager
+    spoof XYZ = target + (player-target) * (0.25 / true_3D_distance)
+    spoof facing = atan2(targetY-spoofY, targetX-spoofX), normalized [0,2pi)
+    local XYZ/O is temporarily spoofed for two synchronous 0x600A10 pulses,
+    then immediately restored in memory
+    while transaction is active, outgoing movement packets have XYZ/O rewritten
+
+  Restore / transaction behavior recovered:
+    active timeout nominal 1800ms
+    post-loot hold timeout nominal 4000ms
+    spell failure for Pick Pocket forces restore
+    other spell cast while PP transaction active forces restore
+    loot response establishes hold state
+    outgoing opcode 0x15E is captured for money retry
+    outgoing opcode 0x15F may be held until wallet update
+    wallet snapshot is descriptor +0x1260
+    money retry interval 120ms, maximum 10 retries
+    held release packet is replayed after confirmation/giveup as appropriate
+
+SOURCE RECONSTRUCTION
+  Path: src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c
+  Classification: FUNCTIONALLY EQUIVALENT RECONSTRUCTION
+  It is not claimed to be the original historical source and is not claimed
+  to compile byte-for-byte to the historical DLL.
+
+LOCAL BUILD CHECK
+  clang -target i686-pc-windows-msvc -std=c11 -O2 -msse2 \
+        -fno-stack-protector -ffreestanding -fms-extensions -fno-builtin -c
+  lld-link /dll /machine:x86 /nodefaultlib /entry:DllMain@12 \
+           /subsystem:windows /opt:ref /opt:icf /dynamicbase:no \
+           /nxcompat:no /safeseh:no
+  Result: valid PE32 i386 DLL, no normal PE import table.
