@@ -77,6 +77,28 @@ def tracked_files():
         return []
 
 
+def verify_movementcore_archive():
+    tool = ROOT / "tools" / "restore_movementcore_source.py"
+    if not tool.is_file():
+        error("missing MovementCore restore verifier: tools/restore_movementcore_source.py")
+        return
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(tool), "--verify-only"],
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        error("MovementCore source verification could not run: %s" % exc)
+        return
+    print(proc.stdout.rstrip())
+    if proc.returncode != 0:
+        error("canonical V68 MovementCore source archive failed verification")
+
+
 def main():
     current = load_json("CURRENT.json")
     runtime = load_json("runtime/current.json")
@@ -152,8 +174,11 @@ def main():
     restore_doc = mc.get("source_restore_doc")
     if restore_doc:
         require_path(restore_doc)
+
+    verify_movementcore_archive()
+
     if source_state != "normal_source":
-        warning("MovementCore canonical source is not yet a normal source file (state=%s)" % source_state)
+        warning("MovementCore canonical source is verified but not yet committed as a normal .c file (state=%s)" % source_state)
 
     legacy_dir = mc.get("legacy_partial_source_dir")
     if legacy_dir and (ROOT / legacy_dir).is_dir():
