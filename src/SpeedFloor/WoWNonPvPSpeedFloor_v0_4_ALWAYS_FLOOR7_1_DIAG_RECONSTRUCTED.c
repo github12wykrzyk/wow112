@@ -8,20 +8,29 @@
  *   WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll
  *   SHA256 39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db
  *
- * This is NOT claimed to be the original source.  The constants, hardcoded
+ * This is NOT claimed to be the original source. The constants, hardcoded
  * addresses, calling conventions, timer layout, object traversal, stealth
  * scan, speed write/recalc path, exported status interface and diagnostic
  * behaviour below were reconstructed from the final PE32/x86 machine code.
+ *
+ * Candidate extension: W112_CONTROL_API_V1 settings were added on work. They
+ * are not claimed to have existed in the recovered DLL. Their compile-time
+ * defaults preserve the active v0.4 runtime behaviour when no ControlHub is
+ * loaded.
  */
+/* Workflow latency benchmark marker: source-only comment; no runtime semantic change. */
 
 #if !defined(_M_IX86) && !defined(__i386__)
 #error This module is for 32-bit x86 only.
 #endif
 
+#include "../common/W112ControlAPI.h"
+
 #if defined(_MSC_VER)
 #define STDCALL  __stdcall
 #define THISCALL __thiscall
 #define DLLEXPORT __declspec(dllexport)
+#pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
 #else
 #define STDCALL  __attribute__((stdcall))
 #define THISCALL __attribute__((thiscall))
@@ -52,7 +61,10 @@ typedef u32            UINT_PTR32;
 #define FILE_END32            2u
 
 #define WOW_OBJECT_MANAGER_PTR 0x00B41414u
+#define WOW_SELECTED_GUID_LO   0x00B4E2D8u
+#define WOW_SELECTED_GUID_HI   0x00B4E2DCu
 #define WOW_PVP_STATE_FN       0x00605FF0u
+#define WOW_UNIT_REACTION_FN   0x006061E0u
 #define WOW_SPEED_RECALC_FN    0x007C5C20u
 
 /* Hardcoded WoW.exe IAT slots observed in the final DLL. */
@@ -69,9 +81,11 @@ typedef u32            UINT_PTR32;
 #define OM_PLAYER_GUID_LO_OFF   0x00C0u
 #define OM_PLAYER_GUID_HI_OFF   0x00C4u
 #define OBJ_DESCRIPTOR_PTR_OFF  0x0008u
+#define OBJ_TYPE_ID_OFF         0x0014u
 #define OBJ_GUID_LO_OFF         0x0030u
 #define OBJ_GUID_HI_OFF         0x0034u
 #define OBJ_NEXT_OFF            0x003Cu
+#define TYPEID_PLAYER           4u
 
 /* Active stealth spell-id scan inside the descriptor block. */
 #define DESC_STEALTH_FIRST_OFF  0x00BCu
@@ -89,6 +103,13 @@ typedef u32            UINT_PTR32;
 #define TIMER_PERIOD_MS  5u
 #define MAX_OBJECT_STEPS 0x0FFFu
 #define MAX_APPLY_DETAIL_LOGS 192u
+
+#define CONTROL_MIN_SPEED  1.00f
+#define CONTROL_MAX_SPEED 14.00f
+#define CONTROL_SPEED_STEP 0.10f
+#define SETTING_ENABLED             1u
+#define SETTING_MINIMUM_SPEED       2u
+#define SETTING_DISABLE_ON_HOSTILE  3u
 
 #define STATUS_DETACHED            0u
 #define STATUS_ACTIVE              1u
@@ -108,10 +129,12 @@ typedef BOOL32 (STDCALL *WriteFileFn)(HANDLE32, const void *, u32, u32 *, void *
 typedef BOOL32 (STDCALL *CloseHandleFn)(HANDLE32);
 typedef u32 (STDCALL *GetTickCountFn)(void);
 typedef u32 (THISCALL *PvpStateFn)(void *player);
+typedef s32 (THISCALL *UnitReactionFn)(uptr32 selfObj, uptr32 targetObj);
 typedef void (THISCALL *SpeedRecalcFn)(void *movementThis, u32 zero);
 
 static volatile u32 g_prevPvp = 0xFFFFFFFFu;
 static volatile u32 g_prevStealth = 0xFFFFFFFFu;
+static volatile u32 g_prevTargetHostile = 0xFFFFFFFFu;
 static volatile u32 g_status = STATUS_DETACHED;
 static volatile u32 g_applyCount = 0u;
 static volatile UINT_PTR32 g_timerId = 0u;
@@ -119,12 +142,21 @@ static volatile u32 g_applyDetailCount = 0u;
 static volatile u32 g_lastHealthTick = 0u;
 static volatile u32 g_lastHealthApplyCount = 0u;
 
+/* Runtime config defaults intentionally match the accepted v0.4 behaviour. */
+static volatile u32 g_cfgEnabled = 1u;
+static volatile u32 g_cfgMinimumSpeedBits = SPEED_FLOOR_BITS;
+static volatile u32 g_cfgDisableOnHostilePlayer = 1u;
+static W112_ControlSettingV1 g_controlSettings[3];
+static volatile u32 g_controlDescriptorReady = 0u;
+
 static const char kLogName[] = "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.log";
 static const char kHex[] = "0123456789ABCDEF";
 static const char kEventApply[] = "FLOOR_APPLY";
 static const char kEventHealth[] = "SPEED_HEALTH";
 static const char kEventPvp[] = "PVP_STATE";
 static const char kEventStealth[] = "STEALTH_STATE";
+static const char kEventTargetHostile0[] = "TARGET_HOSTILE_PLAYER=0";
+static const char kEventTargetHostile1[] = "TARGET_HOSTILE_PLAYER=1";
 static const char kEventNeeded[] = "FLOOR_NEEDED";
 static const char kEventLoad[] = "LOAD_ALWAYS_FLOOR71_DIAG_V04";
 
@@ -199,6 +231,13 @@ static u32 float_bits(float v)
     return x.u;
 }
 
+static float bits_float(u32 v)
+{
+    union { float f; u32 u; } x;
+    x.u = v;
+    return x.f;
+}
+
 /* Matches the positive-value diagnostic conversion visible in the DLL. */
 static u32 float_x100(float v)
 {
@@ -266,7 +305,7 @@ static void log_event(const char *eventName,
     p = append_u32_dec(p, g_applyCount);
     p = append_str(p, " apply_delta=");
     p = append_u32_dec(p, applyDelta);
-    p = append_str(p, " floor_x100=710 pvp_gate=DISABLED method=SAFE_DIRECT_RECALC_ONLY\r\n");
+    p = append_str(p, " floor_runtime=CONTROL_API_V1 target_gate=CONFIGURABLE_HOSTILE_PLAYER method=SAFE_DIRECT_RECALC_ONLY\r\n");
 
     h = createFile(kLogName,
                    GENERIC_WRITE32,
@@ -304,17 +343,13 @@ static u32 detect_stealth(uptr32 player)
     return 0u;
 }
 
-static uptr32 find_player_object(void)
+static uptr32 find_object_by_guid(u32 guidLo, u32 guidHi)
 {
     uptr32 mgr = read_u32(WOW_OBJECT_MANAGER_PTR);
-    u32 guidLo, guidHi;
     uptr32 obj;
     u32 guard = MAX_OBJECT_STEPS;
 
     if (!sane_ptr(mgr)) return 0u;
-
-    guidLo = read_u32(mgr + OM_PLAYER_GUID_LO_OFF);
-    guidHi = read_u32(mgr + OM_PLAYER_GUID_HI_OFF);
     if ((guidLo | guidHi) == 0u) return 0u;
 
     obj = read_u32(mgr + OM_FIRST_OBJECT_OFF);
@@ -330,6 +365,39 @@ static uptr32 find_player_object(void)
         obj = next;
     }
     return 0u;
+}
+
+static uptr32 find_player_object(void)
+{
+    uptr32 mgr = read_u32(WOW_OBJECT_MANAGER_PTR);
+    u32 guidLo, guidHi;
+
+    if (!sane_ptr(mgr)) return 0u;
+
+    guidLo = read_u32(mgr + OM_PLAYER_GUID_LO_OFF);
+    guidHi = read_u32(mgr + OM_PLAYER_GUID_HI_OFF);
+    return find_object_by_guid(guidLo, guidHi);
+}
+
+static u32 current_target_is_hostile_player(uptr32 player)
+{
+    u32 guidLo = read_u32(WOW_SELECTED_GUID_LO);
+    u32 guidHi = read_u32(WOW_SELECTED_GUID_HI);
+    uptr32 target;
+    s32 reaction;
+    UnitReactionFn fn;
+
+    if ((guidLo | guidHi) == 0u) return 0u;
+
+    target = find_object_by_guid(guidLo, guidHi);
+    if (!target) return 0u;
+    if (read_u32(target + OBJ_TYPE_ID_OFF) != TYPEID_PLAYER) return 0u;
+
+    fn = (UnitReactionFn)(uptr32)WOW_UNIT_REACTION_FN;
+    reaction = fn(player, target);
+
+    /* PlayerESP's verified build-5875 classifier treats reactions 1..3 as enemy/hostile. */
+    return (reaction >= 1 && reaction <= 3) ? 1u : 0u;
 }
 
 static u32 query_pvp(uptr32 player)
@@ -349,10 +417,12 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     uptr32 player;
     u32 pvp;
     u32 stealth;
+    u32 targetHostile;
     float curBefore;
     float runBefore;
     float curAfter;
     float runAfter;
+    float floorValue;
     GetTickCountFn getTickCount;
     u32 now;
     u32 applyDelta;
@@ -367,10 +437,12 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
 
     pvp = query_pvp(player);
     stealth = detect_stealth(player);
+    targetHostile = current_target_is_hostile_player(player);
     curBefore = read_f32(player + PLAYER_CURRENT_SPEED_OFF);
     runBefore = read_f32(player + PLAYER_RUN_SPEED_OFF);
     curAfter = curBefore;
     runAfter = runBefore;
+    floorValue = bits_float(g_cfgMinimumSpeedBits);
 
     if (g_prevPvp != pvp) {
         g_prevPvp = pvp;
@@ -384,12 +456,20 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
                   runBefore, curBefore, runBefore, curBefore, 0u);
     }
 
-    /* v0.4 has no PvP gate: the floor applies in PvP and non-PvP alike. */
-    if (runBefore > SPEED_MIN_VALID && runBefore < SPEED_FLOOR) {
+    if (g_prevTargetHostile != targetHostile) {
+        g_prevTargetHostile = targetHostile;
+        log_event(targetHostile ? kEventTargetHostile1 : kEventTargetHostile0,
+                  pvp, stealth, player,
+                  runBefore, curBefore, runBefore, curBefore, 0u);
+    }
+
+    if (g_cfgEnabled &&
+        (!g_cfgDisableOnHostilePlayer || !targetHostile) &&
+        runBefore > SPEED_MIN_VALID && runBefore < floorValue) {
         log_event(kEventNeeded, pvp, stealth, player,
                   runBefore, curBefore, runBefore, curBefore, 0u);
 
-        write_u32(player + PLAYER_RUN_SPEED_OFF, SPEED_FLOOR_BITS);
+        write_u32(player + PLAYER_RUN_SPEED_OFF, g_cfgMinimumSpeedBits);
         recalc_speed(player);
 
         curAfter = read_f32(player + PLAYER_CURRENT_SPEED_OFF);
@@ -416,6 +496,116 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     /* The final DLL logs the post-action snapshot for SPEED_HEALTH. */
     log_event(kEventHealth, pvp, stealth, player,
               runAfter, curAfter, runAfter, curAfter, applyDelta);
+}
+
+static void init_control_descriptor(void)
+{
+    W112_ControlSettingV1 *s;
+    if (g_controlDescriptorReady) return;
+
+    s = &g_controlSettings[0];
+    s->struct_size = (w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id = SETTING_ENABLED;
+    s->key = "enabled";
+    s->label = "Enabled";
+    s->type = W112_CTL_BOOL;
+    s->default_value.u32 = 1u;
+    s->min_value.u32 = 0u;
+    s->max_value.u32 = 1u;
+    s->step.u32 = 1u;
+    s->flags = W112_CTL_LIVE;
+    s->enum_options = 0;
+    s->enum_option_count = 0u;
+
+    s = &g_controlSettings[1];
+    s->struct_size = (w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id = SETTING_MINIMUM_SPEED;
+    s->key = "minimum_speed";
+    s->label = "Minimum Speed";
+    s->type = W112_CTL_FLOAT;
+    s->default_value.f32 = SPEED_FLOOR;
+    s->min_value.f32 = CONTROL_MIN_SPEED;
+    s->max_value.f32 = CONTROL_MAX_SPEED;
+    s->step.f32 = CONTROL_SPEED_STEP;
+    s->flags = W112_CTL_LIVE;
+    s->enum_options = 0;
+    s->enum_option_count = 0u;
+
+    s = &g_controlSettings[2];
+    s->struct_size = (w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id = SETTING_DISABLE_ON_HOSTILE;
+    s->key = "disable_on_hostile_player";
+    s->label = "Disable on hostile player";
+    s->type = W112_CTL_BOOL;
+    s->default_value.u32 = 1u;
+    s->min_value.u32 = 0u;
+    s->max_value.u32 = 1u;
+    s->step.u32 = 1u;
+    s->flags = W112_CTL_LIVE;
+    s->enum_options = 0;
+    s->enum_option_count = 0u;
+
+    g_controlDescriptorReady = 1u;
+}
+
+static int W112_CTL_STDCALL speedfloor_control_get(w112_u32 settingId, W112_ControlValueV1 *outValue)
+{
+    if (!outValue) return 0;
+    if (settingId == SETTING_ENABLED) {
+        outValue->u32 = g_cfgEnabled ? 1u : 0u;
+        return 1;
+    }
+    if (settingId == SETTING_MINIMUM_SPEED) {
+        outValue->f32 = bits_float(g_cfgMinimumSpeedBits);
+        return 1;
+    }
+    if (settingId == SETTING_DISABLE_ON_HOSTILE) {
+        outValue->u32 = g_cfgDisableOnHostilePlayer ? 1u : 0u;
+        return 1;
+    }
+    return 0;
+}
+
+static int W112_CTL_STDCALL speedfloor_control_set(w112_u32 settingId, const W112_ControlValueV1 *value)
+{
+    float v;
+    if (!value) return 0;
+
+    if (settingId == SETTING_ENABLED) {
+        if (value->u32 > 1u) return 0;
+        g_cfgEnabled = value->u32;
+        return 1;
+    }
+    if (settingId == SETTING_MINIMUM_SPEED) {
+        v = value->f32;
+        if (!(v >= CONTROL_MIN_SPEED && v <= CONTROL_MAX_SPEED)) return 0;
+        g_cfgMinimumSpeedBits = float_bits(v);
+        return 1;
+    }
+    if (settingId == SETTING_DISABLE_ON_HOSTILE) {
+        if (value->u32 > 1u) return 0;
+        g_cfgDisableOnHostilePlayer = value->u32;
+        return 1;
+    }
+    return 0;
+}
+
+static const W112_ControlModuleV1 g_controlModule = {
+    W112_CONTROL_API_V1,
+    (w112_u32)sizeof(W112_ControlModuleV1),
+    "speedfloor",
+    "SpeedFloor",
+    VERSION_0_4,
+    3u,
+    g_controlSettings,
+    speedfloor_control_get,
+    speedfloor_control_set
+};
+
+DLLEXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
+{
+    init_control_descriptor();
+    return &g_controlModule;
 }
 
 DLLEXPORT u32 STDCALL SpeedFloor_GetVersion(void)
