@@ -66,12 +66,20 @@ jobs:
           --build-metadata dist/controlhub_build.json
           --output build/WoWControlHub.dll
 
-      - name: Upload runnable ZIP and machine-readable verdict
+      - name: Write human-readable test card
+        shell: pwsh
+        run: >-
+          python tools/write_candidate_test_card.py
+          --summary dist/candidate_summary.json
+          --output dist/TEST_THIS.txt
+
+      - name: Upload runnable ZIP and candidate diagnostics
         uses: actions/upload-artifact@v4
         with:
           name: WoW112-WORK-CANDIDATE-${{ github.sha }}
           path: |
             dist/WoW112_WORK_CANDIDATE.zip
+            dist/TEST_THIS.txt
             dist/candidate_metadata.json
             dist/candidate_summary.json
             dist/controlhub_build.json
