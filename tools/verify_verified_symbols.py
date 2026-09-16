@@ -40,7 +40,7 @@ def verify_provenance(owner, rows, active_sources):
             error(f"{owner}: provenance file missing: {rel}")
             continue
         if rel.startswith("src/") and rel not in active_sources:
-            error(f"{owner}: source provenance is not an active canonical source_path: {rel}")
+            error(f"{owner}: source provenance is not an active canonical source_path/include: {rel}")
         if not isinstance(evidence, list) or not evidence:
             error(f"{owner}: provenance[{i}] missing evidence snippets")
             continue
@@ -50,6 +50,34 @@ def verify_provenance(owner, rows, active_sources):
                 error(f"{owner}: empty/non-string evidence snippet in {rel}")
             elif snippet not in text:
                 error(f"{owner}: evidence not found in {rel}: {snippet!r}")
+
+
+def collect_active_sources(runtime):
+    active = set()
+    for item in runtime.get("active_dlls", []):
+        if not isinstance(item, dict):
+            continue
+        source_path = item.get("source_path")
+        if source_path:
+            active.add(source_path)
+        includes = item.get("source_includes", [])
+        if includes is None:
+            includes = []
+        if not isinstance(includes, list):
+            error(f"{item.get('name', '<unnamed>')}: source_includes must be a list")
+            continue
+        for rel in includes:
+            if not isinstance(rel, str) or not rel:
+                error(f"{item.get('name', '<unnamed>')}: source_includes contains an invalid path")
+                continue
+            if not rel.replace('\\', '/').startswith("src/"):
+                error(f"{item.get('name', '<unnamed>')}: source_includes must live under src/: {rel}")
+                continue
+            if not (ROOT / rel).is_file():
+                error(f"{item.get('name', '<unnamed>')}: source include missing: {rel}")
+                continue
+            active.add(rel)
+    return active
 
 
 def main():
@@ -67,11 +95,7 @@ def main():
     ):
         error("registry target must be WoW 1.12.1 build 5875 Windows x86")
 
-    active_sources = {
-        item.get("source_path")
-        for item in runtime.get("active_dlls", [])
-        if isinstance(item, dict) and item.get("source_path")
-    }
+    active_sources = collect_active_sources(runtime)
 
     seen = set()
     symbols = registry.get("symbols")
