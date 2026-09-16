@@ -13,7 +13,7 @@ Canonical active runtime is defined by `runtime/current.json`. This document is 
 | `WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll` | FUNCTIONALLY EQUIVALENT RECONSTRUCTION + exact v0.13 binary-patch lineage | `src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c` |
 | `WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll` | FUNCTIONALLY EQUIVALENT RECONSTRUCTION + exact v0.9 binary-patch lineage | `src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c` |
 | `MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll` | NORMAL SOURCE | `src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c` |
-| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | `src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c` |
+| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, DIRECT + LOSSLESS ARCHIVE BACKUP | `src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c` |
 
 ## AI routing rule
 

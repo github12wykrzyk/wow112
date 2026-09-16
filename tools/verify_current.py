@@ -111,6 +111,10 @@ def verify_ai_contract(index, current):
         error("AI_INDEX runtime pointer does not match CURRENT.json")
     if canonical.get("source_root") != current.get("canonical_source_root"):
         error("AI_INDEX source_root does not match CURRENT.json")
+    if canonical.get("active_builder") != current.get("active_builder"):
+        error("AI_INDEX active_builder does not match CURRENT.json")
+    if current.get("active_builder"):
+        require_file(current.get("active_builder"))
     for rel in index.get("read_order", []):
         require_file(rel)
     for key in ("source_inventory", "project_rules"):
@@ -199,6 +203,28 @@ def verify_source_item(item):
     prefix = item.get("source_archive_prefix")
     if prefix and not list(ROOT.glob(prefix + "*")):
         error("source archive parts missing: %s -> %s*" % (name, prefix))
+    recipe = item.get("build_recipe")
+    if recipe is not None:
+        if not isinstance(recipe, dict):
+            error("invalid build_recipe object: %s" % name)
+        else:
+            tool = recipe.get("tool")
+            profile = recipe.get("profile")
+            allowed_profiles = {
+                "msvc_x86_crtless",
+                "clangcl_i686_crtless",
+                "clangcl_i686_win32imports",
+            }
+            if not tool:
+                error("build_recipe missing tool: %s" % name)
+            elif not (ROOT / tool).is_file():
+                error("build_recipe tool missing: %s -> %s" % (name, tool))
+            if profile not in allowed_profiles:
+                error("unsupported build_recipe profile: %s -> %r" % (name, profile))
+            if recipe.get("status") != "verified_x86_candidate_build":
+                warning("build_recipe is not marked verified: %s" % name)
+    elif source_path:
+        warning("direct source has no verified build_recipe: %s" % name)
 
 
 def verify_runtime(current, runtime, sha_manifest):
@@ -240,7 +266,7 @@ def verify_current_metadata(current):
     required = (
         "project", "wow_version", "wow_build", "architecture", "stable_baseline", "status",
         "working_branch", "stable_branch", "baseline_dir", "active_dll_list", "runtime_manifest",
-        "sha256_manifest", "current_version_doc", "canonical_source_root", "ai_entrypoint", "ai_index", "exe",
+        "sha256_manifest", "current_version_doc", "canonical_source_root", "ai_entrypoint", "ai_index", "active_builder", "exe",
     )
     for key in required:
         if current.get(key) in (None, ""):

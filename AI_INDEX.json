@@ -28,7 +28,8 @@
     "manifest_root": "manifests",
     "project_rules": "PROJECT_INSTRUCTIONS.md",
     "runtime_binary_cache": "artifacts/runtime_cache",
-    "runtime_packager": "tools/package_current.py"
+    "runtime_packager": "tools/package_current.py",
+    "active_builder": "tools/build_active_module.py"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
@@ -36,7 +37,9 @@
     "status": "python tools/ai_status.py",
     "status_json": "python tools/ai_status.py --json",
     "runtime_verify": "python tools/verify_runtime_artifacts.py",
-    "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json"
+    "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json",
+    "build_active_list": "python tools/build_active_module.py --list",
+    "build_active_one": "python tools/build_active_module.py --name <runtime-dll-name>"
   },
   "directories": {
     "src": "canonical editable source and source evidence grouped by module",

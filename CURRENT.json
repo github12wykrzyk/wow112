@@ -36,5 +36,6 @@
     "source_restore_doc": "artifacts/V68/source/README_RESTORE.md",
     "source_parts_dir": "artifacts/V68/source",
     "legacy_partial_source_dir": "source/V20_SOURCE_PARTS"
-  }
+  },
+  "active_builder": "tools/build_active_module.py"
 }

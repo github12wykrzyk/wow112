@@ -24,7 +24,12 @@
         "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
         "size": 45056
       },
-      "source_path": "src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c"
+      "source_path": "src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c",
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "clangcl_i686_crtless",
+        "status": "verified_x86_candidate_build"
+      }
     },
     {
       "name": "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
@@ -160,7 +165,7 @@
     {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
       "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
-      "source_state": "exact_source_archived",
+      "source_state": "normal_source",
       "source_origin": "original_source",
       "source_sha256": "c7b64f2a979b533a360caca9033d9e92d61c88f820ecf495ca80851b8a8b9a63",
       "source_size": 81294,
@@ -173,7 +178,12 @@
         "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
         "size": 31744
       },
-      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c"
+      "source_path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "clangcl_i686_win32imports",
+        "status": "verified_x86_candidate_build"
+      }
     }
   ]
 }

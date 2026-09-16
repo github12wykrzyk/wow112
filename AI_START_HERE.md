@@ -76,6 +76,8 @@ Always follow `runtime/current.json -> active_dlls[*].source_path` when it exist
 
 For modules whose exact source is still stored only as a lossless recovery archive, follow the `source_restore_doc` / `source_archive` / `source_archive_prefix` metadata instead of guessing.
 
+For active modules with `build_recipe`, build through `python tools/build_active_module.py --name <runtime-dll-name>`; the tool reads the verified compiler/link profile from `runtime/current.json` instead of rediscovering flags.
+
 ## Definition of done for an AI iteration
 
 A candidate is ready for testing when:
