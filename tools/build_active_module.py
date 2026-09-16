@@ -110,7 +110,7 @@ def run_build(vcvars, profile, source, obj, output):
     print(f"BUILD_PROFILE={profile}")
     print(f"SOURCE={source.relative_to(ROOT)}")
     print(f"OUTPUT={output}")
-    proc = subprocess.run(["cmd.exe", "/d", "/s", "/c", command], cwd=str(ROOT))
+    proc = subprocess.run(command, cwd=str(ROOT), shell=True)
     if proc.returncode:
         die(f"build failed with exit code {proc.returncode}")
 

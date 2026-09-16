@@ -255,9 +255,9 @@ static void __stdcall Tick(HWND hwnd,UINT msg,UINT_PTR id,DWORD now)
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetVersion(void){return 0x00020000u;}
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetStatus(void){return g_status;}
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetHookHits(void){return g_hookHits;}
-__declspec(dlexport) DWORD __stdcall StealthCDGuardian_GetHookLost(void){return g_hookLost;}
-__declspec(dlexport) DWORD __stdcall StealthCDGuardian_GetHookRepairs(void){return g_hookRepairs;}
-__declspec(dlexport) DWORD __stdcall StealthCDGuardian_GetForeignChains(void){return g_foreignChains;}
+__declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetHookLost(void){return g_hookLost;}
+__declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetHookRepairs(void){return g_hookRepairs;}
+__declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetForeignChains(void){return g_foreignChains;}
 
 BOOL __stdcall DllMain(HINSTANCE h,DWORD reason,LPVOID reserved)
 {
