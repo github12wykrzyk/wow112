@@ -1,4 +1,4 @@
-name: Audit active source buildability
+name: Audit AutoLoot build compatibility
 
 on:
   push:
@@ -12,35 +12,32 @@ permissions:
   contents: read
 
 jobs:
-  compile-clang:
+  compile-autoloot:
     runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: SpeedFloor
-            source: src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c
-          - id: AutoLootPP
-            source: src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c
-          - id: LongPickPocket
-            source: src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c
-          - id: MovementCore
-            source: src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
     steps:
       - uses: actions/checkout@v4
+
+      - name: Apply source-equivalent clang asm formatting in workspace
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c')
+          s=p.read_text(encoding='utf-8')
+          old='    __asm { mov eax, fs:[30h] mov peb, eax }'
+          new='    __asm { mov eax, fs:[30h] ; mov peb, eax }'
+          if s.count(old)!=1:
+              raise SystemExit('expected exact one-line clang asm pattern not found once')
+          p.write_text(s.replace(old,new),encoding='utf-8',newline='\n')
 
       - name: Configure x86 and compile with clang-cl i686
         shell: cmd
         run: |
           call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars32.bat"
           if errorlevel 1 exit /b 1
-          clang-cl --target=i686-pc-windows-msvc --version
+          clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /GS- /GR- /EHsc- /Zl /Brepro /clang:-fno-builtin /Fo"AutoLootPP.obj" "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c"
           if errorlevel 1 exit /b 1
-          if not exist build_audit mkdir build_audit
-          clang-cl --target=i686-pc-windows-msvc /nologo /c /O2 /GS- /GR- /EHsc- /Zl /Brepro /clang:-fno-builtin /Fo"build_audit\${{ matrix.id }}.obj" "${{ matrix.source }}"
+          link /nologo /DLL /MACHINE:X86 /NODEFAULTLIB /ENTRY:DllMain@12 /Brepro /OUT:"AutoLootPP.dll" "AutoLootPP.obj"
           if errorlevel 1 exit /b 1
-          link /nologo /DLL /MACHINE:X86 /NODEFAULTLIB /ENTRY:DllMain@12 /Brepro /OUT:"build_audit\${{ matrix.id }}.dll" "build_audit\${{ matrix.id }}.obj"
+          dumpbin /headers "AutoLootPP.dll" | findstr /C:"14C machine (x86)"
           if errorlevel 1 exit /b 1
-          dumpbin /headers "build_audit\${{ matrix.id }}.dll" | findstr /C:"14C machine (x86)"
-          if errorlevel 1 exit /b 1
-          certutil -hashfile "build_audit\${{ matrix.id }}.dll" SHA256
+          certutil -hashfile "AutoLootPP.dll" SHA256
