@@ -45,7 +45,6 @@ struct ChallengeInfo {
 static struct ChallengeInfo g_challenges[CHALLENGE_CACHE_SIZE];
 static WNDPROC32 g_challenge_prev_wndproc = NULL;
 static BOOL g_challenge_hooked = FALSE;
-static BOOL g_challenge_lua_ready = FALSE;
 static DWORD g_next_challenge_post_frame = 0u;
 static BOOL g_challenge_logged = FALSE;
 
@@ -185,6 +184,7 @@ static void chal_apply_known_names(void) {
 
 static void chal_lua_init(void) {
     static const char initScript[] =
+        "if type(GetRealmName)=='function' and type(SendAddonMessage)=='function' and type(CreateFrame)=='function' then "
         "if not W112_ESP_CHAL_FRAME then "
         "W112_ESP_CHAL_CACHE={};W112_ESP_CHAL_SENT={};W112_ESP_CHAL_LAST={};"
         "W112_ESP_CHAL_NAMES={'Slow&Steady','Exhaustion','War Mode','Hardcore','Vagrant','Boaring','Lvl1','Craftmaster','Brewmaster','Heroism','Samurai','Together','True HC'};"
@@ -193,10 +193,9 @@ static void chal_lua_init(void) {
         "if event=='CHAT_MSG_ADDON' and arg1=='RESPONSE_PLAYER_CHALLENGES' then "
         "local _,_,g,m=string.find(arg2 or '', '^(.+):(%d*)$');"
         "if g then W112_ESP_CHAL_CACHE[g]=tonumber(m) or 0 end end end);end;"
-        "W112_ESP_CHAL_RESULT=''";
+        "W112_ESP_CHAL_RESULT='';end";
     FrameScriptExecuteFn exec = (FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
     exec(initScript, initScript);
-    g_challenge_lua_ready = TRUE;
 }
 
 static void chal_query_main_thread(DWORD lo, DWORD hi) {
@@ -210,18 +209,23 @@ static void chal_query_main_thread(DWORD lo, DWORD hi) {
 
     c = chal_find(lo, hi);
     if (!c) return;
-    if (!g_challenge_lua_ready) chal_lua_init();
+
+    /* Re-run the idempotent init every query. Login/logout and BG transitions can
+       rebuild the Lua state while the injected DLL remains loaded. The init and
+       query scripts therefore guard all game-only globals instead of throwing a
+       modal Lua error on GlueXML screens. */
+    chal_lua_init();
 
     chal_guid_token(guid, lo, hi);
-    p = app_str(p, "W112_ESP_CHAL_RESULT='';do local u='");
+    p = app_str(p, "W112_ESP_CHAL_RESULT='';if type(W112_ESP_CHAL_CACHE)=='table' and type(GetRealmName)=='function' and type(GetTime)=='function' and type(SendAddonMessage)=='function' then do local u='");
     p = app_str(p, guid);
-    p = app_str(p, "';local _,g=UnitExists(u);if not g then g=u end;local m=W112_ESP_CHAL_CACHE[g];");
-    p = app_str(p, "if m==nil then local r=GetRealmName();local t=Turtle_ChallengesCache and Turtle_ChallengesCache[r];");
+    p = app_str(p, "';local g=u;if type(UnitExists)=='function' then local _,ug=UnitExists(u);if ug then g=ug end end;local m=W112_ESP_CHAL_CACHE[g];");
+    p = app_str(p, "if m==nil then local r=GetRealmName();local t=(type(Turtle_ChallengesCache)=='table') and Turtle_ChallengesCache[r];");
     p = app_str(p, "if t and t[g] and t[g]>0 then m=t[g];W112_ESP_CHAL_CACHE[g]=m end end;");
     p = app_str(p, "if m~=nil then if m==0 then W112_ESP_CHAL_RESULT='-' else local o='';local b=1;");
-    p = app_str(p, "for i=1,table.getn(W112_ESP_CHAL_NAMES) do if mod(m,b*2)>=b then if o~='' then o=o..'/' end;o=o..W112_ESP_CHAL_NAMES[i] end;b=b*2 end;");
+    p = app_str(p, "for i=1,table.getn(W112_ESP_CHAL_NAMES) do if math.mod(m,b*2)>=b then if o~='' then o=o..'/' end;o=o..W112_ESP_CHAL_NAMES[i] end;b=b*2 end;");
     p = app_str(p, "if o=='' then o='Challenge' end;W112_ESP_CHAL_RESULT=o end else local s=W112_ESP_CHAL_SENT[g] or 0;local n=GetTime();local l=W112_ESP_CHAL_LAST[g] or -999;");
-    p = app_str(p, "if s<2 and n-l>2 then W112_ESP_CHAL_SENT[g]=s+1;W112_ESP_CHAL_LAST[g]=n;SendAddonMessage('TW_UI','REQUEST_PLAYER_CHALLENGES;'..g,'GUILD') end end end");
+    p = app_str(p, "if s<2 and n-l>2 then W112_ESP_CHAL_SENT[g]=s+1;W112_ESP_CHAL_LAST[g]=n;SendAddonMessage('TW_UI','REQUEST_PLAYER_CHALLENGES;'..g,'GUILD') end end end end");
     *p = 0;
 
     exec(script, script);
