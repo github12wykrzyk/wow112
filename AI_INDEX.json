@@ -13,11 +13,13 @@
     "development": "work"
   },
   "read_order": [
+    "AGENTS.md",
     "AI_START_HERE.md",
     "CURRENT.json",
     "runtime/current.json"
   ],
   "canonical": {
+    "operating_contract": "AGENTS.md",
     "current_state": "CURRENT.json",
     "runtime_manifest": "runtime/current.json",
     "source_root": "src",
@@ -50,11 +52,13 @@
     "artifacts/V67"
   ],
   "rules": [
+    "AGENTS.md defines the AI operating contract",
     "runtime/current.json decides the active stack and canonical source provenance",
     "prefer targeted module reads over repository-wide search",
     "work must be synchronized with current main before a new iteration",
     "main contains only accepted stable state",
     "stable baseline numbers are rollback points, not experiment counters",
+    "the AI owns routine GitHub housekeeping; the user should mainly describe behavior and test in game",
     "never mix TBC/Wrath/Retail APIs or assumptions into build 5875 code"
   ]
 }
