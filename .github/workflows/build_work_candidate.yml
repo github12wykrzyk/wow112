@@ -87,5 +87,6 @@ jobs:
             dist/candidate_metadata.json
             dist/candidate_summary.json
             dist/controlhub_build.json
+            src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c
           if-no-files-found: error
           compression-level: 0
