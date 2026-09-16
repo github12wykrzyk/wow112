@@ -1,27 +1,44 @@
 /*
   PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD
-  + LockboxLab combined experiment for WoW 1.12.1 build 5875 x86.
+  + LockboxLab mode-isolated experiment for WoW 1.12.1 build 5875 x86.
 
   Preserved behavior:
     - ordinary shared Combat Range floor = 9 yd;
     - Pick Pocket (921) max client range = 300 yd;
     - Pick Lock (1804) max client range = 300 yd.
 
-  LockboxLab experiment (single DLL, three paths at once):
-    A) client-side Pick Lock cast-time experiment:
-       patch Spell.dbc record 1804 CastingTimeIndex (field 18, +0x48) to 0;
-    B) early-open protocol/client-path probes:
-       after targeting a bag lockbox, issue sparse UseContainerItem probes at
-       0.25/0.50/1/2/3/4/4.6/5.1/5.6 s; if the server accepts an early open,
-       the loot window timing is printed in chat;
-    C) automatic lockbox queue:
-       a small injected Vanilla Lua frame scans bags 0..4 for common Vanilla
-       lockbox/junkbox item IDs, Pick Locks them one-by-one, opens/loots them,
-       then advances to the next box.
+  LockboxLab keeps all three experimental paths in ONE DLL, but separates them
+  into four runtime modes so one in-game session can identify what actually works:
 
-  The server remains authoritative.  The client cast-time patch and early-open
-  probes are deliberately experimental; the normal ~5 s server path remains a
-  fallback.  /lockboxlab toggles the automatic queue at runtime.
+    F6 cycles 1 -> 2 -> 3 -> 4 -> 1
+
+    MODE 1  INSTANT ONLY / MANUAL
+      - client Spell.dbc Pick Lock CastingTimeIndex = 0
+      - no automatic bag queue
+      - no early UseContainerItem probes
+      - manually cast Pick Lock to test the client cast-time patch in isolation
+
+    MODE 2  NORMAL CAST + EARLY PROBES
+      - original Pick Lock CastingTimeIndex restored
+      - automatic lockbox queue enabled
+      - sparse UseContainerItem probes at 0.25/0.50/1/2/3/4/4.6/5.1/5.6 s
+      - isolates any early-open/server protocol behavior from the instant patch
+
+    MODE 3  NORMAL AUTO BASELINE
+      - original Pick Lock CastingTimeIndex restored
+      - automatic lockbox queue enabled
+      - no early probes; first open attempt is made after 5.20 s
+      - control/baseline for reliable serial processing
+
+    MODE 4  EVERYTHING
+      - client CastingTimeIndex = 0
+      - automatic queue enabled
+      - early-open probes enabled
+      - combines all experimental paths
+
+  /lockboxlab toggles the automatic worker in modes 2-4.
+  The server remains authoritative.  All mode changes are reversible at runtime;
+  DLL unload restores the original Pick Lock CastingTimeIndex.
 */
 
 typedef unsigned char BYTE;
@@ -41,6 +58,7 @@ typedef HANDLE (__stdcall *GetCurrentProcess_t)(void);
 typedef void   (__stdcall *TimerProc_t)(HWND, UINT, UINT_PTR, DWORD);
 typedef UINT_PTR (__stdcall *SetTimer_t)(HWND, UINT_PTR, UINT, TimerProc_t);
 typedef BOOL   (__stdcall *KillTimer_t)(HWND, UINT_PTR);
+typedef short  (__stdcall *GetAsyncKeyState_t)(int);
 
 #define TRUE 1
 #define FALSE 0
@@ -59,11 +77,18 @@ typedef BOOL   (__stdcall *KillTimer_t)(HWND, UINT_PTR);
 #define PICK_LOCK_SPELL_ID        1804u
 
 /* WoW.exe IAT entries verified for this 5875 executable lineage. */
-#define WOW_IAT_VIRTUALPROTECT     0x007FF35Cu
-#define WOW_IAT_FLUSHICACHE        0x007FF320u
-#define WOW_IAT_GETCURRENTPROCESS  0x007FF390u
-#define WOW_IAT_SETTIMER           0x007FF4F4u
-#define WOW_IAT_KILLTIMER          0x007FF4F8u
+#define WOW_IAT_VIRTUALPROTECT      0x007FF35Cu
+#define WOW_IAT_FLUSHICACHE         0x007FF320u
+#define WOW_IAT_GETCURRENTPROCESS   0x007FF390u
+#define WOW_IAT_SETTIMER            0x007FF4F4u
+#define WOW_IAT_KILLTIMER           0x007FF4F8u
+#define WOW_IAT_GETASYNCKEYSTATE    0x007FF644u
+
+#define VK_F6 0x75
+#define LAB_MODE_INSTANT_ONLY          1u
+#define LAB_MODE_NORMAL_PROBES         2u
+#define LAB_MODE_NORMAL_AUTO           3u
+#define LAB_MODE_ALL                   4u
 
 static const DWORD g_callsites[] = {
     0x004825CAu,
@@ -92,47 +117,60 @@ static volatile DWORD g_pickLockRecord = 0;
 static volatile DWORD g_originalPickLockCastTimeIndex = 0;
 static volatile DWORD g_castTimePatched = 0;
 static volatile DWORD g_scriptInjected = 0;
+static volatile DWORD g_labMode = LAB_MODE_INSTANT_ONLY;
+static volatile DWORD g_f6WasDown = 0;
 static UINT_PTR g_labTimer = 0;
 
-/*
-  Lua 5.0-compatible bag worker.  The known IDs cover the normal Vanilla
-  junkboxes obtained from Pick Pocket plus the common dropped lockboxes.
-  Sparse early UseContainerItem() calls are the protocol-path experiment.
-*/
+/* Lua 5.0-compatible worker.  Mode 1 intentionally does not scan bags. */
 static const char g_lockboxLabScript[] =
 "if not WOW112_LockboxLab then "
-"WOW112_LockboxLab={enabled=1,next=0,busy=nil,b=0,s=0,id=0,start=0,probe=0,lootStart=0,"
+"WOW112_LockboxLab={enabled=1,mode=1,next=0,busy=nil,b=0,s=0,id=0,start=0,probe=0,lootStart=0,normalOpen=0,"
 "ids={[4632]=1,[4633]=1,[4634]=1,[4636]=1,[4637]=1,[4638]=1,[5758]=1,[5759]=1,[5760]=1,"
 "[16882]=1,[16883]=1,[16884]=1,[16885]=1},skip={},probes={0.25,0.50,1.00,2.00,3.00,4.00,4.60,5.10,5.60}};"
 "local L=WOW112_LockboxLab;"
 "SLASH_LOCKBOXLAB1='/lockboxlab';"
-"SlashCmdList['LOCKBOXLAB']=function(msg) L.enabled=1-L.enabled; "
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(L.enabled==1 and '|cff55ff55[LockboxLab]|r ON' or '|cffffaa00[LockboxLab]|r OFF') end end;"
+"SlashCmdList['LOCKBOXLAB']=function(msg) "
+"if msg=='on' then L.enabled=1 elseif msg=='off' then L.enabled=0 else L.enabled=1-L.enabled end;"
+"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage((L.enabled==1 and '|cff55ff55[LockboxLab]|r worker ON' or '|cffffaa00[LockboxLab]|r worker OFF')..' mode='..L.mode) end end;"
 "local f=CreateFrame('Frame');L.frame=f;"
 "f:SetScript('OnUpdate',function() "
-"local n=GetTime(); if n<L.next then return end;"
+"local n=GetTime();if n<L.next then return end;"
+"if L.mode==1 then L.next=n+0.50;return end;"
 "if L.enabled~=1 then L.next=n+0.50;return end;"
 "if L.busy and GetNumLootItems and GetNumLootItems()>0 then "
-"if not L.lootStart or L.lootStart==0 then L.lootStart=n; "
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ff66[LockboxLab]|r OPEN '..string.format('%.2f',n-L.start)..'s probes='..L.probe) end end;"
+"if not L.lootStart or L.lootStart==0 then L.lootStart=n;"
+"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ff66[LockboxLab]|r OPEN mode='..L.mode..' '..string.format('%.2f',n-L.start)..'s probes='..L.probe) end end;"
 "local c=GetNumLootItems();local i;for i=1,c do LootSlot(i) end;"
-"if GetNumLootItems()==0 or n-L.lootStart>1.50 then CloseLoot();L.busy=nil;L.lootStart=0;L.next=n+0.40 else L.next=n+0.15 end;return end;"
+"if GetNumLootItems()==0 or n-L.lootStart>1.50 then CloseLoot();L.busy=nil;L.lootStart=0;L.normalOpen=0;L.next=n+0.40 else L.next=n+0.15 end;return end;"
 "if L.busy then "
 "local link=GetContainerItemLink(L.b,L.s);if not link then L.busy=nil;L.next=n+0.30;return end;"
-"local age=n-L.start;local t=L.probes[L.probe+1];"
-"if t and age>=t then L.probe=L.probe+1;UseContainerItem(L.b,L.s);L.next=n+0.08;return end;"
-"if age>6.40 then UseContainerItem(L.b,L.s);L.skip[L.id]=n+15.0;"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[LockboxLab]|r timeout >6.4s item='..L.id) end;"
-"L.busy=nil;L.next=n+0.50;return end;L.next=n+0.05;return end;"
+"local age=n-L.start;"
+"if L.mode==2 or L.mode==4 then local t=L.probes[L.probe+1];"
+"if t and age>=t then L.probe=L.probe+1;UseContainerItem(L.b,L.s);L.next=n+0.08;return end "
+"elseif L.mode==3 then if L.normalOpen==0 and age>=5.20 then L.normalOpen=1;UseContainerItem(L.b,L.s);L.next=n+0.15;return end end;"
+"if age>6.50 then UseContainerItem(L.b,L.s);L.skip[L.id]=n+15.0;"
+"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[LockboxLab]|r TIMEOUT mode='..L.mode..' >6.5s item='..L.id) end;"
+"L.busy=nil;L.normalOpen=0;L.next=n+0.50;return end;"
+"L.next=n+0.05;return end;"
 "if UnitAffectingCombat and UnitAffectingCombat('player') then L.next=n+0.50;return end;"
 "local b,s,m,link,a,z,id;for b=0,4 do m=GetContainerNumSlots(b);for s=1,m do link=GetContainerItemLink(b,s);"
 "if link then a,z,id=string.find(link,'item:(%d+)');id=tonumber(id);"
 "if id and L.ids[id] and (not L.skip[id] or n>=L.skip[id]) then "
-"CastSpellByName('Pick Lock');if SpellIsTargeting() then PickupContainerItem(b,s);L.busy=1;L.b=b;L.s=s;L.id=id;L.start=n;L.probe=0;L.lootStart=0;L.next=n+0.05;"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[LockboxLab]|r START item='..id..' bag='..b..' slot='..s) end;return end end end end end;"
+"CastSpellByName('Pick Lock');if SpellIsTargeting() then PickupContainerItem(b,s);"
+"L.busy=1;L.b=b;L.s=s;L.id=id;L.start=n;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=n+0.05;"
+"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[LockboxLab]|r START mode='..L.mode..' item='..id..' bag='..b..' slot='..s) end;return end end end end end;"
 "L.next=n+0.75 end);"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[LockboxLab]|r READY: auto queue + early-open probes; /lockboxlab toggle') end "
+"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[LockboxLab]|r READY - F6 cycles modes 1-4; /lockboxlab toggles worker; default mode 1') end "
 "end";
+
+static const char g_mode1Script[] =
+"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=1;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 1: INSTANT ONLY / MANUAL') end end";
+static const char g_mode2Script[] =
+"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=2;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 2: NORMAL CAST + EARLY PROBES') end end";
+static const char g_mode3Script[] =
+"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=3;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 3: NORMAL AUTO BASELINE') end end";
+static const char g_mode4Script[] =
+"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=4;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 4: EVERYTHING') end end";
 
 static VirtualProtect_t GetVirtualProtect(void)
 {
@@ -157,6 +195,11 @@ static SetTimer_t GetSetTimer(void)
 static KillTimer_t GetKillTimer(void)
 {
     return *(KillTimer_t*)WOW_IAT_KILLTIMER;
+}
+
+static GetAsyncKeyState_t GetGetAsyncKeyState(void)
+{
+    return *(GetAsyncKeyState_t*)WOW_IAT_GETASYNCKEYSTATE;
 }
 
 static BOOL MemoryEquals(const BYTE* a, const BYTE* b, DWORD n)
@@ -244,36 +287,87 @@ static DWORD FindSpellRecordById(DWORD spellId)
     return 0;
 }
 
-static void TryInstallPickLockCastTimeExperiment(void)
+static BOOL EnsurePickLockRecord(void)
 {
-    DWORD rec, oldIndex;
-    if (g_castTimePatched) return;
+    DWORD rec;
+    if (g_pickLockRecord) return TRUE;
     rec = FindSpellRecordById(PICK_LOCK_SPELL_ID);
-    if (!rec) return;
-    oldIndex = *(DWORD*)(rec + SPELL_CAST_TIME_INDEX_OFF);
+    if (!rec) return FALSE;
     g_pickLockRecord = rec;
-    g_originalPickLockCastTimeIndex = oldIndex;
-    if (oldIndex == 0u) {
+    g_originalPickLockCastTimeIndex = *(DWORD*)(rec + SPELL_CAST_TIME_INDEX_OFF);
+    return TRUE;
+}
+
+static BOOL SetPickLockInstant(BOOL instant)
+{
+    DWORD current;
+    if (!EnsurePickLockRecord()) return FALSE;
+    current = *(DWORD*)(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF);
+
+    if (instant) {
+        if (current != 0u &&
+            !WriteDwordProtected(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF, 0u))
+            return FALSE;
         g_castTimePatched = 1u;
-        return;
+        return TRUE;
     }
-    if (WriteDwordProtected(rec + SPELL_CAST_TIME_INDEX_OFF, 0u))
-        g_castTimePatched = 1u;
+
+    if (g_originalPickLockCastTimeIndex == 0u)
+        return FALSE;
+    if (current != g_originalPickLockCastTimeIndex &&
+        !WriteDwordProtected(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF,
+                             g_originalPickLockCastTimeIndex))
+        return FALSE;
+    g_castTimePatched = 0u;
+    return TRUE;
+}
+
+static BOOL ModeNeedsInstant(DWORD mode)
+{
+    return (mode == LAB_MODE_INSTANT_ONLY || mode == LAB_MODE_ALL) ? TRUE : FALSE;
+}
+
+static const char* ModeScript(DWORD mode)
+{
+    if (mode == LAB_MODE_INSTANT_ONLY) return g_mode1Script;
+    if (mode == LAB_MODE_NORMAL_PROBES) return g_mode2Script;
+    if (mode == LAB_MODE_NORMAL_AUTO) return g_mode3Script;
+    return g_mode4Script;
+}
+
+static BOOL ApplyLabMode(DWORD mode)
+{
+    if (mode < LAB_MODE_INSTANT_ONLY || mode > LAB_MODE_ALL) return FALSE;
+    if (!SetPickLockInstant(ModeNeedsInstant(mode))) return FALSE;
+    g_labMode = mode;
+    if (g_scriptInjected) ExecuteFrameScript(ModeScript(mode));
+    return TRUE;
 }
 
 static void __stdcall LockboxLabTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWORD tick)
 {
+    GetAsyncKeyState_t gak;
+    DWORD down, next;
     (void)hwnd; (void)msg; (void)id; (void)tick;
-    TryInstallPickLockCastTimeExperiment();
-    if (g_castTimePatched && !g_scriptInjected) {
+
+    if (!EnsurePickLockRecord()) return;
+
+    if (!g_scriptInjected) {
+        if (!ApplyLabMode(LAB_MODE_INSTANT_ONLY)) return;
         ExecuteFrameScript(g_lockboxLabScript);
         g_scriptInjected = 1u;
+        ExecuteFrameScript(g_mode1Script);
     }
-    if (g_castTimePatched && g_scriptInjected && g_labTimer) {
-        KillTimer_t kt = GetKillTimer();
-        if (kt) kt((HWND)0, g_labTimer);
-        g_labTimer = 0;
+
+    gak = GetGetAsyncKeyState();
+    if (!gak) return;
+    down = (gak(VK_F6) & (short)0x8000) ? 1u : 0u;
+    if (down && !g_f6WasDown) {
+        next = g_labMode + 1u;
+        if (next > LAB_MODE_ALL) next = LAB_MODE_INSTANT_ONLY;
+        ApplyLabMode(next);
     }
+    g_f6WasDown = down;
 }
 
 /*
@@ -387,11 +481,11 @@ static BOOL InstallHook(void)
         g_patchedCalls = i + 1u;
     }
 
-    g_installed = 1;
+    g_installed = 1u;
 
-    /* Defer Spell.dbc + FrameScript work until client data/UI are initialized. */
+    /* Keep the timer alive: it performs deferred initialization and F6 mode switching. */
     st = GetSetTimer();
-    if (st) g_labTimer = st((HWND)0, 0u, 500u, LockboxLabTimerProc);
+    if (st) g_labTimer = st((HWND)0, 0u, 100u, LockboxLabTimerProc);
     return TRUE;
 }
 
@@ -406,14 +500,14 @@ static void RemoveHook(void)
         g_labTimer = 0;
     }
 
-    if (g_castTimePatched && g_pickLockRecord &&
-        *(DWORD*)(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF) == 0u &&
-        g_originalPickLockCastTimeIndex != 0u) {
+    if (g_pickLockRecord && g_originalPickLockCastTimeIndex != 0u &&
+        *(DWORD*)(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF) !=
+        g_originalPickLockCastTimeIndex) {
         WriteDwordProtected(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF,
                             g_originalPickLockCastTimeIndex);
     }
-    g_castTimePatched = 0;
-    g_pickLockRecord = 0;
+    g_castTimePatched = 0u;
+    g_pickLockRecord = 0u;
 
     if (!g_installed && !g_patchedCalls) return;
 
@@ -422,8 +516,8 @@ static void RemoveHook(void)
 
     WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4);
 
-    g_patchedCalls = 0;
-    g_installed = 0;
+    g_patchedCalls = 0u;
+    g_installed = 0u;
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetStatus(void)
@@ -450,7 +544,13 @@ __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetLockboxLabStatus(vo
 {
     return (g_installed ? 1u : 0u) |
            (g_castTimePatched ? 2u : 0u) |
-           (g_scriptInjected ? 4u : 0u);
+           (g_scriptInjected ? 4u : 0u) |
+           (g_labMode << 8);
+}
+
+__declspec(dllexport) DWORD __stdcall PickPocketSelective_GetLockboxLabMode(void)
+{
+    return g_labMode;
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetOriginalPickLockCastTimeIndex(void)
@@ -460,7 +560,7 @@ __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetOriginalPickLockCas
 
 __declspec(dllexport) const char* __stdcall PickPocketSelective_GetBuildTag(void)
 {
-    return "LOCKBOXLAB_ALL3_20260916";
+    return "LOCKBOXLAB_MODES4_20260916";
 }
 
 BOOL __stdcall DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
