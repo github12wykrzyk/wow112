@@ -1,0 +1,89 @@
+name: Materialize archived active sources
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - '.github/workflows/materialize_active_sources.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Restore exact PlayerESP source
+        shell: cmd
+        run: python tools\RESTORE_PLAYERESP_SOURCE.py
+
+      - name: Restore verified PositionalSpoof reconstruction
+        shell: python
+        run: |
+          from pathlib import Path
+          import base64, hashlib, lzma
+          src = Path('artifacts/PositionalSpoof/WoWPositionalSpoof_v0_36_FINAL_RECONSTRUCTED.c.xz.b64')
+          out = Path('src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c')
+          data = lzma.decompress(base64.b64decode(src.read_bytes()))
+          expected_sha = 'bf4e738330d936c1af62db606a21d3e53bedc0b84d5b7864dc655369c127bbe2'
+          expected_size = 53725
+          if len(data) != expected_size:
+              raise SystemExit(f'Positional source size mismatch: {len(data)} != {expected_size}')
+          got = hashlib.sha256(data).hexdigest()
+          if got != expected_sha:
+              raise SystemExit(f'Positional source SHA mismatch: {got} != {expected_sha}')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_bytes(data)
+          print(out, len(data), got)
+
+      - name: Route active modules directly to materialized sources
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          rp = Path('runtime/current.json')
+          runtime = json.loads(rp.read_text(encoding='utf-8'))
+          routes = {
+            'WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll':
+              'src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c',
+            'WoWPlayerESP_v1_2_range_sweep.dll':
+              'src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c',
+          }
+          for item in runtime['active_dlls']:
+              if item['name'] in routes:
+                  p = Path(routes[item['name']])
+                  if not p.is_file():
+                      raise SystemExit(f'materialized source missing: {p}')
+                  item['source_path'] = p.as_posix()
+          rp.write_text(json.dumps(runtime, indent=2) + '\n', encoding='utf-8')
+
+          dp = Path('docs/SOURCE_INVENTORY.md')
+          s = dp.read_text(encoding='utf-8')
+          s = s.replace(
+            '| `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll` | BINARY-VERIFIED RECONSTRUCTION / exact binary-patch lineage | recovery + audit under `artifacts/PositionalSpoof/`; no direct active `source_path` yet |',
+            '| `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll` | BINARY-VERIFIED RECONSTRUCTION / exact binary-patch lineage | `src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c` |'
+          )
+          s = s.replace(
+            '| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | restore metadata/tool points to `artifacts/WoWPlayerESP_v1_2_range_sweep.c.xz.b64.part*` |',
+            '| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | `src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c` |'
+          )
+          dp.write_text(s, encoding='utf-8', newline='\n')
+
+      - name: Verify current state
+        shell: cmd
+        run: |
+          python tools\verify_current.py
+          if errorlevel 1 exit /b 1
+
+      - name: Commit materialized source routing
+        shell: bash
+        run: |
+          git config user.name 'github12wykrzyk'
+          git config user.email '102224296+github12wykrzyk@users.noreply.github.com'
+          git add runtime/current.json docs/SOURCE_INVENTORY.md src/PositionalSpoof src/WoWPlayerESP
+          git commit -m 'infra: materialize remaining active sources under src'
+          git push origin HEAD:work
