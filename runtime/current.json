@@ -34,8 +34,8 @@
       "source_state": "functionally_equivalent_reconstruction",
       "source_origin": "static_reverse_engineering_from_final_dll_plus_W112_CONTROL_API_V1_extension",
       "source_path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-      "source_sha256": "f1a446d0384f37888675f765327ab019a74ab9a9a9743ed95597b7bb24b4b69f",
-      "source_size": 14417,
+      "source_sha256": "411012697343fae738007fd0a8f8fa19e7ad0b28978667a8316704133757dfee",
+      "source_size": 20466,
       "source_restore_doc": "artifacts/SpeedFloor/README_RECOVERY.md",
       "binary_patch_audit": "artifacts/SpeedFloor/BINARY_REVERSE_AUDIT.txt",
       "binary_artifact": {
@@ -84,7 +84,8 @@
       "sha256": "044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b",
       "source_state": "normal_source",
       "source_path": "src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c",
-      "source_sha256": "764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888"
+      "source_sha256": "764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888",
+      "source_size": 107833
     },
     {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
@@ -104,7 +105,7 @@
       "source_origin": "accepted_candidate_build_plus_deterministic_hotkey_binary_patch",
       "source_path": "src/WoWControlHub/WoWControlHub_v1.c",
       "source_sha256": "19b0000141c3b6cce0c6a3be1c53607709e49d0b2b370e84eedbad232250a8c8",
-      "source_size": 0,
+      "source_size": 25106,
       "binary_patch_audit": "artifacts/V69/runtime/CONTROLHUB_BINARY_PATCH.txt",
       "binary_artifact": {
         "kind": "xz",
