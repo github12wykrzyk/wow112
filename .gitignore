@@ -1,6 +1,7 @@
 *.log
 *.dmp
 *.mdmp
+generated/
 _V67_OLD/
 _V*_OLD/
 .vscode/
