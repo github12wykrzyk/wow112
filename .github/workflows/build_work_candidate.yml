@@ -38,12 +38,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build full active stack for PP360 source candidate
+      - name: Build PP360 source candidate from pre-fix base
         if: github.event_name == 'push'
         shell: pwsh
         run: >-
           python tools/build_changed_active.py
-          --all
+          --base "34a52ef8ba5ff9f14f05e2757dec7236ccdc0ac6"
           --output-dir build
           --package dist/WoW112_WORK_CANDIDATE.zip
           --package-metadata dist/candidate_metadata.json
