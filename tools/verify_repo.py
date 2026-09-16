@@ -143,6 +143,39 @@ def verify_movementcore_source(mc, runtime_dlls):
         error("MovementCore source_sha256 mismatch between CURRENT.json and runtime/current.json")
 
 
+def verify_source_inventory(runtime_dlls):
+    allowed = {"normal_source", "not_indexed_in_repo"}
+    normal = []
+    not_indexed = []
+    for item in runtime_dlls:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name", "<unnamed>")
+        state = item.get("source_state")
+        if state not in allowed:
+            error("active DLL has missing/invalid source_state: %s (%r)" % (name, state))
+            continue
+        if state == "normal_source":
+            normal.append(name)
+            source_path = item.get("source_path")
+            source_hash = str(item.get("source_sha256", "")).lower()
+            if not source_path:
+                error("normal_source DLL missing source_path: %s" % name)
+            elif not (ROOT / source_path).is_file():
+                error("normal_source DLL source file missing: %s -> %s" % (name, source_path))
+            if len(source_hash) != 64:
+                error("normal_source DLL missing/invalid source_sha256: %s" % name)
+        else:
+            not_indexed.append(name)
+
+    require_path("docs/SOURCE_INVENTORY.md")
+    if not_indexed:
+        warning("%d/%d active DLLs do not yet have indexed normal source; see docs/SOURCE_INVENTORY.md" % (
+            len(not_indexed), len(runtime_dlls)
+        ))
+    return len(normal), len(not_indexed)
+
+
 def main():
     current = load_json("CURRENT.json")
     runtime = load_json("runtime/current.json")
@@ -220,6 +253,7 @@ def main():
 
     verify_movementcore_archive()
     verify_movementcore_source(mc, runtime_dlls)
+    source_normal, source_missing = verify_source_inventory(runtime_dlls)
 
     legacy_dir = mc.get("legacy_partial_source_dir")
     if legacy_dir and (ROOT / legacy_dir).is_dir():
@@ -233,6 +267,8 @@ def main():
     print("\nRepository verification summary")
     print("  baseline: %s" % current.get("stable_baseline"))
     print("  active DLLs: %d" % len(runtime_dlls))
+    print("  indexed normal sources: %d" % source_normal)
+    print("  source not indexed: %d" % source_missing)
     print("  MovementCore source: normal .c + verified archive")
     print("  warnings: %d" % len(WARNINGS))
     print("  errors: %d" % len(ERRORS))
