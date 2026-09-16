@@ -18,18 +18,29 @@
 - zgodnosc WoW 1.12.1 / build 5875 / x86,
 - zgodnosc wskazanego baseline z runtime manifestem,
 - identyczna kolejnosc i zawartosc `dlls.txt` oraz `runtime/current.json`,
-- obecność wszystkich aktywnych DLL w manifeście SHA256,
+- obecnosc wszystkich aktywnych DLL w manifeście SHA256,
 - zgodnosc hashy zapisanych w runtime z manifestem,
 - zgodnosc EXE z manifestem,
-- obecnosc dokumentacji canonical source MovementCore,
-- odtworzenie canonical source MovementCore z XZ/Base64 i weryfikacje jego rozmiaru/SHA256,
+- obecnosc canonicalnego pliku `.c` MovementCore,
+- SHA256 i rozmiar canonicalnego `.c`,
+- odtworzenie niezaleznego backupu MovementCore z XZ/Base64 i weryfikacje jego rozmiaru/SHA256,
+- zgodnosc powiazania MovementCore source miedzy `CURRENT.json` i `runtime/current.json`,
 - brak sledzonych plikow `.log`, `.dmp`, `.mdmp`.
 
 ## MovementCore source
 
-Canonical V68 source jest obecnie zachowany w `artifacts/V68/source/` jako cztery czesci Base64 zawierajace archiwum XZ.
+Canonical V68 source jest normalnym plikiem:
 
-Odtworzenie i weryfikacja bez zapisu:
+`src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c`
+
+Referencyjne parametry source:
+
+- source size: 107833 B,
+- source SHA256: `764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888`.
+
+Niezalezny recovery path pozostaje w `artifacts/V68/source/` jako cztery czesci Base64 zawierajace archiwum XZ.
+
+Odtworzenie i weryfikacja backupu bez zapisu:
 
 ```bash
 python tools/restore_movementcore_source.py --verify-only
@@ -41,7 +52,7 @@ Odtworzenie do domyslnego katalogu `generated/`:
 python tools/restore_movementcore_source.py
 ```
 
-Skrypt akceptuje source tylko wtedy, gdy zgadzaja sie jednoczesnie:
+Skrypt akceptuje backup tylko wtedy, gdy zgadzaja sie jednoczesnie:
 
 - XZ size: 23480 B,
 - XZ SHA256: `ca4acf000c84b42172e124fdf10876170a96773ad54fab9d6b88799113e47f48`,
@@ -60,6 +71,10 @@ Przy zmianie DLL/EXE zachowujemy:
 - source/diff albo jednoznaczna sciezke rekonstrukcji,
 - sposob rollbacku.
 
-## Docelowy kierunek
+## Zasada pracy ze source
 
-Kolejny etap migracji to zapisanie pelnego, zweryfikowanego MovementCore jako normalnego pliku `.c` w `src/MovementCore/`, tak aby GitHub mogl wykonywac normalne diffy i code search. Do czasu tej migracji skompresowany artefakt pozostaje canonicalnym zrodlem V68.
+Zmiany MovementCore wykonujemy od teraz na normalnym pliku w `src/MovementCore/`. Git pokazuje zwykly diff kodu i historia linii pozostaje czytelna.
+
+Po zmianie source nie nadpisujemy starego V68 recovery archive. Dla nowego stabilnego baseline tworzymy nowy source/runtime manifest i nowy recovery artifact, dzieki czemu V68 nadal pozostaje byte-for-byte rollbackiem.
+
+`.gitattributes` wymusza LF dla source/metadanych, zeby ustawienia Windows `core.autocrlf` nie zmienialy canonicalnego hasha.
