@@ -38,15 +38,20 @@ namespace WoW112Updater
         private const string StableArtifactPrefix = "WoW112-STABLE-CANDIDATE-";
         private const string TestInnerZip = "WoW112_WORK_CANDIDATE.zip";
         private const string StableInnerZip = "WoW112_STABLE_CANDIDATE.zip";
+        private const string UpdaterVersion = "1.1";
+        private const int MaxBackups = 10;
 
         private readonly TextBox gameDir = new TextBox();
         private readonly TextBox token = new TextBox();
         private readonly ComboBox channel = new ComboBox();
+        private readonly ComboBox rollbackChoice = new ComboBox();
+        private readonly Label localInfo = new Label();
         private readonly Label status = new Label();
         private readonly RichTextBox log = new RichTextBox();
         private readonly ProgressBar progress = new ProgressBar();
         private readonly Button checkButton = new Button();
         private readonly Button updateButton = new Button();
+        private readonly Button updatePlayButton = new Button();
         private readonly Button rollbackButton = new Button();
         private readonly Button launchButton = new Button();
         private readonly Button browseButton = new Button();
@@ -59,9 +64,9 @@ namespace WoW112Updater
 
         public MainForm()
         {
-            Text = "WoW112 Updater";
-            ClientSize = new Size(820, 610);
-            MinimumSize = new Size(820, 610);
+            Text = "WoW112 Updater v" + UpdaterVersion;
+            ClientSize = new Size(860, 660);
+            MinimumSize = new Size(860, 660);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9F);
 
@@ -70,18 +75,19 @@ namespace WoW112Updater
 
             BuildUi();
             LoadConfig();
+            RefreshLocalState();
         }
 
         private void BuildUi()
         {
-            var title = new Label { Text = "WoW112 Updater", Font = new Font("Segoe UI Semibold", 18F), AutoSize = true, Left = 20, Top = 16 };
+            var title = new Label { Text = "WoW112 Updater v" + UpdaterVersion, Font = new Font("Segoe UI Semibold", 18F), AutoSize = true, Left = 20, Top = 16 };
             Controls.Add(title);
 
             Controls.Add(new Label { Text = "Katalog gry", AutoSize = true, Left = 22, Top = 66 });
-            gameDir.SetBounds(20, 86, 660, 26);
+            gameDir.SetBounds(20, 86, 700, 26);
             Controls.Add(gameDir);
             browseButton.Text = "Wybierz...";
-            browseButton.SetBounds(690, 84, 108, 30);
+            browseButton.SetBounds(730, 84, 108, 30);
             browseButton.Click += BrowseButton_Click;
             Controls.Add(browseButton);
 
@@ -95,10 +101,10 @@ namespace WoW112Updater
 
             Controls.Add(new Label { Text = "GitHub token (tylko odczyt: Contents + Actions)", AutoSize = true, Left = 220, Top = 126 });
             token.UseSystemPasswordChar = true;
-            token.SetBounds(218, 146, 460, 28);
+            token.SetBounds(218, 146, 500, 28);
             Controls.Add(token);
             saveButton.Text = "Zapisz";
-            saveButton.SetBounds(690, 144, 108, 30);
+            saveButton.SetBounds(730, 144, 108, 30);
             saveButton.Click += delegate { SaveConfig(true); };
             Controls.Add(saveButton);
 
@@ -112,33 +118,49 @@ namespace WoW112Updater
             };
             Controls.Add(note);
 
+            localInfo.AutoSize = false;
+            localInfo.SetBounds(20, 204, 818, 24);
+            localInfo.Font = new Font("Segoe UI Semibold", 9F);
+            Controls.Add(localInfo);
+
             checkButton.Text = "SPRAWDŹ";
-            checkButton.SetBounds(20, 215, 140, 38);
+            checkButton.SetBounds(20, 238, 125, 38);
             checkButton.Click += async delegate { await CheckAsync(); };
             Controls.Add(checkButton);
 
             updateButton.Text = "AKTUALIZUJ";
-            updateButton.SetBounds(170, 215, 140, 38);
+            updateButton.SetBounds(155, 238, 125, 38);
             updateButton.Click += async delegate { await UpdateAsync(); };
             Controls.Add(updateButton);
 
-            rollbackButton.Text = "ROLLBACK";
-            rollbackButton.SetBounds(320, 215, 140, 38);
-            rollbackButton.Click += delegate { Rollback(); };
-            Controls.Add(rollbackButton);
+            updatePlayButton.Text = "UPDATE + PLAY";
+            updatePlayButton.SetBounds(290, 238, 160, 38);
+            updatePlayButton.Font = new Font("Segoe UI Semibold", 9F);
+            updatePlayButton.Click += async delegate { await UpdateAndPlayAsync(); };
+            Controls.Add(updatePlayButton);
 
             launchButton.Text = "URUCHOM WOW";
-            launchButton.SetBounds(470, 215, 150, 38);
+            launchButton.SetBounds(460, 238, 150, 38);
             launchButton.Click += delegate { LaunchGame(); };
             Controls.Add(launchButton);
 
+            Controls.Add(new Label { Text = "Cofnij do:", AutoSize = true, Left = 22, Top = 294 });
+            rollbackChoice.DropDownStyle = ComboBoxStyle.DropDownList;
+            rollbackChoice.SetBounds(90, 289, 570, 28);
+            Controls.Add(rollbackChoice);
+
+            rollbackButton.Text = "ROLLBACK";
+            rollbackButton.SetBounds(670, 287, 168, 32);
+            rollbackButton.Click += delegate { Rollback(); };
+            Controls.Add(rollbackButton);
+
             status.Text = "Gotowy";
             status.AutoSize = false;
-            status.SetBounds(20, 266, 778, 26);
+            status.SetBounds(20, 332, 818, 26);
             status.Font = new Font("Segoe UI Semibold", 10F);
             Controls.Add(status);
 
-            progress.SetBounds(20, 296, 778, 18);
+            progress.SetBounds(20, 362, 818, 18);
             progress.Style = ProgressBarStyle.Marquee;
             progress.MarqueeAnimationSpeed = 25;
             progress.Visible = false;
@@ -147,7 +169,7 @@ namespace WoW112Updater
             log.ReadOnly = true;
             log.BackColor = Color.White;
             log.Font = new Font("Consolas", 9F);
-            log.SetBounds(20, 326, 778, 260);
+            log.SetBounds(20, 392, 818, 245);
             Controls.Add(log);
         }
 
@@ -161,6 +183,7 @@ namespace WoW112Updater
                 {
                     gameDir.Text = dialog.SelectedPath;
                     SaveConfig(false);
+                    RefreshLocalState();
                 }
             }
         }
@@ -171,7 +194,9 @@ namespace WoW112Updater
             progress.Visible = value;
             checkButton.Enabled = !value;
             updateButton.Enabled = !value;
-            rollbackButton.Enabled = !value;
+            updatePlayButton.Enabled = !value;
+            rollbackButton.Enabled = !value && rollbackChoice.Items.Count > 0;
+            rollbackChoice.Enabled = !value && rollbackChoice.Items.Count > 0;
             launchButton.Enabled = !value;
             browseButton.Enabled = !value;
             saveButton.Enabled = !value;
@@ -279,6 +304,7 @@ namespace WoW112Updater
             }
             finally
             {
+                RefreshLocalState();
                 SetBusy(false, status.Text);
             }
         }
@@ -312,6 +338,8 @@ namespace WoW112Updater
                     : "Aktualizacja zakończona: " + result.Changed + " plików.";
                 Log("Gotowe. Zmieniono: " + result.Changed + ", bez zmian: " + result.Unchanged + ".");
                 if (!string.IsNullOrWhiteSpace(result.BackupDir)) Log("Backup: " + result.BackupDir);
+                TrimBackups(gameDir.Text.Trim(), MaxBackups);
+                RefreshLocalState();
             }
             catch (Exception ex)
             {
@@ -322,6 +350,16 @@ namespace WoW112Updater
             finally
             {
                 SetBusy(false, status.Text);
+            }
+        }
+
+        private async Task UpdateAndPlayAsync()
+        {
+            await UpdateAsync();
+            if (!status.Text.StartsWith("Aktualizacja nie powiodła", StringComparison.OrdinalIgnoreCase))
+            {
+                status.Text = "Gotowe. Uruchamiam WoW...";
+                LaunchGame();
             }
         }
 
@@ -555,6 +593,85 @@ namespace WoW112Updater
             return dir;
         }
 
+        private void RefreshLocalState()
+        {
+            rollbackChoice.Items.Clear();
+            var root = gameDir.Text.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                localInfo.Text = "Lokalnie: wybierz katalog gry.";
+                rollbackButton.Enabled = false;
+                rollbackChoice.Enabled = false;
+                return;
+            }
+
+            var installed = ReadInstalledState();
+            if (installed == null)
+            {
+                localInfo.Text = "Lokalnie: brak stanu updatera (pierwsza instalacja lub ręcznie kopiowane pliki).";
+            }
+            else
+            {
+                DateTime when;
+                var whenText = DateTime.TryParse(GetString(installed, "installed_utc"), out when)
+                    ? " • " + when.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                    : string.Empty;
+                localInfo.Text = "Lokalnie: " + GetString(installed, "channel").ToUpperInvariant()
+                    + " • run " + GetLong(installed, "run_id")
+                    + " • " + ShortSha(GetString(installed, "head_sha"))
+                    + whenText;
+            }
+
+            var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+            if (Directory.Exists(backupRoot))
+            {
+                foreach (var dir in Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase))
+                {
+                    var choice = ReadBackupChoice(dir);
+                    if (choice != null) rollbackChoice.Items.Add(choice);
+                }
+            }
+            if (rollbackChoice.Items.Count > 0) rollbackChoice.SelectedIndex = 0;
+            rollbackButton.Enabled = !busy && rollbackChoice.Items.Count > 0;
+            rollbackChoice.Enabled = !busy && rollbackChoice.Items.Count > 0;
+        }
+
+        private BackupChoice ReadBackupChoice(string dir)
+        {
+            try
+            {
+                var manifestPath = Path.Combine(dir, "backup_manifest.json");
+                if (!File.Exists(manifestPath)) return null;
+                var manifest = AsDictionary(json.DeserializeObject(File.ReadAllText(manifestPath, Encoding.UTF8)));
+                var previous = GetValue(manifest, "previous_installed") as Dictionary<string, object>;
+                var label = previous == null
+                    ? "Stan sprzed pierwszej instalacji updatera"
+                    : GetString(previous, "channel").ToUpperInvariant() + " run " + GetLong(previous, "run_id")
+                        + " • " + ShortSha(GetString(previous, "head_sha"));
+                label += " • " + Path.GetFileName(dir);
+                return new BackupChoice(dir, label);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void TrimBackups(string root, int keep)
+        {
+            try
+            {
+                var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                if (!Directory.Exists(backupRoot)) return;
+                var dirs = Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+                foreach (var dir in dirs.Skip(Math.Max(keep, 1))) Directory.Delete(dir, true);
+            }
+            catch (Exception ex)
+            {
+                Log("Ostrzeżenie: nie udało się przyciąć historii backupów: " + ex.Message);
+            }
+        }
+
         private void Rollback()
         {
             try
@@ -563,13 +680,19 @@ namespace WoW112Updater
                 var root = gameDir.Text.Trim();
                 if (!Directory.Exists(root)) throw new InvalidOperationException("Wybierz katalog gry.");
                 if (IsGameRunning(root)) throw new InvalidOperationException("Zamknij WoW przed rollbackiem.");
-                var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
-                if (!Directory.Exists(backupRoot)) throw new InvalidOperationException("Brak backupów updatera.");
-                var dir = Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+                var choice = rollbackChoice.SelectedItem as BackupChoice;
+                string dir = choice == null ? null : choice.Path;
+                if (dir == null)
+                {
+                    var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                    if (Directory.Exists(backupRoot))
+                        dir = Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+                }
                 if (dir == null) throw new InvalidOperationException("Brak backupów updatera.");
                 RestoreBackupDirectory(root, dir, true);
                 status.Text = "Rollback zakończony.";
                 Log("Rollback OK: " + dir);
+                RefreshLocalState();
             }
             catch (Exception ex)
             {
@@ -620,7 +743,8 @@ namespace WoW112Updater
         private void WriteInstalledState(string root, RemotePackageInfo remote, IList<string> managedFiles, string exeName)
         {
             var state = new Dictionary<string, object>();
-            state["schema_version"] = 1;
+            state["schema_version"] = 2;
+            state["updater_version"] = UpdaterVersion;
             state["channel"] = remote.Channel;
             state["run_id"] = remote.RunId;
             state["head_sha"] = remote.HeadSha;
@@ -842,6 +966,23 @@ namespace WoW112Updater
             public int Changed;
             public int Unchanged;
             public string BackupDir;
+        }
+
+        private sealed class BackupChoice
+        {
+            public readonly string Path;
+            public readonly string Label;
+
+            public BackupChoice(string path, string label)
+            {
+                Path = path;
+                Label = label;
+            }
+
+            public override string ToString()
+            {
+                return Label;
+            }
         }
     }
 }
