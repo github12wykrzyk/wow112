@@ -34,8 +34,9 @@
     {
       "name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
       "sha256": "044053a23720e5e6b7ec89e19c213dd937837cee92c2d93cfbdbaa5263021d8b",
-      "source_state": "archived_compressed_verified",
-      "source_restore_doc": "artifacts/V68/source/README_RESTORE.md"
+      "source_state": "normal_source",
+      "source_path": "src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c",
+      "source_sha256": "764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888"
     },
     {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
