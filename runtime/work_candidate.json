@@ -4,7 +4,8 @@
   "source_overrides": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
-    "WoWPlayerESP_v1_2_range_sweep.dll"
+    "WoWPlayerESP_v1_2_range_sweep.dll",
+    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "Aggregate TEST(work) keeps the AutoJunkbox PickLock candidate, the ControlHub-compatible SpeedFloor candidate, and the PlayerESP Turtle challenge-display candidate. The active work EXE also carries the corrected hard 5s Stealth cooldown selector (spellId from argument #1). AutoLootPP and MovementCore remain exact runtime/current.json binaries until their separate regression work is accepted."
+  "note": "Aggregate TEST(work) keeps the AutoJunkbox PickLock candidate, ControlHub-compatible SpeedFloor, PlayerESP Turtle challenge display, and MovementCore V21 LALT-priority candidate. LALT now owns its synthetic movement path, blocks new Pick Pocket starts while active, and bypasses the PP quiet tail after an already-active PP finishes. The active work EXE also carries the corrected hard 5s Stealth cooldown selector."
 }
