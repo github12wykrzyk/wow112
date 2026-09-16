@@ -68,6 +68,7 @@ typedef s32            NTSTATUS32;
 #define WOW_TARGET_GUID_LO          0x00B71B48u
 #define WOW_TARGET_GUID_HI          0x00B71B4Cu
 #define WOW_LOOT_WINDOW_FLAG        0x00B71B44u
+#define WOW_CASTING_SPELLID         0x00CECA88u /* current local-player cast id; shared with MovementCore */
 
 #define WOW_SEND_PACKET_THIS        0x007FF9E4u
 #define WOW_NET_SEND_FN             0x005AB630u
@@ -96,6 +97,7 @@ typedef s32            NTSTATUS32;
 #define OBJ_Z_OFF                   0x09C0u
 
 #define DESC_HEALTH_OFF             0x0058u
+#define DESC_CHANNEL_SPELL_OFF      0x0240u /* UNIT_CHANNEL_SPELL, descriptor index 144 in vanilla 1.12.1 */
 #define DESC_BOUNDING_RADIUS_OFF    0x0208u
 #define DESC_PP_LIFE_MARKER_OFF     0x1260u
 #define AUX_LEVEL_OFF               0x0070u
@@ -434,10 +436,22 @@ static int has_stealth_aura(uptr o)
     return 0;
 }
 
+static int player_busy_with_foreign_cast_or_channel(uptr player)
+{
+    u32 cast_id=read_u32(WOW_CASTING_SPELLID);uptr d;
+    /* Do not make AutoPP interrupt the player's own cast.  Pick Pocket's
+       own transient cast id is excluded so an already-started PP retry can finish. */
+    if(cast_id!=0u && cast_id!=PP_SUBOP)return 1;
+    d=descriptor(player);
+    if(d && read_u32(d+DESC_CHANNEL_SPELL_OFF)!=0u)return 1;
+    return 0;
+}
+
 static void service_pickpocket(uptr player,u32 now)
 {
     uptr target;float d2=0.0f;
     if(g_loot_state!=LOOT_IDLE)return; /* final runtime gives corpses priority over PP */
+    if(player_busy_with_foreign_cast_or_channel(player))return;
 
     if(g_pp.active){
         uptr o=find_object(g_pp.guid);
