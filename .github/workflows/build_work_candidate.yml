@@ -13,6 +13,7 @@ on:
       - 'tools/build_changed_active.py'
       - 'tools/build_controlhub_candidate.py'
       - 'tools/package_current.py'
+      - 'tools/verify_control_provider_exports.py'
       - 'tools/verify_current.py'
       - 'tools/verify_runtime_artifacts.py'
       - 'tools/verify_verified_symbols.py'
@@ -60,6 +61,14 @@ jobs:
           --package-metadata dist/candidate_metadata.json
           --summary dist/candidate_summary.json
 
+      - name: Verify W112 control provider exports
+        shell: pwsh
+        run: >-
+          python tools/verify_control_provider_exports.py
+          build/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll
+          build/MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll
+          --json-out dist/control_provider_exports.json
+
       - name: Build and append WoWControlHub pilot
         shell: pwsh
         run: >-
@@ -87,5 +96,6 @@ jobs:
             dist/candidate_metadata.json
             dist/candidate_summary.json
             dist/controlhub_build.json
+            dist/control_provider_exports.json
           if-no-files-found: error
           compression-level: 0
