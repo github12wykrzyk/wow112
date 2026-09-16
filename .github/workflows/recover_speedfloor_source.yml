@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Recover terminal XZ stream and exact SpeedFloor source
+      - name: Recover exact source from natural repaired 015 split
         shell: python
         run: |
           import base64, hashlib, io, lzma, pathlib, subprocess, tarfile, zipfile
@@ -31,13 +31,12 @@ jobs:
 
           def sh(*a,text=False): return subprocess.check_output(list(a),text=text,stderr=subprocess.DEVNULL)
           def clean(s): return ''.join(c for c in s if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
-          def strict_dec(s): return base64.b64decode(clean(s),validate=True)
           def accept(data,origin):
               h=hashlib.sha256(data).hexdigest(); report.append(f'CANDIDATE {origin} size={len(data)} sha256={h}')
               if h==WANT:
                   (OUT/TARGET).write_bytes(data); report.append(f'EXACT_MATCH {origin}'); return True
               return False
-          def inspect_blob(blob,label):
+          def inspect(blob,label):
               report.append(f'DECOMPRESSED {label} size={len(blob)} magic={blob[:16].hex()}')
               if zipfile.is_zipfile(io.BytesIO(blob)):
                   with zipfile.ZipFile(io.BytesIO(blob)) as z:
@@ -55,19 +54,28 @@ jobs:
                               if f and accept(f.read(),label+':'+m.name): return True
               except Exception as e:
                   report.append(f'NOT_TAR {label} {type(e).__name__}')
-              # Nested direct ZIP signatures are also worth testing if wrapper bytes exist.
-              p=blob.find(b'PK\x03\x04')
-              if p>0 and zipfile.is_zipfile(io.BytesIO(blob[p:])):
-                  return inspect_blob(blob[p:],label+f':embedded_zip@{p}')
               return False
+          def test(label,stream):
+              s=clean(stream)
+              # tolerate historical redundant trailing '=' but never padding in the middle
+              first=s.find('=')
+              if first!=-1 and any(c!='=' for c in s[first:]):
+                  report.append(f'REJECT_MIDPAD {label} len={len(s)} firsteq={first}'); return False
+              try: raw=base64.b64decode(s,validate=False)
+              except Exception as e:
+                  report.append(f'B64_FAIL {label} len={len(s)} {type(e).__name__}'); return False
+              report.append(f'B64_OK {label} chars={len(s)} raw={len(raw)} tail={s[-8:]}')
+              if not raw.startswith(b'\xfd7zXZ\x00'): return False
+              try:
+                  d=lzma.LZMADecompressor(format=lzma.FORMAT_XZ); blob=d.decompress(raw)
+              except Exception as e:
+                  report.append(f'XZ_FAIL {label} {type(e).__name__}'); return False
+              report.append(f'XZ_STATE {label} eof={d.eof} out={len(blob)} unused={len(d.unused_data)}')
+              if not d.eof or d.unused_data: return False
+              return inspect(blob,label)
 
-          vals=[]
-          for i in range(15):
-              vals.append(clean(sh('git','show',f'HEAD:{D}/part{i:03d}.txt').decode()))
-          prefix=''.join(vals)
+          prefix=''.join(clean(sh('git','show',f'HEAD:{D}/part{i:03d}.txt').decode()) for i in range(15))
           fix=clean(sh('git','show','HEAD:'+FIX).decode())
-          report.append(f'prefix_chars={len(prefix)} fix_chars={len(fix)}')
-
           p15=f'{D}/part015.txt'
           revs=sh('git','log','--all','--format=%H','--',p15,text=True).splitlines()+['HEAD']
           variants=[]; seen=set()
@@ -75,54 +83,34 @@ jobs:
               try: v=clean(sh('git','show',f'{rev}:{p15}').decode())
               except Exception: continue
               h=hashlib.sha256(v.encode()).hexdigest()
-              if h not in seen:
-                  seen.add(h); variants.append((rev,v))
-          report.append('variants='+'|'.join(f'{r[:12]} len={len(v)} eq={[i for i,c in enumerate(v) if c=="="]}' for r,v in variants))
+              if h not in seen: seen.add(h); variants.append((rev,v))
+          report.append(f'prefix={len(prefix)} fix={len(fix)}')
+          report.append('variants='+'|'.join(f'{r[:12]}:{len(v)}:eq={[i for i,c in enumerate(v) if c=="="]}' for r,v in variants))
 
-          candidates=[]; cseen=set()
-          def add(label,c15):
-              c15=clean(c15)
-              stream=prefix+c15
-              if len(stream)%4: return
-              # strict Base64: padding only at the very end.
-              if '=' in stream[:-2]: return
-              h=hashlib.sha256(c15.encode()).hexdigest()
-              if h in cseen: return
-              cseen.add(h); candidates.append((label,c15))
-
-          # Strong hypothesis from the archive math: 120002 compressed bytes => 160004 Base64 chars,
-          # so logical part015 is 10004 chars. Test every surviving 5004-char complement against verified 015a.
+          exact=[]
           for rev,v in variants:
-              for off in range(0,max(0,len(v)-5004+1)):
-                  w=v[off:off+5004]
-                  add(f'fix+win5004:{rev[:8]}:{off}',fix+w)
-                  add(f'win5004+fix:{rev[:8]}:{off}',w+fix)
-              # Also test the exact natural split/tail shapes explicitly for auditability.
+              tag=rev[:8]
+              if len(v)>=5000:
+                  exact.append((f'fix+v[5000:]:{tag}',prefix+fix+v[5000:]))
+              if len(v)>=5001:
+                  exact.append((f'fix+v[5000:-1]:{tag}',prefix+fix+v[5000:-1]))
+                  exact.append((f'fix+v[5001:]:{tag}',prefix+fix+v[5001:]))
               if len(v)>=10004:
-                  add(f'fix+v5000_10004:{rev[:8]}',fix+v[5000:10004])
-                  add(f'fix+last5004:{rev[:8]}',fix+v[-5004:])
+                  exact.append((f'fix+v[5000:10004]:{tag}',prefix+fix+v[5000:10004]))
+                  exact.append((f'fix+v[-5004:]:{tag}',prefix+fix+v[-5004:]))
+              if len(v)>=10005:
+                  exact.append((f'fix+v[5000:10005]:{tag}',prefix+fix+v[5000:10005]))
 
-          report.append(f'terminal_candidates={len(candidates)}')
-          recovered=False
-          for label,c15 in candidates:
-              stream=prefix+c15
-              try: raw=strict_dec(stream)
-              except Exception: continue
-              if not raw.startswith(b'\xfd7zXZ\x00'): continue
-              try:
-                  d=lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
-                  blob=d.decompress(raw)
-              except lzma.LZMAError:
-                  continue
-              if not d.eof: continue
-              report.append(f'XZ_EOF {label} b64={len(stream)} raw={len(raw)} out={len(blob)} unused={len(d.unused_data)} c15sha={hashlib.sha256(c15.encode()).hexdigest()}')
-              if d.unused_data: continue
-              if inspect_blob(blob,label):
-                  recovered=True; break
+          dedup=set(); recovered=False
+          for label,stream in exact:
+              h=hashlib.sha256(clean(stream).encode()).hexdigest()
+              if h in dedup: continue
+              dedup.add(h)
+              if test(label,stream): recovered=True; break
 
           rp=OUT/'RECOVERY_REPORT.txt'; rp.write_text('\n'.join(report)+'\n',encoding='utf-8'); print(rp.read_text())
           target=OUT/TARGET
-          if not target.exists(): raise SystemExit('No exact source in recovered terminal XZ candidates')
+          if not target.exists(): raise SystemExit('Natural 015a+015b variants did not recover exact source')
           h=hashlib.sha256(target.read_bytes()).hexdigest(); print(f'VERIFIED_EXACT_SOURCE sha256={h} size={target.stat().st_size}')
           if h!=WANT: raise SystemExit('hash mismatch')
 
