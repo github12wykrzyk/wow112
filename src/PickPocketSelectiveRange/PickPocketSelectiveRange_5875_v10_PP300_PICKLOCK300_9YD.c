@@ -1,48 +1,28 @@
 /*
   PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD
-  + LockboxLab mode-isolated experiment for WoW 1.12.1 build 5875 x86.
+  + AutoJunkbox macro driver for WoW 1.12.1 build 5875 x86.
 
   Preserved behavior:
     - ordinary shared Combat Range floor = 9 yd;
     - Pick Pocket (921) max client range = 300 yd;
     - Pick Lock (1804) max client range = 300 yd.
 
-  LockboxLab keeps all three experimental paths in ONE DLL, but separates them
-  into four runtime modes so one in-game session can identify what actually works:
+  AutoJunkbox behavior:
+    - reproduces the user's known-working Vanilla macro semantics;
+    - runs only while a LocalPlayer exists, is out of combat, and has remained
+      physically stationary for a short settle window;
+    - does not run while the client reports another spell cast or an open loot
+      window;
+    - no SlashCmdList/bootstrap dependency, so loading on the login screen is safe;
+    - if no item link contains "Junkbox", the macro is a no-op.
 
-    F6 cycles 1 -> 2 -> 3 -> 4 -> 1
-
-    MODE 1  INSTANT ONLY / MANUAL
-      - client Spell.dbc Pick Lock CastingTimeIndex = 0
-      - no automatic bag queue
-      - no early UseContainerItem probes
-      - manually cast Pick Lock to test the client cast-time patch in isolation
-
-    MODE 2  NORMAL CAST + EARLY PROBES
-      - original Pick Lock CastingTimeIndex restored
-      - automatic lockbox queue enabled
-      - sparse UseContainerItem probes at 0.25/0.50/1/2/3/4/4.6/5.1/5.6 s
-      - isolates any early-open/server protocol behavior from the instant patch
-
-    MODE 3  NORMAL AUTO BASELINE
-      - original Pick Lock CastingTimeIndex restored
-      - automatic lockbox queue enabled
-      - no early probes; first open attempt is made after 5.20 s
-      - control/baseline for reliable serial processing
-
-    MODE 4  EVERYTHING
-      - client CastingTimeIndex = 0
-      - automatic queue enabled
-      - early-open probes enabled
-      - combines all experimental paths
-
-  /lockboxlab toggles the automatic worker in modes 2-4.
-  Lua initialization is deliberately deferred: the DLL can be loaded on the
-  login screen, but the worker is created only after Vanilla UI globals and bag
-  APIs exist.  A lightweight bootstrap refresh also survives logout/relog/UI reset.
-  The server remains authoritative.  All mode changes are reversible at runtime;
-  DLL unload restores the original Pick Lock CastingTimeIndex.
+  The auto driver intentionally does not alter Pick Lock cast time or attempt
+  protocol/early-open tricks.  Server cast timing remains authoritative.
 */
+
+#if !defined(_M_IX86) && !defined(__i386__)
+#error This DLL is x86-only.
+#endif
 
 typedef unsigned char BYTE;
 typedef unsigned long DWORD;
@@ -61,23 +41,41 @@ typedef HANDLE (__stdcall *GetCurrentProcess_t)(void);
 typedef void   (__stdcall *TimerProc_t)(HWND, UINT, UINT_PTR, DWORD);
 typedef UINT_PTR (__stdcall *SetTimer_t)(HWND, UINT_PTR, UINT, TimerProc_t);
 typedef BOOL   (__stdcall *KillTimer_t)(HWND, UINT_PTR);
-typedef short  (__stdcall *GetAsyncKeyState_t)(int);
 
 #define TRUE 1
 #define FALSE 0
 #define DLL_PROCESS_DETACH 0
 #define DLL_PROCESS_ATTACH 1
-#define PAGE_EXECUTE_READWRITE 0x40
+#define PAGE_EXECUTE_READWRITE 0x40u
 
+/* Range path already verified for this active module lineage. */
 #define WOW_RANGE_RESOLVER       0x006E3480u
 #define WOW_COMBAT_RANGE_FLOOR   0x00801624u
 #define WOW_SPELL_INDEX_MAX      0x00C0D78Cu
 #define WOW_SPELL_INDEX_TABLE    0x00C0D788u
 #define WOW_FRAMESCRIPT_EXECUTE  0x00704CD0u
 
-#define SPELL_CAST_TIME_INDEX_OFF 0x48u /* Spell.dbc field 18 */
 #define PICK_POCKET_SPELL_ID       921u
 #define PICK_LOCK_SPELL_ID        1804u
+
+/* Verified build-5875 LocalPlayer/object fields shared with MovementCore. */
+#define WOW_OBJECT_MANAGER_PTR     0x00B41414u
+#define OM_FIRST_OBJECT_OFF        0x00ACu
+#define OM_PLAYER_GUID_LO_OFF      0x00C0u
+#define OM_PLAYER_GUID_HI_OFF      0x00C4u
+#define OBJ_DESCRIPTOR_PTR_OFF     0x0008u
+#define OBJ_GUID_LO_OFF            0x0030u
+#define OBJ_GUID_HI_OFF            0x0034u
+#define OBJ_NEXT_OFF               0x003Cu
+#define OBJ_X_OFF                  0x09B8u
+#define OBJ_Y_OFF                  0x09BCu
+#define OBJ_Z_OFF                  0x09C0u
+#define UNIT_FIELD_FLAGS_INDEX     0x002Eu
+#define UNIT_FLAG_IN_COMBAT        0x00080000u
+
+/* Current canonical MovementCore uses these globals for arbitration. */
+#define WOW_CASTING_SPELLID        0x00CECA88u
+#define WOW_IS_LOOTING_STATE       0x00B71B48u
 
 /* WoW.exe IAT entries verified for this 5875 executable lineage. */
 #define WOW_IAT_VIRTUALPROTECT      0x007FF35Cu
@@ -85,13 +83,14 @@ typedef short  (__stdcall *GetAsyncKeyState_t)(int);
 #define WOW_IAT_GETCURRENTPROCESS   0x007FF390u
 #define WOW_IAT_SETTIMER            0x007FF4F4u
 #define WOW_IAT_KILLTIMER           0x007FF4F8u
-#define WOW_IAT_GETASYNCKEYSTATE    0x007FF644u
 
-#define VK_F6 0x75
-#define LAB_MODE_INSTANT_ONLY          1u
-#define LAB_MODE_NORMAL_PROBES         2u
-#define LAB_MODE_NORMAL_AUTO           3u
-#define LAB_MODE_ALL                   4u
+#define AUTO_TIMER_MS                 100u
+#define STATIONARY_SETTLE_MS          650u
+#define MACRO_RETRY_GAP_MS            750u
+#define STATIONARY_EPSILON            0.03f
+
+/* Required by MSVC CRT-less x86 when floating-point operations are emitted. */
+int _fltused = 0x9875;
 
 static const DWORD g_callsites[] = {
     0x004825CAu,
@@ -111,90 +110,27 @@ static const DWORD g_callsites[] = {
 static const BYTE g_300f[4] = { 0x00, 0x00, 0x96, 0x43 };
 static const BYTE g_9f[4]   = { 0x00, 0x00, 0x10, 0x41 };
 
-static volatile DWORD g_installed = 0;
-static volatile DWORD g_pickPocketHits = 0;
-static volatile DWORD g_pickLockHits = 0;
-static volatile DWORD g_lastSpellId = 0;
-static volatile DWORD g_patchedCalls = 0;
-static volatile DWORD g_pickLockRecord = 0;
-static volatile DWORD g_originalPickLockCastTimeIndex = 0;
-static volatile DWORD g_castTimePatched = 0;
-static volatile DWORD g_scriptInjected = 0;
-static volatile DWORD g_labMode = LAB_MODE_INSTANT_ONLY;
-static volatile DWORD g_f6WasDown = 0;
-static volatile DWORD g_lastBootstrapTick = 0;
-static UINT_PTR g_labTimer = 0;
+static volatile DWORD g_installed = 0u;
+static volatile DWORD g_pickPocketHits = 0u;
+static volatile DWORD g_pickLockHits = 0u;
+static volatile DWORD g_lastSpellId = 0u;
+static volatile DWORD g_patchedCalls = 0u;
+static volatile DWORD g_macroDispatches = 0u;
+static volatile DWORD g_stationary = 0u;
+static volatile DWORD g_lastMacroTick = 0u;
+static volatile DWORD g_stationarySince = 0u;
+static volatile DWORD g_havePosition = 0u;
+static float g_lastX = 0.0f;
+static float g_lastY = 0.0f;
+static float g_lastZ = 0.0f;
+static UINT_PTR g_autoTimer = 0u;
 
-/*
-  Lua 5.0-compatible bootstrap + worker.
-
-  The DLL is loaded before the account/login UI is fully initialized on this
-  client.  Therefore this chunk must be safe when SlashCmdList and bag APIs are
-  still nil.  It creates only a bootstrap frame first; the actual LockboxLab
-  worker is installed later from OnUpdate once the required Vanilla globals
-  exist.  Re-executing the chunk is idempotent.
-*/
-static const char g_lockboxLabScript[] =
-"if not WOW112_LockboxLabBootstrap and CreateFrame then "
-"local B=CreateFrame('Frame');WOW112_LockboxLabBootstrap=B;"
-"B:SetScript('OnUpdate',function() "
-"if WOW112_LockboxLab then B:SetScript('OnUpdate',nil);return end;"
-"if not SlashCmdList or not GetTime or not GetContainerNumSlots or not GetContainerItemLink or not CastSpellByName or not SpellIsTargeting or not PickupContainerItem or not UseContainerItem or not GetNumLootItems or not LootSlot or not CloseLoot or not string or not string.find or not string.format then return end;"
-"local initMode=WOW112_LockboxPendingMode or 1;"
-"WOW112_LockboxLab={enabled=1,mode=initMode,next=0,busy=nil,b=0,s=0,id=0,start=0,probe=0,lootStart=0,normalOpen=0,"
-"ids={[4632]=1,[4633]=1,[4634]=1,[4636]=1,[4637]=1,[4638]=1,[5758]=1,[5759]=1,[5760]=1,"
-"[16882]=1,[16883]=1,[16884]=1,[16885]=1},skip={},probes={0.25,0.50,1.00,2.00,3.00,4.00,4.60,5.10,5.60}};"
-"local L=WOW112_LockboxLab;"
-"SLASH_LOCKBOXLAB1='/lockboxlab';"
-"SlashCmdList['LOCKBOXLAB']=function(msg) "
-"if msg=='on' then L.enabled=1 elseif msg=='off' then L.enabled=0 else L.enabled=1-L.enabled end;"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage((L.enabled==1 and '|cff55ff55[LockboxLab]|r worker ON' or '|cffffaa00[LockboxLab]|r worker OFF')..' mode='..L.mode) end end;"
-"local f=CreateFrame('Frame');L.frame=f;"
-"f:SetScript('OnUpdate',function() "
-"local n=GetTime();if n<L.next then return end;"
-"if L.mode==1 then L.next=n+0.50;return end;"
-"if L.enabled~=1 then L.next=n+0.50;return end;"
-"if L.busy and GetNumLootItems and GetNumLootItems()>0 then "
-"if not L.lootStart or L.lootStart==0 then L.lootStart=n;"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ff66[LockboxLab]|r OPEN mode='..L.mode..' '..string.format('%.2f',n-L.start)..'s probes='..L.probe) end end;"
-"local c=GetNumLootItems();local i;for i=1,c do LootSlot(i) end;"
-"if GetNumLootItems()==0 or n-L.lootStart>1.50 then CloseLoot();L.busy=nil;L.lootStart=0;L.normalOpen=0;L.next=n+0.40 else L.next=n+0.15 end;return end;"
-"if L.busy then "
-"local link=GetContainerItemLink(L.b,L.s);if not link then L.busy=nil;L.next=n+0.30;return end;"
-"local age=n-L.start;"
-"if L.mode==2 or L.mode==4 then local t=L.probes[L.probe+1];"
-"if t and age>=t then L.probe=L.probe+1;UseContainerItem(L.b,L.s);L.next=n+0.08;return end "
-"elseif L.mode==3 then if L.normalOpen==0 and age>=5.20 then L.normalOpen=1;UseContainerItem(L.b,L.s);L.next=n+0.15;return end end;"
-"if age>6.50 then UseContainerItem(L.b,L.s);L.skip[L.id]=n+15.0;"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[LockboxLab]|r TIMEOUT mode='..L.mode..' >6.5s item='..L.id) end;"
-"L.busy=nil;L.normalOpen=0;L.next=n+0.50;return end;"
-"L.next=n+0.05;return end;"
-"if UnitAffectingCombat and UnitAffectingCombat('player') then L.next=n+0.50;return end;"
-"local b,s,m,link,a,z,id;for b=0,4 do m=GetContainerNumSlots(b);for s=1,m do link=GetContainerItemLink(b,s);"
-"if link then a,z,id=string.find(link,'item:(%d+)');id=tonumber(id);"
-"if id and L.ids[id] and (not L.skip[id] or n>=L.skip[id]) then "
-"CastSpellByName('Pick Lock');if SpellIsTargeting() then PickupContainerItem(b,s);"
-"L.busy=1;L.b=b;L.s=s;L.id=id;L.start=n;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=n+0.05;"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[LockboxLab]|r START mode='..L.mode..' item='..id..' bag='..b..' slot='..s) end;return end end end end end;"
-"L.next=n+0.75 end);"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[LockboxLab]|r READY - F6 cycles modes 1-4; /lockboxlab toggles worker; mode='..L.mode) end;"
-"B:SetScript('OnUpdate',nil) "
-"end) "
-"end";
-
-/*
-  Mode scripts are idempotent.  They always publish a pending mode for a future
-  worker, but only reset an existing worker when the mode actually changes.
-  This lets the native timer safely refresh bootstrap state after relog/UI reset.
-*/
-static const char g_mode1Script[] =
-"WOW112_LockboxPendingMode=1;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=1 then L.mode=1;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 1: INSTANT ONLY / MANUAL') end end end";
-static const char g_mode2Script[] =
-"WOW112_LockboxPendingMode=2;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=2 then L.mode=2;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 2: NORMAL CAST + EARLY PROBES') end end end";
-static const char g_mode3Script[] =
-"WOW112_LockboxPendingMode=3;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=3 then L.mode=3;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 3: NORMAL AUTO BASELINE') end end end";
-static const char g_mode4Script[] =
-"WOW112_LockboxPendingMode=4;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=4 then L.mode=4;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 4: EVERYTHING') end end end";
+/* Exact working macro sequence supplied by the user, wrapped only in API guards. */
+static const char g_junkboxMacroScript[] =
+"if GetContainerNumSlots and GetContainerItemLink and CastSpellByName and PickupContainerItem and ClearCursor and string and string.find then "
+"for b=0,4 do for s=1,GetContainerNumSlots(b) do l=GetContainerItemLink(b,s) if l~=nil then "
+"if string.find(l,'Junkbox') then CastSpellByName('Pick Lock') PickupContainerItem(b,s) ClearCursor() end "
+"end end end end";
 
 static VirtualProtect_t GetVirtualProtect(void)
 {
@@ -221,9 +157,15 @@ static KillTimer_t GetKillTimer(void)
     return *(KillTimer_t*)WOW_IAT_KILLTIMER;
 }
 
-static GetAsyncKeyState_t GetGetAsyncKeyState(void)
+static BOOL Ptr(const void* p)
 {
-    return *(GetAsyncKeyState_t*)WOW_IAT_GETASYNCKEYSTATE;
+    DWORD v = (DWORD)p;
+    return v >= 0x10000u && v <= 0x7FFDFFFFu && !(v & 1u);
+}
+
+static float AbsF(float v)
+{
+    return v < 0.0f ? -v : v;
 }
 
 static BOOL MemoryEquals(const BYTE* a, const BYTE* b, DWORD n)
@@ -237,7 +179,7 @@ static BOOL MemoryEquals(const BYTE* a, const BYTE* b, DWORD n)
 
 static BOOL WriteExecutableMemory(BYTE* dst, const BYTE* src, DWORD n)
 {
-    DWORD oldProtect = 0, tmpProtect = 0, i;
+    DWORD oldProtect = 0u, tmpProtect = 0u, i;
     VirtualProtect_t vp = GetVirtualProtect();
     FlushInstructionCache_t fic = GetFlushInstructionCache();
     GetCurrentProcess_t gcp = GetGetCurrentProcess();
@@ -245,26 +187,16 @@ static BOOL WriteExecutableMemory(BYTE* dst, const BYTE* src, DWORD n)
     if (!vp || !fic || !gcp) return FALSE;
     if (!vp(dst, n, PAGE_EXECUTE_READWRITE, &oldProtect)) return FALSE;
 
-    for (i = 0; i < n; ++i) dst[i] = src[i];
+    for (i = 0u; i < n; ++i) dst[i] = src[i];
     fic(gcp(), dst, n);
     vp(dst, n, oldProtect, &tmpProtect);
     return TRUE;
 }
 
-static BOOL WriteDwordProtected(DWORD address, DWORD value)
-{
-    BYTE b[4];
-    b[0] = (BYTE)(value & 0xFFu);
-    b[1] = (BYTE)((value >> 8) & 0xFFu);
-    b[2] = (BYTE)((value >> 16) & 0xFFu);
-    b[3] = (BYTE)((value >> 24) & 0xFFu);
-    return WriteExecutableMemory((BYTE*)address, b, 4u);
-}
-
 static DWORD DecodeDirectCallTarget(DWORD site)
 {
     LONG rel;
-    if (*(BYTE*)site != 0xE8) return 0;
+    if (*(BYTE*)site != 0xE8u) return 0u;
     rel = *(LONG*)(site + 1u);
     return (DWORD)(site + 5u + rel);
 }
@@ -274,12 +206,12 @@ static BOOL PatchDirectCall(DWORD site, DWORD target)
     BYTE patch[5];
     LONG rel = (LONG)(target - (site + 5u));
 
-    patch[0] = 0xE8;
+    patch[0] = 0xE8u;
     patch[1] = (BYTE)(rel & 0xFF);
     patch[2] = (BYTE)((rel >> 8) & 0xFF);
     patch[3] = (BYTE)((rel >> 16) & 0xFF);
     patch[4] = (BYTE)((rel >> 24) & 0xFF);
-    return WriteExecutableMemory((BYTE*)site, patch, 5);
+    return WriteExecutableMemory((BYTE*)site, patch, 5u);
 }
 
 static void ExecuteFrameScript(const char* script)
@@ -297,110 +229,113 @@ static void ExecuteFrameScript(const char* script)
     }
 }
 
-static DWORD FindSpellRecordById(DWORD spellId)
+static BYTE* LocalPlayer(void)
 {
-    DWORD maxIndex, i, table, rec;
-    table = *(DWORD*)WOW_SPELL_INDEX_TABLE;
-    if (!table) return 0;
-    maxIndex = *(DWORD*)WOW_SPELL_INDEX_MAX;
-    if (maxIndex == 0u || maxIndex > 100000u) return 0;
-    for (i = 0; i <= maxIndex; ++i) {
-        rec = *(DWORD*)(table + i * 4u);
-        if (rec && *(DWORD*)rec == spellId) return rec;
+    BYTE* manager = *(BYTE**)WOW_OBJECT_MANAGER_PTR;
+    BYTE* object;
+    DWORD lo, hi, i;
+
+    if (!Ptr(manager)) return 0;
+    lo = *(DWORD*)(manager + OM_PLAYER_GUID_LO_OFF);
+    hi = *(DWORD*)(manager + OM_PLAYER_GUID_HI_OFF);
+    if ((lo | hi) == 0u) return 0;
+
+    object = *(BYTE**)(manager + OM_FIRST_OBJECT_OFF);
+    for (i = 0u; i < 4095u && Ptr(object); ++i) {
+        BYTE* next;
+        if (*(DWORD*)(object + OBJ_GUID_LO_OFF) == lo &&
+            *(DWORD*)(object + OBJ_GUID_HI_OFF) == hi)
+            return object;
+        next = *(BYTE**)(object + OBJ_NEXT_OFF);
+        if (next == object) break;
+        object = next;
     }
     return 0;
 }
 
-static BOOL EnsurePickLockRecord(void)
+static BOOL PlayerInCombat(BYTE* player)
 {
-    DWORD rec;
-    if (g_pickLockRecord) return TRUE;
-    rec = FindSpellRecordById(PICK_LOCK_SPELL_ID);
-    if (!rec) return FALSE;
-    g_pickLockRecord = rec;
-    g_originalPickLockCastTimeIndex = *(DWORD*)(rec + SPELL_CAST_TIME_INDEX_OFF);
-    return TRUE;
+    DWORD* descriptors;
+    if (!Ptr(player)) return FALSE;
+    descriptors = *(DWORD**)(player + OBJ_DESCRIPTOR_PTR_OFF);
+    if (!Ptr(descriptors)) return FALSE;
+    return (descriptors[UNIT_FIELD_FLAGS_INDEX] & UNIT_FLAG_IN_COMBAT) ? TRUE : FALSE;
 }
 
-static BOOL SetPickLockInstant(BOOL instant)
+static void ResetStationaryState(void)
 {
-    DWORD current;
-    if (!EnsurePickLockRecord()) return FALSE;
-    current = *(DWORD*)(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF);
+    g_havePosition = 0u;
+    g_stationarySince = 0u;
+    g_stationary = 0u;
+}
 
-    if (instant) {
-        if (current != 0u &&
-            !WriteDwordProtected(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF, 0u))
-            return FALSE;
-        g_castTimePatched = 1u;
-        return TRUE;
-    }
+static BOOL PlayerStationary(BYTE* player, DWORD tick)
+{
+    float x, y, z;
 
-    if (g_originalPickLockCastTimeIndex == 0u)
+    if (!Ptr(player)) {
+        ResetStationaryState();
         return FALSE;
-    if (current != g_originalPickLockCastTimeIndex &&
-        !WriteDwordProtected(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF,
-                             g_originalPickLockCastTimeIndex))
+    }
+
+    x = *(float*)(player + OBJ_X_OFF);
+    y = *(float*)(player + OBJ_Y_OFF);
+    z = *(float*)(player + OBJ_Z_OFF);
+
+    if (!g_havePosition) {
+        g_lastX = x;
+        g_lastY = y;
+        g_lastZ = z;
+        g_havePosition = 1u;
+        g_stationarySince = tick;
+        g_stationary = 0u;
         return FALSE;
-    g_castTimePatched = 0u;
+    }
+
+    if (AbsF(x - g_lastX) > STATIONARY_EPSILON ||
+        AbsF(y - g_lastY) > STATIONARY_EPSILON ||
+        AbsF(z - g_lastZ) > STATIONARY_EPSILON) {
+        g_lastX = x;
+        g_lastY = y;
+        g_lastZ = z;
+        g_stationarySince = tick;
+        g_stationary = 0u;
+        return FALSE;
+    }
+
+    if ((DWORD)(tick - g_stationarySince) < STATIONARY_SETTLE_MS) {
+        g_stationary = 0u;
+        return FALSE;
+    }
+
+    g_stationary = 1u;
     return TRUE;
 }
 
-static BOOL ModeNeedsInstant(DWORD mode)
+static void __stdcall AutoJunkboxTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWORD tick)
 {
-    return (mode == LAB_MODE_INSTANT_ONLY || mode == LAB_MODE_ALL) ? TRUE : FALSE;
-}
+    BYTE* player;
+    (void)hwnd;
+    (void)msg;
+    (void)id;
 
-static const char* ModeScript(DWORD mode)
-{
-    if (mode == LAB_MODE_INSTANT_ONLY) return g_mode1Script;
-    if (mode == LAB_MODE_NORMAL_PROBES) return g_mode2Script;
-    if (mode == LAB_MODE_NORMAL_AUTO) return g_mode3Script;
-    return g_mode4Script;
-}
-
-static BOOL ApplyLabMode(DWORD mode)
-{
-    if (mode < LAB_MODE_INSTANT_ONLY || mode > LAB_MODE_ALL) return FALSE;
-    if (!SetPickLockInstant(ModeNeedsInstant(mode))) return FALSE;
-    g_labMode = mode;
-    if (g_scriptInjected) ExecuteFrameScript(ModeScript(mode));
-    return TRUE;
-}
-
-static void __stdcall LockboxLabTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWORD tick)
-{
-    GetAsyncKeyState_t gak;
-    DWORD down, next;
-    (void)hwnd; (void)msg; (void)id;
-
-    if (!EnsurePickLockRecord()) return;
-
-    if (!g_scriptInjected) {
-        if (!ApplyLabMode(LAB_MODE_INSTANT_ONLY)) return;
-        g_scriptInjected = 1u;
+    player = LocalPlayer();
+    if (!player) {
+        ResetStationaryState();
+        return;
     }
 
-    /*
-      Refresh only lightweight/idempotent bootstrap state once per second.
-      This is safe on the login screen (no SlashCmdList indexing until ready)
-      and reconstructs the Lua worker after logout/relog or a UI reset.
-    */
-    if (g_lastBootstrapTick == 0u || (DWORD)(tick - g_lastBootstrapTick) >= 1000u) {
-        g_lastBootstrapTick = tick;
-        ExecuteFrameScript(g_lockboxLabScript);
-        ExecuteFrameScript(ModeScript(g_labMode));
-    }
+    if (!PlayerStationary(player, tick)) return;
+    if (PlayerInCombat(player)) return;
+    if (*(DWORD*)WOW_CASTING_SPELLID != 0u) return;
+    if (*(DWORD*)WOW_IS_LOOTING_STATE != 0u) return;
+    if (g_lastMacroTick != 0u &&
+        (DWORD)(tick - g_lastMacroTick) < MACRO_RETRY_GAP_MS)
+        return;
 
-    gak = GetGetAsyncKeyState();
-    if (!gak) return;
-    down = (gak(VK_F6) & (short)0x8000) ? 1u : 0u;
-    if (down && !g_f6WasDown) {
-        next = g_labMode + 1u;
-        if (next > LAB_MODE_ALL) next = LAB_MODE_INSTANT_ONLY;
-        ApplyLabMode(next);
-    }
-    g_f6WasDown = down;
+    ExecuteFrameScript(g_junkboxMacroScript);
+    g_lastMacroTick = tick;
+    ++g_macroDispatches;
 }
 
 /*
@@ -482,10 +417,10 @@ __declspec(naked) static void RangeResolverWrapper(void)
 static BOOL ValidateTargetBuild(void)
 {
     DWORD i;
-    if (!MemoryEquals((const BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4))
+    if (!MemoryEquals((const BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4u))
         return FALSE;
 
-    for (i = 0; i < CALLSITE_COUNT; ++i) {
+    for (i = 0u; i < CALLSITE_COUNT; ++i) {
         if (DecodeDirectCallTarget(g_callsites[i]) != WOW_RANGE_RESOLVER)
             return FALSE;
     }
@@ -499,26 +434,39 @@ static BOOL InstallHook(void)
     SetTimer_t st;
 
     if (!ValidateTargetBuild()) return FALSE;
-
-    if (!WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_9f, 4))
+    if (!WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_9f, 4u))
         return FALSE;
 
-    for (i = 0; i < CALLSITE_COUNT; ++i) {
+    for (i = 0u; i < CALLSITE_COUNT; ++i) {
         if (!PatchDirectCall(g_callsites[i], wrapper)) {
             DWORD j;
-            for (j = 0; j < i; ++j)
+            for (j = 0u; j < i; ++j)
                 PatchDirectCall(g_callsites[j], WOW_RANGE_RESOLVER);
-            WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4);
+            WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4u);
             return FALSE;
         }
         g_patchedCalls = i + 1u;
     }
 
-    g_installed = 1u;
-
-    /* Keep the timer alive: it performs deferred initialization and F6 mode switching. */
     st = GetSetTimer();
-    if (st) g_labTimer = st((HWND)0, 0u, 100u, LockboxLabTimerProc);
+    if (!st) {
+        for (i = 0u; i < g_patchedCalls; ++i)
+            PatchDirectCall(g_callsites[i], WOW_RANGE_RESOLVER);
+        g_patchedCalls = 0u;
+        WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4u);
+        return FALSE;
+    }
+
+    g_autoTimer = st((HWND)0, 0u, AUTO_TIMER_MS, AutoJunkboxTimerProc);
+    if (!g_autoTimer) {
+        for (i = 0u; i < g_patchedCalls; ++i)
+            PatchDirectCall(g_callsites[i], WOW_RANGE_RESOLVER);
+        g_patchedCalls = 0u;
+        WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4u);
+        return FALSE;
+    }
+
+    g_installed = 1u;
     return TRUE;
 }
 
@@ -527,30 +475,21 @@ static void RemoveHook(void)
     DWORD i;
     KillTimer_t kt;
 
-    if (g_labTimer) {
+    if (g_autoTimer) {
         kt = GetKillTimer();
-        if (kt) kt((HWND)0, g_labTimer);
-        g_labTimer = 0;
+        if (kt) kt((HWND)0, g_autoTimer);
+        g_autoTimer = 0u;
     }
-
-    if (g_pickLockRecord && g_originalPickLockCastTimeIndex != 0u &&
-        *(DWORD*)(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF) !=
-        g_originalPickLockCastTimeIndex) {
-        WriteDwordProtected(g_pickLockRecord + SPELL_CAST_TIME_INDEX_OFF,
-                            g_originalPickLockCastTimeIndex);
-    }
-    g_castTimePatched = 0u;
-    g_pickLockRecord = 0u;
 
     if (!g_installed && !g_patchedCalls) return;
 
-    for (i = 0; i < g_patchedCalls; ++i)
+    for (i = 0u; i < g_patchedCalls; ++i)
         PatchDirectCall(g_callsites[i], WOW_RANGE_RESOLVER);
 
-    WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4);
-
+    WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4u);
     g_patchedCalls = 0u;
     g_installed = 0u;
+    ResetStationaryState();
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetStatus(void)
@@ -573,27 +512,32 @@ __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetPickLockHitCount(vo
     return g_pickLockHits;
 }
 
+/* Compatibility exports retained from the previous LockboxLab candidate. */
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetLockboxLabStatus(void)
 {
     return (g_installed ? 1u : 0u) |
-           (g_castTimePatched ? 2u : 0u) |
-           (g_scriptInjected ? 4u : 0u) |
-           (g_labMode << 8);
+           (g_stationary ? 2u : 0u) |
+           (5u << 8);
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetLockboxLabMode(void)
 {
-    return g_labMode;
+    return 5u;
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetOriginalPickLockCastTimeIndex(void)
 {
-    return g_originalPickLockCastTimeIndex;
+    return 0u;
+}
+
+__declspec(dllexport) DWORD __stdcall PickPocketSelective_GetAutoJunkboxDispatchCount(void)
+{
+    return g_macroDispatches;
 }
 
 __declspec(dllexport) const char* __stdcall PickPocketSelective_GetBuildTag(void)
 {
-    return "LOCKBOXLAB_MODES4_UIREADYFIX_20260916";
+    return "AUTOJUNKBOX_MACRO_STATIONARY_V1_20260916";
 }
 
 BOOL __stdcall DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
