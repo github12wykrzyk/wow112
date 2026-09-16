@@ -8,7 +8,11 @@ V68 = V67 + AutoPP HARDLOS3D rear-only fix. Mining HARDLOS is unchanged.
 
 ### Active EXE
 `WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe`
-SHA256: `b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27`
+
+- Path: repository root (`/WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe`)
+- Size: `4907008` bytes
+- SHA256: `b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27`
+- Storage: direct canonical binary in `main`
 
 ### Active DLLs
 1. `WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll`
@@ -24,7 +28,7 @@ SHA256: `b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27`
 `PPHardSelect()` generates HARDLOS retry candidates relative to target orientation and accepts only the rear hemisphere. There is no front-side fallback. Spoofed player orientation still faces the target for Pick Pocket.
 
 ### Canonical repository representation
-V68 is stored as a delta against V67.
+V68 is stored as a delta against V67 for DLL/runtime history, while the active patched client EXE is now stored directly in the repository root.
 
 Verified runtime delta:
 - `artifacts/V68/runtime/`
@@ -41,7 +45,7 @@ Both artifact directories contain `README_RESTORE.md` with reconstruction comman
 The old full-bundle chunks under `archives/` are deprecated and must not be treated as canonical.
 
 ### EXE
-The large client EXE is represented by the existing deterministic V66 -> V67/V68 Stealth5 patch path and its SHA256 documentation. V68 does not change the EXE relative to V67.
+The active V68 client EXE is stored directly at repository root and is part of the canonical stable baseline. Its required SHA256 is `b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27`. V68 does not change the EXE relative to V67; the historical deterministic V66 -> V67/V68 Stealth5 patch documentation remains useful for audit/reconstruction, but the direct binary is now the primary artifact.
 
 ### Version history
 Keep all stable working versions in the repository without an automatic retention limit. New baselines such as V69, V70 and later remain available alongside older versions for rollback and comparison.
