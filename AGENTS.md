@@ -60,6 +60,7 @@ If documentation conflicts with current machine-readable routing, stop treating 
 - Do not create a new stable baseline number for every experiment.
 - Promote to `main` only after verification passes and the candidate is accepted as stable.
 - When GitHub git-data tools are available, group one logical multi-file iteration into one tree/commit instead of using one Contents-API commit per file. This avoids duplicate CI runs and keeps rollback points meaningful.
+- For updates to existing canonical source files, prefer the Git-data path `create_blob -> create_tree -> create_commit -> update_ref`. Use Contents API `update_file` only for small/simple text-file edits when appropriate. If a Contents-API write is blocked before reaching GitHub, retry through the normal Git-data path instead of asking the user to edit or upload files manually.
 
 The AI owns routine branch synchronization and commit hygiene. Do not ask the user to merge, rebase or resolve routine repository state manually when GitHub tools can do it.
 
