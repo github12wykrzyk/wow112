@@ -43,5 +43,5 @@ The old full-bundle chunks under `archives/` are deprecated and must not be trea
 ### EXE
 The large client EXE is represented by the existing deterministic V66 -> V67/V68 Stealth5 patch path and its SHA256 documentation. V68 does not change the EXE relative to V67.
 
-### Retention
-Keep at most the latest 10 working versions in the repository. With current V68 the retention window is V59-V68; after adding a new version, drop the oldest retained version once the count exceeds 10.
+### Version history
+Keep all stable working versions in the repository without an automatic retention limit. New baselines such as V69, V70 and later remain available alongside older versions for rollback and comparison.
