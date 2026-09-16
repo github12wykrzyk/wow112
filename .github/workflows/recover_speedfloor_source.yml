@@ -20,7 +20,7 @@ jobs:
       - name: Recover exact source from retained archive experiments
         shell: python
         run: |
-          import base64, hashlib, io, lzma, os, pathlib, re, tarfile, zipfile
+          import base64, hashlib, io, lzma, pathlib, re, subprocess, tarfile, zipfile
 
           TARGET = 'WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.c'
           WANT = '4766f7057415cc41458b33ba8e07221906c955b3abc602a53f818d914fc870a3'
@@ -30,6 +30,11 @@ jobs:
 
           def natural_key(p):
               return [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', p.name)]
+
+          def b64(s):
+              s = ''.join(s.split())
+              s += '=' * ((-len(s)) % 4)
+              return base64.b64decode(s, validate=False)
 
           def accept(data, origin):
               got = hashlib.sha256(data).hexdigest()
@@ -41,7 +46,6 @@ jobs:
               return False
 
           def search_container(blob, label):
-              # Direct XZ stream, if present.
               if blob.startswith(b'\xfd7zXZ\x00'):
                   try:
                       dec = lzma.decompress(blob)
@@ -53,8 +57,10 @@ jobs:
 
               if zipfile.is_zipfile(io.BytesIO(blob)):
                   with zipfile.ZipFile(io.BytesIO(blob)) as z:
-                      report.append(f'ZIP_OK {label} members={len(z.namelist())}')
-                      for n in z.namelist():
+                      names = z.namelist()
+                      report.append(f'ZIP_OK {label} members={len(names)}')
+                      report.append('ZIP_SPEEDFLOOR_NAMES ' + '|'.join(n for n in names if 'SpeedFloor' in n or 'NonPvP' in n))
+                      for n in names:
                           if pathlib.PurePosixPath(n).name == TARGET:
                               if accept(z.read(n), f'{label}:{n}'):
                                   return True
@@ -64,6 +70,7 @@ jobs:
                   with tarfile.open(fileobj=io.BytesIO(blob), mode='r:*') as t:
                       members = t.getmembers()
                       report.append(f'TAR_OK {label} members={len(members)}')
+                      report.append('TAR_SPEEDFLOOR_NAMES ' + '|'.join(m.name for m in members if 'SpeedFloor' in m.name or 'NonPvP' in m.name))
                       for m in members:
                           if m.isfile() and pathlib.PurePosixPath(m.name).name == TARGET:
                               f = t.extractfile(m)
@@ -73,7 +80,6 @@ jobs:
               except Exception:
                   pass
 
-              # Last resort: nested ZIP after a textual/prefix wrapper.
               off = blob.find(b'PK\x03\x04')
               if off > 0 and zipfile.is_zipfile(io.BytesIO(blob[off:])):
                   return search_container(blob[off:], label + f':embedded_zip@{off}')
@@ -81,59 +87,76 @@ jobs:
               report.append(f'UNKNOWN_CONTAINER {label} size={len(blob)} magic={blob[:16].hex()}')
               return False
 
-          # 1. Search ordinary tracked files/history first.
+          found = False
+
+          # 1. Current tree.
           for p in pathlib.Path('.').rglob(TARGET):
               if '.git' not in p.parts and accept(p.read_bytes(), f'repo:{p}'):
+                  found = True
                   break
-          else:
-              # 2. Recover deprecated full-bundle experiments retained in repo.
+
+          # 2. Deprecated full-bundle experiments. Try both historical chunking schemes:
+          #    (a) chunks are pieces of one Base64 stream; (b) each chunk was Base64-encoded independently.
+          if not found:
               dirs = [
                   pathlib.Path('archives/V68_FULL_NO_EXE_BUNDLE_B64'),
                   pathlib.Path('archives/V68_FULL_NOEXE'),
                   pathlib.Path('artifacts/V68/bundle'),
               ]
-              found = False
               for d in dirs:
                   if not d.is_dir():
                       continue
-                  parts = sorted([p for p in d.iterdir() if p.is_file() and ('part' in p.name)], key=natural_key)
+                  parts = sorted([p for p in d.iterdir() if p.is_file() and 'part' in p.name], key=natural_key)
+                  texts = [p.read_text(encoding='utf-8').strip() for p in parts]
                   report.append(f'PARTSET {d} count={len(parts)} names={",".join(p.name for p in parts)}')
-                  joined_text = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+                  variants = []
                   try:
-                      blob = base64.b64decode(joined_text, validate=False)
-                      report.append(f'B64_OK {d} chars={len(joined_text)} bytes={len(blob)}')
+                      variants.append(('joined-base64', b64(''.join(texts))))
                   except Exception as e:
-                      report.append(f'B64_FAIL {d}: {e!r}')
-                      continue
-                  if search_container(blob, str(d)):
-                      found = True
+                      report.append(f'B64_JOIN_FAIL {d}: {e!r}')
+                  try:
+                      variants.append(('per-part-base64', b''.join(b64(t) for t in texts)))
+                  except Exception as e:
+                      report.append(f'B64_PERPART_FAIL {d}: {e!r}')
+                  seen_hashes = set()
+                  for mode, blob in variants:
+                      h = hashlib.sha256(blob).hexdigest()
+                      if h in seen_hashes:
+                          continue
+                      seen_hashes.add(h)
+                      report.append(f'B64_VARIANT {d} mode={mode} bytes={len(blob)} sha256={h}')
+                      if search_container(blob, f'{d}:{mode}'):
+                          found = True
+                          break
+                  if found:
                       break
 
-              # 3. Search every historical revision's tree for the exact path/name.
-              if not found:
-                  import subprocess
-                  revs = subprocess.check_output(['git','rev-list','--all'], text=True).splitlines()
-                  report.append(f'HISTORY_REVS {len(revs)}')
-                  seen = set()
-                  for rev in revs:
+          # 3. Every historical revision in all fetched branches/tags.
+          if not found:
+              revs = subprocess.check_output(['git','rev-list','--all'], text=True).splitlines()
+              report.append(f'HISTORY_REVS {len(revs)}')
+              seen = set()
+              for rev in revs:
+                  try:
+                      names = subprocess.check_output(['git','ls-tree','-r','--name-only',rev], text=True, stderr=subprocess.DEVNULL).splitlines()
+                  except Exception:
+                      continue
+                  for n in names:
+                      if pathlib.PurePosixPath(n).name != TARGET:
+                          continue
+                      key = (rev,n)
+                      if key in seen:
+                          continue
+                      seen.add(key)
                       try:
-                          names = subprocess.check_output(['git','ls-tree','-r','--name-only',rev], text=True, stderr=subprocess.DEVNULL).splitlines()
+                          data = subprocess.check_output(['git','show',f'{rev}:{n}'], stderr=subprocess.DEVNULL)
                       except Exception:
                           continue
-                      for n in names:
-                          if pathlib.PurePosixPath(n).name != TARGET:
-                              continue
-                          key=(rev,n)
-                          if key in seen: continue
-                          seen.add(key)
-                          try:
-                              data = subprocess.check_output(['git','show',f'{rev}:{n}'], stderr=subprocess.DEVNULL)
-                          except Exception:
-                              continue
-                          if accept(data, f'git:{rev}:{n}'):
-                              found=True
-                              break
-                      if found: break
+                      if accept(data, f'git:{rev}:{n}'):
+                          found = True
+                          break
+                  if found:
+                      break
 
           rp = OUT / 'RECOVERY_REPORT.txt'
           rp.write_text('\n'.join(report) + '\n', encoding='utf-8')
