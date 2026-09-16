@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import subprocess
 import sys
@@ -99,6 +100,49 @@ def verify_movementcore_archive():
         error("canonical V68 MovementCore source archive failed verification")
 
 
+def verify_movementcore_source(mc, runtime_dlls):
+    if mc.get("source_state") != "normal_source":
+        error("MovementCore source_state must be normal_source")
+        return
+
+    rel = mc.get("source_path")
+    expected_hash = str(mc.get("source_sha256", "")).lower()
+    expected_size = mc.get("source_size")
+    if not rel:
+        error("MovementCore source_path missing from CURRENT.json")
+        return
+    path = ROOT / rel
+    if not path.is_file():
+        error("canonical MovementCore source file missing: %s" % rel)
+        return
+    data = path.read_bytes()
+    actual_hash = hashlib.sha256(data).hexdigest()
+    if len(expected_hash) != 64:
+        error("invalid MovementCore source_sha256 in CURRENT.json")
+    elif actual_hash != expected_hash:
+        error("canonical MovementCore source SHA256 mismatch")
+    if not isinstance(expected_size, int) or expected_size <= 0:
+        error("invalid MovementCore source_size in CURRENT.json")
+    elif len(data) != expected_size:
+        error("canonical MovementCore source size mismatch: got %d expected %d" % (len(data), expected_size))
+
+    runtime_item = None
+    runtime_name = mc.get("runtime_name")
+    for item in runtime_dlls:
+        if isinstance(item, dict) and item.get("name") == runtime_name:
+            runtime_item = item
+            break
+    if runtime_item is None:
+        error("MovementCore runtime entry not found in runtime/current.json")
+        return
+    if runtime_item.get("source_state") != "normal_source":
+        error("MovementCore runtime source_state is not normal_source")
+    if runtime_item.get("source_path") != rel:
+        error("MovementCore source_path mismatch between CURRENT.json and runtime/current.json")
+    if str(runtime_item.get("source_sha256", "")).lower() != expected_hash:
+        error("MovementCore source_sha256 mismatch between CURRENT.json and runtime/current.json")
+
+
 def main():
     current = load_json("CURRENT.json")
     runtime = load_json("runtime/current.json")
@@ -170,15 +214,12 @@ def main():
             error("EXE SHA256 mismatch in manifests: %s" % exe_name)
 
     mc = current.get("movementcore", {})
-    source_state = mc.get("source_state")
     restore_doc = mc.get("source_restore_doc")
     if restore_doc:
         require_path(restore_doc)
 
     verify_movementcore_archive()
-
-    if source_state != "normal_source":
-        warning("MovementCore canonical source is verified but not yet committed as a normal .c file (state=%s)" % source_state)
+    verify_movementcore_source(mc, runtime_dlls)
 
     legacy_dir = mc.get("legacy_partial_source_dir")
     if legacy_dir and (ROOT / legacy_dir).is_dir():
@@ -192,6 +233,7 @@ def main():
     print("\nRepository verification summary")
     print("  baseline: %s" % current.get("stable_baseline"))
     print("  active DLLs: %d" % len(runtime_dlls))
+    print("  MovementCore source: normal .c + verified archive")
     print("  warnings: %d" % len(WARNINGS))
     print("  errors: %d" % len(ERRORS))
 
