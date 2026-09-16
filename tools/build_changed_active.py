@@ -11,13 +11,12 @@ from pathlib import Path
 PROCESS_START = time.perf_counter()
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime/current.json"
+WORK_CANDIDATE = ROOT / "runtime/work_candidate.json"
 BUILDER = ROOT / "tools/build_active_module.py"
 PACKAGER = ROOT / "tools/package_current.py"
 FAST_VERIFY = ROOT / "tools/verify_current.py"
 RUNTIME_VERIFY = ROOT / "tools/verify_runtime_artifacts.py"
 SYMBOL_VERIFY = ROOT / "tools/verify_verified_symbols.py"
-CONTROLHUB_SOURCE = ROOT / "src/WoWControlHub/WoWControlHub_v1.c"
-CONTROLHUB_SPEEDFLOOR_SOURCE = "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c"
 
 
 def norm(path):
@@ -115,6 +114,23 @@ def run_fast_gates():
     return results, wall_ms
 
 
+def load_persistent_overrides(by_name):
+    if not WORK_CANDIDATE.is_file():
+        return [], {}
+    data = json.loads(WORK_CANDIDATE.read_text(encoding="utf-8"))
+    names = data.get("source_overrides", [])
+    if not isinstance(names, list) or any(not isinstance(x, str) for x in names):
+        raise SystemExit("runtime/work_candidate.json -> source_overrides must be a list of runtime DLL names")
+    selected = []
+    for name in names:
+        item = by_name.get(name)
+        if item is None:
+            raise SystemExit(f"work candidate override is not an active buildable DLL: {name}")
+        if item not in selected:
+            selected.append(item)
+    return selected, data
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Build changed active WoW 1.12.1/5875 x86 modules and package one candidate stack."
@@ -134,22 +150,15 @@ def main():
         for x in items
         if x.get("source_path") and isinstance(x.get("build_recipe"), dict)
     }
+    by_name = {
+        x.get("name"): x
+        for x in items
+        if x.get("name") and x.get("source_path") and isinstance(x.get("build_recipe"), dict)
+    }
 
     changed, resolved_base = changed_files(args.base)
     source_selected = [by_source[p] for p in changed if p in by_source]
-
-    # Candidate-only companion dependency: while the optional ControlHub pilot is
-    # present, every produced candidate must contain the ABI-enabled SpeedFloor,
-    # even when the current edit touched only ControlHub or another module.
-    # This does not mutate stable runtime hashes and is reported separately from
-    # genuinely changed active modules.
-    candidate_required = []
-    if CONTROLHUB_SOURCE.is_file():
-        speed_item = by_source.get(CONTROLHUB_SPEEDFLOOR_SOURCE)
-        if speed_item is None:
-            raise SystemExit("ControlHub pilot requires canonical SpeedFloor source routing")
-        if speed_item not in source_selected:
-            candidate_required.append(speed_item)
+    persistent_selected, work_candidate = load_persistent_overrides(by_name)
 
     force_all_paths = {
         "tools/build_active_module.py",
@@ -160,7 +169,7 @@ def main():
     force_all = args.all or bool(force_all_paths.intersection(changed))
 
     selected_for_candidate = list(source_selected)
-    for item in candidate_required:
+    for item in persistent_selected:
         if item not in selected_for_candidate:
             selected_for_candidate.append(item)
     audit_selected = list(by_source.values()) if force_all else list(selected_for_candidate)
@@ -168,15 +177,14 @@ def main():
     relevant_infra = {
         "tools/build_active_module.py",
         "tools/build_changed_active.py",
-        "tools/build_controlhub_candidate.py",
         "tools/package_current.py",
         "tools/verify_verified_symbols.py",
         "runtime/verified_symbols_5875.json",
         "runtime/current.json",
+        "runtime/work_candidate.json",
         "CURRENT.json",
         ".github/workflows/build_work_candidate.yml",
         "src/common/W112ControlAPI.h",
-        "src/WoWControlHub/WoWControlHub_v1.c",
     }
     relevant = bool(audit_selected) or bool(relevant_infra.intersection(changed)) or any(
         p.startswith("artifacts/runtime_cache/") for p in changed
@@ -274,7 +282,7 @@ def main():
     ab_compare = next((x.get("ab_compare") for x in built if x.get("ab_compare")), None)
 
     summary = {
-        "schema_version": 3,
+        "schema_version": 4,
         "head": head,
         "base": resolved_base,
         "result": "PASS" if ready else "FAIL",
@@ -291,7 +299,9 @@ def main():
         "force_all": force_all,
         "relevant": relevant,
         "changed_active_modules": [x["name"] for x in source_selected],
-        "candidate_required_modules": [x["name"] for x in candidate_required],
+        "persistent_candidate_modules": [x["name"] for x in persistent_selected],
+        "work_candidate_note": work_candidate.get("note") if isinstance(work_candidate, dict) else None,
+        "candidate_required_modules": [],
         "audit_build_count": len(built),
         "audit_builds": build_rows,
         "candidate_override_count": len(overrides),

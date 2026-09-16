@@ -7,10 +7,10 @@ on:
     paths:
       - 'src/**'
       - 'runtime/current.json'
+      - 'runtime/work_candidate.json'
       - 'CURRENT.json'
       - 'tools/build_active_module.py'
       - 'tools/build_changed_active.py'
-      - 'tools/build_controlhub_candidate.py'
       - 'tools/package_current.py'
       - 'tools/verify_current.py'
       - 'tools/verify_runtime_artifacts.py'
@@ -59,16 +59,6 @@ jobs:
           --package-metadata dist/candidate_metadata.json
           --summary dist/candidate_summary.json
 
-      - name: Build ControlHub pilot and append to candidate
-        shell: pwsh
-        run: >-
-          python tools/build_controlhub_candidate.py
-          --package dist/WoW112_WORK_CANDIDATE.zip
-          --package-metadata dist/candidate_metadata.json
-          --summary dist/candidate_summary.json
-          --build-metadata dist/controlhub_build.json
-          --output build/WoWControlHub.dll
-
       - name: Write human-readable test card
         shell: pwsh
         run: >-
@@ -85,6 +75,5 @@ jobs:
             dist/TEST_THIS.txt
             dist/candidate_metadata.json
             dist/candidate_summary.json
-            dist/controlhub_build.json
           if-no-files-found: error
           compression-level: 0
