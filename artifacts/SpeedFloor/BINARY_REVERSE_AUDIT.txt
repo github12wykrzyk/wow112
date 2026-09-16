@@ -1,0 +1,163 @@
+SpeedFloor v0.4 binary reverse audit
+====================================
+
+CLASSIFICATION
+--------------
+FUNCTIONALLY EQUIVALENT RECONSTRUCTION
+NOT ORIGINAL SOURCE
+NOT BINARY-VERIFIED SOURCE RECONSTRUCTION
+
+FINAL DLL
+---------
+Name: WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll
+Size: 10240 bytes
+SHA256: 39478169ac9e37d82ce45daa4fad997ae059c57c271fb14027aa3c1b302854db
+Format: PE32 / i386
+ImageBase: 0x10000000
+PE timestamp: 1789491014 = 2026-09-15 16:50:14 UTC
+Entry RVA: 0x1040
+Import directory: absent / zero
+
+SECTIONS (final DLL)
+--------------------
+.text  VS=0x1AC4 RVA=0x1000 RAW=0x1C00 file=0x0400
+.rdata VS=0x02BA RVA=0x3000 RAW=0x0400 file=0x2000
+.data  VS=0x0024 RVA=0x4000 RAW=0x0200 file=0x2400
+.reloc VS=0x00EC RVA=0x5000 RAW=0x0200 file=0x2600
+
+EXPORTS (final DLL)
+-------------------
+RVA 0x1020 _SpeedFloor_GetApplyCount@0
+RVA 0x1030 _SpeedFloor_GetMethod@0
+RVA 0x1010 _SpeedFloor_GetStatus@0
+RVA 0x1000 _SpeedFloor_GetVersion@0
+
+EXPORTED CONSTANTS / STATE
+--------------------------
+GetVersion -> 0x00040000
+GetMethod  -> 4
+GetStatus  -> global state at final image VA 0x1000400C
+GetApplyCount -> final image VA 0x10004010
+
+Final .data bytes:
+0x10004000  75 98 00 00   _fltused magic 0x00009875
+0x10004004  FF FF FF FF   previous PvP state = unknown
+0x10004008  FF FF FF FF   previous stealth state = unknown
+0x1000400C  00 00 00 00   status
+0x10004010  00 00 00 00   apply count
+0x10004014  00 00 00 00   timer id
+0x10004018  00 00 00 00   detailed apply log count
+0x1000401C  00 00 00 00   last health-log tick
+0x10004020  00 00 00 00   last health-log apply snapshot
+
+WOW 5875 ABSOLUTE ADDRESSES OBSERVED
+------------------------------------
+0x00B41414 object manager pointer
+0x00605FF0 PvP-state query (__thiscall, player in ECX)
+0x007C5C20 speed recalculation (__thiscall, ECX=player+0x9A8, stack arg 0)
+
+WoW.exe IAT slots used instead of a PE import table:
+0x007FF15C CloseHandle
+0x007FF190 SetFilePointer
+0x007FF1D4 CreateFileA
+0x007FF2EC WriteFile
+0x007FF310 GetTickCount
+0x007FF4F4 SetTimer
+0x007FF4F8 KillTimer
+
+DLLMAIN / TIMER
+---------------
+PROCESS_ATTACH:
+  status=1
+  log LOAD_ALWAYS_FLOOR71_DIAG_V04
+  resolve SetTimer through 0x007FF4F4
+  if missing: status=2, fail load
+  SetTimer(NULL,0,5,callback)
+  if returned id=0: status=3, fail load
+
+PROCESS_DETACH:
+  if KillTimer slot and timer id are nonzero: KillTimer(NULL,id)
+  timer id=0
+  status=0
+
+PLAYER LOOKUP
+-------------
+manager = *(u32*)0x00B41414
+sanity: 0x00010000 <= ptr < 0x7FFE0000 and even
+manager + 0xC0 = current player GUID low
+manager + 0xC4 = current player GUID high
+manager + 0xAC = first object
+object + 0x30/+0x34 = object GUID low/high
+object + 0x3C = next object
+bounded traversal (~0xFFF steps) with self-link rejection
+
+PVP / STEALTH
+-------------
+pvp = (call 0x00605FF0(player) != 0)
+
+descriptor = *(u32*)(player+0x08)
+stealth scan: every dword from descriptor+0xBC through +0x178 inclusive
+recognized IDs:
+  0x000006F8 .. 0x000006FB
+  0x00002C3F
+  0x00002C41
+
+SPEED FLOOR
+-----------
+current speed: *(float*)(player+0xA2C)
+run speed:     *(float*)(player+0xA34)
+minimum-valid threshold: 0x3C23D70A ~= 0.01f
+floor bits: 0x40E33333 ~= 7.10f
+
+Apply if:
+  run > 0.01f && run < floor
+No PvP gate is present.
+No stealth gate is present.
+
+Apply sequence:
+  log FLOOR_NEEDED
+  *(u32*)(player+0xA34) = 0x40E33333
+  call 0x007C5C20 with ECX=player+0x9A8 and stack arg 0
+  reload player+0xA2C and +0xA34
+  increment apply count
+  log FLOOR_APPLY for first 192 applications only
+
+HEALTH LOG
+----------
+Every ~2000 ms:
+  delta = apply_count - previous snapshot
+  log SPEED_HEALTH with current post-action snapshot
+
+LOGGER
+------
+File: WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.log
+Open mode observed:
+  GENERIC_WRITE
+  FILE_SHARE_READ | FILE_SHARE_WRITE
+  OPEN_ALWAYS
+  FILE_ATTRIBUTE_NORMAL
+Append via SetFilePointer(FILE_END), WriteFile, CloseHandle.
+
+RECONSTRUCTED SOURCE
+--------------------
+Path: src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c
+Size: 14417 bytes
+SHA256: f1a446d0384f37888675f765327ab019a74ab9a9a9743ed95597b7bb24b4b69f
+
+COMPILE / LINK CHECK
+--------------------
+Compiler used for syntax/object check:
+  clang 17, target i686-pc-windows-msvc, -O2 -msse2 -ffreestanding
+Linker:
+  lld-link /dll /machine:x86 /nodefaultlib /entry:DllMain@12
+
+Test rebuild:
+  Size: 9216 bytes
+  SHA256: b2492c9d8cbe42dedb1a27ac50f053937c66c9040a0ce1c756a9217c25aafa68
+  Imports: none
+  Exported names: match final
+  Export RVAs: match final
+  .data: byte-identical to final DLL
+  .text: not byte-identical
+
+Therefore this recovery is intentionally classified as FUNCTIONALLY EQUIVALENT RECONSTRUCTION.
