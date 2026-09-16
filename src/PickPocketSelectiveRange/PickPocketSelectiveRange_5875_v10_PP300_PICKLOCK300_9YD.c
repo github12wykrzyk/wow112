@@ -37,6 +37,9 @@
       - combines all experimental paths
 
   /lockboxlab toggles the automatic worker in modes 2-4.
+  Lua initialization is deliberately deferred: the DLL can be loaded on the
+  login screen, but the worker is created only after Vanilla UI globals and bag
+  APIs exist.  A lightweight bootstrap refresh also survives logout/relog/UI reset.
   The server remains authoritative.  All mode changes are reversible at runtime;
   DLL unload restores the original Pick Lock CastingTimeIndex.
 */
@@ -119,12 +122,26 @@ static volatile DWORD g_castTimePatched = 0;
 static volatile DWORD g_scriptInjected = 0;
 static volatile DWORD g_labMode = LAB_MODE_INSTANT_ONLY;
 static volatile DWORD g_f6WasDown = 0;
+static volatile DWORD g_lastBootstrapTick = 0;
 static UINT_PTR g_labTimer = 0;
 
-/* Lua 5.0-compatible worker.  Mode 1 intentionally does not scan bags. */
+/*
+  Lua 5.0-compatible bootstrap + worker.
+
+  The DLL is loaded before the account/login UI is fully initialized on this
+  client.  Therefore this chunk must be safe when SlashCmdList and bag APIs are
+  still nil.  It creates only a bootstrap frame first; the actual LockboxLab
+  worker is installed later from OnUpdate once the required Vanilla globals
+  exist.  Re-executing the chunk is idempotent.
+*/
 static const char g_lockboxLabScript[] =
-"if not WOW112_LockboxLab then "
-"WOW112_LockboxLab={enabled=1,mode=1,next=0,busy=nil,b=0,s=0,id=0,start=0,probe=0,lootStart=0,normalOpen=0,"
+"if not WOW112_LockboxLabBootstrap and CreateFrame then "
+"local B=CreateFrame('Frame');WOW112_LockboxLabBootstrap=B;"
+"B:SetScript('OnUpdate',function() "
+"if WOW112_LockboxLab then B:SetScript('OnUpdate',nil);return end;"
+"if not SlashCmdList or not GetTime or not GetContainerNumSlots or not GetContainerItemLink or not CastSpellByName or not SpellIsTargeting or not PickupContainerItem or not UseContainerItem or not GetNumLootItems or not LootSlot or not CloseLoot or not string or not string.find or not string.format then return end;"
+"local initMode=WOW112_LockboxPendingMode or 1;"
+"WOW112_LockboxLab={enabled=1,mode=initMode,next=0,busy=nil,b=0,s=0,id=0,start=0,probe=0,lootStart=0,normalOpen=0,"
 "ids={[4632]=1,[4633]=1,[4634]=1,[4636]=1,[4637]=1,[4638]=1,[5758]=1,[5759]=1,[5760]=1,"
 "[16882]=1,[16883]=1,[16884]=1,[16885]=1},skip={},probes={0.25,0.50,1.00,2.00,3.00,4.00,4.60,5.10,5.60}};"
 "local L=WOW112_LockboxLab;"
@@ -160,17 +177,24 @@ static const char g_lockboxLabScript[] =
 "L.busy=1;L.b=b;L.s=s;L.id=id;L.start=n;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=n+0.05;"
 "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[LockboxLab]|r START mode='..L.mode..' item='..id..' bag='..b..' slot='..s) end;return end end end end end;"
 "L.next=n+0.75 end);"
-"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[LockboxLab]|r READY - F6 cycles modes 1-4; /lockboxlab toggles worker; default mode 1') end "
+"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[LockboxLab]|r READY - F6 cycles modes 1-4; /lockboxlab toggles worker; mode='..L.mode) end;"
+"B:SetScript('OnUpdate',nil) "
+"end) "
 "end";
 
+/*
+  Mode scripts are idempotent.  They always publish a pending mode for a future
+  worker, but only reset an existing worker when the mode actually changes.
+  This lets the native timer safely refresh bootstrap state after relog/UI reset.
+*/
 static const char g_mode1Script[] =
-"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=1;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 1: INSTANT ONLY / MANUAL') end end";
+"WOW112_LockboxPendingMode=1;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=1 then L.mode=1;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 1: INSTANT ONLY / MANUAL') end end end";
 static const char g_mode2Script[] =
-"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=2;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 2: NORMAL CAST + EARLY PROBES') end end";
+"WOW112_LockboxPendingMode=2;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=2 then L.mode=2;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 2: NORMAL CAST + EARLY PROBES') end end end";
 static const char g_mode3Script[] =
-"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=3;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 3: NORMAL AUTO BASELINE') end end";
+"WOW112_LockboxPendingMode=3;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=3 then L.mode=3;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 3: NORMAL AUTO BASELINE') end end end";
 static const char g_mode4Script[] =
-"if WOW112_LockboxLab then local L=WOW112_LockboxLab;L.mode=4;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 4: EVERYTHING') end end";
+"WOW112_LockboxPendingMode=4;if WOW112_LockboxLab then local L=WOW112_LockboxLab;if L.mode~=4 then L.mode=4;L.busy=nil;L.probe=0;L.lootStart=0;L.normalOpen=0;L.next=GetTime()+0.20;if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[LockboxLab]|r MODE 4: EVERYTHING') end end end";
 
 static VirtualProtect_t GetVirtualProtect(void)
 {
@@ -348,15 +372,24 @@ static void __stdcall LockboxLabTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWOR
 {
     GetAsyncKeyState_t gak;
     DWORD down, next;
-    (void)hwnd; (void)msg; (void)id; (void)tick;
+    (void)hwnd; (void)msg; (void)id;
 
     if (!EnsurePickLockRecord()) return;
 
     if (!g_scriptInjected) {
         if (!ApplyLabMode(LAB_MODE_INSTANT_ONLY)) return;
-        ExecuteFrameScript(g_lockboxLabScript);
         g_scriptInjected = 1u;
-        ExecuteFrameScript(g_mode1Script);
+    }
+
+    /*
+      Refresh only lightweight/idempotent bootstrap state once per second.
+      This is safe on the login screen (no SlashCmdList indexing until ready)
+      and reconstructs the Lua worker after logout/relog or a UI reset.
+    */
+    if (g_lastBootstrapTick == 0u || (DWORD)(tick - g_lastBootstrapTick) >= 1000u) {
+        g_lastBootstrapTick = tick;
+        ExecuteFrameScript(g_lockboxLabScript);
+        ExecuteFrameScript(ModeScript(g_labMode));
     }
 
     gak = GetGetAsyncKeyState();
@@ -560,7 +593,7 @@ __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetOriginalPickLockCas
 
 __declspec(dllexport) const char* __stdcall PickPocketSelective_GetBuildTag(void)
 {
-    return "LOCKBOXLAB_MODES4_20260916";
+    return "LOCKBOXLAB_MODES4_UIREADYFIX_20260916";
 }
 
 BOOL __stdcall DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
