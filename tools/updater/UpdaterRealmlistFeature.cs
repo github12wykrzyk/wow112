@@ -27,6 +27,7 @@ namespace WoW112Updater
         public static void Run(Form mainForm)
         {
             RealmlistFeature.Attach(mainForm);
+            MaintenanceFeature.Attach(mainForm);
             System.Windows.Forms.Application.Run(mainForm);
         }
     }

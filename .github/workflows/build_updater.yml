@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work
+      - main
     paths:
       - 'tools/updater/**'
       - '.github/workflows/build_updater.yml'
@@ -20,14 +21,14 @@ jobs:
   build-updater:
     runs-on: windows-2022
     steps:
-      - name: Checkout current work tree
+      - name: Checkout current tree
         uses: actions/checkout@v5
 
       - name: Verify current repository state
         shell: pwsh
         run: python tools/verify_current.py
 
-      - name: Compile WinForms updater x86
+      - name: Compile WinForms updater and bootstrap x86
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -40,6 +41,14 @@ jobs:
           if (-not (Test-Path $csc)) { throw "Roslyn csc.exe not found: $csc" }
           $ref = "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8"
           if (-not (Test-Path $ref)) { throw ".NET Framework 4.8 reference assemblies not found" }
+
+          & $csc /nologo /target:winexe /platform:x86 /optimize+ /langversion:latest `
+            /out:dist\WoW112UpdaterBootstrap.exe `
+            /reference:"$ref\mscorlib.dll" `
+            /reference:"$ref\System.dll" `
+            /reference:"$ref\System.Core.dll" `
+            tools\updater\UpdaterBootstrap.cs
+          if ($LASTEXITCODE -ne 0) { throw "bootstrap csc failed with exit code $LASTEXITCODE" }
 
           & $csc /nologo /target:winexe /platform:x86 /optimize+ /langversion:latest `
             /out:dist\WoW112Updater.exe `
@@ -56,34 +65,47 @@ jobs:
             tools\updater\WoW112Updater.cs `
             tools\updater\UpdaterNetworkCompat.cs `
             tools\updater\UpdaterProcessGuard.cs `
-            tools\updater\UpdaterRealmlistFeature.cs
-          if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
+            tools\updater\UpdaterRealmlistFeature.cs `
+            tools\updater\UpdaterMaintenanceFeature.cs
+          if ($LASTEXITCODE -ne 0) { throw "updater csc failed with exit code $LASTEXITCODE" }
 
-      - name: Verify updater PE32 x86 and hash
+      - name: Verify updater PE32 x86 and hashes
         shell: pwsh
         run: |
           @'
           import hashlib, json, struct
           from pathlib import Path
-          p = Path('dist/WoW112Updater.exe')
-          data = p.read_bytes()
-          if data[:2] != b'MZ':
-              raise SystemExit('not an MZ executable')
-          pe = struct.unpack_from('<I', data, 0x3C)[0]
-          if data[pe:pe+4] != b'PE\0\0':
-              raise SystemExit('missing PE signature')
-          machine = struct.unpack_from('<H', data, pe + 4)[0]
-          if machine != 0x014C:
-              raise SystemExit(f'expected x86 machine 0x014C, got 0x{machine:04X}')
+
+          def inspect(path):
+              p = Path(path)
+              data = p.read_bytes()
+              if data[:2] != b'MZ':
+                  raise SystemExit(f'{p}: not an MZ executable')
+              pe = struct.unpack_from('<I', data, 0x3C)[0]
+              if data[pe:pe+4] != b'PE\0\0':
+                  raise SystemExit(f'{p}: missing PE signature')
+              machine = struct.unpack_from('<H', data, pe + 4)[0]
+              if machine != 0x014C:
+                  raise SystemExit(f'{p}: expected x86 machine 0x014C, got 0x{machine:04X}')
+              return data, machine
+
+          updater = Path('dist/WoW112Updater.exe')
+          bootstrap = Path('dist/WoW112UpdaterBootstrap.exe')
+          updater_data, updater_machine = inspect(updater)
+          bootstrap_data, bootstrap_machine = inspect(bootstrap)
           meta = {
-              'name': p.name,
-              'updater_version': '1.1-realmlist',
+              'name': updater.name,
+              'updater_version': '1.2-maintenance',
               'self_update_protocol': 1,
-              'sha256': hashlib.sha256(data).hexdigest(),
-              'size': len(data),
-              'pe_machine': '0x014C',
+              'sha256': hashlib.sha256(updater_data).hexdigest(),
+              'size': len(updater_data),
+              'pe_machine': f'0x{updater_machine:04X}',
+              'bootstrap_name': bootstrap.name,
+              'bootstrap_sha256': hashlib.sha256(bootstrap_data).hexdigest(),
+              'bootstrap_size': len(bootstrap_data),
+              'bootstrap_pe_machine': f'0x{bootstrap_machine:04X}',
               'git_sha': '${{ github.sha }}',
-              'channel': 'work',
+              'channel': '${{ github.ref_name }}',
           }
           Path('dist/updater_build.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
           print(json.dumps(meta, indent=2))
@@ -99,6 +121,7 @@ jobs:
           name: WoW112Updater-${{ github.sha }}
           path: |
             dist/WoW112Updater.exe
+            dist/WoW112UpdaterBootstrap.exe
             dist/updater_build.json
             dist/README_UPDATER.md
           if-no-files-found: error

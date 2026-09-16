@@ -4,7 +4,7 @@ Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository
 
 Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater itself is an external Windows utility and does not inject into the game.
 
-## V1.1 QoL behavior
+## Current V1.2 maintenance behavior
 
 - `TEST (work)` reads the newest successful `Build work candidate` GitHub Actions run on branch `work`.
 - Downloads the corresponding `WoW112-WORK-CANDIDATE-*` artifact through the GitHub API.
@@ -14,12 +14,32 @@ Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater
 - Tracks updater-managed files in `.wow112_updater/installed.json` and safely removes stale managed files.
 - Shows the locally installed channel, GitHub Actions run, short commit SHA and installation time directly in the GUI.
 - `UPDATE + PLAY` performs the update flow and then launches WoW in one action.
-- Rollback history is selectable in the GUI instead of being limited to the newest backup.
-- The updater keeps at most the 10 newest backups under `.wow112_updater/backups/`.
-- `URUCHOM WOW` starts the installed WoW executable with the game directory as working directory.
-- Updates are blocked only while an actual WoW game executable (`WoW.exe` or the project `WoW_*.exe`) from the selected directory is running.
-- `WoW112Updater.exe` may safely be stored and launched directly from the WoW directory; it is excluded from the running-game guard and from the launch fallback.
-- Realmlist selector reads and writes `<game>/realmlist.wtf` without touching unrelated lines. Two presets are included: `SET realmList "play.octowow.st"` and `SET realmList "logon.ravencraft.io"`. Selecting a preset applies it immediately; `USTAW REALMLIST` reapplies the current selection.
+- Rollback history is selectable in the GUI; at most 10 newest backups are retained.
+- `URUCHOM WOW` starts only a real WoW executable (`WoW.exe` or project `WoW_*.exe`) from the selected directory.
+- `WoW112Updater.exe` may safely live directly in the WoW directory; it is excluded from the running-game guard.
+- Realmlist selector reads and writes `<game>/realmlist.wtf` without touching unrelated lines. Presets: OctoWoW (`play.octowow.st`) and RavenCraft (`logon.ravencraft.io`).
+
+## Maintenance tools
+
+### VERIFY / REPAIR
+
+The updater retrieves the exact GitHub Actions artifact recorded in `.wow112_updater/installed.json`, verifies the candidate ZIP SHA256, reconstructs the expected EXE/DLL/dlls.txt set and compares local SHA256 values.
+
+If files are missing, modified or stale, the updater offers to repair them from the exact same installed build. Repair is blocked while WoW is running, creates a rollback-compatible backup first and verifies the files again after writing.
+
+### DIAGNOSTYKA ZIP
+
+Creates `.wow112_updater/diagnostics/WoW112_diagnostics_*.zip` containing sanitized installed-state metadata, `dlls.txt`, `realmlist.wtf` when present, updater/runtime information, SHA256/size status for managed files, backup index and the current updater session log.
+
+The diagnostics ZIP intentionally never includes the GitHub token, updater `config.json` or the DPAPI-protected token blob.
+
+### AKTUALIZUJ UPDATER
+
+The updater can now update itself. It reads the newest successful `Build WoW112 updater` artifact for the selected channel branch, validates `updater_build.json`, SHA256-verifies both `WoW112Updater.exe` and the x86 bootstrap, stages the new executable and starts `WoW112UpdaterBootstrap.exe`.
+
+The bootstrap waits for the current updater process to exit, verifies the staged SHA256 again, replaces the updater executable, keeps `previous_updater.exe` under `.wow112_updater/selfupdate/` as recovery evidence and restarts the updater. No token is passed to the bootstrap.
+
+`self_update_protocol: 1` is the compatibility contract for this replacement flow.
 
 ## Private repository authentication
 
@@ -28,17 +48,15 @@ The repository is private, so GitHub does not permit anonymous artifact download
 - Contents: Read
 - Actions: Read
 
-The token is stored only on the local PC, protected with Windows DPAPI (`CurrentUser`). It is never written to the repository or updater logs.
+The token is stored only on the local PC, protected with Windows DPAPI (`CurrentUser`). It is never written to the repository, diagnostics ZIP or updater logs.
 
 ## Channels
 
-- `TEST (work)` consumes the newest successful aggregate work candidate.
-- `STABLE (main)` is wired to the `Build stable candidate` workflow. It becomes usable after this updater/stable-pipeline infrastructure is accepted and promoted to `main`.
+- `TEST (work)` consumes the newest successful aggregate work candidate and the updater build from `work`.
+- `STABLE (main)` consumes the stable candidate/updater build from `main` after this infrastructure is accepted and promoted.
 
 `TEST (work)` intentionally follows the newest successful aggregate build. If several experiments are pushed to `work`, the updater follows the newest successful combined candidate rather than a package tied to one chat.
 
-## Build and self-update foundation
+## Build
 
-`.github/workflows/build_updater.yml` first runs `python tools/verify_current.py`, then compiles `WoW112Updater.exe` as a Windows x86 .NET Framework 4.8 WinForms executable and performs a PE32/x86 smoke check.
-
-`updater_build.json` records updater version metadata, SHA256, source commit and `self_update_protocol: 1`. Automatic replacement of the running updater executable is not implemented yet; it requires a small bootstrap/helper so the old process can exit before its EXE is atomically replaced.
+`.github/workflows/build_updater.yml` runs `python tools/verify_current.py`, compiles `WoW112Updater.exe` and `WoW112UpdaterBootstrap.exe` as Windows x86 .NET Framework 4.8 executables, verifies PE32/x86 for both and emits SHA256 metadata in `updater_build.json`.
