@@ -103,7 +103,6 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define UNIT_FIELD_HEALTH_INDEX    0x0016u
 #define UNIT_FIELD_FLAGS_INDEX     0x002Eu
 #define UNIT_FIELD_AURA_INDEX      0x002Fu
-#define UNIT_CHANNEL_SPELL_INDEX   0x0090u /* vanilla 1.12.1 UNIT_CHANNEL_SPELL = descriptor index 144 */
 #define UNIT_FIELD_AURA_SLOTS      48u
 #define UNIT_FLAG_IN_COMBAT        0x00080000u
 
@@ -505,15 +504,6 @@ static BYTE* ObjByGuid(DWORD lo,DWORD hi)
 }
 
 static DWORD Combat(BYTE*p){DWORD*d;if(!Ptr(p))return 0;d=*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR);if(!Ptr(d))return 0;return(d[UNIT_FIELD_FLAGS_INDEX]&UNIT_FLAG_IN_COMBAT)?1u:0u;}
-static DWORD PlayerBusyWithForeignCastOrChannel(void)
-{
-    DWORD castId=*(DWORD*)ADDR_CASTING_SPELLID;BYTE*p;DWORD*d;
-    /* Preserve Pick Pocket's own in-flight/retry state; block only a different
-       player cast or any active vanilla channel. */
-    if(castId!=0u&&castId!=SPELL_PICK_POCKET)return 1u;
-    p=LocalPlayer();if(!Ptr(p))return 0u;d=*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR);if(!Ptr(d))return 0u;
-    return d[UNIT_CHANNEL_SPELL_INDEX]!=0u?1u:0u;
-}
 static DWORD CurrentTargetIsPlayer(void)
 {
     DWORD lo=*(DWORD*)ADDR_SELECTED_GUID_LOW,hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;BYTE*t;DWORD*d;
@@ -1309,10 +1299,6 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
        reaches ClientServices::Send from its relocated module address. */
     isAutoSource=(returnAddr>=0x01000000u&&returnAddr<=0x7FFDFFFFu)?1u:0u;
     PPDecodeTargetGuid(packet,&tlo,&thi);
-    /* Defense-in-depth: all automatic PP sources and HARDLOS retries must yield
-       while the local player is casting another spell or channeling. Manual PP
-       remains user-controlled. */
-    if(isAutoSource&&PlayerBusyWithForeignCastOrChannel()){g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;}
     if(isAutoSource&&CurrentTargetIsPlayer()){g_ppForward=0u;++g_autoPPBlocked;++g_autoPPTargetPlayerBlocks;g_ppQuietUntil=0u;return;}
     if(!g_autoPPEnabled&&isAutoSource){g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;}
     /* One auto PP transaction at a time: failure callbacks have no GUID in 5875.
