@@ -1,0 +1,111 @@
+name: Persist final AI iteration infrastructure
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - '.github/workflows/persist_final_infra.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  persist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Persist build routing and stronger verifier
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          rp = Path('runtime/current.json')
+          runtime = json.loads(rp.read_text(encoding='utf-8'))
+          recipes = {
+            'WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll': 'clangcl_i686_crtless',
+            'WoWPlayerESP_v1_2_range_sweep.dll': 'clangcl_i686_win32imports',
+          }
+          for item in runtime['active_dlls']:
+              name = item['name']
+              if name in recipes:
+                  item['build_recipe'] = {
+                      'tool': 'tools/build_active_module.py',
+                      'profile': recipes[name],
+                      'status': 'verified_x86_candidate_build'
+                  }
+              if name == 'WoWPlayerESP_v1_2_range_sweep.dll':
+                  item['source_state'] = 'normal_source'
+          rp.write_text(json.dumps(runtime, indent=2) + '\n', encoding='utf-8')
+
+          cp = Path('CURRENT.json')
+          current = json.loads(cp.read_text(encoding='utf-8'))
+          current['active_builder'] = 'tools/build_active_module.py'
+          cp.write_text(json.dumps(current, indent=2) + '\n', encoding='utf-8')
+
+          ip = Path('AI_INDEX.json')
+          index = json.loads(ip.read_text(encoding='utf-8'))
+          index['canonical']['active_builder'] = 'tools/build_active_module.py'
+          index['commands']['build_active_list'] = 'python tools/build_active_module.py --list'
+          index['commands']['build_active_one'] = 'python tools/build_active_module.py --name <runtime-dll-name>'
+          ip.write_text(json.dumps(index, indent=2) + '\n', encoding='utf-8')
+
+          dp = Path('docs/SOURCE_INVENTORY.md')
+          s = dp.read_text(encoding='utf-8')
+          s = s.replace(
+              '| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, LOSSLESS ARCHIVE | `src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c` |',
+              '| `WoWPlayerESP_v1_2_range_sweep.dll` | EXACT ORIGINAL SOURCE, DIRECT + LOSSLESS ARCHIVE BACKUP | `src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c` |'
+          )
+          dp.write_text(s, encoding='utf-8', newline='\n')
+
+          sp = Path('AI_START_HERE.md')
+          s = sp.read_text(encoding='utf-8')
+          marker = 'For modules whose exact source is still stored only as a lossless recovery archive, follow the `source_restore_doc` / `source_archive` / `source_archive_prefix` metadata instead of guessing.\n'
+          addition = marker + '\nFor active modules with `build_recipe`, build through `python tools/build_active_module.py --name <runtime-dll-name>`; the tool reads the verified compiler/link profile from `runtime/current.json` instead of rediscovering flags.\n'
+          if marker in s and 'build_active_module.py --name <runtime-dll-name>' not in s:
+              s = s.replace(marker, addition)
+          sp.write_text(s, encoding='utf-8', newline='\n')
+
+          vp = Path('tools/verify_current.py')
+          s = vp.read_text(encoding='utf-8')
+          old = '''    prefix = item.get("source_archive_prefix")\n    if prefix and not list(ROOT.glob(prefix + "*")):\n        error("source archive parts missing: %s -> %s*" % (name, prefix))\n'''
+          new = old + '''    recipe = item.get("build_recipe")\n    if recipe is not None:\n        if not isinstance(recipe, dict):\n            error("invalid build_recipe object: %s" % name)\n        else:\n            tool = recipe.get("tool")\n            profile = recipe.get("profile")\n            allowed_profiles = {\n                "msvc_x86_crtless",\n                "clangcl_i686_crtless",\n                "clangcl_i686_win32imports",\n            }\n            if not tool:\n                error("build_recipe missing tool: %s" % name)\n            elif not (ROOT / tool).is_file():\n                error("build_recipe tool missing: %s -> %s" % (name, tool))\n            if profile not in allowed_profiles:\n                error("unsupported build_recipe profile: %s -> %r" % (name, profile))\n            if recipe.get("status") != "verified_x86_candidate_build":\n                warning("build_recipe is not marked verified: %s" % name)\n    elif source_path:\n        warning("direct source has no verified build_recipe: %s" % name)\n'''
+          if old not in s:
+              raise SystemExit('verify_current build-recipe insertion marker not found')
+          if 'unsupported build_recipe profile' not in s:
+              s = s.replace(old, new)
+
+          old2 = '''    if canonical.get("source_root") != current.get("canonical_source_root"):\n        error("AI_INDEX source_root does not match CURRENT.json")\n'''
+          new2 = old2 + '''    if canonical.get("active_builder") != current.get("active_builder"):\n        error("AI_INDEX active_builder does not match CURRENT.json")\n    if current.get("active_builder"):\n        require_file(current.get("active_builder"))\n'''
+          if old2 not in s:
+              raise SystemExit('verify_current active-builder marker not found')
+          if 'AI_INDEX active_builder does not match CURRENT.json' not in s:
+              s = s.replace(old2, new2)
+
+          old3 = '''        "sha256_manifest", "current_version_doc", "canonical_source_root", "ai_entrypoint", "ai_index", "exe",\n'''
+          new3 = '''        "sha256_manifest", "current_version_doc", "canonical_source_root", "ai_entrypoint", "ai_index", "active_builder", "exe",\n'''
+          if old3 not in s:
+              raise SystemExit('verify_current required-key marker not found')
+          s = s.replace(old3, new3)
+          vp.write_text(s, encoding='utf-8', newline='\n')
+
+      - name: Verify compact state
+        run: |
+          python tools/ai_status.py
+          python tools/verify_current.py
+          python tools/verify_runtime_artifacts.py
+
+      - name: Deep verify repository
+        run: python tools/verify_repo.py
+
+      - name: Commit final infrastructure metadata
+        shell: bash
+        run: |
+          git config user.name 'github12wykrzyk'
+          git config user.email '102224296+github12wykrzyk@users.noreply.github.com'
+          git add runtime/current.json CURRENT.json AI_INDEX.json AI_START_HERE.md docs/SOURCE_INVENTORY.md tools/verify_current.py
+          git commit -m 'infra: finalize direct source and build routing for active stack'
+          git push origin HEAD:work
