@@ -295,6 +295,7 @@ static float g_ppPendingD2=0.0f;
 
 /* SafeBreak v13 state. */
 static volatile DWORD g_mode=0,g_started=0,g_lastInject=0,g_injecting=0,g_forwardCurrent=1,g_timerId=0;
+static volatile DWORD g_safeBreakPauseTick=0u,g_safeBreakPauseMs=0u,g_safeBreakResumes=0u;
 static volatile DWORD g_seenCombat=0,g_clearTick=0,g_key7=0,g_key8=0,g_keyAlt=0,g_key10=0,g_key11=0;
 static volatile DWORD g_autoPPEnabled=1u,g_autoPPBlocked=0u,g_autoPPManualPass=0u,g_autoPPTargetPlayerBlocks=0u;
 /* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
@@ -1452,7 +1453,7 @@ static void GatherTick(BYTE*p,DWORD now)
 static void Stop(BOOL sendReal)
 {
     BYTE*p=LocalPlayer();
-    g_mode=MODE_OFF;g_started=0;g_lastInject=0;g_seenCombat=0;g_clearTick=0;g_worldLost=0;g_worldReadySince=0;
+    g_mode=MODE_OFF;g_started=0;g_lastInject=0;g_safeBreakPauseTick=0u;g_seenCombat=0;g_clearTick=0;g_worldLost=0;g_worldReadySince=0;
     if(sendReal&&p&&!g_injecting)SendReal(p);
 }
 
@@ -1470,7 +1471,7 @@ static void Start(DWORD mode,DWORD now)
     g_x=px+dist;g_y=py;g_z=pz-down;g_o=po;
     if(mode==MODE_LOCAL_STRONG&&t){dx=px-*(float*)(t+OFF_UNIT_X);dy=py-*(float*)(t+OFF_UNIT_Y);if(AbsF(dx)>=AbsF(dy)){g_x=(dx<0)?px-dist:px+dist;g_y=py;}else{g_x=px;g_y=(dy<0)?py-dist:py+dist;}}
     if(mode==MODE_INSTANCE_UNREACHABLE){g_x=px;g_y=py;g_z=pz+INSTANCE_Z_UP;}
-    g_mode=mode;g_started=now;g_lastInject=0;g_seenCombat=Combat(p);g_clearTick=0;g_worldLost=0;g_worldReadySince=now;
+    g_mode=mode;g_started=now;g_lastInject=0;g_safeBreakPauseTick=0u;g_seenCombat=Combat(p);g_clearTick=0;g_worldLost=0;g_worldReadySince=now;
 }
 
 static void Inject(BYTE*p)
@@ -1491,7 +1492,7 @@ static void Inject(BYTE*p)
 
 static void __stdcall TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
-    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12;BYTE*p;
+    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
     (void)w;(void)m;(void)id;(void)tm;
     if(!GT()||!GK())return;
     now=GT()();
@@ -1507,8 +1508,18 @@ static void __stdcall TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      * covered by LongPP active/injecting; normal-range PP is covered by the
      * outgoing 921 quiet window even when LongPP correctly decides not to spoof. */
     if(LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET||((LONG)(g_ppQuietUntil-now)>0)){
+        /* Do not burn SafeBreak lifetime while PP owns movement. */
+        if(!g_safeBreakPauseTick)g_safeBreakPauseTick=now;
         ++g_ppSafeBreakYields;
         return;
+    }
+    if(g_safeBreakPauseTick){
+        paused=(DWORD)(now-g_safeBreakPauseTick);
+        g_started+=paused;
+        g_safeBreakPauseMs+=paused;
+        g_safeBreakPauseTick=0u;
+        g_lastInject=0u; /* resume with an immediate spoof pulse */
+        ++g_safeBreakResumes;
     }
 
     p=LocalPlayer();
