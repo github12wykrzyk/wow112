@@ -7,6 +7,8 @@
  * Design:
  *   - a Win32 timer callback runs on the game/UI thread;
  *   - the build-5875 FrameScript executor is signature-guarded before use;
+ *   - world readiness is checked inside guarded Vanilla Lua instead of walking
+ *     Object Manager pointers during login/logout/BG transition windows;
  *   - Lua uses only Vanilla-era API to inspect temporary weapon enchants,
  *     locate the highest available rank of the selected poison and apply it;
  *   - before touching inventory slot 16/17, the script verifies that using the
@@ -48,16 +50,6 @@ typedef u32            UINT_PTR32;
 #define FALSE32 0
 #define DLL_PROCESS_DETACH 0u
 #define DLL_PROCESS_ATTACH 1u
-
-/* Verified project primitives for WoW.exe build 5875. */
-#define WOW_OBJECT_MANAGER_PTR       0x00B41414u
-#define OM_FIRST_OBJECT_OFF          0x00ACu
-#define OM_PLAYER_GUID_LO_OFF        0x00C0u
-#define OM_PLAYER_GUID_HI_OFF        0x00C4u
-#define OBJ_GUID_LO_OFF              0x0030u
-#define OBJ_GUID_HI_OFF              0x0034u
-#define OBJ_NEXT_OFF                 0x003Cu
-#define MAX_OBJECT_STEPS             0x1000u
 
 /*
  * FrameScript_Execute build-5875 entry point. It is guarded by the exact
@@ -130,9 +122,11 @@ static const char kScriptName[] = "W112 AutoPoisons";
 /*
  * Vanilla poison item ranks, ordered from low to high. The Lua helper scans
  * each list backwards so the highest rank present in bags wins automatically.
+ * The top-level guard is intentionally idempotent: executing this bootstrap
+ * every timer tick safely recreates W112AP after Lua-state/world transitions.
  */
 static const char kBootstrapLua[] =
-"if not W112AP then "
+"if type(UnitExists)=='function' and UnitExists('player') and not W112AP then "
 "W112AP={last=0,pmh=-1,poh=-1,pen=0};"
 "W112AP.ids={"
 "[1]={6947,6949,6950,8926,8927,8928},"
@@ -179,39 +173,9 @@ static u32 read_u32(uptr32 address)
     return *(volatile u32 *)(uptr32)address;
 }
 
-static int sane_ptr(uptr32 p)
-{
-    return p >= 0x00010000u && p < 0x7FFE0000u && !(p & 1u);
-}
-
 static void *load_iat_fn(uptr32 slot)
 {
     return (void *)(uptr32)read_u32(slot);
-}
-
-static uptr32 find_local_player(void)
-{
-    uptr32 om, obj;
-    u32 guidLo, guidHi, steps;
-
-    om = read_u32(WOW_OBJECT_MANAGER_PTR);
-    if (!sane_ptr(om)) return 0u;
-    guidLo = read_u32(om + OM_PLAYER_GUID_LO_OFF);
-    guidHi = read_u32(om + OM_PLAYER_GUID_HI_OFF);
-    if ((guidLo | guidHi) == 0u) return 0u;
-
-    obj = read_u32(om + OM_FIRST_OBJECT_OFF);
-    for (steps = 0u; sane_ptr(obj) && steps < MAX_OBJECT_STEPS; ++steps) {
-        if (read_u32(obj + OBJ_GUID_LO_OFF) == guidLo &&
-            read_u32(obj + OBJ_GUID_HI_OFF) == guidHi)
-            return obj;
-        {
-            uptr32 next = read_u32(obj + OBJ_NEXT_OFF);
-            if (next == obj) break;
-            obj = next;
-        }
-    }
-    return 0u;
 }
 
 static int framescript_signature_ok(void)
@@ -252,46 +216,47 @@ static char *append_u32(char *p, u32 v)
     return p;
 }
 
-static void build_tick_script(char out[96])
+static void build_tick_script(char out[160])
 {
     char *p = out;
-    p = append_str(p, "W112AP_Tick(");
+    p = append_str(p, "if type(UnitExists)=='function' and UnitExists('player') and W112AP_Tick then W112AP_Tick(");
     p = append_u32(p, g_cfgEnabled ? 1u : 0u); *p++ = ',';
     p = append_u32(p, (u32)g_cfgMainHand); *p++ = ',';
     p = append_u32(p, (u32)g_cfgOffHand); *p++ = ',';
     p = append_u32(p, (u32)g_cfgRefreshSeconds); *p++ = ')';
+    p = append_str(p, " end");
     *p = 0;
 }
 
 static void STDCALL AutoPoisons_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 timerId, u32 time)
 {
-    char tickScript[96];
+    char tickScript[160];
     (void)hwnd; (void)msg; (void)timerId; (void)time;
     ++g_tickCount;
 
-    if (!find_local_player()) {
-        g_status = STATUS_WAITING_WORLD;
-        g_luaReady = 0u;
-        return;
-    }
     if (!framescript_signature_ok()) {
         g_status = STATUS_FRAMESCRIPT_MISMATCH;
         g_luaReady = 0u;
         return;
     }
-    if (!g_luaReady) {
-        if (!execute_lua(kBootstrapLua)) {
-            g_status = STATUS_BOOTSTRAP_FAILED;
-            return;
-        }
-        g_luaReady = 1u;
+
+    /* Never walk Object Manager pointers here. World/BG transitions can leave
+       plausible-looking stale pointers briefly. The Lua bootstrap/tick guards
+       are safe on GlueXML/login screens and are idempotent after Lua resets. */
+    if (!execute_lua(kBootstrapLua)) {
+        g_status = STATUS_WAITING_WORLD;
+        g_luaReady = 0u;
+        return;
     }
+    g_luaReady = 1u;
 
     build_tick_script(tickScript);
     if (execute_lua(tickScript))
         g_status = STATUS_ACTIVE;
-    else
+    else {
         g_status = STATUS_BOOTSTRAP_FAILED;
+        g_luaReady = 0u;
+    }
 }
 
 static void init_control_descriptor(void)

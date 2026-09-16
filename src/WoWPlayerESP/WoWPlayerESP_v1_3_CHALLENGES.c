@@ -16,13 +16,15 @@
   Challenge Lua is deliberately world-state guarded because GlueXML/login and
   BG/world transitions can temporarily expose a different Lua global set.
 
-  Hook lifecycle rule:
-    the v1.2 base owns the primary game-window WndProc subclass. This wrapper
-    adds one secondary subclass only while it can prove that its saved HWND is
-    still the base module's current game window and that our proc is actually
-    installed. World/BG transitions may cause v1.2 to restore/recreate its
-    subclass; stale challenge-hook state is therefore reconciled instead of
-    blindly trusting a one-time g_challenge_hooked flag.
+  WndProc chain rule:
+    the v1.2 base owns the primary game-window subclass and this wrapper adds
+    one secondary subclass. A later module (currently WoWControlHub) is allowed
+    to subclass above us. Therefore "attached" means same live game HWND, not
+    "our proc is the current top-level WndProc". Reinstalling merely because a
+    legitimate later subclass is on top can duplicate chal_game_wndproc inside
+    the chain (Challenges -> ControlHub -> Challenges) and recurse until stack
+    exhaustion. Reinstallation is done only when the base moves to a different
+    game HWND/world-window instance.
 
   Hotkey ownership rule:
     F8 belongs to MovementCore SafeBreak in the active stack. The legacy v1.2
@@ -291,17 +293,21 @@ static void chal_clear_hook_tracking(void) {
     g_challenge_prev_wndproc = NULL;
 }
 
+/*
+ * A valid secondary subclass does NOT have to be the current top-level WndProc.
+ * WoWControlHub may legitimately sit above it while retaining us as its saved
+ * predecessor. Treating that state as "lost" and installing chal_game_wndproc
+ * again would put the same proc twice in the chain and make the global
+ * g_challenge_prev_wndproc point back through ControlHub to ourselves.
+ */
 static BOOL chal_hook_is_current(void) {
-    LONG current;
     if (!g_challenge_hooked || !g_challenge_hwnd || !g_challenge_prev_wndproc) return FALSE;
-    if (g_challenge_hwnd != g_hooked_game_hwnd || !IsWindow(g_challenge_hwnd)) return FALSE;
-    current = GetWindowLongA(g_challenge_hwnd, GWL_WNDPROC);
-    return (WNDPROC32)(DWORD)current == chal_game_wndproc;
+    if (g_challenge_hwnd != g_hooked_game_hwnd) return FALSE;
+    return IsWindow(g_challenge_hwnd) ? TRUE : FALSE;
 }
 
-/* Restore only if our proc is still the actual top-level WndProc.  If v1.2 or
-   another owner already rebuilt the chain, writing our stale predecessor back
-   would clobber that newer hook and is exactly what this guard avoids. */
+/* Restore only if our proc is still the actual top-level WndProc. If another
+   owner is above us, never overwrite that newer chain on the old window. */
 static void chal_remove_hook(void) {
     LONG current;
     if (g_challenge_hooked && g_challenge_hwnd && g_challenge_prev_wndproc && IsWindow(g_challenge_hwnd)) {
@@ -317,9 +323,8 @@ static BOOL chal_try_install_hook(void) {
 
     if (chal_hook_is_current()) return TRUE;
 
-    /* A transition can invalidate either the HWND or the base v1.2 subclass.
-       Only undo our old hook when it is demonstrably still on top; otherwise
-       discard stale bookkeeping and let the new current chain remain intact. */
+    /* Only an HWND/world-window transition makes an attached hook stale. A
+       later subclass above us is expected and must not trigger reinstallation. */
     chal_remove_hook();
 
     if (!g_hooked_game_hwnd || !g_old_game_wndproc || !IsWindow(g_hooked_game_hwnd)) return FALSE;
@@ -332,7 +337,7 @@ static BOOL chal_try_install_hook(void) {
     g_challenge_prev_wndproc = (WNDPROC32)(DWORD)oldProc;
     g_challenge_hwnd = g_hooked_game_hwnd;
     g_challenge_hooked = TRUE;
-    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active transition_safe=1");
+    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active chain_safe=1");
     return TRUE;
 }
 
