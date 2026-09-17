@@ -42,6 +42,20 @@ static void CopyText(char *dst, unsigned cap, const char *src)
     dst[i] = 0;
 }
 
+static void CopyEvent(DiagEvent *dst, const DiagEvent *src)
+{
+    if (!dst || !src) return;
+    dst->tick_ms = src->tick_ms;
+    dst->pid = src->pid;
+    dst->tid = src->tid;
+    dst->level = src->level;
+    dst->value_a = src->value_a;
+    dst->value_b = src->value_b;
+    CopyText(dst->module, sizeof(dst->module), src->module);
+    CopyText(dst->event_name, sizeof(dst->event_name), src->event_name);
+    CopyText(dst->text, sizeof(dst->text), src->text);
+}
+
 static void AppendChar(char *dst, unsigned cap, unsigned *pos, char c)
 {
     if (*pos + 1 >= cap) return;
@@ -204,7 +218,7 @@ __declspec(dllexport) int __cdecl W112DiagWriteEvent(const char *module, const c
         return 0;
     }
     idx = g_seq++;
-    g_ring[idx % W112_DIAG_RING_CAP] = ev;
+    CopyEvent(&g_ring[idx % W112_DIAG_RING_CAP], &ev);
     ok = AppendEventToFile(g_session_path, &ev);
     LeaveCriticalSection(&g_lock);
     return ok;
