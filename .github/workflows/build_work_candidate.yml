@@ -7,8 +7,12 @@ on:
     paths:
       - 'src/**'
       - 'runtime/current.json'
+      - 'runtime/work_base_dlls.txt'
       - 'runtime/work_candidate.json'
+      - 'runtime/verified_symbols_5875.json'
+      - 'manifests/SHA256SUMS_WORK.txt'
       - 'CURRENT.json'
+      - 'AI_INDEX.json'
       - 'tools/build_active_module.py'
       - 'tools/build_changed_active.py'
       - 'tools/build_controlhub_candidate.py'
@@ -18,9 +22,7 @@ on:
       - 'tools/verify_current.py'
       - 'tools/verify_runtime_artifacts.py'
       - 'tools/verify_verified_symbols.py'
-      - 'tools/write_candidate_test_card.py'
-      - 'runtime/verified_symbols_5875.json'
-      - 'artifacts/runtime_cache/**'
+      - 'tools/verify_candidate_package.py'
       - '.github/workflows/build_work_candidate.yml'
   workflow_dispatch:
 
@@ -41,56 +43,85 @@ jobs:
           fetch-depth: 0
 
       - name: Build changed active modules and package candidate
-        if: github.event_name == 'push'
         shell: pwsh
-        run: >-
-          python tools/build_changed_active.py
-          --base "${{ github.event.before }}"
-          --output-dir build
-          --package dist/WoW112_WORK_CANDIDATE.zip
-          --package-metadata dist/candidate_metadata.json
-          --summary dist/candidate_summary.json
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '${{ github.event.before }}'
+          if (-not $base -or $base -match '^0+$') {
+            $base = (git rev-parse HEAD^)
+          }
+          python tools/build_changed_active.py `
+            --base "$base" `
+            --output-dir build `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json
+          if ($LASTEXITCODE -ne 0) { throw "candidate build failed" }
 
       - name: Full active-stack build/package audit
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
-        run: >-
-          python tools/build_changed_active.py
-          --all
-          --output-dir build
-          --package dist/WoW112_WORK_CANDIDATE.zip
-          --package-metadata dist/candidate_metadata.json
-          --summary dist/candidate_summary.json
+        run: |
+          python tools/build_changed_active.py `
+            --all `
+            --output-dir build `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json
+          if ($LASTEXITCODE -ne 0) { throw "full active-stack audit failed" }
 
-      - name: Build and append WoWControlHub pilot
+      - name: Build and append WoWControlHub when present
         shell: pwsh
-        run: >-
-          python tools/build_controlhub_candidate.py
-          --package dist/WoW112_WORK_CANDIDATE.zip
-          --package-metadata dist/candidate_metadata.json
-          --summary dist/candidate_summary.json
-          --build-metadata dist/controlhub_build.json
-          --output build/WoWControlHub.dll
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/WoWControlHub/WoWControlHub_v2.c') {
+            python tools/build_controlhub_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/controlhub_build.json `
+              --output build/WoWControlHub.dll
+            if ($LASTEXITCODE -ne 0) { throw "ControlHub candidate failed" }
+          }
 
-      - name: Build and append AutoPoisons provider
+      - name: Build and append AutoPoisons when present
         shell: pwsh
-        run: >-
-          python tools/build_autopoisons_candidate.py
-          --package dist/WoW112_WORK_CANDIDATE.zip
-          --package-metadata dist/candidate_metadata.json
-          --summary dist/candidate_summary.json
-          --build-metadata dist/autopoisons_build.json
-          --output build/WoWAutoPoisons_5875_v1.dll
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/AutoPoisons/WoWAutoPoisons_5875_v1.c') {
+            python tools/build_autopoisons_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/autopoisons_build.json `
+              --output build/WoWAutoPoisons_5875_v1.dll
+            if ($LASTEXITCODE -ne 0) { throw "AutoPoisons candidate failed" }
+          }
 
-      - name: Build and append observer-only WoWDiagHub
+      - name: Build and append observer WoWDiagHub when present
         shell: pwsh
-        run: >-
-          python tools/build_diaghub_candidate.py
-          --package dist/WoW112_WORK_CANDIDATE.zip
-          --package-metadata dist/candidate_metadata.json
-          --summary dist/candidate_summary.json
-          --build-metadata dist/diaghub_build.json
-          --output build/WoWDiagHub.dll
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/WoWDiagHub/WoWDiagHub_5875_v1.c') {
+            python tools/build_diaghub_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/diaghub_build.json `
+              --output build/WoWDiagHub.dll
+            if ($LASTEXITCODE -ne 0) { throw "DiagHub candidate failed" }
+          }
+
+      - name: Final fail-closed runnable ZIP gate
+        shell: pwsh
+        run: |
+          python tools/verify_candidate_package.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --report dist/final_package_verification.json `
+            --finalize
+          if ($LASTEXITCODE -ne 0) { throw "final package verification failed" }
 
       - name: Write human-readable test card
         shell: pwsh
@@ -108,8 +139,7 @@ jobs:
             dist/TEST_THIS.txt
             dist/candidate_metadata.json
             dist/candidate_summary.json
-            dist/controlhub_build.json
-            dist/autopoisons_build.json
-            dist/diaghub_build.json
+            dist/final_package_verification.json
+            dist/*_build.json
           if-no-files-found: error
           compression-level: 0

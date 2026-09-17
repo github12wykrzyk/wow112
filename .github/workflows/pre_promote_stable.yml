@@ -1,54 +1,51 @@
-name: Build stable candidate
+name: Pre-promote stable
 
 on:
   push:
     branches:
-      - main
-    paths:
-      - 'CURRENT.json'
-      - 'AI_INDEX.json'
-      - 'runtime/current.json'
-      - 'baseline/**'
-      - 'manifests/**'
-      - 'artifacts/runtime_cache/**'
-      - 'artifacts/V*/runtime/**'
-      - 'tools/package_exact_current.py'
-      - 'tools/verify_candidate_package.py'
-      - 'tools/verify_current.py'
-      - 'tools/verify_runtime_artifacts.py'
-      - 'tools/verify_verified_symbols.py'
-      - 'tools/verify_repo.py'
-      - 'tools/sync_source_metadata.py'
-      - '.github/workflows/build_stable_candidate.yml'
+      - 'promote/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-stable-candidate-${{ github.ref }}
+  group: pre-promote-stable-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-stable:
+  stable-gate:
     runs-on: windows-2022
     steps:
-      - name: Checkout stable tree
+      - name: Checkout promotion candidate
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Require stable metadata
+      - name: Prove candidate contains current main
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch origin main
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "promotion candidate does not contain current main"
+          }
+          Write-Host "Promotion SHA: $env:GITHUB_SHA"
+
+      - name: Require curated stable metadata
         shell: pwsh
         run: |
           $state = Get-Content CURRENT.json -Raw | ConvertFrom-Json
-          if ($state.status -ne 'stable') { throw "main stable package requires CURRENT.status=stable" }
+          if ($state.status -ne 'stable') {
+            throw "promotion candidate must set CURRENT.status=stable"
+          }
 
       - name: Verify source promotion fingerprints
         shell: pwsh
         run: python tools/sync_source_metadata.py --check
 
-      - name: Verify current stable state
+      - name: Verify canonical current state
         shell: pwsh
         run: python tools/verify_current.py
 
@@ -68,28 +65,28 @@ jobs:
         shell: pwsh
         run: python tools/verify_repo.py
 
-      - name: Package exact accepted stable bytes
+      - name: Package exact stable runtime bytes
         shell: pwsh
         run: >-
           python tools/package_exact_current.py
-          --output dist/WoW112_STABLE_CANDIDATE.zip
+          --output dist/WoW112_PREPROMOTE_CANDIDATE.zip
           --metadata dist/candidate_metadata.json
 
-      - name: Final fail-closed stable ZIP gate
+      - name: Final fail-closed promotion ZIP gate
         shell: pwsh
         run: >-
           python tools/verify_candidate_package.py
-          --package dist/WoW112_STABLE_CANDIDATE.zip
+          --package dist/WoW112_PREPROMOTE_CANDIDATE.zip
           --package-metadata dist/candidate_metadata.json
           --report dist/final_package_verification.json
           --finalize
 
-      - name: Upload stable runnable ZIP and metadata
+      - name: Upload verified promotion proof
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112-STABLE-CANDIDATE-${{ github.sha }}
+          name: WoW112-PREPROMOTE-${{ github.sha }}
           path: |
-            dist/WoW112_STABLE_CANDIDATE.zip
+            dist/WoW112_PREPROMOTE_CANDIDATE.zip
             dist/candidate_metadata.json
             dist/final_package_verification.json
           if-no-files-found: error

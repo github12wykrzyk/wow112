@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Minimal machine-readable routing index for repeated AI-assisted development. Canonical state is not duplicated here.",
+  "purpose": "Machine-readable routing index for repeated AI-assisted development. Canonical state is not duplicated here.",
   "target": {
     "game": "World of Warcraft",
     "version": "1.12.1",
@@ -10,11 +10,13 @@
   },
   "branches": {
     "stable": "main",
-    "development": "work"
+    "development": "work",
+    "promotion_pattern": "promote/**"
   },
   "read_order": [
     "AGENTS.md",
     "AI_START_HERE.md",
+    "AI_INDEX.json",
     "CURRENT.json",
     "runtime/current.json"
   ],
@@ -33,18 +35,23 @@
     "project_rules": "PROJECT_INSTRUCTIONS.md",
     "runtime_binary_cache": "artifacts/runtime_cache",
     "runtime_packager": "tools/package_current.py",
+    "exact_stable_packager": "tools/package_exact_current.py",
+    "final_package_verifier": "tools/verify_candidate_package.py",
     "active_builder": "tools/build_active_module.py",
     "candidate_builder": "tools/build_changed_active.py",
-    "source_metadata_sync": "tools/sync_source_metadata.py"
+    "source_metadata_sync": "tools/sync_source_metadata.py",
+    "promotion_workflow": ".github/workflows/pre_promote_stable.yml"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
+    "runtime_verify": "python tools/verify_runtime_artifacts.py",
+    "verified_symbols_verify": "python tools/verify_verified_symbols.py",
     "deep_verify": "python tools/verify_repo.py",
     "status": "python tools/ai_status.py",
     "status_json": "python tools/ai_status.py --json",
-    "runtime_verify": "python tools/verify_runtime_artifacts.py",
-    "verified_symbols_verify": "python tools/verify_verified_symbols.py",
     "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json",
+    "package_exact_stable": "python tools/package_exact_current.py --output dist/WoW112_STABLE_CANDIDATE.zip --metadata dist/candidate_metadata.json",
+    "finalize_package": "python tools/verify_candidate_package.py --package dist/WoW112_WORK_CANDIDATE.zip --package-metadata dist/candidate_metadata.json --summary dist/candidate_summary.json --finalize",
     "build_active_list": "python tools/build_active_module.py --list",
     "build_active_one": "python tools/build_active_module.py --name <runtime-dll-name>",
     "build_changed_candidate": "python tools/build_changed_active.py --base <previous-git-sha> --package dist/WoW112_WORK_CANDIDATE.zip --package-metadata dist/candidate_metadata.json",
@@ -52,16 +59,16 @@
     "check_source_metadata": "python tools/sync_source_metadata.py --check"
   },
   "directories": {
-    "src": "canonical editable source and source evidence grouped by module",
-    "source": "legacy/historical material only; never an active canonical source_path",
+    "src": "canonical editable source/evidence grouped by module",
     "runtime": "machine-readable active runtime metadata and verified fast indexes",
     "baseline": "stable rollback metadata",
     "manifests": "reference hashes",
-    "artifacts": "recovery, exact runtime binary cache, binary audits and deterministic reproducers",
-    "artifacts/runtime_cache": "content-addressed exact DLL bytes for fast current-runtime packaging",
+    "artifacts/runtime_cache": "content-addressed exact DLL bytes for stable packaging and rollback",
+    "artifacts": "recovery, binary audits and deterministic reproducers",
     "archives": "deprecated/intermediate archive experiments; do not scan by default",
-    "docs": "workflow, provenance and retention documentation",
-    "tools": "verification, restore, packaging and maintenance scripts"
+    "source": "legacy/historical material only",
+    "docs": "workflow/provenance/retention documentation",
+    "tools": "verification, build, packaging and maintenance scripts"
   },
   "do_not_scan_by_default": [
     "archives",
@@ -72,18 +79,15 @@
   "rules": [
     "AGENTS.md defines the AI operating contract",
     "runtime/current.json decides the active stack and canonical source provenance",
-    "runtime/verified_symbols_5875.json is a derived fast index only; its listed provenance remains authoritative",
-    "when a task needs shared build-5875 native primitives, consult the verified-symbol registry before opening unrelated large module sources",
-    "never use an omitted/unresolved registry topic as verified evidence",
-    "active DLL binary_artifact entries provide the normal exact-byte packaging path",
-    "prefer targeted module reads over repository-wide search",
-    "work must be synchronized with current main before a new iteration",
-    "main contains only accepted stable state",
-    "stable baseline numbers are rollback points, not experiment counters",
-    "normal work candidates may temporarily have stale source_sha256/source_size promotion fingerprints; the fast verifier warns and candidate build metadata records the exact source used",
-    "run source_metadata_sync before stable promotion so deep verification sees exact source fingerprints",
-    "when GitHub git-data tools are available, group one logical multi-file iteration into one commit to avoid duplicate CI runs",
-    "the AI owns routine GitHub housekeeping; the user should mainly describe behavior and test in game",
-    "never mix TBC/Wrath/Retail APIs or assumptions into build 5875 code"
+    "work must contain current main before development",
+    "normal multi-file changes should be one Git tree commit",
+    "TEST candidates may compile changed source",
+    "STABLE packages must use exact accepted bytes, never an unchecked rebuild",
+    "stable promotion must pass Pre-promote stable on the exact promote/** SHA before main moves",
+    "promote accepted changes from a clean main-based tree, not the entire accumulated work branch",
+    "run source metadata sync/check before stable promotion",
+    "final runnable ZIPs must pass tools/verify_candidate_package.py",
+    "AI owns routine GitHub housekeeping",
+    "never mix TBC/Wrath/Retail assumptions into build 5875 code"
   ]
 }

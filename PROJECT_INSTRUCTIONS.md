@@ -1,77 +1,57 @@
-# Project instructions — WoW 1.12 / AI-first workflow
+# Project instructions — WoW112 AI-first workflow
 
-Projekt dotyczy wyłącznie **World of Warcraft 1.12.1 build 5875, Windows x86**.
+Project scope is permanently **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
-## Start każdej pracy
+This document is intentionally short. `AGENTS.md` is the authoritative operating contract; do not maintain a competing copy of the workflow here.
 
-Najpierw przeczytaj:
+## Mandatory startup
 
-1. `AI_START_HERE.md`
-2. `AI_INDEX.json`
-3. `CURRENT.json`
-4. `runtime/current.json`
+Read:
 
-Dopiero potem otwieraj kod modułu, którego dotyczy zadanie. Nie skanuj automatycznie `archives/`, starych baseline ani całego `artifacts/`.
+1. `AGENTS.md`
+2. `AI_START_HERE.md`
+3. `AI_INDEX.json`
+4. `CURRENT.json`
+5. `runtime/current.json`
 
-## Twarde zasady techniczne
-
-- Nie mieszać API, struktur ani założeń z TBC/Wrath/Retail.
-- Zachowywać kompatybilność z buildem 5875 x86.
-- Preferować małe, punktowe zmiany zamiast przepisywania stabilnych modułów.
-- Nie zakładać, że funkcja opisana w nazwie DLL faktycznie działa — weryfikować source, diff, audit/reproducer lub test.
-- Przy modyfikacji binarnej zachować offset, oryginalne bajty, nowe bajty i sposób rollbacku.
-- Nie usuwać działającego rollbacku bez technicznej potrzeby.
-- Oryginalny source i source zrekonstruowany z binarki to różne klasy dowodu i muszą pozostać jawnie rozróżnione.
+Then open only the files needed for the requested module.
 
 ## Canonical state
 
-- `CURRENT.json` — wskazuje bieżący baseline i wszystkie canonical pointers.
-- `runtime/current.json` — dokładny aktywny EXE/DLL stack, SHA256 i provenance source.
-- `baseline/<wersja>/dlls.txt` — lista aktywnych DLL; kolejność musi być identyczna jak w `runtime/current.json`.
-- `manifests/SHA256SUMS_<wersja>.txt` — referencyjne hashe stabilnego runtime.
-- `src/` — canonical editable source root.
-- `source/` — legacy/history only; aktywne `source_path` nie mogą wskazywać tego katalogu.
+- `CURRENT.json` — baseline, branches, canonical tool/data pointers.
+- `runtime/current.json` — exact active runtime and source provenance.
+- `src/` — normal editable source root.
+- baseline/manifests — stable rollback identity.
+- `artifacts/runtime_cache/<sha256>.dll.xz` — exact-byte stable recovery cache.
+- `source/`, `archives/`, `src/history/` — legacy/history only.
 
-Jeżeli `runtime/current.json` zawiera `source_path`, ten dokładny plik jest canonicalnym punktem edycji dla danego lineage. Podobna nazwa pliku nie ma pierwszeństwa przed metadanymi runtime.
+Machine-readable routing wins over stale prose.
 
-## Workflow Git
+## Branch contract
 
-- `main` = ostatni zaakceptowany stabilny stan.
-- `work` = bieżący kandydat rozwojowy.
-- `work` musi startować z aktualnego `main`; nie rozwijamy projektu na starym/diverged `work`.
-- Eksperymentalne iteracje mogą wykonywać wiele commitów na `work` bez zużywania kolejnych numerów baseline.
-- Po zaakceptowaniu działającego stanu tworzymy następny stabilny baseline (`V69`, `V70`, ...), promujemy do `main` i synchronizujemy `work` do nowego `main`.
+- `main` = accepted stable.
+- `work` = development.
+- `promote/**` = curated stable candidate only.
+
+Do not push an unverified promotion directly to `main`. The exact `promote/**` SHA must first pass `.github/workflows/pre_promote_stable.yml`.
+
+## Stable byte identity
+
+A stable package is assembled from exact accepted runtime bytes and verified against `runtime/current.json`. It is not defined by a fresh source rebuild.
+
+Use:
+- `tools/package_exact_current.py`
+- `tools/verify_candidate_package.py`
 
 ## Verification
 
-Szybka kontrola każdej iteracji:
+Routine:
+`python tools/verify_current.py`
 
-```text
-python tools/verify_current.py
-```
+Stable promotion additionally:
+`python tools/sync_source_metadata.py --check`
+`python tools/verify_runtime_artifacts.py`
+`python tools/verify_verified_symbols.py`
+`python tools/verify_repo.py`
 
-Krótki status dla AI/człowieka:
-
-```text
-python tools/ai_status.py
-python tools/ai_status.py --json
-```
-
-Głęboki audit baseline/recovery:
-
-```text
-python tools/verify_repo.py
-```
-
-`verify_current.py` jest wersjo-niezależny i powinien pozostać podstawowym gate dla kolejnych V69/V70/... . `verify_repo.py` może zawierać dodatkowe kontrole recovery specyficzne dla aktualnie zabezpieczonych baseline.
-
-## Zasada aktualizacji metadanych
-
-- Zmiana canonical source -> aktualizuj jego SHA256/size w metadanych, które na niego wskazują.
-- Zmiana DLL/EXE -> aktualizuj runtime SHA256 i właściwy manifest.
-- Stabilna promocja -> aktualizuj `CURRENT.json`, `runtime/current.json`, `CURRENT_VERSION.md`, baseline i manifest nowej wersji.
-- Nie deklaruj byte-identical/rebuild-exact bez weryfikacji.
-
-## MovementCore legacy warning
-
-Nie budować MovementCore z `source/V20_SOURCE_PARTS/`. To niepełny materiał historyczny. Canonicalny plik wskazuje zawsze `CURRENT.json` / `runtime/current.json`.
+Never weaken a verifier merely to obtain PASS.
