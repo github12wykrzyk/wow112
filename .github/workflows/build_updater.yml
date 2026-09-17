@@ -63,6 +63,7 @@ jobs:
             /reference:"$ref\System.Security.dll" `
             /reference:"$ref\System.Web.Extensions.dll" `
             tools\updater\WoW112Updater.cs `
+            tools\updater\UpdaterHost.cs `
             tools\updater\UpdaterSafety.cs `
             tools\updater\UpdaterNetworkCompat.cs `
             tools\updater\UpdaterProcessGuard.cs `

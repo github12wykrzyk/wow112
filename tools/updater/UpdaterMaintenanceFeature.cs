@@ -22,7 +22,10 @@ namespace WoW112Updater
         public static void Attach(Form form)
         {
             if (form == null) return;
-            new MaintenanceController(form).Attach();
+            var host = form as IUpdaterHost;
+            if (host == null)
+                throw new InvalidOperationException("MainForm nie implementuje IUpdaterHost; maintenance nie może zostać bezpiecznie podłączony.");
+            new MaintenanceController(host).Attach();
         }
 
         private sealed class MaintenanceController
@@ -36,12 +39,8 @@ namespace WoW112Updater
             private const int AddedHeight = 62;
             private const int MaxBackups = 10;
 
+            private readonly IUpdaterHost host;
             private readonly Form form;
-            private readonly TextBox gameDir;
-            private readonly TextBox token;
-            private readonly ComboBox channel;
-            private readonly Label status;
-            private readonly RichTextBox log;
             private readonly JavaScriptSerializer json = new JavaScriptSerializer();
             private readonly Button verifyRepairButton = new Button();
             private readonly Button diagnosticsButton = new Button();
@@ -49,19 +48,15 @@ namespace WoW112Updater
             private bool attached;
             private bool maintenanceBusy;
 
-            public MaintenanceController(Form form)
+            public MaintenanceController(IUpdaterHost host)
             {
-                this.form = form;
-                gameDir = GetPrivateField<TextBox>(form, "gameDir");
-                token = GetPrivateField<TextBox>(form, "token");
-                channel = GetPrivateField<ComboBox>(form, "channel");
-                status = GetPrivateField<Label>(form, "status");
-                log = GetPrivateField<RichTextBox>(form, "log");
+                this.host = host ?? throw new ArgumentNullException("host");
+                form = host.Window ?? throw new InvalidOperationException("IUpdaterHost.Window nie może być null.");
             }
 
             public void Attach()
             {
-                if (attached || gameDir == null || token == null) return;
+                if (attached) return;
                 attached = true;
 
                 foreach (var control in form.Controls.Cast<Control>().ToArray())
@@ -93,9 +88,9 @@ namespace WoW112Updater
                 selfUpdateButton.Click += async delegate { await SelfUpdateAsync(); };
                 form.Controls.Add(selfUpdateButton);
 
-                gameDir.TextChanged += delegate { StampLocalUpdaterVersion(); };
+                host.GameDirectoryChanged += delegate { StampLocalUpdaterVersion(); };
                 StampLocalUpdaterVersion();
-                Log("Moduł maintenance v" + FeatureVersion + " gotowy.");
+                Log("Moduł maintenance v" + FeatureVersion + " gotowy (IUpdaterHost, bez reflection do MainForm).");
             }
 
             private async Task VerifyRepairAsync()
@@ -105,7 +100,7 @@ namespace WoW112Updater
                 {
                     ValidateGameAndToken();
                     SetBusy(true, "Weryfikacja zainstalowanej paczki...");
-                    var root = Path.GetFullPath(gameDir.Text.Trim());
+                    var root = Path.GetFullPath(host.GameDirectory);
                     var installed = ReadInstalledState(root);
                     if (installed == null)
                         throw new InvalidOperationException("Brak .wow112_updater/installed.json. Najpierw wykonaj aktualizację updaterem.");
@@ -185,7 +180,7 @@ namespace WoW112Updater
                 }
                 finally
                 {
-                    InvokePrivate("RefreshLocalState");
+                    host.RefreshLocalState();
                     SetBusy(false, finalStatus);
                 }
             }
@@ -197,7 +192,7 @@ namespace WoW112Updater
                 try
                 {
                     if (maintenanceBusy) return;
-                    if (string.IsNullOrWhiteSpace(token.Text))
+                    if (string.IsNullOrWhiteSpace(host.GitHubToken))
                         throw new InvalidOperationException("Wpisz GitHub token z prawem odczytu repozytorium i Actions.");
 
                     SetBusy(true, "Sprawdzanie aktualizacji updatera...");
@@ -260,7 +255,7 @@ namespace WoW112Updater
                 try
                 {
                     if (maintenanceBusy) return;
-                    var root = gameDir.Text.Trim();
+                    var root = host.GameDirectory;
                     if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                         throw new InvalidOperationException("Wybierz istniejący katalog gry.");
                     root = Path.GetFullPath(root);
@@ -284,7 +279,7 @@ namespace WoW112Updater
                         AddText(zip, "updater_info.txt", BuildUpdaterInfo(root));
                         AddText(zip, "managed_hashes.txt", BuildManagedHashes(root, installed));
                         AddText(zip, "backup_index.txt", BuildBackupIndex(root));
-                        if (log != null) AddText(zip, "session_log.txt", log.Text ?? string.Empty);
+                        AddText(zip, "session_log.txt", host.SessionLogText);
                     }
 
                     finalStatus = "Diagnostyka zapisana: " + path;
@@ -343,7 +338,7 @@ namespace WoW112Updater
 
             private async Task<RemoteUpdaterBuild> DownloadLatestUpdaterAsync()
             {
-                var branch = channel != null && channel.SelectedIndex == 1 ? "main" : "work";
+                var branch = host.IsStableChannel ? "main" : "work";
                 using (var client = CreateClient())
                 {
                     var runs = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50"))), "workflow_runs"));
@@ -507,7 +502,7 @@ namespace WoW112Updater
             {
                 try
                 {
-                    var root = gameDir == null ? string.Empty : gameDir.Text.Trim();
+                    var root = host.GameDirectory;
                     if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return;
                     var installed = ReadInstalledState(root);
                     if (installed == null) return;
@@ -518,35 +513,21 @@ namespace WoW112Updater
                 catch { }
             }
 
-            private void ExportSetBusy(bool value, string text)
-            {
-                SetBusy(value, text);
-            }
-
             private void SetBusy(bool value, string text)
             {
                 maintenanceBusy = value;
                 verifyRepairButton.Enabled = !value;
                 diagnosticsButton.Enabled = !value;
                 selfUpdateButton.Enabled = !value;
-                try
-                {
-                    var method = form.GetType().GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic);
-                    if (method != null) method.Invoke(form, new object[] { value, text });
-                    else if (status != null) status.Text = text;
-                }
-                catch
-                {
-                    if (status != null) status.Text = text;
-                }
+                host.SetBusy(value, text);
             }
 
             private void ValidateGameAndToken()
             {
                 if (maintenanceBusy) throw new InvalidOperationException("Updater już wykonuje operację.");
-                if (string.IsNullOrWhiteSpace(gameDir.Text) || !Directory.Exists(gameDir.Text.Trim()))
+                if (string.IsNullOrWhiteSpace(host.GameDirectory) || !Directory.Exists(host.GameDirectory))
                     throw new InvalidOperationException("Wybierz istniejący katalog gry.");
-                if (string.IsNullOrWhiteSpace(token.Text))
+                if (string.IsNullOrWhiteSpace(host.GitHubToken))
                     throw new InvalidOperationException("Wpisz GitHub token z prawem odczytu repozytorium i Actions.");
             }
 
@@ -558,7 +539,7 @@ namespace WoW112Updater
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("WoW112Updater/" + FeatureVersion);
                 client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
                 client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Text.Trim());
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", host.GitHubToken);
                 return client;
             }
 
@@ -822,26 +803,7 @@ namespace WoW112Updater
 
             private void Log(string message)
             {
-                if (log == null) return;
-                log.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
-                log.SelectionStart = log.TextLength;
-                log.ScrollToCaret();
-            }
-
-            private void InvokePrivate(string name)
-            {
-                try
-                {
-                    var method = form.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic);
-                    if (method != null) method.Invoke(form, null);
-                }
-                catch { }
-            }
-
-            private static T GetPrivateField<T>(object instance, string name) where T : class
-            {
-                var field = instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
-                return field == null ? null : field.GetValue(instance) as T;
+                host.LogMessage(message);
             }
 
             private void TrimBackups(string root, int keep)

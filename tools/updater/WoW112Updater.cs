@@ -27,7 +27,7 @@ namespace WoW112Updater
         }
     }
 
-    internal sealed class MainForm : Form
+    internal sealed partial class MainForm : Form
     {
         private const string Owner = "github12wykrzyk";
         private const string Repo = "wow112";
