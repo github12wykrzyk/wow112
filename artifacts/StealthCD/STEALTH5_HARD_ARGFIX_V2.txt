@@ -1,0 +1,57 @@
+STEALTH 5S HARD EXE ARGUMENT FIX — WORK CANDIDATE
+Target: World of Warcraft 1.12.1 build 5875 x86
+
+Problem
+-------
+The existing EXE hard patch detours the central cooldown-entry insertion routine
+at VA 0x006E12C0 to VA 0x0075D401 and contains a 5000 ms clamp for Stealth
+ranks 1784..1787. Binary inspection of the active EXE showed the selector used:
+
+    0x0075D401: mov eax,[esp+0x14]
+
+Inspection of the real callers of 0x006E12C0 shows that spellId is argument #1,
+therefore it is at [esp+0x04] before the original function prologue. The old
+selector was checking argument #5 and could fail to recognize Stealth.
+
+Patch
+-----
+Only one byte changes in the active EXE:
+
+    VA:          0x0075D401
+    raw offset:  0x0035D401
+    old bytes:   8B 44 24 14    mov eax,[esp+0x14]
+    new bytes:   8B 44 24 04    mov eax,[esp+0x04]
+
+The existing 5000 ms writes remain unchanged:
+
+    mov dword ptr [esp+0x10],0x1388
+    if [esp+0x1C] > 0x1388: [esp+0x1C] = 0x1388
+
+EXE identity
+------------
+Old SHA256:
+  b24ebfe0a9fa49ba051911a904fc1dcb531d7c3908a35e77a84376d96b476f27
+
+New SHA256:
+  0a5ecb0023f9ba1dddecb25f4a636a0bcd1706db70583d9db3ad69ba51f9f227
+
+Size remains 4,907,008 bytes.
+
+Applied on work
+---------------
+Binary/metadata commit:
+  4d5a409b1dc618acbb901cbc1bdff05508d195e2
+
+One-shot patch + fast verification run:
+  GitHub Actions run 35130857684 — SUCCESS
+
+Reproducer / verification
+-------------------------
+  python tools/patch_stealth5_exe_argfix.py
+  python tools/patch_stealth5_exe_argfix.py --check
+
+Rollback is the inverse one-byte change (04 -> 14) plus restoring the old EXE
+hash in CURRENT.json, runtime/current.json and manifests/SHA256SUMS_WORK.txt.
+
+This is a work-only candidate until in-game acceptance. No new stable baseline
+is created by this fix.

@@ -295,6 +295,7 @@ static float g_ppPendingD2=0.0f;
 
 /* SafeBreak v13 state. */
 static volatile DWORD g_mode=0,g_started=0,g_lastInject=0,g_injecting=0,g_forwardCurrent=1,g_timerId=0;
+static volatile DWORD g_safeBreakPauseTick=0u,g_safeBreakPauseMs=0u,g_safeBreakResumes=0u;
 static volatile DWORD g_seenCombat=0,g_clearTick=0,g_key7=0,g_key8=0,g_keyAlt=0,g_key10=0,g_key11=0;
 static volatile DWORD g_autoPPEnabled=1u,g_autoPPBlocked=0u,g_autoPPManualPass=0u,g_autoPPTargetPlayerBlocks=0u;
 /* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
@@ -308,10 +309,10 @@ static volatile DWORD g_ppHardLOSArms=0u,g_ppHardLOSLOSFailures=0u,g_ppHardLOSOv
 static BYTE g_ppHardRetryPacket[PP_HARDLOS_PACKET_CAP];
 static volatile DWORD g_ppHardRetryActive=0u,g_ppHardRetryScheduled=0u,g_ppHardRetryInjecting=0u,g_ppHardRetryDue=0u,g_ppHardRetrySize=0u,g_ppHardRetryAttempts=0u,g_ppHardRetrySent=0u,g_ppHardRetryExhausted=0u;
 static volatile DWORD g_ppHardRetryLo=0u,g_ppHardRetryHi=0u;
-static volatile DWORD g_longPPBase=0u,g_longPPReasonPtr=0u,g_longPPGuidLoPtr=0u,g_longPPGuidHiPtr=0u,g_longPPSpoofXPtr=0u,g_longPPSpoofYPtr=0u,g_longPPSpoofZPtr=0u;
+static volatile DWORD g_longPPBase=0u,g_longPPReasonPtr=0u,g_longPPGuidLoPtr=0u,g_longPPGuidHiPtr=0u,g_longPPSpoofXPtr=0u,g_longPPSpoofYPtr=0u,g_longPPSpoofZPtr=0u,g_longPPSpoofOPtr=0u;
 static volatile DWORD g_nextPPFailTarget=0u,g_ppFailHookOk=0u,g_ppFailLogEvent=0u,g_ppFailLogLo=0u,g_ppFailLogHi=0u,g_ppFailLogVariant=0u;
 static volatile DWORD g_ppHardArmed=0u,g_ppHardLo=0u,g_ppHardHi=0u;
-static float g_ppHardX=0.0f,g_ppHardY=0.0f,g_ppHardZ=0.0f;
+static float g_ppHardX=0.0f,g_ppHardY=0.0f,g_ppHardZ=0.0f,g_ppHardO=0.0f;
 static volatile DWORD g_suppressed=0,g_hb=0,g_moveInfoFailures=0;
 static volatile DWORD g_worldLost=0,g_worldReadySince=0,g_worldGuardHits=0;
 static float g_x=0,g_y=0,g_z=0,g_o=0;
@@ -566,6 +567,20 @@ static void SinCosF(float a,float*s,float*c)
     }
 }
 
+/* Keep LongPP orientation coherent with MovementCore's rear-sector XYZ override.
+ * Verified active LongPP layout stores spoof O at base+0x50FC, immediately after XYZ. */
+static float PPAtan2YX(float y,float x)
+{
+    float r;
+    __asm {
+        fld y
+        fld x
+        fpatan
+        fstp dword ptr [r]
+    }
+    return r;
+}
+
 static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
 {
     PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;
@@ -596,14 +611,15 @@ static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
     g_ppHardX=x-(fx*back)+(rx*side);
     g_ppHardY=y-(fy*back)+(ry*side);
     g_ppHardZ=z+zbase+dz;
+    g_ppHardO=PPAtan2YX(y-g_ppHardY,x-g_ppHardX);if(g_ppHardO<0.0f)g_ppHardO+=6.28318530717958647692f;
     g_ppHardLo=lo;g_ppHardHi=hi;g_ppHardArmed=1u;g_ppFailPendingVariant=idx;++g_ppHardLOSArms;if(variantOut)*variantOut=idx;
 }
 static void PPHardApplySpoof(void)
 {
     if(!g_ppHardArmed||!g_ppChainOk||!LongPPActive())return;
-    if(!Ptr((void*)g_longPPSpoofXPtr)||!Ptr((void*)g_longPPSpoofYPtr)||!Ptr((void*)g_longPPSpoofZPtr)||!Ptr((void*)g_longPPGuidLoPtr)||!Ptr((void*)g_longPPGuidHiPtr))return;
+    if(!Ptr((void*)g_longPPSpoofXPtr)||!Ptr((void*)g_longPPSpoofYPtr)||!Ptr((void*)g_longPPSpoofZPtr)||!Ptr((void*)g_longPPSpoofOPtr)||!Ptr((void*)g_longPPGuidLoPtr)||!Ptr((void*)g_longPPGuidHiPtr))return;
     if(*(DWORD*)g_longPPGuidLoPtr!=g_ppHardLo||*(DWORD*)g_longPPGuidHiPtr!=g_ppHardHi)return;
-    *(float*)g_longPPSpoofXPtr=g_ppHardX;*(float*)g_longPPSpoofYPtr=g_ppHardY;*(float*)g_longPPSpoofZPtr=g_ppHardZ;++g_ppHardLOSOverrides;
+    *(float*)g_longPPSpoofXPtr=g_ppHardX;*(float*)g_longPPSpoofYPtr=g_ppHardY;*(float*)g_longPPSpoofZPtr=g_ppHardZ;*(float*)g_longPPSpoofOPtr=g_ppHardO;++g_ppHardLOSOverrides;
 }
 static void PPHardRetryCancel(void)
 {
@@ -1437,7 +1453,7 @@ static void GatherTick(BYTE*p,DWORD now)
 static void Stop(BOOL sendReal)
 {
     BYTE*p=LocalPlayer();
-    g_mode=MODE_OFF;g_started=0;g_lastInject=0;g_seenCombat=0;g_clearTick=0;g_worldLost=0;g_worldReadySince=0;
+    g_mode=MODE_OFF;g_started=0;g_lastInject=0;g_safeBreakPauseTick=0u;g_seenCombat=0;g_clearTick=0;g_worldLost=0;g_worldReadySince=0;
     if(sendReal&&p&&!g_injecting)SendReal(p);
 }
 
@@ -1455,7 +1471,7 @@ static void Start(DWORD mode,DWORD now)
     g_x=px+dist;g_y=py;g_z=pz-down;g_o=po;
     if(mode==MODE_LOCAL_STRONG&&t){dx=px-*(float*)(t+OFF_UNIT_X);dy=py-*(float*)(t+OFF_UNIT_Y);if(AbsF(dx)>=AbsF(dy)){g_x=(dx<0)?px-dist:px+dist;g_y=py;}else{g_x=px;g_y=(dy<0)?py-dist:py+dist;}}
     if(mode==MODE_INSTANCE_UNREACHABLE){g_x=px;g_y=py;g_z=pz+INSTANCE_Z_UP;}
-    g_mode=mode;g_started=now;g_lastInject=0;g_seenCombat=Combat(p);g_clearTick=0;g_worldLost=0;g_worldReadySince=now;
+    g_mode=mode;g_started=now;g_lastInject=0;g_safeBreakPauseTick=0u;g_seenCombat=Combat(p);g_clearTick=0;g_worldLost=0;g_worldReadySince=now;
 }
 
 static void Inject(BYTE*p)
@@ -1476,7 +1492,7 @@ static void Inject(BYTE*p)
 
 static void __stdcall TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
-    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12;BYTE*p;
+    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
     (void)w;(void)m;(void)id;(void)tm;
     if(!GT()||!GK())return;
     now=GT()();
@@ -1492,8 +1508,18 @@ static void __stdcall TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      * covered by LongPP active/injecting; normal-range PP is covered by the
      * outgoing 921 quiet window even when LongPP correctly decides not to spoof. */
     if(LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET||((LONG)(g_ppQuietUntil-now)>0)){
+        /* Do not burn SafeBreak lifetime while PP owns movement. */
+        if(!g_safeBreakPauseTick)g_safeBreakPauseTick=now;
         ++g_ppSafeBreakYields;
         return;
+    }
+    if(g_safeBreakPauseTick){
+        paused=(DWORD)(now-g_safeBreakPauseTick);
+        g_started+=paused;
+        g_safeBreakPauseMs+=paused;
+        g_safeBreakPauseTick=0u;
+        g_lastInject=0u; /* resume with an immediate spoof pulse */
+        ++g_safeBreakResumes;
     }
 
     p=LocalPlayer();
@@ -1633,9 +1659,9 @@ static BOOL InstallUnified(void)
         g_ppChainOk=1u;g_ppActivePtr=decodedActive;g_ppInjectPtr=decodedInject;
         /* Supported LongPP layout: move hook RVA 0x1970, persistent state at 0x50E4..0x5104. */
         g_longPPBase=t-0x1970u;g_longPPGuidLoPtr=g_longPPBase+0x50E4u;g_longPPGuidHiPtr=g_longPPBase+0x50E8u;
-        g_longPPSpoofXPtr=g_longPPBase+0x50F0u;g_longPPSpoofYPtr=g_longPPBase+0x50F4u;g_longPPSpoofZPtr=g_longPPBase+0x50F8u;g_longPPReasonPtr=g_longPPBase+0x5104u;
+        g_longPPSpoofXPtr=g_longPPBase+0x50F0u;g_longPPSpoofYPtr=g_longPPBase+0x50F4u;g_longPPSpoofZPtr=g_longPPBase+0x50F8u;g_longPPSpoofOPtr=g_longPPBase+0x50FCu;g_longPPReasonPtr=g_longPPBase+0x5104u;
     }else{
-        g_ppChainOk=0u;g_ppActivePtr=0u;g_ppInjectPtr=0u;g_longPPBase=g_longPPReasonPtr=g_longPPGuidLoPtr=g_longPPGuidHiPtr=g_longPPSpoofXPtr=g_longPPSpoofYPtr=g_longPPSpoofZPtr=0u;
+        g_ppChainOk=0u;g_ppActivePtr=0u;g_ppInjectPtr=0u;g_longPPBase=g_longPPReasonPtr=g_longPPGuidLoPtr=g_longPPGuidHiPtr=g_longPPSpoofXPtr=g_longPPSpoofYPtr=g_longPPSpoofZPtr=g_longPPSpoofOPtr=0u;
     }
 
     ft=DCall(ADDR_PP_FAIL_CALL);
