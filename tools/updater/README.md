@@ -4,7 +4,7 @@ Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository
 
 Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater itself is an external Windows utility and does not inject into the game.
 
-## Current V1.3 safety behavior
+## Current V1.4 safety + diagnostics behavior
 
 - `TEST (work)` and `STABLE (main)` inspect the newest run of the expected GitHub Actions workflow on the selected branch.
 - The updater installs only when that newest run is `completed` with `conclusion=success`. It never silently falls back to an older successful artifact when the newest run is queued, running, cancelled or failed.
@@ -13,7 +13,7 @@ Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater
 - Verifies the inner candidate ZIP against `package_sha256` before any game files are changed.
 - Rejects nested ZIP paths and duplicate root filenames even when they differ only by letter case.
 - Compares SHA256 of package files with the selected game directory and installs only changed files.
-- Generates `dlls.txt` from DLL order in the verified candidate ZIP, including `WoWControlHub.dll` when present.
+- Generates `dlls.txt` from DLL order in the verified candidate ZIP, including candidate companion modules when present.
 - Tracks updater-managed files in `.wow112_updater/installed.json`; state and backup manifests are written transactionally through a temporary file with a previous-state recovery copy.
 - File replacement first uses `File.Replace` and has a verified copy fallback for filesystems where replace semantics are unavailable.
 - Shows the locally installed channel, GitHub Actions run, short commit SHA and installation time directly in the GUI.
@@ -36,7 +36,35 @@ If files are missing, modified or stale, the updater offers to repair them from 
 
 Creates `.wow112_updater/diagnostics/WoW112_diagnostics_*.zip` containing sanitized installed-state metadata, `dlls.txt`, `realmlist.wtf` when present, updater/runtime information, SHA256/size status for managed files, backup index and the current updater session log.
 
-The diagnostics ZIP intentionally never includes the GitHub token, updater `config.json` or the DPAPI-protected token blob.
+The diagnostics ZIP intentionally never includes the GitHub token, updater `config.json` or DPAPI-protected token material.
+
+### WYŚLIJ RAPORT DO GITHUB
+
+Updater V1.4 can create a sanitized diagnostic GitHub Issue directly in `github12wykrzyk/wow112`.
+
+The report includes:
+
+- installed channel, Actions run, head SHA and artifact identity,
+- current `dlls.txt`,
+- newest local WoWDiagHub JSONL records from `<game>/.wow112_debug/`,
+- the tail of the updater session log,
+- a deterministic diagnostic signature used to avoid duplicate open Issues.
+
+Game-directory and user-profile paths are sanitized before upload. The normal updater token remains read-only and is **not** reused for issue creation.
+
+Issue upload uses a separate fine-grained token scoped only to this repository with:
+
+- Issues: Read and write
+
+The report token is stored separately under `%APPDATA%/WoW112Updater/report_token.dpapi`, protected with Windows DPAPI (`CurrentUser`). It is not added to diagnostic ZIPs or report bodies.
+
+### WoWDiagHub candidate module
+
+The TEST(work) candidate may include `WoWDiagHub.dll`, an observer-only x86 diagnostics provider. V1 intentionally does not hook gameplay functions, install a global exception handler or perform network access.
+
+It exposes `W112_DIAG_API_V1` so other DLLs can later report structured events without each module implementing its own logging transport. Local files are written under `<game>/.wow112_debug/` in JSONL form, with an in-process ring buffer used for snapshots.
+
+Gameplay modules are not automatically instrumented merely because WoWDiagHub is present; instrumentation should be added point-by-point after the base diagnostics module is accepted in game.
 
 ### AKTUALIZUJ UPDATER
 
@@ -54,6 +82,8 @@ The repository is private, so GitHub does not permit anonymous artifact download
 - Actions: Read
 
 The token is stored only on the local PC, protected with Windows DPAPI (`CurrentUser`). It is never written to the repository, diagnostics ZIP or updater logs.
+
+The optional issue-report token is separate and should have only the Issues permission described above.
 
 ## Channels
 
