@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
@@ -23,6 +24,19 @@ jobs:
     steps:
       - name: Checkout current tree
         uses: actions/checkout@v5
+
+      - name: Require exact pre-promote attestation on main push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=100" --jq '[.workflow_runs[] | select(.name == "Pre-promote stable" and .head_sha == env.GITHUB_SHA and .status == "completed" and .conclusion == "success")] | length')"
+          echo "successful pre-promote attestations for ${GITHUB_SHA}: ${count}"
+          if [ "${count}" -lt 1 ]; then
+            echo "ERROR: main SHA has no successful Pre-promote stable attestation."
+            exit 1
+          fi
 
       - name: Reject stale or diverged work branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/work'
