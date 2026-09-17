@@ -31,10 +31,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=100" --jq '[.workflow_runs[] | select(.name == "Pre-promote stable" and .head_sha == env.GITHUB_SHA and .status == "completed" and .conclusion == "success")] | length')"
-          echo "successful pre-promote attestations for ${GITHUB_SHA}: ${count}"
+          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=100" --jq '[.workflow_runs[] | select(.name == "Pre-promote stable" and .path == ".github/workflows/pre_promote_stable.yml" and .event == "push" and (.head_branch | startswith("promote/")) and .head_sha == env.GITHUB_SHA and .status == "completed" and .conclusion == "success")] | length')"
+          echo "successful promote/** pre-promote attestations for ${GITHUB_SHA}: ${count}"
           if [ "${count}" -lt 1 ]; then
-            echo "ERROR: main SHA has no successful Pre-promote stable attestation."
+            echo "ERROR: main SHA has no successful push-triggered Pre-promote stable attestation from promote/**."
             exit 1
           fi
 
