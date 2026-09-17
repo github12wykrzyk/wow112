@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Verify exact-byte recovery for every active runtime DLL."""
 
-import hashlib
 import json
-import lzma
 import sys
 from pathlib import Path
+
+from exact_runtime_artifacts import load_registry, resolve_exact_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 ERRORS = []
@@ -30,71 +30,33 @@ def main():
     if ERRORS:
         return 1
 
-    cache_root = ROOT / (current.get("runtime_binary_cache") or "artifacts/runtime_cache")
+    try:
+        registry, registry_rel = load_registry(current)
+    except Exception as exc:
+        error(str(exc))
+        return 1
+
     items = runtime.get("active_dlls", [])
     verified = 0
+    print(f"Exact-artifact registry: {registry_rel} ({len(registry)} explicit recipes)")
 
     for item in items:
         if not isinstance(item, dict):
             error("runtime active_dlls contains non-object entry")
             continue
-
-        name = item.get("name", "<unnamed>")
-        expected = str(item.get("sha256", "")).lower()
-        expected_size = item.get("size")
-        if len(expected) != 64:
-            error(f"invalid runtime SHA256: {name}")
-            continue
-
-        artifact = item.get("binary_artifact")
-        if (not isinstance(expected_size, int) or expected_size <= 0) and isinstance(artifact, dict):
-            artifact_size = artifact.get("size")
-            if isinstance(artifact_size, int) and artifact_size > 0:
-                expected_size = artifact_size
-
-        source_kind = "content_addressed_cache"
-        if isinstance(artifact, dict) and artifact.get("path"):
-            rel = artifact.get("path")
-            fmt = artifact.get("kind") or artifact.get("format") or "xz"
-            source_kind = "runtime_binary_artifact"
-            artifact_hash = str(artifact.get("sha256", "")).lower()
-            if artifact_hash and artifact_hash != expected:
-                error(f"binary_artifact SHA metadata differs from runtime SHA: {name}")
-                continue
-            artifact_size = artifact.get("size")
-            if isinstance(artifact_size, int) and isinstance(expected_size, int) and artifact_size != expected_size:
-                error(f"binary_artifact size metadata differs from runtime size: {name}")
-                continue
-            path = ROOT / rel
-        else:
-            fmt = "xz"
-            path = cache_root / f"{expected}.dll.xz"
-            rel = str(path.relative_to(ROOT)).replace("\\", "/")
-
-        if fmt != "xz":
-            error(f"unsupported exact artifact format for {name}: {fmt!r}")
-            continue
-        if not path.is_file():
-            error(f"no exact-byte artifact for active DLL: {name} -> {rel}")
-            continue
-
         try:
-            data = lzma.decompress(path.read_bytes())
+            _, meta = resolve_exact_bytes(item, current, registry)
         except Exception as exc:
-            error(f"exact artifact XZ decode failed: {name} -> {rel}: {exc}")
+            error(str(exc))
             continue
-
-        if isinstance(expected_size, int) and expected_size > 0 and len(data) != expected_size:
-            error(f"exact artifact size mismatch: {name} got={len(data)} expected={expected_size}")
-            continue
-
-        got = hashlib.sha256(data).hexdigest()
-        if got != expected:
-            error(f"exact artifact hash mismatch: {name} got={got} expected={expected}")
-            continue
-
         verified += 1
-        print(f"OK: {name} source={source_kind} size={len(data)} sha256={got}")
+        source = meta.get("source")
+        if isinstance(source, list):
+            source = f"{len(source)} parts"
+        print(
+            f"OK: {meta['name']} source={meta['source_kind']} encoding={meta['encoding_kind']} "
+            f"size={meta['size']} sha256={meta['sha256']} ({source})"
+        )
 
     print("\nRuntime artifact verification summary")
     print(f"  active DLLs: {len(items)}")

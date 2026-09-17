@@ -55,8 +55,7 @@ def read_zip(path):
             raise SystemExit("candidate ZIP contains duplicate/case-colliding entries")
         if any("/" in name.rstrip("/") or "\\" in name for name in names):
             raise SystemExit("candidate ZIP contains nested/unsafe paths")
-        rows = [(info.filename, zf.read(info.filename)) for info in infos]
-    return rows
+        return [(info.filename, zf.read(info.filename)) for info in infos]
 
 
 def deterministic_repack(path, rows):
@@ -81,39 +80,35 @@ def loader_bytes(dlls):
 
 
 def load_optional(path):
-    if not path:
+    if not path or not Path(path).is_file():
         return None
-    p = Path(path)
-    if not p.is_file():
-        return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def verify_extra_metadata(extras, content):
-    names = set(content)
+def validate_meta_rows(rows, content, label):
+    out = []
     seen = set()
-    required = []
-    for row in extras or []:
+    for row in rows or []:
         if not isinstance(row, dict):
-            raise SystemExit("candidate_extra_dlls contains a non-object")
+            raise SystemExit(f"{label} contains a non-object")
         name = row.get("name")
         if not name or not name.lower().endswith(".dll"):
-            raise SystemExit("candidate_extra_dlls contains an invalid DLL name")
-        if name not in names:
-            raise SystemExit(f"candidate extra DLL missing from final ZIP: {name}")
+            raise SystemExit(f"{label} contains an invalid DLL name")
         key = name.lower()
         if key in seen:
-            raise SystemExit(f"duplicate candidate extra DLL metadata: {name}")
+            raise SystemExit(f"duplicate {label} metadata: {name}")
         seen.add(key)
+        if name not in content:
+            raise SystemExit(f"{label} DLL missing from final ZIP: {name}")
         data = content[name]
         expected_hash = str(row.get("sha256", "")).lower()
         expected_size = row.get("size")
         if expected_hash and sha256_bytes(data) != expected_hash:
-            raise SystemExit(f"candidate extra DLL SHA256 mismatch: {name}")
-        if isinstance(expected_size, int) and len(data) != expected_size:
-            raise SystemExit(f"candidate extra DLL size mismatch: {name}")
-        required.append(name)
-    return required
+            raise SystemExit(f"{label} DLL SHA256 mismatch: {name}")
+        if isinstance(expected_size, int) and expected_size > 0 and len(data) != expected_size:
+            raise SystemExit(f"{label} DLL size mismatch: {name}")
+        out.append(name)
+    return out
 
 
 def main():
@@ -122,8 +117,7 @@ def main():
     ap.add_argument("--package-metadata", required=True)
     ap.add_argument("--summary")
     ap.add_argument("--report", default="dist/final_package_verification.json")
-    ap.add_argument("--finalize", action="store_true",
-                    help="Create/repair dlls.txt and synchronize final package metadata.")
+    ap.add_argument("--finalize", action="store_true")
     args = ap.parse_args()
 
     package = (ROOT / args.package).resolve()
@@ -137,7 +131,7 @@ def main():
         raise SystemExit(f"candidate metadata missing: {metadata_path}")
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    summary = load_optional(summary_path) if summary_path else None
+    summary = load_optional(summary_path)
 
     rows = read_zip(package)
     content = dict(rows)
@@ -153,8 +147,7 @@ def main():
         raise SystemExit(f"candidate EXE mismatch: got {exe_names[0]}, expected {expected_exe}")
 
     expected_loader = loader_bytes(dll_names)
-    current_loader = content.get(DLL_LIST)
-    if current_loader != expected_loader:
+    if content.get(DLL_LIST) != expected_loader:
         if not args.finalize:
             raise SystemExit("dlls.txt is missing or does not exactly match final DLL order")
         rows = [(name, data) for name, data in rows if name != DLL_LIST]
@@ -162,37 +155,47 @@ def main():
         deterministic_repack(package, rows)
         rows = read_zip(package)
         content = dict(rows)
-
-    actual_loader = content.get(DLL_LIST)
-    if actual_loader != expected_loader:
+    if content.get(DLL_LIST) != expected_loader:
         raise SystemExit("final dlls.txt round-trip verification failed")
 
-    pe = {}
-    for name in exe_names + dll_names:
-        pe[name] = inspect_pe(name, content[name])
+    pe = {name: inspect_pe(name, content[name]) for name in exe_names + dll_names}
 
-    extras = metadata.get("candidate_extra_dlls") or []
-    required_modules = verify_extra_metadata(extras, content)
+    active_rows = metadata.get("active_dlls") or []
+    extra_rows = metadata.get("candidate_extra_dlls") or []
+    active_names = validate_meta_rows(active_rows, content, "active_dlls")
+    extra_names = validate_meta_rows(extra_rows, content, "candidate_extra_dlls")
+
+    # Candidate extras may replace an already-active DLL (for example ControlHub)
+    # or add a true companion DLL (for example AutoPoisons/DiagHub). Extra metadata
+    # wins for replacements because it describes the final bytes actually packaged.
+    active_keys = {x.lower() for x in active_names}
+    companion_names = [name for name in extra_names if name.lower() not in active_keys]
+    expected_final_keys = set(active_keys)
+    expected_final_keys.update(name.lower() for name in companion_names)
+    actual_final_keys = {name.lower() for name in dll_names}
+    if expected_final_keys != actual_final_keys:
+        missing = sorted(expected_final_keys - actual_final_keys)
+        unexpected = sorted(actual_final_keys - expected_final_keys)
+        raise SystemExit(f"final DLL identity set mismatch: missing={missing} unexpected={unexpected}")
+
+    active_count = metadata.get("active_dll_count")
+    if isinstance(active_count, int) and active_count != len(active_names):
+        raise SystemExit(f"active DLL metadata count mismatch: declared={active_count} rows={len(active_names)}")
+    if len(active_names) + len(companion_names) != len(dll_names):
+        raise SystemExit(
+            f"final DLL count mismatch: active={len(active_names)} companions={len(companion_names)} ZIP={len(dll_names)}"
+        )
 
     if summary is not None:
         if summary.get("result") != "PASS" or not summary.get("ready_for_test"):
             raise SystemExit("candidate summary is not PASS/ready_for_test before final gate")
-        summary_extras = summary.get("candidate_extra_dlls") or []
-        summary_required = verify_extra_metadata(summary_extras, content)
-        if [x.lower() for x in summary_required] != [x.lower() for x in required_modules]:
+        summary_extra_names = validate_meta_rows(summary.get("candidate_extra_dlls") or [], content, "summary candidate_extra_dlls")
+        if [x.lower() for x in summary_extra_names] != [x.lower() for x in extra_names]:
             raise SystemExit("candidate extra DLL metadata differs between summary and package metadata")
 
     package_sha = sha256_file(package)
     package_size = package.stat().st_size
     names = [name for name, _ in rows]
-
-    active_count = metadata.get("active_dll_count")
-    extra_count = len(required_modules)
-    if isinstance(active_count, int) and active_count + extra_count != len(dll_names):
-        raise SystemExit(
-            f"final DLL count mismatch: active={active_count} extras={extra_count} ZIP={len(dll_names)}"
-        )
-
     report = {
         "schema_version": 1,
         "result": "PASS",
@@ -200,12 +203,15 @@ def main():
         "package_sha256": package_sha,
         "package_size": package_size,
         "exe": exe_names[0],
+        "active_dll_count": len(active_names),
+        "companion_dll_count": len(companion_names),
         "dll_count": len(dll_names),
         "dlls": dll_names,
         "loader_manifest": DLL_LIST,
         "loader_exact": True,
         "all_binary_entries_pe32_x86": True,
-        "candidate_required_modules": required_modules,
+        "candidate_replacements": [name for name in extra_names if name.lower() in active_keys],
+        "candidate_required_modules": companion_names,
         "pe": pe,
     }
 
@@ -219,7 +225,8 @@ def main():
         metadata["package_sha256"] = package_sha
         metadata["package_size"] = package_size
         metadata["zip_root_entries"] = names
-        metadata["candidate_required_modules"] = required_modules
+        metadata["candidate_required_modules"] = companion_names
+        metadata["candidate_replacement_modules"] = report["candidate_replacements"]
         metadata["loader_manifest"] = loader_meta
         metadata["final_package_verification"] = report
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -228,7 +235,8 @@ def main():
             summary["package_sha256"] = package_sha
             summary["package_size"] = package_size
             summary["zip_root_entries"] = names
-            summary["candidate_required_modules"] = required_modules
+            summary["candidate_required_modules"] = companion_names
+            summary["candidate_replacement_modules"] = report["candidate_replacements"]
             summary["loader_manifest"] = loader_meta
             summary["final_package_verification"] = report
             summary["ready_for_test"] = True
