@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "1.7";
+        public const string Version = "1.8";
     }
 
     internal static class UpdaterSafety
