@@ -20,6 +20,7 @@ on:
       - 'tools/build_diaghub_candidate.py'
       - 'tools/package_current.py'
       - 'tools/verify_current.py'
+      - 'tools/verify_candidate_source_scope.py'
       - 'tools/verify_runtime_artifacts.py'
       - 'tools/verify_verified_symbols.py'
       - 'tools/verify_candidate_package.py'
@@ -42,6 +43,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Fail closed on unapproved candidate source drift
+        shell: pwsh
+        run: |
+          python tools/verify_candidate_source_scope.py
+          if ($LASTEXITCODE -ne 0) { throw "candidate source-fingerprint scope failed" }
 
       - name: Build changed active modules and package candidate
         shell: pwsh
