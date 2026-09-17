@@ -4,7 +4,7 @@ Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository
 
 Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater itself is an external Windows utility and does not inject into the game.
 
-## Current V1.4 safety + diagnostics behavior
+## Current V1.5 safety + diagnostics behavior
 
 - `TEST (work)` and `STABLE (main)` inspect the newest run of the expected GitHub Actions workflow on the selected branch.
 - The updater installs only when that newest run is `completed` with `conclusion=success`. It never silently falls back to an older successful artifact when the newest run is queued, running, cancelled or failed.
@@ -40,7 +40,7 @@ The diagnostics ZIP intentionally never includes the GitHub token, updater `conf
 
 ### WYŚLIJ RAPORT DO GITHUB
 
-Updater V1.4 can create a sanitized diagnostic GitHub Issue directly in `github12wykrzyk/wow112`.
+Updater V1.5 can create a sanitized diagnostic GitHub Issue directly in `github12wykrzyk/wow112`.
 
 The report includes:
 
@@ -50,13 +50,19 @@ The report includes:
 - the tail of the updater session log,
 - a deterministic diagnostic signature used to avoid duplicate open Issues.
 
-Game-directory and user-profile paths are sanitized before upload. The normal updater token remains read-only and is **not** reused for issue creation.
+The signature deliberately excludes volatile report-generation time and updater-session timestamps. It is based on installed build identity, current `dlls.txt` and the newest WoWDiagHub JSONL data, so repeated clicks for the same diagnostic state resolve to the same open Issue while a new game diagnostic session can produce a new report.
+
+Game-directory and user-profile paths are sanitized case-insensitively before upload. Reading diagnostic tails is bounded so very large JSONL files are not loaded entirely into memory.
+
+The normal updater token remains read-only and is **not** reused for issue creation.
 
 Issue upload uses a separate fine-grained token scoped only to this repository with:
 
 - Issues: Read and write
 
 The report token is stored separately under `%APPDATA%/WoW112Updater/report_token.dpapi`, protected with Windows DPAPI (`CurrentUser`). It is not added to diagnostic ZIPs or report bodies.
+
+`TOKEN RAPORTU` lets the user replace this token from the GUI. If GitHub rejects the stored report token with HTTP 401/403, the updater removes that rejected local token automatically so the next send attempt asks for a replacement instead of becoming permanently stuck on bad credentials.
 
 ### WoWDiagHub candidate module
 
