@@ -8,11 +8,18 @@
   "status": "stable",
   "working_branch": "work",
   "stable_branch": "main",
+  "promotion_branch_pattern": "promote/**",
   "ai_entrypoint": "AI_START_HERE.md",
   "ai_index": "AI_INDEX.json",
   "canonical_source_root": "src",
   "fast_verifier": "tools/verify_current.py",
   "deep_verifier": "tools/verify_repo.py",
+  "runtime_packager": "tools/package_current.py",
+  "exact_stable_packager": "tools/package_exact_current.py",
+  "final_package_verifier": "tools/verify_candidate_package.py",
+  "promotion_workflow": ".github/workflows/pre_promote_stable.yml",
+  "runtime_binary_cache": "artifacts/runtime_cache",
+  "candidate_builder": "tools/build_changed_active.py",
   "source_metadata_sync": "tools/sync_source_metadata.py",
   "baseline_dir": "baseline/V69",
   "active_dll_list": "baseline/V69/dlls.txt",
@@ -35,5 +42,6 @@
     "source_restore_doc": "artifacts/V68/source/README_RESTORE.md",
     "source_parts_dir": "artifacts/V68/source",
     "legacy_partial_source_dir": "source/V20_SOURCE_PARTS"
-  }
+  },
+  "active_builder": "tools/build_active_module.py"
 }

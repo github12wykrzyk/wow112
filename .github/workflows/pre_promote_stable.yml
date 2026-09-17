@@ -1,0 +1,93 @@
+name: Pre-promote stable
+
+on:
+  push:
+    branches:
+      - 'promote/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-promote-stable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stable-gate:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout promotion candidate
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Prove candidate contains current main
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch origin main
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "promotion candidate does not contain current main"
+          }
+          Write-Host "Promotion SHA: $env:GITHUB_SHA"
+
+      - name: Require curated stable metadata
+        shell: pwsh
+        run: |
+          $state = Get-Content CURRENT.json -Raw | ConvertFrom-Json
+          if ($state.status -ne 'stable') {
+            throw "promotion candidate must set CURRENT.status=stable"
+          }
+
+      - name: Verify source promotion fingerprints
+        shell: pwsh
+        run: python tools/sync_source_metadata.py --check
+
+      - name: Verify canonical current state
+        shell: pwsh
+        run: python tools/verify_current.py
+
+      - name: Verify exact runtime byte recovery
+        shell: pwsh
+        run: python tools/verify_runtime_artifacts.py
+
+      - name: Verify shared build-5875 symbol registry
+        shell: pwsh
+        run: |
+          if (Test-Path 'runtime/verified_symbols_5875.json') {
+            python tools/verify_verified_symbols.py
+            if ($LASTEXITCODE -ne 0) { throw "verified symbol registry failed" }
+          }
+
+      - name: Deep repository audit
+        shell: pwsh
+        run: python tools/verify_repo.py
+
+      - name: Package exact stable runtime bytes
+        shell: pwsh
+        run: >-
+          python tools/package_exact_current.py
+          --output dist/WoW112_PREPROMOTE_CANDIDATE.zip
+          --metadata dist/candidate_metadata.json
+
+      - name: Final fail-closed promotion ZIP gate
+        shell: pwsh
+        run: >-
+          python tools/verify_candidate_package.py
+          --package dist/WoW112_PREPROMOTE_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --report dist/final_package_verification.json
+          --finalize
+
+      - name: Upload verified promotion proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-PREPROMOTE-${{ github.sha }}
+          path: |
+            dist/WoW112_PREPROMOTE_CANDIDATE.zip
+            dist/candidate_metadata.json
+            dist/final_package_verification.json
+          if-no-files-found: error
+          compression-level: 0

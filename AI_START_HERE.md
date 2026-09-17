@@ -2,89 +2,86 @@
 
 This repository is optimized for repeated AI-assisted development of **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
-`AGENTS.md` is the repository-wide operating contract for AI agents. This file is the fast routing entrypoint. The goal is to minimize context cost and avoid rediscovering the repository on every task.
+`AGENTS.md` is the operating contract. This file is the fast routing entrypoint after that contract has been read.
 
-Never infer the active stack from filenames, old ZIPs, chat history or archive folders when current repository metadata is available.
+## Read order for every task
 
-## Read order for every new task
+1. `AGENTS.md`
+2. `AI_START_HERE.md`
+3. `AI_INDEX.json`
+4. `CURRENT.json`
+5. `runtime/current.json`
+6. only files for the affected module.
 
-1. `AGENTS.md` — operating contract: how the AI must work, use GitHub, verify, package and communicate.
-2. `AI_INDEX.json` — machine-readable map of the repository.
-3. `CURRENT.json` — current baseline, branches and canonical pointers.
-4. `runtime/current.json` — exact active EXE/DLL stack, hashes and source provenance.
-5. Read only the source/module files relevant to the requested change.
-6. Read `docs/SOURCE_INVENTORY.md` only when source provenance/recovery matters.
-
-Do **not** scan `archives/`, old baseline artifacts, `src/history/` or recovery chunks unless the task explicitly requires history, rollback or reconstruction.
+Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or recovery chunks unless the task actually needs rollback/reconstruction.
 
 ## Hard invariants
 
-- Target only WoW `1.12.1`, build `5875`, `x86`.
-- `main` is the last accepted stable state.
-- `work` is the only normal development branch.
-- `work` must start from current `main`; do not develop on a stale/diverged `work`.
-- `runtime/current.json` is authoritative for the active runtime and each module's source provenance.
-- `src/` is the canonical editable source root.
-- `source/` is legacy/historical material only and must not contain an active canonical `source_path`.
-- Never treat a DLL filename as proof of behavior; verify source, binary audit, reproducer or test evidence.
-- Never silently replace an original source with a reconstruction.
-- Routine GitHub housekeeping belongs to the AI. The user should mainly describe desired behavior and perform in-game tests.
+- `main` = last accepted stable state.
+- `work` = normal development branch.
+- `promote/**` = curated stable-candidate gate branches.
+- `work` must contain current `main`.
+- `runtime/current.json` decides active runtime/source lineage.
+- `src/` is canonical editable source root.
+- Stable runtime packages use exact accepted bytes, never an unverified rebuild.
+- No direct promotion to `main` before the exact `promote/**` SHA passes `Pre-promote stable`.
 
-## Fast iteration protocol
-
-For normal development:
-
-1. Start from current `main`, with `work` synchronized to it.
-2. Locate the module through `runtime/current.json` instead of global repository search.
-3. Change the smallest possible source/runtime surface.
-4. Keep source provenance explicit (`original_source`, reconstruction, binary-patch lineage, etc.).
-5. Update metadata/hashes that the change actually invalidates.
-6. Run `python tools/verify_current.py`.
-7. Commit the complete candidate to `work`.
-8. Prepare a runnable test artifact/package when the user needs one.
-9. User tests the candidate in game and reports the result.
-10. Only after a working state is accepted, promote it to `main` and create/update the next stable baseline metadata when appropriate.
-
-Do not create a new stable baseline for every experimental edit. Multiple candidate iterations may happen on `work`; stable baseline numbers are rollback points, not chat-message counters.
-
-## Verification levels
-
-Fast gate used during repeated iterations:
+## Fast TEST path
 
 ```text
-python tools/verify_current.py
+read routing -> edit canonical source -> verify_current ->
+one logical commit on work -> Build work candidate ->
+verify_candidate_package -> artifact -> user test
 ```
 
-Human/AI status summary:
+Useful commands:
 
 ```text
 python tools/ai_status.py
-python tools/ai_status.py --json
+python tools/verify_current.py
+python tools/verify_runtime_artifacts.py
+python tools/verify_verified_symbols.py
 ```
 
-Deep baseline/recovery audit:
+The work workflow builds changed active modules, packages the complete stack, appends enabled candidate companion modules, then runs one final fail-closed ZIP verifier.
+
+## Stable promotion path
+
+Never promote the entire accumulated `work` branch just because one feature was accepted.
+
+Curate accepted changes onto current `main`, create a `promote/<purpose>` branch, and require `Pre-promote stable` PASS on that exact SHA. Stable packaging must come from exact accepted runtime bytes:
 
 ```text
+python tools/sync_source_metadata.py --check
+python tools/verify_current.py
+python tools/verify_runtime_artifacts.py
 python tools/verify_repo.py
+python tools/package_exact_current.py
+python tools/verify_candidate_package.py --finalize ...
 ```
 
-The fast gate follows current metadata and is intended to remain valid across V69, V70 and later. Deep recovery scripts may be baseline-specific and are primarily required when promoting or auditing a stable release.
+Only then may AI move `main`. Afterward, integrate the new main into work without deleting unrelated work experiments.
 
-## Where to edit
+## Exact-byte runtime cache
 
-Always follow `runtime/current.json -> active_dlls[*].source_path` when it exists. A module directory may contain reconstructed/evidence files in addition to the canonical source; `source_path` decides which file is authoritative for the current runtime lineage.
+An active stable DLL must be recoverable by exact SHA from either its `binary_artifact` metadata or:
 
-For modules whose exact source is still stored only as a lossless recovery archive, follow the `source_restore_doc` / `source_archive` / `source_archive_prefix` metadata instead of guessing.
+`artifacts/runtime_cache/<sha256>.dll.xz`
 
-## Definition of done for an AI iteration
+Missing or mismatching exact bytes are a hard promotion failure.
 
-A candidate is ready for testing when:
+## Current state
 
-- the requested change is implemented,
-- unrelated modules were not modified,
-- metadata points to the correct source/runtime lineage,
-- `tools/verify_current.py` returns `PASS`,
-- rollback remains available,
-- the candidate is committed to `work`,
-- a runnable test package is prepared when needed,
-- the commit message states the functional change rather than only a version number.
+Do not copy the baseline number from this prose. Read `CURRENT.json`; it is the source of truth. `CURRENT_VERSION.md` is descriptive only.
+
+## Definition of ready-to-test
+
+A TEST artifact is ready only when:
+- fast repository gates pass,
+- changed x86 modules build,
+- final ZIP contains one root EXE + all root DLLs + exact `dlls.txt`,
+- all binary entries are PE32 x86,
+- metadata SHA matches the final ZIP,
+- `FINAL_PACKAGE: PASS`.
+
+See `AGENTS.md` for the full operating contract.

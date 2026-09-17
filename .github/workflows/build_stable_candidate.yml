@@ -1,0 +1,96 @@
+name: Build stable candidate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'CURRENT.json'
+      - 'AI_INDEX.json'
+      - 'runtime/current.json'
+      - 'baseline/**'
+      - 'manifests/**'
+      - 'artifacts/runtime_cache/**'
+      - 'artifacts/V*/runtime/**'
+      - 'tools/package_exact_current.py'
+      - 'tools/verify_candidate_package.py'
+      - 'tools/verify_current.py'
+      - 'tools/verify_runtime_artifacts.py'
+      - 'tools/verify_verified_symbols.py'
+      - 'tools/verify_repo.py'
+      - 'tools/sync_source_metadata.py'
+      - '.github/workflows/build_stable_candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-stable-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-stable:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout stable tree
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require stable metadata
+        shell: pwsh
+        run: |
+          $state = Get-Content CURRENT.json -Raw | ConvertFrom-Json
+          if ($state.status -ne 'stable') { throw "main stable package requires CURRENT.status=stable" }
+
+      - name: Verify source promotion fingerprints
+        shell: pwsh
+        run: python tools/sync_source_metadata.py --check
+
+      - name: Verify current stable state
+        shell: pwsh
+        run: python tools/verify_current.py
+
+      - name: Verify exact runtime byte recovery
+        shell: pwsh
+        run: python tools/verify_runtime_artifacts.py
+
+      - name: Verify shared build-5875 symbol registry
+        shell: pwsh
+        run: |
+          if (Test-Path 'runtime/verified_symbols_5875.json') {
+            python tools/verify_verified_symbols.py
+            if ($LASTEXITCODE -ne 0) { throw "verified symbol registry failed" }
+          }
+
+      - name: Deep repository audit
+        shell: pwsh
+        run: python tools/verify_repo.py
+
+      - name: Package exact accepted stable bytes
+        shell: pwsh
+        run: >-
+          python tools/package_exact_current.py
+          --output dist/WoW112_STABLE_CANDIDATE.zip
+          --metadata dist/candidate_metadata.json
+
+      - name: Final fail-closed stable ZIP gate
+        shell: pwsh
+        run: >-
+          python tools/verify_candidate_package.py
+          --package dist/WoW112_STABLE_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --report dist/final_package_verification.json
+          --finalize
+
+      - name: Upload stable runnable ZIP and metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-STABLE-CANDIDATE-${{ github.sha }}
+          path: |
+            dist/WoW112_STABLE_CANDIDATE.zip
+            dist/candidate_metadata.json
+            dist/final_package_verification.json
+          if-no-files-found: error
+          compression-level: 0

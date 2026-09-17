@@ -104,6 +104,7 @@ def verify_ai_contract(index, current):
         error("AI_INDEX stable branch does not match CURRENT.json")
     if branches.get("development") != current.get("working_branch"):
         error("AI_INDEX development branch does not match CURRENT.json")
+
     canonical = index.get("canonical", {})
     if canonical.get("current_state") != "CURRENT.json":
         error("AI_INDEX canonical current_state must be CURRENT.json")
@@ -111,6 +112,14 @@ def verify_ai_contract(index, current):
         error("AI_INDEX runtime pointer does not match CURRENT.json")
     if canonical.get("source_root") != current.get("canonical_source_root"):
         error("AI_INDEX source_root does not match CURRENT.json")
+
+    for key in ("active_builder", "candidate_builder", "source_metadata_sync"):
+        if canonical.get(key) != current.get(key):
+            error("AI_INDEX %s does not match CURRENT.json" % key)
+        rel = current.get(key)
+        if rel:
+            require_file(rel)
+
     for rel in index.get("read_order", []):
         require_file(rel)
     for key in ("source_inventory", "project_rules"):
@@ -156,7 +165,14 @@ def verify_exe(current, runtime, sha_manifest):
         error("canonical EXE size mismatch: got %d expected %d" % (path.stat().st_size, expected_size))
 
 
-def verify_source_item(item):
+def fingerprint_mismatch(strict, msg):
+    if strict:
+        error(msg)
+    else:
+        warning(msg + " (candidate promotion fingerprint is stale; sync before stable promotion)")
+
+
+def verify_source_item(item, strict_fingerprints):
     name = item.get("name", "<unnamed>")
     state = item.get("source_state")
     allowed = {
@@ -169,11 +185,13 @@ def verify_source_item(item):
     if state not in allowed:
         error("active DLL has invalid source_state: %s (%r)" % (name, state))
         return
+
     source_path = item.get("source_path")
     source_hash = str(item.get("source_sha256", "")).lower()
     source_size = item.get("source_size")
     if state == "normal_source" and not source_path:
         error("normal_source DLL missing source_path: %s" % name)
+
     if source_path:
         normalized = source_path.replace("\\", "/")
         if not normalized.startswith("src/"):
@@ -183,15 +201,22 @@ def verify_source_item(item):
             if source_hash:
                 if len(source_hash) != 64:
                     error("invalid source_sha256: %s" % name)
-                elif file_sha256(path) != source_hash:
-                    error("source SHA256 mismatch: %s -> %s" % (name, source_path))
+                else:
+                    actual_hash = file_sha256(path)
+                    if actual_hash != source_hash:
+                        fingerprint_mismatch(strict_fingerprints, "source SHA256 mismatch: %s -> %s" % (name, source_path))
             elif state == "normal_source":
                 warning("normal source has no source_sha256: %s" % name)
+
             if source_size is not None:
                 if not isinstance(source_size, int) or source_size <= 0:
                     error("invalid source_size: %s" % name)
                 elif path.stat().st_size != source_size:
-                    error("source size mismatch: %s got %d expected %d" % (name, path.stat().st_size, source_size))
+                    fingerprint_mismatch(
+                        strict_fingerprints,
+                        "source size mismatch: %s got %d expected %d" % (name, path.stat().st_size, source_size),
+                    )
+
     for field in ("source_restore_doc", "binary_patch_audit", "binary_reproducer", "source_archive", "source_restore_tool"):
         rel = item.get(field)
         if rel:
@@ -200,8 +225,31 @@ def verify_source_item(item):
     if prefix and not list(ROOT.glob(prefix + "*")):
         error("source archive parts missing: %s -> %s*" % (name, prefix))
 
+    recipe = item.get("build_recipe")
+    if recipe is not None:
+        if not isinstance(recipe, dict):
+            error("invalid build_recipe object: %s" % name)
+        else:
+            tool = recipe.get("tool")
+            profile = recipe.get("profile")
+            allowed_profiles = {
+                "msvc_x86_crtless",
+                "clangcl_i686_crtless",
+                "clangcl_i686_win32imports",
+            }
+            if not tool:
+                error("build_recipe missing tool: %s" % name)
+            elif not (ROOT / tool).is_file():
+                error("build_recipe tool missing: %s -> %s" % (name, tool))
+            if profile not in allowed_profiles:
+                error("unsupported build_recipe profile: %s -> %r" % (name, profile))
+            if recipe.get("status") != "verified_x86_candidate_build":
+                warning("build_recipe is not marked verified: %s" % name)
+    elif source_path:
+        warning("direct source has no verified build_recipe: %s" % name)
 
-def verify_runtime(current, runtime, sha_manifest):
+
+def verify_runtime(current, runtime, sha_manifest, strict_fingerprints):
     if current.get("stable_baseline") != runtime.get("baseline"):
         error("baseline mismatch: CURRENT.json=%s runtime/current.json=%s" % (current.get("stable_baseline"), runtime.get("baseline")))
     if runtime.get("wow_build") != 5875:
@@ -232,7 +280,7 @@ def verify_runtime(current, runtime, sha_manifest):
             error("active DLL missing from SHA256 manifest: %s" % name)
         elif manifest_hash != expected:
             error("active DLL hash differs between runtime and SHA256 manifest: %s" % name)
-        verify_source_item(item)
+        verify_source_item(item, strict_fingerprints)
     return len(items)
 
 
@@ -240,7 +288,8 @@ def verify_current_metadata(current):
     required = (
         "project", "wow_version", "wow_build", "architecture", "stable_baseline", "status",
         "working_branch", "stable_branch", "baseline_dir", "active_dll_list", "runtime_manifest",
-        "sha256_manifest", "current_version_doc", "canonical_source_root", "ai_entrypoint", "ai_index", "exe",
+        "sha256_manifest", "current_version_doc", "canonical_source_root", "ai_entrypoint", "ai_index",
+        "active_builder", "candidate_builder", "source_metadata_sync", "exe",
     )
     for key in required:
         if current.get(key) in (None, ""):
@@ -267,19 +316,24 @@ def main():
     runtime = load_json(current.get("runtime_manifest", "runtime/current.json"))
     if runtime is None:
         return 1
+
+    strict_fingerprints = current.get("status") != "candidate"
     sha_manifest = parse_sha256(current.get("sha256_manifest", ""))
-    active_count = verify_runtime(current, runtime, sha_manifest)
+    active_count = verify_runtime(current, runtime, sha_manifest, strict_fingerprints)
     verify_exe(current, runtime, sha_manifest)
+
     banned_suffixes = (".log", ".dmp", ".mdmp")
     for rel in tracked_files():
         if rel.lower().endswith(banned_suffixes):
             error("tracked runtime/debug artifact should not be in Git: %s" % rel)
+
     print("\nFast current-state verification summary")
     print("  target: WoW 1.12.1 build 5875 x86")
     print("  baseline: %s" % current.get("stable_baseline"))
     print("  active DLLs: %d" % active_count)
     print("  canonical source root: %s" % current.get("canonical_source_root"))
     print("  AI entrypoint: %s" % current.get("ai_entrypoint"))
+    print("  source fingerprints: %s" % ("strict" if strict_fingerprints else "candidate-warning mode"))
     print("  warnings: %d" % len(WARNINGS))
     print("  errors: %d" % len(ERRORS))
     if ERRORS:

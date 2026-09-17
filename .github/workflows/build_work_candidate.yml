@@ -1,0 +1,141 @@
+name: Build work candidate
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - 'src/**'
+      - 'runtime/current.json'
+      - 'runtime/work_base_dlls.txt'
+      - 'runtime/work_candidate.json'
+      - 'runtime/verified_symbols_5875.json'
+      - 'manifests/SHA256SUMS_WORK.txt'
+      - 'CURRENT.json'
+      - 'AI_INDEX.json'
+      - 'tools/build_active_module.py'
+      - 'tools/build_changed_active.py'
+      - 'tools/build_controlhub_candidate.py'
+      - 'tools/build_autopoisons_candidate.py'
+      - 'tools/build_diaghub_candidate.py'
+      - 'tools/package_current.py'
+      - '.github/workflows/build_work_candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-work-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-package:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout current work tree
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Build changed active modules and package candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '${{ github.event.before }}'
+          if (-not $base -or $base -match '^0+$') {
+            $base = (git rev-parse HEAD^)
+          }
+          python tools/build_changed_active.py `
+            --base "$base" `
+            --output-dir build `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json
+          if ($LASTEXITCODE -ne 0) { throw "candidate build failed" }
+
+      - name: Full active-stack build/package audit
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          python tools/build_changed_active.py `
+            --all `
+            --output-dir build `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json
+          if ($LASTEXITCODE -ne 0) { throw "full active-stack audit failed" }
+
+      - name: Build and append WoWControlHub when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/WoWControlHub/WoWControlHub_v2.c') {
+            python tools/build_controlhub_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/controlhub_build.json `
+              --output build/WoWControlHub.dll
+            if ($LASTEXITCODE -ne 0) { throw "ControlHub candidate failed" }
+          }
+
+      - name: Build and append AutoPoisons when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/AutoPoisons/WoWAutoPoisons_5875_v1.c') {
+            python tools/build_autopoisons_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/autopoisons_build.json `
+              --output build/WoWAutoPoisons_5875_v1.dll
+            if ($LASTEXITCODE -ne 0) { throw "AutoPoisons candidate failed" }
+          }
+
+      - name: Build and append observer WoWDiagHub when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/WoWDiagHub/WoWDiagHub_5875_v1.c') {
+            python tools/build_diaghub_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/diaghub_build.json `
+              --output build/WoWDiagHub.dll
+            if ($LASTEXITCODE -ne 0) { throw "DiagHub candidate failed" }
+          }
+
+      - name: Final fail-closed runnable ZIP gate
+        shell: pwsh
+        run: |
+          python tools/verify_candidate_package.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --report dist/final_package_verification.json `
+            --finalize
+          if ($LASTEXITCODE -ne 0) { throw "final package verification failed" }
+
+      - name: Write human-readable test card
+        shell: pwsh
+        run: >-
+          python tools/write_candidate_test_card.py
+          --summary dist/candidate_summary.json
+          --output dist/TEST_THIS.txt
+
+      - name: Upload runnable ZIP and candidate diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-WORK-CANDIDATE-${{ github.sha }}
+          path: |
+            dist/WoW112_WORK_CANDIDATE.zip
+            dist/TEST_THIS.txt
+            dist/candidate_metadata.json
+            dist/candidate_summary.json
+            dist/final_package_verification.json
+            dist/*_build.json
+          if-no-files-found: error
+          compression-level: 0

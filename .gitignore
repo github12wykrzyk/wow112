@@ -1,6 +1,11 @@
 *.log
 *.dmp
 *.mdmp
+/build/
+/dist/
+/.wow112_debug/
+/.wow112_updater/
+**/.wow112_debug/
 generated/
 _V67_OLD/
 _V*_OLD/

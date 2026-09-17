@@ -1,81 +1,65 @@
 # wow112
 
-Prywatne repozytorium projektu **World of Warcraft 1.12.1 build 5875, Windows x86** zoptymalizowane pod wielokrotne iteracje AI-assisted development.
+Private AI-first repository for **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
-## AI / szybki start
+## Start here
 
-**Zawsze zaczynaj od `AI_START_HERE.md`.**
+For every AI task, read in this order:
 
-Minimalny zestaw do odczytu na początku zadania:
+1. `AGENTS.md`
+2. `AI_START_HERE.md`
+3. `AI_INDEX.json`
+4. `CURRENT.json`
+5. `runtime/current.json`
 
-1. `AI_INDEX.json`
-2. `CURRENT.json`
-3. `runtime/current.json`
-4. tylko kod modułu potrzebnego do danej zmiany
+Do not infer the active baseline or stack from this README. `CURRENT.json` and `runtime/current.json` are canonical.
 
-Nie trzeba przeszukiwać całego repo przy każdej rozmowie. `archives/`, historyczne baseline i recovery chunks są materiałem on-demand.
+## Branches
 
-## Aktualny stabilny baseline
+- `main` — last accepted stable state.
+- `work` — current development candidate.
+- `promote/**` — temporary curated stable candidates; these must pass the pre-promotion gate before `main` moves.
 
-**V68 — AutoPP rear-only HARDLOS3D + V67 feature stack**
+Normal feature/fix work happens on `work`. Accepted changes are curated onto current `main`; the entire accumulated `work` branch is not promoted wholesale.
 
-- `main` — ostatni zaakceptowany stabilny stan.
-- `work` — bieżący kandydat rozwojowy; musi być zsynchronizowany z aktualnym `main` przed rozpoczęciem nowej iteracji.
-- poprzednie stabilne baseline pozostają dostępne jako rollback.
+## Build and verification
 
-Canonical state:
-
-- `CURRENT.json` — główny wskaźnik stanu,
-- `runtime/current.json` — dokładny aktywny EXE/DLL stack + SHA256 + source provenance,
-- `baseline/V68/dlls.txt` — kolejność aktywnych DLL,
-- `manifests/SHA256SUMS_V68.txt` — referencyjne hashe,
-- `CURRENT_VERSION.md` — opis bieżącej stabilnej wersji.
-
-## Source layout
-
-`src/` jest jedynym normalnym **canonical editable source root**.
-
-Aktywny plik dla konkretnego DLL wybiera pole `source_path` w `runtime/current.json`. Jeżeli moduł ma tylko lossless recovery archive, runtime metadata wskazuje restore doc/tool/artifact.
-
-`source/` jest katalogiem legacy/history. Nie należy dodawać tam nowych aktywnych źródeł ani wskazywać go jako canonical `source_path`.
-
-## Szybka weryfikacja
-
-Dla codziennych iteracji:
+Routine:
 
 ```text
 python tools/verify_current.py
+python tools/verify_runtime_artifacts.py
+python tools/verify_verified_symbols.py
 ```
 
-Kompaktowy stan repo:
+TEST artifact:
+- `.github/workflows/build_work_candidate.yml`
+- ends with `tools/verify_candidate_package.py`
+- publishes only after final package verification.
 
-```text
-python tools/ai_status.py
-python tools/ai_status.py --json
-```
+Stable promotion:
+- `.github/workflows/pre_promote_stable.yml`
+- strict source/deep checks
+- exact-byte packaging with `tools/package_exact_current.py`
+- final ZIP verification before `main` is updated.
 
-Głęboki audit obecnego baseline/recovery:
+Stable artifact:
+- `.github/workflows/build_stable_candidate.yml`
+- packages exact accepted runtime bytes; it does not silently replace them with a new rebuild.
 
-```text
-python tools/verify_repo.py
-```
+## Canonical layout
 
-GitHub Actions wykonuje szybki gate na `work` i `main`; dodatkowe głębokie kontrole są przeznaczone dla stabilnej promocji/audytu.
+- `CURRENT.json` — current baseline/branch/tool pointers.
+- `runtime/current.json` — exact active EXE/DLL stack and provenance.
+- `src/` — canonical editable source root.
+- `baseline/` — stable rollback metadata.
+- `manifests/` — stable/reference hashes.
+- `artifacts/runtime_cache/` — content-addressed exact DLL bytes.
+- `artifacts/` — recovery/audit/reproducer evidence.
+- `archives/`, `src/history/`, `source/` — historical material; do not scan by default.
 
-## Iteracje i wersjonowanie
+## Human role
 
-Nie tworzymy nowego baseline dla każdej eksperymentalnej poprawki. Kilka lub kilkadziesiąt prób może żyć na `work`. Gdy użytkownik zaakceptuje działający stan, dopiero wtedy powstaje kolejny stabilny rollback point (`V69`, `V70`, ...), poprzedni baseline zostaje zachowany, a `work` jest synchronizowany do nowego `main`.
+The human user describes desired behavior and tests ready artifacts. AI owns routine GitHub edits, branch housekeeping, verification, packaging, and promotion workflow.
 
-Pełny workflow: `docs/AI_ITERATION_WORKFLOW.md`.
-
-## Najważniejsze dokumenty
-
-- `AI_START_HERE.md` — najszybszy punkt wejścia dla AI,
-- `AI_INDEX.json` — machine-readable routing index,
-- `PROJECT_INSTRUCTIONS.md` — twarde zasady projektu,
-- `docs/AI_ITERATION_WORKFLOW.md` — workflow setek kolejnych iteracji,
-- `docs/SOURCE_INVENTORY.md` — provenance aktywnych źródeł,
-- `docs/VERSION_RETENTION.md` — polityka rollbacków,
-- `CURRENT_VERSION.md` — bieżąca stabilna wersja.
-
-Projekt nie zakłada zgodności z TBC/Wrath/Retail.
+Full contract: `AGENTS.md`.
