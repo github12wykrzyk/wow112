@@ -19,6 +19,7 @@
   "final_package_verifier": "tools/verify_candidate_package.py",
   "promotion_workflow": ".github/workflows/pre_promote_stable.yml",
   "runtime_binary_cache": "artifacts/runtime_cache",
+  "exact_artifact_registry": "runtime/exact_artifacts.json",
   "candidate_builder": "tools/build_changed_active.py",
   "source_metadata_sync": "tools/sync_source_metadata.py",
   "baseline_dir": "baseline/V69",

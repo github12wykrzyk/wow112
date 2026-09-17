@@ -1,33 +1,16 @@
 {
   "schema_version": 1,
   "purpose": "Machine-readable routing index for repeated AI-assisted development. Canonical state is not duplicated here.",
-  "target": {
-    "game": "World of Warcraft",
-    "version": "1.12.1",
-    "build": 5875,
-    "platform": "Windows",
-    "architecture": "x86"
-  },
-  "branches": {
-    "stable": "main",
-    "development": "work",
-    "promotion_pattern": "promote/**"
-  },
-  "read_order": [
-    "AGENTS.md",
-    "AI_START_HERE.md",
-    "AI_INDEX.json",
-    "CURRENT.json",
-    "runtime/current.json"
-  ],
-  "conditional_fast_indexes": {
-    "shared_native_primitives": "runtime/verified_symbols_5875.json"
-  },
+  "target": {"game": "World of Warcraft", "version": "1.12.1", "build": 5875, "platform": "Windows", "architecture": "x86"},
+  "branches": {"stable": "main", "development": "work", "promotion_pattern": "promote/**"},
+  "read_order": ["AGENTS.md", "AI_START_HERE.md", "AI_INDEX.json", "CURRENT.json", "runtime/current.json"],
+  "conditional_fast_indexes": {"shared_native_primitives": "runtime/verified_symbols_5875.json"},
   "canonical": {
     "operating_contract": "AGENTS.md",
     "current_state": "CURRENT.json",
     "runtime_manifest": "runtime/current.json",
     "verified_symbols_registry": "runtime/verified_symbols_5875.json",
+    "exact_artifact_registry": "runtime/exact_artifacts.json",
     "source_root": "src",
     "source_inventory": "docs/SOURCE_INVENTORY.md",
     "baseline_root": "baseline",
@@ -70,12 +53,7 @@
     "docs": "workflow/provenance/retention documentation",
     "tools": "verification, build, packaging and maintenance scripts"
   },
-  "do_not_scan_by_default": [
-    "archives",
-    "src/history",
-    "source/V20_SOURCE_PARTS",
-    "artifacts/V67"
-  ],
+  "do_not_scan_by_default": ["archives", "src/history", "source/V20_SOURCE_PARTS", "artifacts/V67"],
   "rules": [
     "AGENTS.md defines the AI operating contract",
     "runtime/current.json decides the active stack and canonical source provenance",

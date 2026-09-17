@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "purpose": "Explicit exact-byte recovery recipes keyed by runtime DLL SHA256. Used when exact accepted bytes are recoverable from repository evidence but are not stored as a direct content-addressed XZ cache blob.",
+  "artifacts": {
+    "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e": {
+      "kind": "xz_b64_parts",
+      "path_prefix": "artifacts/V67/runtime/WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll.xz.b64.part",
+      "sha256": "2bc2f9be3bca94bd0fc77e2c7c0f4fbfa3669cc03787f2cba4214f0acb2e567e",
+      "size": 8192,
+      "provenance": "existing V67 exact runtime archive; retained for V69 stable byte recovery"
+    }
+  }
+}

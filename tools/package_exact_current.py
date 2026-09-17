@@ -4,11 +4,12 @@
 import argparse
 import hashlib
 import json
-import lzma
 import os
 import tempfile
 import zipfile
 from pathlib import Path
+
+from exact_runtime_artifacts import load_registry, resolve_exact_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 CURRENT = ROOT / "CURRENT.json"
@@ -28,40 +29,6 @@ def sha256_file(path):
 
 def load_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def exact_artifact(item, current):
-    expected = str(item.get("sha256", "")).lower()
-    size = item.get("size")
-    artifact = item.get("binary_artifact")
-
-    candidates = []
-    if isinstance(artifact, dict) and artifact.get("path"):
-        candidates.append((ROOT / artifact["path"], artifact.get("format") or artifact.get("kind") or "xz", "runtime_binary_artifact"))
-
-    cache_root = current.get("runtime_binary_cache") or "artifacts/runtime_cache"
-    if len(expected) == 64:
-        candidates.append((ROOT / cache_root / f"{expected}.dll.xz", "xz", "content_addressed_cache"))
-
-    checked = []
-    for path, fmt, kind in candidates:
-        checked.append(str(path.relative_to(ROOT)).replace("\\", "/"))
-        if not path.is_file():
-            continue
-        if fmt != "xz":
-            raise SystemExit(f"unsupported stable runtime artifact format for {item.get('name')}: {fmt}")
-        try:
-            data = lzma.decompress(path.read_bytes())
-        except Exception as exc:
-            raise SystemExit(f"could not decompress {path}: {exc}")
-        actual = sha256_bytes(data)
-        if actual != expected:
-            raise SystemExit(f"stable cache SHA256 mismatch for {item.get('name')}: got {actual}, expected {expected}")
-        if isinstance(size, int) and len(data) != size:
-            raise SystemExit(f"stable cache size mismatch for {item.get('name')}: got {len(data)}, expected {size}")
-        return data, str(path.relative_to(ROOT)).replace("\\", "/"), kind
-
-    raise SystemExit(f"no exact stable byte artifact for {item.get('name')} ({expected}); checked: {checked}")
 
 
 def deterministic_zip(path, rows):
@@ -98,6 +65,11 @@ def main():
     if current.get("stable_baseline") != runtime.get("baseline"):
         raise SystemExit("CURRENT/runtime baseline mismatch")
 
+    try:
+        registry, registry_rel = load_registry(current)
+    except Exception as exc:
+        raise SystemExit(str(exc))
+
     exe_meta = runtime.get("exe") or {}
     exe_current = current.get("exe") or {}
     exe_name = exe_meta.get("name")
@@ -117,18 +89,21 @@ def main():
         raise SystemExit("canonical EXE size mismatch")
 
     rows = [(exe_name, exe_data)]
-    sources = {}
     dlls = runtime.get("active_dlls") or []
     if not dlls:
         raise SystemExit("runtime/current.json has no active DLLs")
 
+    resolved = []
     for item in dlls:
         name = item.get("name")
         if not name or not name.lower().endswith(".dll"):
             raise SystemExit(f"invalid active DLL entry: {item!r}")
-        data, source, source_kind = exact_artifact(item, current)
+        try:
+            data, meta = resolve_exact_bytes(item, current, registry)
+        except Exception as exc:
+            raise SystemExit(str(exc))
         rows.append((name, data))
-        sources[name] = {"sha256": item.get("sha256"), "size": len(data), "source": source, "source_kind": source_kind, "byte_identical_current": True}
+        resolved.append(meta)
 
     out = (ROOT / args.output).resolve()
     metadata_path = (ROOT / args.metadata).resolve()
@@ -146,11 +121,12 @@ def main():
         "zip_root_entries": [name for name, _ in rows],
         "exe": {"name": exe_name, "sha256": expected_exe_hash, "size": len(exe_data), "in_zip_root": True},
         "active_dll_count": len(dlls),
-        "active_dlls": [{"name": item.get("name"), **sources[item.get("name")]} for item in dlls],
+        "active_dlls": resolved,
         "all_active_dlls_in_zip_root": True,
         "candidate_extra_dll_count": 0,
         "candidate_extra_dlls": [],
         "candidate_required_modules": [],
+        "exact_artifact_registry": registry_rel,
         "stable_packaging_mode": "exact_accepted_bytes_no_rebuild"
     }
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
