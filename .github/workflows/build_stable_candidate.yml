@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: build-stable-candidate-${{ github.ref }}
@@ -39,6 +40,21 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Require exact pre-promote attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $runs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs?head_sha=$env:GITHUB_SHA&per_page=100" | ConvertFrom-Json
+          $proof = @($runs.workflow_runs | Where-Object {
+            $_.name -eq 'Pre-promote stable' -and
+            $_.head_sha -eq $env:GITHUB_SHA -and
+            $_.status -eq 'completed' -and
+            $_.conclusion -eq 'success'
+          })
+          Write-Host "successful pre-promote attestations for $env:GITHUB_SHA`: $($proof.Count)"
+          if ($proof.Count -lt 1) { throw "main SHA has no successful Pre-promote stable attestation" }
 
       - name: Require stable metadata
         shell: pwsh
