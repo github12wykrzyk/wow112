@@ -19,10 +19,6 @@ on:
       - 'tools/build_autopoisons_candidate.py'
       - 'tools/build_diaghub_candidate.py'
       - 'tools/package_current.py'
-      - 'tools/verify_current.py'
-      - 'tools/verify_runtime_artifacts.py'
-      - 'tools/verify_verified_symbols.py'
-      - 'tools/verify_candidate_package.py'
       - '.github/workflows/build_work_candidate.yml'
   workflow_dispatch:
 
