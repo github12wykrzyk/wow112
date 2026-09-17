@@ -62,7 +62,9 @@ jobs:
             /reference:"$ref\System.IO.Compression.FileSystem.dll" `
             /reference:"$ref\System.Security.dll" `
             /reference:"$ref\System.Web.Extensions.dll" `
+            /resource:tools\updater\assets\wow112_updater_background.jpg,WoW112Updater.Background.jpg `
             tools\updater\WoW112Updater.cs `
+            tools\updater\UpdaterModernUi.cs `
             tools\updater\UpdaterHost.cs `
             tools\updater\UpdaterSafety.cs `
             tools\updater\UpdaterNetworkCompat.cs `
