@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -22,7 +23,37 @@ def load_json(path):
         return None
 
 
-def verify_provenance(owner, rows, active_sources):
+def file_sha256(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def exact_archived_source_fingerprints(runtime):
+    out = set()
+    for item in runtime.get("active_dlls", []):
+        if not isinstance(item, dict) or item.get("source_state") != "exact_source_archived":
+            continue
+        digest = str(item.get("source_sha256", "")).lower()
+        size = item.get("source_size")
+        if len(digest) == 64 and isinstance(size, int) and size > 0:
+            out.add((digest, size))
+    return out
+
+
+def is_exact_restored_archived_source(path, archived_fingerprints):
+    if not path.is_file() or not archived_fingerprints:
+        return False
+    size = path.stat().st_size
+    candidates = {digest for digest, expected_size in archived_fingerprints if expected_size == size}
+    if not candidates:
+        return False
+    return file_sha256(path) in candidates
+
+
+def verify_provenance(owner, rows, active_sources, archived_fingerprints):
     if not isinstance(rows, list) or not rows:
         error(f"{owner}: provenance must be a non-empty list")
         return
@@ -40,7 +71,8 @@ def verify_provenance(owner, rows, active_sources):
             error(f"{owner}: provenance file missing: {rel}")
             continue
         if rel.startswith("src/") and rel not in active_sources:
-            error(f"{owner}: source provenance is not an active canonical source_path/include: {rel}")
+            if not is_exact_restored_archived_source(path, archived_fingerprints):
+                error(f"{owner}: source provenance is not an active canonical source_path/include or exact archived-source restore: {rel}")
         if not isinstance(evidence, list) or not evidence:
             error(f"{owner}: provenance[{i}] missing evidence snippets")
             continue
@@ -134,6 +166,7 @@ def main():
         error("registry target must be WoW 1.12.1 build 5875 Windows x86")
 
     active_sources = collect_active_sources(runtime)
+    archived_fingerprints = exact_archived_source_fingerprints(runtime)
 
     seen = set()
     symbols = registry.get("symbols")
@@ -166,19 +199,20 @@ def main():
                 error(f"{sid}: function missing calling_convention")
             if not row.get("c_signature"):
                 error(f"{sid}: function missing c_signature")
-        verify_provenance(sid, row.get("provenance"), active_sources)
+        verify_provenance(sid, row.get("provenance"), active_sources, archived_fingerprints)
 
     for i, row in enumerate(registry.get("omitted_unresolved", [])):
         if not isinstance(row, dict):
             error(f"omitted_unresolved[{i}] is not an object")
             continue
         if row.get("provenance"):
-            verify_provenance(f"omitted_unresolved[{i}]", row["provenance"], active_sources)
+            verify_provenance(f"omitted_unresolved[{i}]", row["provenance"], active_sources, archived_fingerprints)
 
     print("\nVerified-symbol registry summary")
     print("  target: WoW 1.12.1 build 5875 Windows x86")
     print(f"  verified symbols: {len(symbols)}")
     print(f"  omitted unresolved topics: {len(registry.get('omitted_unresolved', []))}")
+    print(f"  exact archived source fingerprints: {len(archived_fingerprints)}")
     print(f"  errors: {len(ERRORS)}")
     if ERRORS:
         print("RESULT: FAIL")
