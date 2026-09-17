@@ -64,35 +64,99 @@ namespace WoW112Updater
             var art = new ArtworkPanel(LoadUpdaterArtwork()) { Dock = DockStyle.Fill };
             Controls.Add(art);
 
-            var title = LabelOf("WoW112 Updater", 27F, CText, FontStyle.Bold, "Georgia");
-            title.Location = new Point(42, 28);
-            art.Controls.Add(title);
-            var sub = LabelOf("World of Warcraft 1.12.1  •  Build 5875", 10F, CMuted, FontStyle.Regular);
-            sub.Location = new Point(46, 80);
-            art.Controls.Add(sub);
-            modernChannelBadge = Badge("TEST / WORK", CCopper);
-            modernChannelBadge.Location = new Point(46, 108);
-            art.Controls.Add(modernChannelBadge);
+            // The complete interactive shell is intentionally capped at 600 logical pixels.
+            // At the 960px minimum width this still leaves >300px of unobstructed hero artwork.
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Padding = new Padding(28, 24, 28, 28),
+                ColumnCount = 2,
+                RowCount = 2,
+                Margin = Padding.Empty
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 600F));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 116F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            art.Controls.Add(root);
 
-            var nav = new FramePanel { Left = 28, Top = 150, Width = 180, Height = 550, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left, BackColor = CPanel };
-            art.Controls.Add(nav);
-            var navFlow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 330, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(10, 14, 10, 0), BackColor = Color.Transparent };
+            var header = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent, Margin = Padding.Empty };
+            root.Controls.Add(header, 0, 0);
+            var title = LabelOf("WoW112 Updater", 27F, CText, FontStyle.Bold, "Georgia");
+            title.Location = new Point(10, 2);
+            header.Controls.Add(title);
+            var sub = LabelOf("World of Warcraft 1.12.1  •  Build 5875", 10F, CMuted, FontStyle.Regular);
+            sub.Location = new Point(13, 54);
+            header.Controls.Add(sub);
+            modernChannelBadge = Badge("TEST / WORK", CCopper);
+            modernChannelBadge.Location = new Point(13, 80);
+            header.Controls.Add(modernChannelBadge);
+
+            var body = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = Padding.Empty
+            };
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 142F));
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            body.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            root.Controls.Add(body, 0, 1);
+
+            var nav = new SurfacePanel(142, 42)
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 12, 0),
+                Padding = new Padding(8, 12, 8, 10)
+            };
+            body.Controls.Add(nav, 0, 0);
+
+            var navFlow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 304,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
             nav.Controls.Add(navFlow);
             AddNav(navFlow, "Updater");
             AddNav(navFlow, "Modules");
             AddNav(navFlow, "Settings");
             AddNav(navFlow, "Logs");
             AddNav(navFlow, "About");
-            modernTokenBadge = new Label { Dock = DockStyle.Bottom, Height = 54, BackColor = CPanel2, ForeColor = CMuted, Font = new Font("Segoe UI Semibold", 8.5F), Padding = new Padding(10, 0, 8, 0), TextAlign = ContentAlignment.MiddleLeft };
+
+            modernTokenBadge = new Label
+            {
+                Dock = DockStyle.Bottom,
+                Height = 50,
+                BackColor = Color.Transparent,
+                ForeColor = CMuted,
+                Font = new Font("Segoe UI Semibold", 8.2F),
+                Padding = new Padding(3, 0, 0, 0),
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true
+            };
             nav.Controls.Add(modernTokenBadge);
 
-            var host = new FramePanel { Left = 224, Top = 150, Width = 620, Height = 550, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left, BackColor = CPanel };
-            art.Controls.Add(host);
+            var host = new SurfacePanel(196, 62)
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Padding = Padding.Empty
+            };
+            body.Controls.Add(host, 1, 0);
+
             foreach (var key in new[] { "About", "Logs", "Settings", "Modules", "Updater" })
             {
-                var p = new Panel { Dock = DockStyle.Fill, BackColor = CPanel, Visible = false };
-                modernPages[key] = p;
-                host.Controls.Add(p);
+                var page = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent, Visible = false };
+                modernPages[key] = page;
+                host.Controls.Add(page);
             }
 
             BuildHome(modernPages["Updater"]);
@@ -114,96 +178,225 @@ namespace WoW112Updater
 
         private void BuildHome(Panel p)
         {
-            Header(p, "Updater", "Verified packages from GitHub Actions. Safety checks remain fail-closed.");
-            var build = new FramePanel { Left = 26, Top = 102, Width = 566, Height = 116, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, BackColor = CPanel2 };
-            p.Controls.Add(build);
-            var h = LabelOf("Installed build", 11F, CText, FontStyle.Bold); h.Location = new Point(18, 14); build.Controls.Add(h);
-            localInfo.AutoSize = false; localInfo.SetBounds(18, 42, 525, 55); localInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right; localInfo.BackColor = Color.Transparent; localInfo.ForeColor = CMuted; localInfo.Font = new Font("Segoe UI Semibold", 9.3F); build.Controls.Add(localInfo);
+            var body = PageBody(p, "Updater", "Verified packages from GitHub Actions. Safe, fail-closed installation.");
+            var stack = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 390,
+                BackColor = Color.Transparent,
+                ColumnCount = 1,
+                RowCount = 5,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 102F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 67F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 118F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 60F));
+            body.Controls.Add(stack);
 
-            var sh = LabelOf("Status", 11F, CText, FontStyle.Bold); sh.Location = new Point(28, 242); p.Controls.Add(sh);
-            status.AutoSize = false; status.SetBounds(28, 272, 556, 38); status.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right; status.BackColor = CBack; status.ForeColor = CText; status.Padding = new Padding(12, 0, 8, 0); status.TextAlign = ContentAlignment.MiddleLeft; status.Font = new Font("Segoe UI Semibold", 10F); p.Controls.Add(status);
-            progress.SetBounds(28, 319, 556, 12); progress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right; p.Controls.Add(progress);
+            var build = new SurfacePanel(176, 46) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(14, 10, 14, 8) };
+            stack.Controls.Add(build, 0, 0);
+            var buildLayout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty, Padding = Padding.Empty };
+            buildLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F));
+            buildLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            build.Controls.Add(buildLayout);
+            var h = LabelOf("Installed build", 10.5F, CText, FontStyle.Bold); h.Dock = DockStyle.Fill; h.TextAlign = ContentAlignment.MiddleLeft; buildLayout.Controls.Add(h, 0, 0);
+            localInfo.AutoSize = false; localInfo.Dock = DockStyle.Fill; localInfo.BackColor = Color.Transparent; localInfo.ForeColor = CMuted; localInfo.Font = new Font("Segoe UI Semibold", 9F); localInfo.TextAlign = ContentAlignment.TopLeft; localInfo.AutoEllipsis = true; buildLayout.Controls.Add(localInfo, 0, 1);
 
-            var actions = new FlowLayoutPanel { Left = 28, Top = 356, Width = 556, Height = 105, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, BackColor = Color.Transparent, WrapContents = true };
-            p.Controls.Add(actions);
-            StyleButton(updatePlayButton, true, 190, 46, "UPDATE & PLAY"); actions.Controls.Add(updatePlayButton);
-            StyleButton(launchButton, false, 135, 46, "PLAY WOW"); actions.Controls.Add(launchButton);
-            StyleButton(updateButton, false, 120, 38, "UPDATE ONLY"); actions.Controls.Add(updateButton);
-            StyleButton(checkButton, false, 160, 38, "CHECK FOR UPDATES"); actions.Controls.Add(checkButton);
+            var statusBox = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty, Padding = Padding.Empty };
+            statusBox.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            statusBox.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+            stack.Controls.Add(statusBox, 0, 1);
+            var sh = LabelOf("Status", 9F, CMuted, FontStyle.Bold); sh.Dock = DockStyle.Fill; sh.TextAlign = ContentAlignment.MiddleLeft; statusBox.Controls.Add(sh, 0, 0);
+            status.AutoSize = false; status.Dock = DockStyle.Fill; status.BackColor = CBack; status.ForeColor = CText; status.Padding = new Padding(10, 0, 8, 0); status.TextAlign = ContentAlignment.MiddleLeft; status.Font = new Font("Segoe UI Semibold", 9.5F); status.AutoEllipsis = true; statusBox.Controls.Add(status, 0, 1);
 
-            var hint = LabelOf("TEST follows work. STABLE follows main. The newest workflow must pass before installation.", 8.5F, CMuted, FontStyle.Regular);
-            hint.Left = 30; hint.Top = 474; p.Controls.Add(hint);
+            var progressHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent, Margin = new Padding(0, 4, 0, 4), Padding = new Padding(0, 2, 0, 2) };
+            stack.Controls.Add(progressHost, 0, 2);
+            progress.Dock = DockStyle.Fill;
+            progressHost.Controls.Add(progress);
+
+            var actions = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 2, Margin = Padding.Empty, Padding = Padding.Empty };
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65F));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35F));
+            actions.RowStyles.Add(new RowStyle(SizeType.Absolute, 54F));
+            actions.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+            stack.Controls.Add(actions, 0, 3);
+            StyleButton(updatePlayButton, true, 0, 0, "UPDATE & PLAY"); updatePlayButton.Dock = DockStyle.Fill; updatePlayButton.Margin = new Padding(0, 0, 8, 8); actions.Controls.Add(updatePlayButton, 0, 0);
+            StyleButton(launchButton, false, 0, 0, "PLAY WOW"); launchButton.Dock = DockStyle.Fill; launchButton.Margin = new Padding(0, 0, 0, 8); actions.Controls.Add(launchButton, 1, 0);
+            var secondary = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent, Margin = Padding.Empty, Padding = Padding.Empty };
+            actions.Controls.Add(secondary, 0, 1); actions.SetColumnSpan(secondary, 2);
+            StyleButton(updateButton, false, 126, 34, "UPDATE ONLY"); secondary.Controls.Add(updateButton);
+            StyleButton(checkButton, false, 154, 34, "CHECK FOR UPDATES"); secondary.Controls.Add(checkButton);
+
+            var hint = new Label
+            {
+                Text = "TEST follows work. STABLE follows main. Only successful verified workflow artifacts are installed.",
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                ForeColor = CMuted,
+                Font = new Font("Segoe UI", 8.3F),
+                AutoSize = false,
+                TextAlign = ContentAlignment.TopLeft,
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            stack.Controls.Add(hint, 0, 4);
         }
 
         private void BuildSettings(Panel p, ComboBox realmlist, Button realmlistApply)
         {
-            Header(p, "Settings", "Game directory, update channel, GitHub access and realm selection.");
-            var table = new TableLayoutPanel { Left = 28, Top = 105, Width = 555, Height = 350, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, ColumnCount = 2, RowCount = 8, BackColor = Color.Transparent };
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 76F)); table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24F));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
-            p.Controls.Add(table);
-            Field(table, "Game directory", 0); Prep(gameDir); gameDir.Dock = DockStyle.Fill; table.Controls.Add(gameDir, 0, 1); StyleButton(browseButton, false, 112, 30, "BROWSE..."); browseButton.Anchor = AnchorStyles.Left; table.Controls.Add(browseButton, 1, 1);
-            Field(table, "Channel", 2); Prep(channel); channel.Dock = DockStyle.Fill; table.Controls.Add(channel, 0, 3); StyleButton(saveButton, false, 112, 30, "SAVE"); saveButton.Anchor = AnchorStyles.Left; table.Controls.Add(saveButton, 1, 3);
-            Field(table, "GitHub token — Contents + Actions (read only)", 4); Prep(token); token.Dock = DockStyle.Fill; table.Controls.Add(token, 0, 5); table.SetColumnSpan(token, 2);
+            var body = PageBody(p, "Settings", "Game directory, channel, GitHub access and realm selection.");
+            var table = new TableLayoutPanel { Dock = DockStyle.Top, Height = 360, ColumnCount = 2, RowCount = 9, BackColor = Color.Transparent, Margin = Padding.Empty, Padding = Padding.Empty };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 68F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 23F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 43F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 23F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 43F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 23F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 43F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 23F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 43F));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+            body.Controls.Add(table);
+
+            Field(table, "Game directory", 0); Prep(gameDir); gameDir.Dock = DockStyle.Fill; gameDir.Margin = new Padding(0, 0, 8, 9); table.Controls.Add(gameDir, 0, 1); StyleButton(browseButton, false, 0, 0, "BROWSE..."); browseButton.Dock = DockStyle.Fill; browseButton.Margin = new Padding(0, 0, 0, 9); table.Controls.Add(browseButton, 1, 1);
+            Field(table, "Channel", 2); Prep(channel); channel.Dock = DockStyle.Fill; channel.Margin = new Padding(0, 0, 8, 9); table.Controls.Add(channel, 0, 3); StyleButton(saveButton, false, 0, 0, "SAVE"); saveButton.Dock = DockStyle.Fill; saveButton.Margin = new Padding(0, 0, 0, 9); table.Controls.Add(saveButton, 1, 3);
+            Field(table, "GitHub token — Contents + Actions (read only)", 4); Prep(token); token.Dock = DockStyle.Fill; token.Margin = new Padding(0, 0, 0, 9); table.Controls.Add(token, 0, 5); table.SetColumnSpan(token, 2);
             Field(table, "Realm", 6);
-            if (realmlist != null) { Prep(realmlist); realmlist.Dock = DockStyle.Fill; table.Controls.Add(realmlist, 0, 7); }
-            if (realmlistApply != null) { StyleButton(realmlistApply, false, 112, 30, "APPLY REALM"); realmlistApply.Anchor = AnchorStyles.Left; table.Controls.Add(realmlistApply, 1, 7); }
-            var note = LabelOf("Tokens are stored locally with Windows DPAPI for the current Windows user.", 8.5F, CMuted, FontStyle.Regular); note.Left = 30; note.Top = 470; p.Controls.Add(note);
+            if (realmlist != null) { Prep(realmlist); realmlist.Dock = DockStyle.Fill; realmlist.Margin = new Padding(0, 0, 8, 9); table.Controls.Add(realmlist, 0, 7); }
+            if (realmlistApply != null) { StyleButton(realmlistApply, false, 0, 0, "APPLY REALM"); realmlistApply.Dock = DockStyle.Fill; realmlistApply.Margin = new Padding(0, 0, 0, 9); table.Controls.Add(realmlistApply, 1, 7); }
+            var note = new Label { Text = "The GitHub token is stored locally with Windows DPAPI for the current Windows user.", Dock = DockStyle.Fill, BackColor = Color.Transparent, ForeColor = CMuted, Font = new Font("Segoe UI", 8.3F), AutoSize = false, Padding = new Padding(0, 8, 0, 0) };
+            table.Controls.Add(note, 0, 8); table.SetColumnSpan(note, 2);
         }
 
         private void BuildModules(Panel p, Button verify, Button diagnostics, Button selfUpdate, Button report, Button reportToken)
         {
-            Header(p, "Modules", "Maintenance, rollback and diagnostics. Gameplay update logic is unchanged.");
-            var rb = new FramePanel { Left = 26, Top = 105, Width = 566, Height = 110, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, BackColor = CPanel2 };
-            p.Controls.Add(rb);
-            var l = LabelOf("Rollback", 10.5F, CText, FontStyle.Bold); l.Location = new Point(16, 12); rb.Controls.Add(l);
-            rollbackChoice.SetBounds(16, 44, 390, 28); rollbackChoice.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right; Prep(rollbackChoice); rb.Controls.Add(rollbackChoice);
-            StyleButton(rollbackButton, false, 125, 30, "ROLLBACK"); rollbackButton.Left = 420; rollbackButton.Top = 42; rollbackButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; rb.Controls.Add(rollbackButton);
-            var mh = LabelOf("Maintenance tools", 10.5F, CText, FontStyle.Bold); mh.Location = new Point(28, 242); p.Controls.Add(mh);
-            var flow = new FlowLayoutPanel { Left = 28, Top = 274, Width = 555, Height = 170, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, BackColor = Color.Transparent, WrapContents = true };
-            p.Controls.Add(flow);
-            AddTool(flow, verify, "VERIFY / REPAIR", 160); AddTool(flow, diagnostics, "DIAGNOSTICS ZIP", 160); AddTool(flow, selfUpdate, "UPDATE UPDATER", 160); AddTool(flow, report, "SEND GITHUB REPORT", 190); AddTool(flow, reportToken, "REPORT TOKEN", 135);
+            var body = PageBody(p, "Modules", "Maintenance, rollback and diagnostics. Gameplay update logic is unchanged.");
+            var stack = new TableLayoutPanel { Dock = DockStyle.Top, Height = 355, BackColor = Color.Transparent, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty, Padding = Padding.Empty };
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 118F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 188F));
+            body.Controls.Add(stack);
+
+            var rb = new SurfacePanel(176, 46) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(14, 10, 14, 10) };
+            stack.Controls.Add(rb, 0, 0);
+            var rbGrid = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 2, Margin = Padding.Empty, Padding = Padding.Empty };
+            rbGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 68F)); rbGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32F));
+            rbGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F)); rbGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
+            rb.Controls.Add(rbGrid);
+            var l = LabelOf("Rollback", 10F, CText, FontStyle.Bold); l.Dock = DockStyle.Fill; l.TextAlign = ContentAlignment.MiddleLeft; rbGrid.Controls.Add(l, 0, 0); rbGrid.SetColumnSpan(l, 2);
+            Prep(rollbackChoice); rollbackChoice.Dock = DockStyle.Fill; rollbackChoice.Margin = new Padding(0, 0, 8, 0); rbGrid.Controls.Add(rollbackChoice, 0, 1);
+            StyleButton(rollbackButton, false, 0, 0, "ROLLBACK"); rollbackButton.Dock = DockStyle.Fill; rollbackButton.Margin = Padding.Empty; rbGrid.Controls.Add(rollbackButton, 1, 1);
+
+            var mh = LabelOf("Maintenance tools", 9.5F, CMuted, FontStyle.Bold); mh.Dock = DockStyle.Fill; mh.TextAlign = ContentAlignment.MiddleLeft; stack.Controls.Add(mh, 0, 1);
+            var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, FlowDirection = FlowDirection.LeftToRight, WrapContents = true, Margin = Padding.Empty, Padding = Padding.Empty, AutoScroll = true };
+            stack.Controls.Add(flow, 0, 2);
+            AddTool(flow, verify, "VERIFY / REPAIR", 142); AddTool(flow, diagnostics, "DIAGNOSTICS ZIP", 142); AddTool(flow, selfUpdate, "UPDATE UPDATER", 142); AddTool(flow, report, "SEND GITHUB REPORT", 170); AddTool(flow, reportToken, "REPORT TOKEN", 122);
         }
 
         private void BuildLogs(Panel p)
         {
-            Header(p, "Logs", "Updater session log. Technical messages are preserved for troubleshooting.");
-            log.ReadOnly = true; log.BorderStyle = BorderStyle.FixedSingle; log.BackColor = Color.FromArgb(16, 15, 18); log.ForeColor = CText; log.Font = new Font("Consolas", 9F); log.SetBounds(28, 110, 555, 340); log.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right; p.Controls.Add(log);
-            var copy = new Button(); StyleButton(copy, false, 120, 34, "COPY LOG"); copy.Left = 28; copy.Top = 470; copy.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; copy.Click += delegate { try { if (!string.IsNullOrEmpty(log.Text)) Clipboard.SetText(log.Text); } catch { } }; p.Controls.Add(copy);
+            var body = PageBody(p, "Logs", "Updater session log. Technical messages are preserved for troubleshooting.");
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = Color.Transparent, Margin = Padding.Empty, Padding = Padding.Empty };
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
+            body.Controls.Add(layout);
+            log.ReadOnly = true; log.BorderStyle = BorderStyle.FixedSingle; log.BackColor = Color.FromArgb(16, 15, 18); log.ForeColor = CText; log.Font = new Font("Consolas", 9F); log.Dock = DockStyle.Fill; log.Margin = new Padding(0, 0, 0, 10); layout.Controls.Add(log, 0, 0);
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = Padding.Empty, Padding = Padding.Empty };
+            layout.Controls.Add(buttons, 0, 1);
+            var copy = new Button(); StyleButton(copy, false, 118, 34, "COPY LOG"); copy.Click += delegate { try { if (!string.IsNullOrEmpty(log.Text)) Clipboard.SetText(log.Text); } catch { } }; buttons.Controls.Add(copy);
         }
 
         private void BuildAbout(Panel p)
         {
-            Header(p, "About", "A focused updater and launcher for the WoW112 project.");
-            var card = new FramePanel { Left = 28, Top = 112, Width = 555, Height = 235, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, BackColor = CPanel2 };
-            p.Controls.Add(card);
-            AboutLine(card, "Updater", "v" + UpdaterVersion, 24); AboutLine(card, "Target", "World of Warcraft 1.12.1 build 5875", 62); AboutLine(card, "Architecture", "Windows x86", 100); AboutLine(card, "Repository", "github12wykrzyk/wow112", 138); AboutLine(card, "Safety", "SHA256 verified GitHub Actions artifacts", 176);
+            var body = PageBody(p, "About", "Updater information and target runtime.");
+            var card = new SurfacePanel(176, 46) { Dock = DockStyle.Top, Height = 236, Padding = new Padding(14, 12, 14, 12), Margin = Padding.Empty };
+            body.Controls.Add(card);
+            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 5, Margin = Padding.Empty, Padding = Padding.Empty };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116F)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            for (var i = 0; i < 5; i++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20F));
+            card.Controls.Add(grid);
+            AboutLine(grid, 0, "Updater", "v" + UpdaterVersion);
+            AboutLine(grid, 1, "Target", "World of Warcraft 1.12.1 build 5875");
+            AboutLine(grid, 2, "Architecture", "Windows x86");
+            AboutLine(grid, 3, "Repository", "github12wykrzyk/wow112");
+            AboutLine(grid, 4, "Safety", "SHA256 verified GitHub Actions artifacts");
         }
 
-        private void Header(Panel p, string title, string sub)
+        private static Panel PageBody(Panel page, string title, string subtitle)
         {
-            var a = LabelOf(title, 18F, CText, FontStyle.Bold, "Georgia"); a.Location = new Point(26, 22); p.Controls.Add(a);
-            var b = LabelOf(sub, 9F, CMuted, FontStyle.Regular); b.Location = new Point(28, 62); p.Controls.Add(b);
-            var line = new Panel { Left = 28, Top = 88, Width = 555, Height = 1, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, BackColor = CBorder }; p.Controls.Add(line);
+            page.Padding = new Padding(20, 16, 20, 18);
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = Color.Transparent, Margin = Padding.Empty, Padding = Padding.Empty };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 78F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            page.Controls.Add(layout);
+
+            var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = Color.Transparent, Margin = Padding.Empty, Padding = Padding.Empty };
+            head.RowStyles.Add(new RowStyle(SizeType.Absolute, 37F)); head.RowStyles.Add(new RowStyle(SizeType.Absolute, 31F)); head.RowStyles.Add(new RowStyle(SizeType.Absolute, 1F));
+            layout.Controls.Add(head, 0, 0);
+            var a = LabelOf(title, 17F, CText, FontStyle.Bold, "Georgia"); a.Dock = DockStyle.Fill; a.TextAlign = ContentAlignment.MiddleLeft; head.Controls.Add(a, 0, 0);
+            var b = new Label { Text = subtitle, Dock = DockStyle.Fill, AutoSize = false, BackColor = Color.Transparent, ForeColor = CMuted, Font = new Font("Segoe UI", 8.6F), TextAlign = ContentAlignment.TopLeft, AutoEllipsis = true }; head.Controls.Add(b, 0, 1);
+            var line = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(83, 32, 20), Margin = Padding.Empty }; head.Controls.Add(line, 0, 2);
+
+            var body = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent, Margin = Padding.Empty, Padding = new Padding(0, 10, 0, 0) };
+            layout.Controls.Add(body, 0, 1);
+            return body;
         }
 
         private void AddNav(FlowLayoutPanel flow, string name)
         {
-            var b = new Button { Text = name, Width = 148, Height = 45, FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = false, BackColor = CPanel, ForeColor = CText, Font = new Font("Segoe UI Semibold", 10F), TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Margin = new Padding(0, 0, 0, 6), Cursor = Cursors.Hand };
-            b.FlatAppearance.BorderSize = 0; b.FlatAppearance.MouseOverBackColor = CPanel2; b.Click += delegate { SwitchPage(name); }; modernNav[name] = b; flow.Controls.Add(b);
+            var b = new Button
+            {
+                Text = name,
+                Width = 116,
+                Height = 42,
+                FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
+                BackColor = CPanel,
+                ForeColor = CText,
+                Font = new Font("Segoe UI Semibold", 9.4F),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(10, 0, 0, 0),
+                Margin = new Padding(0, 0, 0, 5),
+                Cursor = Cursors.Hand
+            };
+            b.FlatAppearance.BorderSize = 0;
+            b.FlatAppearance.MouseOverBackColor = CPanel2;
+            b.Click += delegate { SwitchPage(name); };
+            modernNav[name] = b;
+            flow.Controls.Add(b);
         }
 
         private void SwitchPage(string name)
         {
             foreach (var x in modernPages) x.Value.Visible = string.Equals(x.Key, name, StringComparison.OrdinalIgnoreCase);
-            foreach (var x in modernNav) { var on = string.Equals(x.Key, name, StringComparison.OrdinalIgnoreCase); x.Value.BackColor = on ? CPanel2 : CPanel; x.Value.ForeColor = on ? CGold : CText; x.Value.FlatAppearance.BorderSize = on ? 1 : 0; x.Value.FlatAppearance.BorderColor = on ? CCopper : CPanel; }
+            foreach (var x in modernNav)
+            {
+                var on = string.Equals(x.Key, name, StringComparison.OrdinalIgnoreCase);
+                x.Value.BackColor = on ? CPanel2 : CPanel;
+                x.Value.ForeColor = on ? CGold : CText;
+                x.Value.FlatAppearance.BorderSize = on ? 1 : 0;
+                x.Value.FlatAppearance.BorderColor = on ? CCopper : CPanel;
+            }
             if (modernPages.ContainsKey(name)) modernPages[name].BringToFront();
         }
 
         private void RefreshBadges()
         {
-            if (modernChannelBadge != null) { modernChannelBadge.Text = IsStable() ? "STABLE / MAIN" : "TEST / WORK"; modernChannelBadge.BackColor = IsStable() ? Color.FromArgb(76, 101, 68) : CCopper; }
-            if (modernTokenBadge != null) { var ok = !string.IsNullOrWhiteSpace(token.Text); modernTokenBadge.Text = ok ? "●  GitHub connected" : "○  GitHub token required"; modernTokenBadge.ForeColor = ok ? Color.FromArgb(135, 207, 151) : CMuted; }
+            if (modernChannelBadge != null)
+            {
+                modernChannelBadge.Text = IsStable() ? "STABLE / MAIN" : "TEST / WORK";
+                modernChannelBadge.BackColor = IsStable() ? Color.FromArgb(76, 101, 68) : CCopper;
+            }
+            if (modernTokenBadge != null)
+            {
+                var ok = !string.IsNullOrWhiteSpace(token.Text);
+                modernTokenBadge.Text = ok ? "●  GitHub connected" : "○  GitHub token required";
+                modernTokenBadge.ForeColor = ok ? Color.FromArgb(135, 207, 151) : CMuted;
+            }
         }
 
         private void TranslateStatus()
@@ -211,7 +404,9 @@ namespace WoW112Updater
             if (translatingStatus) return;
             var t = Translate(status.Text);
             if (t == status.Text) return;
-            translatingStatus = true; status.Text = t; translatingStatus = false;
+            translatingStatus = true;
+            status.Text = t;
+            translatingStatus = false;
         }
 
         private void TranslateLocal()
@@ -222,7 +417,9 @@ namespace WoW112Updater
             else if (t.StartsWith("Lokalnie: brak stanu updatera", StringComparison.Ordinal)) t = "Local: no updater state yet (first install or manually copied files).";
             else if (t.StartsWith("Lokalnie:", StringComparison.Ordinal)) t = "Local:" + t.Substring("Lokalnie:".Length);
             if (t == localInfo.Text) return;
-            translatingLocal = true; localInfo.Text = t; translatingLocal = false;
+            translatingLocal = true;
+            localInfo.Text = t;
+            translatingLocal = false;
         }
 
         private static string Translate(string t)
@@ -256,46 +453,168 @@ namespace WoW112Updater
             return t;
         }
 
-        private static Button FindOldButton(IEnumerable<Control> c, string text) { return c.OfType<Button>().FirstOrDefault(x => string.Equals(x.Text, text, StringComparison.OrdinalIgnoreCase)); }
-        private static Label LabelOf(string text, float size, Color color, FontStyle style, string family = "Segoe UI") { return new Label { Text = text, AutoSize = true, BackColor = Color.Transparent, ForeColor = color, Font = new Font(family, size, style) }; }
-        private static Label Badge(string text, Color c) { return new Label { Text = text, AutoSize = false, Size = new Size(118, 24), TextAlign = ContentAlignment.MiddleCenter, BackColor = c, ForeColor = CText, Font = new Font("Segoe UI Semibold", 8F) }; }
-        private static void Field(TableLayoutPanel t, string text, int row) { var l = LabelOf(text, 9F, CMuted, FontStyle.Bold); l.Dock = DockStyle.Fill; l.TextAlign = ContentAlignment.BottomLeft; l.Margin = new Padding(0, 0, 0, 4); t.Controls.Add(l, 0, row); t.SetColumnSpan(l, 2); }
-        private static void Prep(TextBox x) { x.BorderStyle = BorderStyle.FixedSingle; x.BackColor = CBack; x.ForeColor = CText; x.Font = new Font("Segoe UI", 9F); }
-        private static void Prep(ComboBox x) { x.FlatStyle = FlatStyle.Flat; x.BackColor = CBack; x.ForeColor = CText; x.Font = new Font("Segoe UI", 9F); }
-        private static void StyleButton(Button b, bool primary, int w, int h, string text) { b.Text = text; b.FlatStyle = FlatStyle.Flat; b.UseVisualStyleBackColor = false; b.BackColor = primary ? CGreen : CPanel2; b.ForeColor = primary ? CGold : CText; b.Font = new Font("Segoe UI Semibold", primary ? 10F : 9F); b.Cursor = Cursors.Hand; b.FlatAppearance.BorderSize = 1; b.FlatAppearance.BorderColor = primary ? CGold : CBorder; b.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(24, 82, 46) : Color.FromArgb(55, 43, 40); b.Width = w; b.Height = h; b.Margin = new Padding(0, 0, 10, 10); }
-        private static void AddTool(FlowLayoutPanel f, Button b, string text, int w) { if (b == null) return; StyleButton(b, false, w, 38, text); f.Controls.Add(b); }
-        private static void AboutLine(Control p, string n, string v, int y) { var a = LabelOf(n, 9F, CMuted, FontStyle.Bold); a.Location = new Point(18, y); p.Controls.Add(a); var b = LabelOf(v, 9.2F, CText, FontStyle.Regular); b.Location = new Point(150, y); p.Controls.Add(b); }
+        private static Button FindOldButton(IEnumerable<Control> c, string text)
+        {
+            return c.OfType<Button>().FirstOrDefault(x => string.Equals(x.Text, text, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static Label LabelOf(string text, float size, Color color, FontStyle style, string family = "Segoe UI")
+        {
+            return new Label { Text = text, AutoSize = true, BackColor = Color.Transparent, ForeColor = color, Font = new Font(family, size, style) };
+        }
+
+        private static Label Badge(string text, Color c)
+        {
+            return new Label { Text = text, AutoSize = false, Size = new Size(116, 24), TextAlign = ContentAlignment.MiddleCenter, BackColor = c, ForeColor = CText, Font = new Font("Segoe UI Semibold", 8F) };
+        }
+
+        private static void Field(TableLayoutPanel t, string text, int row)
+        {
+            var l = LabelOf(text, 8.8F, CMuted, FontStyle.Bold);
+            l.Dock = DockStyle.Fill;
+            l.TextAlign = ContentAlignment.BottomLeft;
+            l.Margin = new Padding(0, 0, 0, 3);
+            t.Controls.Add(l, 0, row);
+            t.SetColumnSpan(l, 2);
+        }
+
+        private static void Prep(TextBox x)
+        {
+            x.BorderStyle = BorderStyle.FixedSingle;
+            x.BackColor = CBack;
+            x.ForeColor = CText;
+            x.Font = new Font("Segoe UI", 9F);
+        }
+
+        private static void Prep(ComboBox x)
+        {
+            x.FlatStyle = FlatStyle.Flat;
+            x.BackColor = CBack;
+            x.ForeColor = CText;
+            x.Font = new Font("Segoe UI", 9F);
+        }
+
+        private static void StyleButton(Button b, bool primary, int w, int h, string text)
+        {
+            if (b == null) return;
+            b.Text = text;
+            b.FlatStyle = FlatStyle.Flat;
+            b.UseVisualStyleBackColor = false;
+            b.BackColor = primary ? CGreen : CPanel2;
+            b.ForeColor = primary ? CGold : CText;
+            b.Font = new Font("Segoe UI Semibold", primary ? 10F : 8.8F);
+            b.Cursor = Cursors.Hand;
+            b.FlatAppearance.BorderSize = primary ? 1 : 0;
+            b.FlatAppearance.BorderColor = primary ? CGold : CBorder;
+            b.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(24, 82, 46) : Color.FromArgb(55, 43, 40);
+            if (w > 0) b.Width = w;
+            if (h > 0) b.Height = h;
+            b.Margin = new Padding(0, 0, 8, 8);
+        }
+
+        private static void AddTool(FlowLayoutPanel f, Button b, string text, int w)
+        {
+            if (b == null) return;
+            StyleButton(b, false, w, 36, text);
+            f.Controls.Add(b);
+        }
+
+        private static void AboutLine(TableLayoutPanel p, int row, string n, string v)
+        {
+            var a = LabelOf(n, 8.8F, CMuted, FontStyle.Bold); a.Dock = DockStyle.Fill; a.TextAlign = ContentAlignment.MiddleLeft; p.Controls.Add(a, 0, row);
+            var b = new Label { Text = v, Dock = DockStyle.Fill, AutoSize = false, BackColor = Color.Transparent, ForeColor = CText, Font = new Font("Segoe UI", 8.8F), TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true }; p.Controls.Add(b, 1, row);
+        }
 
         private static Image LoadUpdaterArtwork()
         {
-            try { var a = Assembly.GetExecutingAssembly(); using (var s = a.GetManifestResourceStream("WoW112Updater.Background.jpg")) { if (s == null) return null; using (var i = Image.FromStream(s)) return new Bitmap(i); } }
+            try
+            {
+                var a = Assembly.GetExecutingAssembly();
+                using (var s = a.GetManifestResourceStream("WoW112Updater.Background.jpg"))
+                {
+                    if (s == null) return null;
+                    using (var i = Image.FromStream(s)) return new Bitmap(i);
+                }
+            }
             catch { return null; }
         }
 
         private sealed class ArtworkPanel : Panel
         {
             private readonly Image image;
-            public ArtworkPanel(Image i) { image = i; DoubleBuffered = true; ResizeRedraw = true; BackColor = CBack; }
+
+            public ArtworkPanel(Image i)
+            {
+                image = i;
+                DoubleBuffered = true;
+                ResizeRedraw = true;
+                BackColor = CBack;
+            }
+
             protected override void OnPaintBackground(PaintEventArgs e)
             {
                 e.Graphics.Clear(CBack);
-                if (image != null)
+                if (image != null && ClientSize.Width > 0 && ClientSize.Height > 0)
                 {
                     e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    var scale = Math.Min((float)ClientSize.Width / image.Width, (float)ClientSize.Height / image.Height);
-                    var w = (int)Math.Round(image.Width * scale); var h = (int)Math.Round(image.Height * scale); var x = (ClientSize.Width - w) / 2; var y = (ClientSize.Height - h) / 2;
+                    e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
+
+                    // Fill the window while preserving aspect ratio. Horizontal placement is right-anchored
+                    // so the rider and gryphon remain in the safe hero area even when the window is resized.
+                    var scale = Math.Max((float)ClientSize.Width / image.Width, (float)ClientSize.Height / image.Height);
+                    var w = Math.Max(1, (int)Math.Round(image.Width * scale));
+                    var h = Math.Max(1, (int)Math.Round(image.Height * scale));
+                    var x = ClientSize.Width - w;
+                    var y = (ClientSize.Height - h) / 2;
                     e.Graphics.DrawImage(image, new Rectangle(x, y, w, h));
                 }
-                var dw = Math.Max(1, (int)(ClientSize.Width * 0.79));
-                using (var b = new LinearGradientBrush(new Point(0, 0), new Point(dw, 0), Color.FromArgb(210, 18, 16, 19), Color.FromArgb(20, 18, 16, 19))) e.Graphics.FillRectangle(b, 0, 0, dw, ClientSize.Height);
-                using (var b = new LinearGradientBrush(new Point(0, Math.Max(0, ClientSize.Height - 170)), new Point(0, ClientSize.Height), Color.FromArgb(0, 16, 14, 17), Color.FromArgb(145, 16, 14, 17))) e.Graphics.FillRectangle(b, 0, Math.Max(0, ClientSize.Height - 170), ClientSize.Width, 170);
+
+                // Local readability gradient only under the left launcher shell. The right hero area is untouched.
+                var fadeWidth = Math.Min(ClientSize.Width, 690);
+                if (fadeWidth > 0)
+                {
+                    var rect = new Rectangle(0, 0, fadeWidth, ClientSize.Height);
+                    using (var b = new LinearGradientBrush(rect, Color.FromArgb(172, CBack), Color.FromArgb(10, CBack), LinearGradientMode.Horizontal))
+                        e.Graphics.FillRectangle(b, rect);
+                }
             }
         }
 
-        private sealed class FramePanel : Panel
+        private sealed class SurfacePanel : Panel
         {
-            public FramePanel() { DoubleBuffered = true; ResizeRedraw = true; }
-            protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); using (var a = new Pen(Color.FromArgb(83, 32, 20))) using (var b = new Pen(Color.FromArgb(130, CCopper))) { var r = ClientRectangle; r.Width--; r.Height--; e.Graphics.DrawRectangle(a, r); if (r.Width > 5 && r.Height > 5) { r.Inflate(-2, -2); e.Graphics.DrawRectangle(b, r); } } }
+            private readonly int alpha;
+            private readonly int borderAlpha;
+
+            public SurfacePanel(int surfaceAlpha, int lineAlpha)
+            {
+                alpha = Math.Max(0, Math.Min(255, surfaceAlpha));
+                borderAlpha = Math.Max(0, Math.Min(255, lineAlpha));
+                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.Transparent;
+                DoubleBuffered = true;
+                ResizeRedraw = true;
+            }
+
+            protected override void OnPaintBackground(PaintEventArgs e)
+            {
+                base.OnPaintBackground(e);
+                using (var b = new SolidBrush(Color.FromArgb(alpha, CPanel)))
+                    e.Graphics.FillRectangle(b, ClientRectangle);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                if (borderAlpha <= 0 || ClientSize.Width < 2 || ClientSize.Height < 2) return;
+                using (var p = new Pen(Color.FromArgb(borderAlpha, CCopper)))
+                {
+                    var r = ClientRectangle;
+                    r.Width--;
+                    r.Height--;
+                    e.Graphics.DrawRectangle(p, r);
+                }
+            }
         }
     }
 }
