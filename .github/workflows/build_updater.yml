@@ -63,6 +63,7 @@ jobs:
             /reference:"$ref\System.Security.dll" `
             /reference:"$ref\System.Web.Extensions.dll" `
             tools\updater\WoW112Updater.cs `
+            tools\updater\UpdaterSafety.cs `
             tools\updater\UpdaterNetworkCompat.cs `
             tools\updater\UpdaterProcessGuard.cs `
             tools\updater\UpdaterRealmlistFeature.cs `
@@ -73,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           @'
-          import hashlib, json, struct
+          import hashlib, json, re, struct
           from pathlib import Path
 
           def inspect(path):
@@ -89,13 +90,19 @@ jobs:
                   raise SystemExit(f'{p}: expected x86 machine 0x014C, got 0x{machine:04X}')
               return data, machine
 
+          version_source = Path('tools/updater/UpdaterSafety.cs').read_text(encoding='utf-8')
+          match = re.search(r'public const string Version\s*=\s*"([^"]+)"', version_source)
+          if not match:
+              raise SystemExit('UpdaterBuildInfo.Version not found')
+          updater_version = match.group(1)
+
           updater = Path('dist/WoW112Updater.exe')
           bootstrap = Path('dist/WoW112UpdaterBootstrap.exe')
           updater_data, updater_machine = inspect(updater)
           bootstrap_data, bootstrap_machine = inspect(bootstrap)
           meta = {
               'name': updater.name,
-              'updater_version': '1.2-maintenance',
+              'updater_version': updater_version,
               'self_update_protocol': 1,
               'sha256': hashlib.sha256(updater_data).hexdigest(),
               'size': len(updater_data),

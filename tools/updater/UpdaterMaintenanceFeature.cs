@@ -27,7 +27,7 @@ namespace WoW112Updater
 
         private sealed class MaintenanceController
         {
-            private const string FeatureVersion = "1.2-maintenance";
+            private const string FeatureVersion = UpdaterBuildInfo.Version;
             private const string Owner = "github12wykrzyk";
             private const string Repo = "wow112";
             private const string ApiRoot = "https://api.github.com/repos/" + Owner + "/" + Repo;
@@ -71,9 +71,9 @@ namespace WoW112Updater
 
                 form.ClientSize = new Size(form.ClientSize.Width, form.ClientSize.Height + AddedHeight);
                 form.MinimumSize = new Size(form.MinimumSize.Width, form.MinimumSize.Height + AddedHeight);
-                form.Text = "WoW112 Updater v1.2";
+                form.Text = "WoW112 Updater v" + FeatureVersion;
                 var title = form.Controls.OfType<Label>().FirstOrDefault(x => x.Top < 55 && x.Text.StartsWith("WoW112 Updater", StringComparison.OrdinalIgnoreCase));
-                if (title != null) title.Text = "WoW112 Updater v1.2";
+                if (title != null) title.Text = "WoW112 Updater v" + FeatureVersion;
 
                 form.Controls.Add(new Label { Text = "Narzędzia updatera", AutoSize = true, Left = 22, Top = 262 });
 
@@ -335,7 +335,7 @@ namespace WoW112Updater
                     string expectedPackageSha;
                     ExtractCandidate(outer, innerName, out inner, out expectedPackageSha);
                     var gotPackageSha = Sha256(inner);
-                    if (!string.IsNullOrWhiteSpace(expectedPackageSha) && !string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("SHA256 paczki zainstalowanego buildu nie zgadza się z candidate_metadata.json.");
                     return BuildExpectedFiles(inner);
                 }
@@ -346,19 +346,8 @@ namespace WoW112Updater
                 var branch = channel != null && channel.SelectedIndex == 1 ? "main" : "work";
                 using (var client = CreateClient())
                 {
-                    var runs = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&status=success&per_page=50"))), "workflow_runs"));
-                    Dictionary<string, object> chosen = null;
-                    foreach (var item in runs)
-                    {
-                        var row = AsDictionary(item);
-                        if (GetString(row, "name") == UpdaterWorkflowName && GetString(row, "conclusion") == "success")
-                        {
-                            chosen = row;
-                            break;
-                        }
-                    }
-                    if (chosen == null)
-                        throw new InvalidOperationException("Brak udanego workflow updatera na branchu " + branch + ".");
+                    var runs = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50"))), "workflow_runs"));
+                    var chosen = UpdaterSafety.RequireLatestSuccessfulRun(runs, UpdaterWorkflowName, branch);
 
                     var runId = GetLong(chosen, "id");
                     var artifacts = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100"))), "artifacts"));
@@ -373,7 +362,7 @@ namespace WoW112Updater
                             break;
                         }
                     }
-                    if (artifact == null) throw new InvalidOperationException("Udany workflow updatera nie ma aktywnego artefaktu.");
+                    if (artifact == null) throw new InvalidOperationException("Najnowszy udany workflow updatera nie ma aktywnego artefaktu.");
 
                     var outer = await DownloadBytesAsync(client, GetString(artifact, "archive_download_url"));
                     using (var ms = new MemoryStream(outer, false))
@@ -392,14 +381,17 @@ namespace WoW112Updater
                         if (protocol != 1) throw new InvalidOperationException("Nieobsługiwany self_update_protocol: " + protocol);
                         var updaterSha = GetString(meta, "sha256");
                         var bootstrapSha = GetString(meta, "bootstrap_sha256");
-                        if (string.IsNullOrWhiteSpace(updaterSha) || !string.Equals(Sha256(updaterBytes), updaterSha, StringComparison.OrdinalIgnoreCase))
+                        if (!UpdaterSafety.IsSha256Hex(updaterSha) || !string.Equals(Sha256(updaterBytes), updaterSha, StringComparison.OrdinalIgnoreCase))
                             throw new InvalidOperationException("SHA256 WoW112Updater.exe nie zgadza się z updater_build.json.");
-                        if (string.IsNullOrWhiteSpace(bootstrapSha) || !string.Equals(Sha256(bootstrapBytes), bootstrapSha, StringComparison.OrdinalIgnoreCase))
+                        if (!UpdaterSafety.IsSha256Hex(bootstrapSha) || !string.Equals(Sha256(bootstrapBytes), bootstrapSha, StringComparison.OrdinalIgnoreCase))
                             throw new InvalidOperationException("SHA256 bootstrapa nie zgadza się z updater_build.json.");
+                        var version = GetString(meta, "updater_version");
+                        if (string.IsNullOrWhiteSpace(version))
+                            throw new InvalidOperationException("updater_build.json nie zawiera updater_version.");
 
                         return new RemoteUpdaterBuild
                         {
-                            Version = GetString(meta, "updater_version"),
+                            Version = version,
                             UpdaterSha = updaterSha,
                             BootstrapSha = bootstrapSha,
                             UpdaterBytes = updaterBytes,
@@ -412,6 +404,7 @@ namespace WoW112Updater
             private List<ExpectedFile> BuildExpectedFiles(byte[] packageBytes)
             {
                 var files = new List<ExpectedFile>();
+                var packageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 using (var ms = new MemoryStream(packageBytes, false))
                 using (var zip = new ZipArchive(ms, ZipArchiveMode.Read, false))
                 {
@@ -420,6 +413,8 @@ namespace WoW112Updater
                         if (string.IsNullOrWhiteSpace(entry.Name)) continue;
                         if (!string.Equals(entry.Name, entry.FullName, StringComparison.Ordinal))
                             throw new InvalidOperationException("Paczka zawiera zagnieżdżoną ścieżkę: " + entry.FullName);
+                        if (!packageNames.Add(entry.Name))
+                            throw new InvalidOperationException("Paczka zawiera powieloną nazwę pliku (bez rozróżniania wielkości liter): " + entry.Name);
                         var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
                         if (ext != ".dll" && ext != ".exe") continue;
                         files.Add(new ExpectedFile(entry.Name, ReadEntry(entry)));
@@ -472,7 +467,7 @@ namespace WoW112Updater
                 manifest["target_head_sha"] = GetString(installed, "head_sha");
                 manifest["files"] = rows;
                 manifest["previous_installed"] = installed;
-                File.WriteAllText(Path.Combine(dir, "backup_manifest.json"), json.Serialize(manifest), Encoding.UTF8);
+                UpdaterSafety.WriteUtf8Atomic(Path.Combine(dir, "backup_manifest.json"), json.Serialize(manifest), ".tmp", ".previous");
                 return dir;
             }
 
@@ -602,11 +597,12 @@ namespace WoW112Updater
                     if (innerEntry == null) throw new InvalidOperationException("Artifact nie zawiera " + innerName + ".");
                     inner = ReadEntry(innerEntry);
                     var metaEntry = FindEntry(zip, "candidate_metadata.json");
-                    if (metaEntry != null)
-                    {
-                        var meta = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(metaEntry))));
-                        expectedSha = GetString(meta, "package_sha256");
-                    }
+                    if (metaEntry == null)
+                        throw new InvalidOperationException("Artifact nie zawiera candidate_metadata.json; VERIFY / REPAIR został zablokowany.");
+                    var meta = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(metaEntry))));
+                    expectedSha = GetString(meta, "package_sha256");
+                    if (!UpdaterSafety.IsSha256Hex(expectedSha))
+                        throw new InvalidOperationException("candidate_metadata.json nie zawiera poprawnego package_sha256; VERIFY / REPAIR został zablokowany.");
                 }
             }
 
@@ -617,9 +613,16 @@ namespace WoW112Updater
 
             private Dictionary<string, object> ReadInstalledState(string root)
             {
+                var path = Path.Combine(root, ".wow112_updater", "installed.json");
+                var current = TryReadInstalledStateFile(path);
+                if (current != null) return current;
+                return TryReadInstalledStateFile(path + ".previous");
+            }
+
+            private Dictionary<string, object> TryReadInstalledStateFile(string path)
+            {
                 try
                 {
-                    var path = Path.Combine(root, ".wow112_updater", "installed.json");
                     if (!File.Exists(path)) return null;
                     return AsDictionary(json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)));
                 }
@@ -629,8 +632,7 @@ namespace WoW112Updater
             private void WriteInstalledState(string root, Dictionary<string, object> state)
             {
                 var path = Path.Combine(root, ".wow112_updater", "installed.json");
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllText(path, json.Serialize(state), Encoding.UTF8);
+                UpdaterSafety.WriteUtf8Atomic(path, json.Serialize(state), ".tmp", ".previous");
             }
 
             private Dictionary<string, object> SanitizeInstalled(Dictionary<string, object> installed)
@@ -725,22 +727,7 @@ namespace WoW112Updater
 
             private static void ReplaceFile(string temp, string destination)
             {
-                if (File.Exists(destination))
-                {
-                    var backup = destination + ".wow112repairreplace";
-                    if (File.Exists(backup)) File.Delete(backup);
-                    try
-                    {
-                        File.Replace(temp, destination, backup, true);
-                    }
-                    catch
-                    {
-                        File.Copy(temp, destination, true);
-                        File.Delete(temp);
-                    }
-                    if (File.Exists(backup)) File.Delete(backup);
-                }
-                else File.Move(temp, destination);
+                UpdaterSafety.ReplaceFile(temp, destination, ".wow112repairreplace");
             }
 
             private static string SafeDestination(string root, string name)
