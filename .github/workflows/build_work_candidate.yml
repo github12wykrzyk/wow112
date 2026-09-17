@@ -13,6 +13,7 @@ on:
       - 'tools/build_changed_active.py'
       - 'tools/build_controlhub_candidate.py'
       - 'tools/build_autopoisons_candidate.py'
+      - 'tools/build_diaghub_candidate.py'
       - 'tools/package_current.py'
       - 'tools/verify_current.py'
       - 'tools/verify_runtime_artifacts.py'
@@ -81,6 +82,16 @@ jobs:
           --build-metadata dist/autopoisons_build.json
           --output build/WoWAutoPoisons_5875_v1.dll
 
+      - name: Build and append observer-only WoWDiagHub
+        shell: pwsh
+        run: >-
+          python tools/build_diaghub_candidate.py
+          --package dist/WoW112_WORK_CANDIDATE.zip
+          --package-metadata dist/candidate_metadata.json
+          --summary dist/candidate_summary.json
+          --build-metadata dist/diaghub_build.json
+          --output build/WoWDiagHub.dll
+
       - name: Write human-readable test card
         shell: pwsh
         run: >-
@@ -99,5 +110,6 @@ jobs:
             dist/candidate_summary.json
             dist/controlhub_build.json
             dist/autopoisons_build.json
+            dist/diaghub_build.json
           if-no-files-found: error
           compression-level: 0

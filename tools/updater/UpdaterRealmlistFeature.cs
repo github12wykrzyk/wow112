@@ -28,6 +28,7 @@ namespace WoW112Updater
         {
             RealmlistFeature.Attach(mainForm);
             MaintenanceFeature.Attach(mainForm);
+            IssueReportFeature.Attach(mainForm);
             System.Windows.Forms.Application.Run(mainForm);
         }
     }
