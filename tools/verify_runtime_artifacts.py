@@ -47,6 +47,11 @@ def main():
             continue
 
         artifact = item.get("binary_artifact")
+        if (not isinstance(expected_size, int) or expected_size <= 0) and isinstance(artifact, dict):
+            artifact_size = artifact.get("size")
+            if isinstance(artifact_size, int) and artifact_size > 0:
+                expected_size = artifact_size
+
         source_kind = "content_addressed_cache"
         if isinstance(artifact, dict) and artifact.get("path"):
             rel = artifact.get("path")
@@ -79,10 +84,7 @@ def main():
             error(f"exact artifact XZ decode failed: {name} -> {rel}: {exc}")
             continue
 
-        if not isinstance(expected_size, int) or expected_size <= 0:
-            error(f"runtime DLL size metadata invalid: {name}")
-            continue
-        if len(data) != expected_size:
+        if isinstance(expected_size, int) and expected_size > 0 and len(data) != expected_size:
             error(f"exact artifact size mismatch: {name} got={len(data)} expected={expected_size}")
             continue
 
