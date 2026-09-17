@@ -85,9 +85,10 @@ def load_optional(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def validate_meta_rows(rows, content, label):
+def validate_meta_rows(rows, content, label, skip_byte_validation_keys=None):
     out = []
     seen = set()
+    skip_byte_validation_keys = {str(x).lower() for x in (skip_byte_validation_keys or set())}
     for row in rows or []:
         if not isinstance(row, dict):
             raise SystemExit(f"{label} contains a non-object")
@@ -100,13 +101,19 @@ def validate_meta_rows(rows, content, label):
         seen.add(key)
         if name not in content:
             raise SystemExit(f"{label} DLL missing from final ZIP: {name}")
-        data = content[name]
-        expected_hash = str(row.get("sha256", "")).lower()
-        expected_size = row.get("size")
-        if expected_hash and sha256_bytes(data) != expected_hash:
-            raise SystemExit(f"{label} DLL SHA256 mismatch: {name}")
-        if isinstance(expected_size, int) and expected_size > 0 and len(data) != expected_size:
-            raise SystemExit(f"{label} DLL size mismatch: {name}")
+
+        # A candidate_extra_dll may intentionally replace an active DLL. In that
+        # case active_dlls describes the stable bytes while candidate_extra_dlls
+        # describes the final packaged bytes. Validate identity/presence here but
+        # let the extra metadata own final hash/size validation for replacements.
+        if key not in skip_byte_validation_keys:
+            data = content[name]
+            expected_hash = str(row.get("sha256", "")).lower()
+            expected_size = row.get("size")
+            if expected_hash and sha256_bytes(data) != expected_hash:
+                raise SystemExit(f"{label} DLL SHA256 mismatch: {name}")
+            if isinstance(expected_size, int) and expected_size > 0 and len(data) != expected_size:
+                raise SystemExit(f"{label} DLL size mismatch: {name}")
         out.append(name)
     return out
 
@@ -162,8 +169,18 @@ def main():
 
     active_rows = metadata.get("active_dlls") or []
     extra_rows = metadata.get("candidate_extra_dlls") or []
-    active_names = validate_meta_rows(active_rows, content, "active_dlls")
+
+    # Validate final candidate extras first. Their names identify active DLLs that
+    # are intentionally replaced in TEST, so stable active-byte hashes must not be
+    # compared against those final replacement bytes.
     extra_names = validate_meta_rows(extra_rows, content, "candidate_extra_dlls")
+    replacement_keys = {name.lower() for name in extra_names}
+    active_names = validate_meta_rows(
+        active_rows,
+        content,
+        "active_dlls",
+        skip_byte_validation_keys=replacement_keys,
+    )
 
     # Candidate extras may replace an already-active DLL (for example ControlHub)
     # or add a true companion DLL (for example AutoPoisons/DiagHub). Extra metadata
