@@ -46,6 +46,9 @@ jobs:
       - name: Verify canonical current state
         run: python3 tools/verify_current.py
 
+      - name: Restrict candidate source-fingerprint warnings to explicit overrides
+        run: python3 tools/verify_candidate_source_scope.py
+
       - name: Verify exact current runtime artifacts
         run: python3 tools/verify_runtime_artifacts.py
 
