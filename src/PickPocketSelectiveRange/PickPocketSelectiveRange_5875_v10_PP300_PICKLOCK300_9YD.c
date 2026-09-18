@@ -42,12 +42,16 @@ typedef HANDLE (__stdcall *GetCurrentProcess_t)(void);
 typedef void   (__stdcall *TimerProc_t)(HWND, UINT, UINT_PTR, DWORD);
 typedef UINT_PTR (__stdcall *SetTimer_t)(HWND, UINT_PTR, UINT, TimerProc_t);
 typedef BOOL   (__stdcall *KillTimer_t)(HWND, UINT_PTR);
+typedef DWORD  (__stdcall *VirtualQuery_t)(const void*, LPVOID, DWORD);
 
 #define TRUE 1
 #define FALSE 0
 #define DLL_PROCESS_DETACH 0
 #define DLL_PROCESS_ATTACH 1
 #define PAGE_EXECUTE_READWRITE 0x40u
+#define MEM_COMMIT             0x1000u
+#define PAGE_NOACCESS          0x01u
+#define PAGE_GUARD             0x100u
 
 /* Range path already verified for this active module lineage. */
 #define WOW_RANGE_RESOLVER       0x006E3480u
@@ -136,6 +140,7 @@ static float g_lastX = 0.0f;
 static float g_lastY = 0.0f;
 static float g_lastZ = 0.0f;
 static UINT_PTR g_autoTimer = 0u;
+static VirtualQuery_t g_virtualQuery = 0;
 static DWORD g_worldManager = 0u;
 static DWORD g_worldPlayer = 0u;
 static DWORD g_worldGuidLo = 0u;
@@ -180,30 +185,131 @@ static BOOL Ptr(const void* p)
     return v >= 0x10000u && v <= 0x7FFDFFFFu && !(v & 1u);
 }
 
+struct MEMORY_BASIC_INFORMATION32 {
+    LPVOID BaseAddress;
+    LPVOID AllocationBase;
+    DWORD AllocationProtect;
+    DWORD RegionSize;
+    DWORD State;
+    DWORD Protect;
+    DWORD Type;
+};
+
+static BOOL SameString(const char* a, const char* b)
+{
+    while (*a && *b) {
+        if (*a != *b) return FALSE;
+        ++a; ++b;
+    }
+    return *a == *b ? TRUE : FALSE;
+}
+
+static void* FindExportInModule(BYTE* base, const char* wanted)
+{
+    DWORD pe, exportRva, exportSize, count, funcsRva, namesRva, ordsRva, i;
+    BYTE* nt;
+    BYTE* opt;
+    BYTE* exp;
+    DWORD* funcs;
+    DWORD* names;
+    unsigned short* ords;
+
+    if (!base || *(unsigned short*)base != 0x5A4Du) return 0;
+    pe = *(DWORD*)(base + 0x3Cu);
+    nt = base + pe;
+    if (*(DWORD*)nt != 0x00004550u) return 0;
+    opt = nt + 24u;
+    if (*(unsigned short*)opt != 0x010Bu) return 0;
+    exportRva = *(DWORD*)(opt + 0x60u);
+    exportSize = *(DWORD*)(opt + 0x64u);
+    if (!exportRva) return 0;
+
+    exp = base + exportRva;
+    count = *(DWORD*)(exp + 0x18u);
+    funcsRva = *(DWORD*)(exp + 0x1Cu);
+    namesRva = *(DWORD*)(exp + 0x20u);
+    ordsRva = *(DWORD*)(exp + 0x24u);
+    funcs = (DWORD*)(base + funcsRva);
+    names = (DWORD*)(base + namesRva);
+    ords = (unsigned short*)(base + ordsRva);
+
+    for (i = 0u; i < count; ++i) {
+        const char* name = (const char*)(base + names[i]);
+        if (SameString(name, wanted)) {
+            DWORD rva = funcs[ords[i]];
+            if (rva >= exportRva && rva < exportRva + exportSize) return 0;
+            return base + rva;
+        }
+    }
+    return 0;
+}
+
+static BYTE* GetPeb(void)
+{
+    BYTE* p;
+    __asm {
+        mov eax, fs:[0x30]
+        mov p, eax
+    }
+    return p;
+}
+
+static void* FindLoadedExport(const char* wanted)
+{
+    BYTE* peb = GetPeb();
+    BYTE* ldr;
+    BYTE* head;
+    BYTE* cur;
+    DWORD guard = 0u;
+
+    if (!peb) return 0;
+    ldr = *(BYTE**)(peb + 0x0Cu);
+    if (!ldr) return 0;
+    head = ldr + 0x14u;
+    cur = *(BYTE**)head;
+
+    while (cur && cur != head && guard++ < 128u) {
+        BYTE* entry = cur - 8u;
+        BYTE* base = *(BYTE**)(entry + 0x18u);
+        void* found = FindExportInModule(base, wanted);
+        if (found) return found;
+        cur = *(BYTE**)cur;
+    }
+    return 0;
+}
+
+static BOOL Readable4(DWORD address)
+{
+    struct MEMORY_BASIC_INFORMATION32 mbi;
+    DWORD got, base, end;
+
+    if (!g_virtualQuery || address < 0x00010000u || address > 0x7FFFFFFBu)
+        return FALSE;
+    got = g_virtualQuery((const void*)address, &mbi, (DWORD)sizeof(mbi));
+    if (got != (DWORD)sizeof(mbi)) return FALSE;
+    if (mbi.State != MEM_COMMIT) return FALSE;
+    if ((mbi.Protect & PAGE_GUARD) != 0u) return FALSE;
+    if ((mbi.Protect & 0xFFu) == PAGE_NOACCESS) return FALSE;
+    base = (DWORD)mbi.BaseAddress;
+    if (mbi.RegionSize > 0xFFFFFFFFu - base) return FALSE;
+    end = base + mbi.RegionSize;
+    return address >= base && address + 4u >= address && address + 4u <= end;
+}
+
 static BOOL SafeReadDword(const void* address, DWORD* out)
 {
     DWORD v = (DWORD)address;
-    if (!out || v < 0x00010000u || v > 0x7FFFFFFBu) return FALSE;
-    __try {
-        *out = *(volatile const DWORD*)address;
-        return TRUE;
-    } __except(1) {
-        *out = 0u;
-        return FALSE;
-    }
+    if (!out || !Readable4(v)) return FALSE;
+    *out = *(volatile const DWORD*)address;
+    return TRUE;
 }
 
 static BOOL SafeReadFloat(const void* address, float* out)
 {
     DWORD v = (DWORD)address;
-    if (!out || v < 0x00010000u || v > 0x7FFFFFFBu) return FALSE;
-    __try {
-        *out = *(volatile const float*)address;
-        return TRUE;
-    } __except(1) {
-        *out = 0.0f;
-        return FALSE;
-    }
+    if (!out || !Readable4(v)) return FALSE;
+    *out = *(volatile const float*)address;
+    return TRUE;
 }
 
 static float AbsF(float v)
@@ -566,6 +672,9 @@ static BOOL InstallHook(void)
     DWORD wrapper = (DWORD)(LPVOID)&RangeResolverWrapper;
     SetTimer_t st;
 
+    if (!g_virtualQuery)
+        g_virtualQuery = (VirtualQuery_t)FindLoadedExport("VirtualQuery");
+    if (!g_virtualQuery) return FALSE;
     if (!ValidateTargetBuild()) return FALSE;
     if (!WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_9f, 4u))
         return FALSE;
