@@ -6,7 +6,7 @@
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "PP throughput V24 fail-safe candidate: exact AutoLootPP and LongPP bytes unchanged. Manual PP keeps the ec336 send/loot path and mining priority no longer blocks manual packets. The first real AutoLootPP packet is allowed through unchanged to seed ownership; only subsequent legacy retries are replaced by fresh-first/retry-tail scheduling.",
+  "note": "PP throughput V25 root-cause fix: exact AutoLootPP/LongPP bytes unchanged. Queue no longer uses MovementCore legacy GatherLootOpen address 0x00B71B48 (verified target GUID low); queue loot gate now uses AutoLootPP-audited 0x00B71B44. This directly fixes the observed one-auto-PP-then-stop behavior. Manual PP path unchanged.",
   "source_fingerprint_warning_allowlist": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",

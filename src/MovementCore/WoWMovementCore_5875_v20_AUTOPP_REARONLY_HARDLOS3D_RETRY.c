@@ -230,6 +230,7 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define PPQ_RETRY_CAP                     128u
 #define PPQ_CREATURE_TYPE_FN       0x00605570u
 #define PPQ_ATTACKABLE_FN          0x00606980u
+#define PPQ_LOOT_WINDOW_FLAG        0x00B71B44u
 #define PPQ_UNIT_AUX_OFF            0x00000110u
 #define PPQ_AUX_LEVEL_OFF           0x00000070u
 #define PPQ_RANGE_SQ                   90000.0f
@@ -1101,7 +1102,7 @@ static DWORD PPQRetryPop(DWORD now,DWORD*olo,DWORD*ohi){DWORD n=g_ppqRetryCount,
 static void PPQAccept(DWORD lo,DWORD hi,DWORD now){PPQSeenSlot*s=PPQSeenGet(lo,hi);BYTE*o=ObjByGuid(lo,hi);if(s){s->obj=(DWORD)o;if(s->attempts<0xFFFFFFFFu)++s->attempts;}g_ppqInFlight=1u;g_ppqInFlightLo=lo;g_ppqInFlightHi=hi;g_ppqInFlightTick=now;g_ppqLastSend=now;}
 static void PPQFinish(DWORD retry,DWORD now){DWORD lo=g_ppqInFlightLo,hi=g_ppqInFlightHi;if(!g_ppqInFlight)return;g_ppqInFlight=0u;g_ppqInFlightLo=g_ppqInFlightHi=g_ppqInFlightTick=0u;if(retry)PPQRetryEnqueue(lo,hi,now+PPQ_RETRY_DELAY_MS);}
 static DWORD PPQSend(DWORD lo,DWORD hi,DWORD now,DWORD retry){BYTE raw[64];DataStore5875 p;DWORD n=0u;*(DWORD*)(raw+n)=0x012Eu;n+=4u;*(DWORD*)(raw+n)=SPELL_PICK_POCKET;n+=4u;*(WORD*)(raw+n)=0x0002u;n+=2u;n+=PPQPackGuid(raw+n,lo,hi);p.vtable=ADDR_DATASTORE_VTABLE;p.dataPtr=raw;p.backOffset=0u;p.capacity=64u;p.size=n;p.unk14=0u;g_ppqInjecting=1u;DirectClientSend(&p);g_ppqInjecting=0u;if(g_ppFailPendingAuto&&g_ppFailPendingLo==lo&&g_ppFailPendingHi==hi){PPQAccept(lo,hi,now);if(retry)++g_ppqRetrySent;else ++g_ppqFreshSent;return 1u;}return 0u;}
-static void PPQTick(DWORD now){BYTE*p,*o;DWORD lo=0u,hi=0u,code;float d2=0.0f;PPQSeenSlot*s;if(!g_ppqActive)return;if(g_ppqInFlight&&g_ppqResultCode){code=g_ppqResultCode;g_ppqResultCode=0u;if(code==PPQ_RESULT_SUCCESS){++g_ppqSuccess;PPQFinish(0u,now);}else if(code==PPQ_RESULT_NO_POCKETS){++g_ppqNoPockets;PPQFinish(0u,now);}else if(code==PPQ_RESULT_TIMEOUT){++g_ppqTimeouts;++g_ppqRetries;PPQFinish(1u,now);}else{++g_ppqRetries;PPQFinish(1u,now);}}if(!g_autoPPEnabled||g_ppqInFlight||g_ppFailPendingAuto)return;if(LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;if(GatherLootOpen()||CurrentTargetIsPlayer()||MiningPriorityOwnsPP(now))return;if(g_ppqLastSend&&(DWORD)(now-g_ppqLastSend)<PPQ_MIN_SEND_GAP_MS)return;if((LONG)(g_ppqNextScan-now)>0)return;g_ppqNextScan=now+PPQ_SCAN_MS;p=LocalPlayer();if(!Ptr(p))return;PPQPrune(now);o=PPQFindFresh(p,&lo,&hi,&d2);if(o){PPQSend(lo,hi,now,0u);return;}if(PPQRetryPop(now,&lo,&hi)){o=ObjByGuid(lo,hi);s=PPQSeenFind(lo,hi);if(!Ptr(o)||!s||s->attempts>=PPQ_MAX_ATTEMPTS)return;if(!PPQSend(lo,hi,now,1u))PPQRetryEnqueue(lo,hi,now+PPQ_RETRY_DELAY_MS);}}
+static void PPQTick(DWORD now){BYTE*p,*o;DWORD lo=0u,hi=0u,code;float d2=0.0f;PPQSeenSlot*s;if(!g_ppqActive)return;if(g_ppqInFlight&&g_ppqResultCode){code=g_ppqResultCode;g_ppqResultCode=0u;if(code==PPQ_RESULT_SUCCESS){++g_ppqSuccess;PPQFinish(0u,now);}else if(code==PPQ_RESULT_NO_POCKETS){++g_ppqNoPockets;PPQFinish(0u,now);}else if(code==PPQ_RESULT_TIMEOUT){++g_ppqTimeouts;++g_ppqRetries;PPQFinish(1u,now);}else{++g_ppqRetries;PPQFinish(1u,now);}}if(!g_autoPPEnabled||g_ppqInFlight||g_ppFailPendingAuto)return;if(LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;if((*(DWORD*)PPQ_LOOT_WINDOW_FLAG)!=0u||CurrentTargetIsPlayer()||MiningPriorityOwnsPP(now))return;if(g_ppqLastSend&&(DWORD)(now-g_ppqLastSend)<PPQ_MIN_SEND_GAP_MS)return;if((LONG)(g_ppqNextScan-now)>0)return;g_ppqNextScan=now+PPQ_SCAN_MS;p=LocalPlayer();if(!Ptr(p))return;PPQPrune(now);o=PPQFindFresh(p,&lo,&hi,&d2);if(o){PPQSend(lo,hi,now,0u);return;}if(PPQRetryPop(now,&lo,&hi)){o=ObjByGuid(lo,hi);s=PPQSeenFind(lo,hi);if(!Ptr(o)||!s||s->attempts>=PPQ_MAX_ATTEMPTS)return;if(!PPQSend(lo,hi,now,1u))PPQRetryEnqueue(lo,hi,now+PPQ_RETRY_DELAY_MS);}}
 
 static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DWORD*okind,float*od2)
 {
@@ -1856,6 +1857,7 @@ __declspec(dllexport) DWORD __stdcall AutoPPQueue_GetRetryDepth(void){return g_p
 __declspec(dllexport) DWORD __stdcall AutoPPQueue_GetSuccess(void){return g_ppqSuccess;}
 __declspec(dllexport) DWORD __stdcall AutoPPQueue_GetNoPockets(void){return g_ppqNoPockets;}
 __declspec(dllexport) DWORD __stdcall AutoPPQueue_GetTimeouts(void){return g_ppqTimeouts;}
+__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetLootOpen(void){return (*(DWORD*)PPQ_LOOT_WINDOW_FLAG)!=0u?1u:0u;}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetChainOk(void){return g_ppChainOk;}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetLongPPActive(void){return LongPPActive();}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetNextSendHook(void){return g_nextSendTarget;}
