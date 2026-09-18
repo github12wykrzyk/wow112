@@ -110,7 +110,8 @@ typedef s32            NTSTATUS32;
 #define WORLD_SCAN_MS               80u
 #define TIMER_PERIOD_MS             5u
 #define LOOT_OPEN_TIMEOUT_MS        450u
-#define DRAIN_RETRY_MS              250u
+#define DRAIN_RETRY_MS               50u
+#define MAX_DRAIN_PASSES              20u
 #define TOO_FAR_RETRY_MS            120u
 #define CORPSE_COOLDOWN_MS          1500u
 #define MAX_OBJECT_STEPS            0x1000u
@@ -203,7 +204,7 @@ static u8 g_hook_installed;
 
 static const char kLogName[] = "WoWAutoLootPP_v0_9_FullDrain_ServerAware.log";
 static const char kLoad[] = "LOAD WoWAutoLootPP v0.9 FullDrain ServerAware";
-static const char kReady[] = "READY WoWAutoLootPP v0.9 full_drain=1 native_lootall=0x4C1FA0 native_close=0x48F200 exact_reach=1 request_margin_yd=0.65 server_loot_error_hook=1 too_far_retry_ms=120 too_far_burst=8 world_scan_ms=80 open_timeout_ms=450 corpse_queue=16 nearest_first=1 target_required=0 mouseover_required=0 per_guid_backoff=1 fresh_corpse_tracking=1 drain_retries=5 drain_retry_ms=250 fullbag_locked_release=1 pp_proximity=1 pp_range_yd=4.5 pp_full_drain=1 pp_respawn_aware=1 pp_life_scan_ms=100 pp_reset=hp0_to_alive|reappear|ptr_change corpse_range_reenter_reset=1 out_of_range_abort_no_backoff=1 corpse_priority_over_pp=1";
+static const char kReady[] = "READY WoWAutoLootPP v0.9 full_drain=1 native_lootall=0x4C1FA0 native_close=0x48F200 exact_reach=1 request_margin_yd=0.65 server_loot_error_hook=1 too_far_retry_ms=120 too_far_burst=8 world_scan_ms=80 open_timeout_ms=450 corpse_queue=16 nearest_first=1 target_required=0 mouseover_required=0 per_guid_backoff=1 fresh_corpse_tracking=1 drain_retries=20 drain_retry_ms=50 fullbag_locked_release=1 pp_proximity=1 pp_range_yd=4.5 pp_full_drain=1 pp_respawn_aware=1 pp_life_scan_ms=100 pp_reset=hp0_to_alive|reappear|ptr_change corpse_range_reenter_reset=1 out_of_range_abort_no_backoff=1 corpse_priority_over_pp=1";
 
 static u32 read_u32(uptr a){ return *(volatile u32*)a; }
 static u16 read_u16(uptr a){ return *(volatile u16*)a; }
@@ -492,7 +493,7 @@ static void service_loot(u32 now)
             log_line("LOOT_DONE_RELEASED","scan",g_loot_guid,g_drain_pass,0);
             g_loot_state=LOOT_IDLE;g_loot_guid.lo=g_loot_guid.hi=0;
         }else if(now-g_loot_state_tick>=DRAIN_RETRY_MS){
-            if(g_drain_pass<5u){native_loot_all();g_drain_pass++;g_loot_state_tick=now;log_line("LOOT_DRAIN_PASS","scan",g_loot_guid,g_drain_pass,g_server_error_code);}
+            if(g_drain_pass<MAX_DRAIN_PASSES){native_loot_all();g_drain_pass++;g_loot_state_tick=now;log_line("LOOT_DRAIN_PASS","scan",g_loot_guid,g_drain_pass,g_server_error_code);}
             else {native_close_loot();log_line("LOOT_DRAIN_TIMEOUT_RELEASE","scan",g_loot_guid,g_drain_pass,0);g_loot_state=LOOT_IDLE;}
         }
     }
