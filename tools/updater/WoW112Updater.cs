@@ -71,6 +71,8 @@ namespace WoW112Updater
             Font = new Font("Segoe UI", 9F);
 
             configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112Updater");
+            if (Environment.GetCommandLineArgs().Contains("--ui-smoke"))
+                configDir = Path.Combine(Path.GetTempPath(), "WoW112UiSmoke-" + Guid.NewGuid().ToString("N"));
             configPath = Path.Combine(configDir, "config.json");
 
             BuildUi();
@@ -80,97 +82,20 @@ namespace WoW112Updater
 
         private void BuildUi()
         {
-            var title = new Label { Text = "WoW112 Updater v" + UpdaterVersion, Font = new Font("Segoe UI Semibold", 18F), AutoSize = true, Left = 20, Top = 16 };
-            Controls.Add(title);
-
-            Controls.Add(new Label { Text = "Katalog gry", AutoSize = true, Left = 22, Top = 66 });
-            gameDir.SetBounds(20, 86, 700, 26);
-            Controls.Add(gameDir);
-            browseButton.Text = "Wybierz...";
-            browseButton.SetBounds(730, 84, 108, 30);
-            browseButton.Click += BrowseButton_Click;
-            Controls.Add(browseButton);
-
-            Controls.Add(new Label { Text = "Kanał", AutoSize = true, Left = 22, Top = 126 });
             channel.DropDownStyle = ComboBoxStyle.DropDownList;
-            channel.Items.Add("TEST (work)");
-            channel.Items.Add("STABLE (main)");
-            channel.SetBounds(20, 146, 180, 28);
+            channel.Items.AddRange(new object[] { "TEST (work)", "STABLE (main)" });
             channel.SelectedIndex = 0;
-            Controls.Add(channel);
-
-            Controls.Add(new Label { Text = "GitHub token (tylko odczyt: Contents + Actions)", AutoSize = true, Left = 220, Top = 126 });
-            token.UseSystemPasswordChar = true;
-            token.SetBounds(218, 146, 500, 28);
-            Controls.Add(token);
-            saveButton.Text = "Zapisz";
-            saveButton.SetBounds(730, 144, 108, 30);
-            saveButton.Click += delegate { SaveConfig(true); };
-            Controls.Add(saveButton);
-
-            var note = new Label
-            {
-                Text = "Repo jest prywatne. Token zapisuję lokalnie zaszyfrowany przez Windows DPAPI dla bieżącego użytkownika.",
-                AutoSize = true,
-                Left = 22,
-                Top = 181,
-                ForeColor = Color.DimGray
-            };
-            Controls.Add(note);
-
-            localInfo.AutoSize = false;
-            localInfo.SetBounds(20, 204, 818, 24);
-            localInfo.Font = new Font("Segoe UI Semibold", 9F);
-            Controls.Add(localInfo);
-
-            checkButton.Text = "SPRAWDŹ";
-            checkButton.SetBounds(20, 238, 125, 38);
-            checkButton.Click += async delegate { await CheckAsync(); };
-            Controls.Add(checkButton);
-
-            updateButton.Text = "AKTUALIZUJ";
-            updateButton.SetBounds(155, 238, 125, 38);
-            updateButton.Click += async delegate { await UpdateAsync(); };
-            Controls.Add(updateButton);
-
-            updatePlayButton.Text = "UPDATE + PLAY";
-            updatePlayButton.SetBounds(290, 238, 160, 38);
-            updatePlayButton.Font = new Font("Segoe UI Semibold", 9F);
-            updatePlayButton.Click += async delegate { await UpdateAndPlayAsync(); };
-            Controls.Add(updatePlayButton);
-
-            launchButton.Text = "URUCHOM WOW";
-            launchButton.SetBounds(460, 238, 150, 38);
-            launchButton.Click += delegate { LaunchGame(); };
-            Controls.Add(launchButton);
-
-            Controls.Add(new Label { Text = "Cofnij do:", AutoSize = true, Left = 22, Top = 294 });
             rollbackChoice.DropDownStyle = ComboBoxStyle.DropDownList;
-            rollbackChoice.SetBounds(90, 289, 570, 28);
-            Controls.Add(rollbackChoice);
-
-            rollbackButton.Text = "ROLLBACK";
-            rollbackButton.SetBounds(670, 287, 168, 32);
+            token.UseSystemPasswordChar = true;
+            browseButton.Click += BrowseButton_Click;
+            checkButton.Click += async delegate { await CheckAsync(); };
+            updateButton.Click += async delegate { await UpdateAsync(); };
+            updatePlayButton.Click += async delegate { await UpdateAndPlayAsync(); };
+            launchButton.Click += delegate { LaunchGame(); };
             rollbackButton.Click += delegate { Rollback(); };
-            Controls.Add(rollbackButton);
-
+            saveButton.Click += delegate { SaveConfig(true); };
             status.Text = "Gotowy";
-            status.AutoSize = false;
-            status.SetBounds(20, 332, 818, 26);
-            status.Font = new Font("Segoe UI Semibold", 10F);
-            Controls.Add(status);
-
-            progress.SetBounds(20, 362, 818, 18);
-            progress.Style = ProgressBarStyle.Marquee;
-            progress.MarqueeAnimationSpeed = 25;
-            progress.Visible = false;
-            Controls.Add(progress);
-
             log.ReadOnly = true;
-            log.BackColor = Color.White;
-            log.Font = new Font("Consolas", 9F);
-            log.SetBounds(20, 392, 818, 245);
-            Controls.Add(log);
         }
 
         private void BrowseButton_Click(object sender, EventArgs e)
@@ -191,7 +116,11 @@ namespace WoW112Updater
         private void SetBusy(bool value, string text)
         {
             busy = value;
-            progress.Visible = value;
+            progress.Visible = true;
+            progress.Style = value ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+            progress.MarqueeAnimationSpeed = value ? 25 : 0;
+            progress.Value = 0;
+            SetDashboardBusy(value);
             checkButton.Enabled = !value;
             updateButton.Enabled = !value;
             updatePlayButton.Enabled = !value;
@@ -207,6 +136,7 @@ namespace WoW112Updater
 
         private void Log(string message)
         {
+            if (InvokeRequired) { BeginInvoke(new Action<string>(Log), message); return; }
             log.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
             log.SelectionStart = log.TextLength;
             log.ScrollToCaret();
@@ -284,6 +214,7 @@ namespace WoW112Updater
                 SaveConfig(false);
                 SetBusy(true, "Sprawdzanie GitHuba...");
                 lastRemote = await FindLatestPackageAsync();
+                ShowRemotePackage();
                 var installed = ReadInstalledState();
                 Log("Najnowszy build: " + ShortSha(lastRemote.HeadSha) + " / run " + lastRemote.RunId);
                 if (installed != null && GetLong(installed, "run_id") == lastRemote.RunId && GetString(installed, "channel") == lastRemote.Channel)
@@ -299,7 +230,8 @@ namespace WoW112Updater
             }
             catch (Exception ex)
             {
-                status.Text = "Błąd sprawdzania aktualizacji";
+                ShowRemoteFailure(ex);
+                status.Text = "Błąd sprawdzania aktualizacji — szczegóły w logu";
                 Log("BŁĄD: " + ex.Message);
             }
             finally
@@ -320,6 +252,7 @@ namespace WoW112Updater
                 SaveConfig(false);
                 SetBusy(true, "Pobieranie najnowszej paczki...");
                 lastRemote = await FindLatestPackageAsync();
+                ShowRemotePackage();
                 Log("Pobieram artifact: " + lastRemote.ArtifactName);
                 var outerBytes = await DownloadBytesAsync(lastRemote.DownloadUrl);
                 Log("Pobrano " + FormatBytes(outerBytes.LongLength) + ". Weryfikuję paczkę...");
@@ -332,7 +265,10 @@ namespace WoW112Updater
                     throw new InvalidOperationException("SHA256 wewnętrznej paczki nie zgadza się z candidate_metadata.json.");
 
                 Log("SHA256 paczki OK: " + gotPackageSha.Substring(0, 16) + "...");
-                var result = ApplyPackage(innerBytes, lastRemote);
+                var installRoot = Path.GetFullPath(gameDir.Text.Trim());
+                var installRemote = lastRemote;
+                status.Text = "Instalowanie zweryfikowanych plików...";
+                var result = await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot));
                 status.Text = result.Changed == 0
                     ? "Pliki już były aktualne."
                     : "Aktualizacja zakończona: " + result.Changed + " plików.";
@@ -343,6 +279,7 @@ namespace WoW112Updater
             }
             catch (Exception ex)
             {
+                ShowRemoteFailure(ex);
                 status.Text = "Aktualizacja nie powiodła się";
                 Log("BŁĄD: " + ex.Message);
                 MessageBox.Show(this, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -429,13 +366,18 @@ namespace WoW112Updater
             return client;
         }
 
-        private static async Task<string> GetStringAsync(HttpClient client, string url)
+        private async Task<string> GetStringAsync(HttpClient client, string url)
         {
             using (var response = await client.GetAsync(url))
             {
                 var text = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
+                {
+                    SetConnectionState((int)response.StatusCode == 401 || (int)response.StatusCode == 403
+                        ? "GitHub: brak autoryzacji / dostępu" : "GitHub: błąd odpowiedzi");
                     throw new InvalidOperationException("GitHub HTTP " + (int)response.StatusCode + ": " + TrimForError(text));
+                }
+                SetConnectionState("GitHub: połączono");
                 return text;
             }
         }
@@ -476,9 +418,9 @@ namespace WoW112Updater
             }
         }
 
-        private ApplyResult ApplyPackage(byte[] packageBytes, RemotePackageInfo remote)
+        private ApplyResult ApplyPackage(byte[] packageBytes, RemotePackageInfo remote, string root)
         {
-            var root = Path.GetFullPath(gameDir.Text.Trim());
+            if (IsGameRunning(root)) throw new InvalidOperationException("Gra działa. Zamknij WoW przed instalacją.");
             var files = new List<PackageFile>();
             var packageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using (var ms = new MemoryStream(packageBytes, false))
@@ -505,7 +447,7 @@ namespace WoW112Updater
             var dllList = string.Join("\r\n", files.Where(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).Select(f => f.Name).ToArray()) + "\r\n";
             files.Add(new PackageFile("dlls.txt", Encoding.ASCII.GetBytes(dllList)));
 
-            var oldState = ReadInstalledState();
+            var oldState = ReadInstalledState(root);
             var oldManaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (oldState != null)
             {
@@ -757,7 +699,11 @@ namespace WoW112Updater
 
         private Dictionary<string, object> ReadInstalledState()
         {
-            var root = gameDir.Text.Trim();
+            return ReadInstalledState(gameDir.Text.Trim());
+        }
+
+        private Dictionary<string, object> ReadInstalledState(string root)
+        {
             if (string.IsNullOrWhiteSpace(root)) return null;
             var path = InstalledStatePath(root);
             var current = TryReadInstalledStateFile(path);
@@ -981,3 +927,4 @@ namespace WoW112Updater
         }
     }
 }
+

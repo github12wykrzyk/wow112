@@ -13,6 +13,7 @@ namespace WoW112Updater
         bool IsStableChannel { get; }
         string SessionLogText { get; }
         event EventHandler GameDirectoryChanged;
+        void RegisterUiControl(string key, Control control);
         void SetBusy(bool value, string text);
         void SetStatus(string text);
         void LogMessage(string message);
@@ -21,6 +22,11 @@ namespace WoW112Updater
 
     internal sealed partial class MainForm : IUpdaterHost
     {
+        void IUpdaterHost.RegisterUiControl(string key, Control control)
+        {
+            featureControls.Add(key, control);
+        }
+
         Form IUpdaterHost.Window
         {
             get { return this; }
@@ -73,3 +79,4 @@ namespace WoW112Updater
         }
     }
 }
+

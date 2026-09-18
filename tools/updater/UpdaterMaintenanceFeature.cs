@@ -59,34 +59,12 @@ namespace WoW112Updater
                 if (attached) return;
                 attached = true;
 
-                foreach (var control in form.Controls.Cast<Control>().ToArray())
-                {
-                    if (control.Top >= 262) control.Top += AddedHeight;
-                }
-
-                form.ClientSize = new Size(form.ClientSize.Width, form.ClientSize.Height + AddedHeight);
-                form.MinimumSize = new Size(form.MinimumSize.Width, form.MinimumSize.Height + AddedHeight);
-                form.Text = "WoW112 Updater v" + FeatureVersion;
-                var title = form.Controls.OfType<Label>().FirstOrDefault(x => x.Top < 55 && x.Text.StartsWith("WoW112 Updater", StringComparison.OrdinalIgnoreCase));
-                if (title != null) title.Text = "WoW112 Updater v" + FeatureVersion;
-
-                form.Controls.Add(new Label { Text = "Narzędzia updatera", AutoSize = true, Left = 22, Top = 262 });
-
-                verifyRepairButton.Text = "VERIFY / REPAIR";
-                verifyRepairButton.SetBounds(20, 282, 190, 34);
                 verifyRepairButton.Click += async delegate { await VerifyRepairAsync(); };
-                form.Controls.Add(verifyRepairButton);
-
-                diagnosticsButton.Text = "DIAGNOSTYKA ZIP";
-                diagnosticsButton.SetBounds(220, 282, 190, 34);
                 diagnosticsButton.Click += delegate { ExportDiagnostics(); };
-                form.Controls.Add(diagnosticsButton);
-
-                selfUpdateButton.Text = "AKTUALIZUJ UPDATER";
-                selfUpdateButton.SetBounds(420, 282, 210, 34);
-                selfUpdateButton.Font = new Font("Segoe UI Semibold", 9F);
                 selfUpdateButton.Click += async delegate { await SelfUpdateAsync(); };
-                form.Controls.Add(selfUpdateButton);
+                host.RegisterUiControl("verify", verifyRepairButton);
+                host.RegisterUiControl("diagnostics", diagnosticsButton);
+                host.RegisterUiControl("selfUpdate", selfUpdateButton);
 
                 host.GameDirectoryChanged += delegate { StampLocalUpdaterVersion(); };
                 StampLocalUpdaterVersion();
@@ -516,9 +494,6 @@ namespace WoW112Updater
             private void SetBusy(bool value, string text)
             {
                 maintenanceBusy = value;
-                verifyRepairButton.Enabled = !value;
-                diagnosticsButton.Enabled = !value;
-                selfUpdateButton.Enabled = !value;
                 host.SetBusy(value, text);
             }
 
@@ -848,3 +823,4 @@ namespace WoW112Updater
         }
     }
 }
+

@@ -52,6 +52,7 @@ jobs:
 
           & $csc /nologo /target:winexe /platform:x86 /optimize+ /langversion:latest `
             /out:dist\WoW112Updater.exe `
+            /win32manifest:tools\updater\Updater.manifest `
             /reference:"$ref\mscorlib.dll" `
             /reference:"$ref\System.dll" `
             /reference:"$ref\System.Core.dll" `
@@ -65,7 +66,7 @@ jobs:
             /resource:tools\updater\assets\wow112_updater_background.jpg,WoW112Updater.Background.jpg `
             tools\updater\WoW112Updater.cs `
             tools\updater\UpdaterStableUi.cs `
-            tools\updater\UpdaterUiPolishFix.cs `
+            tools\updater\UpdaterUiSmoke.cs `
             tools\updater\UpdaterHost.cs `
             tools\updater\UpdaterSafety.cs `
             tools\updater\UpdaterNetworkCompat.cs `
@@ -74,6 +75,25 @@ jobs:
             tools\updater\UpdaterMaintenanceFeature.cs `
             tools\updater\UpdaterIssueReportFeature.cs
           if ($LASTEXITCODE -ne 0) { throw "updater csc failed with exit code $LASTEXITCODE" }
+
+      - name: Render and verify Windows dashboard
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ./dist/WoW112Updater.exe -ArgumentList '--ui-smoke', 'dist/ui-checks' -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'GUI smoke test timed out' }
+          if ($process.ExitCode -ne 0) {
+            Get-Content dist/ui-checks/failure.txt -ErrorAction SilentlyContinue
+            throw 'GUI smoke test failed'
+          }
+          Get-Content dist/ui-checks/result.txt
+
+      - name: Upload GUI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Updater-UI-evidence-${{ github.sha }}
+          path: dist/ui-checks
+          if-no-files-found: warn
 
       - name: Verify updater PE32 x86 and hashes
         shell: pwsh
@@ -138,3 +158,4 @@ jobs:
             dist/README_UPDATER.md
           if-no-files-found: error
           compression-level: 0
+

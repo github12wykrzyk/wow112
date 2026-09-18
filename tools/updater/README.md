@@ -101,3 +101,30 @@ A failed/in-progress newest run is surfaced as an explicit error instead of sile
 ## Build
 
 `.github/workflows/build_updater.yml` runs `python tools/verify_current.py`, compiles `WoW112Updater.exe` and `WoW112UpdaterBootstrap.exe` as Windows x86 .NET Framework 4.8 executables, verifies PE32/x86 for both and emits SHA256 metadata in `updater_build.json` using the same `UpdaterBuildInfo.Version` constant as the application.
+
+
+## Single-screen dashboard (1.9, work candidate)
+
+One Polish dashboard now contains configuration, installed/available build details,
+update/launch actions, maintenance, backup selection and a live log. Token editing
+and the enlarged log use small secondary dialogs. No navigation sidebar or full
+window scrolling is required. The artwork is a small, aspect-preserving header accent.
+
+`BuildUi` initializes core controls/events; feature controllers register explicit
+control references through `IUpdaterHost`. `BuildDashboard` lays them out once before
+WinForms starts. The old `UpdaterUiPolishFix.cs` is no longer compiled. No label-based
+control lookup or post-show child-layout replacement is used.
+
+All feature actions share the busy-state lock, including game-path/server controls.
+The GitHub badge distinguishes an unverified saved token from a successful API call.
+Changing the channel, directory or token invalidates remote build details. Installation
+file replacement runs on a worker with UI-thread log delivery and a fresh running-game
+check immediately before installation. Existing SHA, backup and workflow gates remain.
+
+The default client area is 1040 x 680 logical pixels, compact target 960 x 620.
+The window fits the monitor work area and declares PerMonitorV2 awareness. Extremely
+small work areas are outside the supported layout target. Windows CI runs an offline
+`--ui-smoke <directory>` probe: real WinForms screenshots, key states, button bounds,
+text fit, busy restoration and explicit 125/150% layout simulations. These simulations
+are not native monitor DPI switching tests; interactive Windows DPI validation remains
+required. The probe uses a temporary configuration directory and no GitHub credentials.

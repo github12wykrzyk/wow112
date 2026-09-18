@@ -49,30 +49,11 @@ namespace WoW112Updater
             public void Attach()
             {
                 if (gameDir == null) return;
-                var oldHeight = form.ClientSize.Height;
-                form.ClientSize = new Size(form.ClientSize.Width, oldHeight + AddedHeight);
-                form.MinimumSize = new Size(form.MinimumSize.Width, form.MinimumSize.Height + AddedHeight);
-
-                sendButton.Text = "WYŚLIJ RAPORT";
-                sendButton.SetBounds(20, oldHeight + 8, 210, 32);
-                sendButton.Font = new Font("Segoe UI Semibold", 9F);
                 sendButton.Click += async delegate { await SendReportAsync(); };
-                form.Controls.Add(sendButton);
-
-                tokenButton.Text = "TOKEN RAPORTU";
-                tokenButton.SetBounds(240, oldHeight + 8, 145, 32);
                 tokenButton.Click += delegate { ChangeReportToken(); };
-                form.Controls.Add(tokenButton);
-
-                var note = new Label
-                {
-                    Text = "GitHub Issues R/W, osobny token DPAPI; raport sanityzowany.",
-                    AutoSize = true,
-                    Left = 400,
-                    Top = oldHeight + 16,
-                    ForeColor = Color.DimGray
-                };
-                form.Controls.Add(note);
+                var host = (IUpdaterHost)form;
+                host.RegisterUiControl("report", sendButton);
+                host.RegisterUiControl("reportToken", tokenButton);
             }
 
             private async Task SendReportAsync()
@@ -403,10 +384,7 @@ namespace WoW112Updater
             private void SetBusy(bool value, string text)
             {
                 busy = value;
-                sendButton.Enabled = !value;
-                tokenButton.Enabled = !value;
-                if (status != null) status.Text = text;
-                form.Cursor = value ? Cursors.WaitCursor : Cursors.Default;
+                ((IUpdaterHost)form).SetBusy(value, text);
             }
 
             private void Log(string message)
@@ -545,3 +523,4 @@ namespace WoW112Updater
         }
     }
 }
+

@@ -29,6 +29,15 @@ namespace WoW112Updater
             RealmlistFeature.Attach(mainForm);
             MaintenanceFeature.Attach(mainForm);
             IssueReportFeature.Attach(mainForm);
+            ((MainForm)mainForm).BuildDashboard();
+            var args = Environment.GetCommandLineArgs();
+            if (args.Length == 3 && args[1] == "--ui-smoke")
+            {
+                try { ((MainForm)mainForm).CaptureUiSmoke(args[2]); }
+                catch (Exception ex) { System.IO.Directory.CreateDirectory(args[2]); System.IO.File.WriteAllText(System.IO.Path.Combine(args[2], "failure.txt"), ex.ToString()); Environment.ExitCode = 1; }
+                finally { mainForm.Dispose(); }
+                return;
+            }
             System.Windows.Forms.Application.Run(mainForm);
         }
     }
@@ -67,33 +76,11 @@ namespace WoW112Updater
                 if (attached || gameDir == null) return;
                 attached = true;
 
-                var existing = form.Controls.Cast<Control>().ToArray();
-                foreach (var control in existing)
-                {
-                    if (control.Top >= 204) control.Top += AddedHeight;
-                }
-
-                form.ClientSize = new Size(form.ClientSize.Width, form.ClientSize.Height + AddedHeight);
-                form.MinimumSize = new Size(form.MinimumSize.Width, form.MinimumSize.Height + AddedHeight);
-
-                var label = new Label
-                {
-                    Text = "Realmlist",
-                    AutoSize = true,
-                    Left = 22,
-                    Top = 204
-                };
-                form.Controls.Add(label);
-
                 selector.DropDownStyle = ComboBoxStyle.DropDownList;
-                selector.SetBounds(20, 222, 600, 28);
-                selector.SelectionChangeCommitted += delegate { ApplySelected(); };
-                form.Controls.Add(selector);
-
-                applyButton.Text = "USTAW REALMLIST";
-                applyButton.SetBounds(630, 220, 208, 30);
                 applyButton.Click += delegate { ApplySelected(); };
-                form.Controls.Add(applyButton);
+                var host = (IUpdaterHost)form;
+                host.RegisterUiControl("realm", selector);
+                host.RegisterUiControl("realmApply", applyButton);
 
                 gameDir.TextChanged += delegate { RefreshSelection(); };
                 RefreshSelection();
@@ -238,3 +225,4 @@ namespace WoW112Updater
         }
     }
 }
+
