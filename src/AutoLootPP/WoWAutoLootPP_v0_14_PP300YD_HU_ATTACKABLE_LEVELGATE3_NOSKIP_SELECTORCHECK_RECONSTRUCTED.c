@@ -24,6 +24,14 @@
  * byte-for-byte with the historical MSVC toolchain.  Addresses, object
  * offsets, packet opcode/layout, hook site, selector gates and the NOSKIP
  * branch are taken from the final machine code.
+ *
+ * WORK queue scheduler candidate (2026-09-18):
+ *   - at most one Pick Pocket transaction remains in flight;
+ *   - accepted fresh GUIDs are visited once per life before any retries;
+ *   - LOS/transient/timeout results are moved to the FIFO retry tail;
+ *   - retry work runs only when the current fresh scan has no eligible GUID;
+ *   - MovementCore publishes acceptance/result events so blocked packets are
+ *     never counted as attempts by this module.
  */
 
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -106,9 +114,14 @@ typedef s32            NTSTATUS32;
 
 #define PP_SCAN_RANGE2              90000.0f /* 300 yd squared */
 #define PP_RANGE2                   PP_SCAN_RANGE2
-#define PP_SCAN_MS                  100u
+#define PP_SCAN_MS                   75u
 #define WORLD_SCAN_MS               80u
-#define TIMER_PERIOD_MS             5u
+#define TIMER_PERIOD_MS              5u
+#define PP_RETRY_DELAY_MS            75u
+#define PP_API_RESOLVE_MS           250u
+#define PP_SEEN_PRUNE_MS            200u
+#define PP_SEEN_CAP                 512u
+#define PP_RETRY_QUEUE_CAP          128u
 #define LOOT_OPEN_TIMEOUT_MS        450u
 #define DRAIN_RETRY_MS               50u
 #define MAX_DRAIN_PASSES              20u
@@ -138,6 +151,7 @@ typedef BOOL32   (STDCALL *CloseHandleFn)(HANDLE32);
 typedef UINT_PTR32 (STDCALL *SetTimerFn)(HWND32,UINT_PTR32,UINT32,void*);
 typedef BOOL32   (STDCALL *KillTimerFn)(HWND32,UINT_PTR32);
 typedef NTSTATUS32 (STDCALL *NtProtectVirtualMemoryFn)(HANDLE32,void**,u32*,u32,u32*);
+typedef u32        (STDCALL *QueryU32Fn)(void);
 
 typedef void (THISCALL *NetSendFn)(void *send_desc);
 typedef void (THISCALL *LootAllFn)(u32 one);
@@ -173,6 +187,19 @@ typedef struct SendDesc {
     u32 zero1;
 } SendDesc;
 
+typedef struct PPSeenSlot {
+    Guid64 guid;
+    uptr object_ptr;
+    u32 life_marker;
+    u32 attempts;
+    u8 state; /* 0 empty, 1 live, 2 tombstone */
+} PPSeenSlot;
+
+typedef struct PPRetryItem {
+    Guid64 guid;
+    u32 due_tick;
+} PPRetryItem;
+
 typedef enum LootState {
     LOOT_IDLE = 0,
     LOOT_WAIT_OPEN = 1,
@@ -201,6 +228,26 @@ static u32 g_server_error_code;
 static u32 g_server_error_tick;
 static u8 g_hook_original[7];
 static u8 g_hook_installed;
+
+/* MovementCore queue-scheduler ABI. Resolved lazily because DLL load order puts
+ * AutoLootPP before MovementCore in the active stack. */
+static QueryU32Fn g_mcReady;
+static QueryU32Fn g_mcAcceptedSerial;
+static QueryU32Fn g_mcResultSeq;
+static QueryU32Fn g_mcResultCode;
+static QueryU32Fn g_mcResultLo;
+static QueryU32Fn g_mcResultHi;
+static u32 g_mcResolveTick;
+static u32 g_mcResultSeen;
+static u32 g_schedulerBound;
+
+static PPSeenSlot g_ppSeen[PP_SEEN_CAP];
+static u32 g_ppSeenCursor;
+static u32 g_ppSeenPruneTick;
+static PPRetryItem g_ppRetry[PP_RETRY_QUEUE_CAP];
+static u32 g_ppRetryHead,g_ppRetryTail,g_ppRetryCount;
+static u32 g_ppFreshSent,g_ppRetryQueued,g_ppRetrySent,g_ppRetryDropped;
+static u32 g_ppResultEvents,g_ppBlockedSends;
 
 static const char kLogName[] = "WoWAutoLootPP_v0_9_FullDrain_ServerAware.log";
 static const char kLoad[] = "LOAD WoWAutoLootPP v0.9 FullDrain ServerAware";
@@ -282,15 +329,38 @@ static uptr find_export(uptr base,const char *name)
     return 0;
 }
 
+static uptr find_export2(uptr base,const char *plain,const char *decorated)
+{
+    uptr p=find_export(base,plain);return p?p:find_export(base,decorated);
+}
+
+static uptr find_module_with_export(const char *plain,const char *decorated,uptr *out_fn)
+{
+    uptr peb=get_peb(),ldr,node,head;
+    if(out_fn)*out_fn=0;
+    if(!sane_ptr(peb))return 0;
+    ldr=read_u32(peb+0x0Cu);if(!sane_ptr(ldr))return 0;
+    head=ldr+0x14u;node=read_u32(head);
+    while(sane_ptr(node)&&node!=head){
+        uptr entry=node-0x08u,base=read_u32(entry+0x18u),fn=0;
+        if(sane_ptr(base))fn=find_export2(base,plain,decorated);
+        if(fn){if(out_fn)*out_fn=fn;return base;}
+        node=read_u32(node);
+    }
+    return 0;
+}
+
 static void resolve_apis(void)
 {
-    uptr k=find_module_base("kernel32.dll"),n=find_module_base("ntdll.dll");
+    uptr k=find_module_base("kernel32.dll"),u=find_module_base("user32.dll"),n=find_module_base("ntdll.dll");
     if(k){
         g_CreateFileA=(CreateFileAFn)find_export(k,"CreateFileA");
         g_WriteFile=(WriteFileFn)find_export(k,"WriteFile");
         g_CloseHandle=(CloseHandleFn)find_export(k,"CloseHandle");
-        g_SetTimer=(SetTimerFn)find_export(k,"SetTimer");
-        g_KillTimer=(KillTimerFn)find_export(k,"KillTimer");
+    }
+    if(u){
+        g_SetTimer=(SetTimerFn)find_export(u,"SetTimer");
+        g_KillTimer=(KillTimerFn)find_export(u,"KillTimer");
     }
     if(n)g_NtProtectVirtualMemory=(NtProtectVirtualMemoryFn)find_export(n,"NtProtectVirtualMemory");
 }
@@ -365,25 +435,162 @@ static int cooldown_active(Guid64 g,u32 now)
     u32 i;for(i=0;i<MAX_BACKOFF;i++)if(guid_eq(g_backoff[i].guid,g)&&g_backoff[i].until_tick>now)return 1;return 0;
 }
 
+/* ---------------- fast fresh-first PP queue scheduler ---------------- */
+#define MC_PP_RESULT_COMPLETE    1u
+#define MC_PP_RESULT_NO_POCKETS  2u
+#define MC_PP_RESULT_LOS         3u
+#define MC_PP_RESULT_OTHER_FAIL  4u
+#define MC_PP_RESULT_TIMEOUT     5u
+
+static int resolve_scheduler_api(u32 now)
+{
+    uptr base=0,fn=0;
+    if(g_schedulerBound&&g_mcReady&&g_mcAcceptedSerial&&g_mcResultSeq&&g_mcResultCode&&g_mcResultLo&&g_mcResultHi)return 1;
+    if(g_mcResolveTick&&(u32)(now-g_mcResolveTick)<PP_API_RESOLVE_MS)return 0;
+    g_mcResolveTick=now?now:1u;
+    base=find_module_with_export("AutoPP_SchedulerReady","_AutoPP_SchedulerReady@0",&fn);
+    if(!base||!fn)return 0;
+    g_mcReady=(QueryU32Fn)fn;
+    g_mcAcceptedSerial=(QueryU32Fn)find_export2(base,"AutoPP_SchedulerAcceptedSerial","_AutoPP_SchedulerAcceptedSerial@0");
+    g_mcResultSeq=(QueryU32Fn)find_export2(base,"AutoPP_SchedulerResultSeq","_AutoPP_SchedulerResultSeq@0");
+    g_mcResultCode=(QueryU32Fn)find_export2(base,"AutoPP_SchedulerResultCode","_AutoPP_SchedulerResultCode@0");
+    g_mcResultLo=(QueryU32Fn)find_export2(base,"AutoPP_SchedulerResultGuidLo","_AutoPP_SchedulerResultGuidLo@0");
+    g_mcResultHi=(QueryU32Fn)find_export2(base,"AutoPP_SchedulerResultGuidHi","_AutoPP_SchedulerResultGuidHi@0");
+    if(!g_mcAcceptedSerial||!g_mcResultSeq||!g_mcResultCode||!g_mcResultLo||!g_mcResultHi){
+        g_mcReady=0;g_mcAcceptedSerial=0;g_mcResultSeq=0;g_mcResultCode=0;g_mcResultLo=0;g_mcResultHi=0;return 0;
+    }
+    g_mcResultSeen=g_mcResultSeq();
+    g_schedulerBound=1u;
+    log_text("AUTOPP_QUEUE_SCHEDULER_BOUND fresh_first=1 retry_tail=1 one_inflight=1");
+    return 1;
+}
+
+static u32 pp_seen_hash(Guid64 g){u32 h=g.lo*2654435761u;h^=g.hi*2246822519u;h^=h>>16;return h&(PP_SEEN_CAP-1u);}
+
+static PPSeenSlot* pp_seen_find(Guid64 g)
+{
+    u32 i,h=pp_seen_hash(g);
+    for(i=0;i<PP_SEEN_CAP;i++){
+        PPSeenSlot*s=&g_ppSeen[(h+i)&(PP_SEEN_CAP-1u)];
+        if(s->state==0u)return 0;
+        if(s->state==1u&&guid_eq(s->guid,g))return s;
+    }
+    return 0;
+}
+
+static PPSeenSlot* pp_seen_get_or_add(Guid64 g)
+{
+    u32 i,h=pp_seen_hash(g),firstT=0xFFFFFFFFu;
+    for(i=0;i<PP_SEEN_CAP;i++){
+        u32 k=(h+i)&(PP_SEEN_CAP-1u);PPSeenSlot*s=&g_ppSeen[k];
+        if(s->state==1u&&guid_eq(s->guid,g))return s;
+        if(s->state==2u&&firstT==0xFFFFFFFFu)firstT=k;
+        if(s->state==0u){
+            if(firstT!=0xFFFFFFFFu)s=&g_ppSeen[firstT];
+            s->guid=g;s->object_ptr=0;s->life_marker=0;s->attempts=0;s->state=1u;return s;
+        }
+    }
+    {PPSeenSlot*s=&g_ppSeen[g_ppSeenCursor++&(PP_SEEN_CAP-1u)];s->guid=g;s->object_ptr=0;s->life_marker=0;s->attempts=0;s->state=1u;return s;}
+}
+
+static int pp_seen_current(Guid64 g,uptr obj,u32 life)
+{
+    PPSeenSlot*s=pp_seen_find(g);
+    if(!s)return 0;
+    if(s->object_ptr==obj&&s->life_marker==life)return 1;
+    s->state=2u;s->object_ptr=0;s->life_marker=0;s->attempts=0;return 0;
+}
+
+static u32 pp_seen_mark_attempt(Guid64 g,uptr obj,u32 life)
+{
+    PPSeenSlot*s=pp_seen_get_or_add(g);
+    if(s->object_ptr!=obj||s->life_marker!=life)s->attempts=0u;
+    s->object_ptr=obj;s->life_marker=life;
+    if(s->attempts<0xFFFFFFFFu)++s->attempts;
+    return s->attempts;
+}
+
+static void pp_seen_prune(u32 now)
+{
+    u32 i;
+    if(g_ppSeenPruneTick&&(u32)(now-g_ppSeenPruneTick)<PP_SEEN_PRUNE_MS)return;
+    g_ppSeenPruneTick=now;
+    for(i=0;i<PP_SEEN_CAP;i++)if(g_ppSeen[i].state==1u){
+        uptr o=find_object(g_ppSeen[i].guid);
+        if(!o||!alive(o)){g_ppSeen[i].state=2u;g_ppSeen[i].object_ptr=0;g_ppSeen[i].life_marker=0;g_ppSeen[i].attempts=0;}
+    }
+}
+
+static int pp_retry_contains(Guid64 g)
+{
+    u32 i;
+    for(i=0;i<g_ppRetryCount;i++){u32 k=(g_ppRetryHead+i)%PP_RETRY_QUEUE_CAP;if(guid_eq(g_ppRetry[k].guid,g))return 1;}
+    return 0;
+}
+
+static void pp_retry_enqueue(Guid64 g,u32 due)
+{
+    PPSeenSlot*s=pp_seen_find(g);
+    if(!s||s->attempts>=MAX_PP_ATTEMPTS||pp_retry_contains(g))return;
+    if(g_ppRetryCount>=PP_RETRY_QUEUE_CAP){++g_ppRetryDropped;return;}
+    g_ppRetry[g_ppRetryTail].guid=g;g_ppRetry[g_ppRetryTail].due_tick=due;
+    g_ppRetryTail=(g_ppRetryTail+1u)%PP_RETRY_QUEUE_CAP;++g_ppRetryCount;++g_ppRetryQueued;
+    log_line("AUTO_PP_RETRY_TAIL","queue",g,s->attempts,g_ppRetryCount);
+}
+
+static int pp_retry_pop_ready(u32 now,Guid64*out)
+{
+    u32 n=g_ppRetryCount,i;
+    if(out){out->lo=0u;out->hi=0u;}
+    for(i=0;i<n;i++){
+        PPRetryItem item=g_ppRetry[g_ppRetryHead];
+        g_ppRetryHead=(g_ppRetryHead+1u)%PP_RETRY_QUEUE_CAP;--g_ppRetryCount;
+        if((s32)(now-item.due_tick)>=0){if(out)*out=item.guid;return 1;}
+        g_ppRetry[g_ppRetryTail]=item;g_ppRetryTail=(g_ppRetryTail+1u)%PP_RETRY_QUEUE_CAP;++g_ppRetryCount;
+    }
+    return 0;
+}
+
+static void pp_process_scheduler_result(u32 now)
+{
+    u32 seq,code;Guid64 g;
+    if(!resolve_scheduler_api(now))return;
+    seq=g_mcResultSeq();if(seq==g_mcResultSeen)return;
+    g_mcResultSeen=seq;code=g_mcResultCode();g.lo=g_mcResultLo();g.hi=g_mcResultHi();++g_ppResultEvents;
+    log_line("AUTO_PP_RESULT","scheduler",g,code,seq);
+    if(code==MC_PP_RESULT_LOS||code==MC_PP_RESULT_OTHER_FAIL||code==MC_PP_RESULT_TIMEOUT)
+        pp_retry_enqueue(g,now+PP_RETRY_DELAY_MS);
+}
+
+
 static void pp_set_backoff(Guid64 g,u32 now,u32 failures)
 {
     CooldownEntry *e=&g_backoff[g_backoff_cursor++%MAX_BACKOFF];
     e->guid=g;e->failures=failures;e->until_tick=now+300u+(failures*150u);e->reserved=0;
 }
 
+static int pp_target_eligible(uptr player,uptr o,u32 now,float *out_d2)
+{
+    uptr d;u32 lvl,plvl,life;Guid64 g;float dd;int ct;
+    if(!player||!sane_ptr(o)||read_u32(o+OBJ_TYPE_OFF)!=WOW_OBJECT_UNIT||!alive(o))return 0;
+    ct=creature_type(o);if(ct!=CREATURE_TYPE_HUMANOID&&ct!=CREATURE_TYPE_UNDEAD)return 0;
+    if(!attackable(o))return 0;
+    plvl=unit_level(player);lvl=unit_level(o);if(lvl>=plvl+3u)return 0;
+    dd=dist2(player,o);if(dd>PP_RANGE2)return 0;
+    g=object_guid(o);if(cooldown_active(g,now))return 0;
+    d=descriptor(o);life=d?read_u32(d+DESC_PP_LIFE_MARKER_OFF):0u;
+    if(pp_seen_current(g,o,life))return 0;
+    if(out_d2)*out_d2=dd;return 1;
+}
+
 static uptr select_pp_target(uptr player,u32 now,float *out_d2)
 {
-    uptr om=object_manager(),o,best=0;u32 guard=MAX_OBJECT_STEPS;float bestd=PP_RANGE2+1.0f;u32 plvl=unit_level(player);
+    uptr om=object_manager(),o,best=0;u32 guard=MAX_OBJECT_STEPS;float bestd=PP_RANGE2+1.0f;
     if(!sane_ptr(om)||!player)return 0;
     o=read_u32(om+OM_FIRST_OBJECT_OFF);
     while(guard--&&sane_ptr(o)){
-        if(read_u32(o+OBJ_TYPE_OFF)==WOW_OBJECT_UNIT&&alive(o)){
-            int ct=creature_type(o);
-            if((ct==CREATURE_TYPE_HUMANOID||ct==CREATURE_TYPE_UNDEAD)&&attackable(o)){
-                u32 lvl=unit_level(o);Guid64 g=object_guid(o);float d=dist2(player,o);
-                if(lvl<plvl+3u && d<=PP_RANGE2 && !cooldown_active(g,now) && d<bestd){best=o;bestd=d;}
-            }
-        }
+        float d=0.0f;
+        if(pp_target_eligible(player,o,now,&d)&&d<bestd){best=o;bestd=d;}
         {uptr n=read_u32(o+OBJ_NEXT_OFF);if(n==o)break;o=n;}
     }
     if(best&&out_d2)*out_d2=bestd;
@@ -409,19 +616,26 @@ static u32 pack_guid(u8 *dst,Guid64 g)
     return n;
 }
 
-/* Reconstructed packet sender at 0x10004B60. */
-static void send_pickpocket(uptr player,uptr target,u32 now,float d2)
+/* Packet sender with MovementCore acceptance acknowledgement. */
+static int send_pickpocket(uptr player,uptr target,u32 now,float d2,u32 retry)
 {
-    u8 packet[64];u32 n=0;Guid64 g=object_guid(target);uptr d=descriptor(target);SendDesc sd;
+    u8 packet[64];u32 n=0,before,after,attempts,life;Guid64 g=object_guid(target);uptr d=descriptor(target);SendDesc sd;
+    if(!resolve_scheduler_api(now)||!g_mcReady()||!g_mcAcceptedSerial)return 0;
     *(u32*)(packet+n)=PP_OPCODE;n+=4;
     *(u32*)(packet+n)=PP_SUBOP;n+=4;
     *(u16*)(packet+n)=PP_PACKET_KIND;n+=2;
     n+=pack_guid(packet+n,g);
     sd.packet=packet;sd.zero0=0u;sd.capacity=0x40u;sd.length=n;sd.zero1=0u;
+    before=g_mcAcceptedSerial();
     ((NetSendFn)(uptr)WOW_NET_SEND_FN)((void*)&sd);
-    g_pp.guid=g;g_pp.send_count++;g_pp.life_marker=d?read_u32(d+DESC_PP_LIFE_MARKER_OFF):0u;g_pp.send_tick=now;g_pp.active=1;
-    log_line(g_pp.send_count==1u?"AUTO_PP_SEND_SCAN":"AUTO_PP_RETRY_SCAN","scan",g,g_pp.send_count,*(u32*)&d2);
-    (void)player;
+    after=g_mcAcceptedSerial();
+    if(after==before){++g_ppBlockedSends;log_line("AUTO_PP_SEND_BLOCKED","scheduler",g,retry,g_ppBlockedSends);return 0;}
+    life=d?read_u32(d+DESC_PP_LIFE_MARKER_OFF):0u;
+    attempts=pp_seen_mark_attempt(g,target,life);
+    g_pp.guid=g;g_pp.send_count=attempts;g_pp.life_marker=life;g_pp.send_tick=now;g_pp.active=0;
+    if(retry){++g_ppRetrySent;log_line("AUTO_PP_RETRY_SEND","queue",g,attempts,*(u32*)&d2);}
+    else{++g_ppFreshSent;log_line("AUTO_PP_FRESH_SEND","scan",g,attempts,*(u32*)&d2);}
+    (void)player;return 1;
 }
 
 static void pp_reset(void){g_pp.guid.lo=g_pp.guid.hi=0;g_pp.send_count=0;g_pp.life_marker=0;g_pp.send_tick=0;g_pp.active=0;}
@@ -437,33 +651,34 @@ static int has_stealth_aura(uptr o)
 
 static void service_pickpocket(uptr player,u32 now)
 {
-    uptr target;float d2=0.0f;
-    if(g_loot_state!=LOOT_IDLE)return; /* final runtime gives corpses priority over PP */
-
-    if(g_pp.active){
-        uptr o=find_object(g_pp.guid);
-        if(!o){log_line("AUTO_PP_RESPAWN_RESET","pickpocket",g_pp.guid,0,0);pp_reset();}
-        else if(pp_tracked_target_should_skip(g_pp.guid))pp_reset();
-        else {
-            uptr d=read_u32(o+OBJ_DESCRIPTOR_OFF);u32 life=sane_ptr(d)?read_u32(d+DESC_PP_LIFE_MARKER_OFF):0u;
-            if(g_pp.life_marker==0u && life!=0u){log_line("AUTO_PP_RESPAWN_RESET","pickpocket",g_pp.guid,0,life);pp_reset();}
-            else if(now-g_pp.send_tick>=350u){
-                if(g_pp.send_count<MAX_PP_ATTEMPTS){send_pickpocket(player,o,now,dist2(player,o));}
-                else {log_line("AUTO_PP_GIVEUP","pickpocket",g_pp.guid,g_pp.send_count,0);pp_set_backoff(g_pp.guid,now,g_pp.send_count);pp_reset();}
-            }
-            /* If stealth disappears the final scanner still keeps the tracked GUID; no
-               synthetic success is invented here.  Loot/money confirmation paths clear it. */
-            return;
-        }
-    }
+    uptr target;float d2=0.0f;Guid64 retry={0,0};
+    pp_process_scheduler_result(now);
+    pp_seen_prune(now);
+    if(g_loot_state!=LOOT_IDLE)return; /* corpses still retain priority */
+    if(!resolve_scheduler_api(now)||!g_mcReady())return; /* exactly one transaction in flight */
 
     if(now-g_pp_scan_tick<PP_SCAN_MS)return;
     g_pp_scan_tick=now;
+
+    /* Fresh work always wins. An accepted GUID is marked seen for this life,
+       so a transient failure cannot monopolize the next scan. */
     target=select_pp_target(player,now,&d2);
-    if(!target)return;
-    g_pp.send_count=0;
-    log_line("AUTO_PP_READY_SCAN","scan",object_guid(target),0,0);
-    send_pickpocket(player,target,now,d2);
+    if(target){
+        log_line("AUTO_PP_READY_FRESH","scan",object_guid(target),g_ppFreshSent,g_ppRetryCount);
+        send_pickpocket(player,target,now,d2,0u);
+        return;
+    }
+
+    /* No fresh target exists: consume the oldest due retry. */
+    if(pp_retry_pop_ready(now,&retry)){
+        PPSeenSlot*s=pp_seen_find(retry);
+        target=find_object(retry);
+        if(!s||s->attempts>=MAX_PP_ATTEMPTS||!target||!alive(target))return;
+        d2=dist2(player,target);
+        if(d2>PP_RANGE2||!attackable(target)){pp_retry_enqueue(retry,now+PP_RETRY_DELAY_MS);return;}
+        if(!send_pickpocket(player,target,now,d2,1u))
+            pp_retry_enqueue(retry,now+PP_RETRY_DELAY_MS);
+    }
 }
 
 static void native_loot_all(void){((LootAllFn)(uptr)WOW_NATIVE_LOOT_ALL_FN)(1u);}
@@ -617,7 +832,15 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
 /* Exported helpers for development/runtime inspection. */
 DLLEXPORT u32 STDCALL AutoLootPP_GetPPAttempts(void){return g_pp.send_count;}
 DLLEXPORT u32 STDCALL AutoLootPP_GetLootState(void){return (u32)g_loot_state;}
-DLLEXPORT u32 STDCALL AutoLootPP_GetVersion(void){return 0x000E0000u;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetVersion(void){return 0x000F0000u;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetSchedulerBound(void){return g_schedulerBound;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetFreshSent(void){return g_ppFreshSent;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetRetryQueued(void){return g_ppRetryQueued;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetRetrySent(void){return g_ppRetrySent;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetRetryDepth(void){return g_ppRetryCount;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetRetryDropped(void){return g_ppRetryDropped;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetResultEvents(void){return g_ppResultEvents;}
+DLLEXPORT u32 STDCALL AutoLootPP_GetBlockedSends(void){return g_ppBlockedSends;}
 
 /* Required by MSVC-style x86 floating-point object files when no CRT is linked. */
 int _fltused=0x9875;

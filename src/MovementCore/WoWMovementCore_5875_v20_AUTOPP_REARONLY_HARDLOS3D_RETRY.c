@@ -218,6 +218,11 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define PP_FAIL_SENTINEL                 0xFFu
 #define SPELL_FAILED_LINE_OF_SIGHT       0x2Au
 #define SPELL_FAILED_TARGET_NO_POCKETS   0x72u
+#define PP_RESULT_COMPLETE                 1u
+#define PP_RESULT_NO_POCKETS               2u
+#define PP_RESULT_LOS                      3u
+#define PP_RESULT_OTHER_FAIL               4u
+#define PP_RESULT_TIMEOUT                  5u
 #define MINING_PRIORITY_SCAN_MS           90u
 #define MINING_PRIORITY_HOLD_MS          360u
 #define SPELL_MINING                    2575u
@@ -306,6 +311,9 @@ static PPSweepSlot g_ppSweep[PP_SWEEP_CAP];
 static volatile DWORD g_ppBlackCount=0u,g_ppBlackAdds=0u,g_ppBlackBlocks=0u,g_ppBlackDeathClears=0u,g_ppBlackNextDeathScan=0u;
 static volatile DWORD g_ppFailPendingAuto=0u,g_ppFailPendingLo=0u,g_ppFailPendingHi=0u,g_ppFailPendingUntil=0u,g_ppFailPendingVariant=0u,g_ppFailPendingSawActive=0u,g_ppPendingSerialBlocks=0u;
 static volatile DWORD g_ppHardLOSArms=0u,g_ppHardLOSLOSFailures=0u,g_ppHardLOSOverrides=0u;
+/* Queue-scheduler handshake consumed by AutoLootPP. The result slot is safe
+ * because AutoPP remains strictly single-inflight. */
+static volatile DWORD g_ppAcceptedSerial=0u,g_ppResultSeq=0u,g_ppResultCode=0u,g_ppResultLo=0u,g_ppResultHi=0u,g_ppResultAux=0u;
 static BYTE g_ppHardRetryPacket[PP_HARDLOS_PACKET_CAP];
 static volatile DWORD g_ppHardRetryActive=0u,g_ppHardRetryScheduled=0u,g_ppHardRetryInjecting=0u,g_ppHardRetryDue=0u,g_ppHardRetrySize=0u,g_ppHardRetryAttempts=0u,g_ppHardRetrySent=0u,g_ppHardRetryExhausted=0u;
 static volatile DWORD g_ppHardRetryLo=0u,g_ppHardRetryHi=0u;
@@ -647,17 +655,27 @@ static void PPHardRetryTick(DWORD now)
        do not consume a HARDLOS variant in that case. */
     if(g_ppHardRetryActive&&!g_ppFailPendingAuto){if(g_ppHardRetryAttempts>1u)--g_ppHardRetryAttempts;g_ppHardRetryScheduled=1u;g_ppHardRetryDue=now+100u;}
 }
+static void PPPublishResult(DWORD code,DWORD lo,DWORD hi,DWORD aux)
+{
+    g_ppResultCode=code;g_ppResultLo=lo;g_ppResultHi=hi;g_ppResultAux=aux;++g_ppResultSeq;
+}
+
 static void __cdecl PPBlacklistOnFail(DWORD reason)
 {
-    DWORD lo,hi,added,now;
+    DWORD lo,hi,added;
     if(!g_ppFailPendingAuto)return;
     lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;g_ppHardArmed=0u;
     if(reason==SPELL_FAILED_TARGET_NO_POCKETS){
-        added=PPBlackAdd(lo,hi);g_ppFailLogEvent=added?1u:2u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppBlackCount;PPHardRetryCancel();
+        added=PPBlackAdd(lo,hi);g_ppFailLogEvent=added?1u:2u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppBlackCount;
+        PPPublishResult(PP_RESULT_NO_POCKETS,lo,hi,reason);PPHardRetryCancel();
     }else if(reason==SPELL_FAILED_LINE_OF_SIGHT){
         ++g_ppHardLOSLOSFailures;g_ppFailLogEvent=3u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppFailPendingVariant;
-        if(g_ppHardRetryActive&&g_ppHardRetryLo==lo&&g_ppHardRetryHi==hi&&g_ppHardRetryAttempts<PP_HARDLOS_VARIANTS){now=GT()?GT()():0u;g_ppHardRetryScheduled=1u;g_ppHardRetryDue=now+PP_HARDLOS_RETRY_DELAY_MS;}else PPHardRetryCancel();
-    }else PPHardRetryCancel();
+        /* Do not burn consecutive HARDLOS variants on one mob. AutoLootPP puts
+           this GUID at the retry tail; the next accepted send advances PPSweep. */
+        PPPublishResult(PP_RESULT_LOS,lo,hi,g_ppFailPendingVariant);PPHardRetryCancel();
+    }else{
+        PPPublishResult(PP_RESULT_OTHER_FAIL,lo,hi,reason);PPHardRetryCancel();
+    }
 }
 __declspec(naked) static void PPBlacklist_FailThunk(void)
 {
@@ -685,7 +703,16 @@ static void PPScanBlacklistDeaths(DWORD now)
 static void PPBlacklistTick(DWORD now)
 {
     DWORD ev=g_ppFailLogEvent,lo,hi,aux;
-    if(g_ppFailPendingAuto){if(LongPPActive())g_ppFailPendingSawActive=1u;else if(g_ppFailPendingSawActive){g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;PPHardRetryCancel();}else if((LONG)(now-g_ppFailPendingUntil)>=0){g_ppFailPendingAuto=0u;PPHardRetryCancel();}}
+    if(g_ppFailPendingAuto){
+        if(LongPPActive())g_ppFailPendingSawActive=1u;
+        else if(g_ppFailPendingSawActive){
+            lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;
+            PPPublishResult(PP_RESULT_COMPLETE,lo,hi,0u);PPHardRetryCancel();
+        }else if((LONG)(now-g_ppFailPendingUntil)>=0){
+            lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;
+            PPPublishResult(PP_RESULT_TIMEOUT,lo,hi,0u);PPHardRetryCancel();
+        }
+    }
     if(ev){lo=g_ppFailLogLo;hi=g_ppFailLogHi;aux=g_ppFailLogVariant;g_ppFailLogEvent=0u;if(ev==1u)GatherFileLog("AUTOPP_BLACKLIST_EMPTY_POCKETS",now,0u,lo,hi,0.0f,0u,aux);else if(ev==2u)GatherFileLog("AUTOPP_BLACKLIST_ALREADY",now,0u,lo,hi,0.0f,0u,aux);else if(ev==3u)GatherFileLog("AUTOPP_HARDLOS_LOS_RETRY",now,0u,lo,hi,0.0f,0u,aux);else if(ev==4u)GatherFileLog("AUTOPP_HARDLOS_SWEEP_EXHAUSTED",now,0u,lo,hi,0.0f,0u,aux);}
     PPScanBlacklistDeaths(now);
     PPHardRetryTick(now);
@@ -1305,7 +1332,6 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
     /* One auto PP transaction at a time: failure callbacks have no GUID in 5875.
        Serialization makes 0x72 -> GUID mapping deterministic even under scanner pressure. */
     if(isAutoSource&&g_ppFailPendingAuto){g_ppForward=0u;++g_autoPPBlocked;++g_ppPendingSerialBlocks;g_ppQuietUntil=0u;return;}
-    if(isAutoSource&&g_ppHardRetryActive&&g_ppHardRetryScheduled&&!g_ppHardRetryInjecting){g_ppForward=0u;++g_autoPPBlocked;++g_ppPendingSerialBlocks;g_ppQuietUntil=0u;return;}
     if(isAutoSource&&(tlo|thi)&&PPBlackFind(tlo,thi)){g_ppForward=0u;++g_autoPPBlocked;++g_ppBlackBlocks;g_ppQuietUntil=0u;return;}
     if(!isAutoSource)++g_autoPPManualPass;
     if(MiningPriorityOwnsPP(now)){g_ppForward=0u;++g_miningPriorityBlocks;g_ppQuietUntil=0u;g_gatherNextScan=0u;return;}
@@ -1313,9 +1339,12 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
         /* Exact failure ownership is handled by the chained 5875 spell-fail callsite.
            The pending GUID is set before LongPP sees this cast, so 0x72 is blacklisted synchronously. */
         g_ppFailPendingAuto=1u;g_ppFailPendingSawActive=0u;g_ppFailPendingLo=tlo;g_ppFailPendingHi=thi;g_ppFailPendingUntil=now+PP_FAIL_PENDING_MS;
-        if(!g_ppHardRetryInjecting)PPHardRetryCapture(packet,tlo,thi);
+        /* Keep the sweep index, but retry scheduling itself belongs to the
+           fresh-first AutoLootPP FIFO. */
+        PPHardRetryCancel();
         PPHardSelect(tlo,thi,&variant);
     }
+    if(isAutoSource)++g_ppAcceptedSerial;
     PPPreemptOutgoing(now);
 }
 
@@ -1756,6 +1785,13 @@ __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSOverrides(void){return g_
 __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSRetrySent(void){return g_ppHardRetrySent;}
 __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSRetryExhausted(void){return g_ppHardRetryExhausted;}
 __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSRetryAttempts(void){return g_ppHardRetryAttempts;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerReady(void){DWORD now=GT()?GT()():0u;return(g_ppChainOk&&g_autoPPEnabled&&!g_ppFailPendingAuto&&!LongPPActive()&&!LongPPInjecting()&&(*(DWORD*)ADDR_CASTING_SPELLID)!=SPELL_PICK_POCKET&&g_mode!=MODE_LOCAL_STRONG&&!CurrentTargetIsPlayer()&&!MiningPriorityOwnsPP(now))?1u:0u;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerAcceptedSerial(void){return g_ppAcceptedSerial;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerResultSeq(void){return g_ppResultSeq;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerResultCode(void){return g_ppResultCode;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerResultGuidLo(void){return g_ppResultLo;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerResultGuidHi(void){return g_ppResultHi;}
+__declspec(dllexport) DWORD __stdcall AutoPP_SchedulerResultAux(void){return g_ppResultAux;}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetChainOk(void){return g_ppChainOk;}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetLongPPActive(void){return LongPPActive();}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetNextSendHook(void){return g_nextSendTarget;}

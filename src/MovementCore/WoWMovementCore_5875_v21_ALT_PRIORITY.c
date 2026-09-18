@@ -15,6 +15,9 @@
  *
  * Ordinary NoFall, AutoGather, AutoOpen, AutoPP, F8/F10 SafeBreak modes and
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
+ *
+ * 2026-09-18 queue candidate: the included V20 base now exposes the single-
+ * inflight PP scheduler ABI and publishes failures to AutoLootPP's retry tail.
  */
 
 #define DllMain W112_MovementCoreV20_DllMain
@@ -301,7 +304,7 @@ static void AltPriority_Remove(void)
     g_altPriorityBaseSendWrapper=0u;
 }
 
-__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}
+__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120100u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityStarts(void){return g_altPriorityStarts;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityPPBlocks(void){return g_altPriorityPPBlocks;}
