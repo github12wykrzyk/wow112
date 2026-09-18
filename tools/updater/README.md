@@ -108,7 +108,7 @@ A failed/in-progress newest run is surfaced as an explicit error instead of sile
 One Polish dashboard now contains configuration, installed/available build details,
 update/launch actions, maintenance, backup selection and a live log. Token editing
 and the enlarged log use small secondary dialogs. No navigation sidebar or full
-window scrolling is required. The artwork is a small, aspect-preserving header accent.
+window scrolling is required. The header uses a clean gold wordmark. The previous JPEG in the repository has a broken data stream and is no longer embedded or rendered.
 
 `BuildUi` initializes core controls/events; feature controllers register explicit
 control references through `IUpdaterHost`. `BuildDashboard` lays them out once before

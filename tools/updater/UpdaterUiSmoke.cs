@@ -59,8 +59,9 @@ namespace WoW112Updater
             SaveUiBitmap(Path.Combine(folder, "scale-125-simulation.png"));
             Scale(new SizeF(1.2F, 1.2F));
             ClientSize = new Size(1560, 1020);
-            System.Windows.Forms.Application.DoEvents(); AssertDashboardLayout();
+            System.Windows.Forms.Application.DoEvents();
             SaveUiBitmap(Path.Combine(folder, "scale-150-simulation.png"));
+            AssertDashboardLayout();
             File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
             Close();
         }
@@ -76,7 +77,7 @@ namespace WoW112Updater
                 for (Control parent = button.Parent; parent != null && parent != this; parent = parent.Parent)
                 {
                     var relative = parent.RectangleToClient(button.RectangleToScreen(button.ClientRectangle));
-                    if (!parent.ClientRectangle.Contains(relative)) throw new Exception("Button outside parent: " + button.Text);
+                    if (!parent.ClientRectangle.Contains(relative)) throw new Exception("Button outside parent: " + button.Text + " relative " + relative + " parent " + parent.ClientSize + " client " + ClientSize + " root rows " + string.Join(",", ((TableLayoutPanel)Controls[0]).RowStyles.Cast<RowStyle>().Select(x => x.Height.ToString()).ToArray()));
                 }
             }
             if (log.Height < 40) throw new Exception("Log too small");

@@ -46,11 +46,10 @@ namespace WoW112Updater
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             Controls.Add(root);
 
-            var header = Grid(3, 1);
+            var header = Grid(2, 1);
             header.ColumnStyles.Clear();
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 294));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
             root.Controls.Add(header, 0, 0);
             var heading = Grid(1, 2);
             heading.RowStyles.Add(new RowStyle(SizeType.Percent, 64));
@@ -64,18 +63,6 @@ namespace WoW112Updater
             identity.Controls.Add(TextLabel("UPDATER  " + UpdaterVersion, 9, Muted), 0, 0);
             PrepareLabel(connectionInfo); identity.Controls.Add(connectionInfo, 0, 1);
             header.Controls.Add(identity, 1, 0);
-            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WoW112Updater.Background.jpg"))
-            {
-                if (stream != null)
-                {
-                    using (var source = Image.FromStream(stream))
-                    {
-                        var art = new PictureBox { Dock = DockStyle.Fill, Image = new Bitmap(source), SizeMode = PictureBoxSizeMode.Zoom, TabStop = false };
-                        art.Disposed += delegate { if (art.Image != null) art.Image.Dispose(); };
-                        header.Controls.Add(art, 2, 0);
-                    }
-                }
-            }
 
             var config = Card("KONFIGURACJA", 3);
             root.Controls.Add(config, 0, 1);
