@@ -104,13 +104,12 @@ typedef u32            UINT_PTR32;
 #define MAX_OBJECT_STEPS 0x0FFFu
 #define MAX_APPLY_DETAIL_LOGS 192u
 
-#define CONTROL_MIN_SPEED      1.00f
-#define CONTROL_MIN_PVP_SPEED  0.00f
-#define CONTROL_MAX_SPEED     14.00f
-#define CONTROL_SPEED_STEP     0.10f
+#define CONTROL_MIN_SPEED  1.00f
+#define CONTROL_MAX_SPEED 14.00f
+#define CONTROL_SPEED_STEP 0.10f
 #define SETTING_ENABLED             1u
 #define SETTING_MINIMUM_SPEED       2u
-#define SETTING_PVP_MINIMUM_SPEED   3u
+#define SETTING_DISABLE_ON_HOSTILE  3u
 
 #define STATUS_DETACHED            0u
 #define STATUS_ACTIVE              1u
@@ -142,17 +141,11 @@ static volatile UINT_PTR32 g_timerId = 0u;
 static volatile u32 g_applyDetailCount = 0u;
 static volatile u32 g_lastHealthTick = 0u;
 static volatile u32 g_lastHealthApplyCount = 0u;
-/* Track values written by this module so switching floors can restore the last observed natural run speed. */
-static volatile u32 g_lastSelectedFloorBits = 0xFFFFFFFFu;
-static volatile u32 g_lastAppliedFloorBits = 0u;
-static volatile u32 g_restoreRunBits = 0u;
-static volatile u32 g_restoreRunValid = 0u;
 
 /* Runtime config defaults intentionally match the accepted v0.4 behaviour. */
 static volatile u32 g_cfgEnabled = 1u;
 static volatile u32 g_cfgMinimumSpeedBits = SPEED_FLOOR_BITS;
-/* 0.0 preserves the accepted behaviour: hostile-player targeting previously disabled the floor. */
-static volatile u32 g_cfgPvpMinimumSpeedBits = 0u;
+static volatile u32 g_cfgDisableOnHostilePlayer = 1u;
 static W112_ControlSettingV1 g_controlSettings[3];
 static volatile u32 g_controlDescriptorReady = 0u;
 
@@ -165,7 +158,6 @@ static const char kEventStealth[] = "STEALTH_STATE";
 static const char kEventTargetHostile0[] = "TARGET_HOSTILE_PLAYER=0";
 static const char kEventTargetHostile1[] = "TARGET_HOSTILE_PLAYER=1";
 static const char kEventNeeded[] = "FLOOR_NEEDED";
-static const char kEventRestore[] = "FLOOR_PROFILE_RESTORE";
 static const char kEventLoad[] = "LOAD_ALWAYS_FLOOR71_DIAG_V04";
 
 /* MSVC-style x86 floating point links may expect this symbol with /NODEFAULTLIB. */
@@ -313,7 +305,7 @@ static void log_event(const char *eventName,
     p = append_u32_dec(p, g_applyCount);
     p = append_str(p, " apply_delta=");
     p = append_u32_dec(p, applyDelta);
-    p = append_str(p, " floor_runtime=CONTROL_API_V1 pvp_floor=HOSTILE_PLAYER_TARGET method=SAFE_DIRECT_RECALC_ONLY\r\n");
+    p = append_str(p, " floor_runtime=CONTROL_API_V1 target_gate=CONFIGURABLE_HOSTILE_PLAYER method=SAFE_DIRECT_RECALC_ONLY\r\n");
 
     h = createFile(kLogName,
                    GENERIC_WRITE32,
@@ -431,11 +423,9 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     float curAfter;
     float runAfter;
     float floorValue;
-    u32 floorBits;
     GetTickCountFn getTickCount;
     u32 now;
     u32 applyDelta;
-    u32 runBeforeBits;
 
     (void)hwnd;
     (void)msg;
@@ -452,33 +442,7 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     runBefore = read_f32(player + PLAYER_RUN_SPEED_OFF);
     curAfter = curBefore;
     runAfter = runBefore;
-    /* Preserve the existing PvP detector semantics: hostile player target selects the PvP floor. */
-    floorBits = g_cfgEnabled ? (targetHostile ? g_cfgPvpMinimumSpeedBits : g_cfgMinimumSpeedBits) : 0u;
-    floorValue = bits_float(floorBits);
-    runBeforeBits = float_bits(runBefore);
-
-    /* If the game/server changed the run field after our last write, that value owns
-       the timeline and the previous restore snapshot is stale. */
-    if (g_restoreRunValid && runBeforeBits != g_lastAppliedFloorBits)
-        g_restoreRunValid = 0u;
-
-    /* A floor is a minimum, not a cap.  When the selected profile/value changes,
-       first remove our previous floor write and return to the last observed natural
-       run value.  The new floor is evaluated against that restored value below. */
-    if (g_lastSelectedFloorBits != 0xFFFFFFFFu &&
-        floorBits != g_lastSelectedFloorBits &&
-        g_restoreRunValid && runBeforeBits == g_lastAppliedFloorBits) {
-        write_u32(player + PLAYER_RUN_SPEED_OFF, g_restoreRunBits);
-        recalc_speed(player);
-        curBefore = read_f32(player + PLAYER_CURRENT_SPEED_OFF);
-        runBefore = read_f32(player + PLAYER_RUN_SPEED_OFF);
-        curAfter = curBefore;
-        runAfter = runBefore;
-        g_restoreRunValid = 0u;
-        log_event(kEventRestore, pvp, stealth, player,
-                  runBefore, curBefore, runAfter, curAfter, 0u);
-    }
-    g_lastSelectedFloorBits = floorBits;
+    floorValue = bits_float(g_cfgMinimumSpeedBits);
 
     if (g_prevPvp != pvp) {
         g_prevPvp = pvp;
@@ -507,16 +471,13 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
      * periodic recalc cannot collapse the buff back toward 7.1.
      */
     if (g_cfgEnabled &&
-        floorValue >= SPEED_MIN_VALID &&
+        (!g_cfgDisableOnHostilePlayer || !targetHostile) &&
         runBefore > SPEED_MIN_VALID && runBefore < floorValue &&
         curBefore < floorValue) {
         log_event(kEventNeeded, pvp, stealth, player,
                   runBefore, curBefore, runBefore, curBefore, 0u);
 
-        g_restoreRunBits = float_bits(runBefore);
-        g_restoreRunValid = 1u;
-        g_lastAppliedFloorBits = floorBits;
-        write_u32(player + PLAYER_RUN_SPEED_OFF, floorBits);
+        write_u32(player + PLAYER_RUN_SPEED_OFF, g_cfgMinimumSpeedBits);
         recalc_speed(player);
 
         curAfter = read_f32(player + PLAYER_CURRENT_SPEED_OFF);
@@ -580,14 +541,14 @@ static void init_control_descriptor(void)
 
     s = &g_controlSettings[2];
     s->struct_size = (w112_u32)sizeof(W112_ControlSettingV1);
-    s->setting_id = SETTING_PVP_MINIMUM_SPEED;
-    s->key = "pvp_minimum_speed";
-    s->label = "PvP Minimum Speed";
-    s->type = W112_CTL_FLOAT;
-    s->default_value.f32 = 0.0f;
-    s->min_value.f32 = CONTROL_MIN_PVP_SPEED;
-    s->max_value.f32 = CONTROL_MAX_SPEED;
-    s->step.f32 = CONTROL_SPEED_STEP;
+    s->setting_id = SETTING_DISABLE_ON_HOSTILE;
+    s->key = "disable_on_hostile_player";
+    s->label = "Disable on hostile player";
+    s->type = W112_CTL_BOOL;
+    s->default_value.u32 = 1u;
+    s->min_value.u32 = 0u;
+    s->max_value.u32 = 1u;
+    s->step.u32 = 1u;
     s->flags = W112_CTL_LIVE;
     s->enum_options = 0;
     s->enum_option_count = 0u;
@@ -606,8 +567,8 @@ static int W112_CTL_STDCALL speedfloor_control_get(w112_u32 settingId, W112_Cont
         outValue->f32 = bits_float(g_cfgMinimumSpeedBits);
         return 1;
     }
-    if (settingId == SETTING_PVP_MINIMUM_SPEED) {
-        outValue->f32 = bits_float(g_cfgPvpMinimumSpeedBits);
+    if (settingId == SETTING_DISABLE_ON_HOSTILE) {
+        outValue->u32 = g_cfgDisableOnHostilePlayer ? 1u : 0u;
         return 1;
     }
     return 0;
@@ -629,10 +590,9 @@ static int W112_CTL_STDCALL speedfloor_control_set(w112_u32 settingId, const W11
         g_cfgMinimumSpeedBits = float_bits(v);
         return 1;
     }
-    if (settingId == SETTING_PVP_MINIMUM_SPEED) {
-        v = value->f32;
-        if (!(v >= CONTROL_MIN_PVP_SPEED && v <= CONTROL_MAX_SPEED)) return 0;
-        g_cfgPvpMinimumSpeedBits = float_bits(v);
+    if (settingId == SETTING_DISABLE_ON_HOSTILE) {
+        if (value->u32 > 1u) return 0;
+        g_cfgDisableOnHostilePlayer = value->u32;
         return 1;
     }
     return 0;
