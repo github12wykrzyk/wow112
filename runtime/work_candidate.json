@@ -6,7 +6,7 @@
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "PP throughput V23 conservative candidate: exact accepted AutoLootPP bytes stay untouched. Manual PP, LongPP send hook, and LongPP loot hook are restored to the previously working ec336 path. Fresh-first/retry-tail scheduling runs only inside the existing MovementCore PP arbiter. Mining-first blocks automatic PP only, never manual PP.",
+  "note": "PP throughput V24 fail-safe candidate: exact AutoLootPP and LongPP bytes unchanged. Manual PP keeps the ec336 send/loot path and mining priority no longer blocks manual packets. The first real AutoLootPP packet is allowed through unchanged to seed ownership; only subsequent legacy retries are replaced by fresh-first/retry-tail scheduling.",
   "source_fingerprint_warning_allowlist": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",

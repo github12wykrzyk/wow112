@@ -1367,7 +1367,7 @@ static void PPPreemptOutgoing(DWORD now)
 
 static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
 {
-    BYTE*raw;DWORD op,spell,now,isAutoSource,tlo=0u,thi=0u,variant=0u;
+    BYTE*raw;DWORD op,spell,now,isAutoSource,queueSeed=0u,tlo=0u,thi=0u,variant=0u;
     g_ppForward=1u;
     if(g_ppSendRecursion||!packet||packet->size<8u||packet->size>MAX_PACKET_SIZE)return;
     raw=PacketRawBase(packet);if(!raw)return;op=*(DWORD*)raw;if(op!=0x12Eu)return;spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
@@ -1378,9 +1378,12 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
     PPDecodeTargetGuid(packet,&tlo,&thi);
     if(isAutoSource&&CurrentTargetIsPlayer()){g_ppForward=0u;++g_autoPPBlocked;++g_autoPPTargetPlayerBlocks;g_ppQuietUntil=0u;return;}
     if(!g_autoPPEnabled&&isAutoSource){g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;}
-    if(isAutoSource&&!g_ppqInjecting){
-        if(isAutoSource&&MiningPriorityOwnsPP(now)){g_ppForward=0u;++g_miningPriorityBlocks;g_ppQuietUntil=0u;g_gatherNextScan=0u;return;}
-        g_ppqActive=1u;g_ppForward=0u;++g_autoPPBlocked;++g_ppqTriggers;g_ppQuietUntil=0u;return;
+    queueSeed=(isAutoSource&&!g_ppqInjecting&&!g_ppqActive)?1u:0u;
+    /* Once seeded, exact AutoLootPP retries are replaced by the queue.  The
+       first foreign auto packet is deliberately NOT suppressed: it uses the
+       previously proven ec336 LongPP path and seeds deterministic ownership. */
+    if(isAutoSource&&!g_ppqInjecting&&g_ppqActive){
+        g_ppForward=0u;++g_autoPPBlocked;++g_ppqTriggers;g_ppQuietUntil=0u;return;
     }
     /* One auto PP transaction at a time: failure callbacks have no GUID in 5875.
        Serialization makes 0x72 -> GUID mapping deterministic even under scanner pressure. */
@@ -1388,13 +1391,20 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
     if(isAutoSource&&g_ppHardRetryActive&&g_ppHardRetryScheduled&&!g_ppHardRetryInjecting){g_ppForward=0u;++g_autoPPBlocked;++g_ppPendingSerialBlocks;g_ppQuietUntil=0u;return;}
     if(isAutoSource&&(tlo|thi)&&PPBlackFind(tlo,thi)){g_ppForward=0u;++g_autoPPBlocked;++g_ppBlackBlocks;g_ppQuietUntil=0u;return;}
     if(!isAutoSource)++g_autoPPManualPass;
-    if(MiningPriorityOwnsPP(now)){g_ppForward=0u;++g_miningPriorityBlocks;g_ppQuietUntil=0u;g_gatherNextScan=0u;return;}
+    /* Mining-first is an automation policy only. Never block a user-initiated
+       manual Pick Pocket because a mining node is cached nearby. */
+    if(isAutoSource&&MiningPriorityOwnsPP(now)){g_ppForward=0u;++g_miningPriorityBlocks;g_ppQuietUntil=0u;g_gatherNextScan=0u;return;}
     if(isAutoSource&&(tlo|thi)&&Ptr((void*)g_longPPReasonPtr)){
         /* Exact failure ownership is handled by the chained 5875 spell-fail callsite.
            The pending GUID is set before LongPP sees this cast, so 0x72 is blacklisted synchronously. */
         g_ppFailPendingAuto=1u;g_ppFailPendingSawActive=0u;g_ppFailPendingLo=tlo;g_ppFailPendingHi=thi;g_ppFailPendingUntil=now+PP_FAIL_PENDING_MS;
-        if(!g_ppHardRetryInjecting&&!g_ppqInjecting)PPHardRetryCapture(packet,tlo,thi);
+        /* Scheduler owns retries for its seed and injected packets.  Preserve
+           legacy retry capture only for non-queue auto traffic. */
+        if(!g_ppHardRetryInjecting&&!g_ppqInjecting&&!queueSeed)PPHardRetryCapture(packet,tlo,thi);
         PPHardSelect(tlo,thi,&variant);
+        if(queueSeed){
+            g_ppqActive=1u;PPQAccept(tlo,thi,now);++g_ppqTriggers;
+        }
     }
     PPPreemptOutgoing(now);
 }
