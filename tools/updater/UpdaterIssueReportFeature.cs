@@ -112,7 +112,7 @@ namespace WoW112Updater
                                 if (!response.IsSuccessStatusCode)
                                 {
                                     HandleAuthenticationFailure(response.StatusCode);
-                                    throw new InvalidOperationException("GitHub Issues HTTP " + (int)response.StatusCode + ": " + TrimForError(text) + "\n\nToken raportowy musi mieć Issues: Read and write tylko dla repo wow112.");
+                                    throw BuildIssueApiException(response.StatusCode, text);
                                 }
                                 var created = AsDictionary(json.DeserializeObject(text));
                                 var number = GetLong(created, "number");
@@ -269,7 +269,7 @@ namespace WoW112Updater
                     if (!response.IsSuccessStatusCode)
                     {
                         HandleAuthenticationFailure(response.StatusCode);
-                        throw new InvalidOperationException("GitHub Issues HTTP " + (int)response.StatusCode + ": " + TrimForError(text));
+                        throw BuildIssueApiException(response.StatusCode, text);
                     }
                     foreach (var item in AsArray(json.DeserializeObject(text)))
                     {
@@ -280,6 +280,31 @@ namespace WoW112Updater
                     }
                 }
                 return 0;
+            }
+
+            private static InvalidOperationException BuildIssueApiException(System.Net.HttpStatusCode statusCode, string responseText)
+            {
+                var code = (int)statusCode;
+                if (code == 403)
+                {
+                    return new InvalidOperationException(
+                        "GitHub odrzucił dostęp do Issues (HTTP 403).\n\n" +
+                        "Fine-grained token musi mieć:\n" +
+                        "• Repository access: Only select repositories -> wow112\n" +
+                        "• Repository permissions -> Issues: Read and write\n" +
+                        "• Metadata: Read-only (ustawiane automatycznie)\n\n" +
+                        "Updater usunął zapisany token. Po poprawieniu lub utworzeniu tokena kliknij Wyślij raport ponownie.\n\n" +
+                        "Szczegóły GitHub: " + TrimForError(responseText));
+                }
+                if (code == 401)
+                {
+                    return new InvalidOperationException(
+                        "GitHub odrzucił token (HTTP 401). Token jest nieprawidłowy, wygasł albo został cofnięty.\n\n" +
+                        "Utwórz/ustaw nowy fine-grained token dla repo wow112 z Issues: Read and write, a potem ponów wysłanie raportu.\n\n" +
+                        "Szczegóły GitHub: " + TrimForError(responseText));
+                }
+                return new InvalidOperationException(
+                    "GitHub Issues HTTP " + code + ": " + TrimForError(responseText));
             }
 
             private static HttpClient CreateClient(string reportToken)
