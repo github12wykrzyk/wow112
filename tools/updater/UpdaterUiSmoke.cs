@@ -52,32 +52,50 @@ namespace WoW112Updater
                 System.Windows.Forms.Application.DoEvents(); AssertDashboardLayout();
                 SaveUiBitmap(Path.Combine(folder, "layout-" + dimensions.Width + "x" + dimensions.Height + ".png"));
             }
-            // Explicit scaling is a layout stress test, not proof of OS per-monitor DPI behavior.
-            ClientSize = new Size(1040, 680);
-            Scale(new SizeF(1.25F, 1.25F));
-            System.Windows.Forms.Application.DoEvents(); AssertDashboardLayout();
-            SaveUiBitmap(Path.Combine(folder, "scale-125-simulation.png"));
-            Scale(new SizeF(1.2F, 1.2F));
-            ClientSize = new Size(1560, 1020);
-            System.Windows.Forms.Application.DoEvents();
-            SaveUiBitmap(Path.Combine(folder, "scale-150-simulation.png"));
-            AssertDashboardLayout();
+            // The hosted desktop is 1024x768 and clamps top-level HWND sizes.
+            // Render the real dashboard on an off-screen WinForms surface for larger
+            // logical viewports; assertions still check every button against its parents.
+            var dashboard = Controls[0];
+            Controls.Remove(dashboard);
+            using (var viewport = new Panel { Size = new Size(1040, 680) })
+            {
+                viewport.Controls.Add(dashboard);
+                foreach (float factor in new[] { 1.25F, 1.2F })
+                {
+                    float total = factor == 1.25F ? 1.25F : 1.5F;
+                    var fonts = WalkControls(dashboard).Concat(new[] { dashboard }).ToDictionary(x => x, x => x.Font);
+                    dashboard.Scale(new SizeF(factor, factor));
+                    foreach (var pair in fonts) pair.Key.Font = new Font(pair.Value.FontFamily, pair.Value.Size * factor, pair.Value.Style);
+                    viewport.Size = new Size((int)(1040 * total), (int)(680 * total));
+                    viewport.CreateControl(); viewport.PerformLayout();
+                    foreach (var control in WalkControls(viewport)) control.PerformLayout();
+                    using (var bitmap = new Bitmap(viewport.Width, viewport.Height))
+                    {
+                        viewport.DrawToBitmap(bitmap, new Rectangle(Point.Empty, viewport.Size));
+                        bitmap.Save(Path.Combine(folder, "scale-" + (int)(total * 100) + "-simulation.png"), ImageFormat.Png);
+                    }
+                    AssertDashboardLayout(viewport);
+                }
+                viewport.Controls.Remove(dashboard);
+            }
+            Controls.Add(dashboard);
             File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
             Close();
         }
-        private void AssertDashboardLayout()
+        private void AssertDashboardLayout(Control viewport = null)
         {
-            foreach (var button in WalkControls(this).OfType<Button>())
+            viewport = viewport ?? this;
+            foreach (var button in WalkControls(viewport).OfType<Button>())
             {
                 if (!button.Visible) continue;
-                var bounds = RectangleToClient(button.RectangleToScreen(button.ClientRectangle));
-                if (!ClientRectangle.Contains(bounds) || button.Height < 22) throw new Exception("Clipped button: " + button.Text + " " + bounds + " client " + ClientSize);
+                var bounds = viewport.RectangleToClient(button.RectangleToScreen(button.ClientRectangle));
+                if (!viewport.ClientRectangle.Contains(bounds) || button.Height < 22) throw new Exception("Clipped button: " + button.Text + " " + bounds + " client " + ClientSize);
                 var size = TextRenderer.MeasureText(button.Text, button.Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
                 if (size.Width + 12 > button.Width || size.Height + 4 > button.Height) throw new Exception("Button text does not fit: " + button.Text + " " + button.Size + " text " + size);
-                for (Control parent = button.Parent; parent != null && parent != this; parent = parent.Parent)
+                for (Control parent = button.Parent; parent != null && parent != viewport; parent = parent.Parent)
                 {
                     var relative = parent.RectangleToClient(button.RectangleToScreen(button.ClientRectangle));
-                    if (!parent.ClientRectangle.Contains(relative)) throw new Exception("Button outside parent: " + button.Text + " relative " + relative + " parent " + parent.ClientSize + " client " + ClientSize + " root rows " + string.Join(",", ((TableLayoutPanel)Controls[0]).RowStyles.Cast<RowStyle>().Select(x => x.Height.ToString()).ToArray()));
+                    if (!parent.ClientRectangle.Contains(relative)) throw new Exception("Button outside parent: " + button.Text + " relative " + relative + " parent " + parent.ClientSize + " client " + ClientSize);
                 }
             }
             if (log.Height < 40) throw new Exception("Log too small");
