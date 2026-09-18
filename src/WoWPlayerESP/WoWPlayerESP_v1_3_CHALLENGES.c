@@ -17,6 +17,8 @@
   BG/world transitions can temporarily expose a different Lua global set.
 
   WndProc chain rule:
+    HWND migration is deferred while an old subclass node remains reachable
+    below another module, so its saved predecessor stays bound to one window.
     the v1.2 base owns the primary game-window subclass and this wrapper adds
     one secondary subclass. A later module (currently WoWControlHub) is allowed
     to subclass above us. Therefore "attached" means same live game HWND, not
@@ -87,7 +89,9 @@ static void chal_world_reset(void) {
 static BOOL chal_probe_world(DWORD* outManager, DWORD* outLo, DWORD* outHi, HWND* outHwnd) {
     DWORD manager = 0u, linkBase = 0u, lo = 0u, hi = 0u;
     HWND hwnd = g_hooked_game_hwnd;
+    HWND liveHwnd = ((GetGameWindowFn)FN_GET_GAME_WINDOW)(0);
 
+    if (!hwnd || !liveHwnd || hwnd != liveHwnd || !IsWindow(liveHwnd)) return FALSE;
     if (!rd_u32(OBJMGR_GLOBAL, &manager)) return FALSE;
     if (manager < 0x00010000u || manager > 0x7FFF0000u) return FALSE;
     if (!readable4(manager + OM_LINK_BASE) ||
@@ -400,14 +404,34 @@ static void chal_remove_hook(void) {
     chal_clear_hook_tracking();
 }
 
+static BOOL chal_release_for_migration(void) {
+    LONG current;
+    if (!g_challenge_hooked || !g_challenge_hwnd || !g_challenge_prev_wndproc) {
+        chal_clear_hook_tracking();
+        return TRUE;
+    }
+    if (!IsWindow(g_challenge_hwnd)) {
+        chal_clear_hook_tracking();
+        return TRUE;
+    }
+
+    current = GetWindowLongA(g_challenge_hwnd, GWL_WNDPROC);
+    if ((WNDPROC32)(DWORD)current != chal_game_wndproc)
+        return FALSE;
+
+    SetWindowLongA(g_challenge_hwnd, GWL_WNDPROC, (LONG)(DWORD)g_challenge_prev_wndproc);
+    chal_clear_hook_tracking();
+    return TRUE;
+}
+
 static BOOL chal_try_install_hook(void) {
     LONG oldProc;
 
     if (chal_hook_is_current()) return TRUE;
 
-    /* Only an HWND/world-window transition makes an attached hook stale. A
-       later subclass above us is expected and must not trigger reinstallation. */
-    chal_remove_hook();
+    /* Keep the saved predecessor tied to the old HWND until that callback can
+       no longer be reached through a higher subclass (normally ControlHub). */
+    if (!chal_release_for_migration()) return FALSE;
 
     if (!g_hooked_game_hwnd || !g_old_game_wndproc || !IsWindow(g_hooked_game_hwnd)) return FALSE;
     oldProc = GetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC);
@@ -419,7 +443,7 @@ static BOOL chal_try_install_hook(void) {
     g_challenge_prev_wndproc = (WNDPROC32)(DWORD)oldProc;
     g_challenge_hwnd = g_hooked_game_hwnd;
     g_challenge_hooked = TRUE;
-    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active chain_safe=1");
+    log_line("CHALLENGE_HOOK_OK Turtle RESPONSE_PLAYER_CHALLENGES bridge active chain_safe=1 migration_safe=1");
     return TRUE;
 }
 

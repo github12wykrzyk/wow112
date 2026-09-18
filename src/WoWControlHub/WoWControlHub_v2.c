@@ -1259,17 +1259,44 @@ static void remove_game_hook(void)
     g_oldWndProc = NULL;
 }
 
+static BOOL release_game_hook_for_migration(void)
+{
+    LONG current;
+    if (!g_gameHwnd || !g_oldWndProc) {
+        g_gameHwnd = NULL;
+        g_oldWndProc = NULL;
+        return TRUE;
+    }
+    if (!IsWindow(g_gameHwnd)) {
+        g_gameHwnd = NULL;
+        g_oldWndProc = NULL;
+        return TRUE;
+    }
+
+    current = GetWindowLongA(g_gameHwnd, GWL_WNDPROC);
+    if ((WNDPROC32)(DWORD)current != hub_game_wndproc)
+        return FALSE;
+
+    SetWindowLongA(g_gameHwnd, GWL_WNDPROC, (LONG)(DWORD)g_oldWndProc);
+    g_gameHwnd = NULL;
+    g_oldWndProc = NULL;
+    return TRUE;
+}
+
 static BOOL ensure_game_hook(HWND hwnd)
 {
     LONG oldProc;
-    if (!hwnd) return FALSE;
+    if (!hwnd || !IsWindow(hwnd)) return FALSE;
 
     /* Do not reinstall merely because another legitimate module subclasses
        above us. If the game HWND is unchanged and we retained a predecessor,
        our node is still part of the chain. */
     if (g_gameHwnd == hwnd && g_oldWndProc) return TRUE;
 
-    remove_game_hook();
+    /* Never repoint the global predecessor while the old callback remains
+       reachable from a still-live HWND during a BG/world transition. */
+    if (!release_game_hook_for_migration()) return FALSE;
+
     oldProc = SetWindowLongA(hwnd, GWL_WNDPROC, (LONG)(DWORD)hub_game_wndproc);
     if (!oldProc) return FALSE;
     g_gameHwnd = hwnd;

@@ -354,6 +354,7 @@ __declspec(dllimport) BOOL   WINAPI PeekMessageA(struct MSG32*, HWND, UINT, UINT
 __declspec(dllimport) BOOL   WINAPI TranslateMessage(const struct MSG32*);
 __declspec(dllimport) LONG   WINAPI DispatchMessageA(const struct MSG32*);
 __declspec(dllimport) LONG   WINAPI SetWindowLongA(HWND, int, LONG);
+__declspec(dllimport) LONG   WINAPI GetWindowLongA(HWND, int);
 __declspec(dllimport) LONG   WINAPI CallWindowProcA(WNDPROC32, HWND, UINT, DWORD, LONG);
 
 __declspec(dllimport) HDC      WINAPI CreateCompatibleDC(HDC);
@@ -1501,33 +1502,63 @@ static LONG WINAPI esp_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPar
     return 0;
 }
 
-static BOOL ensure_game_click_hook(HWND hwnd) {
-    LONG oldProc;
-    if (!hwnd) return FALSE;
-    if (g_hooked_game_hwnd == hwnd && g_old_game_wndproc) return TRUE;
-    if (g_hooked_game_hwnd && g_old_game_wndproc && IsWindow(g_hooked_game_hwnd)) {
-        SetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC, (LONG)(DWORD)g_old_game_wndproc);
-    }
+static void clear_game_click_hook_tracking(void) {
     g_hooked_game_hwnd = NULL;
     g_old_game_wndproc = NULL;
+}
+
+static BOOL release_game_click_hook_for_migration(void) {
+    LONG current;
+    if (!g_hooked_game_hwnd || !g_old_game_wndproc) {
+        clear_game_click_hook_tracking();
+        return TRUE;
+    }
+    if (!IsWindow(g_hooked_game_hwnd)) {
+        clear_game_click_hook_tracking();
+        return TRUE;
+    }
+
+    current = GetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC);
+    if ((WNDPROC32)(DWORD)current != esp_game_wndproc)
+        return FALSE;
+
+    SetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC, (LONG)(DWORD)g_old_game_wndproc);
+    clear_game_click_hook_tracking();
+    return TRUE;
+}
+
+static BOOL ensure_game_click_hook(HWND hwnd) {
+    LONG oldProc;
+    if (!hwnd || !IsWindow(hwnd)) return FALSE;
+    if (g_hooked_game_hwnd == hwnd && g_old_game_wndproc) return TRUE;
+
+    /*
+      One global predecessor cannot safely represent two live HWND chains.
+      If another subclass is above us on the old window, keep the old binding
+      intact until that node becomes top-level or the old HWND is destroyed.
+    */
+    if (!release_game_click_hook_for_migration()) return FALSE;
+
     oldProc = SetWindowLongA(hwnd, GWL_WNDPROC, (LONG)(DWORD)esp_game_wndproc);
     if (!oldProc) return FALSE;
     g_hooked_game_hwnd = hwnd;
     g_old_game_wndproc = (WNDPROC32)(DWORD)oldProc;
     if (!g_click_hook_logged) {
-        log_line("CLICK_HOOK_OK mode=LEFT_CLICK_ON_ESP_LABEL native_target=0x00489A40 hotkey=F8_range_sweep");
+        log_line("CLICK_HOOK_OK mode=LEFT_CLICK_ON_ESP_LABEL native_target=0x00489A40 hotkey=F8_range_sweep migration_safe=1");
         g_click_hook_logged = TRUE;
     }
     return TRUE;
 }
 
 static void remove_game_click_hook(void) {
+    LONG current;
     g_click_hit_count = 0u;
     if (g_hooked_game_hwnd && g_old_game_wndproc && IsWindow(g_hooked_game_hwnd)) {
-        SetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC, (LONG)(DWORD)g_old_game_wndproc);
+        current = GetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC);
+        if ((WNDPROC32)(DWORD)current == esp_game_wndproc)
+            SetWindowLongA(g_hooked_game_hwnd, GWL_WNDPROC, (LONG)(DWORD)g_old_game_wndproc);
     }
-    g_hooked_game_hwnd = NULL;
-    g_old_game_wndproc = NULL;
+    clear_game_click_hook_tracking();
 }
 
 static BOOL label_content_changed(DWORD index, DWORD lo, DWORD hi, DWORD hp, DWORD maxHp,
