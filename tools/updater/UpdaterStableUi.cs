@@ -53,10 +53,14 @@ namespace WoW112Updater
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
             root.Controls.Add(header, 0, 0);
             var heading = Grid(1, 2);
+            heading.RowStyles.Add(new RowStyle(SizeType.Percent, 64));
+            heading.RowStyles.Add(new RowStyle(SizeType.Percent, 36));
             heading.Controls.Add(TextLabel("WoW112", 21, Gold, true), 0, 0);
             heading.Controls.Add(TextLabel("Updater  •  World of Warcraft 1.12.1 / 5875", 9, Muted), 0, 1);
             header.Controls.Add(heading, 0, 0);
             var identity = Grid(1, 2);
+            identity.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            identity.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             identity.Controls.Add(TextLabel("UPDATER  " + UpdaterVersion, 9, Muted), 0, 0);
             PrepareLabel(connectionInfo); identity.Controls.Add(connectionInfo, 0, 1);
             header.Controls.Add(identity, 1, 0);
@@ -174,6 +178,7 @@ namespace WoW112Updater
         {
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = columns, RowCount = rows, Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Color.Transparent };
             for (int i = 0; i < columns; i++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / columns));
+            if (rows == 1) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             return grid;
         }
         private static void Columns(TableLayoutPanel grid, params int[] widths)

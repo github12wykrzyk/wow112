@@ -13,8 +13,12 @@ namespace WoW112Updater
         internal void CaptureUiSmoke(string folder)
         {
             Directory.CreateDirectory(folder);
+            // Hosted runners may have a 1024x768 desktop. Allow off-screen bitmap
+            // capture at the explicitly requested test viewport instead of OS track-size clamping.
+            MaximumSize = new Size(4096, 4096);
             Show();
             System.Windows.Forms.Application.DoEvents();
+            ClientSize = new Size(1040, 680);
             string[] cases = { "first-run", "long-path", "available", "current", "build-running", "network-error", "downloading", "installing", "game-running" };
             foreach (var state in cases)
             {
@@ -36,8 +40,8 @@ namespace WoW112Updater
                 if (state == "game-running") status.Text = "Gra działa. Zamknij WoW przed aktualizacją.";
                 log.Text = "[08:30:00] Updater gotowy.\n[08:30:01] Przykładowy wpis diagnostyczny — tryb testu GUI.";
                 System.Windows.Forms.Application.DoEvents();
-                AssertDashboardLayout();
                 SaveUiBitmap(Path.Combine(folder, state + ".png"));
+                AssertDashboardLayout();
             }
             SetBusy(false, "Gotowy");
             if (!featureControls["verify"].Enabled || !featureControls["report"].Enabled) throw new Exception("Busy state did not restore actions");
@@ -54,6 +58,7 @@ namespace WoW112Updater
             System.Windows.Forms.Application.DoEvents(); AssertDashboardLayout();
             SaveUiBitmap(Path.Combine(folder, "scale-125-simulation.png"));
             Scale(new SizeF(1.2F, 1.2F));
+            ClientSize = new Size(1560, 1020);
             System.Windows.Forms.Application.DoEvents(); AssertDashboardLayout();
             SaveUiBitmap(Path.Combine(folder, "scale-150-simulation.png"));
             File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
@@ -65,7 +70,7 @@ namespace WoW112Updater
             {
                 if (!button.Visible) continue;
                 var bounds = RectangleToClient(button.RectangleToScreen(button.ClientRectangle));
-                if (!ClientRectangle.Contains(bounds) || button.Height < 22) throw new Exception("Clipped button: " + button.Text + " " + bounds);
+                if (!ClientRectangle.Contains(bounds) || button.Height < 22) throw new Exception("Clipped button: " + button.Text + " " + bounds + " client " + ClientSize);
                 var size = TextRenderer.MeasureText(button.Text, button.Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
                 if (size.Width + 12 > button.Width || size.Height + 4 > button.Height) throw new Exception("Button text does not fit: " + button.Text + " " + button.Size + " text " + size);
                 for (Control parent = button.Parent; parent != null && parent != this; parent = parent.Parent)
