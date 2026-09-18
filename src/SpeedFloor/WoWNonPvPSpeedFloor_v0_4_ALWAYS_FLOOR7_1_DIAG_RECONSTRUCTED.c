@@ -142,6 +142,11 @@ static volatile UINT_PTR32 g_timerId = 0u;
 static volatile u32 g_applyDetailCount = 0u;
 static volatile u32 g_lastHealthTick = 0u;
 static volatile u32 g_lastHealthApplyCount = 0u;
+/* Track values written by this module so switching floors can restore the last observed natural run speed. */
+static volatile u32 g_lastSelectedFloorBits = 0xFFFFFFFFu;
+static volatile u32 g_lastAppliedFloorBits = 0u;
+static volatile u32 g_restoreRunBits = 0u;
+static volatile u32 g_restoreRunValid = 0u;
 
 /* Runtime config defaults intentionally match the accepted v0.4 behaviour. */
 static volatile u32 g_cfgEnabled = 1u;
@@ -160,6 +165,7 @@ static const char kEventStealth[] = "STEALTH_STATE";
 static const char kEventTargetHostile0[] = "TARGET_HOSTILE_PLAYER=0";
 static const char kEventTargetHostile1[] = "TARGET_HOSTILE_PLAYER=1";
 static const char kEventNeeded[] = "FLOOR_NEEDED";
+static const char kEventRestore[] = "FLOOR_PROFILE_RESTORE";
 static const char kEventLoad[] = "LOAD_ALWAYS_FLOOR71_DIAG_V04";
 
 /* MSVC-style x86 floating point links may expect this symbol with /NODEFAULTLIB. */
@@ -429,6 +435,7 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     GetTickCountFn getTickCount;
     u32 now;
     u32 applyDelta;
+    u32 runBeforeBits;
 
     (void)hwnd;
     (void)msg;
@@ -446,8 +453,32 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
     curAfter = curBefore;
     runAfter = runBefore;
     /* Preserve the existing PvP detector semantics: hostile player target selects the PvP floor. */
-    floorBits = targetHostile ? g_cfgPvpMinimumSpeedBits : g_cfgMinimumSpeedBits;
+    floorBits = g_cfgEnabled ? (targetHostile ? g_cfgPvpMinimumSpeedBits : g_cfgMinimumSpeedBits) : 0u;
     floorValue = bits_float(floorBits);
+    runBeforeBits = float_bits(runBefore);
+
+    /* If the game/server changed the run field after our last write, that value owns
+       the timeline and the previous restore snapshot is stale. */
+    if (g_restoreRunValid && runBeforeBits != g_lastAppliedFloorBits)
+        g_restoreRunValid = 0u;
+
+    /* A floor is a minimum, not a cap.  When the selected profile/value changes,
+       first remove our previous floor write and return to the last observed natural
+       run value.  The new floor is evaluated against that restored value below. */
+    if (g_lastSelectedFloorBits != 0xFFFFFFFFu &&
+        floorBits != g_lastSelectedFloorBits &&
+        g_restoreRunValid && runBeforeBits == g_lastAppliedFloorBits) {
+        write_u32(player + PLAYER_RUN_SPEED_OFF, g_restoreRunBits);
+        recalc_speed(player);
+        curBefore = read_f32(player + PLAYER_CURRENT_SPEED_OFF);
+        runBefore = read_f32(player + PLAYER_RUN_SPEED_OFF);
+        curAfter = curBefore;
+        runAfter = runBefore;
+        g_restoreRunValid = 0u;
+        log_event(kEventRestore, pvp, stealth, player,
+                  runBefore, curBefore, runAfter, curAfter, 0u);
+    }
+    g_lastSelectedFloorBits = floorBits;
 
     if (g_prevPvp != pvp) {
         g_prevPvp = pvp;
@@ -482,6 +513,9 @@ static void STDCALL SpeedFloor_TimerProc(HWND32 hwnd, UINT32 msg, UINT_PTR32 tim
         log_event(kEventNeeded, pvp, stealth, player,
                   runBefore, curBefore, runBefore, curBefore, 0u);
 
+        g_restoreRunBits = float_bits(runBefore);
+        g_restoreRunValid = 1u;
+        g_lastAppliedFloorBits = floorBits;
         write_u32(player + PLAYER_RUN_SPEED_OFF, floorBits);
         recalc_speed(player);
 
