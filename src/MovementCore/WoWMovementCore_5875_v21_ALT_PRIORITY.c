@@ -15,11 +15,6 @@
  *
  * Ordinary NoFall, AutoGather, AutoOpen, AutoPP, F8/F10 SafeBreak modes and
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
- *
- * V24 WORK candidate: manual PP / LongPP / loot hook surfaces remain identical
- * to ec336. The first AutoLootPP packet is allowed through the proven path and
- * seeds the queue; only later legacy retries are suppressed. Mining priority
- * is automation-only and can never block manual Pick Pocket.
  */
 
 #define DllMain W112_MovementCoreV20_DllMain
@@ -306,7 +301,7 @@ static void AltPriority_Remove(void)
     g_altPriorityBaseSendWrapper=0u;
 }
 
-__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120400u;}
+__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityStarts(void){return g_altPriorityStarts;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityPPBlocks(void){return g_altPriorityPPBlocks;}

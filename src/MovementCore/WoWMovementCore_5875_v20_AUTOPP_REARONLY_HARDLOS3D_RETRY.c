@@ -218,29 +218,6 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define PP_FAIL_SENTINEL                 0xFFu
 #define SPELL_FAILED_LINE_OF_SIGHT       0x2Au
 #define SPELL_FAILED_TARGET_NO_POCKETS   0x72u
-
-/* V23 fresh-first queue. It lives inside the already-proven V20 PP arbiter,
- * so manual PP keeps the exact pre-V22 send/loot chain. */
-#define PPQ_SCAN_MS                        75u
-#define PPQ_MIN_SEND_GAP_MS               100u
-#define PPQ_RETRY_DELAY_MS                100u
-#define PPQ_PRUNE_MS                      200u
-#define PPQ_MAX_ATTEMPTS                    3u
-#define PPQ_SEEN_CAP                      512u
-#define PPQ_RETRY_CAP                     128u
-#define PPQ_CREATURE_TYPE_FN       0x00605570u
-#define PPQ_ATTACKABLE_FN          0x00606980u
-#define PPQ_LOOT_WINDOW_FLAG        0x00B71B44u
-#define PPQ_UNIT_AUX_OFF            0x00000110u
-#define PPQ_AUX_LEVEL_OFF           0x00000070u
-#define PPQ_RANGE_SQ                   90000.0f
-#define PPQ_CREATURE_HUMANOID               7
-#define PPQ_CREATURE_UNDEAD                 6
-#define PPQ_RESULT_SUCCESS                  1u
-#define PPQ_RESULT_NO_POCKETS               2u
-#define PPQ_RESULT_RETRY                    3u
-#define PPQ_RESULT_TIMEOUT                  4u
-
 #define MINING_PRIORITY_SCAN_MS           90u
 #define MINING_PRIORITY_HOLD_MS          360u
 #define SPELL_MINING                    2575u
@@ -324,24 +301,11 @@ static volatile DWORD g_autoPPEnabled=1u,g_autoPPBlocked=0u,g_autoPPManualPass=0
 /* V68 AutoPP per-life blacklist + rear-only PP HARDLOS3D state. */
 typedef struct PPBlackSlot { DWORD lo,hi; BYTE state; BYTE pad0,pad1,pad2; } PPBlackSlot;
 typedef struct PPSweepSlot { DWORD lo,hi,index; BYTE state; BYTE pad0,pad1,pad2; } PPSweepSlot;
-typedef struct PPQSeenSlot { DWORD lo,hi,obj,attempts; BYTE state,queued,pad0,pad1; } PPQSeenSlot;
-typedef struct PPQRetryItem { DWORD lo,hi,due; } PPQRetryItem;
-typedef int (__thiscall *PPQCreatureType_t)(void*);
-typedef int (__stdcall *PPQAttackable_t)(void*);
 static PPBlackSlot g_ppBlack[PP_BLACK_CAP];
 static PPSweepSlot g_ppSweep[PP_SWEEP_CAP];
 static volatile DWORD g_ppBlackCount=0u,g_ppBlackAdds=0u,g_ppBlackBlocks=0u,g_ppBlackDeathClears=0u,g_ppBlackNextDeathScan=0u;
 static volatile DWORD g_ppFailPendingAuto=0u,g_ppFailPendingLo=0u,g_ppFailPendingHi=0u,g_ppFailPendingUntil=0u,g_ppFailPendingVariant=0u,g_ppFailPendingSawActive=0u,g_ppPendingSerialBlocks=0u;
 static volatile DWORD g_ppHardLOSArms=0u,g_ppHardLOSLOSFailures=0u,g_ppHardLOSOverrides=0u;
-static PPQSeenSlot g_ppqSeen[PPQ_SEEN_CAP];
-static PPQRetryItem g_ppqRetry[PPQ_RETRY_CAP];
-static volatile DWORD g_ppqActive=0u,g_ppqInjecting=0u,g_ppqInFlight=0u;
-static volatile DWORD g_ppqInFlightLo=0u,g_ppqInFlightHi=0u,g_ppqInFlightTick=0u;
-static volatile DWORD g_ppqNextScan=0u,g_ppqLastSend=0u,g_ppqNextPrune=0u,g_ppqSeenCursor=0u;
-static volatile DWORD g_ppqRetryHead=0u,g_ppqRetryTail=0u,g_ppqRetryCount=0u;
-static volatile DWORD g_ppqResultCode=0u,g_ppqResultLo=0u,g_ppqResultHi=0u;
-static volatile DWORD g_ppqTriggers=0u,g_ppqFreshSent=0u,g_ppqRetryQueued=0u,g_ppqRetrySent=0u,g_ppqRetryDropped=0u;
-static volatile DWORD g_ppqSuccess=0u,g_ppqNoPockets=0u,g_ppqRetries=0u,g_ppqTimeouts=0u;
 static BYTE g_ppHardRetryPacket[PP_HARDLOS_PACKET_CAP];
 static volatile DWORD g_ppHardRetryActive=0u,g_ppHardRetryScheduled=0u,g_ppHardRetryInjecting=0u,g_ppHardRetryDue=0u,g_ppHardRetrySize=0u,g_ppHardRetryAttempts=0u,g_ppHardRetrySent=0u,g_ppHardRetryExhausted=0u;
 static volatile DWORD g_ppHardRetryLo=0u,g_ppHardRetryHi=0u;
@@ -386,7 +350,6 @@ static float g_diagMoveX=0,g_diagMoveY=0,g_diagMoveZ=0;
 static float g_diagLegacyX=0,g_diagLegacyY=0,g_diagLegacyZ=0;
 static const char g_gatherLogName[]="AutoGather_debug.log";
 static DWORD GatherHasStealth(BYTE*p);
-static void PPQTick(DWORD now);
 
 static VirtualProtect_t VP(void){return *(VirtualProtect_t*)WOW_IAT_VIRTUALPROTECT;}
 static FlushInstructionCache_t FIC(void){return *(FlushInstructionCache_t*)WOW_IAT_FLUSHICACHE;}
@@ -684,28 +647,17 @@ static void PPHardRetryTick(DWORD now)
        do not consume a HARDLOS variant in that case. */
     if(g_ppHardRetryActive&&!g_ppFailPendingAuto){if(g_ppHardRetryAttempts>1u)--g_ppHardRetryAttempts;g_ppHardRetryScheduled=1u;g_ppHardRetryDue=now+100u;}
 }
-static void PPQSetResult(DWORD code,DWORD lo,DWORD hi)
-{
-    if(!g_ppqInFlight)return;
-    if(lo!=g_ppqInFlightLo||hi!=g_ppqInFlightHi)return;
-    g_ppqResultCode=code;g_ppqResultLo=lo;g_ppqResultHi=hi;
-}
-
 static void __cdecl PPBlacklistOnFail(DWORD reason)
 {
     DWORD lo,hi,added,now;
     if(!g_ppFailPendingAuto)return;
     lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;g_ppHardArmed=0u;
     if(reason==SPELL_FAILED_TARGET_NO_POCKETS){
-        added=PPBlackAdd(lo,hi);g_ppFailLogEvent=added?1u:2u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppBlackCount;
-        PPQSetResult(PPQ_RESULT_NO_POCKETS,lo,hi);PPHardRetryCancel();
+        added=PPBlackAdd(lo,hi);g_ppFailLogEvent=added?1u:2u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppBlackCount;PPHardRetryCancel();
     }else if(reason==SPELL_FAILED_LINE_OF_SIGHT){
         ++g_ppHardLOSLOSFailures;g_ppFailLogEvent=3u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppFailPendingVariant;
-        PPQSetResult(PPQ_RESULT_RETRY,lo,hi);
         if(g_ppHardRetryActive&&g_ppHardRetryLo==lo&&g_ppHardRetryHi==hi&&g_ppHardRetryAttempts<PP_HARDLOS_VARIANTS){now=GT()?GT()():0u;g_ppHardRetryScheduled=1u;g_ppHardRetryDue=now+PP_HARDLOS_RETRY_DELAY_MS;}else PPHardRetryCancel();
-    }else{
-        PPQSetResult(PPQ_RESULT_RETRY,lo,hi);PPHardRetryCancel();
-    }
+    }else PPHardRetryCancel();
 }
 __declspec(naked) static void PPBlacklist_FailThunk(void)
 {
@@ -733,20 +685,10 @@ static void PPScanBlacklistDeaths(DWORD now)
 static void PPBlacklistTick(DWORD now)
 {
     DWORD ev=g_ppFailLogEvent,lo,hi,aux;
-    if(g_ppFailPendingAuto){
-        if(LongPPActive())g_ppFailPendingSawActive=1u;
-        else if(g_ppFailPendingSawActive){
-            lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;
-            PPQSetResult(PPQ_RESULT_SUCCESS,lo,hi);PPHardRetryCancel();
-        }else if((LONG)(now-g_ppFailPendingUntil)>=0){
-            lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;
-            PPQSetResult(PPQ_RESULT_TIMEOUT,lo,hi);PPHardRetryCancel();
-        }
-    }
+    if(g_ppFailPendingAuto){if(LongPPActive())g_ppFailPendingSawActive=1u;else if(g_ppFailPendingSawActive){g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;PPHardRetryCancel();}else if((LONG)(now-g_ppFailPendingUntil)>=0){g_ppFailPendingAuto=0u;PPHardRetryCancel();}}
     if(ev){lo=g_ppFailLogLo;hi=g_ppFailLogHi;aux=g_ppFailLogVariant;g_ppFailLogEvent=0u;if(ev==1u)GatherFileLog("AUTOPP_BLACKLIST_EMPTY_POCKETS",now,0u,lo,hi,0.0f,0u,aux);else if(ev==2u)GatherFileLog("AUTOPP_BLACKLIST_ALREADY",now,0u,lo,hi,0.0f,0u,aux);else if(ev==3u)GatherFileLog("AUTOPP_HARDLOS_LOS_RETRY",now,0u,lo,hi,0.0f,0u,aux);else if(ev==4u)GatherFileLog("AUTOPP_HARDLOS_SWEEP_EXHAUSTED",now,0u,lo,hi,0.0f,0u,aux);}
     PPScanBlacklistDeaths(now);
     PPHardRetryTick(now);
-    PPQTick(now);
 }
 static float AbsF(float v){return v<0?-v:v;}
 static void SendReal(BYTE*p){if(Ptr(p))((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);}
@@ -1085,25 +1027,6 @@ static DWORD MiningPriorityOwnsPP(DWORD now)
     return g_miningPriorityValidUntil&&((LONG)(g_miningPriorityValidUntil-now)>0)&&g_miningPriorityEntry ? 1u:0u;
 }
 
-/* ---------------- V23 fresh-first queue implementation ---------------- */
-static DWORD PPQHash(DWORD lo,DWORD hi){DWORD h=lo*2654435761u;h^=hi*2246822519u;h^=h>>16;return h&(PPQ_SEEN_CAP-1u);}
-static PPQSeenSlot* PPQSeenFind(DWORD lo,DWORD hi){DWORD i,h=PPQHash(lo,hi);for(i=0u;i<PPQ_SEEN_CAP;i++){PPQSeenSlot*s=&g_ppqSeen[(h+i)&(PPQ_SEEN_CAP-1u)];if(s->state==0u)return 0;if(s->state==1u&&s->lo==lo&&s->hi==hi)return s;}return 0;}
-static PPQSeenSlot* PPQSeenGet(DWORD lo,DWORD hi){DWORD i,h=PPQHash(lo,hi),firstT=0xFFFFFFFFu;for(i=0u;i<PPQ_SEEN_CAP;i++){DWORD k=(h+i)&(PPQ_SEEN_CAP-1u);PPQSeenSlot*s=&g_ppqSeen[k];if(s->state==1u&&s->lo==lo&&s->hi==hi)return s;if(s->state==2u&&firstT==0xFFFFFFFFu)firstT=k;if(s->state==0u){if(firstT!=0xFFFFFFFFu)s=&g_ppqSeen[firstT];s->lo=lo;s->hi=hi;s->obj=0u;s->attempts=0u;s->queued=0u;s->state=1u;return s;}}{PPQSeenSlot*s=&g_ppqSeen[g_ppqSeenCursor++&(PPQ_SEEN_CAP-1u)];s->lo=lo;s->hi=hi;s->obj=0u;s->attempts=0u;s->queued=0u;s->state=1u;return s;}}
-static void PPQSeenClear(PPQSeenSlot*s){if(!s)return;s->state=2u;s->queued=0u;s->lo=s->hi=s->obj=s->attempts=0u;}
-static void PPQPrune(DWORD now){DWORD i;if((LONG)(g_ppqNextPrune-now)>0)return;g_ppqNextPrune=now+PPQ_PRUNE_MS;for(i=0u;i<PPQ_SEEN_CAP;i++)if(g_ppqSeen[i].state==1u){PPQSeenSlot*s=&g_ppqSeen[i];BYTE*o=(BYTE*)s->obj;DWORD*d;if(!Ptr(o)||*(DWORD*)(o+OFF_OBJ_GUID_LOW)!=s->lo||*(DWORD*)(o+OFF_OBJ_GUID_HIGH)!=s->hi){PPQSeenClear(s);continue;}d=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);if(!Ptr(d)||d[UNIT_FIELD_HEALTH_INDEX]==0u){PPSweepRemove(s->lo,s->hi);PPQSeenClear(s);}}}
-static DWORD PPQUnitLevel(BYTE*o){BYTE*a;if(!Ptr(o))return 0u;a=*(BYTE**)(o+PPQ_UNIT_AUX_OFF);return Ptr(a)?*(DWORD*)(a+PPQ_AUX_LEVEL_OFF):0u;}
-static float PPQDist2(BYTE*a,BYTE*b){float dx,dy,dz;if(!Ptr(a)||!Ptr(b))return PPQ_RANGE_SQ+1.0f;dx=*(float*)(a+OFF_UNIT_X)-*(float*)(b+OFF_UNIT_X);dy=*(float*)(a+OFF_UNIT_Y)-*(float*)(b+OFF_UNIT_Y);dz=*(float*)(a+OFF_UNIT_Z)-*(float*)(b+OFF_UNIT_Z);return dx*dx+dy*dy+dz*dz;}
-static DWORD PPQEligible(BYTE*p,BYTE*o,float*outD2){DWORD*d,mask,lo,hi,lvl,plvl;int ct;float d2;if(!Ptr(p)||!Ptr(o))return 0u;d=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);if(!Ptr(d))return 0u;mask=d[OBJECT_FIELD_TYPE_INDEX];if(!(mask&TYPEMASK_UNIT)||(mask&TYPEMASK_PLAYER)||d[UNIT_FIELD_HEALTH_INDEX]==0u)return 0u;lo=*(DWORD*)(o+OFF_OBJ_GUID_LOW);hi=*(DWORD*)(o+OFF_OBJ_GUID_HIGH);if((lo|hi)==0u||PPBlackFind(lo,hi)||PPQSeenFind(lo,hi))return 0u;ct=((PPQCreatureType_t)PPQ_CREATURE_TYPE_FN)((void*)o);if(ct!=PPQ_CREATURE_HUMANOID&&ct!=PPQ_CREATURE_UNDEAD)return 0u;if(!((PPQAttackable_t)PPQ_ATTACKABLE_FN)((void*)o))return 0u;plvl=PPQUnitLevel(p);lvl=PPQUnitLevel(o);if(lvl>=plvl+3u)return 0u;d2=PPQDist2(p,o);if(d2>PPQ_RANGE_SQ)return 0u;if(outD2)*outD2=d2;return 1u;}
-static BYTE* PPQFindFresh(BYTE*p,DWORD*olo,DWORD*ohi,float*outD2){BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o,*best=0;DWORD i=0u;float bestD=PPQ_RANGE_SQ+1.0f;if(olo)*olo=0u;if(ohi)*ohi=0u;if(outD2)*outD2=0.0f;if(!Ptr(m)||!Ptr(p))return 0;o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);while(i++<4095u&&Ptr(o)){BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);float d2=0.0f;if(PPQEligible(p,o,&d2)&&d2<bestD){best=o;bestD=d2;}if(!Ptr(n)||n==o)break;o=n;}if(best){if(olo)*olo=*(DWORD*)(best+OFF_OBJ_GUID_LOW);if(ohi)*ohi=*(DWORD*)(best+OFF_OBJ_GUID_HIGH);if(outD2)*outD2=bestD;}return best;}
-static DWORD PPQPackGuid(BYTE*dst,DWORD lo,DWORD hi){BYTE x[8],mask=0u;DWORD i,n=1u;x[0]=(BYTE)lo;x[1]=(BYTE)(lo>>8);x[2]=(BYTE)(lo>>16);x[3]=(BYTE)(lo>>24);x[4]=(BYTE)hi;x[5]=(BYTE)(hi>>8);x[6]=(BYTE)(hi>>16);x[7]=(BYTE)(hi>>24);for(i=0u;i<8u;i++)if(x[i])mask|=(BYTE)(1u<<i);dst[0]=mask;for(i=0u;i<8u;i++)if(x[i])dst[n++]=x[i];return n;}
-static DWORD PPQRetryContains(DWORD lo,DWORD hi){DWORD i;for(i=0u;i<g_ppqRetryCount;i++){DWORD k=(g_ppqRetryHead+i)%PPQ_RETRY_CAP;if(g_ppqRetry[k].lo==lo&&g_ppqRetry[k].hi==hi)return 1u;}return 0u;}
-static void PPQRetryEnqueue(DWORD lo,DWORD hi,DWORD due){PPQSeenSlot*s=PPQSeenFind(lo,hi);if(!s||s->attempts>=PPQ_MAX_ATTEMPTS||s->queued||PPQRetryContains(lo,hi))return;if(g_ppqRetryCount>=PPQ_RETRY_CAP){++g_ppqRetryDropped;return;}g_ppqRetry[g_ppqRetryTail].lo=lo;g_ppqRetry[g_ppqRetryTail].hi=hi;g_ppqRetry[g_ppqRetryTail].due=due;g_ppqRetryTail=(g_ppqRetryTail+1u)%PPQ_RETRY_CAP;++g_ppqRetryCount;s->queued=1u;++g_ppqRetryQueued;}
-static DWORD PPQRetryPop(DWORD now,DWORD*olo,DWORD*ohi){DWORD n=g_ppqRetryCount,i;if(olo)*olo=0u;if(ohi)*ohi=0u;for(i=0u;i<n;i++){PPQRetryItem q=g_ppqRetry[g_ppqRetryHead];PPQSeenSlot*s;g_ppqRetryHead=(g_ppqRetryHead+1u)%PPQ_RETRY_CAP;--g_ppqRetryCount;s=PPQSeenFind(q.lo,q.hi);if(s)s->queued=0u;if((LONG)(now-q.due)>=0){if(olo)*olo=q.lo;if(ohi)*ohi=q.hi;return 1u;}if(g_ppqRetryCount<PPQ_RETRY_CAP){g_ppqRetry[g_ppqRetryTail]=q;g_ppqRetryTail=(g_ppqRetryTail+1u)%PPQ_RETRY_CAP;++g_ppqRetryCount;if(s)s->queued=1u;}}return 0u;}
-static void PPQAccept(DWORD lo,DWORD hi,DWORD now){PPQSeenSlot*s=PPQSeenGet(lo,hi);BYTE*o=ObjByGuid(lo,hi);if(s){s->obj=(DWORD)o;if(s->attempts<0xFFFFFFFFu)++s->attempts;}g_ppqInFlight=1u;g_ppqInFlightLo=lo;g_ppqInFlightHi=hi;g_ppqInFlightTick=now;g_ppqLastSend=now;}
-static void PPQFinish(DWORD retry,DWORD now){DWORD lo=g_ppqInFlightLo,hi=g_ppqInFlightHi;if(!g_ppqInFlight)return;g_ppqInFlight=0u;g_ppqInFlightLo=g_ppqInFlightHi=g_ppqInFlightTick=0u;if(retry)PPQRetryEnqueue(lo,hi,now+PPQ_RETRY_DELAY_MS);}
-static DWORD PPQSend(DWORD lo,DWORD hi,DWORD now,DWORD retry){BYTE raw[64];DataStore5875 p;DWORD n=0u;*(DWORD*)(raw+n)=0x012Eu;n+=4u;*(DWORD*)(raw+n)=SPELL_PICK_POCKET;n+=4u;*(WORD*)(raw+n)=0x0002u;n+=2u;n+=PPQPackGuid(raw+n,lo,hi);p.vtable=ADDR_DATASTORE_VTABLE;p.dataPtr=raw;p.backOffset=0u;p.capacity=64u;p.size=n;p.unk14=0u;g_ppqInjecting=1u;DirectClientSend(&p);g_ppqInjecting=0u;if(g_ppFailPendingAuto&&g_ppFailPendingLo==lo&&g_ppFailPendingHi==hi){PPQAccept(lo,hi,now);if(retry)++g_ppqRetrySent;else ++g_ppqFreshSent;return 1u;}return 0u;}
-static void PPQTick(DWORD now){BYTE*p,*o;DWORD lo=0u,hi=0u,code;float d2=0.0f;PPQSeenSlot*s;if(!g_ppqActive)return;if(g_ppqInFlight&&g_ppqResultCode){code=g_ppqResultCode;g_ppqResultCode=0u;if(code==PPQ_RESULT_SUCCESS){++g_ppqSuccess;PPQFinish(0u,now);}else if(code==PPQ_RESULT_NO_POCKETS){++g_ppqNoPockets;PPQFinish(0u,now);}else if(code==PPQ_RESULT_TIMEOUT){++g_ppqTimeouts;++g_ppqRetries;PPQFinish(1u,now);}else{++g_ppqRetries;PPQFinish(1u,now);}}if(!g_autoPPEnabled||g_ppqInFlight||g_ppFailPendingAuto)return;if(LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;if((*(DWORD*)PPQ_LOOT_WINDOW_FLAG)!=0u||CurrentTargetIsPlayer()||MiningPriorityOwnsPP(now))return;if(g_ppqLastSend&&(DWORD)(now-g_ppqLastSend)<PPQ_MIN_SEND_GAP_MS)return;if((LONG)(g_ppqNextScan-now)>0)return;g_ppqNextScan=now+PPQ_SCAN_MS;p=LocalPlayer();if(!Ptr(p))return;PPQPrune(now);o=PPQFindFresh(p,&lo,&hi,&d2);if(o){PPQSend(lo,hi,now,0u);return;}if(PPQRetryPop(now,&lo,&hi)){o=ObjByGuid(lo,hi);s=PPQSeenFind(lo,hi);if(!Ptr(o)||!s||s->attempts>=PPQ_MAX_ATTEMPTS)return;if(!PPQSend(lo,hi,now,1u))PPQRetryEnqueue(lo,hi,now+PPQ_RETRY_DELAY_MS);}}
-
 static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DWORD*okind,float*od2)
 {
     BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o,*best=0;DWORD i,visible=0,nodes=0,profmatch=0,inrange=0,posfail=0,eligible=0,entry=0,kind=0,lo=0,hi=0,src=0,match=0,inCombat=0u;float px,py,pz,d2,bestd=GATHER_SCAN_RANGE_SQ+1.0f,x=0,y=0,z=0,copperBest=1000000000.0f;DWORD*desc;
@@ -1368,7 +1291,7 @@ static void PPPreemptOutgoing(DWORD now)
 
 static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
 {
-    BYTE*raw;DWORD op,spell,now,isAutoSource,queueSeed=0u,tlo=0u,thi=0u,variant=0u;
+    BYTE*raw;DWORD op,spell,now,isAutoSource,tlo=0u,thi=0u,variant=0u;
     g_ppForward=1u;
     if(g_ppSendRecursion||!packet||packet->size<8u||packet->size>MAX_PACKET_SIZE)return;
     raw=PacketRawBase(packet);if(!raw)return;op=*(DWORD*)raw;if(op!=0x12Eu)return;spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
@@ -1379,33 +1302,19 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
     PPDecodeTargetGuid(packet,&tlo,&thi);
     if(isAutoSource&&CurrentTargetIsPlayer()){g_ppForward=0u;++g_autoPPBlocked;++g_autoPPTargetPlayerBlocks;g_ppQuietUntil=0u;return;}
     if(!g_autoPPEnabled&&isAutoSource){g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;}
-    queueSeed=(isAutoSource&&!g_ppqInjecting&&!g_ppqActive)?1u:0u;
-    /* Once seeded, exact AutoLootPP retries are replaced by the queue.  The
-       first foreign auto packet is deliberately NOT suppressed: it uses the
-       previously proven ec336 LongPP path and seeds deterministic ownership. */
-    if(isAutoSource&&!g_ppqInjecting&&g_ppqActive){
-        g_ppForward=0u;++g_autoPPBlocked;++g_ppqTriggers;g_ppQuietUntil=0u;return;
-    }
     /* One auto PP transaction at a time: failure callbacks have no GUID in 5875.
        Serialization makes 0x72 -> GUID mapping deterministic even under scanner pressure. */
     if(isAutoSource&&g_ppFailPendingAuto){g_ppForward=0u;++g_autoPPBlocked;++g_ppPendingSerialBlocks;g_ppQuietUntil=0u;return;}
     if(isAutoSource&&g_ppHardRetryActive&&g_ppHardRetryScheduled&&!g_ppHardRetryInjecting){g_ppForward=0u;++g_autoPPBlocked;++g_ppPendingSerialBlocks;g_ppQuietUntil=0u;return;}
     if(isAutoSource&&(tlo|thi)&&PPBlackFind(tlo,thi)){g_ppForward=0u;++g_autoPPBlocked;++g_ppBlackBlocks;g_ppQuietUntil=0u;return;}
     if(!isAutoSource)++g_autoPPManualPass;
-    /* Mining-first is an automation policy only. Never block a user-initiated
-       manual Pick Pocket because a mining node is cached nearby. */
-    if(isAutoSource&&MiningPriorityOwnsPP(now)){g_ppForward=0u;++g_miningPriorityBlocks;g_ppQuietUntil=0u;g_gatherNextScan=0u;return;}
+    if(MiningPriorityOwnsPP(now)){g_ppForward=0u;++g_miningPriorityBlocks;g_ppQuietUntil=0u;g_gatherNextScan=0u;return;}
     if(isAutoSource&&(tlo|thi)&&Ptr((void*)g_longPPReasonPtr)){
         /* Exact failure ownership is handled by the chained 5875 spell-fail callsite.
            The pending GUID is set before LongPP sees this cast, so 0x72 is blacklisted synchronously. */
         g_ppFailPendingAuto=1u;g_ppFailPendingSawActive=0u;g_ppFailPendingLo=tlo;g_ppFailPendingHi=thi;g_ppFailPendingUntil=now+PP_FAIL_PENDING_MS;
-        /* Scheduler owns retries for its seed and injected packets.  Preserve
-           legacy retry capture only for non-queue auto traffic. */
-        if(!g_ppHardRetryInjecting&&!g_ppqInjecting&&!queueSeed)PPHardRetryCapture(packet,tlo,thi);
+        if(!g_ppHardRetryInjecting)PPHardRetryCapture(packet,tlo,thi);
         PPHardSelect(tlo,thi,&variant);
-        if(queueSeed){
-            g_ppqActive=1u;PPQAccept(tlo,thi,now);++g_ppqTriggers;
-        }
     }
     PPPreemptOutgoing(now);
 }
@@ -1847,17 +1756,6 @@ __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSOverrides(void){return g_
 __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSRetrySent(void){return g_ppHardRetrySent;}
 __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSRetryExhausted(void){return g_ppHardRetryExhausted;}
 __declspec(dllexport) DWORD __stdcall AutoPP_GetHardLOSRetryAttempts(void){return g_ppHardRetryAttempts;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetActive(void){return g_ppqActive;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetInFlight(void){return g_ppqInFlight;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetTriggers(void){return g_ppqTriggers;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetFreshSent(void){return g_ppqFreshSent;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetRetryQueued(void){return g_ppqRetryQueued;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetRetrySent(void){return g_ppqRetrySent;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetRetryDepth(void){return g_ppqRetryCount;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetSuccess(void){return g_ppqSuccess;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetNoPockets(void){return g_ppqNoPockets;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetTimeouts(void){return g_ppqTimeouts;}
-__declspec(dllexport) DWORD __stdcall AutoPPQueue_GetLootOpen(void){return (*(DWORD*)PPQ_LOOT_WINDOW_FLAG)!=0u?1u:0u;}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetChainOk(void){return g_ppChainOk;}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetLongPPActive(void){return LongPPActive();}
 __declspec(dllexport) DWORD __stdcall PPIntegration_GetNextSendHook(void){return g_nextSendTarget;}

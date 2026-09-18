@@ -6,7 +6,7 @@
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "PP throughput V25 root-cause fix: exact AutoLootPP/LongPP bytes unchanged. Queue no longer uses MovementCore legacy GatherLootOpen address 0x00B71B48 (verified target GUID low); queue loot gate now uses AutoLootPP-audited 0x00B71B44. This directly fixes the observed one-auto-PP-then-stop behavior. Manual PP path unchanged.",
+  "note": "Startup-recovery candidate: temporarily use exact accepted V69 runtime bytes for SpeedFloor and AutoLootPP instead of rebuilt reconstructed-source overrides. Keep PickPocketSelectiveRange, PlayerESP and MovementCore work candidates unchanged. This isolates the two most recently changed DLL candidates after a no-error startup failure.",
   "source_fingerprint_warning_allowlist": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
