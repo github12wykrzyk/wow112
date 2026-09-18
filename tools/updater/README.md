@@ -12,8 +12,9 @@ Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater
 - Requires `candidate_metadata.json` and a valid 64-character `package_sha256`; missing/invalid metadata blocks install and VERIFY / REPAIR.
 - Verifies the inner candidate ZIP against `package_sha256` before any game files are changed.
 - Rejects nested ZIP paths and duplicate root filenames even when they differ only by letter case.
-- Compares SHA256 of package files with the selected game directory and installs only changed files.
-- Generates `dlls.txt` from DLL order in the verified candidate ZIP, including candidate companion modules when present.
+- Compares SHA256 of every DLL independently against the selected game directory and reports per-DLL state (current / update / missing / removed upstream).
+- The **DLL-e** dialog has a persistent update toggle for every DLL. Checked means the updater may replace/add/remove that DLL; unchecked preserves the local DLL version and skips its update/removal.
+- Generates `dlls.txt` from the verified candidate order while preserving locally held DLLs whose per-DLL update toggle is disabled.
 - Tracks updater-managed files in `.wow112_updater/installed.json`; state and backup manifests are written transactionally through a temporary file with a previous-state recovery copy.
 - File replacement first uses `File.Replace` and has a verified copy fallback for filesystems where replace semantics are unavailable.
 - Shows the locally installed channel, GitHub Actions run, short commit SHA and installation time directly in the GUI.
@@ -103,7 +104,7 @@ A failed/in-progress newest run is surfaced as an explicit error instead of sile
 `.github/workflows/build_updater.yml` runs `python tools/verify_current.py`, compiles `WoW112Updater.exe` and `WoW112UpdaterBootstrap.exe` as Windows x86 .NET Framework 4.8 executables, verifies PE32/x86 for both and emits SHA256 metadata in `updater_build.json` using the same `UpdaterBuildInfo.Version` constant as the application.
 
 
-## Single-screen dashboard (1.9, work candidate)
+## Single-screen dashboard (2.0, work candidate)
 
 One Polish dashboard now contains configuration, installed/available build details,
 update/launch actions, maintenance, backup selection and a live log. Token editing

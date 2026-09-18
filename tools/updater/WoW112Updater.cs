@@ -151,6 +151,7 @@ namespace WoW112Updater
                 gameDir.Text = GetString(root, "game_dir");
                 var selected = GetString(root, "channel");
                 if (selected == "stable") channel.SelectedIndex = 1;
+                LoadDllUpdatePreferences(root);
                 var protectedToken = GetString(root, "token_dpapi");
                 if (!string.IsNullOrWhiteSpace(protectedToken))
                 {
@@ -178,6 +179,7 @@ namespace WoW112Updater
                 root["game_dir"] = gameDir.Text.Trim();
                 root["channel"] = IsStable() ? "stable" : "test";
                 root["token_dpapi"] = protectedToken;
+                root["dll_update_enabled"] = GetDllUpdatePreferencesForSave();
                 File.WriteAllText(configPath, json.Serialize(root), Encoding.UTF8);
                 if (announce) Log("Ustawienia zapisane lokalnie.");
             }
@@ -215,17 +217,29 @@ namespace WoW112Updater
                 SetBusy(true, "Sprawdzanie GitHuba...");
                 lastRemote = await FindLatestPackageAsync();
                 ShowRemotePackage();
+                await InspectRemoteDllsAsync(lastRemote);
+                ShowRemoteDllSummary();
                 var installed = ReadInstalledState();
                 Log("Najnowszy build: " + ShortSha(lastRemote.HeadSha) + " / run " + lastRemote.RunId);
-                if (installed != null && GetLong(installed, "run_id") == lastRemote.RunId && GetString(installed, "channel") == lastRemote.Channel)
+
+                var dllChanges = LastDllChangeCount;
+                var enabledDllChanges = LastEnabledDllChangeCount;
+                var skippedDllChanges = dllChanges - enabledDllChanges;
+                if (dllChanges > 0)
                 {
-                    status.Text = "Masz najnowszą wersję " + lastRemote.Channel.ToUpperInvariant() + ".";
-                    Log("Lokalny stan odpowiada najnowszemu artefaktowi.");
+                    status.Text = "DLL: " + enabledDllChanges + " do aktualizacji"
+                        + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty);
+                    Log("Wykryto " + dllChanges + " zmian DLL; aktywne aktualizacje: " + enabledDllChanges + ".");
+                }
+                else if (installed != null && GetLong(installed, "run_id") == lastRemote.RunId && GetString(installed, "channel") == lastRemote.Channel)
+                {
+                    status.Text = "Masz najnowszą wersję " + lastRemote.Channel.ToUpperInvariant() + " • wszystkie DLL aktualne.";
+                    Log("Każda DLL odpowiada najnowszemu artefaktowi.");
                 }
                 else
                 {
-                    status.Text = "Dostępna aktualizacja " + lastRemote.Channel.ToUpperInvariant() + ": " + ShortSha(lastRemote.HeadSha);
-                    Log("Aktualizacja jest dostępna.");
+                    status.Text = "Nowy build dostępny • DLL bez zmian.";
+                    Log("Nowy artifact jest dostępny, ale SHA256 wszystkich DLL jest już zgodne.");
                 }
             }
             catch (Exception ex)
@@ -253,18 +267,9 @@ namespace WoW112Updater
                 SetBusy(true, "Pobieranie najnowszej paczki...");
                 lastRemote = await FindLatestPackageAsync();
                 ShowRemotePackage();
-                Log("Pobieram artifact: " + lastRemote.ArtifactName);
-                var outerBytes = await DownloadBytesAsync(lastRemote.DownloadUrl);
-                Log("Pobrano " + FormatBytes(outerBytes.LongLength) + ". Weryfikuję paczkę...");
-
-                byte[] innerBytes;
-                string expectedPackageSha;
-                ExtractInnerPackage(outerBytes, lastRemote.InnerZipName, out innerBytes, out expectedPackageSha);
-                var gotPackageSha = Sha256(innerBytes);
-                if (!string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("SHA256 wewnętrznej paczki nie zgadza się z candidate_metadata.json.");
-
-                Log("SHA256 paczki OK: " + gotPackageSha.Substring(0, 16) + "...");
+                var innerBytes = await GetVerifiedPackageBytesAsync(lastRemote);
+                InspectDllPackage(innerBytes, gameDir.Text.Trim());
+                ShowRemoteDllSummary();
                 var installRoot = Path.GetFullPath(gameDir.Text.Trim());
                 var installRemote = lastRemote;
                 status.Text = "Instalowanie zweryfikowanych plików...";
@@ -444,9 +449,6 @@ namespace WoW112Updater
             if (!files.Any(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException("Paczka nie zawiera DLL-i.");
 
-            var dllList = string.Join("\r\n", files.Where(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).Select(f => f.Name).ToArray()) + "\r\n";
-            files.Add(new PackageFile("dlls.txt", Encoding.ASCII.GetBytes(dllList)));
-
             var oldState = ReadInstalledState(root);
             var oldManaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (oldState != null)
@@ -458,7 +460,53 @@ namespace WoW112Updater
                 }
             }
 
+            var remoteDlls = files.Where(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).ToList();
+            var remoteDllNames = new HashSet<string>(remoteDlls.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+            var installFiles = new List<PackageFile>();
+            var finalDllNames = new List<string>();
+
+            foreach (var file in files)
+            {
+                if (!file.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    installFiles.Add(file);
+                    continue;
+                }
+
+                var dest = SafeDestination(root, file.Name);
+                if (IsDllUpdateEnabled(file.Name))
+                {
+                    installFiles.Add(file);
+                    finalDllNames.Add(file.Name);
+                }
+                else if (File.Exists(dest))
+                {
+                    finalDllNames.Add(file.Name);
+                    Log("HOLD " + file.Name + " (aktualizacja DLL wyłączona; zachowuję lokalną wersję)");
+                }
+                else
+                {
+                    Log("SKIP " + file.Name + " (aktualizacja DLL wyłączona; brak lokalnego pliku)");
+                }
+            }
+
+            foreach (var oldName in oldManaged.Where(name => name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !remoteDllNames.Contains(name)))
+            {
+                var dest = SafeDestination(root, oldName);
+                if (!IsDllUpdateEnabled(oldName) && File.Exists(dest) && !finalDllNames.Contains(oldName, StringComparer.OrdinalIgnoreCase))
+                {
+                    finalDllNames.Add(oldName);
+                    Log("HOLD " + oldName + " (DLL nie ma już w paczce, ale usunięcie jest wyłączone)");
+                }
+            }
+
+            var dllList = finalDllNames.Count == 0 ? string.Empty : string.Join("\r\n", finalDllNames.ToArray()) + "\r\n";
+            installFiles.Add(new PackageFile("dlls.txt", Encoding.ASCII.GetBytes(dllList)));
+            files = installFiles;
+
             var newManaged = new HashSet<string>(files.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+            foreach (var name in finalDllNames) newManaged.Add(name);
+
             var changed = new List<PackageFile>();
             foreach (var file in files)
             {
@@ -466,7 +514,10 @@ namespace WoW112Updater
                 if (!File.Exists(dest) || !string.Equals(Sha256File(dest), file.Sha256, StringComparison.OrdinalIgnoreCase))
                     changed.Add(file);
             }
-            var stale = oldManaged.Where(name => !newManaged.Contains(name) && File.Exists(SafeDestination(root, name))).ToList();
+            var stale = oldManaged.Where(name =>
+                !newManaged.Contains(name)
+                && File.Exists(SafeDestination(root, name))
+                && (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || IsDllUpdateEnabled(name))).ToList();
 
             var backupDir = string.Empty;
             if (changed.Count > 0 || stale.Count > 0)

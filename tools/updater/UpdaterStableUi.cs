@@ -16,6 +16,7 @@ namespace WoW112Updater
         private readonly Label connectionInfo = new Label();
         private readonly Label remoteInfo = new Label();
         private readonly Button tokenSettings = new Button();
+        private readonly Button dllUpdatesButton = new Button();
         private bool dashboardReady;
         private static readonly Color Canvas = Color.FromArgb(21, 23, 28);
         private static readonly Color Surface = Color.FromArgb(30, 33, 40);
@@ -86,6 +87,9 @@ namespace WoW112Updater
             config.Controls.Add(auth, 0, 3);
             tokenSettings.Click += delegate { EditAccessToken(); };
 
+            featureControls["dllUpdates"] = dllUpdatesButton;
+            dllUpdatesButton.Click += async delegate { await ShowDllUpdateDialogAsync(); };
+
             var update = Card("AKTUALIZACJA", 4);
             update.RowStyles.Clear();
             foreach (var height in new[] { 22F, 64F, 32F, 10F, 40F }) update.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
@@ -99,12 +103,13 @@ namespace WoW112Updater
             progress.Dock = DockStyle.Fill; progress.Margin = new Padding(4, 1, 4, 3);
             progress.Style = ProgressBarStyle.Continuous;
             update.Controls.Add(progress, 0, 3);
-            var actions = Grid(4, 1); actions.ColumnStyles.Clear();
-            foreach (float width in new[] { 21F, 21F, 34F, 24F }) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, width));
+            var actions = Grid(5, 1); actions.ColumnStyles.Clear();
+            foreach (float width in new[] { 16F, 16F, 18F, 30F, 20F }) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, width));
             actions.Controls.Add(ActionButton(checkButton, "Sprawdź"), 0, 0);
-            actions.Controls.Add(ActionButton(updateButton, "Aktualizuj"), 1, 0);
-            actions.Controls.Add(ActionButton(updatePlayButton, "Aktualizuj i uruchom", true), 2, 0);
-            actions.Controls.Add(ActionButton(launchButton, "Uruchom grę"), 3, 0);
+            actions.Controls.Add(ActionButton(dllUpdatesButton, "DLL-e"), 1, 0);
+            actions.Controls.Add(ActionButton(updateButton, "Aktualizuj"), 2, 0);
+            actions.Controls.Add(ActionButton(updatePlayButton, "Aktualizuj i uruchom", true), 3, 0);
+            actions.Controls.Add(ActionButton(launchButton, "Uruchom grę"), 4, 0);
             update.Controls.Add(actions, 0, 4);
 
             var tools = Card("NARZĘDZIA", 2); root.Controls.Add(tools, 0, 3);
@@ -222,6 +227,7 @@ namespace WoW112Updater
         private void ResetRemote(bool resetConnection)
         {
             lastRemote = null;
+            ResetDllUpdateInspection();
             remoteInfo.Text = "Nie sprawdzono — wybierz Sprawdź.";
             detailsTip.SetToolTip(remoteInfo, remoteInfo.Text);
             if (resetConnection) SetConnectionState(string.IsNullOrWhiteSpace(token.Text) ? "GitHub: brak tokenu" : "GitHub: token niesprawdzony");
