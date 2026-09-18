@@ -98,6 +98,7 @@ typedef BOOL   (__stdcall *KillTimer_t)(HWND, UINT_PTR);
 #define AUTO_TIMER_MS                 100u
 #define STATIONARY_SETTLE_MS          650u
 #define MACRO_RETRY_GAP_MS            750u
+#define WORLD_REACQUIRE_MS            1500u
 #define STATIONARY_EPSILON            0.03f
 
 /* Required by MSVC CRT-less x86 when floating-point operations are emitted. */
@@ -135,6 +136,11 @@ static float g_lastX = 0.0f;
 static float g_lastY = 0.0f;
 static float g_lastZ = 0.0f;
 static UINT_PTR g_autoTimer = 0u;
+static DWORD g_worldManager = 0u;
+static DWORD g_worldPlayer = 0u;
+static DWORD g_worldGuidLo = 0u;
+static DWORD g_worldGuidHi = 0u;
+static DWORD g_worldReadySince = 0u;
 
 /* Exact working macro sequence supplied by the user, wrapped only in API guards. */
 static const char g_junkboxMacroScript[] =
@@ -172,6 +178,32 @@ static BOOL Ptr(const void* p)
 {
     DWORD v = (DWORD)p;
     return v >= 0x10000u && v <= 0x7FFDFFFFu && !(v & 1u);
+}
+
+static BOOL SafeReadDword(const void* address, DWORD* out)
+{
+    DWORD v = (DWORD)address;
+    if (!out || v < 0x00010000u || v > 0x7FFFFFFBu) return FALSE;
+    __try {
+        *out = *(volatile const DWORD*)address;
+        return TRUE;
+    } __except(1) {
+        *out = 0u;
+        return FALSE;
+    }
+}
+
+static BOOL SafeReadFloat(const void* address, float* out)
+{
+    DWORD v = (DWORD)address;
+    if (!out || v < 0x00010000u || v > 0x7FFFFFFBu) return FALSE;
+    __try {
+        *out = *(volatile const float*)address;
+        return TRUE;
+    } __except(1) {
+        *out = 0.0f;
+        return FALSE;
+    }
 }
 
 static float AbsF(float v)
@@ -242,35 +274,41 @@ static void ExecuteFrameScript(const char* script)
 
 static BYTE* LocalPlayer(void)
 {
-    BYTE* manager = *(BYTE**)WOW_OBJECT_MANAGER_PTR;
-    BYTE* object;
-    DWORD lo, hi, i;
+    DWORD managerRaw = 0u, objectRaw = 0u;
+    DWORD lo = 0u, hi = 0u, i;
 
-    if (!Ptr(manager)) return 0;
-    lo = *(DWORD*)(manager + OM_PLAYER_GUID_LO_OFF);
-    hi = *(DWORD*)(manager + OM_PLAYER_GUID_HI_OFF);
-    if ((lo | hi) == 0u) return 0;
+    if (!SafeReadDword((const void*)WOW_OBJECT_MANAGER_PTR, &managerRaw) ||
+        !Ptr((void*)managerRaw)) return 0;
+    if (!SafeReadDword((const void*)(managerRaw + OM_PLAYER_GUID_LO_OFF), &lo) ||
+        !SafeReadDword((const void*)(managerRaw + OM_PLAYER_GUID_HI_OFF), &hi) ||
+        (lo | hi) == 0u) return 0;
+    if (!SafeReadDword((const void*)(managerRaw + OM_FIRST_OBJECT_OFF), &objectRaw))
+        return 0;
 
-    object = *(BYTE**)(manager + OM_FIRST_OBJECT_OFF);
-    for (i = 0u; i < 4095u && Ptr(object); ++i) {
-        BYTE* next;
-        if (*(DWORD*)(object + OBJ_GUID_LO_OFF) == lo &&
-            *(DWORD*)(object + OBJ_GUID_HI_OFF) == hi)
-            return object;
-        next = *(BYTE**)(object + OBJ_NEXT_OFF);
-        if (next == object) break;
-        object = next;
+    for (i = 0u; i < 4095u && Ptr((void*)objectRaw); ++i) {
+        DWORD objLo = 0u, objHi = 0u, nextRaw = 0u;
+        if (!SafeReadDword((const void*)(objectRaw + OBJ_GUID_LO_OFF), &objLo) ||
+            !SafeReadDword((const void*)(objectRaw + OBJ_GUID_HI_OFF), &objHi))
+            return 0;
+        if (objLo == lo && objHi == hi)
+            return (BYTE*)objectRaw;
+        if (!SafeReadDword((const void*)(objectRaw + OBJ_NEXT_OFF), &nextRaw))
+            return 0;
+        if (nextRaw == objectRaw) break;
+        objectRaw = nextRaw;
     }
     return 0;
 }
 
 static BOOL PlayerInCombat(BYTE* player)
 {
-    DWORD* descriptors;
+    DWORD descriptors = 0u, flags = 0u;
     if (!Ptr(player)) return FALSE;
-    descriptors = *(DWORD**)(player + OBJ_DESCRIPTOR_PTR_OFF);
-    if (!Ptr(descriptors)) return FALSE;
-    return (descriptors[UNIT_FIELD_FLAGS_INDEX] & UNIT_FLAG_IN_COMBAT) ? TRUE : FALSE;
+    if (!SafeReadDword(player + OBJ_DESCRIPTOR_PTR_OFF, &descriptors) ||
+        !Ptr((void*)descriptors)) return FALSE;
+    if (!SafeReadDword((const void*)(descriptors + UNIT_FIELD_FLAGS_INDEX * 4u), &flags))
+        return FALSE;
+    return (flags & UNIT_FLAG_IN_COMBAT) ? TRUE : FALSE;
 }
 
 static BOOL IsStealthSpell(DWORD spellId)
@@ -285,15 +323,16 @@ static BOOL IsStealthSpell(DWORD spellId)
 
 static BOOL PlayerHasStealth(BYTE* player)
 {
-    DWORD* descriptors;
-    DWORD i, spellId;
+    DWORD descriptors = 0u;
+    DWORD i, spellId = 0u;
 
     if (!Ptr(player)) return FALSE;
-    descriptors = *(DWORD**)(player + OBJ_DESCRIPTOR_PTR_OFF);
-    if (!Ptr(descriptors)) return FALSE;
+    if (!SafeReadDword(player + OBJ_DESCRIPTOR_PTR_OFF, &descriptors) ||
+        !Ptr((void*)descriptors)) return FALSE;
 
     for (i = 0u; i < UNIT_FIELD_AURA_SLOTS; ++i) {
-        spellId = descriptors[UNIT_FIELD_AURA_INDEX + i];
+        if (!SafeReadDword((const void*)(descriptors + (UNIT_FIELD_AURA_INDEX + i) * 4u), &spellId))
+            return FALSE;
         if (spellId && IsStealthSpell(spellId)) return TRUE;
     }
     return FALSE;
@@ -306,6 +345,53 @@ static void ResetStationaryState(void)
     g_stationary = 0u;
 }
 
+static void ResetWorldGuard(void)
+{
+    g_worldManager = 0u;
+    g_worldPlayer = 0u;
+    g_worldGuidLo = 0u;
+    g_worldGuidHi = 0u;
+    g_worldReadySince = 0u;
+    ResetStationaryState();
+}
+
+static BOOL WorldStable(BYTE* player, DWORD tick)
+{
+    DWORD manager = 0u, lo = 0u, hi = 0u, objLo = 0u, objHi = 0u;
+
+    if (!Ptr(player) ||
+        !SafeReadDword((const void*)WOW_OBJECT_MANAGER_PTR, &manager) ||
+        !Ptr((void*)manager) ||
+        !SafeReadDword((const void*)(manager + OM_PLAYER_GUID_LO_OFF), &lo) ||
+        !SafeReadDword((const void*)(manager + OM_PLAYER_GUID_HI_OFF), &hi) ||
+        (lo | hi) == 0u ||
+        !SafeReadDword(player + OBJ_GUID_LO_OFF, &objLo) ||
+        !SafeReadDword(player + OBJ_GUID_HI_OFF, &objHi) ||
+        objLo != lo || objHi != hi) {
+        ResetWorldGuard();
+        return FALSE;
+    }
+
+    if (manager != g_worldManager ||
+        (DWORD)player != g_worldPlayer ||
+        lo != g_worldGuidLo ||
+        hi != g_worldGuidHi) {
+        g_worldManager = manager;
+        g_worldPlayer = (DWORD)player;
+        g_worldGuidLo = lo;
+        g_worldGuidHi = hi;
+        g_worldReadySince = tick;
+        ResetStationaryState();
+        return FALSE;
+    }
+
+    if (!g_worldReadySince) {
+        g_worldReadySince = tick;
+        return FALSE;
+    }
+    return (DWORD)(tick - g_worldReadySince) >= WORLD_REACQUIRE_MS ? TRUE : FALSE;
+}
+
 static BOOL PlayerStationary(BYTE* player, DWORD tick)
 {
     float x, y, z;
@@ -315,9 +401,12 @@ static BOOL PlayerStationary(BYTE* player, DWORD tick)
         return FALSE;
     }
 
-    x = *(float*)(player + OBJ_X_OFF);
-    y = *(float*)(player + OBJ_Y_OFF);
-    z = *(float*)(player + OBJ_Z_OFF);
+    if (!SafeReadFloat(player + OBJ_X_OFF, &x) ||
+        !SafeReadFloat(player + OBJ_Y_OFF, &y) ||
+        !SafeReadFloat(player + OBJ_Z_OFF, &z)) {
+        ResetStationaryState();
+        return FALSE;
+    }
 
     if (!g_havePosition) {
         g_lastX = x;
@@ -357,10 +446,7 @@ static void __stdcall AutoJunkboxTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWO
     (void)id;
 
     player = LocalPlayer();
-    if (!player) {
-        ResetStationaryState();
-        return;
-    }
+    if (!WorldStable(player, tick)) return;
 
     /* Never break rogue stealth for a bag lockbox.  Reset the settle state so
        leaving stealth requires a fresh stationary window before automation. */
@@ -371,8 +457,11 @@ static void __stdcall AutoJunkboxTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWO
 
     if (!PlayerStationary(player, tick)) return;
     if (PlayerInCombat(player)) return;
-    if (*(DWORD*)WOW_CASTING_SPELLID != 0u) return;
-    if (*(DWORD*)WOW_IS_LOOTING_STATE != 0u) return;
+    {
+        DWORD casting = 0u, looting = 0u;
+        if (!SafeReadDword((const void*)WOW_CASTING_SPELLID, &casting) || casting != 0u) return;
+        if (!SafeReadDword((const void*)WOW_IS_LOOTING_STATE, &looting) || looting != 0u) return;
+    }
     if (g_lastMacroTick != 0u &&
         (DWORD)(tick - g_lastMacroTick) < MACRO_RETRY_GAP_MS)
         return;
@@ -533,7 +622,7 @@ static void RemoveHook(void)
     WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_300f, 4u);
     g_patchedCalls = 0u;
     g_installed = 0u;
-    ResetStationaryState();
+    ResetWorldGuard();
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetStatus(void)

@@ -40,6 +40,7 @@
 #define CHALLENGE_CACHE_SIZE 256u
 #define CHALLENGE_REQUERY_FRAMES 60u
 #define CHALLENGE_POST_GAP_FRAMES 15u
+#define CHALLENGE_WORLD_STABLE_POLLS 15u /* 15 x 100 ms = 1.5 s quarantine after world/BG rebuild */
 
 #define FN_FRAMESCRIPT_EXECUTE 0x00704CD0u
 #define FN_FRAMESCRIPT_GETTEXT 0x00703BF0u
@@ -66,6 +67,86 @@ static HWND g_challenge_hwnd = NULL;
 static BOOL g_challenge_hooked = FALSE;
 static DWORD g_next_challenge_post_frame = 0u;
 static BOOL g_challenge_logged = FALSE;
+static volatile DWORD g_challenge_world_ready = 0u;
+static DWORD g_challenge_world_polls = 0u;
+static DWORD g_challenge_world_manager = 0u;
+static DWORD g_challenge_world_guid_lo = 0u;
+static DWORD g_challenge_world_guid_hi = 0u;
+static HWND g_challenge_world_hwnd = NULL;
+
+static void chal_world_reset(void) {
+    g_challenge_world_ready = 0u;
+    g_challenge_world_polls = 0u;
+    g_challenge_world_manager = 0u;
+    g_challenge_world_guid_lo = 0u;
+    g_challenge_world_guid_hi = 0u;
+    g_challenge_world_hwnd = NULL;
+    g_next_challenge_post_frame = g_render_frame + CHALLENGE_POST_GAP_FRAMES;
+}
+
+static BOOL chal_probe_world(DWORD* outManager, DWORD* outLo, DWORD* outHi, HWND* outHwnd) {
+    DWORD manager = 0u, linkBase = 0u, lo = 0u, hi = 0u;
+    HWND hwnd = g_hooked_game_hwnd;
+
+    if (!rd_u32(OBJMGR_GLOBAL, &manager)) return FALSE;
+    if (manager < 0x00010000u || manager > 0x7FFF0000u) return FALSE;
+    if (!readable4(manager + OM_LINK_BASE) ||
+        !readable4(manager + OM_FIRST_OBJECT) ||
+        !readable4(manager + OM_LOCAL_GUID_LO) ||
+        !readable4(manager + OM_LOCAL_GUID_HI)) return FALSE;
+    if (!rd_u32(manager + OM_LINK_BASE, &linkBase) || linkBase != 0x38u) return FALSE;
+    if (!rd_u32(manager + OM_LOCAL_GUID_LO, &lo) ||
+        !rd_u32(manager + OM_LOCAL_GUID_HI, &hi) ||
+        (lo == 0u && hi == 0u)) return FALSE;
+    if (!g_cached_local_obj || !cached_object_matches(g_cached_local_obj, lo, hi)) return FALSE;
+    if (!hwnd || !IsWindow(hwnd)) return FALSE;
+
+    if (outManager) *outManager = manager;
+    if (outLo) *outLo = lo;
+    if (outHi) *outHi = hi;
+    if (outHwnd) *outHwnd = hwnd;
+    return TRUE;
+}
+
+static BOOL chal_world_identity_ready(void) {
+    DWORD manager, lo, hi;
+    HWND hwnd;
+    if (!g_challenge_world_ready) return FALSE;
+    if (!chal_probe_world(&manager, &lo, &hi, &hwnd)) return FALSE;
+    return manager == g_challenge_world_manager &&
+           lo == g_challenge_world_guid_lo &&
+           hi == g_challenge_world_guid_hi &&
+           hwnd == g_challenge_world_hwnd;
+}
+
+static void chal_world_guard_tick(void) {
+    DWORD manager, lo, hi;
+    HWND hwnd;
+
+    if (!chal_probe_world(&manager, &lo, &hi, &hwnd)) {
+        chal_world_reset();
+        return;
+    }
+
+    if (manager != g_challenge_world_manager ||
+        lo != g_challenge_world_guid_lo ||
+        hi != g_challenge_world_guid_hi ||
+        hwnd != g_challenge_world_hwnd) {
+        g_challenge_world_manager = manager;
+        g_challenge_world_guid_lo = lo;
+        g_challenge_world_guid_hi = hi;
+        g_challenge_world_hwnd = hwnd;
+        g_challenge_world_polls = 1u;
+        g_challenge_world_ready = 0u;
+        g_next_challenge_post_frame = g_render_frame + CHALLENGE_POST_GAP_FRAMES;
+        return;
+    }
+
+    if (g_challenge_world_polls < CHALLENGE_WORLD_STABLE_POLLS)
+        ++g_challenge_world_polls;
+    if (g_challenge_world_polls >= CHALLENGE_WORLD_STABLE_POLLS)
+        g_challenge_world_ready = 1u;
+}
 
 static DWORD chal_strlen(const char* s) {
     DWORD n = 0u;
@@ -226,6 +307,7 @@ static void chal_query_main_thread(DWORD lo, DWORD hi) {
     FrameScriptExecuteFn exec = (FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
     FrameScriptGetTextFn getText = (FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
 
+    if (!chal_world_identity_ready()) return;
     c = chal_find(lo, hi);
     if (!c) return;
 
@@ -343,6 +425,7 @@ static BOOL chal_try_install_hook(void) {
 
 static void chal_schedule_query(void) {
     DWORD i;
+    if (!chal_world_identity_ready()) return;
     if (!chal_hook_is_current()) return;
     if (g_render_frame < g_next_challenge_post_frame) return;
 
@@ -364,10 +447,13 @@ static void chal_schedule_query(void) {
 static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
     (void)ignored;
     while (!g_stop) {
-        if (!chal_hook_is_current()) chal_try_install_hook();
-        if (chal_hook_is_current()) {
-            chal_apply_known_names();
-            chal_schedule_query();
+        chal_world_guard_tick();
+        if (g_challenge_world_ready) {
+            if (!chal_hook_is_current()) chal_try_install_hook();
+            if (chal_hook_is_current() && chal_world_identity_ready()) {
+                chal_apply_known_names();
+                chal_schedule_query();
+            }
         }
         Sleep(100u);
     }
