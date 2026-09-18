@@ -6,5 +6,12 @@
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "Startup-recovery candidate: temporarily use exact accepted V69 runtime bytes for SpeedFloor and AutoLootPP instead of rebuilt reconstructed-source overrides. Keep PickPocketSelectiveRange, PlayerESP and MovementCore work candidates unchanged. This isolates the two most recently changed DLL candidates after a no-error startup failure."
+  "note": "Startup-recovery candidate: temporarily use exact accepted V69 runtime bytes for SpeedFloor and AutoLootPP instead of rebuilt reconstructed-source overrides. Keep PickPocketSelectiveRange, PlayerESP and MovementCore work candidates unchanged. This isolates the two most recently changed DLL candidates after a no-error startup failure.",
+  "source_fingerprint_warning_allowlist": [
+    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
+    "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
+    "WoWPlayerESP_v1_2_range_sweep.dll",
+    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
+  ]
 }
