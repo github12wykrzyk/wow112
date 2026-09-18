@@ -408,6 +408,7 @@ static float g_current_farthest_sq = 0.0f;
 static DWORD g_current_over150 = 0u;
 static DWORD g_current_over300 = 0u;
 
+static volatile DWORD g_esp_enabled = 1u;
 static volatile DWORD g_range_sweep_enabled = 0u;
 static DWORD g_sweep_state = 0u;
 static DWORD g_sweep_index = 0u;
@@ -1847,7 +1848,13 @@ static void render_frame_fast(void) {
         refresh_esp_cache(manager, localObj, guidLo, guidHi, lx, ly, lz);
     }
 
+    if (!g_esp_enabled) g_range_sweep_enabled = 0u;
     range_sweep_tick(manager, localObj, guidLo, guidHi, lx, ly, lz);
+    if (!g_esp_enabled) {
+        g_click_hit_count = 0u;
+        overlay_hide();
+        return;
+    }
 
     if (!init_projection_context(&projCtx, &projReason) || !projCtx.ready) {
         overlay_hide();

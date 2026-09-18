@@ -36,6 +36,8 @@ typedef void* HWND;
 typedef unsigned int UINT;
 typedef DWORD UINT_PTR;
 
+#include "../common/W112ControlAPI.h"
+
 typedef BOOL   (__stdcall *VirtualProtect_t)(LPVOID, DWORD, DWORD, DWORD*);
 typedef BOOL   (__stdcall *FlushInstructionCache_t)(HANDLE, const void*, DWORD);
 typedef HANDLE (__stdcall *GetCurrentProcess_t)(void);
@@ -125,6 +127,12 @@ static const DWORD g_callsites[] = {
 
 static const BYTE g_300f[4] = { 0x00, 0x00, 0x96, 0x43 };
 static const BYTE g_9f[4]   = { 0x00, 0x00, 0x10, 0x41 };
+
+static volatile DWORD g_cfgAutoJunkboxEnabled = 1u;
+static volatile DWORD g_cfgStationarySettleMs = STATIONARY_SETTLE_MS;
+static volatile DWORD g_cfgMacroRetryGapMs = MACRO_RETRY_GAP_MS;
+static W112_ControlSettingV1 g_controlSettings[7];
+static volatile DWORD g_controlDescriptorReady = 0u;
 
 static volatile DWORD g_installed = 0u;
 static volatile DWORD g_pickPocketHits = 0u;
@@ -535,7 +543,7 @@ static BOOL PlayerStationary(BYTE* player, DWORD tick)
         return FALSE;
     }
 
-    if ((DWORD)(tick - g_stationarySince) < STATIONARY_SETTLE_MS) {
+    if ((DWORD)(tick - g_stationarySince) < g_cfgStationarySettleMs) {
         g_stationary = 0u;
         return FALSE;
     }
@@ -550,6 +558,11 @@ static void __stdcall AutoJunkboxTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWO
     (void)hwnd;
     (void)msg;
     (void)id;
+
+    if (!g_cfgAutoJunkboxEnabled) {
+        ResetStationaryState();
+        return;
+    }
 
     player = LocalPlayer();
     if (!WorldStable(player, tick)) return;
@@ -569,7 +582,7 @@ static void __stdcall AutoJunkboxTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWO
         if (!SafeReadDword((const void*)WOW_IS_LOOTING_STATE, &looting) || looting != 0u) return;
     }
     if (g_lastMacroTick != 0u &&
-        (DWORD)(tick - g_lastMacroTick) < MACRO_RETRY_GAP_MS)
+        (DWORD)(tick - g_lastMacroTick) < g_cfgMacroRetryGapMs)
         return;
 
     ExecuteFrameScript(g_junkboxMacroScript);
@@ -732,6 +745,76 @@ static void RemoveHook(void)
     g_patchedCalls = 0u;
     g_installed = 0u;
     ResetWorldGuard();
+}
+
+static void init_control_descriptor(void)
+{
+    W112_ControlSettingV1 *s;
+    if(g_controlDescriptorReady)return;
+
+    s=&g_controlSettings[0];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=1u;s->key="auto_junkbox";s->label="Auto junkbox";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[1];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=2u;s->key="stationary_ms";s->label="Stationary settle (ms)";
+    s->type=W112_CTL_INT;s->default_value.i32=650;s->min_value.i32=0;s->max_value.i32=3000;s->step.i32=50;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[2];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=3u;s->key="retry_ms";s->label="Junkbox retry (ms)";
+    s->type=W112_CTL_INT;s->default_value.i32=750;s->min_value.i32=100;s->max_value.i32=5000;s->step.i32=50;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[3];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=4u;s->key="installed";s->label="Range hook installed";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[4];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=5u;s->key="pp_hits";s->label="Pick Pocket range hits";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[5];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="lock_hits";s->label="Pick Lock range hits";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[6];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="macro_count";s->label="Junkbox macro dispatches";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    g_controlDescriptorReady=1u;
+}
+
+static int W112_CTL_STDCALL pick_control_get(w112_u32 id,W112_ControlValueV1*out)
+{
+    if(!out)return 0;
+    if(id==1u){out->u32=g_cfgAutoJunkboxEnabled?1u:0u;return 1;}
+    if(id==2u){out->i32=(w112_i32)g_cfgStationarySettleMs;return 1;}
+    if(id==3u){out->i32=(w112_i32)g_cfgMacroRetryGapMs;return 1;}
+    if(id==4u){out->u32=g_installed?1u:0u;return 1;}
+    if(id==5u){out->i32=(w112_i32)g_pickPocketHits;return 1;}
+    if(id==6u){out->i32=(w112_i32)g_pickLockHits;return 1;}
+    if(id==7u){out->i32=(w112_i32)g_macroDispatches;return 1;}
+    return 0;
+}
+
+static int W112_CTL_STDCALL pick_control_set(w112_u32 id,const W112_ControlValueV1*value)
+{
+    if(!value)return 0;
+    if(id==1u){if(value->u32>1u)return 0;g_cfgAutoJunkboxEnabled=value->u32;if(!g_cfgAutoJunkboxEnabled)ResetStationaryState();return 1;}
+    if(id==2u){if(value->i32<0||value->i32>3000)return 0;g_cfgStationarySettleMs=(DWORD)value->i32;return 1;}
+    if(id==3u){if(value->i32<100||value->i32>5000)return 0;g_cfgMacroRetryGapMs=(DWORD)value->i32;return 1;}
+    return 0;
+}
+
+static const W112_ControlModuleV1 g_controlModule={
+    W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
+    "pickrange","PickRange",0x000A0000u,7u,g_controlSettings,
+    pick_control_get,pick_control_set
+};
+
+W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
+{
+    init_control_descriptor();
+    return &g_controlModule;
 }
 
 __declspec(dllexport) DWORD __stdcall PickPocketSelective_GetStatus(void)

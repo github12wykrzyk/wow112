@@ -4,15 +4,17 @@
   "source_overrides": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll",
-    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
+    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
+    "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
   ],
-  "note": "Startup-recovery candidate keeps accepted V69 runtime bytes for SpeedFloor and AutoLootPP, while current work experiments remain explicit. WoWControlHub source drift is intentionally allowlisted because the dedicated candidate builder compiles and appends the current ControlHub source for TEST packages.",
+  "note": "GUI provider wave: persist normal-source work candidates for PickPocketSelectiveRange, MovementCore, PlayerESP and StealthCDGuardian so WoWControlHub can control them live. Keep SpeedFloor and AutoLootPP on exact accepted V69 runtime bytes; do not re-enable reconstructed AutoLootPP source after the earlier startup failure.",
   "source_fingerprint_warning_allowlist": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
     "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
-    "WoWControlHub.dll"
+    "WoWControlHub.dll",
+    "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
   ]
 }

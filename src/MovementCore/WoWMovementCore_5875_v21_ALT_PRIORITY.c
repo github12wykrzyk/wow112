@@ -23,6 +23,8 @@
 #undef MovementCore_GetVersion
 #undef DllMain
 
+#include "../common/W112ControlAPI.h"
+
 static volatile DWORD g_altPriorityInstalled=0u;
 static volatile DWORD g_altPriorityBlockCurrent=0u;
 static volatile DWORD g_altPriorityStarts=0u;
@@ -299,6 +301,99 @@ static void AltPriority_Remove(void)
     if(DCall(ADDR_MOVE_SEND_CALL)==(DWORD)(LPVOID)&AltPriority_MoveWrapper)PCall(ADDR_MOVE_SEND_CALL,(DWORD)(LPVOID)&MovementCore_MoveWrapper);
     g_altPriorityInstalled=0u;
     g_altPriorityBaseSendWrapper=0u;
+}
+
+static const W112_ControlEnumOptionV1 g_modeOptions[]={
+    {MODE_OFF,"Off"},
+    {MODE_LEGACY_FAST,"F8 Fast"},
+    {MODE_LOCAL_STRONG,"ALT Strong"},
+    {MODE_PURSUIT,"F10 Pursuit"},
+    {MODE_INSTANCE_UNREACHABLE,"Instance"}
+};
+static W112_ControlSettingV1 g_controlSettings[7];
+static volatile DWORD g_controlDescriptorReady=0u;
+
+static void init_control_descriptor(void)
+{
+    W112_ControlSettingV1*s;
+    if(g_controlDescriptorReady)return;
+
+    s=&g_controlSettings[0];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=1u;s->key="auto_gather";s->label="AutoGather (F9)";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[1];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=2u;s->key="auto_pp";s->label="Auto PickPocket (F11)";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[2];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=3u;s->key="auto_open";s->label="AutoOpen (F12)";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[3];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=4u;s->key="mode";s->label="SafeBreak mode";
+    s->type=W112_CTL_ENUM;s->default_value.i32=MODE_OFF;s->min_value.i32=MODE_OFF;s->max_value.i32=MODE_INSTANCE_UNREACHABLE;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=g_modeOptions;s->enum_option_count=(w112_u32)(sizeof(g_modeOptions)/sizeof(g_modeOptions[0]));
+
+    s=&g_controlSettings[4];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=5u;s->key="gather_active";s->label="Gather active";
+    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[5];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="alt_starts";s->label="ALT starts";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[6];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="alt_pp_blocks";s->label="ALT PP blocks";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    g_controlDescriptorReady=1u;
+}
+
+static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1*out)
+{
+    if(!out)return 0;
+    if(id==1u){out->u32=g_gatherEnabled?1u:0u;return 1;}
+    if(id==2u){out->u32=g_autoPPEnabled?1u:0u;return 1;}
+    if(id==3u){out->u32=g_autoOpenEnabled?1u:0u;return 1;}
+    if(id==4u){out->i32=(w112_i32)g_mode;return 1;}
+    if(id==5u){out->u32=(g_gatherActive||g_gatherLootWait)?1u:0u;return 1;}
+    if(id==6u){out->i32=(w112_i32)g_altPriorityStarts;return 1;}
+    if(id==7u){out->i32=(w112_i32)g_altPriorityPPBlocks;return 1;}
+    return 0;
+}
+
+static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlValueV1*value)
+{
+    DWORD now;
+    BYTE*p;
+    if(!value||value->u32>1u)return 0;
+    now=GT()?GT()():0u;
+    p=LocalPlayer();
+
+    if(id==1u){
+        g_gatherEnabled=value->u32;
+        if(!g_gatherEnabled&&(g_gatherActive||g_gatherLootWait))GatherStop(p,now,"GUI_GATHER_DISABLED",1u,0u);
+        return 1;
+    }
+    if(id==2u){g_autoPPEnabled=value->u32;return 1;}
+    if(id==3u){
+        g_autoOpenEnabled=value->u32;
+        if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(p,now,"GUI_AUTOOPEN_DISABLED",1u,0u);
+        return 1;
+    }
+    return 0;
+}
+
+static const W112_ControlModuleV1 g_controlModule={
+    W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
+    "movementcore","MovementCore",0x00120000u,7u,g_controlSettings,
+    movement_control_get,movement_control_set
+};
+
+W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
+{
+    init_control_descriptor();
+    return &g_controlModule;
 }
 
 __declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}

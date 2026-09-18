@@ -38,6 +38,8 @@
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
 
+#include "../common/W112ControlAPI.h"
+
 #define WM_W112_ESP_CHALLENGE (0x8000u + 0x0112u)
 #define CHALLENGE_CACHE_SIZE 256u
 #define CHALLENGE_REQUERY_FRAMES 60u
@@ -482,6 +484,77 @@ static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
         Sleep(100u);
     }
     return 0u;
+}
+
+static W112_ControlSettingV1 g_controlSettings[5];
+static volatile DWORD g_controlDescriptorReady=0u;
+
+static void init_control_descriptor(void)
+{
+    W112_ControlSettingV1*s;
+    if(g_controlDescriptorReady)return;
+
+    s=&g_controlSettings[0];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=1u;s->key="esp_enabled";s->label="ESP labels";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[1];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=2u;s->key="range_sweep";s->label="Range sweep";
+    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[2];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=3u;s->key="cached_players";s->label="Cached hostile players";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=128;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[3];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=4u;s->key="click_targets";s->label="Clickable ESP targets";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=128;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[4];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=5u;s->key="challenge_ready";s->label="Challenge bridge ready";
+    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    g_controlDescriptorReady=1u;
+}
+
+static int W112_CTL_STDCALL esp_control_get(w112_u32 id,W112_ControlValueV1*out)
+{
+    if(!out)return 0;
+    if(id==1u){out->u32=g_esp_enabled?1u:0u;return 1;}
+    if(id==2u){out->u32=g_range_sweep_enabled?1u:0u;return 1;}
+    if(id==3u){out->i32=(w112_i32)g_esp_cache_count;return 1;}
+    if(id==4u){out->i32=(w112_i32)g_click_hit_count;return 1;}
+    if(id==5u){out->u32=g_challenge_world_ready?1u:0u;return 1;}
+    return 0;
+}
+
+static int W112_CTL_STDCALL esp_control_set(w112_u32 id,const W112_ControlValueV1*value)
+{
+    if(!value||value->u32>1u)return 0;
+    if(id==1u){
+        g_esp_enabled=value->u32;
+        if(!g_esp_enabled)g_range_sweep_enabled=0u;
+        return 1;
+    }
+    if(id==2u){
+        if(value->u32&&!g_esp_enabled)return 0;
+        g_range_sweep_enabled=value->u32;
+        if(g_range_sweep_enabled)g_sweep_next_frame=g_render_frame+1u;
+        return 1;
+    }
+    return 0;
+}
+
+static const W112_ControlModuleV1 g_controlModule={
+    W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
+    "playeresp","PlayerESP",0x00010300u,5u,g_controlSettings,
+    esp_control_get,esp_control_set
+};
+
+W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
+{
+    init_control_descriptor();
+    return &g_controlModule;
 }
 
 BOOL WINAPI DllMain(HMODULE hinst, DWORD reason, LPVOID reserved) {

@@ -35,6 +35,8 @@ typedef void* HWND;
 typedef void* LPVOID;
 typedef DWORD UINT_PTR;
 
+#include "../common/W112ControlAPI.h"
+
 #define TRUE 1
 #define FALSE 0
 #define DLL_PROCESS_ATTACH 1
@@ -85,6 +87,11 @@ typedef HANDLE (__stdcall *CreateFileA_t)(const char*,DWORD,DWORD,LPVOID,DWORD,D
 typedef BOOL (__stdcall *WriteFile_t)(HANDLE,const void*,DWORD,DWORD*,LPVOID);
 typedef DWORD (__stdcall *SetFilePointer_t)(HANDLE,LONG,LONG*,DWORD);
 typedef BOOL (__stdcall *CloseHandle_t)(HANDLE);
+
+static volatile DWORD g_cfgEnabled=1u;
+static volatile DWORD g_cfgStealthCdMs=STEALTH_CD_MS;
+static W112_ControlSettingV1 g_controlSettings[6];
+static volatile DWORD g_controlDescriptorReady=0u;
 
 static volatile DWORD g_status=0u; /* 0 off, 1 protected, 2 initial fail, 3 lost/unsafe */
 static volatile DWORD g_hookHits=0u;
@@ -157,16 +164,19 @@ __declspec(naked) static void CooldownAddHook(void)
         and edx, 0FFFFFFFCh
         cmp edx, 06F8h
         jne not_stealth
+        cmp dword ptr [g_cfgEnabled], 0
+        je not_stealth
 
         mov dword ptr [g_lastSpell], eax
         mov edx, dword ptr [esp+10h]
         mov dword ptr [g_lastOriginalRecovery], edx
         mov edx, dword ptr [esp+1Ch]
         mov dword ptr [g_lastOriginalCategory], edx
-        mov dword ptr [esp+10h], 01388h
-        cmp dword ptr [esp+1Ch], 01388h
+        mov edx, dword ptr [g_cfgStealthCdMs]
+        mov dword ptr [esp+10h], edx
+        cmp dword ptr [esp+1Ch], edx
         jle category_ok
-        mov dword ptr [esp+1Ch], 01388h
+        mov dword ptr [esp+1Ch], edx
 category_ok:
         inc dword ptr [g_hookHits]
 not_stealth:
@@ -250,6 +260,70 @@ static void __stdcall Tick(HWND hwnd,UINT msg,UINT_PTR id,DWORD now)
     if(!g_chatShown){g_chatShown=1u;DebugChat(g_chatScript);}
     hits=g_hookHits;
     if(hits!=g_lastLoggedHits){g_lastLoggedHits=hits;LogState("STEALTH_CD_FORCED",g_lastSpell,g_lastOriginalRecovery,g_lastOriginalCategory,hits,0u);}
+}
+
+static void init_control_descriptor(void)
+{
+    W112_ControlSettingV1 *s;
+    if(g_controlDescriptorReady)return;
+
+    s=&g_controlSettings[0];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=1u;s->key="enabled";s->label="Stealth CD override";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[1];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=2u;s->key="cooldown_ms";s->label="Stealth cooldown (ms)";
+    s->type=W112_CTL_INT;s->default_value.i32=5000;s->min_value.i32=1000;s->max_value.i32=10000;s->step.i32=500;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[2];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=3u;s->key="status";s->label="Hook status";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=3;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[3];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=4u;s->key="hook_hits";s->label="Stealth hook hits";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[4];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=5u;s->key="hook_lost";s->label="Hook lost count";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[5];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="hook_repairs";s->label="Hook repairs";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    g_controlDescriptorReady=1u;
+}
+
+static int W112_CTL_STDCALL stealth_control_get(w112_u32 id,W112_ControlValueV1*out)
+{
+    if(!out)return 0;
+    if(id==1u){out->u32=g_cfgEnabled?1u:0u;return 1;}
+    if(id==2u){out->i32=(w112_i32)g_cfgStealthCdMs;return 1;}
+    if(id==3u){out->i32=(w112_i32)g_status;return 1;}
+    if(id==4u){out->i32=(w112_i32)g_hookHits;return 1;}
+    if(id==5u){out->i32=(w112_i32)g_hookLost;return 1;}
+    if(id==6u){out->i32=(w112_i32)g_hookRepairs;return 1;}
+    return 0;
+}
+
+static int W112_CTL_STDCALL stealth_control_set(w112_u32 id,const W112_ControlValueV1*value)
+{
+    if(!value)return 0;
+    if(id==1u){if(value->u32>1u)return 0;g_cfgEnabled=value->u32;return 1;}
+    if(id==2u){if(value->i32<1000||value->i32>10000)return 0;g_cfgStealthCdMs=(DWORD)value->i32;return 1;}
+    return 0;
+}
+
+static const W112_ControlModuleV1 g_controlModule={
+    W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
+    "stealthcd","StealthCD",0x00020000u,6u,g_controlSettings,
+    stealth_control_get,stealth_control_set
+};
+
+W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
+{
+    init_control_descriptor();
+    return &g_controlModule;
 }
 
 __declspec(dllexport) DWORD __stdcall StealthCDGuardian_GetVersion(void){return 0x00020000u;}
