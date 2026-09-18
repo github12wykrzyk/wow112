@@ -6,7 +6,7 @@
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "Startup-recovery packaging after PP queue rollback: keep exact accepted V69 AutoLootPP runtime bytes (do NOT rebuild reconstructed AutoLootPP). Preserve existing PickPocketSelectiveRange, PlayerESP and MovementCore work candidates. The failed PP queue experiment is archived separately.",
+  "note": "PP throughput V22 candidate: keep exact accepted AutoLootPP bytes (05f1e...) untouched. Fresh-first queue and retry-tail scheduler live only in MovementCore v21 overlay, with one in-flight PP and a chained loot-success hook. This avoids executing rebuilt reconstructed AutoLootPP timer code.",
   "source_fingerprint_warning_allowlist": [
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
