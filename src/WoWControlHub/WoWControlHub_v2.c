@@ -9,6 +9,8 @@
  *   - page across more than four modules and more than four settings;
  *   - expose a compact Runtime Health section using already-existing,
  *     read-only diagnostic exports from active modules;
+ *   - add keyboard-first navigation, precise +/- controls and one-click
+ *     per-setting restore-to-default without changing provider ABI;
  *   - preserve the V1 Win32 layered-overlay / game-WndProc architecture.
  */
 
@@ -49,7 +51,17 @@ typedef DWORD (WINAPI *GetU32Fn)(void);
 #define FN_GET_GAME_WINDOW 0x00435C30u
 #define WM_KEYDOWN         0x0100u
 #define WM_LBUTTONDOWN     0x0201u
+#define VK_RETURN          0x0Du
+#define VK_TAB             0x09u
+#define VK_SPACE           0x20u
+#define VK_PRIOR           0x21u
+#define VK_NEXT            0x22u
+#define VK_LEFT            0x25u
+#define VK_UP              0x26u
+#define VK_RIGHT           0x27u
+#define VK_DOWN            0x28u
 #define VK_INSERT          0x2Du
+#define VK_R               0x52u
 #define GWL_WNDPROC        (-4)
 #define PM_REMOVE          0x0001u
 
@@ -75,7 +87,7 @@ typedef DWORD (WINAPI *GetU32Fn)(void);
 #define TH32CS_SNAPMODULE32 0x00000010u
 
 #define PANEL_W 620
-#define PANEL_H 430
+#define PANEL_H 470
 #define PANEL_X 20
 #define PANEL_Y 20
 #define HEADER_H 30
@@ -96,11 +108,17 @@ typedef DWORD (WINAPI *GetU32Fn)(void);
 #define SETTING_NAV_Y 286
 #define SETTING_NAV_H 24
 
-#define SLIDER_X 390
-#define SLIDER_W 198
+#define VALUE_X 300
+#define STEP_MINUS_X 390
+#define STEP_PLUS_X 544
+#define STEP_W 24
+#define RESET_X 574
+#define RESET_W 34
+#define SLIDER_X 420
+#define SLIDER_W 118
 #define SLIDER_YOFF 25
 
-#define HEALTH_Y 318
+#define HEALTH_Y 342
 #define HEALTH_ROW_H 18
 
 #define MAX_MODULES 32u
@@ -110,6 +128,7 @@ typedef DWORD (WINAPI *GetU32Fn)(void);
 #define COLOR_BG        0x00202020u
 #define COLOR_HEADER    0x00303030u
 #define COLOR_PANEL     0x00282828u
+#define COLOR_SELECTED  0x00343434u
 #define COLOR_BORDER    0x00606060u
 #define COLOR_TAB       0x00383838u
 #define COLOR_TAB_ON    0x00505050u
@@ -162,6 +181,9 @@ struct RuntimeHealth {
     DWORD movementAltInstalled;
     DWORD movementAltStarts;
     DWORD movementPPBlocks;
+    DWORD autoPoisonsPresent;
+    DWORD autoPoisonsStatus;
+    DWORD autoPoisonsTicks;
 };
 
 __declspec(dllimport) HANDLE WINAPI CreateThread(LPVOID, SIZE_T, DWORD (WINAPI *)(LPVOID), LPVOID, DWORD, DWORD*);
@@ -218,6 +240,7 @@ static volatile DWORD g_visible = 0u;
 static struct HubModule g_modules[MAX_MODULES];
 static DWORD g_moduleCount = 0u;
 static DWORD g_selectedModule = 0u;
+static DWORD g_selectedSetting = 0u;
 static DWORD g_modulePage = 0u;
 static DWORD g_settingPage = 0u;
 static DWORD g_lastDiscoveryTick = 0u;
@@ -256,6 +279,17 @@ static char *app_i32(char *p, LONG value)
 {
     if (value < 0) { *p++ = '-'; value = -value; }
     return app_u32(p, (DWORD)value);
+}
+
+static char *app_hex32(char *p, DWORD value)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    int shift;
+    *p++ = '0';
+    *p++ = 'x';
+    for (shift = 28; shift >= 0; shift -= 4)
+        *p++ = hex[(value >> shift) & 0xFu];
+    return p;
 }
 
 static char *app_float1(char *p, float value)
@@ -485,6 +519,14 @@ static void probe_health_exports(HMODULE module)
         f = (GetU32Fn)find_export0(module, "MovementCore_GetAltPriorityPPBlocks", "_MovementCore_GetAltPriorityPPBlocks@0", "_MovementCore_GetAltPriorityPPBlocks");
         if (f) g_health.movementPPBlocks = f();
     }
+
+    f = (GetU32Fn)find_export0(module, "AutoPoisons_GetStatus", "_AutoPoisons_GetStatus@0", "_AutoPoisons_GetStatus");
+    if (f) {
+        g_health.autoPoisonsPresent = 1u;
+        g_health.autoPoisonsStatus = f();
+        f = (GetU32Fn)find_export0(module, "AutoPoisons_GetTickCount", "_AutoPoisons_GetTickCount@0", "_AutoPoisons_GetTickCount");
+        if (f) g_health.autoPoisonsTicks = f();
+    }
 }
 
 static void normalize_pages(void)
@@ -494,6 +536,7 @@ static void normalize_pages(void)
 
     if (g_moduleCount == 0u) {
         g_selectedModule = 0u;
+        g_selectedSetting = 0u;
         g_modulePage = 0u;
         g_settingPage = 0u;
         return;
@@ -508,8 +551,19 @@ static void normalize_pages(void)
         g_modulePage = g_selectedModule / MODULES_PER_PAGE;
 
     settingCount = g_modules[g_selectedModule].api->setting_count;
-    pages = settingCount ? ((settingCount + SETTINGS_PER_PAGE - 1u) / SETTINGS_PER_PAGE) : 1u;
+    if (settingCount == 0u) {
+        g_selectedSetting = 0u;
+        g_settingPage = 0u;
+        return;
+    }
+
+    if (g_selectedSetting >= settingCount) g_selectedSetting = settingCount - 1u;
+    pages = (settingCount + SETTINGS_PER_PAGE - 1u) / SETTINGS_PER_PAGE;
     if (g_settingPage >= pages) g_settingPage = pages - 1u;
+
+    if (g_selectedSetting < g_settingPage * SETTINGS_PER_PAGE ||
+        g_selectedSetting >= (g_settingPage + 1u) * SETTINGS_PER_PAGE)
+        g_settingPage = g_selectedSetting / SETTINGS_PER_PAGE;
 }
 
 static void refresh_modules(void)
@@ -532,6 +586,9 @@ static void refresh_modules(void)
     g_health.movementAltInstalled = 0u;
     g_health.movementAltStarts = 0u;
     g_health.movementPPBlocks = 0u;
+    g_health.autoPoisonsPresent = 0u;
+    g_health.autoPoisonsStatus = 0u;
+    g_health.autoPoisonsTicks = 0u;
 
     snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
     if (snap == INVALID_HANDLE_VALUE) return;
@@ -569,6 +626,14 @@ static const char *enum_label(const W112_ControlSettingV1 *s, LONG value)
     return NULL;
 }
 
+static BOOL value_is_default(const W112_ControlSettingV1 *s, const W112_ControlValueV1 *v)
+{
+    if (!s || !v) return FALSE;
+    if (s->type == W112_CTL_FLOAT) return v->f32 == s->default_value.f32;
+    if (s->type == W112_CTL_BOOL) return v->u32 == s->default_value.u32;
+    return v->i32 == s->default_value.i32;
+}
+
 static void build_value_text(char out[96], const W112_ControlSettingV1 *s, const W112_ControlValueV1 *v)
 {
     char *p = out;
@@ -590,6 +655,7 @@ static void build_value_text(char out[96], const W112_ControlSettingV1 *s, const
     if (s->flags & W112_CTL_REQUIRES_RELOAD) p = app_str(p, " RELOAD");
     else if (s->flags & W112_CTL_LIVE) p = app_str(p, " LIVE");
     if (s->flags & W112_CTL_READ_ONLY) p = app_str(p, " RO");
+    if (!value_is_default(s, v)) p = app_str(p, " *");
     *p = 0;
 }
 
@@ -630,6 +696,18 @@ static const char *stealth_status_text(DWORD s)
     if (s == 0u) return "OFF";
     if (s == 2u) return "INIT FAIL";
     if (s == 3u) return "HOOK UNSAFE";
+    return "STATUS ?";
+}
+
+static const char *autopoisons_status_text(DWORD s)
+{
+    if (s == 0u) return "DETACHED";
+    if (s == 1u) return "WAITING WORLD";
+    if (s == 2u) return "ACTIVE";
+    if (s == 3u) return "SCRIPT MISMATCH";
+    if (s == 4u) return "BOOTSTRAP FAIL";
+    if (s == 5u) return "NO TIMER";
+    if (s == 6u) return "TIMER FAIL";
     return "STATUS ?";
 }
 
@@ -693,6 +771,159 @@ static void draw_runtime_health(void)
     }
     *p = 0;
     draw_text(28, y, b, COLOR_MUTED);
+    y += HEALTH_ROW_H;
+
+    p = b;
+    p = app_str(p, "AutoPoisons: ");
+    if (!g_health.autoPoisonsPresent) {
+        p = app_str(p, "NOT LOADED");
+    } else {
+        p = app_str(p, autopoisons_status_text(g_health.autoPoisonsStatus));
+        p = app_str(p, "   ticks=");
+        p = app_u32(p, g_health.autoPoisonsTicks);
+    }
+    *p = 0;
+    draw_text(28, y, b, COLOR_MUTED);
+}
+
+static void reset_setting_to_default(const W112_ControlModuleV1 *api,
+                                     const W112_ControlSettingV1 *s)
+{
+    W112_ControlValueV1 v;
+    if (!api || !s || !api->set_value) return;
+    if (s->flags & W112_CTL_READ_ONLY) return;
+    v = s->default_value;
+    api->set_value(s->setting_id, &v);
+}
+
+static void step_setting(const W112_ControlModuleV1 *api,
+                         const W112_ControlSettingV1 *s,
+                         LONG direction)
+{
+    W112_ControlValueV1 v;
+    if (!api || !s || !api->get_value || !api->set_value || direction == 0) return;
+    if (s->flags & W112_CTL_READ_ONLY) return;
+    if (!api->get_value(s->setting_id, &v)) return;
+
+    if (s->type == W112_CTL_BOOL) {
+        v.u32 = direction > 0 ? 1u : 0u;
+    } else if (s->type == W112_CTL_ENUM && s->enum_options && s->enum_option_count) {
+        DWORD i;
+        DWORD found = 0u;
+        LONG next;
+        for (i = 0u; i < s->enum_option_count; ++i) {
+            if (s->enum_options[i].value == v.i32) {
+                found = i + 1u;
+                break;
+            }
+        }
+        if (!found) return;
+        next = (LONG)(found - 1u) + (direction > 0 ? 1 : -1);
+        if (next < 0) next = 0;
+        if ((DWORD)next >= s->enum_option_count) next = (LONG)s->enum_option_count - 1;
+        v.i32 = s->enum_options[(DWORD)next].value;
+    } else if (s->type == W112_CTL_FLOAT) {
+        float step = s->step.f32;
+        if (!(step > 0.0f)) step = 0.1f;
+        v.f32 += direction > 0 ? step : -step;
+        if (v.f32 < s->min_value.f32) v.f32 = s->min_value.f32;
+        if (v.f32 > s->max_value.f32) v.f32 = s->max_value.f32;
+    } else {
+        LONG step = s->step.i32;
+        if (step <= 0) step = 1;
+        v.i32 += direction > 0 ? step : -step;
+        if (v.i32 < s->min_value.i32) v.i32 = s->min_value.i32;
+        if (v.i32 > s->max_value.i32) v.i32 = s->max_value.i32;
+    }
+    api->set_value(s->setting_id, &v);
+}
+
+static void toggle_or_advance_setting(const W112_ControlModuleV1 *api,
+                                      const W112_ControlSettingV1 *s)
+{
+    W112_ControlValueV1 v;
+    if (!api || !s || !api->get_value || !api->set_value) return;
+    if (s->flags & W112_CTL_READ_ONLY) return;
+
+    if (s->type != W112_CTL_BOOL) {
+        step_setting(api, s, 1);
+        return;
+    }
+
+    if (api->get_value(s->setting_id, &v)) {
+        v.u32 = v.u32 ? 0u : 1u;
+        api->set_value(s->setting_id, &v);
+    }
+}
+
+static void select_module_relative(LONG direction)
+{
+    LONG next;
+    if (!g_moduleCount || direction == 0) return;
+    next = (LONG)g_selectedModule + (direction > 0 ? 1 : -1);
+    if (next < 0) next = (LONG)g_moduleCount - 1;
+    if ((DWORD)next >= g_moduleCount) next = 0;
+    g_selectedModule = (DWORD)next;
+    g_modulePage = g_selectedModule / MODULES_PER_PAGE;
+    g_selectedSetting = 0u;
+    g_settingPage = 0u;
+    normalize_pages();
+}
+
+static BOOL handle_panel_key(DWORD key)
+{
+    const W112_ControlModuleV1 *api;
+    DWORD settingCount;
+
+    if (!g_visible) return FALSE;
+    if (key == VK_TAB) {
+        select_module_relative(1);
+        return TRUE;
+    }
+    if (!g_moduleCount) return FALSE;
+
+    api = g_modules[g_selectedModule].api;
+    settingCount = api->setting_count;
+
+    if (key == VK_PRIOR || key == VK_NEXT) {
+        DWORD pages = settingCount ? ((settingCount + SETTINGS_PER_PAGE - 1u) / SETTINGS_PER_PAGE) : 1u;
+        if (key == VK_PRIOR && g_settingPage > 0u) --g_settingPage;
+        if (key == VK_NEXT && g_settingPage + 1u < pages) ++g_settingPage;
+        g_selectedSetting = g_settingPage * SETTINGS_PER_PAGE;
+        if (settingCount && g_selectedSetting >= settingCount) g_selectedSetting = settingCount - 1u;
+        return TRUE;
+    }
+
+    if (!settingCount) return FALSE;
+
+    if (key == VK_UP) {
+        if (g_selectedSetting > 0u) --g_selectedSetting;
+        g_settingPage = g_selectedSetting / SETTINGS_PER_PAGE;
+        return TRUE;
+    }
+    if (key == VK_DOWN) {
+        if (g_selectedSetting + 1u < settingCount) ++g_selectedSetting;
+        g_settingPage = g_selectedSetting / SETTINGS_PER_PAGE;
+        return TRUE;
+    }
+
+    if (key == VK_LEFT) {
+        step_setting(api, &api->settings[g_selectedSetting], -1);
+        return TRUE;
+    }
+    if (key == VK_RIGHT) {
+        step_setting(api, &api->settings[g_selectedSetting], 1);
+        return TRUE;
+    }
+    if (key == VK_RETURN || key == VK_SPACE) {
+        toggle_or_advance_setting(api, &api->settings[g_selectedSetting]);
+        return TRUE;
+    }
+    if (key == VK_R) {
+        reset_setting_to_default(api, &api->settings[g_selectedSetting]);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static void draw_panel(void)
@@ -706,7 +937,7 @@ static void draw_panel(void)
     clear_pixels(COLOR_BG);
     fill_rect(0, 0, PANEL_W, HEADER_H, COLOR_HEADER);
     frame_rect(0, 0, PANEL_W, PANEL_H, COLOR_BORDER);
-    draw_text(12, 7, "WoWControlHub V2   [Insert]", COLOR_TEXT);
+    draw_text(12, 7, "WoWControlHub V2.1   [Insert]", COLOR_TEXT);
 
     modulePages = g_moduleCount ? ((g_moduleCount + MODULES_PER_PAGE - 1u) / MODULES_PER_PAGE) : 1u;
     draw_button(MOD_PREV_X, MOD_NAV_Y, MOD_NAV_W, MOD_NAV_H, "<", g_modulePage > 0u);
@@ -743,8 +974,10 @@ static void draw_panel(void)
         float norm;
         int fill;
 
-        fill_rect(12, y, PANEL_W - 24, ROW_H - 4, COLOR_PANEL);
+        fill_rect(12, y, PANEL_W - 24, ROW_H - 4,
+                  idx == g_selectedSetting ? COLOR_SELECTED : COLOR_PANEL);
         frame_rect(12, y, PANEL_W - 24, ROW_H - 4, COLOR_BORDER);
+        if (idx == g_selectedSetting) fill_rect(13, y + 1, 3, ROW_H - 6, COLOR_ACCENT);
         draw_text(20, y + 6, s->label ? s->label : s->key, COLOR_TEXT);
 
         if (!api->get_value(s->setting_id, &v)) {
@@ -753,12 +986,14 @@ static void draw_panel(void)
         }
 
         build_value_text(b, s, &v);
-        draw_text(410, y + 6, b, COLOR_MUTED);
+        draw_text(VALUE_X, y + 6, b, COLOR_MUTED);
 
         if (s->type == W112_CTL_BOOL) {
-            frame_rect(568, y + 5, 18, 18, COLOR_ACCENT);
-            if (v.u32) fill_rect(572, y + 9, 10, 10, COLOR_FILL);
+            frame_rect(STEP_PLUS_X, y + 5, 18, 18, COLOR_ACCENT);
+            if (v.u32) fill_rect(STEP_PLUS_X + 4, y + 9, 10, 10, COLOR_FILL);
         } else {
+            if (!(s->flags & W112_CTL_READ_ONLY))
+                draw_button(STEP_MINUS_X, y + 18, STEP_W, 18, "-", TRUE);
             fill_rect(SLIDER_X, y + SLIDER_YOFF, SLIDER_W, 6, COLOR_TRACK);
             norm = normalized_value(s, &v);
             fill = (int)(norm * (float)SLIDER_W);
@@ -766,7 +1001,12 @@ static void draw_panel(void)
             if (fill > SLIDER_W) fill = SLIDER_W;
             fill_rect(SLIDER_X, y + SLIDER_YOFF, fill, 6, COLOR_FILL);
             frame_rect(SLIDER_X, y + SLIDER_YOFF, SLIDER_W, 6, COLOR_BORDER);
+            if (!(s->flags & W112_CTL_READ_ONLY))
+                draw_button(STEP_PLUS_X, y + 18, STEP_W, 18, "+", TRUE);
         }
+
+        if (!(s->flags & W112_CTL_READ_ONLY))
+            draw_button(RESET_X, y + 18, RESET_W, 18, "RST", FALSE);
     }
 
     draw_button(12, SETTING_NAV_Y, 32, SETTING_NAV_H, "<", g_settingPage > 0u);
@@ -787,12 +1027,14 @@ static void draw_panel(void)
     p = app_u32(p, g_selectedModule + 1u);
     p = app_str(p, "/");
     p = app_u32(p, g_moduleCount);
-    p = app_str(p, "   page ");
-    p = app_u32(p, g_modulePage + 1u);
-    p = app_str(p, "/");
-    p = app_u32(p, modulePages);
+    p = app_str(p, "   ");
+    p = app_str(p, api->module_id);
+    p = app_str(p, "   ver=");
+    p = app_hex32(p, api->module_version);
     *p = 0;
     draw_text(260, SETTING_NAV_Y + 5, b, COLOR_MUTED);
+
+    draw_text(20, 318, "Keys: arrows select/adjust  Enter toggle/next  R default  Tab module", COLOR_MUTED);
 
     draw_runtime_health();
 }
@@ -897,6 +1139,7 @@ static BOOL handle_panel_click(int gameX, int gameY)
         if (g_modulePage > 0u) {
             --g_modulePage;
             g_selectedModule = g_modulePage * MODULES_PER_PAGE;
+            g_selectedSetting = 0u;
             g_settingPage = 0u;
         }
         return TRUE;
@@ -907,6 +1150,7 @@ static BOOL handle_panel_click(int gameX, int gameY)
             ++g_modulePage;
             g_selectedModule = g_modulePage * MODULES_PER_PAGE;
             if (g_selectedModule >= g_moduleCount) g_selectedModule = g_moduleCount - 1u;
+            g_selectedSetting = 0u;
             g_settingPage = 0u;
         }
         return TRUE;
@@ -921,6 +1165,7 @@ static BOOL handle_panel_click(int gameX, int gameY)
         int tx = TAB_X + (int)i * (TAB_W + TAB_GAP);
         if (point_in(x, y, tx, MOD_NAV_Y, TAB_W, MOD_NAV_H)) {
             g_selectedModule = idx;
+            g_selectedSetting = 0u;
             g_settingPage = 0u;
             return TRUE;
         }
@@ -932,10 +1177,13 @@ static BOOL handle_panel_click(int gameX, int gameY)
 
     if (point_in(x, y, 12, SETTING_NAV_Y, 32, SETTING_NAV_H)) {
         if (g_settingPage > 0u) --g_settingPage;
+        g_selectedSetting = g_settingPage * SETTINGS_PER_PAGE;
         return TRUE;
     }
     if (point_in(x, y, 198, SETTING_NAV_Y, 32, SETTING_NAV_H)) {
         if (g_settingPage + 1u < settingPages) ++g_settingPage;
+        g_selectedSetting = g_settingPage * SETTINGS_PER_PAGE;
+        if (settingCount && g_selectedSetting >= settingCount) g_selectedSetting = settingCount - 1u;
         return TRUE;
     }
 
@@ -947,18 +1195,28 @@ static BOOL handle_panel_click(int gameX, int gameY)
         const W112_ControlSettingV1 *s = &api->settings[idx];
         int ry = ROW_Y + (int)i * ROW_H;
         if (y >= ry && y < ry + ROW_H - 4) {
+            g_selectedSetting = idx;
             if (s->flags & W112_CTL_READ_ONLY) return TRUE;
 
-            if (s->type == W112_CTL_BOOL) {
-                W112_ControlValueV1 v;
-                if (api->get_value(s->setting_id, &v)) {
-                    v.u32 = v.u32 ? 0u : 1u;
-                    api->set_value(s->setting_id, &v);
-                }
+            if (point_in(x, y, RESET_X, ry + 18, RESET_W, 18)) {
+                reset_setting_to_default(api, s);
                 return TRUE;
             }
 
-            if (x >= SLIDER_X - 8 && x <= SLIDER_X + SLIDER_W + 8) {
+            if (s->type == W112_CTL_BOOL) {
+                toggle_or_advance_setting(api, s);
+                return TRUE;
+            }
+
+            if (point_in(x, y, STEP_MINUS_X, ry + 18, STEP_W, 18)) {
+                step_setting(api, s, -1);
+                return TRUE;
+            }
+            if (point_in(x, y, STEP_PLUS_X, ry + 18, STEP_W, 18)) {
+                step_setting(api, s, 1);
+                return TRUE;
+            }
+            if (x >= SLIDER_X - 6 && x <= SLIDER_X + SLIDER_W + 6) {
                 set_numeric_from_click(api, s, x);
                 return TRUE;
             }
@@ -975,6 +1233,9 @@ static LONG WINAPI hub_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPar
         g_visible = g_visible ? 0u : 1u;
         return 0;
     }
+
+    if (msg == WM_KEYDOWN && g_visible && handle_panel_key(wParam))
+        return 0;
 
     if (msg == WM_LBUTTONDOWN && g_visible) {
         int mx = (int)(short)(lParam & 0xFFFF);
