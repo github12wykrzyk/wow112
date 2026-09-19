@@ -227,7 +227,7 @@ namespace WoW112Updater
                         sb.AppendLine();
                         sb.AppendLine("#### " + Path.GetFileName(file) + " (UTC " + File.GetLastWriteTimeUtc(file).ToString("o") + ")");
                         sb.AppendLine("```text");
-                        sb.AppendLine(Sanitize(HeadFile(file, 5000) + "\\n--- END OF REPORT ---\\n" + TailFile(file, 7000), root, 12500));
+                        sb.AppendLine(Sanitize(HeadFile(file, 5000) + "\n--- END OF REPORT ---\n" + TailFile(file, 7000), root, 12500));
                         sb.AppendLine("```");
                     }
                 }
@@ -321,7 +321,7 @@ namespace WoW112Updater
                             total += read;
                         }
                         var text = Encoding.UTF8.GetString(bytes, 0, total);
-                        return text.Length <= maxChars ? text : text.Substring(0, maxChars) + "\\n<head truncated>";
+                        return text.Length <= maxChars ? text : text.Substring(0, maxChars) + "\n<head truncated>";
                     }
                 }
                 catch (Exception ex) { return "<crash report read error: " + ex.Message + ">"; }
@@ -348,8 +348,8 @@ namespace WoW112Updater
                             if (message.IndexOf("WoW_5875_", StringComparison.OrdinalIgnoreCase) < 0 &&
                                 message.IndexOf("WoW.exe", StringComparison.OrdinalIgnoreCase) < 0) continue;
                             result.Add("Event UTC " + ev.TimeGenerated.ToUniversalTime().ToString("o") +
-                                ", source " + ev.Source + ", event id " + ev.InstanceId + "\\n" +
-                                (message.Length <= 4000 ? message : message.Substring(0, 4000) + "\\n<event truncated>"));
+                                ", source " + ev.Source + ", event id " + ev.InstanceId + "\n" +
+                                (message.Length <= 4000 ? message : message.Substring(0, 4000) + "\n<event truncated>"));
                         }
                     }
                 }
