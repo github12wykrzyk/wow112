@@ -6,10 +6,10 @@
  *
  * Scope:
  *   - never changes range, facing, movement, packets, GCD or opener timing;
- *   - manual "Clear stuck opener" only clears stale client action GUID/UI state
- *     when no client spell is pending/casting;
- *   - optional auto-clear is OFF by default and requires Backstab/Ambush evidence,
- *     an idle cast state and a configurable grace period;
+ *   - manual recovery uses the native stop-targeting path when needed, then
+ *     selectively clears an opener-owned client cast state (never an unrelated cast);
+ *   - optional auto-clear is OFF by default. Active opener recovery additionally
+ *     requires an unchanged client state for 2300 ms to protect the energy gate;
  *   - exposes counters and last observed opener through W112_CONTROL_API_V1.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -35,6 +35,7 @@ typedef void (STDCALL *TimerProc32)(HWND32,UINT32,UINT_PTR32,u32);
 typedef UINT_PTR32 (STDCALL *SetTimerFn)(HWND32,UINT_PTR32,UINT32,TimerProc32);
 typedef BOOL32 (STDCALL *KillTimerFn)(HWND32,UINT_PTR32);
 typedef u32 (STDCALL *GetTickCountFn)(void);
+typedef void (__cdecl *StopTargetingFn)(void);
 
 #define DLL_PROCESS_DETACH 0u
 #define DLL_PROCESS_ATTACH 1u
@@ -48,6 +49,10 @@ typedef u32 (STDCALL *GetTickCountFn)(void);
 #define CLIENT_PREV_CASTING_SPELL_ID    0x00CECAA8u
 #define CLIENT_PREV_ACTION_GUID_LO      0x00CECB20u
 #define CLIENT_PREV_ACTION_GUID_HI      0x00CECB24u
+#define CLIENT_TARGETING_STATE          0x00CECAC0u
+#define CLIENT_CAST_MISC                0x00CECAACu
+/* Same 5875 native stop-targeting primitive already used by canonical PositionalSpoof. */
+#define SPELL_STOP_TARGETING_INTERNAL   0x006E4900u
 
 #define WOW_IAT_GETTICKCOUNT 0x007FF310u
 #define WOW_IAT_SETTIMER     0x007FF4F4u
@@ -55,7 +60,8 @@ typedef u32 (STDCALL *GetTickCountFn)(void);
 
 #define TIMER_PERIOD_MS 20u
 #define WORLD_SETTLE_MS 1500u
-#define VERSION_1_0 0x00010000u
+#define ACTIVE_AUTO_RECOVERY_MS 2300u
+#define VERSION_1_0 0x00010100u
 
 #define SETTING_CLEAR_NOW      1u
 #define SETTING_AUTO_CLEAR     2u
@@ -72,6 +78,9 @@ static volatile u32 g_activeSkips=0u;
 static volatile u32 g_lastOpener=0u;
 static volatile u32 g_watchStart=0u;
 static volatile u32 g_watch=0u;
+static volatile u32 g_watchPending=0u,g_watchSpell=0u,g_watchHandle=0u;
+static volatile u32 g_watchPrevious=0u,g_watchGuidLo=0u,g_watchGuidHi=0u;
+static volatile u32 g_watchPrevGuidLo=0u,g_watchPrevGuidHi=0u,g_watchTargeting=0u;
 static volatile u32 g_worldManager=0u;
 static volatile u32 g_worldSince=0u;
 static W112_ControlSettingV1 g_settings[6];
@@ -113,39 +122,101 @@ static u32 opener_evidence(void){
  return 0u;
 }
 
-/* Deliberately UI-only: do not clear pending cast, cast handle, targeting,
-   packet state, GCD or PositionalSpoof private state. */
+/* The client-side ESC escape path is only a diagnostic observation: this
+   module invokes the 5875 native stop-targeting primitive, not a keyboard ESC.
+   Only an opener-owned cast may be cancelled. Do not touch packets, GCD,
+   target selection, movement or PositionalSpoof's private retry queue. */
 static int clear_stale_ui(int manual){
- u32 ev;
- if(!world_stable(tick_now()))return 0;
- if(cast_active()){g_activeSkips++;return 0;}
- if(!action_guid_present()){g_watch=0u;return 0;}
- ev=opener_evidence();
- if(!manual && !ev)return 0;
- if(ev)g_lastOpener=ev;
+ u32 ev,sid,prev,pending,handle,targeting,hasGuid,wasActive,now=tick_now();
+ if(!world_stable(now))return 0;
+ sid=read_u32(CLIENT_CASTING_SPELL_ID);
+ prev=read_u32(CLIENT_PREV_CASTING_SPELL_ID);
+ pending=read_u32(CLIENT_PENDING_SPELLCAST);
+ handle=read_u32(CLIENT_CAST_HANDLE);
+ targeting=(u32)*(volatile unsigned short*)CLIENT_TARGETING_STATE;
+ hasGuid=(u32)action_guid_present();
+ wasActive=pending||sid||handle;
+ ev=isOpener(sid)?sid:(isOpener(prev)?prev:0u);
+ if(!ev){if(manual)g_activeSkips++;return 0;}
+ if(!hasGuid&&!wasActive&&!targeting){g_watch=0u;return 0;}
+ if(wasActive){
+  /* A previous opener alone cannot authorize cancellation of a new spell. */
+  if(!isOpener(sid) && !(sid==0u && isOpener(prev) && targeting)){
+   if(manual)g_activeSkips++;
+   return 0;
+  }
+  /* The positional energy gate can validly hold an opener up to 1900 ms.
+     No automatic cancellation of a live client cast before this bound. */
+  if(!manual && (!g_watch || (u32)(now-g_watchStart)<ACTIVE_AUTO_RECOVERY_MS))return 0;
+ }
+ if(targeting){
+  StopTargetingFn stop=(StopTargetingFn)SPELL_STOP_TARGETING_INTERNAL;
+  stop();
+ }
+ /* The native stop may have completed the cancellation. Check again so we
+    never erase an unrelated spell that took over during the transition. */
+ if(read_u32(CLIENT_CASTING_SPELL_ID)!=0u &&
+    read_u32(CLIENT_CASTING_SPELL_ID)!=sid)return 0;
+ if(wasActive){
+  write_u32(CLIENT_PENDING_SPELLCAST,0u);
+  write_u32(CLIENT_CASTING_SPELL_ID,0u);
+  write_u32(CLIENT_CAST_HANDLE,0u);
+  write_u32(CLIENT_CAST_MISC,0u);
+ }
  write_u32(CLIENT_CURRENT_ACTION_GUID_LO,0u);
  write_u32(CLIENT_CURRENT_ACTION_GUID_HI,0u);
  write_u32(CLIENT_PREV_ACTION_GUID_LO,0u);
  write_u32(CLIENT_PREV_ACTION_GUID_HI,0u);
- if(isOpener(read_u32(CLIENT_PREV_CASTING_SPELL_ID)))write_u32(CLIENT_PREV_CASTING_SPELL_ID,0u);
+ if(isOpener(read_u32(CLIENT_PREV_CASTING_SPELL_ID)))
+  write_u32(CLIENT_PREV_CASTING_SPELL_ID,0u);
+ g_lastOpener=ev;
  g_clearCount++;
  g_watch=0u;
  return 1;
 }
 
 static void STDCALL TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 id,u32 unused){
- u32 now,ev;
+ u32 now,pending,sid,handle,prev,alo,ahi,palo,pahi,targeting,age;
  (void)hwnd;(void)msg;(void)id;(void)unused;
  now=tick_now();
  if(!world_stable(now)){g_watch=0u;return;}
- ev=opener_evidence();
- if(ev){
-  g_lastOpener=ev;
-  if(action_guid_present()&&!g_watch){g_watch=1u;g_watchStart=now;}
+ pending=read_u32(CLIENT_PENDING_SPELLCAST);
+ sid=read_u32(CLIENT_CASTING_SPELL_ID);
+ handle=read_u32(CLIENT_CAST_HANDLE);
+ prev=read_u32(CLIENT_PREV_CASTING_SPELL_ID);
+ alo=read_u32(CLIENT_CURRENT_ACTION_GUID_LO);
+ ahi=read_u32(CLIENT_CURRENT_ACTION_GUID_HI);
+ palo=read_u32(CLIENT_PREV_ACTION_GUID_LO);
+ pahi=read_u32(CLIENT_PREV_ACTION_GUID_HI);
+ targeting=(u32)*(volatile unsigned short*)CLIENT_TARGETING_STATE;
+ if(isOpener(sid))g_lastOpener=sid;
+ else if(isOpener(prev))g_lastOpener=prev;
+ /* Only monitor an opener and a real client-side action/cast/targeting state. */
+ if((!isOpener(sid)&&!isOpener(prev)) ||
+    !(pending||sid||handle||alo||ahi||palo||pahi||targeting)){
+  g_watch=0u;return;
  }
- if(!action_guid_present()){g_watch=0u;return;}
- if(g_cfgAutoClear&&g_watch&&!cast_active()&&(u32)(now-g_watchStart)>=g_cfgGraceMs)
-  clear_stale_ui(0);
+ /* Do not mistake a progressing legitimate cast for a stalled action. */
+ if(!g_watch || pending!=g_watchPending || sid!=g_watchSpell ||
+    handle!=g_watchHandle || prev!=g_watchPrevious ||
+    alo!=g_watchGuidLo || ahi!=g_watchGuidHi ||
+    palo!=g_watchPrevGuidLo || pahi!=g_watchPrevGuidHi ||
+    targeting!=g_watchTargeting){
+  g_watch=1u;g_watchStart=now;
+  g_watchPending=pending;g_watchSpell=sid;g_watchHandle=handle;
+  g_watchPrevious=prev;g_watchGuidLo=alo;g_watchGuidHi=ahi;
+  g_watchPrevGuidLo=palo;g_watchPrevGuidHi=pahi;
+  g_watchTargeting=targeting;
+  return;
+ }
+ if(!g_cfgAutoClear)return;
+ age=(u32)(now-g_watchStart);
+ if(age<g_cfgGraceMs)return;
+ if(pending||sid||handle){
+  if(age<ACTIVE_AUTO_RECOVERY_MS)return;
+  if(!isOpener(sid) && !(sid==0u && isOpener(prev) && targeting))return;
+ }
+ clear_stale_ui(0);
 }
 
 static void init_desc(void){
