@@ -58,6 +58,7 @@ typedef LONG (WINAPI *WNDPROC32)(HWND, UINT, DWORD, LONG);
 #define HOSTILE_HEAD_Z      2.30f
 #define RENDER_INTERVAL_MS  33u
 #define CACHE_REFRESH_FRAMES 15u
+#define WORLD_RELATION_STABLE_FRAMES 60u /* ~2.0 s quarantine after world/BG identity rebuild */
 #define DIAG_EVERY_FRAMES   300u
 #define LABEL_W             360
 #define LABEL_H             58
@@ -408,6 +409,16 @@ static float g_current_farthest_sq = 0.0f;
 static DWORD g_current_over150 = 0u;
 static DWORD g_current_over300 = 0u;
 
+/* Native UnitReaction/CanAttack enter client-owned structures that can remain
+   transiently incomplete after a loading-screen/BG Object Manager rebuild even
+   when the outer object pointers are already readable. Gate those calls on a
+   stable world identity instead of treating readable memory as initialized. */
+static DWORD g_relation_world_manager = 0u;
+static DWORD g_relation_world_local_lo = 0u;
+static DWORD g_relation_world_local_hi = 0u;
+static DWORD g_relation_world_local_obj = 0u;
+static DWORD g_relation_world_stable_frames = 0u;
+
 static volatile DWORD g_esp_enabled = 1u;
 static volatile DWORD g_range_sweep_enabled = 0u;
 static DWORD g_sweep_state = 0u;
@@ -729,6 +740,51 @@ static const char* reaction_name(int r) {
         case 8: return "Exalted";
         default: return "Unknown";
     }
+}
+
+static void reset_world_runtime_cache(void) {
+    DWORD i;
+    g_esp_cache_count = 0u;
+    g_cache_age_frames = 0xFFFFFFFFu;
+    g_cached_local_obj = 0u;
+    g_cached_local_guid_lo = 0u;
+    g_cached_local_guid_hi = 0u;
+    g_click_hit_count = 0u;
+    g_sweep_state = 0u;
+    g_sweep_index = 0u;
+    for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
+        g_tracked[i].used = 0u;
+        g_tracked[i].seenThisRefresh = 0u;
+        g_tracked[i].obj = 0u;
+        g_tracked[i].name[0] = 0;
+    }
+}
+
+static BOOL relation_world_ready(DWORD manager, DWORD localObj, DWORD guidLo, DWORD guidHi) {
+    struct UnitMeta localMeta;
+    if (!manager || !localObj || (guidLo == 0u && guidHi == 0u) ||
+        !cached_object_matches(localObj, guidLo, guidHi) ||
+        !read_unit_meta(localObj, &localMeta)) {
+        g_relation_world_stable_frames = 0u;
+        return FALSE;
+    }
+
+    if (manager != g_relation_world_manager ||
+        guidLo != g_relation_world_local_lo ||
+        guidHi != g_relation_world_local_hi ||
+        localObj != g_relation_world_local_obj) {
+        g_relation_world_manager = manager;
+        g_relation_world_local_lo = guidLo;
+        g_relation_world_local_hi = guidHi;
+        g_relation_world_local_obj = localObj;
+        g_relation_world_stable_frames = 1u;
+        reset_world_runtime_cache();
+        return FALSE;
+    }
+
+    if (g_relation_world_stable_frames < WORLD_RELATION_STABLE_FRAMES)
+        ++g_relation_world_stable_frames;
+    return g_relation_world_stable_frames >= WORLD_RELATION_STABLE_FRAMES;
 }
 
 static int native_unit_reaction(DWORD selfObj, DWORD targetObj) {
@@ -1645,14 +1701,16 @@ static int get_or_create_tracked(DWORD lo, DWORD hi) {
 static void update_tracked_from_object(int ti, DWORD obj, DWORD localObj, const char* knownName) {
     struct UnitMeta m;
     float x, y, z;
+    (void)localObj;
     if (ti < 0 || ti >= (int)MAX_TRACKED_PLAYERS) return;
     if (!cached_object_matches(obj, g_tracked[ti].guidLo, g_tracked[ti].guidHi)) return;
     if (!rd_f32(obj + OBJ_POS_X, &x) || !rd_f32(obj + OBJ_POS_Y, &y) || !rd_f32(obj + OBJ_POS_Z, &z)) return;
     g_tracked[ti].obj = obj;
     g_tracked[ti].x = x; g_tracked[ti].y = y; g_tracked[ti].z = z;
-    g_tracked[ti].reaction = native_unit_reaction(localObj, obj);
-    g_tracked[ti].canAttack = native_can_attack(localObj, obj);
-    g_tracked[ti].pvpEnabled = native_unit_is_pvp(obj);
+    /* Do not call client relation helpers here. This helper is also used by
+       GUID-cache fallback where an object may be readable but no longer belong
+       to the current live enumeration. Relation state is refreshed only in the
+       guarded live-enumeration path below. */
     if (read_unit_meta(obj, &m)) {
         g_tracked[ti].health = m.health;
         g_tracked[ti].maxHealth = m.maxHealth;
@@ -1677,7 +1735,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
     DWORD obj, next, type, lo, hi, visited = 0u;
     DWORD count = 0u, i;
     int reaction, ti;
-    BYTE canAttack;
+    BYTE canAttack, pvpEnabled;
     char pname[MAX_PLAYER_NAME + 1u];
     DWORD nameNodes = 0u;
     const char* nameReason = "UNKNOWN";
@@ -1708,8 +1766,16 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
         if (type == TYPEID_PLAYER &&
             rd_u32(obj + OBJ_GUID_LO, &lo) && rd_u32(obj + OBJ_GUID_HI, &hi) &&
             !(lo == guidLo && hi == guidHi)) {
+            /* Revalidate both objects and require initialized unit metadata
+               immediately before entering native relation code. */
+            if (!cached_object_matches(localObj, guidLo, guidHi) ||
+                !cached_object_matches(obj, lo, hi) ||
+                !read_unit_meta(obj, &meta))
+                goto next_object;
+
             reaction = native_unit_reaction(localObj, obj);
             canAttack = native_can_attack(localObj, obj);
+            pvpEnabled = native_unit_is_pvp(obj);
             if (reaction >= 1 && reaction <= 3) {
                 pname[0] = 0;
                 nameFound = lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
@@ -1720,6 +1786,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 update_tracked_from_object(ti, obj, localObj, pname);
                 g_tracked[ti].reaction = reaction;
                 g_tracked[ti].canAttack = canAttack;
+                g_tracked[ti].pvpEnabled = pvpEnabled;
 
                 if (rd_f32(obj + OBJ_POS_X, &px) && rd_f32(obj + OBJ_POS_Y, &py) && rd_f32(obj + OBJ_POS_Z, &pz)) {
                     dx = px - lx; dy = py - ly; dz = pz - lz; d2 = dx*dx + dy*dy + dz*dz;
@@ -1729,6 +1796,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 }
             }
         }
+next_object:
         if (!rd_u32(obj + g_next_offset, &next)) break;
         if (next == obj || next == manager) break;
         obj = next;
@@ -1842,6 +1910,16 @@ static void render_frame_fast(void) {
             g_cache_age_frames = 0xFFFFFFFFu;
             return;
         }
+    }
+
+    /* BG/instance transitions can expose a new Object Manager and valid-looking
+       player objects before UnitReaction's internal faction/reputation state is
+       initialized. Hold ESP relation scanning until the same world identity has
+       remained valid for ~2 seconds. */
+    if (!relation_world_ready(manager, localObj, guidLo, guidHi)) {
+        g_click_hit_count = 0u;
+        overlay_hide();
+        return;
     }
 
     if (g_cache_age_frames == 0xFFFFFFFFu || g_cache_age_frames >= CACHE_REFRESH_FRAMES || needRefresh) {
