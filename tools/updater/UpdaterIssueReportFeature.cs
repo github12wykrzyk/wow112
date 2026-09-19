@@ -207,7 +207,7 @@ namespace WoW112Updater
                         sb.AppendLine();
                         sb.AppendLine("#### " + Path.GetFileName(file));
                         sb.AppendLine("```json");
-                        sb.AppendLine(Sanitize(TailFile(file, 12000), root, 12000));
+                        sb.AppendLine(Sanitize(TailFile(file, 5000), root, 5000));
                         sb.AppendLine("```");
                     }
                 }
@@ -245,7 +245,7 @@ namespace WoW112Updater
                     sb.AppendLine();
                     sb.AppendLine("### Updater session log (tail)");
                     sb.AppendLine("```text");
-                    sb.AppendLine(Sanitize(TailText(log.Text, 10000), root, 10000));
+                    sb.AppendLine(Sanitize(TailText(log.Text, 5000), root, 5000));
                     sb.AppendLine("```");
                 }
                 return sb.ToString();
