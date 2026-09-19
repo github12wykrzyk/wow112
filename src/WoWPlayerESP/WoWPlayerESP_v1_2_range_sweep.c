@@ -144,6 +144,10 @@ typedef LONG (WINAPI *WNDPROC32)(HWND, UINT, DWORD, LONG);
 #define OBJ_POS_Z           0x000009C0u
 #define OBJ_POS_O           0x000009C4u
 #define TYPEID_PLAYER       4u
+#define WSG_HORDE_FLAG_AURA 23333u
+#define WSG_ALLIANCE_FLAG_AURA 23335u
+#define PLAYER_AURA_FIRST_INDEX 0x2Fu
+#define PLAYER_AURA_SLOT_COUNT 48u
 
 /* Vanilla 1.12.1 player info/name cache used by UnitName/player-name lookups. */
 #define PLAYER_NAME_CACHE_HEAD 0x00C0E230u
@@ -305,6 +309,7 @@ struct LabelOverlay {
     DWORD lastYd;
     BYTE lastPvp;
     BYTE lastSource;
+    BYTE lastFlagCarrier;
     DWORD lastAgeSec;
     BOOL contentValid;
 };
@@ -420,6 +425,7 @@ static DWORD g_relation_world_local_obj = 0u;
 static DWORD g_relation_world_stable_frames = 0u;
 
 static volatile DWORD g_esp_enabled = 1u;
+static volatile DWORD g_esp_flag_enabled = 1u;
 static volatile DWORD g_range_sweep_enabled = 0u;
 static DWORD g_sweep_state = 0u;
 static DWORD g_sweep_index = 0u;
@@ -785,6 +791,26 @@ static BOOL relation_world_ready(DWORD manager, DWORD localObj, DWORD guidLo, DW
     if (g_relation_world_stable_frames < WORLD_RELATION_STABLE_FRAMES)
         ++g_relation_world_stable_frames;
     return g_relation_world_stable_frames >= WORLD_RELATION_STABLE_FRAMES;
+}
+
+/* Standard Vanilla race-to-team classification requires no client relation calls.
+   Unknown/custom races are not classified as hostile. */
+static BYTE vanilla_race_team(BYTE race) {
+    if (race==1u || race==3u || race==4u || race==7u) return 1u;
+    if (race==2u || race==5u || race==6u || race==8u) return 2u;
+    return 0u;
+}
+
+/* Strictly live aura marker: never mark stale MEM/LAST positions as carriers. */
+static BYTE live_wsg_flag_carrier(DWORD obj) {
+    DWORD desc=0u, spell=0u, i;
+    if(!obj || !rd_u32(obj+OBJ_DESC_PTR,&desc) ||
+       desc<0x00010000u || desc>0x7FFF0000u) return 0u;
+    for(i=0u;i<PLAYER_AURA_SLOT_COUNT;++i) {
+        if(!rd_u32(desc+4u*(PLAYER_AURA_FIRST_INDEX+i),&spell)) return 0u;
+        if(spell==WSG_HORDE_FLAG_AURA || spell==WSG_ALLIANCE_FLAG_AURA) return 1u;
+    }
+    return 0u;
 }
 
 static int native_unit_reaction(DWORD selfObj, DWORD targetObj) {
@@ -1316,7 +1342,7 @@ static void draw_text_centered(HDC dc, int cx, int y, const char* text, COLORREF
 
 static void draw_esp_label(HDC dc, const char* name,
                            DWORD hp, DWORD maxHp, float distance, BYTE pvpEnabled,
-                           BYTE source, DWORD ageSec) {
+                           BYTE source, DWORD ageSec, BYTE flagCarrier) {
     char line1[64], line2[96], line3[128];
     char* p;
     DWORD pct = 0u;
@@ -1324,6 +1350,7 @@ static void draw_esp_label(HDC dc, const char* name,
     if (maxHp != 0u) pct = (hp * 100u) / maxHp;
 
     p = line1;
+    if(flagCarrier) p=app_str(p,"[FLAG] ");
     p = app_str(p, (name && name[0]) ? name : "Unknown");
     *p = 0;
 
@@ -1619,15 +1646,17 @@ static void remove_game_click_hook(void) {
 }
 
 static BOOL label_content_changed(DWORD index, DWORD lo, DWORD hi, DWORD hp, DWORD maxHp,
-                                  DWORD yd, BYTE pvp, BYTE source, DWORD ageSec) {
+                                  DWORD yd, BYTE pvp, BYTE source, DWORD ageSec, BYTE flagCarrier) {
     struct LabelOverlay* l;
     if (index >= MAX_ESP_PLAYERS) return TRUE;
     l = &g_labels[index];
     if (!l->contentValid || l->lastGuidLo != lo || l->lastGuidHi != hi ||
         l->lastHp != hp || l->lastMaxHp != maxHp || l->lastYd != yd || l->lastPvp != pvp ||
-        l->lastSource != source || l->lastAgeSec != ageSec) {
+        l->lastSource != source || l->lastAgeSec != ageSec ||
+        l->lastFlagCarrier != flagCarrier) {
         l->lastGuidLo = lo; l->lastGuidHi = hi; l->lastHp = hp; l->lastMaxHp = maxHp;
         l->lastYd = yd; l->lastPvp = pvp; l->lastSource = source; l->lastAgeSec = ageSec;
+        l->lastFlagCarrier=flagCarrier;
         l->contentValid = TRUE;
         return TRUE;
     }
@@ -1735,7 +1764,8 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
     DWORD obj, next, type, lo, hi, visited = 0u;
     DWORD count = 0u, i;
     int reaction, ti;
-    BYTE canAttack, pvpEnabled;
+    BYTE canAttack, pvpEnabled, localTeam;
+    struct UnitMeta localMeta;
     char pname[MAX_PLAYER_NAME + 1u];
     DWORD nameNodes = 0u;
     const char* nameReason = "UNKNOWN";
@@ -1747,7 +1777,8 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
     g_current_over150 = 0u;
     g_current_over300 = 0u;
 
-    if (!manager || !localObj) return FALSE;
+    if (!manager || !localObj || !read_unit_meta(localObj,&localMeta)) return FALSE;
+    localTeam=vanilla_race_team(localMeta.raceId);
     expire_old_tracked();
 
     for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
@@ -1773,9 +1804,11 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 !read_unit_meta(obj, &meta))
                 goto next_object;
 
-            reaction = native_unit_reaction(localObj, obj);
-            canAttack = native_can_attack(localObj, obj);
-            pvpEnabled = native_unit_is_pvp(obj);
+            /* Avoid BG transition crashes in the native relation path. */
+            reaction=(localTeam && vanilla_race_team(meta.raceId) &&
+                      localTeam!=vanilla_race_team(meta.raceId)) ? 1 : 5;
+            canAttack=(BYTE)(reaction==1 ? 1u : 0u);
+            pvpEnabled=canAttack;
             if (reaction >= 1 && reaction <= 3) {
                 pname[0] = 0;
                 nameFound = lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
@@ -1967,6 +2000,7 @@ static void render_frame_fast(void) {
             DWORD ageFrames = g_render_frame - e->lastSeenFrame;
             DWORD ageSec = (ageFrames * RENDER_INTERVAL_MS) / 1000u;
             BOOL liveObject = FALSE;
+            BYTE flagCarrier = 0u;
 
             x = e->x; y = e->y; z = e->z;
 
@@ -1985,6 +2019,8 @@ static void render_frame_fast(void) {
                 }
             }
 
+            if(liveObject && g_esp_flag_enabled)
+                flagCarrier=live_wsg_flag_carrier(e->obj);
             dx = x - lx; dy = y - ly; dz = z - lz;
             d2 = dx*dx + dy*dy + dz*dz;
             d = sqrt_local(d2);
@@ -1999,9 +2035,9 @@ static void render_frame_fast(void) {
 
                 {
                     DWORD ydNow = (DWORD)(d + 0.5f);
-                    if (label_content_changed(drawn, e->guidLo, e->guidHi, hpNow, maxHpNow, ydNow, e->pvpEnabled, e->source, ageSec)) {
+                    if (label_content_changed(drawn, e->guidLo, e->guidHi, hpNow, maxHpNow, ydNow, e->pvpEnabled, e->source, ageSec, flagCarrier)) {
                         clear_label_pixels();
-                        draw_esp_label(g_label_memdc, e->name, hpNow, maxHpNow, d, e->pvpEnabled, e->source, ageSec);
+                        draw_esp_label(g_label_memdc, e->name, hpNow, maxHpNow, d, e->pvpEnabled, e->source, ageSec, flagCarrier);
                         finalize_label_alpha();
                         if (!update_label_alpha(g_labels[drawn].hwnd, absX, absY)) {
                             g_labels[drawn].contentValid = FALSE;

@@ -5,9 +5,10 @@
     "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
-    "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
+    "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
+    "WoWPlayerESP_v1_2_range_sweep.dll"
   ],
-  "note": "BG crash isolation: use exact accepted runtime bytes for WoWPlayerESP_v1_2_range_sweep.dll instead of rebuilding the experimental v1.3 Challenges wrapper. Native crash report #12 repeats ACCESS_VIOLATION at WoW.exe 0x0060621D with WoWPlayerESP frame +0x39F7 during BG entry. Preserve current Auto-facing, Auto-WotF, AutoKick, PickPocket, MovementCore and StealthCD work experiments unchanged. Keep Challenges wrapper source for later hardening, but do not package it in this candidate.",
+  "note": "Experimental BG PlayerESP candidate: replace unsafe native relation calls with read-only vanilla race team check, recover labels after world transition, and display live-only WSG flag aura marker. Prior v1.3 binary caused BG crash; require testing before stable promotion.",
   "source_fingerprint_warning_allowlist": [
     "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",

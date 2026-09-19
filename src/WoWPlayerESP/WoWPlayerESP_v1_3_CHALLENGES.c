@@ -486,7 +486,7 @@ static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
     return 0u;
 }
 
-static W112_ControlSettingV1 g_controlSettings[5];
+static W112_ControlSettingV1 g_controlSettings[6];
 static volatile DWORD g_controlDescriptorReady=0u;
 
 static void init_control_descriptor(void)
@@ -514,6 +514,10 @@ static void init_control_descriptor(void)
     s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=5u;s->key="challenge_ready";s->label="Challenge bridge ready";
     s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
+    s=&g_controlSettings[5];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="wsg_flag_carrier";s->label="WSG Flag Carrier";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
     g_controlDescriptorReady=1u;
 }
 
@@ -525,6 +529,7 @@ static int W112_CTL_STDCALL esp_control_get(w112_u32 id,W112_ControlValueV1*out)
     if(id==3u){out->i32=(w112_i32)g_esp_cache_count;return 1;}
     if(id==4u){out->i32=(w112_i32)g_click_hit_count;return 1;}
     if(id==5u){out->u32=g_challenge_world_ready?1u:0u;return 1;}
+    if(id==6u){out->u32=g_esp_flag_enabled?1u:0u;return 1;}
     return 0;
 }
 
@@ -542,12 +547,13 @@ static int W112_CTL_STDCALL esp_control_set(w112_u32 id,const W112_ControlValueV
         if(g_range_sweep_enabled)g_sweep_next_frame=g_render_frame+1u;
         return 1;
     }
+    if(id==6u){g_esp_flag_enabled=value->u32;return 1;}
     return 0;
 }
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "playeresp","PlayerESP",0x00010300u,5u,g_controlSettings,
+    "playeresp","PlayerESP",0x00010400u,6u,g_controlSettings,
     esp_control_get,esp_control_set
 };
 
