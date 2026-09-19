@@ -327,7 +327,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
     {"skip_indurium","Skip Indurium"},
     {"skip_hakkari_thorium","Skip Hakkari Thorium"}
 };
-static W112_ControlSettingV1 g_controlSettings[7u+14u];
+static W112_ControlSettingV1 g_controlSettings[7u+14u+3u];
 static volatile DWORD g_controlDescriptorReady=0u;
 
 static void init_control_descriptor(void)
@@ -372,6 +372,19 @@ static void init_control_descriptor(void)
         s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
     }
 
+    s=&g_controlSettings[21u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=22u;
+    s->key="mining_early_restore";s->label="Mining: real XYZ during cast (TEST)";
+    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[22u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=23u;
+    s->key="mining_early_releases";s->label="Mining early releases";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[23u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=24u;
+    s->key="mining_early_interrupts";s->label="Mining early interrupts";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
     g_controlDescriptorReady=1u;
 }
 
@@ -386,6 +399,9 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==6u){out->i32=(w112_i32)g_altPriorityStarts;return 1;}
     if(id==7u){out->i32=(w112_i32)g_altPriorityPPBlocks;return 1;}
     if(id>=8u&&id<22u){out->u32=(g_miningBlacklistMask&(1u<<(id-8u)))?1u:0u;return 1;}
+    if(id==22u){out->u32=g_miningEarlyRestoreEnabled?1u:0u;return 1;}
+    if(id==23u){out->i32=(w112_i32)g_miningEarlyRestoreCount;return 1;}
+    if(id==24u){out->i32=(w112_i32)g_miningEarlyCancelCount;return 1;}
     return 0;
 }
 
@@ -406,6 +422,15 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     if(id==3u){
         g_autoOpenEnabled=value->u32;
         if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(p,now,"GUI_AUTOOPEN_DISABLED",1u,0u);
+        return 1;
+    }
+    if(id==22u){
+        g_miningEarlyRestoreEnabled=value->u32;
+        if(!value->u32&&g_miningEarlyRestored&&Ptr(p)){
+            g_miningEarlyRestored=0u;g_miningEarlyRestoreAt=0u;
+            g_gatherSpoof=1u;GatherSendFake(p,now);
+            GatherFileLog("MINING_EARLY_GUI_DISABLED",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
+        }
         return 1;
     }
     if(id>=8u&&id<22u){
@@ -429,7 +454,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,21u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,24u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

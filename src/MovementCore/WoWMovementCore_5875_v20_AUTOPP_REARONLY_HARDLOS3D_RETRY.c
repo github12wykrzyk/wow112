@@ -197,6 +197,7 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define GATHER_HB_GAP_MS              150u
 #define GATHER_HERB_HOLD_MS          6200u  /* fallback only if cast-state is not observed */
 #define GATHER_MINING_HOLD_MS       18000u  /* HARD LOS sweep, combat-safe Mining */
+#define MINING_EARLY_CANCEL_WINDOW_MS 1200u /* Cast ending this soon after restore is treated as interruption. */
 #define MINING_3D_RETRY_FIRST_MS       300u
 #define MINING_3D_RETRY_GAP_MS         180u
 #define MINING_3D_RETRY_SETTLE_MS       90u
@@ -335,6 +336,10 @@ static volatile DWORD g_gatherSpoof=0u,g_gatherClickPending=0u,g_gatherClickAt=0
 static volatile DWORD g_gatherLootWait=0u,g_gatherLootWaitUntil=0u,g_gatherLootTargetGoneLogged=0u;
 static volatile DWORD g_gatherLootStart=0u,g_gatherLootSeenOpen=0u,g_gatherLootOpenLogged=0u;
 static volatile DWORD g_gatherSawCast=0u,g_gatherCastSeenLogged=0u;
+/* Opt-in Mining-only experiment: restore real server XYZ during the mining cast.
+ * Re-arm near-node XYZ before the original manual loot window gate. */
+static volatile DWORD g_miningEarlyRestoreEnabled=0u,g_miningEarlyRestored=0u,g_miningEarlyRestoreUsed=0u;
+static volatile DWORD g_miningEarlyRestoreAt=0u,g_miningEarlyRestoreCount=0u,g_miningEarlyCancelCount=0u;
 static volatile DWORD g_gatherStealthBreaks=0u,g_gatherStealthWaits=0u,g_gatherStealthPending=0u;
 static volatile DWORD g_mining3DRetryIndex=0u,g_mining3DRetryAt=0u,g_mining3DRetryActive=0u,g_mining3DRetries=0u,g_mining3DSweepsExhausted=0u;
 static float g_mining3DDx=0.0f,g_mining3DDy=0.0f,g_mining3DDz=0.0f;
@@ -1170,14 +1175,14 @@ static DWORD Mining3DQueueRetry(BYTE*p,DWORD now)
 
 static void GatherStop(BYTE*p,DWORD now,const char*reason,DWORD sendReal,DWORD blacklist)
 {
-    DWORD lo=g_gatherTargetLo,hi=g_gatherTargetHi,entry=g_gatherEntry,attempts=g_gatherAttempts;float d2=g_gatherDistSq;(void)blacklist;g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_gatherStealthPending=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_gatherNodeX=g_gatherNodeY=g_gatherNodeZ=0.0f;g_autoOpenPickPrimed=0u;g_gatherStart=0u;g_gatherLastHB=0u;g_gatherSpoof=0u;g_gatherClickPending=0u;g_gatherClickAt=0u;g_gatherPosSource=0u;g_gatherTargetLo=g_gatherTargetHi=g_gatherEntry=g_gatherKind=0u;g_gatherX=g_gatherY=g_gatherZ=g_gatherDistSq=0.0f;g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;if(sendReal&&Ptr(p))SendReal(p);GatherFileLog(reason,now,entry,lo,hi,d2,attempts,blacklist);
+    DWORD lo=g_gatherTargetLo,hi=g_gatherTargetHi,entry=g_gatherEntry,attempts=g_gatherAttempts;float d2=g_gatherDistSq;(void)blacklist;g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_gatherStealthPending=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_gatherNodeX=g_gatherNodeY=g_gatherNodeZ=0.0f;g_autoOpenPickPrimed=0u;g_gatherStart=0u;g_gatherLastHB=0u;g_gatherSpoof=0u;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;g_gatherClickPending=0u;g_gatherClickAt=0u;g_gatherPosSource=0u;g_gatherTargetLo=g_gatherTargetHi=g_gatherEntry=g_gatherKind=0u;g_gatherX=g_gatherY=g_gatherZ=g_gatherDistSq=0.0f;g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;if(sendReal&&Ptr(p))SendReal(p);GatherFileLog(reason,now,entry,lo,hi,d2,attempts,blacklist);
 }
 
 static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,DWORD kind,float d2)
 {
     DWORD*desc,src=0;float nx=0,ny=0,nz=0,px,py,dx,dy;
     if(!Ptr(p)||!Ptr(obj))return;desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);if(!GetGOPos(obj,desc,&nx,&ny,&nz,&src)){GatherFileLog("POS_FAIL_RETRY",now,entry,lo,hi,d2,g_gatherAttempts,kind);g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;return;}
-    g_gatherActive=1u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_autoOpenPickPrimed=0u;g_gatherTargetLo=lo;g_gatherTargetHi=hi;g_gatherEntry=entry;g_gatherKind=kind;g_gatherStart=now;g_gatherLastHB=0u;g_gatherDistSq=d2;g_gatherPosSource=src;
+    g_gatherActive=1u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_autoOpenPickPrimed=0u;g_gatherTargetLo=lo;g_gatherTargetHi=hi;g_gatherEntry=entry;g_gatherKind=kind;g_gatherStart=now;g_gatherLastHB=0u;g_gatherDistSq=d2;g_gatherPosSource=src;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;
     ChatAttempt(kind,entry,lo,hi,now);
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);dx=px-nx;dy=py-ny;
     g_gatherNodeX=nx;g_gatherNodeY=ny;g_gatherNodeZ=nz;g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz;
@@ -1208,7 +1213,15 @@ static DWORD GatherCastMatches(DWORD kind,DWORD castId)
 
 static void GatherBeginManualLootWait(BYTE*p,DWORD now,const char*reason)
 {
-    (void)p;
+    /* Preserve the existing near-node loot protocol. Only the mining cast may
+     * run at real XYZ; restore spoof before handing off to the loot gate. */
+    if(g_gatherKind==2u&&g_miningEarlyRestored){
+        g_miningEarlyRestored=0u;
+        g_miningEarlyRestoreAt=0u;
+        g_gatherSpoof=1u;
+        GatherSendFake(p,now);
+        GatherFileLog("MINING_EARLY_REARM_LOOT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
+    }
     g_gatherActive=0u;
     g_gatherClickPending=0u;
     g_gatherLootWait=1u;
@@ -1263,7 +1276,7 @@ static void GatherClearForPPFast(DWORD now,DWORD logEvent)
     DWORD lo=g_gatherTargetLo,hi=g_gatherTargetHi,entry=g_gatherEntry,attempts=g_gatherAttempts;float d2=g_gatherDistSq;
     g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;
     g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_gatherStealthPending=0u;g_autoOpenPickPrimed=0u;
-    g_gatherStart=0u;g_gatherLastHB=0u;g_gatherSpoof=0u;g_gatherClickPending=0u;g_gatherClickAt=0u;g_gatherPosSource=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;
+    g_gatherStart=0u;g_gatherLastHB=0u;g_gatherSpoof=0u;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;g_gatherClickPending=0u;g_gatherClickAt=0u;g_gatherPosSource=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;
     g_gatherTargetLo=g_gatherTargetHi=g_gatherEntry=g_gatherKind=0u;g_gatherX=g_gatherY=g_gatherZ=g_gatherDistSq=0.0f;
     g_gatherNextScan=now+PP_POST_CAST_QUIET_MS;
     if(logEvent)QueuePPLog(logEvent,now,entry,lo,hi,d2,attempts);
@@ -1440,12 +1453,41 @@ static void GatherTick(BYTE*p,DWORD now)
         if(GatherCastMatches(g_gatherKind,castId)){
             g_gatherSawCast=1u;
             if(!g_gatherCastSeenLogged){g_gatherCastSeenLogged=1u;GatherFileLog("GATHER_CAST_SEEN",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,castId);}
+            if(g_gatherKind==2u&&g_miningEarlyRestoreEnabled&&g_gatherSpoof&&
+               !g_miningEarlyRestoreUsed&&!Combat(p)){
+                /* Only after observing the mining cast; never release a pending
+                 * click / LOS retry or any herb, open, PP or combat transaction. */
+                g_miningEarlyRestoreUsed=1u;
+                g_miningEarlyRestored=1u;
+                g_miningEarlyRestoreAt=now;
+                g_gatherSpoof=0u;
+                SendReal(p);
+                ++g_miningEarlyRestoreCount;
+                GatherFileLog("MINING_EARLY_RESTORE_REAL",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,castId);
+            }
         }else if(castId){
             if(castId==SPELL_PICK_POCKET){++g_ppPriorityAborts;GatherClearForPPFast(now,2u);}
             else{++g_foreignCastAborts;GatherStop(p,now,"FOREIGN_CAST_ABORT",1u,0u);}
             return;
         }
 
+        if(g_gatherKind==2u&&g_miningEarlyRestored&&!castId&&!GatherLootOpen()&&
+           (DWORD)(now-g_miningEarlyRestoreAt)<MINING_EARLY_CANCEL_WINDOW_MS){
+            /* Early disappearance of the cast after real XYZ is treated as
+             * interruption. Re-arm once and retry through the existing HARDLOS
+             * machinery. Fail closed to legacy mining until manually re-enabled. */
+            g_miningEarlyRestored=0u;
+            g_miningEarlyRestoreAt=0u;
+            g_miningEarlyRestoreEnabled=0u;
+            g_gatherSpoof=1u;
+            GatherSendFake(p,now);
+            g_gatherSawCast=0u;
+            g_gatherCastSeenLogged=0u;
+            g_mining3DRetryAt=now+MINING_3D_RETRY_FIRST_MS;
+            ++g_miningEarlyCancelCount;
+            GatherFileLog("MINING_EARLY_INTERRUPTED_LEGACY",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
+            return;
+        }
         hold=(g_gatherKind==1u)?GATHER_HERB_HOLD_MS:((g_gatherKind==3u)?AUTOOPEN_HOLD_MS:GATHER_MINING_HOLD_MS);
         if(g_gatherSawCast&&!castId&&(DWORD)(now-g_gatherStart)>=350u){GatherBeginManualLootWait(p,now,"MANUALLOOT_WAIT_CAST_END");return;}
         if((DWORD)(now-g_gatherStart)>=hold){GatherBeginManualLootWait(p,now,"MANUALLOOT_WAIT_FALLBACK");return;}
