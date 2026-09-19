@@ -168,6 +168,8 @@ static volatile u32 g_busy = 0u;
 static volatile u32 g_status = STATUS_DETACHED;
 static volatile u32 g_worldPresent = 0u;
 static volatile u32 g_worldReadyAfter = 0u;
+/* Armed only after the UI-thread timer has observed a reacquired world. */
+static volatile u32 g_captureReady = 0u;
 
 static volatile u32 g_cfgEnabled = 1u;
 static volatile u32 g_cfgNormalCasts = 1u;
@@ -483,6 +485,8 @@ __declspec(naked) static void SpellStartDecodedHook(void)
         jne hook_done
         cmp dword ptr [g_cfgEnabled], 0
         je hook_done
+        cmp dword ptr [g_captureReady], 0
+        je hook_done
         cmp dword ptr [g_cfgNormalCasts], 0
         je hook_done
         mov eax, dword ptr [ebp-0x10]
@@ -513,18 +517,16 @@ __declspec(naked) static void SpellStartDetailHook(void)
     __asm {
         pushfd
         pushad
+        cmp dword ptr [g_captureReady], 0
+        je detail_done
         cmp dword ptr [g_pendingNormal], 0
         je detail_done
-        mov eax, dword ptr [edi]
-        mov ecx, dword ptr [edi+4]
-        cmp eax, dword ptr [g_pendingGuidLo]
-        jne detail_done
-        cmp ecx, dword ptr [g_pendingGuidHi]
-        jne detail_done
-        mov edx, dword ptr [ebx+8]
-        cmp edx, dword ptr [g_pendingSpell]
-        jne detail_done
+        /* At this signature-guarded callsite EDI/EBX are not guaranteed
+           readable across zone transitions. The cast duration has already
+           been decoded into the current handler's stack local. */
         mov eax, dword ptr [ebp-0x1C]
+        cmp eax, 60000
+        ja detail_done
         mov dword ptr [g_pendingCastMs], eax
     detail_done:
         popad
@@ -546,6 +548,7 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
     now=tick_now();
 
     if(!world_ready()){
+        g_captureReady=0u;
         if(g_worldPresent){ ++g_worldResets; clear_transient_state(); }
         g_worldPresent=0u;
         g_worldReadyAfter=0u;
@@ -554,6 +557,7 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
         return;
     }
     if(!g_worldPresent){
+        g_captureReady=0u;
         g_worldPresent=1u;
         g_worldReadyAfter=now+WORLD_REACQUIRE_MS;
         clear_transient_state();
@@ -562,12 +566,14 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
         return;
     }
     if((LONG32)(now-g_worldReadyAfter)<0){
+        g_captureReady=0u;
         g_status=STATUS_REACQUIRE;
         g_busy=0u;
         return;
     }
 
     if(!g_cfgEnabled){
+        g_captureReady=0u;
         clear_transient_state();
         g_status=STATUS_DISABLED;
         g_busy=0u;
@@ -575,6 +581,7 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
     }
 
     if(!framescript_signature_ok()){
+        g_captureReady=0u;
         clear_transient_state();
         g_status=STATUS_FRAMESCRIPT_MISMATCH;
         g_busy=0u;
@@ -582,6 +589,7 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
     }
 
     g_status=STATUS_ACTIVE;
+    g_captureReady=1u;
 
     if(g_pendingNormal){
         u32 castMs=g_pendingCastMs;
@@ -643,6 +651,7 @@ static void remove_module(void)
 {
     KillTimerFn killTimer=(KillTimerFn)load_iat_fn(WOW_IAT_KILLTIMER);
     g_installed=0u;
+    g_captureReady=0u;
     if(g_timerId && killTimer) killTimer(0,g_timerId);
     g_timerId=0u;
     if(*(volatile u8 *)(uptr32)ADDR_SPELL_DETAIL_HOOK==0xE9u){
