@@ -10,7 +10,7 @@
  * casts spells, or hooks game code. Normal server-side rules still apply.
  *
  * UI-thread SetTimer; world-identity reset/quarantine during BG transitions;
- * WSG locale-specific GetRealZoneText gate; validated GUID and GO descriptors;
+ * WSG detector is diagnostic; exact dropped-flag GO IDs are the hard scope gate;
  * 4.75-yard physical range; per-GUID capped retries and no pointer caching.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -136,22 +136,31 @@ static int buildGuard(void) {
     return 1;
 }
 
-/* No Lua calls on GlueXML/loading screens; re-probe every 400ms.  The gate
- * deliberately fails closed on localized zone names rather than risk
- * interacting with unrelated GameObjects outside the English WSG instance. */
+/* Diagnostic WSG detector only: the scanner itself is hard-scoped by the
+ * globally unique dropped-flag GameObject entries 179785/179786.  Do not let
+ * localized/custom zone text disable the feature.  Prefer the historical
+ * English zone name, then use the locale-independent battlefield flag tokens
+ * exposed by the 1.12 UI API when available. */
 static void checkWsgZone(u32 now) {
     static const char script[] =
         "W112_AUTOFLAG_WSG='0';"
-        "if type(GetRealZoneText)=='function' and type(UnitExists)=='function' "
-        "and UnitExists('player') and GetRealZoneText()=='Warsong Gulch' "
-        "then W112_AUTOFLAG_WSG='1' end";
+        "if type(UnitExists)=='function' and UnitExists('player') then "
+        "local z='';"
+        "if type(GetRealZoneText)=='function' then z=GetRealZoneText() or '' "
+        "elseif type(GetZoneText)=='function' then z=GetZoneText() or '' end;"
+        "if z=='Warsong Gulch' then W112_AUTOFLAG_WSG='1' "
+        "elseif type(GetBattlefieldFlagPosition)=='function' then "
+        "local x1,y1,t1=GetBattlefieldFlagPosition(1);"
+        "local x2,y2,t2=GetBattlefieldFlagPosition(2);"
+        "if t1=='AllianceFlag' or t1=='HordeFlag' or "
+        "t2=='AllianceFlag' or t2=='HordeFlag' then W112_AUTOFLAG_WSG='1' end "
+        "end end";
     const char *result;
     if (g_lastZoneCheck && (u32)(now-g_lastZoneCheck)<ZONE_REFRESH_MS)return;
     g_lastZoneCheck=now;
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,script);
     result=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOFLAG_WSG",-1,0u);
     g_wsg=(result && result[0]=='1' && result[1]==0) ? 1u:0u;
-    if(!g_wsg)resetFlag();
 }
 
 /* Resolve fresh player pointer each tick. World/instance identity changes
@@ -229,7 +238,8 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now) {
     player=localPlayer(now);
     if(!player){g_status=(g_mgr ? STATUS_WORLD_GRACE:STATUS_WAIT_WORLD);return;}
     checkWsgZone(now);
-    if(!g_wsg){g_status=STATUS_OUTSIDE_WSG;return;}
+    /* WSG text detection is diagnostic only.  The actual interaction gate is
+     * the exact dropped-flag entry allowlist inside scanAndClick(). */
     g_status=STATUS_ACTIVE;
     scanAndClick(player,now);
 }
@@ -237,7 +247,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now) {
 static void initSettings(void) {
     u32 i;
     static const char *keys[4]={"enabled","wsg_active","click_attempts","last_flag_entry"};
-    static const char *labels[4]={"Enabled","WSG active","Click attempts","Last flag entry"};
+    static const char *labels[4]={"Enabled","WSG detected (read-only)","Click attempts","Last flag entry"};
     if(g_descriptorReady)return;
     for(i=0u;i<4u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];

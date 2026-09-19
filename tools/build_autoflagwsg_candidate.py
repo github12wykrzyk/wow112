@@ -122,7 +122,7 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "autoflagwsg",
-        "settings": ["Enabled", "WSG active", "Click attempts", "Last flag entry"],
+        "settings": ["Enabled", "WSG detected (read-only)", "Click attempts", "Last flag entry"],
         "timings_ms": timing,
     }
 
