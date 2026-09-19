@@ -9,6 +9,7 @@
  * V3 design:
  *   - normal casts: signature-guarded detour after SMSG_SPELL_START (0x131)
  *     has decoded caster GUID + spell id; only current selected target is latched;
+ *   - normal-cast attempts/retries require fresh native current-cast spell ID;
  *   - channels: poll public UNIT_CHANNEL_SPELL on a FRESH GUID->object resolve;
  *   - no object pointer survives a timer tick;
  *   - world/BG transitions hard-reset state and require a reacquire grace period;
@@ -67,7 +68,7 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define DLL_PROCESS_ATTACH 1u
 #define PAGE_EXECUTE_READWRITE 0x40u
 
-#define VERSION_3_2 0x00030200u
+#define VERSION_3_3 0x00030300u
 #define TIMER_PERIOD_MS 10u
 #define WORLD_REACQUIRE_MS 750u
 #define KICK_RETRY_INTERVAL_MS 35u
@@ -134,6 +135,10 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define TYPE_UNIT                   3u
 #define TYPE_PLAYER                 4u
 #define UNIT_CHANNEL_SPELL_INDEX    0x0090u
+/* Native CGUnit casting spell ID (not the channel descriptor). */
+#define OFF_UNIT_CASTING_SPELL       0x0C8Cu
+#define ADDR_UNIT_SET_CASTING_SPELL  0x0060D026u
+#define ADDR_UNIT_CLEAR_CASTING_SPELL 0x0060D066u
 
 #define WOW_IAT_GETTICKCOUNT        0x007FF310u
 #define WOW_IAT_FLUSHICACHE         0x007FF320u
@@ -376,6 +381,26 @@ static u32 target_channel_spell(u32 lo,u32 hi,u32 *outType)
     return read_u32(desc + UNIT_CHANNEL_SPELL_INDEX*4u);
 }
 
+/* Fail closed if this 5875 client no longer uses the expected native cast
+   slot. Check the actual setter and clearer instruction bodies, rather than
+   assuming a stale SPELL_START packet proves the target is still casting.
+   These sites are not detoured by AutoKick. */
+static int casting_slot_signature_ok(void)
+{
+    static const u8 setSig[]={0x89,0x81,0x8C,0x0C,0x00,0x00};
+    static const u8 clearSig[]={0xC7,0x86,0x8C,0x0C,0x00,0x00,0x00,0x00,0x00,0x00};
+    return bytes_match(ADDR_UNIT_SET_CASTING_SPELL,setSig,(u32)sizeof(setSig)) &&
+           bytes_match(ADDR_UNIT_CLEAR_CASTING_SPELL,clearSig,(u32)sizeof(clearSig));
+}
+
+/* Positive, fresh live-cast check. The caller has just resolved the exact
+   selected GUID to a live unit object on the UI timer thread. */
+static int target_normal_cast_live(u32 obj,u32 spell)
+{
+    return valid_ptr(obj) && spell!=0u && casting_slot_signature_ok() &&
+           read_u32(obj+OFF_UNIT_CASTING_SPELL)==spell;
+}
+
 static char *append_text(char *p,const char *end,const char *s)
 {
     if(!p||!end||!s) return p;
@@ -456,13 +481,9 @@ static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 startTic
        is already too late at its first eligible timer tick. */
     if(extra+(u32)delay
        >=remaining-NORMAL_CAST_SAFETY_MS){ ++g_expiredDrops; return; }
+    /* Retry is allowed only while the native unit cast ID still matches.
+       Every attempt is revalidated immediately before firing. */
     schedule_kick_after(lo,hi,spell,now,extra,QUEUE_KIND_NORMAL,startTick+castMs);
-    /* Normal casts have no authoritative live-cast descriptor in 1.12.1.
-       A retry after the first Kick can therefore race the target's cast end
-       (or our own successful interrupt). Fail closed: one normal-cast attempt.
-       Channel retries remain safe because each retry is live-validated via
-       UNIT_CHANNEL_SPELL immediately before CastSpellByName('Kick'). */
-    g_queueAttemptsRemaining=1u;
 }
 
 static void fire_queued_kick(u32 now)
@@ -485,15 +506,16 @@ static void fire_queued_kick(u32 now)
         g_queued=0u; g_queueAttemptsRemaining=0u; ++g_targetDrops; return;
     }
 
-    /* Every attempt (including retries) must still belong to a live cast
-       window. For channels the actual descriptor must still advertise the
-       same channel spell; the previous timer's snapshot is never enough. */
+    /* Re-check the same resolved target and currently casting spell before
+       EVERY attempt, including the initial one. A packet timestamp alone
+       never authorizes a retry after the client clears the cast. */
     if(g_queueKind==QUEUE_KIND_NORMAL){
-        if((LONG32)(g_queueDeadline-now)<=(LONG32)NORMAL_CAST_SAFETY_MS){
+        if(!g_cfgNormalCasts || !target_normal_cast_live(obj,g_queueSpell) ||
+           (LONG32)(g_queueDeadline-now)<=(LONG32)NORMAL_CAST_SAFETY_MS){
             g_queued=0u; g_queueAttemptsRemaining=0u; ++g_expiredDrops; return;
         }
     }else if(g_queueKind==QUEUE_KIND_CHANNEL){
-        if(target_channel_spell(lo,hi,0)!=g_queueSpell){
+        if(!g_cfgChannels || target_channel_spell(lo,hi,0)!=g_queueSpell){
             g_queued=0u; g_queueAttemptsRemaining=0u; ++g_expiredDrops; return;
         }
     }else{
@@ -868,7 +890,7 @@ static const W112_ControlModuleV1 g_controlModule={
     (w112_u32)sizeof(W112_ControlModuleV1),
     "autokick",
     "AutoKick (target)",
-    VERSION_3_1,
+    VERSION_3_3,
     20u,
     g_controlSettings,
     autokick_control_get,
