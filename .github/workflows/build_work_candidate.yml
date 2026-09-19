@@ -20,6 +20,7 @@ on:
       - 'tools/build_autokick_candidate.py'
       - 'tools/build_diaghub_candidate.py'
       - 'tools/build_groundtargetassist_candidate.py'
+      - 'tools/build_openeruirecovery_candidate.py'
       - 'tools/package_current.py'
       - 'tools/verify_current.py'
       - 'tools/verify_candidate_source_scope.py'
@@ -134,6 +135,20 @@ jobs:
               --build-metadata dist/groundtargetassist_build.json `
               --output build/WoWGroundTargetAssist_5875_v1.dll
             if ($LASTEXITCODE -ne 0) { throw "GroundTarget Assist candidate failed" }
+          }
+
+      - name: Build and append Opener UI Recovery when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/OpenerUIRecovery/WoWOpenerUIRecovery_5875_v1.c') {
+            python tools/build_openeruirecovery_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/openeruirecovery_build.json `
+              --output build/WoWOpenerUIRecovery_5875_v1.dll
+            if ($LASTEXITCODE -ne 0) { throw "Opener UI Recovery candidate failed" }
           }
 
       - name: Build and append observer WoWDiagHub when present
