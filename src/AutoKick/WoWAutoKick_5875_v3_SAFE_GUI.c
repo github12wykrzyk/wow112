@@ -396,6 +396,14 @@ static int execute_kick_lua(void)
     return fn(script,g_scriptName)?1:0;
 }
 
+/* Explicit 5875 form IDs also guard against bogus duration stack data. */
+static int is_known_instant_form(u32 spell)
+{
+    return spell==5487u /* Bear Form */ || spell==9634u /* Dire Bear Form */
+        || spell==768u /* Cat Form */ || spell==783u /* Travel Form */
+        || spell==1066u /* Aquatic Form */ || spell==24858u /* Moonkin Form */;
+}
+
 static void schedule_kick_after(u32 lo,u32 hi,u32 spell,u32 now,u32 extraDelayMs)
 {
     s32 delay=g_cfgReactionDelayMs;
@@ -417,6 +425,9 @@ static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 now)
     u32 extra=0u;
     if(window<MAX_REMAINING_MIN_MS) window=MAX_REMAINING_MIN_MS;
     if(window>MAX_REMAINING_MAX_MS) window=MAX_REMAINING_MAX_MS;
+    /* A zero-duration SPELL_START is an instant or has no trustworthy timing.
+       Never turn shapeshifts or an unverified cast-duration capture into Kick. */
+    if(!castMs || is_known_instant_form(spell)) return;
     if(castMs>60000u) castMs=60000u;
     if(castMs>(u32)window) extra=castMs-(u32)window;
     schedule_kick_after(lo,hi,spell,now,extra);
@@ -469,6 +480,7 @@ static void poll_channel(u32 now)
         g_lastChannelGuidLo=lo; g_lastChannelGuidHi=hi; g_lastChannelSpell=0u;
     }
     if(!spell){ g_lastChannelSpell=0u; return; }
+    if(is_known_instant_form(spell)){ g_lastChannelSpell=0u; return; }
     if(spell!=g_lastChannelSpell){
         g_lastChannelSpell=spell;
         ++g_channelEdges;
