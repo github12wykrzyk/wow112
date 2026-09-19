@@ -3,7 +3,7 @@
   + AutoJunkbox macro driver for WoW 1.12.1 build 5875 x86.
 
   Preserved behavior:
-    - ordinary shared Combat Range floor = 9 yd;
+    - ordinary shared Combat Range floor = 8 yd;
     - Pick Pocket (921) max client range = 300 yd;
     - Pick Lock (1804) max client range = 300 yd.
 
@@ -126,7 +126,7 @@ static const DWORD g_callsites[] = {
 #define CALLSITE_COUNT ((DWORD)(sizeof(g_callsites) / sizeof(g_callsites[0])))
 
 static const BYTE g_300f[4] = { 0x00, 0x00, 0x96, 0x43 };
-static const BYTE g_9f[4]   = { 0x00, 0x00, 0x10, 0x41 };
+static const BYTE g_8f[4]   = { 0x00, 0x00, 0x00, 0x41 };
 
 static volatile DWORD g_cfgAutoJunkboxEnabled = 1u;
 static volatile DWORD g_cfgStationarySettleMs = STATIONARY_SETTLE_MS;
@@ -689,7 +689,7 @@ static BOOL InstallHook(void)
         g_virtualQuery = (VirtualQuery_t)FindLoadedExport("VirtualQuery");
     if (!g_virtualQuery) return FALSE;
     if (!ValidateTargetBuild()) return FALSE;
-    if (!WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_9f, 4u))
+    if (!WriteExecutableMemory((BYTE*)WOW_COMBAT_RANGE_FLOOR, g_8f, 4u))
         return FALSE;
 
     for (i = 0u; i < CALLSITE_COUNT; ++i) {
