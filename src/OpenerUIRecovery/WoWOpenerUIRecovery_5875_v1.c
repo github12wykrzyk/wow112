@@ -54,6 +54,7 @@ typedef u32 (STDCALL *GetTickCountFn)(void);
 #define WOW_IAT_KILLTIMER    0x007FF4F8u
 
 #define TIMER_PERIOD_MS 20u
+#define WORLD_SETTLE_MS 1500u
 #define VERSION_1_0 0x00010000u
 
 #define SETTING_CLEAR_NOW      1u
@@ -71,6 +72,8 @@ static volatile u32 g_activeSkips=0u;
 static volatile u32 g_lastOpener=0u;
 static volatile u32 g_watchStart=0u;
 static volatile u32 g_watch=0u;
+static volatile u32 g_worldManager=0u;
+static volatile u32 g_worldSince=0u;
 static W112_ControlSettingV1 g_settings[6];
 static volatile u32 g_descReady=0u;
 
@@ -78,6 +81,14 @@ static u32 read_u32(u32 a){return *(volatile u32*)a;}
 static void write_u32(u32 a,u32 v){*(volatile u32*)a=v;}
 static void *iat(u32 a){return (void*)read_u32(a);}
 static u32 tick_now(void){GetTickCountFn f=(GetTickCountFn)iat(WOW_IAT_GETTICKCOUNT);return f?f():0u;}
+/* Avoid observing/clearing stale opener state immediately after a world rebuild.
+   Manager identity alone is not a full BG detector; never write unless settled. */
+static int world_stable(u32 now){
+ u32 mgr=read_u32(ADDR_OBJMGR_GLOBAL);
+ if(!mgr){g_worldManager=0u;g_worldSince=0u;g_watch=0u;return 0;}
+ if(mgr!=g_worldManager || !g_worldSince){g_worldManager=mgr;g_worldSince=now?now:1u;g_watch=0u;return 0;}
+ return (u32)(now-g_worldSince)>=WORLD_SETTLE_MS;
+}
 
 static int isBackstab(u32 s){
  return s==53u||s==2589u||s==2590u||s==2591u||s==8721u||s==11279u||s==11280u||s==11281u;
@@ -106,6 +117,7 @@ static u32 opener_evidence(void){
    packet state, GCD or PositionalSpoof private state. */
 static int clear_stale_ui(int manual){
  u32 ev;
+ if(!world_stable(tick_now()))return 0;
  if(cast_active()){g_activeSkips++;return 0;}
  if(!action_guid_present()){g_watch=0u;return 0;}
  ev=opener_evidence();
@@ -124,8 +136,8 @@ static int clear_stale_ui(int manual){
 static void STDCALL TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 id,u32 unused){
  u32 now,ev;
  (void)hwnd;(void)msg;(void)id;(void)unused;
- if(!read_u32(ADDR_OBJMGR_GLOBAL)){g_watch=0u;return;}
  now=tick_now();
+ if(!world_stable(now)){g_watch=0u;return;}
  ev=opener_evidence();
  if(ev){
   g_lastOpener=ev;
