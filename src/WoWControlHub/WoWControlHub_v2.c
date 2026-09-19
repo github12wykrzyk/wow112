@@ -124,6 +124,8 @@ typedef DWORD (WINAPI *GetU32Fn)(void);
 #define MAX_MODULES 32u
 #define DISCOVERY_MS 1000u
 #define FRAME_MS 50u
+#define PROFILE_NAME "wow112_controlhub.ini"
+#define RESTORED_CAPACITY 128u
 
 #define COLOR_BG        0x00202020u
 #define COLOR_HEADER    0x00303030u
@@ -186,6 +188,9 @@ struct RuntimeHealth {
     DWORD autoPoisonsTicks;
 };
 
+__declspec(dllimport) DWORD  WINAPI GetModuleFileNameA(HMODULE, char*, DWORD);
+__declspec(dllimport) DWORD  WINAPI GetPrivateProfileStringA(LPCSTR, LPCSTR, LPCSTR, char*, DWORD, LPCSTR);
+__declspec(dllimport) BOOL   WINAPI WritePrivateProfileStringA(LPCSTR, LPCSTR, LPCSTR, LPCSTR);
 __declspec(dllimport) HANDLE WINAPI CreateThread(LPVOID, SIZE_T, DWORD (WINAPI *)(LPVOID), LPVOID, DWORD, DWORD*);
 __declspec(dllimport) void   WINAPI Sleep(DWORD);
 __declspec(dllimport) BOOL   WINAPI CloseHandle(HANDLE);
@@ -245,6 +250,10 @@ static DWORD g_modulePage = 0u;
 static DWORD g_settingPage = 0u;
 static DWORD g_lastDiscoveryTick = 0u;
 static struct RuntimeHealth g_health;
+static char g_profilePath[512];
+static HMODULE g_restoredHandles[RESTORED_CAPACITY];
+static const W112_ControlModuleV1 *g_restoredApis[RESTORED_CAPACITY];
+static DWORD g_restoredCount = 0u;
 
 static LONG WINAPI hub_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam);
 
@@ -304,6 +313,111 @@ static char *app_float1(char *p, float value)
     *p++ = '.';
     *p++ = (char)('0' + fp);
     return p;
+}
+
+/* The INI lives next to the game EXE, outside the updater-managed DLL set.
+ * Persist only writable settings, using a stable module_id + setting_id key.
+ * Values are exact 32-bit ABI payloads, so float precision is not lost. */
+static void init_profile_path(void)
+{
+    DWORD n = GetModuleFileNameA(NULL, g_profilePath, (DWORD)sizeof(g_profilePath));
+    DWORD i, suffix = (DWORD)sizeof(PROFILE_NAME);
+    if (!n || n >= (DWORD)sizeof(g_profilePath) || n + suffix >= (DWORD)sizeof(g_profilePath)) {
+        g_profilePath[0] = 0;
+        return;
+    }
+    for (i = n; i > 0u; --i)
+        if (g_profilePath[i - 1u] == '\\' || g_profilePath[i - 1u] == '/') break;
+    if (!i || i + suffix > (DWORD)sizeof(g_profilePath)) { g_profilePath[0] = 0; return; }
+    { DWORD j; for (j = 0u; j < suffix; ++j) g_profilePath[i + j] = PROFILE_NAME[j]; }
+}
+
+static void setting_ini_key(char key[16], DWORD settingId)
+{
+    char *p = app_u32(key, settingId);
+    *p = 0;
+}
+
+static BOOL parse_profile_bits(const char *text, DWORD *out)
+{
+    DWORD i, value = 0u;
+    if (!text || !out || cstr_len(text) != 8u) return FALSE;
+    for (i = 0u; i < 8u; ++i) {
+        char ch = text[i];
+        DWORD digit;
+        if (ch >= '0' && ch <= '9') digit = (DWORD)(ch - '0');
+        else if (ch >= 'A' && ch <= 'F') digit = (DWORD)(ch - 'A' + 10);
+        else return FALSE;
+        value = (value << 4u) | digit;
+    }
+    *out = value;
+    return TRUE;
+}
+
+static BOOL valid_saved_value(const W112_ControlSettingV1 *s, W112_ControlValueV1 v)
+{
+    DWORD i;
+    if (s->type == W112_CTL_BOOL) return v.u32 <= 1u;
+    if (s->type == W112_CTL_FLOAT)
+        return v.f32 >= s->min_value.f32 && v.f32 <= s->max_value.f32;
+    if (s->type == W112_CTL_INT)
+        return v.i32 >= s->min_value.i32 && v.i32 <= s->max_value.i32;
+    if (s->type == W112_CTL_ENUM) {
+        for (i = 0u; i < s->enum_option_count; ++i)
+            if (s->enum_options && s->enum_options[i].value == v.i32) return TRUE;
+    }
+    return FALSE;
+}
+
+static void save_setting(const W112_ControlModuleV1 *api, const W112_ControlSettingV1 *s)
+{
+    W112_ControlValueV1 value;
+    char key[16], bits[9];
+    static const char digits[] = "0123456789ABCDEF";
+    DWORD i;
+    if (!g_profilePath[0] || !api || !s || (s->flags & W112_CTL_READ_ONLY) ||
+        !api->get_value || !api->get_value(s->setting_id, &value)) return;
+    setting_ini_key(key, s->setting_id);
+    for (i = 0u; i < 8u; ++i) bits[i] = digits[(value.u32 >> (28u - i * 4u)) & 15u];
+    bits[8] = 0;
+    WritePrivateProfileStringA(api->module_id, key, bits, g_profilePath);
+}
+
+static void restore_module_once(const W112_ControlModuleV1 *api, HMODULE handle)
+{
+    DWORD i, count;
+    char key[16], text[32];
+    W112_ControlValueV1 value;
+    if (!api || !g_profilePath[0]) return;
+    for (i = 0u; i < g_restoredCount; ++i)
+        if (g_restoredHandles[i] == handle && g_restoredApis[i] == api) return;
+    if (g_restoredCount >= RESTORED_CAPACITY) return;
+    g_restoredHandles[g_restoredCount] = handle;
+    g_restoredApis[g_restoredCount++] = api;
+    count = api->setting_count;
+    for (i = 0u; i < count; ++i) {
+        const W112_ControlSettingV1 *s = &api->settings[i];
+        DWORD bits;
+        if (s->flags & W112_CTL_READ_ONLY) continue;
+        setting_ini_key(key, s->setting_id);
+        if (GetPrivateProfileStringA(api->module_id, key, "", text,
+                                     (DWORD)sizeof(text), g_profilePath) != 8u) continue;
+        if (!parse_profile_bits(text, &bits)) continue;
+        value.u32 = bits;
+        if (valid_saved_value(s, value)) api->set_value(s->setting_id, &value);
+    }
+}
+
+static int hub_set_value(const W112_ControlModuleV1 *api,
+                         const W112_ControlSettingV1 *s,
+                         const W112_ControlValueV1 *value)
+{
+    int ok;
+    if (!api || !s || !value || !api->set_value ||
+        (s->flags & W112_CTL_READ_ONLY)) return 0;
+    ok = api->set_value(s->setting_id, value);
+    if (ok) save_setting(api, s);
+    return ok;
 }
 
 static void clear_pixels(DWORD rgb)
@@ -604,6 +718,7 @@ static void refresh_modules(void)
                 if (valid_module_api(api) && count < MAX_MODULES) {
                     g_modules[count].handle = me.hModule;
                     g_modules[count].api = api;
+                    restore_module_once(api, me.hModule);
                     ++count;
                 }
             }
@@ -793,7 +908,7 @@ static void reset_setting_to_default(const W112_ControlModuleV1 *api,
     if (!api || !s || !api->set_value) return;
     if (s->flags & W112_CTL_READ_ONLY) return;
     v = s->default_value;
-    api->set_value(s->setting_id, &v);
+    hub_set_value(api, s, &v);
 }
 
 static void step_setting(const W112_ControlModuleV1 *api,
@@ -835,7 +950,7 @@ static void step_setting(const W112_ControlModuleV1 *api,
         if (v.i32 < s->min_value.i32) v.i32 = s->min_value.i32;
         if (v.i32 > s->max_value.i32) v.i32 = s->max_value.i32;
     }
-    api->set_value(s->setting_id, &v);
+    hub_set_value(api, s, &v);
 }
 
 static void toggle_or_advance_setting(const W112_ControlModuleV1 *api,
@@ -852,7 +967,7 @@ static void toggle_or_advance_setting(const W112_ControlModuleV1 *api,
 
     if (api->get_value(s->setting_id, &v)) {
         v.u32 = v.u32 ? 0u : 1u;
-        api->set_value(s->setting_id, &v);
+        hub_set_value(api, s, &v);
     }
 }
 
@@ -1113,7 +1228,7 @@ static void set_numeric_from_click(const W112_ControlModuleV1 *api,
         if (raw > maxv) raw = maxv;
         v.i32 = raw;
     }
-    api->set_value(s->setting_id, &v);
+    hub_set_value(api, s, &v);
 }
 
 static BOOL point_in(int x, int y, int rx, int ry, int rw, int rh)
@@ -1311,6 +1426,7 @@ static DWORD WINAPI WorkerThread(LPVOID ignored)
     (void)ignored;
 
     g_lastDiscoveryTick = 0u;
+    init_profile_path();
 
     while (!g_stop) {
         pump_messages();
