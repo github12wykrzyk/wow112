@@ -67,7 +67,7 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define DLL_PROCESS_ATTACH 1u
 #define PAGE_EXECUTE_READWRITE 0x40u
 
-#define VERSION_3_1 0x00030100u
+#define VERSION_3_2 0x00030200u
 #define TIMER_PERIOD_MS 10u
 #define WORLD_REACQUIRE_MS 750u
 #define KICK_RETRY_INTERVAL_MS 35u
@@ -457,6 +457,12 @@ static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 startTic
     if(extra+(u32)delay
        >=remaining-NORMAL_CAST_SAFETY_MS){ ++g_expiredDrops; return; }
     schedule_kick_after(lo,hi,spell,now,extra,QUEUE_KIND_NORMAL,startTick+castMs);
+    /* Normal casts have no authoritative live-cast descriptor in 1.12.1.
+       A retry after the first Kick can therefore race the target's cast end
+       (or our own successful interrupt). Fail closed: one normal-cast attempt.
+       Channel retries remain safe because each retry is live-validated via
+       UNIT_CHANNEL_SPELL immediately before CastSpellByName('Kick'). */
+    g_queueAttemptsRemaining=1u;
 }
 
 static void fire_queued_kick(u32 now)
