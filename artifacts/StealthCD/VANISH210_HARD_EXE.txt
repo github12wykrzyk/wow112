@@ -1,0 +1,23 @@
+VANISH 3:30 HARD EXE PATCH — WORK CANDIDATE
+Target: World of Warcraft 1.12.1 build 5875 x86
+
+Central cooldown insertion hook: 0x006E12C0 -> code cave 0x0075D401.
+The existing EXE hard-cooldown selector was repurposed from Stealth ranks
+1784..1787 to Vanish ranks 1856..1857:
+  (spellId & 0xFFFFFFFE) == 0x00000740
+
+Forced cooldown:
+  recovery = 210000 ms
+  category recovery = min(category recovery, 210000 ms)
+
+Stealth remains handled by active WoWStealthCDGuardian v2 runtime layer.
+
+Old EXE SHA256:
+  0a5ecb0023f9ba1dddecb25f4a636a0bcd1706db70583d9db3ad69ba51f9f227
+New EXE SHA256:
+  9a735271283a49d16ca670d6a6fc8bb12937deca07221087c608b27c2ffd42a2
+Size:
+  4907008
+
+Reproducer:
+  python tools/patch_vanish210_exe.py
