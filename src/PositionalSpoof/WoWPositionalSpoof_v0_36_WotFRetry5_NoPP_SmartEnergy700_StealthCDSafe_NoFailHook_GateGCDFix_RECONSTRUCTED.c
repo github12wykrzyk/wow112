@@ -110,7 +110,7 @@ int _fltused=0;
 #define OM_LOCAL_GUID_LO        0xC0UL
 #define OM_LOCAL_GUID_HI        0xC4UL
 
-#define SPOOF_DISTANCE          2.0f
+#define SPOOF_DISTANCE          1.6f
 #define MAX_TARGET_DIST2        100.0f
 #define MAX_CANDIDATES          8UL
 #define RESULT_TIMEOUT_MS       350UL
@@ -654,23 +654,20 @@ static void autoPickPocketTick(DWORD tick){
 
 static float normAngle(float a){while(a<0.0f)a+=TWO_PI_F;while(a>=TWO_PI_F)a-=TWO_PI_F;return a;}
 
-/* Candidate ordering deliberately starts with the normal client prediction.  If that
-   fails with an authoritative positional result, subsequent candidates cover the
-   opposite and perpendicular sides of the target. */
+/* Positional opener candidates stay strictly in the target's rear hemisphere.
+   The final runtime currently has NoFailHook, so candidate 0 is the normal live path;
+   keeping every fallback rear-valid makes a future fail-hook diagnostic safe as well. */
 static float candidateAngle(DWORD spell,DWORD idx,float targetO){
  float a,q=PI_F*0.25f;
- /* Order is intentionally biased toward the expected valid half-plane first.
-    For Backstab we probe 180, 135, 225, 90, 270, 45, 315, 0 degrees
-    relative to the target orientation.  Gouge mirrors this around the front. */
  if(isBehindSpell(spell)){
-   if(idx==0)a=targetO+PI_F;
-   else if(idx==1)a=targetO+PI_F-q;
-   else if(idx==2)a=targetO+PI_F+q;
-   else if(idx==3)a=targetO+HALF_PI_F;
-   else if(idx==4)a=targetO+PI_F+HALF_PI_F;
-   else if(idx==5)a=targetO+q;
-   else if(idx==6)a=targetO-q;
-   else a=targetO;
+   if(idx==0)a=targetO+PI_F;                         /* 180 deg */
+   else if(idx==1)a=targetO+PI_F-(PI_F/9.0f);      /* 160 deg */
+   else if(idx==2)a=targetO+PI_F+(PI_F/9.0f);      /* 200 deg */
+   else if(idx==3)a=targetO+PI_F-(PI_F*7.0f/36.0f);/* 145 deg */
+   else if(idx==4)a=targetO+PI_F+(PI_F*7.0f/36.0f);/* 215 deg */
+   else if(idx==5)a=targetO+PI_F-q;                 /* 135 deg */
+   else if(idx==6)a=targetO+PI_F+q;                 /* 225 deg */
+   else a=targetO+PI_F-(PI_F/18.0f);                /* 170 deg */
  }else{
    if(idx==0)a=targetO;
    else if(idx==1)a=targetO+q;
@@ -714,6 +711,11 @@ static int sendCurrentCandidate(const char *tag){
  else logCandidate(tag,g_spoofSpell,g_candidate,sx,sy,sz,so);
  *(float*)(pl+UNIT_X)=sx;*(float*)(pl+UNIT_Y)=sy;*(float*)(pl+UNIT_Z)=sz;*(float*)(pl+UNIT_O)=so;
  sendHeartbeat(pl);
+ /* Refresh target XYZ/O between spoof heartbeats.  This narrows the stale-facing
+    window for a rotating or strafing target without changing the cast/GCD pipeline. */
+ if(calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0)){
+   *(float*)(pl+UNIT_X)=sx;*(float*)(pl+UNIT_Y)=sy;*(float*)(pl+UNIT_Z)=sz;*(float*)(pl+UNIT_O)=so;
+ }
  sendHeartbeat(pl);
  *(float*)(pl+UNIT_X)=px;*(float*)(pl+UNIT_Y)=py;*(float*)(pl+UNIT_Z)=pz;*(float*)(pl+UNIT_O)=po;
  return 1;
