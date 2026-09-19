@@ -766,6 +766,9 @@ static void reset_world_runtime_cache(void) {
     }
 }
 
+/* Forward declaration: implementation is below the world guard. */
+static BOOL cached_object_matches(DWORD obj, DWORD guidLo, DWORD guidHi);
+
 static BOOL relation_world_ready(DWORD manager, DWORD localObj, DWORD guidLo, DWORD guidHi) {
     struct UnitMeta localMeta;
     if (!manager || !localObj || (guidLo == 0u && guidHi == 0u) ||
