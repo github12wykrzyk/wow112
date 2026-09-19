@@ -205,6 +205,10 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define MINING_3D_XY_SHIFT              6.0f
 #define MINING_SERVER_XY_STEP            1.25f
 #define MINING_SERVER_Z_STEP             0.75f
+/* Vertical mining TEST: retain near-node server position below the ore throughout
+ * cast and loot; 4.0 yd vertical offset with zero XY is below a ~5 yd interaction
+ * radius, without asserting the private server accepts the below-ground ray. */
+#define MINING_BELOW_NODE_Z_OFFSET       4.0f
 #define GATHER_RESCAN_DELAY_MS         60u
 #define GATHER_LOOT_OPEN_GRACE_MS      1200u
 #define GATHER_LOOT_MIN_OPEN_MS         120u
@@ -340,6 +344,7 @@ static volatile DWORD g_gatherSawCast=0u,g_gatherCastSeenLogged=0u;
  * Re-arm near-node XYZ before the original manual loot window gate. */
 static volatile DWORD g_miningEarlyRestoreEnabled=0u,g_miningEarlyRestored=0u,g_miningEarlyRestoreUsed=0u;
 static volatile DWORD g_miningEarlyRestoreAt=0u,g_miningEarlyRestoreCount=0u,g_miningEarlyCancelCount=0u;
+static volatile DWORD g_miningBelowNodeEnabled=0u;
 static volatile DWORD g_gatherStealthBreaks=0u,g_gatherStealthWaits=0u,g_gatherStealthPending=0u;
 static volatile DWORD g_mining3DRetryIndex=0u,g_mining3DRetryAt=0u,g_mining3DRetryActive=0u,g_mining3DRetries=0u,g_mining3DSweepsExhausted=0u;
 static float g_mining3DDx=0.0f,g_mining3DDy=0.0f,g_mining3DDz=0.0f;
@@ -1163,6 +1168,13 @@ static DWORD Mining3DQueueRetry(BYTE*p,DWORD now)
 {
     if(g_gatherKind!=2u||g_gatherSawCast||g_mining3DRetryIndex>=MINING_3D_RETRY_COUNT)return 0u;
     Mining3DSelectOffset(g_mining3DRetryIndex);
+    /* TEST: keep server XYZ consistently below ore during HARDLOS retry.
+     * Shift only local LOS geometry as before; do not shift the server point
+     * back up to the ore on retry. */
+    if(g_miningBelowNodeEnabled){
+        g_miningServerDx=0.0f;g_miningServerDy=0.0f;
+        g_miningServerDz=-MINING_BELOW_NODE_Z_OFFSET;
+    }
     /* V62: server sees a different near-node endpoint on every retry too. */
     g_gatherX=g_gatherNodeX+g_miningServerDx;
     g_gatherY=g_gatherNodeY+g_miningServerDy;
@@ -1187,6 +1199,10 @@ static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);dx=px-nx;dy=py-ny;
     g_gatherNodeX=nx;g_gatherNodeY=ny;g_gatherNodeZ=nz;g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz;
     if(AbsF(dx)>=AbsF(dy))g_gatherX=nx+((dx>=0.0f)?GATHER_NODE_OFFSET:-GATHER_NODE_OFFSET);else g_gatherY=ny+((dy>=0.0f)?GATHER_NODE_OFFSET:-GATHER_NODE_OFFSET);
+    if(kind==2u&&g_miningBelowNodeEnabled&&d2>GATHER_NEAR_RANGE_SQ){
+        g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz-MINING_BELOW_NODE_Z_OFFSET;
+        GatherFileLog("MINING_BELOW_NODE_BEGIN",now,entry,lo,hi,d2,g_gatherAttempts,40u);
+    }
     if(d2<=GATHER_NEAR_RANGE_SQ){
         g_gatherSpoof=0u;GatherFileLog(kind==3u?"AUTOOPEN_TARGET_BEGIN_NEAR":"TARGET_BEGIN_NEAR",now,entry,lo,hi,d2,g_gatherAttempts,kind);
         if(GatherRequestStealthBreak(p,now)){g_gatherClickPending=1u;g_gatherClickAt=now+GATHER_STEALTH_BREAK_DELAY_MS;}
@@ -1453,7 +1469,7 @@ static void GatherTick(BYTE*p,DWORD now)
         if(GatherCastMatches(g_gatherKind,castId)){
             g_gatherSawCast=1u;
             if(!g_gatherCastSeenLogged){g_gatherCastSeenLogged=1u;GatherFileLog("GATHER_CAST_SEEN",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,castId);}
-            if(g_gatherKind==2u&&g_miningEarlyRestoreEnabled&&g_gatherSpoof&&
+            if(g_gatherKind==2u&&g_miningEarlyRestoreEnabled&&!g_miningBelowNodeEnabled&&g_gatherSpoof&&
                !g_miningEarlyRestoreUsed&&!Combat(p)){
                 /* Only after observing the mining cast; never release a pending
                  * click / LOS retry or any herb, open, PP or combat transaction. */
