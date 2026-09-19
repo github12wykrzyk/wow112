@@ -17,6 +17,7 @@ on:
       - 'tools/build_changed_active.py'
       - 'tools/build_controlhub_candidate.py'
       - 'tools/build_autopoisons_candidate.py'
+      - 'tools/build_autokick_candidate.py'
       - 'tools/build_diaghub_candidate.py'
       - 'tools/build_groundtargetassist_candidate.py'
       - 'tools/package_current.py'
@@ -105,6 +106,20 @@ jobs:
               --build-metadata dist/autopoisons_build.json `
               --output build/WoWAutoPoisons_5875_v1.dll
             if ($LASTEXITCODE -ne 0) { throw "AutoPoisons candidate failed" }
+          }
+
+      - name: Build and append AutoKick V3 when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/AutoKick/WoWAutoKick_5875_v3_SAFE_GUI.c') {
+            python tools/build_autokick_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/autokick_build.json `
+              --output build/WoWAutoKick_5875_v3_SAFE_GUI.dll
+            if ($LASTEXITCODE -ne 0) { throw "AutoKick V3 candidate failed" }
           }
 
       - name: Build and append GroundTarget Assist when present
