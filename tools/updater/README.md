@@ -4,7 +4,7 @@ Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository
 
 Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater itself is an external Windows utility and does not inject into the game.
 
-## Current V1.5 safety + diagnostics behavior
+## Current 2.1 safety + diagnostics behavior
 
 - `TEST (work)` and `STABLE (main)` inspect the newest run of the expected GitHub Actions workflow on the selected branch.
 - The updater installs only when that newest run is `completed` with `conclusion=success`. It never silently falls back to an older successful artifact when the newest run is queued, running, cancelled or failed.
@@ -41,19 +41,21 @@ The diagnostics ZIP intentionally never includes the GitHub token, updater `conf
 
 ### WYŚLIJ RAPORT DO GITHUB
 
-Updater V1.5 can create a sanitized diagnostic GitHub Issue directly in `github12wykrzyk/wow112`.
+Updater 2.1 can create a sanitized diagnostic GitHub Issue directly in `github12wykrzyk/wow112`.
 
 The report includes:
 
 - installed channel, Actions run, head SHA and artifact identity,
 - current `dlls.txt`,
 - newest local WoWDiagHub JSONL records from `<game>/.wow112_debug/`,
+- up to two most recent native WoW `Errors/*.txt` crash reports from the last 72 hours (bounded head/tail excerpts),
+- up to two matching Windows Application Error/Windows Error Reporting records from the last 72 hours, including faulting module/exception details when Windows recorded them,
 - the tail of the updater session log,
 - a deterministic diagnostic signature used to avoid duplicate open Issues.
 
-The signature deliberately excludes volatile report-generation time and updater-session timestamps. It is based on installed build identity, current `dlls.txt` and the newest WoWDiagHub JSONL data, so repeated clicks for the same diagnostic state resolve to the same open Issue while a new game diagnostic session can produce a new report.
+The signature excludes volatile report-generation time and updater-session timestamps. It uses installed build identity, `dlls.txt`, WoWDiagHub data, the recent native crash reports and matching Windows exception records. A new native crash may create a new Issue even when the DLL set did not change.
 
-Game-directory and user-profile paths are sanitized case-insensitively before upload. Reading diagnostic tails is bounded so very large JSONL files are not loaded entirely into memory.
+Game-directory and user-profile paths are sanitized case-insensitively before upload. Native crash excerpts and Windows event messages can still contain character names or other in-game data; sending a report explicitly uploads these excerpts to the selected private repository. No raw memory dumps or arbitrary Windows events are uploaded. All file excerpts and event searches are bounded.
 
 The normal updater token remains read-only and is **not** reused for issue creation.
 
