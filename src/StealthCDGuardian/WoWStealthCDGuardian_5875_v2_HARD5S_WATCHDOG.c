@@ -159,7 +159,8 @@ static void DebugChat(const char*script)
 __declspec(naked) static void CooldownAddHook(void)
 {
     __asm {
-        mov eax, dword ptr [esp+14h]
+        /* spellId is argument #1 at entry to 0x006E12C0; keep this in sync with the verified EXE hard-patch ABI. */
+        mov eax, dword ptr [esp+04h]
         mov edx, eax
         and edx, 0FFFFFFFCh
         cmp edx, 06F8h
