@@ -122,7 +122,7 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "groundtargetassist",
-        "settings": ["Enabled"],
+        "settings": ["Enabled", "Prediction", "Lead (ms)", "Max lead (yd)"],
         "timings_ms": timing,
     }
 
@@ -162,7 +162,18 @@ def main():
         "abi": "W112_CONTROL_API_V1",
         "default_enabled": True,
         "scope": "pure TARGET_FLAG_DEST_LOCATION (0x0040) only",
-        "target_source": "current selected target GUID -> build-5875 object -> XYZ",
+        "target_source": "current selected target GUID -> build-5875 object -> rolling XYZ history -> predicted XY",
+        "prediction": {
+            "default_enabled": True,
+            "default_lead_ms": 900,
+            "lead_range_ms": [0, 1500],
+            "default_max_lead_yd": 10.0,
+            "max_lead_range_yd": [0.0, 15.0],
+            "sample_interval_ms": 50,
+            "history_samples": 8,
+            "turn_adaptive": True,
+            "stale_motion_cutoff_ms": 300,
+        },
         "commit_primitive": "BindLocation 0x006E60F0",
         "targeting_state": "0x00CECAC0",
         "timer_period_ms": 10,
