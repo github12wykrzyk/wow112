@@ -11,6 +11,9 @@
        original final .c file (the final DLL lineage is binary-patched)
 
    Base lineage: v0.36 NoPP SmartEnergy700 SmoothStealth GateGCDFix.
+   Work-candidate extension: W112_CONTROL_API_V1 adds live PvE/PvP opener
+   energy-gate controls. This control extension is not part of the recovered
+   accepted runtime DLL lineage.
    Client-only / DLL+EXE experiment.
 
    Strategy:
@@ -28,7 +31,8 @@
         immediate ENERGY_GATE_CANCEL invalid_state loop caused by g_target still being zero
      -> the skipped native StartGlobalCooldown EDX argument is captured at 0x6E58FB and
         replayed exactly on deferred release instead of forcing the wrong GCD slot
-     -> stealthed Backstab/Ambush is held until the next predicted energy tick is <=700 ms away
+     -> stealthed Backstab/Ambush is held until a runtime-configurable PvE/PvP
+        pre-tick window (default 700 ms) before the next predicted energy tick
      -> ordinary outgoing movement packets remain enabled, but X/Y/Z/O are rewritten
         to the currently active candidate until success/final failure
      -> real server position restored only after SPELL_GO/final failure/timeout.
@@ -42,11 +46,16 @@
    Log: WoWPositionalSpoof_v0_36_NoPP_SmartEnergy700_SmoothStealth_GateGCDFix.log
 */
 
+#include "../common/W112ControlAPI.h"
+
+#if defined(_MSC_VER)
+#pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
+#endif
+
 typedef unsigned char BYTE;
 typedef unsigned short WORD;
 typedef unsigned long DWORD;
 typedef long LONG;
-typedef int BOOL;
 typedef void *PVOID;
 typedef unsigned long ULONG;
 typedef void *HANDLE;
@@ -136,8 +145,11 @@ int _fltused=0;
 #define CGLootInfo_HAS_LOOT      0x004C2A70UL
 #define PLAYER_FIELD_COINAGE_INDEX 0x498UL
 #define UNIT_FIELD_POWER4_INDEX     0x1AUL
-#define ENERGY_TICK_MS              2000UL
-#define ENERGY_GATE_WINDOW_MS        700UL
+#define ENERGY_TICK_MS                     2000UL
+#define ENERGY_GATE_DEFAULT_WINDOW_MS        700UL
+#define ENERGY_GATE_MIN_WINDOW_MS            100UL
+#define ENERGY_GATE_MAX_WINDOW_MS           1500UL
+#define ENERGY_GATE_WINDOW_STEP_MS            50UL
 #define CLIENT_PENDING_SPELLCAST  0x00CEAC48UL
 #define CLIENT_CASTING_SPELL_ID   0x00CECA88UL
 #define CLIENT_CAST_HANDLE        0x00CECA8CUL
@@ -149,7 +161,13 @@ int _fltused=0;
 #define CLIENT_PREV_ACTION_GUID_HI    0x00CECB24UL
 #define CLIENT_CAST_MISC              0x00CECAACUL
 #define SPELL_STOP_TARGETING_INTERNAL 0x006E4900UL
-#define ENERGY_GATE_MAX_HOLD_MS       750UL
+#define ENERGY_GATE_MAX_HOLD_MS      1900UL
+
+#define SETTING_PVE_GATE_ENABLED       1u
+#define SETTING_PVE_WINDOW_MS          2u
+#define SETTING_PVP_GATE_ENABLED       3u
+#define SETTING_PVP_WINDOW_MS          4u
+#define OPENER_TIMING_CONTROL_VERSION  0x00010000u
 
 #define PHASE_IDLE              0
 #define PHASE_WAIT_RESULT       1
@@ -210,6 +228,9 @@ static DWORD g_lastTimerTick;
 static DWORD g_energyGateStartTick;
 static DWORD g_energyGateReleaseDelay;
 static DWORD g_energyGateTickSerialAtStart;
+static DWORD g_energyGateWindowMsForCast;
+static int g_energyGateEnabledForCast;
+static int g_energyGatePvpForCast;
 static DWORD g_ppLastScanTick;
 static int g_ppAwaitLoot;
 static DWORD g_ppLootSinceTick;
@@ -228,6 +249,12 @@ static DWORD g_energyLastTick;
 static DWORD g_energyTickSerial;
 static int g_energySynced;
 static int g_energyGatePassed;
+static volatile DWORD g_cfgPveGateEnabled=1UL;
+static volatile DWORD g_cfgPveWindowMs=ENERGY_GATE_DEFAULT_WINDOW_MS;
+static volatile DWORD g_cfgPvpGateEnabled=1UL;
+static volatile DWORD g_cfgPvpWindowMs=ENERGY_GATE_DEFAULT_WINDOW_MS;
+static W112_ControlSettingV1 g_controlSettings[4];
+static volatile DWORD g_controlDescriptorReady;
 static int g_wotfCcActive;
 static DWORD g_wotfAura;
 static DWORD g_wotfMechanic;
@@ -322,6 +349,15 @@ static void trackEnergyTick(DWORD tick){
 }
 static DWORD energyTimeToNext(DWORD tick){DWORD elapsed,mod;if(!g_energySynced)return 0xFFFFFFFFUL;elapsed=(DWORD)(tick-g_energyLastTick);mod=elapsed%ENERGY_TICK_MS;return mod?ENERGY_TICK_MS-mod:ENERGY_TICK_MS;}
 static void logEnergyGate(const char*tag,DWORD energy,DWORD left){char b[180],*p=b;p=ap(p,tag);p=ap(p," energy=");p=dec(p,energy);p=ap(p," next_ms=");p=dec(p,left);p=ap(p,"\r\n");lograw(b,(DWORD)(p-b));}
+static void selectEnergyGateConfig(DWORD targetType){
+ char b[180],*p=b;
+ g_energyGatePvpForCast=(targetType==4UL)?1:0;
+ if(g_energyGatePvpForCast){g_energyGateEnabledForCast=g_cfgPvpGateEnabled?1:0;g_energyGateWindowMsForCast=g_cfgPvpWindowMs;}
+ else {g_energyGateEnabledForCast=g_cfgPveGateEnabled?1:0;g_energyGateWindowMsForCast=g_cfgPveWindowMs;}
+ p=ap(p,"ENERGY_GATE_CONFIG mode=");p=ap(p,g_energyGatePvpForCast?"PVP":"PVE");
+ p=ap(p," enabled=");p=dec(p,(DWORD)(g_energyGateEnabledForCast?1:0));
+ p=ap(p," window_ms=");p=dec(p,g_energyGateWindowMsForCast);p=ap(p,"\r\n");lograw(b,(DWORD)(p-b));
+}
 static float fcos1(float x){float r;__asm {
  fld x
  fcos
@@ -721,7 +757,7 @@ static void runDeferredClientUiClear(void){
   q=ap(q," action_guid=");q=hex32(q,ahi);q=ap(q,":");q=hex32(q,alo);q=ap(q," prev_guid=");q=hex32(q,pahi);q=ap(q,":");q=hex32(q,palo);q=ap(q," targeting=0x");q=hex32(q,(DWORD)targeting);q=ap(q,"\r\n");lograw(b,(DWORD)(q-b));
  }
 }
-static void clearState(void){g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
+static void clearState(void){g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_energyGateWindowMsForCast=ENERGY_GATE_DEFAULT_WINDOW_MS;g_energyGateEnabledForCast=1;g_energyGatePvpForCast=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
 static void cancelTimer(void){if(g_timer&&pKillTimer)pKillTimer(0,g_timer);g_timer=0;}
 static void restoreServerPosition(const char*tag){DWORD spell=g_spoofSpell,count=g_rewrittenMoveCount;if(g_player)sendHeartbeat(g_player);logSpellText(tag,spell);if(count)logCountText("MOVE_REWRITTEN",spell,count);clearState();}
 
@@ -769,10 +805,14 @@ static void beginQueuedPositionalCast(void){
  if(!g_castPending||!g_spoofSpell)return;
  pl=getPlayer();
  if(!g_energyGatePassed&&isBehindSpell(g_spoofSpell)&&pl&&playerIsStealthed(pl)){
-   e=playerEnergy(pl);left=energyTimeToNext(g_lastTimerTick);
-   if(left==0xFFFFFFFFUL){logs("ENERGY_GATE_UNSYNCED allow\r\n");g_energyGatePassed=1;}
-   else if(left>ENERGY_GATE_WINDOW_MS){g_phase=PHASE_ENERGY_GATE;g_energyGateStartTick=g_lastTimerTick;g_energyGateReleaseDelay=left-ENERGY_GATE_WINDOW_MS;g_energyGateTickSerialAtStart=g_energyTickSerial;g_deferredClientGcd=1;clearClientPendingCast("CLIENT_PENDING_CLEAR_HOLD");deferClientUiClear(3);logEnergyGate("ENERGY_GATE_HOLD",e,left);return;}
-   else {g_energyGatePassed=1;logEnergyGate("ENERGY_GATE_PASS",e,left);}
+   if(!g_energyGateEnabledForCast){
+     g_energyGatePassed=1;logs(g_energyGatePvpForCast?"ENERGY_GATE_BYPASS PVP_DISABLED\r\n":"ENERGY_GATE_BYPASS PVE_DISABLED\r\n");
+   }else{
+     e=playerEnergy(pl);left=energyTimeToNext(g_lastTimerTick);
+     if(left==0xFFFFFFFFUL){logs("ENERGY_GATE_UNSYNCED allow\r\n");g_energyGatePassed=1;}
+     else if(left>g_energyGateWindowMsForCast){g_phase=PHASE_ENERGY_GATE;g_energyGateStartTick=g_lastTimerTick;g_energyGateReleaseDelay=left-g_energyGateWindowMsForCast;g_energyGateTickSerialAtStart=g_energyTickSerial;g_deferredClientGcd=1;clearClientPendingCast("CLIENT_PENDING_CLEAR_HOLD");deferClientUiClear(3);logEnergyGate("ENERGY_GATE_HOLD",e,left);return;}
+     else {g_energyGatePassed=1;logEnergyGate("ENERGY_GATE_PASS",e,left);}
+   }
  }
  g_candidate=0;g_rewrittenMoveCount=0;g_phase=PHASE_WAIT_RESULT;
  if(!sendCurrentCandidate("SPOOF_CANDIDATE")){clearState();return;}
@@ -807,8 +847,8 @@ void STDCALL QueuePositionalCast(DWORD spell,DWORD store){
  /* From this point the original CMSG is intentionally suppressed. Keep the native GCD
     only if we manage to transmit our cloned cast synchronously during this same call. */
  g_skipNativeGcdCurrent=1;
- g_player=pl;g_target=tg;
- g_spoofSpell=spell;g_candidate=0;g_castPending=1;g_rewrittenMoveCount=0;g_energyGatePassed=0;g_deferredClientGcdArg=0; /* smart gate: prefer <=700ms before tick, frozen context, release on observed tick, hard-cap hold at 750ms */
+ g_player=pl;g_target=tg;selectEnergyGateConfig(type);
+ g_spoofSpell=spell;g_candidate=0;g_castPending=1;g_rewrittenMoveCount=0;g_energyGatePassed=0;g_deferredClientGcdArg=0; /* smart gate: per-target PvE/PvP pre-tick window, frozen context, release on observed tick, 1900ms safety cap */
  logSpellText(isAmbush(spell)?"OPENER_PIPELINE_AMBUSH":"OPENER_PIPELINE_BACKSTAB",spell);
  g_insideOriginalQueue=1;
  beginQueuedPositionalCast();
@@ -978,6 +1018,47 @@ __declspec(naked) void SpellGoHook(void){
  }
 }
 
+static void initOpenerTimingControlDescriptor(void){
+ W112_ControlSettingV1*s;
+ if(g_controlDescriptorReady)return;
+ s=&g_controlSettings[0];
+ s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVE_GATE_ENABLED;
+ s->key="pve_energy_gate";s->label="PvE energy gate";s->type=W112_CTL_BOOL;
+ s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_controlSettings[1];
+ s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVE_WINDOW_MS;
+ s->key="pve_pre_tick_ms";s->label="PvE pre-tick (ms)";s->type=W112_CTL_INT;
+ s->default_value.i32=(w112_i32)ENERGY_GATE_DEFAULT_WINDOW_MS;s->min_value.i32=(w112_i32)ENERGY_GATE_MIN_WINDOW_MS;s->max_value.i32=(w112_i32)ENERGY_GATE_MAX_WINDOW_MS;s->step.i32=(w112_i32)ENERGY_GATE_WINDOW_STEP_MS;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_controlSettings[2];
+ s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVP_GATE_ENABLED;
+ s->key="pvp_energy_gate";s->label="PvP energy gate";s->type=W112_CTL_BOOL;
+ s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_controlSettings[3];
+ s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVP_WINDOW_MS;
+ s->key="pvp_pre_tick_ms";s->label="PvP pre-tick (ms)";s->type=W112_CTL_INT;
+ s->default_value.i32=(w112_i32)ENERGY_GATE_DEFAULT_WINDOW_MS;s->min_value.i32=(w112_i32)ENERGY_GATE_MIN_WINDOW_MS;s->max_value.i32=(w112_i32)ENERGY_GATE_MAX_WINDOW_MS;s->step.i32=(w112_i32)ENERGY_GATE_WINDOW_STEP_MS;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ g_controlDescriptorReady=1UL;
+}
+static int W112_CTL_STDCALL openerTimingControlGet(w112_u32 id,W112_ControlValueV1*out){
+ if(!out)return 0;
+ if(id==SETTING_PVE_GATE_ENABLED){out->u32=g_cfgPveGateEnabled?1u:0u;return 1;}
+ if(id==SETTING_PVE_WINDOW_MS){out->i32=(w112_i32)g_cfgPveWindowMs;return 1;}
+ if(id==SETTING_PVP_GATE_ENABLED){out->u32=g_cfgPvpGateEnabled?1u:0u;return 1;}
+ if(id==SETTING_PVP_WINDOW_MS){out->i32=(w112_i32)g_cfgPvpWindowMs;return 1;}
+ return 0;
+}
+static int W112_CTL_STDCALL openerTimingControlSet(w112_u32 id,const W112_ControlValueV1*v){
+ if(!v)return 0;
+ if(id==SETTING_PVE_GATE_ENABLED){if(v->u32>1u)return 0;g_cfgPveGateEnabled=(DWORD)v->u32;return 1;}
+ if(id==SETTING_PVP_GATE_ENABLED){if(v->u32>1u)return 0;g_cfgPvpGateEnabled=(DWORD)v->u32;return 1;}
+ if(id==SETTING_PVE_WINDOW_MS){if(v->i32<(w112_i32)ENERGY_GATE_MIN_WINDOW_MS||v->i32>(w112_i32)ENERGY_GATE_MAX_WINDOW_MS)return 0;g_cfgPveWindowMs=(DWORD)v->i32;return 1;}
+ if(id==SETTING_PVP_WINDOW_MS){if(v->i32<(w112_i32)ENERGY_GATE_MIN_WINDOW_MS||v->i32>(w112_i32)ENERGY_GATE_MAX_WINDOW_MS)return 0;g_cfgPvpWindowMs=(DWORD)v->i32;return 1;}
+ return 0;
+}
+static const W112_ControlModuleV1 g_openerTimingControlModule={
+ W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),"opener_timing","Opener Timing",OPENER_TIMING_CONTROL_VERSION,4u,g_controlSettings,openerTimingControlGet,openerTimingControlSet
+};
+W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){initOpenerTimingControlDescriptor();return &g_openerTimingControlModule;}
 static BOOL prot(DWORD site,ULONG np,ULONG*op){PVOID b=(PVOID)(site&0xfffff000UL);ULONG sz=0x1000;return pProtect&&pProtect((HANDLE)(LONG)-1,&b,&sz,np,op)>=0;}
 static void unprot(DWORD site,ULONG op){PVOID b=(PVOID)(site&0xfffff000UL);ULONG sz=0x1000,x=0;pProtect((HANDLE)(LONG)-1,&b,&sz,op,&x);}
 static void callpatch(DWORD site,void*fn){BYTE*p=(BYTE*)site;p[0]=0xE8;*(DWORD*)(p+1)=(DWORD)fn-(site+5);}
@@ -994,7 +1075,7 @@ static BOOL install(void){ULONG op;
  /* NoFailHook binary patch: installer jumps over the CAST_FAIL_SITE hook-install block. Signature validation above and legacy restore path below remain, matching the final patched DLL. */
  if(!prot(SPELL_GO_SITE,PAGE_EXECUTE_READWRITE,&op)){logs("ERROR protect go\r\n");return 0;}jmppatch6(SPELL_GO_SITE,SpellGoHook);unprot(SPELL_GO_SITE,op);
  if(!prot(MOVEMENT_SEND_SITE,PAGE_EXECUTE_READWRITE,&op)){logs("ERROR protect movement-send\r\n");return 0;}callpatch(MOVEMENT_SEND_SITE,MovementSendHook);unprot(MOVEMENT_SEND_SITE,op);
- installed=1;logs("PATCH_OK WoWPositionalSpoof v0.36 NoPP SmartEnergy700 SmoothStealth GateGCDFix auto_wotf=1 adaptive_candidates=8 double_heartbeat=1 ambush=1 auto_pickpocket=0 pp_external_module=1 stealth_speed_100pct=1 speed_apply=native_CMovement_SetRunSpeed_0x7C7030 current_speed_cache=0xA2C speed_timer_ms=5 energy_gate=1 energy_gate_window_ms=700 energy_gate_max_hold_ms=750 energy_gate_frozen_target=1 energy_gate_release_on_tick=1 opener_hold=1 suppressed_native_gcd_skip=1 deferred_gcd_on_actual_send=1 deferred_gcd_exact_edx=1 gate_context_frozen_before_hold=1 candidate_order=back_half_first fresh_cdatastore_per_send=1 immediate_positional_cast=0 movement_rewrite=1 timeout=350 current_action_guid_clear=1 deferred_ui_only_clear=1 no_deferred_cast_clear=1\r\n");return 1;
+ installed=1;logs("PATCH_OK WoWPositionalSpoof v0.36 NoPP SmartEnergy700 SmoothStealth GateGCDFix auto_wotf=1 adaptive_candidates=8 double_heartbeat=1 ambush=1 auto_pickpocket=0 pp_external_module=1 stealth_speed_100pct=1 speed_apply=native_CMovement_SetRunSpeed_0x7C7030 current_speed_cache=0xA2C speed_timer_ms=5 energy_gate=1 energy_gate_window_ms=control_api_pve_pvp_default_700 energy_gate_max_hold_ms=1900 energy_gate_frozen_target=1 energy_gate_release_on_tick=1 opener_hold=1 suppressed_native_gcd_skip=1 deferred_gcd_on_actual_send=1 deferred_gcd_exact_edx=1 gate_context_frozen_before_hold=1 candidate_order=back_half_first fresh_cdatastore_per_send=1 immediate_positional_cast=0 movement_rewrite=1 timeout=350 current_action_guid_clear=1 deferred_ui_only_clear=1 no_deferred_cast_clear=1\r\n");return 1;
 }
 static void restore(void){ULONG op;if(!installed)return;
  if(prot(CAST_SEND_SITE,PAGE_EXECUTE_READWRITE,&op)){cp((BYTE*)CAST_SEND_SITE,sendOrig,5);unprot(CAST_SEND_SITE,op);}

@@ -2,13 +2,15 @@
   "schema_version": 1,
   "purpose": "Persistent source overrides for the aggregate TEST (work) updater candidate. These are experimental work-only binaries and do not change stable runtime/current.json identity.",
   "source_overrides": [
+    "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
     "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
   ],
-  "note": "GUI provider wave: persist normal-source work candidates for PickPocketSelectiveRange, MovementCore, PlayerESP and StealthCDGuardian so WoWControlHub can control them live. Keep SpeedFloor and AutoLootPP on exact accepted V69 runtime bytes; do not re-enable reconstructed AutoLootPP source after the earlier startup failure.",
+  "note": "GUI provider wave: persist the PositionalSpoof opener-timing candidate plus normal-source work candidates for PickPocketSelectiveRange, MovementCore, PlayerESP and StealthCDGuardian. Opener Timing exposes separate live PvE/PvP energy-gate toggles and pre-tick windows through WoWControlHub. Keep SpeedFloor and AutoLootPP on exact accepted V69 runtime bytes; do not re-enable reconstructed AutoLootPP source after the earlier startup failure.",
   "source_fingerprint_warning_allowlist": [
+    "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
     "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
