@@ -19,6 +19,7 @@ namespace WoW112Updater
             Show();
             System.Windows.Forms.Application.DoEvents();
             ClientSize = new Size(1040, 680);
+            AssertExeInspection(folder);
             string[] cases = { "first-run", "long-path", "available", "current", "build-running", "network-error", "downloading", "installing", "game-running" };
             foreach (var state in cases)
             {
@@ -79,9 +80,42 @@ namespace WoW112Updater
                 viewport.Controls.Remove(dashboard);
             }
             Controls.Add(dashboard);
-            File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
+            File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; EXE SHA256 missing/current/changed; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
             Close();
         }
+        private void AssertExeInspection(string folder)
+        {
+            // No GitHub token or actual game required: exercise the same EXE SHA256
+            // comparison that "Sprawdź" performs on a verified candidate ZIP.
+            var root = Path.Combine(folder, "exe-inspection-fixture");
+            Directory.CreateDirectory(root);
+            var exeName = "WoW_5875_SMOKE.exe";
+            var exeBytes = new byte[] { 0x4d, 0x5a, 0x01, 0x02 };
+            byte[] archive;
+            using (var ms = new MemoryStream())
+            {
+                using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
+                {
+                    using (var output = zip.CreateEntry(exeName).Open()) output.Write(exeBytes, 0, exeBytes.Length);
+                    using (var output = zip.CreateEntry("Smoke.dll").Open()) output.WriteByte(1);
+                }
+                archive = ms.ToArray();
+            }
+            InspectDllPackage(archive, root);
+            if (lastExeInspection == null || lastExeInspection.State != "BRAK LOKALNIE" || !lastExeInspection.HasChange)
+                throw new Exception("EXE smoke: missing local EXE was not detected");
+            var local = Path.Combine(root, exeName);
+            File.WriteAllBytes(local, exeBytes);
+            InspectDllPackage(archive, root);
+            if (lastExeInspection.State != "AKTUALNY" || lastExeInspection.HasChange)
+                throw new Exception("EXE smoke: current local EXE was not detected");
+            File.WriteAllBytes(local, new byte[] { 0x4d, 0x5a, 0x02, 0x03 });
+            InspectDllPackage(archive, root);
+            if (lastExeInspection.State != "AKTUALIZACJA" || !lastExeInspection.HasChange)
+                throw new Exception("EXE smoke: changed local EXE was not detected");
+            ResetDllUpdateInspection();
+        }
+
         private void AssertDashboardLayout(Control viewport = null)
         {
             viewport = viewport ?? this;

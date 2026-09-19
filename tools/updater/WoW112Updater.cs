@@ -225,21 +225,24 @@ namespace WoW112Updater
                 var dllChanges = LastDllChangeCount;
                 var enabledDllChanges = LastEnabledDllChangeCount;
                 var skippedDllChanges = dllChanges - enabledDllChanges;
-                if (dllChanges > 0)
+                var exeChanged = lastExeInspection == null || lastExeInspection.HasChange;
+                if (exeChanged || dllChanges > 0)
                 {
-                    status.Text = "DLL: " + enabledDllChanges + " do aktualizacji"
+                    status.Text = "EXE: " + (lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State)
+                        + " • DLL: " + enabledDllChanges + " do aktualizacji"
                         + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty);
-                    Log("Wykryto " + dllChanges + " zmian DLL; aktywne aktualizacje: " + enabledDllChanges + ".");
+                    Log("EXE " + (exeChanged ? "wymaga aktualizacji" : "jest aktualny")
+                        + "; DLL: " + dllChanges + " zmian, aktywne: " + enabledDllChanges + ".");
                 }
                 else if (installed != null && GetLong(installed, "run_id") == lastRemote.RunId && GetString(installed, "channel") == lastRemote.Channel)
                 {
-                    status.Text = "Masz najnowszą wersję " + lastRemote.Channel.ToUpperInvariant() + " • wszystkie DLL aktualne.";
-                    Log("Każda DLL odpowiada najnowszemu artefaktowi.");
+                    status.Text = "Masz najnowszą wersję " + lastRemote.Channel.ToUpperInvariant() + " • EXE i DLL aktualne.";
+                    Log("EXE i każda DLL odpowiadają najnowszemu artefaktowi.");
                 }
                 else
                 {
-                    status.Text = "Nowy build dostępny • DLL bez zmian.";
-                    Log("Nowy artifact jest dostępny, ale SHA256 wszystkich DLL jest już zgodne.");
+                    status.Text = "Nowy build dostępny • EXE i DLL bez zmian.";
+                    Log("Nowy artefakt jest dostępny, ale SHA256 EXE i wszystkich DLL już są zgodne.");
                 }
             }
             catch (Exception ex)
@@ -275,9 +278,11 @@ namespace WoW112Updater
                 status.Text = "Instalowanie zweryfikowanych plików...";
                 var result = await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot));
                 status.Text = result.Changed == 0
-                    ? "Pliki już były aktualne."
-                    : "Aktualizacja zakończona: " + result.Changed + " plików.";
-                Log("Gotowe. Zmieniono: " + result.Changed + ", bez zmian: " + result.Unchanged + ".");
+                    ? "EXE i pozostałe pliki już były aktualne."
+                    : "Aktualizacja zakończona: " + result.Changed + " plików"
+                        + (result.ExeChanged ? " (w tym EXE)." : ".");
+                Log("Gotowe. Zmieniono: " + result.Changed + ", bez zmian: " + result.Unchanged
+                    + "; EXE: " + (result.ExeChanged ? "zaktualizowany" : "bez zmian") + ".");
                 if (!string.IsNullOrWhiteSpace(result.BackupDir)) Log("Backup: " + result.BackupDir);
                 TrimBackups(gameDir.Text.Trim(), MaxBackups);
                 RefreshLocalState();
@@ -555,7 +560,9 @@ namespace WoW112Updater
                 throw;
             }
 
-            return new ApplyResult { Changed = changed.Count + stale.Count, Unchanged = files.Count - changed.Count, BackupDir = backupDir };
+            return new ApplyResult { Changed = changed.Count + stale.Count, Unchanged = files.Count - changed.Count,
+                ExeChanged = changed.Any(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
+                BackupDir = backupDir };
         }
 
         private string CreateBackup(string root, IList<string> touchedNames, Dictionary<string, object> oldState, RemotePackageInfo remote)
@@ -957,6 +964,7 @@ namespace WoW112Updater
         {
             public int Changed;
             public int Unchanged;
+            public bool ExeChanged;
             public string BackupDir;
         }
 

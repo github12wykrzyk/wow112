@@ -5,6 +5,7 @@ on:
     branches:
       - work
     paths:
+      - '*.exe'
       - 'src/**'
       - 'runtime/current.json'
       - 'runtime/work_base_dlls.txt'

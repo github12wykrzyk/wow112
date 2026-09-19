@@ -12,9 +12,9 @@ Target game runtime remains World of Warcraft 1.12.1 build 5875 x86. The updater
 - Requires `candidate_metadata.json` and a valid 64-character `package_sha256`; missing/invalid metadata blocks install and VERIFY / REPAIR.
 - Verifies the inner candidate ZIP against `package_sha256` before any game files are changed.
 - Rejects nested ZIP paths and duplicate root filenames even when they differ only by letter case.
-- Compares SHA256 of every DLL independently against the selected game directory and reports per-DLL state (current / update / missing / removed upstream).
+- Compares SHA256 of the canonical root WoW EXE **and** every DLL independently against the selected game directory; the dashboard explicitly reports EXE state (current / update / missing) even if all DLLs are unchanged.
 - The **DLL-e** dialog has a persistent update toggle for every DLL. Checked means the updater may replace/add/remove that DLL; unchecked preserves the local DLL version and skips its update/removal.
-- Generates `dlls.txt` from the verified candidate order while preserving locally held DLLs whose per-DLL update toggle is disabled.
+- Updates the root canonical EXE from the verified candidate automatically (no DLL toggle applies to EXE), checks its SHA256 after installation and includes it in the rollback backup. The launcher uses that installed EXE. Generates `dlls.txt` from the verified candidate order while preserving locally held DLLs whose per-DLL update toggle is disabled.
 - Tracks updater-managed files in `.wow112_updater/installed.json`; state and backup manifests are written transactionally through a temporary file with a previous-state recovery copy.
 - File replacement first uses `File.Replace` and has a verified copy fallback for filesystems where replace semantics are unavailable.
 - Shows the locally installed channel, GitHub Actions run, short commit SHA and installation time directly in the GUI.
@@ -131,3 +131,8 @@ small work areas are outside the supported layout target. Windows CI runs an off
 text fit, busy restoration and explicit 125/150% layout simulations. These simulations
 are not native monitor DPI switching tests; interactive Windows DPI validation remains
 required. The probe uses a temporary configuration directory and no GitHub credentials.
+
+## EXE refresh (2.2, TEST work)
+
+The TEST candidate workflow now triggers on root `*.exe` changes in addition to runtime manifests, so EXE-only patches create a new downloadable artifact. The updater compares and displays EXE SHA256 separately from DLL changes; its offline UI smoke covers EXE missing/current/changed. A successful installation logs whether EXE was replaced.
+

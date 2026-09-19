@@ -14,6 +14,7 @@ namespace WoW112Updater
         private readonly Dictionary<string, bool> dllUpdatePreferences =
             new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private readonly List<DllUpdateStatus> lastDllInspection = new List<DllUpdateStatus>();
+        private DllUpdateStatus lastExeInspection;
         private byte[] cachedVerifiedPackage;
         private long cachedVerifiedRunId;
         private string cachedVerifiedChannel = string.Empty;
@@ -47,6 +48,7 @@ namespace WoW112Updater
         private void ResetDllUpdateInspection()
         {
             lastDllInspection.Clear();
+            lastExeInspection = null;
             cachedVerifiedPackage = null;
             cachedVerifiedRunId = 0;
             cachedVerifiedChannel = string.Empty;
@@ -88,7 +90,9 @@ namespace WoW112Updater
         private void InspectDllPackage(byte[] packageBytes, string root)
         {
             lastDllInspection.Clear();
+            lastExeInspection = null;
             var remoteDlls = new List<PackageFile>();
+            var remoteExes = new List<PackageFile>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             using (var ms = new MemoryStream(packageBytes, false))
@@ -96,14 +100,31 @@ namespace WoW112Updater
             {
                 foreach (var entry in zip.Entries)
                 {
-                    if (string.IsNullOrWhiteSpace(entry.Name) || !entry.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.IsNullOrWhiteSpace(entry.Name)) continue;
+                    var isDll = entry.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+                    var isExe = entry.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+                    if (!isDll && !isExe) continue;
                     if (!string.Equals(entry.FullName, entry.Name, StringComparison.Ordinal))
-                        throw new InvalidOperationException("Paczka zawiera zagnieżdżoną ścieżkę DLL: " + entry.FullName);
+                        throw new InvalidOperationException("Paczka zawiera zagnieżdżoną ścieżkę EXE/DLL: " + entry.FullName);
                     if (!seen.Add(entry.Name))
-                        throw new InvalidOperationException("Paczka zawiera powieloną nazwę DLL: " + entry.Name);
-                    remoteDlls.Add(new PackageFile(entry.Name, ReadEntry(entry)));
+                        throw new InvalidOperationException("Paczka zawiera powieloną nazwę EXE/DLL: " + entry.Name);
+                    var file = new PackageFile(entry.Name, ReadEntry(entry));
+                    if (isExe) remoteExes.Add(file);
+                    else remoteDlls.Add(file);
                 }
             }
+            if (remoteExes.Count != 1)
+                throw new InvalidOperationException("Paczka musi zawierać dokładnie jeden główny EXE WoW.");
+
+            var exe = remoteExes[0];
+            var localExe = SafeDestination(root, exe.Name);
+            var localExeSha = File.Exists(localExe) ? Sha256File(localExe) : string.Empty;
+            var exeChanged = !string.Equals(localExeSha, exe.Sha256, StringComparison.OrdinalIgnoreCase);
+            var exeState = string.IsNullOrEmpty(localExeSha) ? "BRAK LOKALNIE" : (exeChanged ? "AKTUALIZACJA" : "AKTUALNY");
+            lastExeInspection = new DllUpdateStatus(exe.Name, exeState, exeChanged, localExeSha, exe.Sha256, false);
+            Log("EXE " + exeState + " " + exe.Name
+                + " [" + (string.IsNullOrEmpty(localExeSha) ? "-" : localExeSha.Substring(0, 12))
+                + " -> " + exe.Sha256.Substring(0, 12) + "]");
 
             foreach (var dll in remoteDlls)
             {
@@ -149,10 +170,14 @@ namespace WoW112Updater
             var changed = LastDllChangeCount;
             var enabled = LastEnabledDllChangeCount;
             var held = changed - enabled;
+            var exeText = lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State;
             remoteInfo.Text = lastRemote.Channel.ToUpperInvariant() + " • " + ShortSha(lastRemote.HeadSha)
-                + " • run " + lastRemote.RunId + "\nDLL: " + changed + " zmian • aktywne " + enabled
-                + (held > 0 ? " • wstrzymane " + held : string.Empty);
-            detailsTip.SetToolTip(remoteInfo, remoteInfo.Text);
+                + " • run " + lastRemote.RunId + "\nEXE: " + exeText + " • DLL: " + enabled + " do aktualizacji";
+            detailsTip.SetToolTip(remoteInfo, remoteInfo.Text
+                + (lastExeInspection == null ? string.Empty : "\nEXE: " + lastExeInspection.Name
+                    + "\nSHA256 paczki: " + lastExeInspection.RemoteSha)
+                + "\nDLL: " + changed + " zmian, aktywne " + enabled
+                + (held > 0 ? ", wstrzymane " + held : string.Empty));
         }
 
         private async Task ShowDllUpdateDialogAsync()
