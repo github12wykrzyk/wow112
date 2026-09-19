@@ -4,11 +4,10 @@
   "source_overrides": [
     "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
-    "WoWPlayerESP_v1_2_range_sweep.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
     "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
   ],
-  "note": "Auto-facing TEST: rebuild PositionalSpoof from current work source. Changes are isolated to Backstab/Ambush positioning: 1.6 yd spoof radius, rear-hemisphere-only opener candidates, and fresh target XYZ/O recalculation between the two spoof heartbeats. Preserve the concurrent Auto-WotF watchdog changes. No changes to GCD, client cast/UI state, Pick Pocket, MovementCore, energy-gate semantics, or NoFailHook. Keep work-only until in-game acceptance.",
+  "note": "BG crash isolation: use exact accepted runtime bytes for WoWPlayerESP_v1_2_range_sweep.dll instead of rebuilding the experimental v1.3 Challenges wrapper. Native crash report #12 repeats ACCESS_VIOLATION at WoW.exe 0x0060621D with WoWPlayerESP frame +0x39F7 during BG entry. Preserve current Auto-facing, Auto-WotF, AutoKick, PickPocket, MovementCore and StealthCD work experiments unchanged. Keep Challenges wrapper source for later hardening, but do not package it in this candidate.",
   "source_fingerprint_warning_allowlist": [
     "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
