@@ -72,6 +72,12 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define WORLD_REACQUIRE_MS 750u
 #define KICK_RETRY_INTERVAL_MS 35u
 #define KICK_RETRY_ATTEMPTS 3u
+/* The packet gives an estimate, not proof of server-side cast liveness.
+   Reject the end of the estimate, including all retries, rather than
+   firing Kick on an expired or nearly finished normal cast. */
+#define NORMAL_CAST_SAFETY_MS 350u
+#define QUEUE_KIND_NORMAL 1u
+#define QUEUE_KIND_CHANNEL 2u
 
 #define SETTING_ENABLED           1u
 #define SETTING_NORMAL_CASTS      2u
@@ -187,6 +193,7 @@ static volatile u32 g_pendingGuidLo = 0u;
 static volatile u32 g_pendingGuidHi = 0u;
 static volatile u32 g_pendingSpell = 0u;
 static volatile u32 g_pendingCastMs = 0u;
+static volatile u32 g_pendingStartTick = 0u;
 
 static volatile u32 g_queued = 0u;
 static volatile u32 g_queueGuidLo = 0u;
@@ -194,6 +201,9 @@ static volatile u32 g_queueGuidHi = 0u;
 static volatile u32 g_queueSpell = 0u;
 static volatile u32 g_queueDue = 0u;
 static volatile u32 g_queueAttemptsRemaining = 0u;
+static volatile u32 g_queueKind = 0u;
+static volatile u32 g_queueDeadline = 0u;
+static volatile u32 g_expiredDrops = 0u;
 
 static volatile u32 g_lastChannelGuidLo = 0u;
 static volatile u32 g_lastChannelGuidHi = 0u;
@@ -334,8 +344,8 @@ static int world_ready(void)
 static void clear_transient_state(void)
 {
     g_pendingNormal=0u;
-    g_pendingGuidLo=0u; g_pendingGuidHi=0u; g_pendingSpell=0u; g_pendingCastMs=0u;
-    g_queued=0u; g_queueGuidLo=0u; g_queueGuidHi=0u; g_queueSpell=0u; g_queueDue=0u; g_queueAttemptsRemaining=0u;
+    g_pendingGuidLo=0u; g_pendingGuidHi=0u; g_pendingSpell=0u; g_pendingCastMs=0u; g_pendingStartTick=0u;
+    g_queued=0u; g_queueGuidLo=0u; g_queueGuidHi=0u; g_queueSpell=0u; g_queueDue=0u; g_queueAttemptsRemaining=0u; g_queueKind=0u; g_queueDeadline=0u;
     g_lastChannelGuidLo=0u; g_lastChannelGuidHi=0u; g_lastChannelSpell=0u;
 }
 
@@ -407,12 +417,13 @@ static int is_known_instant_form(u32 spell)
         || spell==1066u /* Aquatic Form */ || spell==24858u /* Moonkin Form */;
 }
 
-static void schedule_kick_after(u32 lo,u32 hi,u32 spell,u32 now,u32 extraDelayMs)
+static void schedule_kick_after(u32 lo,u32 hi,u32 spell,u32 now,u32 extraDelayMs,u32 kind,u32 deadline)
 {
     s32 delay=g_cfgReactionDelayMs;
     if(delay<REACTION_DELAY_MIN_MS) delay=REACTION_DELAY_MIN_MS;
     if(delay>REACTION_DELAY_MAX_MS) delay=REACTION_DELAY_MAX_MS;
     g_queueGuidLo=lo; g_queueGuidHi=hi; g_queueSpell=spell;
+    g_queueKind=kind; g_queueDeadline=deadline;
     g_queueDue=now+extraDelayMs+(u32)delay;
     g_queueAttemptsRemaining=KICK_RETRY_ATTEMPTS;
     g_queued=1u;
@@ -420,21 +431,32 @@ static void schedule_kick_after(u32 lo,u32 hi,u32 spell,u32 now,u32 extraDelayMs
 
 static void schedule_kick(u32 lo,u32 hi,u32 spell,u32 now)
 {
-    schedule_kick_after(lo,hi,spell,now,0u);
+    schedule_kick_after(lo,hi,spell,now,0u,QUEUE_KIND_CHANNEL,0u);
 }
 
-static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 now)
+static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 startTick,u32 now)
 {
     s32 window=g_cfgMaxRemainingMs;
-    u32 extra=0u;
+    s32 delay=g_cfgReactionDelayMs;
+    u32 elapsed,remaining,extra=0u;
     if(window<MAX_REMAINING_MIN_MS) window=MAX_REMAINING_MIN_MS;
     if(window>MAX_REMAINING_MAX_MS) window=MAX_REMAINING_MAX_MS;
-    /* A zero-duration SPELL_START is an instant or has no trustworthy timing.
-       Never turn shapeshifts or an unverified cast-duration capture into Kick. */
-    if(!castMs || is_known_instant_form(spell)) return;
-    if(castMs>60000u) castMs=60000u;
-    if(castMs>(u32)window) extra=castMs-(u32)window;
-    schedule_kick_after(lo,hi,spell,now,extra);
+    if(delay<REACTION_DELAY_MIN_MS) delay=REACTION_DELAY_MIN_MS;
+    if(delay>REACTION_DELAY_MAX_MS) delay=REACTION_DELAY_MAX_MS;
+    /* Only this SPELL_START instance may arm a Kick. Timestamp is captured
+       in the packet hook, not on the later UI-timer tick. Never reinterpret
+       a zero/invalid duration or a shapeshift as a pending normal cast. */
+    if(!castMs || castMs>60000u || is_known_instant_form(spell)) return;
+    elapsed=(u32)(now-startTick);
+    if(elapsed>=castMs){ ++g_expiredDrops; return; }
+    remaining=castMs-elapsed;
+    if(remaining<=NORMAL_CAST_SAFETY_MS){ ++g_expiredDrops; return; }
+    if(remaining>(u32)window) extra=remaining-(u32)window;
+    /* A reaction delay or max-remaining window must not queue a Kick that
+       is already too late at its first eligible timer tick. */
+    if(extra+(u32)delay
+       >=remaining-NORMAL_CAST_SAFETY_MS){ ++g_expiredDrops; return; }
+    schedule_kick_after(lo,hi,spell,now,extra,QUEUE_KIND_NORMAL,startTick+castMs);
 }
 
 static void fire_queued_kick(u32 now)
@@ -455,6 +477,21 @@ static void fire_queued_kick(u32 now)
     }
     if(g_cfgPlayersOnly && typeId!=TYPE_PLAYER){
         g_queued=0u; g_queueAttemptsRemaining=0u; ++g_targetDrops; return;
+    }
+
+    /* Every attempt (including retries) must still belong to a live cast
+       window. For channels the actual descriptor must still advertise the
+       same channel spell; the previous timer's snapshot is never enough. */
+    if(g_queueKind==QUEUE_KIND_NORMAL){
+        if((LONG32)(g_queueDeadline-now)<=(LONG32)NORMAL_CAST_SAFETY_MS){
+            g_queued=0u; g_queueAttemptsRemaining=0u; ++g_expiredDrops; return;
+        }
+    }else if(g_queueKind==QUEUE_KIND_CHANNEL){
+        if(target_channel_spell(lo,hi,0)!=g_queueSpell){
+            g_queued=0u; g_queueAttemptsRemaining=0u; ++g_expiredDrops; return;
+        }
+    }else{
+        g_queued=0u; g_queueAttemptsRemaining=0u; ++g_expiredDrops; return;
     }
 
     /* Duplicate guard suppresses duplicate cast edges, but must not suppress the
@@ -505,8 +542,14 @@ static void poll_channel(u32 now)
     if(lo!=g_lastChannelGuidLo || hi!=g_lastChannelGuidHi){
         g_lastChannelGuidLo=lo; g_lastChannelGuidHi=hi; g_lastChannelSpell=0u;
     }
-    if(!spell){ g_lastChannelSpell=0u; return; }
-    if(is_known_instant_form(spell)){ g_lastChannelSpell=0u; return; }
+    if(!spell || is_known_instant_form(spell)){
+        /* A completed channel invalidates any queued retries immediately. */
+        if(g_queued && g_queueKind==QUEUE_KIND_CHANNEL &&
+           g_queueGuidLo==lo && g_queueGuidHi==hi){
+            g_queued=0u; g_queueAttemptsRemaining=0u; ++g_expiredDrops;
+        }
+        g_lastChannelSpell=0u; return;
+    }
     if(spell!=g_lastChannelSpell){
         g_lastChannelSpell=spell;
         ++g_channelEdges;
@@ -538,6 +581,8 @@ __declspec(naked) static void SpellStartDecodedHook(void)
         mov edx, dword ptr [ebp-0x04]
         mov dword ptr [g_pendingSpell], edx
         mov dword ptr [g_pendingCastMs], 0
+        call tick_now
+        mov dword ptr [g_pendingStartTick], eax
         mov dword ptr [g_pendingNormal], 1
         inc dword ptr [g_normalEdges]
     hook_done:
@@ -631,13 +676,21 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
 
     if(g_pendingNormal){
         u32 castMs=g_pendingCastMs;
+        u32 startTick=g_pendingStartTick;
         lo=g_pendingGuidLo; hi=g_pendingGuidHi; spell=g_pendingSpell;
         g_pendingNormal=0u;
         g_pendingCastMs=0u;
+        g_pendingStartTick=0u;
+        /* A new SPELL_START supersedes retries for an older normal cast,
+           even when the new spell has zero or untrusted cast duration. */
+        if(g_queued && g_queueKind==QUEUE_KIND_NORMAL &&
+           g_queueGuidLo==lo && g_queueGuidHi==hi){
+            g_queued=0u; g_queueAttemptsRemaining=0u;
+        }
         /* SPELL_START also covers instant abilities (e.g. druid shapeshifts).
            A decoded zero-duration cast is not an interruptible normal cast.
            Fail closed if the detail hook has not supplied a valid duration. */
-        if(castMs>0u) schedule_normal_kick(lo,hi,spell,castMs,now);
+        if(castMs>0u) schedule_normal_kick(lo,hi,spell,castMs,startTick,now);
     }
     poll_channel(now);
     fire_queued_kick(now);
@@ -759,7 +812,7 @@ static int W112_CTL_STDCALL autokick_control_get(w112_u32 id,W112_ControlValueV1
     if(id==SETTING_STATUS){ out->i32=(s32)g_status; return 1; }
     if(id==SETTING_KICK_ATTEMPTS){ out->u32=g_kickAttempts; return 1; }
     if(id==SETTING_LAST_SPELL){ out->u32=g_lastKickSpell; return 1; }
-    if(id==SETTING_DROPS){ out->u32=g_targetDrops+g_duplicateDrops+g_luaFails; return 1; }
+    if(id==SETTING_DROPS){ out->u32=g_targetDrops+g_duplicateDrops+g_expiredDrops+g_luaFails; return 1; }
     if(id==SETTING_MAX_REMAINING_MS){ out->i32=g_cfgMaxRemainingMs; return 1; }
     if(id==SETTING_EXCL_WARRIOR){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_WARRIOR)?1u:0u; return 1; }
     if(id==SETTING_EXCL_PALADIN){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_PALADIN)?1u:0u; return 1; }
