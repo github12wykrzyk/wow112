@@ -70,6 +70,8 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define VERSION_3_1 0x00030100u
 #define TIMER_PERIOD_MS 10u
 #define WORLD_REACQUIRE_MS 750u
+#define KICK_RETRY_INTERVAL_MS 35u
+#define KICK_RETRY_ATTEMPTS 3u
 
 #define SETTING_ENABLED           1u
 #define SETTING_NORMAL_CASTS      2u
@@ -191,6 +193,7 @@ static volatile u32 g_queueGuidLo = 0u;
 static volatile u32 g_queueGuidHi = 0u;
 static volatile u32 g_queueSpell = 0u;
 static volatile u32 g_queueDue = 0u;
+static volatile u32 g_queueAttemptsRemaining = 0u;
 
 static volatile u32 g_lastChannelGuidLo = 0u;
 static volatile u32 g_lastChannelGuidHi = 0u;
@@ -332,7 +335,7 @@ static void clear_transient_state(void)
 {
     g_pendingNormal=0u;
     g_pendingGuidLo=0u; g_pendingGuidHi=0u; g_pendingSpell=0u; g_pendingCastMs=0u;
-    g_queued=0u; g_queueGuidLo=0u; g_queueGuidHi=0u; g_queueSpell=0u; g_queueDue=0u;
+    g_queued=0u; g_queueGuidLo=0u; g_queueGuidHi=0u; g_queueSpell=0u; g_queueDue=0u; g_queueAttemptsRemaining=0u;
     g_lastChannelGuidLo=0u; g_lastChannelGuidHi=0u; g_lastChannelSpell=0u;
 }
 
@@ -411,6 +414,7 @@ static void schedule_kick_after(u32 lo,u32 hi,u32 spell,u32 now,u32 extraDelayMs
     if(delay>REACTION_DELAY_MAX_MS) delay=REACTION_DELAY_MAX_MS;
     g_queueGuidLo=lo; g_queueGuidHi=hi; g_queueSpell=spell;
     g_queueDue=now+extraDelayMs+(u32)delay;
+    g_queueAttemptsRemaining=KICK_RETRY_ATTEMPTS;
     g_queued=1u;
 }
 
@@ -437,22 +441,36 @@ static void fire_queued_kick(u32 now)
 {
     u32 lo,hi,obj,typeId;
     s32 guard;
+    int internalRetry;
     if(!g_queued) return;
     if((LONG32)(now-g_queueDue)<0) return;
-    g_queued=0u;
 
     lo=read_u32(ADDR_SELECTED_GUID_LO);
     hi=read_u32(ADDR_SELECTED_GUID_HI);
-    if(lo!=g_queueGuidLo || hi!=g_queueGuidHi){ ++g_targetDrops; return; }
-    if(!current_target_snapshot(&lo,&hi,&obj,&typeId)){ ++g_targetDrops; return; }
-    if(g_cfgPlayersOnly && typeId!=TYPE_PLAYER){ ++g_targetDrops; return; }
+    if(lo!=g_queueGuidLo || hi!=g_queueGuidHi){
+        g_queued=0u; g_queueAttemptsRemaining=0u; ++g_targetDrops; return;
+    }
+    if(!current_target_snapshot(&lo,&hi,&obj,&typeId)){
+        g_queued=0u; g_queueAttemptsRemaining=0u; ++g_targetDrops; return;
+    }
+    if(g_cfgPlayersOnly && typeId!=TYPE_PLAYER){
+        g_queued=0u; g_queueAttemptsRemaining=0u; ++g_targetDrops; return;
+    }
 
+    /* Duplicate guard suppresses duplicate cast edges, but must not suppress the
+       short internal retry burst. FrameScript success only means the Lua chunk
+       executed; under heavy rotation-key spam the first CastSpellByName(Kick)
+       can lose the client input/action race without reporting cast success. */
+    internalRetry=(g_queueAttemptsRemaining<KICK_RETRY_ATTEMPTS);
     guard=g_cfgDuplicateGuardMs;
     if(guard<DUP_GUARD_MIN_MS) guard=DUP_GUARD_MIN_MS;
     if(guard>DUP_GUARD_MAX_MS) guard=DUP_GUARD_MAX_MS;
-    if(g_lastKickAttemptTick && (u32)(now-g_lastKickAttemptTick)<(u32)guard){ ++g_duplicateDrops; return; }
+    if(!internalRetry && g_lastKickAttemptTick && (u32)(now-g_lastKickAttemptTick)<(u32)guard){
+        g_queued=0u; g_queueAttemptsRemaining=0u; ++g_duplicateDrops; return;
+    }
 
     if(!framescript_signature_ok()){
+        g_queued=0u; g_queueAttemptsRemaining=0u;
         g_status=STATUS_FRAMESCRIPT_MISMATCH;
         ++g_luaFails;
         return;
@@ -461,6 +479,14 @@ static void fire_queued_kick(u32 now)
     g_lastKickSpell=g_queueSpell;
     ++g_kickAttempts;
     if(!execute_kick_lua()) ++g_luaFails;
+
+    if(g_queueAttemptsRemaining>0u) --g_queueAttemptsRemaining;
+    if(g_queueAttemptsRemaining>0u){
+        g_queueDue=now+KICK_RETRY_INTERVAL_MS;
+        g_queued=1u;
+    }else{
+        g_queued=0u;
+    }
 }
 
 static void poll_channel(u32 now)
