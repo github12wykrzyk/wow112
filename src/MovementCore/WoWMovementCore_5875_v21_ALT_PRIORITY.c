@@ -310,12 +310,30 @@ static const W112_ControlEnumOptionV1 g_modeOptions[]={
     {MODE_PURSUIT,"F10 Pursuit"},
     {MODE_INSTANCE_UNREACHABLE,"Instance"}
 };
-static W112_ControlSettingV1 g_controlSettings[7];
+/* GUI checkbox ON means ignore the entire mining-node family. */
+static const struct {const char*key;const char*label;} g_miningBlacklistControls[]={
+    {"skip_copper","Skip Copper Vein"},
+    {"skip_tin","Skip Tin Vein"},
+    {"skip_silver","Skip Silver Vein"},
+    {"skip_iron","Skip Iron Deposit"},
+    {"skip_gold","Skip Gold Vein"},
+    {"skip_mithril","Skip Mithril Deposit"},
+    {"skip_truesilver","Skip Truesilver"},
+    {"skip_small_thorium","Skip Small Thorium"},
+    {"skip_rich_thorium","Skip Rich Thorium"},
+    {"skip_dark_iron","Skip Dark Iron"},
+    {"skip_bloodstone","Skip Bloodstone"},
+    {"skip_incendicite","Skip Incendicite"},
+    {"skip_indurium","Skip Indurium"},
+    {"skip_hakkari_thorium","Skip Hakkari Thorium"}
+};
+static W112_ControlSettingV1 g_controlSettings[7u+14u];
 static volatile DWORD g_controlDescriptorReady=0u;
 
 static void init_control_descriptor(void)
 {
     W112_ControlSettingV1*s;
+    DWORD i;
     if(g_controlDescriptorReady)return;
 
     s=&g_controlSettings[0];
@@ -346,6 +364,14 @@ static void init_control_descriptor(void)
     s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="alt_pp_blocks";s->label="ALT PP blocks";
     s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
+    for(i=0u;i<14u;i++){
+        s=&g_controlSettings[7u+i];
+        s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=8u+i;
+        s->key=g_miningBlacklistControls[i].key;s->label=g_miningBlacklistControls[i].label;
+        s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
+        s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+    }
+
     g_controlDescriptorReady=1u;
 }
 
@@ -359,6 +385,7 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==5u){out->u32=(g_gatherActive||g_gatherLootWait)?1u:0u;return 1;}
     if(id==6u){out->i32=(w112_i32)g_altPriorityStarts;return 1;}
     if(id==7u){out->i32=(w112_i32)g_altPriorityPPBlocks;return 1;}
+    if(id>=8u&&id<22u){out->u32=(g_miningBlacklistMask&(1u<<(id-8u)))?1u:0u;return 1;}
     return 0;
 }
 
@@ -381,12 +408,28 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(p,now,"GUI_AUTOOPEN_DISABLED",1u,0u);
         return 1;
     }
+    if(id>=8u&&id<22u){
+        DWORD bit=1u<<(id-8u);
+        if(value->u32)g_miningBlacklistMask|=bit;
+        else g_miningBlacklistMask&=~bit;
+        /* Invalidate the Mining-first cache immediately: a skipped vein must
+         * never continue blocking AutoPP until its old cache TTL expires. */
+        g_miningPriorityValidUntil=0u;
+        g_miningPriorityEntry=g_miningPriorityLo=g_miningPriorityHi=0u;
+        g_miningPriorityD2=0.0f;
+        g_miningPriorityNextScan=0u;
+        g_gatherNextScan=0u;
+        if(value->u32&&g_gatherActive&&g_gatherKind==2u&&
+           (MiningBlacklistBit(g_gatherEntry)&bit))
+            GatherStop(p,now,"GUI_MINING_BLACKLIST",1u,0u);
+        return 1;
+    }
     return 0;
 }
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,7u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,21u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

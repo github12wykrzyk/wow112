@@ -852,29 +852,37 @@ static DWORD IsHerbEntry(DWORD e)
         default:return 0u;
     }
 }
-static DWORD IsMiningEntry(DWORD e)
+/* One bit per ore family (including every supported alternate GO entry).
+ * A family disabled in the GUI must also disappear from the Mining-first PP
+ * arbitration scan; never blacklist individual GUIDs or retry attempts. */
+static volatile DWORD g_miningBlacklistMask=0u;
+
+static DWORD MiningBlacklistBit(DWORD e)
 {
-    /* Full vanilla-family aliases seen by classic gather databases. */
     switch(e){
-        case 1731u:case 2055u:case 3763u:case 100145u:case 103713u:case 103714u: /* Copper */
-        case 1732u:case 2054u:case 3764u:case 100147u:case 100224u:case 103709u:case 103711u: /* Tin */
-        case 1733u:case 100162u:case 105569u:case 73940u:                         /* Silver / ooze alias */
-        case 1735u:case 100163u:case 103710u:case 103712u:case 73939u:           /* Iron */
-        case 1734u:case 100666u:case 150080u:case 181109u:case 73941u:           /* Gold / ooze alias */
-        case 2040u:case 100176u:case 150079u:case 176645u:case 123310u:          /* Mithril */
-        case 2047u:case 100197u:case 150081u:case 181108u:case 123309u:          /* Truesilver */
-        case 324u:case 150082u:case 176643u:case 123848u:                        /* Small Thorium */
-        case 175404u:case 176644u:case 177388u:                                 /* Rich Thorium */
-        case 165658u:                                                            /* Dark Iron */
-        case 2653u:                                                              /* Lesser Bloodstone */
-        case 1610u:case 1667u:                                                   /* Incendicite */
-        case 19903u:                                                             /* Indurium */
-        case 180215u:                                                            /* Hakkari Thorium */
-            return 1u;
+        case 1731u:case 2055u:case 3763u:case 100145u:case 103713u:case 103714u:return 1u<<0;  /* Copper */
+        case 1732u:case 2054u:case 3764u:case 100147u:case 100224u:case 103709u:case 103711u:return 1u<<1; /* Tin */
+        case 1733u:case 100162u:case 105569u:case 73940u:return 1u<<2;  /* Silver */
+        case 1735u:case 100163u:case 103710u:case 103712u:case 73939u:return 1u<<3; /* Iron */
+        case 1734u:case 100666u:case 150080u:case 181109u:case 73941u:return 1u<<4; /* Gold */
+        case 2040u:case 100176u:case 150079u:case 176645u:case 123310u:return 1u<<5; /* Mithril */
+        case 2047u:case 100197u:case 150081u:case 181108u:case 123309u:return 1u<<6; /* Truesilver */
+        case 324u:case 150082u:case 176643u:case 123848u:return 1u<<7; /* Small Thorium */
+        case 175404u:case 176644u:case 177388u:return 1u<<8; /* Rich Thorium */
+        case 165658u:return 1u<<9;  /* Dark Iron */
+        case 2653u:return 1u<<10;   /* Lesser Bloodstone */
+        case 1610u:case 1667u:return 1u<<11; /* Incendicite */
+        case 19903u:return 1u<<12;  /* Indurium */
+        case 180215u:return 1u<<13; /* Hakkari Thorium */
         default:return 0u;
     }
 }
 
+static DWORD IsMiningEntry(DWORD e)
+{
+    DWORD bit=MiningBlacklistBit(e);
+    return bit&&!(g_miningBlacklistMask&bit);
+}
 
 static const char* MiningName(DWORD e)
 {
