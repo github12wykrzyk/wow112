@@ -21,3 +21,5 @@ Size:
 
 Reproducer:
   python tools/patch_vanish210_exe.py
+
+Repository state: patched EXE committed on work; candidate CI is expected to verify/package this exact SHA.
