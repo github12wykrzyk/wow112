@@ -67,7 +67,7 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define DLL_PROCESS_ATTACH 1u
 #define PAGE_EXECUTE_READWRITE 0x40u
 
-#define VERSION_3_0 0x00030000u
+#define VERSION_3_1 0x00030100u
 #define TIMER_PERIOD_MS 10u
 #define WORLD_REACQUIRE_MS 750u
 
@@ -81,6 +81,16 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define SETTING_KICK_ATTEMPTS     8u
 #define SETTING_LAST_SPELL        9u
 #define SETTING_DROPS             10u
+#define SETTING_MAX_REMAINING_MS  11u
+#define SETTING_EXCL_WARRIOR      12u
+#define SETTING_EXCL_PALADIN      13u
+#define SETTING_EXCL_HUNTER       14u
+#define SETTING_EXCL_ROGUE        15u
+#define SETTING_EXCL_PRIEST       16u
+#define SETTING_EXCL_SHAMAN       17u
+#define SETTING_EXCL_MAGE         18u
+#define SETTING_EXCL_WARLOCK      19u
+#define SETTING_EXCL_DRUID        20u
 
 #define STATUS_DETACHED              0u
 #define STATUS_INSTALLING            1u
@@ -106,6 +116,8 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define ADDR_SPELL_START_HANDLER    0x006E7640u
 #define ADDR_SPELL_START_HOOK       0x006E767Fu
 #define ADDR_SPELL_START_CONTINUE   0x006E7686u
+#define ADDR_SPELL_DETAIL_HOOK      0x006E773Cu
+#define ADDR_SPELL_DETAIL_CONTINUE  0x006E7745u
 
 #define OFF_OBJ_DESCRIPTOR_PTR      0x0008u
 #define OFF_OBJ_TYPE                0x0014u
@@ -128,8 +140,22 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 #define DUP_GUARD_MIN_MS 50
 #define DUP_GUARD_MAX_MS 500
 #define DUP_GUARD_STEP_MS 10
+#define MAX_REMAINING_MIN_MS 0
+#define MAX_REMAINING_MAX_MS 30000
+#define MAX_REMAINING_STEP_MS 50
+
+#define CLASSBIT_WARRIOR  (1u<<0)
+#define CLASSBIT_PALADIN  (1u<<1)
+#define CLASSBIT_HUNTER   (1u<<2)
+#define CLASSBIT_ROGUE    (1u<<3)
+#define CLASSBIT_PRIEST   (1u<<4)
+#define CLASSBIT_SHAMAN   (1u<<5)
+#define CLASSBIT_MAGE     (1u<<6)
+#define CLASSBIT_WARLOCK  (1u<<7)
+#define CLASSBIT_DRUID    (1u<<8)
 
 static const u8 g_hookOriginal[7] = {0x8B,0xC7,0x2D,0x31,0x01,0x00,0x00};
+static const u8 g_detailHookOriginal[9] = {0x33,0xF6,0x56,0x8D,0x8D,0x1C,0xFF,0xFF,0xFF};
 static const char g_kickLua[] =
     "if type(UnitExists)=='function' and type(UnitCanAttack)=='function' and "
     "type(CastSpellByName)=='function' and UnitExists('player') and UnitExists('target') "
@@ -149,11 +175,14 @@ static volatile u32 g_cfgChannels = 1u;
 static volatile u32 g_cfgPlayersOnly = 1u;
 static volatile s32 g_cfgReactionDelayMs = 0;
 static volatile s32 g_cfgDuplicateGuardMs = 120;
+static volatile s32 g_cfgMaxRemainingMs = 30000;
+static volatile u32 g_cfgExcludedClassMask = 0u;
 
 static volatile u32 g_pendingNormal = 0u;
 static volatile u32 g_pendingGuidLo = 0u;
 static volatile u32 g_pendingGuidHi = 0u;
 static volatile u32 g_pendingSpell = 0u;
+static volatile u32 g_pendingCastMs = 0u;
 
 static volatile u32 g_queued = 0u;
 static volatile u32 g_queueGuidLo = 0u;
@@ -175,7 +204,7 @@ static volatile u32 g_targetDrops = 0u;
 static volatile u32 g_worldResets = 0u;
 static volatile u32 g_luaFails = 0u;
 
-static W112_ControlSettingV1 g_controlSettings[10];
+static W112_ControlSettingV1 g_controlSettings[20];
 static volatile u32 g_controlDescriptorReady = 0u;
 
 static const W112_ControlEnumOptionV1 g_statusOptions[] = {
@@ -252,6 +281,17 @@ static BOOL32 patch_jmp7(uptr32 site,uptr32 target)
     return write_executable((void*)(uptr32)site,p,7u);
 }
 
+static BOOL32 patch_jmp9(uptr32 site,uptr32 target)
+{
+    u8 p[9];
+    LONG32 rel=(LONG32)(target-(site+5u));
+    u32 i;
+    p[0]=0xE9u;
+    p[1]=(u8)(rel&0xFF); p[2]=(u8)((rel>>8)&0xFF); p[3]=(u8)((rel>>16)&0xFF); p[4]=(u8)((rel>>24)&0xFF);
+    for(i=5u;i<9u;++i) p[i]=0x90u;
+    return write_executable((void*)(uptr32)site,p,9u);
+}
+
 static u32 tick_now(void)
 {
     GetTickCountFn fn=(GetTickCountFn)load_iat_fn(WOW_IAT_GETTICKCOUNT);
@@ -289,7 +329,7 @@ static int world_ready(void)
 static void clear_transient_state(void)
 {
     g_pendingNormal=0u;
-    g_pendingGuidLo=0u; g_pendingGuidHi=0u; g_pendingSpell=0u;
+    g_pendingGuidLo=0u; g_pendingGuidHi=0u; g_pendingSpell=0u; g_pendingCastMs=0u;
     g_queued=0u; g_queueGuidLo=0u; g_queueGuidHi=0u; g_queueSpell=0u; g_queueDue=0u;
     g_lastChannelGuidLo=0u; g_lastChannelGuidHi=0u; g_lastChannelSpell=0u;
 }
@@ -321,22 +361,63 @@ static u32 target_channel_spell(u32 lo,u32 hi,u32 *outType)
     return read_u32(desc + UNIT_CHANNEL_SPELL_INDEX*4u);
 }
 
+static char *append_text(char *p,const char *end,const char *s)
+{
+    if(!p||!end||!s) return p;
+    while(*s && p<end) *p++=*s++;
+    return p;
+}
+
 static int execute_kick_lua(void)
 {
     FrameScriptExecuteFn fn;
+    u32 mask=g_cfgExcludedClassMask;
+    char script[768];
+    char *p,*end;
     if(!framescript_signature_ok()) return 0;
     fn=(FrameScriptExecuteFn)(uptr32)WOW_FRAMESCRIPT_EXECUTE;
-    return fn(g_kickLua,g_scriptName)?1:0;
+    if(!mask) return fn(g_kickLua,g_scriptName)?1:0;
+
+    p=script; end=script+sizeof(script)-1;
+    p=append_text(p,end,"if type(UnitExists)=='function' and type(UnitCanAttack)=='function' and type(UnitClass)=='function' and type(CastSpellByName)=='function' and UnitExists('player') and UnitExists('target') and UnitCanAttack('player','target') then local _,c=UnitClass('target');if c");
+    if(mask&CLASSBIT_WARRIOR) p=append_text(p,end," and c~='WARRIOR'");
+    if(mask&CLASSBIT_PALADIN) p=append_text(p,end," and c~='PALADIN'");
+    if(mask&CLASSBIT_HUNTER) p=append_text(p,end," and c~='HUNTER'");
+    if(mask&CLASSBIT_ROGUE) p=append_text(p,end," and c~='ROGUE'");
+    if(mask&CLASSBIT_PRIEST) p=append_text(p,end," and c~='PRIEST'");
+    if(mask&CLASSBIT_SHAMAN) p=append_text(p,end," and c~='SHAMAN'");
+    if(mask&CLASSBIT_MAGE) p=append_text(p,end," and c~='MAGE'");
+    if(mask&CLASSBIT_WARLOCK) p=append_text(p,end," and c~='WARLOCK'");
+    if(mask&CLASSBIT_DRUID) p=append_text(p,end," and c~='DRUID'");
+    p=append_text(p,end," then CastSpellByName('Kick') end end");
+    *p=0;
+    return fn(script,g_scriptName)?1:0;
 }
 
-static void schedule_kick(u32 lo,u32 hi,u32 spell,u32 now)
+static void schedule_kick_after(u32 lo,u32 hi,u32 spell,u32 now,u32 extraDelayMs)
 {
     s32 delay=g_cfgReactionDelayMs;
     if(delay<REACTION_DELAY_MIN_MS) delay=REACTION_DELAY_MIN_MS;
     if(delay>REACTION_DELAY_MAX_MS) delay=REACTION_DELAY_MAX_MS;
     g_queueGuidLo=lo; g_queueGuidHi=hi; g_queueSpell=spell;
-    g_queueDue=now+(u32)delay;
+    g_queueDue=now+extraDelayMs+(u32)delay;
     g_queued=1u;
+}
+
+static void schedule_kick(u32 lo,u32 hi,u32 spell,u32 now)
+{
+    schedule_kick_after(lo,hi,spell,now,0u);
+}
+
+static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 now)
+{
+    s32 window=g_cfgMaxRemainingMs;
+    u32 extra=0u;
+    if(window<MAX_REMAINING_MIN_MS) window=MAX_REMAINING_MIN_MS;
+    if(window>MAX_REMAINING_MAX_MS) window=MAX_REMAINING_MAX_MS;
+    if(castMs>60000u) castMs=60000u;
+    if(castMs>(u32)window) extra=castMs-(u32)window;
+    schedule_kick_after(lo,hi,spell,now,extra);
 }
 
 static void fire_queued_kick(u32 now)
@@ -414,6 +495,7 @@ __declspec(naked) static void SpellStartDecodedHook(void)
         mov dword ptr [g_pendingGuidHi], ecx
         mov edx, dword ptr [ebp-0x04]
         mov dword ptr [g_pendingSpell], edx
+        mov dword ptr [g_pendingCastMs], 0
         mov dword ptr [g_pendingNormal], 1
         inc dword ptr [g_normalEdges]
     hook_done:
@@ -422,6 +504,35 @@ __declspec(naked) static void SpellStartDecodedHook(void)
         mov eax, edi
         sub eax, 0x131
         push ADDR_SPELL_START_CONTINUE
+        ret
+    }
+}
+
+__declspec(naked) static void SpellStartDetailHook(void)
+{
+    __asm {
+        pushfd
+        pushad
+        cmp dword ptr [g_pendingNormal], 0
+        je detail_done
+        mov eax, dword ptr [edi]
+        mov ecx, dword ptr [edi+4]
+        cmp eax, dword ptr [g_pendingGuidLo]
+        jne detail_done
+        cmp ecx, dword ptr [g_pendingGuidHi]
+        jne detail_done
+        mov edx, dword ptr [ebx+8]
+        cmp edx, dword ptr [g_pendingSpell]
+        jne detail_done
+        mov eax, dword ptr [ebp-0x1C]
+        mov dword ptr [g_pendingCastMs], eax
+    detail_done:
+        popad
+        popfd
+        xor esi, esi
+        push esi
+        lea ecx, [ebp-0xE4]
+        push ADDR_SPELL_DETAIL_CONTINUE
         ret
     }
 }
@@ -473,9 +584,11 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
     g_status=STATUS_ACTIVE;
 
     if(g_pendingNormal){
+        u32 castMs=g_pendingCastMs;
         lo=g_pendingGuidLo; hi=g_pendingGuidHi; spell=g_pendingSpell;
         g_pendingNormal=0u;
-        schedule_kick(lo,hi,spell,now);
+        g_pendingCastMs=0u;
+        schedule_normal_kick(lo,hi,spell,castMs,now);
     }
     poll_channel(now);
     fire_queued_kick(now);
@@ -490,6 +603,10 @@ static BOOL32 install_module(void)
         g_status=STATUS_BUILD_GUARD_FAIL;
         return FALSE32;
     }
+    if(!bytes_match(ADDR_SPELL_DETAIL_HOOK,g_detailHookOriginal,9u)){
+        g_status=STATUS_HOOK_SIGNATURE_FAIL;
+        return FALSE32;
+    }
     if(!bytes_match(ADDR_SPELL_START_HOOK,g_hookOriginal,7u)){
         g_status=STATUS_HOOK_SIGNATURE_FAIL;
         return FALSE32;
@@ -498,14 +615,21 @@ static BOOL32 install_module(void)
         g_status=STATUS_PATCH_FAIL;
         return FALSE32;
     }
+    if(!patch_jmp9(ADDR_SPELL_DETAIL_HOOK,(uptr32)SpellStartDetailHook)){
+        write_executable((void*)(uptr32)ADDR_SPELL_START_HOOK,g_hookOriginal,7u);
+        g_status=STATUS_PATCH_FAIL;
+        return FALSE32;
+    }
     setTimer=(SetTimerFn)load_iat_fn(WOW_IAT_SETTIMER);
     if(!setTimer){
+        write_executable((void*)(uptr32)ADDR_SPELL_DETAIL_HOOK,g_detailHookOriginal,9u);
         write_executable((void*)(uptr32)ADDR_SPELL_START_HOOK,g_hookOriginal,7u);
         g_status=STATUS_SETTIMER_MISSING;
         return FALSE32;
     }
     g_timerId=setTimer(0,0u,TIMER_PERIOD_MS,AutoKick_TimerProc);
     if(!g_timerId){
+        write_executable((void*)(uptr32)ADDR_SPELL_DETAIL_HOOK,g_detailHookOriginal,9u);
         write_executable((void*)(uptr32)ADDR_SPELL_START_HOOK,g_hookOriginal,7u);
         g_status=STATUS_SETTIMER_FAILED;
         return FALSE32;
@@ -521,6 +645,12 @@ static void remove_module(void)
     g_installed=0u;
     if(g_timerId && killTimer) killTimer(0,g_timerId);
     g_timerId=0u;
+    if(*(volatile u8 *)(uptr32)ADDR_SPELL_DETAIL_HOOK==0xE9u){
+        LONG32 rel=*(volatile LONG32 *)(uptr32)(ADDR_SPELL_DETAIL_HOOK+1u);
+        uptr32 dst=ADDR_SPELL_DETAIL_HOOK+5u+(uptr32)rel;
+        if(dst==(uptr32)SpellStartDetailHook)
+            write_executable((void*)(uptr32)ADDR_SPELL_DETAIL_HOOK,g_detailHookOriginal,9u);
+    }
     if(*(volatile u8 *)(uptr32)ADDR_SPELL_START_HOOK==0xE9u){
         LONG32 rel=*(volatile LONG32 *)(uptr32)(ADDR_SPELL_START_HOOK+1u);
         uptr32 dst=ADDR_SPELL_START_HOOK+5u+(uptr32)rel;
@@ -554,6 +684,16 @@ static void init_control_descriptor(void)
     s=&g_controlSettings[7]; init_setting(s,SETTING_KICK_ATTEMPTS,"attempts","Kick attempts",W112_CTL_INT,W112_CTL_LIVE|W112_CTL_READ_ONLY); s->max_value.i32=0x7FFFFFFF;
     s=&g_controlSettings[8]; init_setting(s,SETTING_LAST_SPELL,"last_spell","Last spell ID",W112_CTL_INT,W112_CTL_LIVE|W112_CTL_READ_ONLY); s->max_value.i32=0x7FFFFFFF;
     s=&g_controlSettings[9]; init_setting(s,SETTING_DROPS,"drops","Drops",W112_CTL_INT,W112_CTL_LIVE|W112_CTL_READ_ONLY); s->max_value.i32=0x7FFFFFFF;
+    s=&g_controlSettings[10]; init_setting(s,SETTING_MAX_REMAINING_MS,"max_remaining_ms","Normal cast max remaining ms",W112_CTL_INT,W112_CTL_LIVE); s->default_value.i32=30000; s->min_value.i32=MAX_REMAINING_MIN_MS; s->max_value.i32=MAX_REMAINING_MAX_MS; s->step.i32=MAX_REMAINING_STEP_MS;
+    s=&g_controlSettings[11]; init_setting(s,SETTING_EXCL_WARRIOR,"exclude_warrior","Exclude Warrior",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[12]; init_setting(s,SETTING_EXCL_PALADIN,"exclude_paladin","Exclude Paladin",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[13]; init_setting(s,SETTING_EXCL_HUNTER,"exclude_hunter","Exclude Hunter",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[14]; init_setting(s,SETTING_EXCL_ROGUE,"exclude_rogue","Exclude Rogue",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[15]; init_setting(s,SETTING_EXCL_PRIEST,"exclude_priest","Exclude Priest",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[16]; init_setting(s,SETTING_EXCL_SHAMAN,"exclude_shaman","Exclude Shaman",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[17]; init_setting(s,SETTING_EXCL_MAGE,"exclude_mage","Exclude Mage",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[18]; init_setting(s,SETTING_EXCL_WARLOCK,"exclude_warlock","Exclude Warlock",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
+    s=&g_controlSettings[19]; init_setting(s,SETTING_EXCL_DRUID,"exclude_druid","Exclude Druid",W112_CTL_BOOL,W112_CTL_LIVE); s->max_value.u32=1u; s->step.u32=1u;
     g_controlDescriptorReady=1u;
 }
 
@@ -570,10 +710,27 @@ static int W112_CTL_STDCALL autokick_control_get(w112_u32 id,W112_ControlValueV1
     if(id==SETTING_KICK_ATTEMPTS){ out->u32=g_kickAttempts; return 1; }
     if(id==SETTING_LAST_SPELL){ out->u32=g_lastKickSpell; return 1; }
     if(id==SETTING_DROPS){ out->u32=g_targetDrops+g_duplicateDrops+g_luaFails; return 1; }
+    if(id==SETTING_MAX_REMAINING_MS){ out->i32=g_cfgMaxRemainingMs; return 1; }
+    if(id==SETTING_EXCL_WARRIOR){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_WARRIOR)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_PALADIN){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_PALADIN)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_HUNTER){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_HUNTER)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_ROGUE){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_ROGUE)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_PRIEST){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_PRIEST)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_SHAMAN){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_SHAMAN)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_MAGE){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_MAGE)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_WARLOCK){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_WARLOCK)?1u:0u; return 1; }
+    if(id==SETTING_EXCL_DRUID){ out->u32=(g_cfgExcludedClassMask&CLASSBIT_DRUID)?1u:0u; return 1; }
     return 0;
 }
 
 static int clamp_i32(s32 v,s32 lo,s32 hi){ if(v<lo)return lo; if(v>hi)return hi; return v; }
+
+static int set_class_exclusion(u32 bit,u32 enabled)
+{
+    if(enabled) g_cfgExcludedClassMask|=bit;
+    else g_cfgExcludedClassMask&=~bit;
+    return 1;
+}
 
 static int W112_CTL_STDCALL autokick_control_set(w112_u32 id,const W112_ControlValueV1 *value)
 {
@@ -584,6 +741,16 @@ static int W112_CTL_STDCALL autokick_control_set(w112_u32 id,const W112_ControlV
     if(id==SETTING_PLAYERS_ONLY){ g_cfgPlayersOnly=value->u32?1u:0u; return 1; }
     if(id==SETTING_REACTION_DELAY_MS){ g_cfgReactionDelayMs=clamp_i32(value->i32,REACTION_DELAY_MIN_MS,REACTION_DELAY_MAX_MS); return 1; }
     if(id==SETTING_DUP_GUARD_MS){ g_cfgDuplicateGuardMs=clamp_i32(value->i32,DUP_GUARD_MIN_MS,DUP_GUARD_MAX_MS); return 1; }
+    if(id==SETTING_MAX_REMAINING_MS){ g_cfgMaxRemainingMs=clamp_i32(value->i32,MAX_REMAINING_MIN_MS,MAX_REMAINING_MAX_MS); return 1; }
+    if(id==SETTING_EXCL_WARRIOR) return set_class_exclusion(CLASSBIT_WARRIOR,value->u32?1u:0u);
+    if(id==SETTING_EXCL_PALADIN) return set_class_exclusion(CLASSBIT_PALADIN,value->u32?1u:0u);
+    if(id==SETTING_EXCL_HUNTER) return set_class_exclusion(CLASSBIT_HUNTER,value->u32?1u:0u);
+    if(id==SETTING_EXCL_ROGUE) return set_class_exclusion(CLASSBIT_ROGUE,value->u32?1u:0u);
+    if(id==SETTING_EXCL_PRIEST) return set_class_exclusion(CLASSBIT_PRIEST,value->u32?1u:0u);
+    if(id==SETTING_EXCL_SHAMAN) return set_class_exclusion(CLASSBIT_SHAMAN,value->u32?1u:0u);
+    if(id==SETTING_EXCL_MAGE) return set_class_exclusion(CLASSBIT_MAGE,value->u32?1u:0u);
+    if(id==SETTING_EXCL_WARLOCK) return set_class_exclusion(CLASSBIT_WARLOCK,value->u32?1u:0u);
+    if(id==SETTING_EXCL_DRUID) return set_class_exclusion(CLASSBIT_DRUID,value->u32?1u:0u);
     return 0;
 }
 
@@ -592,8 +759,8 @@ static const W112_ControlModuleV1 g_controlModule={
     (w112_u32)sizeof(W112_ControlModuleV1),
     "autokick",
     "AutoKick (target)",
-    VERSION_3_0,
-    10u,
+    VERSION_3_1,
+    20u,
     g_controlSettings,
     autokick_control_get,
     autokick_control_set

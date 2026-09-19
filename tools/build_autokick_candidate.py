@@ -126,6 +126,10 @@ def main():
             "Enabled", "Normal casts", "Channels", "Players only",
             "Reaction delay ms", "Duplicate guard ms", "Status",
             "Kick attempts", "Last spell ID", "Drops",
+            "Normal cast max remaining ms",
+            "Exclude Warrior", "Exclude Paladin", "Exclude Hunter",
+            "Exclude Rogue", "Exclude Priest", "Exclude Shaman",
+            "Exclude Mage", "Exclude Warlock", "Exclude Druid",
         ],
         "timings_ms": timing,
     }
@@ -181,6 +185,8 @@ def main():
             "players_only": True,
             "reaction_delay_ms": 0,
             "duplicate_guard_ms": 120,
+            "normal_cast_max_remaining_ms": 30000,
+            "excluded_classes": [],
         },
     }
     hub = package_meta.get("controlhub_pilot")
