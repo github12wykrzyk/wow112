@@ -608,7 +608,10 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
         lo=g_pendingGuidLo; hi=g_pendingGuidHi; spell=g_pendingSpell;
         g_pendingNormal=0u;
         g_pendingCastMs=0u;
-        schedule_normal_kick(lo,hi,spell,castMs,now);
+        /* SPELL_START also covers instant abilities (e.g. druid shapeshifts).
+           A decoded zero-duration cast is not an interruptible normal cast.
+           Fail closed if the detail hook has not supplied a valid duration. */
+        if(castMs>0u) schedule_normal_kick(lo,hi,spell,castMs,now);
     }
     poll_channel(now);
     fire_queued_kick(now);
