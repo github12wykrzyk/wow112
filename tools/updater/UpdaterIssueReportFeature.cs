@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -211,6 +212,34 @@ namespace WoW112Updater
                     }
                 }
 
+
+                sb.AppendLine();
+                sb.AppendLine("### Recent WoW native crash reports (last 72h)");
+                var crashFiles = GetRecentCrashFiles(root);
+                if (crashFiles.Length == 0)
+                {
+                    sb.AppendLine("No recent native WoW Errors/*.txt reports found.");
+                }
+                else
+                {
+                    foreach (var file in crashFiles)
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine("#### " + Path.GetFileName(file) + " (UTC " + File.GetLastWriteTimeUtc(file).ToString("o") + ")");
+                        sb.AppendLine("```text");
+                        sb.AppendLine(Sanitize(HeadFile(file, 5000) + "\\n--- END OF REPORT ---\\n" + TailFile(file, 7000), root, 12500));
+                        sb.AppendLine("```");
+                    }
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("### Windows Application Error / WER (last 72h)");
+                var windowsErrors = GetRecentWowApplicationErrors(root);
+                if (windowsErrors.Length == 0)
+                    sb.AppendLine("No matching recent Windows Application Error/WER events accessible.");
+                else
+                    foreach (var error in windowsErrors) sb.AppendLine(Sanitize(error, root, 5000));
+
                 if (log != null && !string.IsNullOrWhiteSpace(log.Text))
                 {
                     sb.AppendLine();
@@ -248,7 +277,87 @@ namespace WoW112Updater
                         sb.AppendLine(Sanitize(TailFile(file, 12000), root, 12000));
                     }
                 }
+                var crashFiles = GetRecentCrashFiles(root);
+                foreach (var file in crashFiles)
+                {
+                    sb.AppendLine(Path.GetFileName(file));
+                    sb.AppendLine(File.GetLastWriteTimeUtc(file).Ticks.ToString());
+                    sb.AppendLine(Sanitize(HeadFile(file, 2500) + TailFile(file, 2500), root, 5500));
+                }
+                foreach (var error in GetRecentWowApplicationErrors(root))
+                    sb.AppendLine(Sanitize(error, root, 5000));
                 return sb.ToString();
+            }
+
+            private static string[] GetRecentCrashFiles(string root)
+            {
+                try
+                {
+                    var errorDir = Path.Combine(root, "Errors");
+                    if (!Directory.Exists(errorDir)) return new string[0];
+                    var cutoff = DateTime.UtcNow.AddHours(-72);
+                    return Directory.GetFiles(errorDir, "*.txt", SearchOption.TopDirectoryOnly)
+                        .Where(p => File.GetLastWriteTimeUtc(p) >= cutoff)
+                        .OrderByDescending(File.GetLastWriteTimeUtc)
+                        .Take(2)
+                        .ToArray();
+                }
+                catch { return new string[0]; }
+            }
+
+            private static string HeadFile(string path, int maxChars)
+            {
+                try
+                {
+                    using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        var count = (int)Math.Min(stream.Length, Math.Max(4096, maxChars * 3));
+                        var bytes = new byte[count];
+                        var total = 0;
+                        while (total < count)
+                        {
+                            var read = stream.Read(bytes, total, count - total);
+                            if (read <= 0) break;
+                            total += read;
+                        }
+                        var text = Encoding.UTF8.GetString(bytes, 0, total);
+                        return text.Length <= maxChars ? text : text.Substring(0, maxChars) + "\\n<head truncated>";
+                    }
+                }
+                catch (Exception ex) { return "<crash report read error: " + ex.Message + ">"; }
+            }
+
+            private static string[] GetRecentWowApplicationErrors(string root)
+            {
+                var result = new List<string>();
+                try
+                {
+                    var cutoff = DateTime.Now.AddHours(-72);
+                    using (var app = new EventLog("Application"))
+                    {
+                        var events = app.Entries;
+                        var inspected = 0;
+                        for (var i = events.Count - 1; i >= 0 && inspected < 512 && result.Count < 2; --i, ++inspected)
+                        {
+                            var ev = events[i];
+                            if (ev.TimeGenerated < cutoff) break;
+                            if (ev.EntryType != EventLogEntryType.Error) continue;
+                            if (!string.Equals(ev.Source, "Application Error", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(ev.Source, "Windows Error Reporting", StringComparison.OrdinalIgnoreCase)) continue;
+                            var message = ev.Message ?? string.Empty;
+                            if (message.IndexOf("WoW_5875_", StringComparison.OrdinalIgnoreCase) < 0 &&
+                                message.IndexOf("WoW.exe", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                            result.Add("Event UTC " + ev.TimeGenerated.ToUniversalTime().ToString("o") +
+                                ", source " + ev.Source + ", event id " + ev.InstanceId + "\\n" +
+                                (message.Length <= 4000 ? message : message.Substring(0, 4000) + "\\n<event truncated>"));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    result.Add("Windows Application log unavailable: " + ex.GetType().Name);
+                }
+                return result.ToArray();
             }
 
             private static string[] GetRecentDiagFiles(string root)
