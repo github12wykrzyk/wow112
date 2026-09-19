@@ -184,6 +184,119 @@ static void AltPriority_Start(DWORD now)
     }
 }
 
+/*
+ * Q lowest-HP enemy-player target, build 5875. The existing MovementCore UI
+ * timer owns the key edge: no new hooks, threads, worker scans or ESP rebuilds.
+ * Distances are true XYZ, tiered 0-10/10-20/20-40 yd; within a tier rank by
+ * current HP percentage, then by squared distance and GUID.
+ * Native CanAttack/TargetGuid signatures match the proven 5875 ESP lineage.
+ */
+#define W112_Q_KEY                         0x51u
+#define W112_Q_TYPEID_PLAYER               4u
+#define W112_Q_TYPE_ID_OFF                 0x0014u
+#define W112_Q_HEALTH_DESC_OFF             0x0058u
+#define W112_Q_MAX_HEALTH_DESC_OFF         0x0070u
+#define W112_Q_CAN_ATTACK_FN               0x00606980u
+#define W112_Q_TARGET_GUID_FN              0x00489A40u
+#define W112_Q_FRAME_GET_TEXT_FN           0x00703BF0u
+static DWORD g_qWasDown=0u,g_qMgr=0u,g_qSelf=0u,g_qReadySince=0u;
+static DWORD g_qSelections=0u,g_qNoTargets=0u;
+typedef BYTE (__thiscall *W112_Q_CanAttackFn)(DWORD,DWORD);
+typedef void (__fastcall *W112_Q_TargetGuidFn)(unsigned long long*);
+typedef const char* (__fastcall *W112_Q_FrameGetTextFn)(const char*,int,DWORD);
+
+static BOOL W112_Q_PosValid(float x,float y,float z)
+{
+    return x==x && y==y && z==z &&
+           x>-100000.0f && x<100000.0f &&
+           y>-100000.0f && y<100000.0f &&
+           z>-100000.0f && z<100000.0f;
+}
+static BOOL W112_Q_NativeSignaturesValid(void)
+{
+    static const BYTE attack[]={0x55,0x8B,0xEC,0x56,0x8B,0x75,0x08,0x8B,0x46,0x08,0x57,0x8B,0xF9};
+    static const BYTE target[]={0x56,0x8B,0xF1,0x8B,0x46,0x04,0x8B,0x0E};
+    DWORD i;
+    for(i=0u;i<sizeof(attack);++i)
+        if(((const volatile BYTE*)W112_Q_CAN_ATTACK_FN)[i]!=attack[i])return FALSE;
+    for(i=0u;i<sizeof(target);++i)
+        if(((const volatile BYTE*)W112_Q_TARGET_GUID_FN)[i]!=target[i])return FALSE;
+    return TRUE;
+}
+static BOOL W112_Q_ChatHasFocus(void)
+{
+    const char *state;
+    /* This is a non-destructive query; if Lua is unavailable, do not retarget. */
+    DebugChat("W112_Q_EDITING=(ChatFrameEditBox and ChatFrameEditBox:IsVisible()) and '1' or '0'");
+    state=((W112_Q_FrameGetTextFn)W112_Q_FRAME_GET_TEXT_FN)("W112_Q_EDITING",-1,0u);
+    return !state || state[0]!='0' || state[1]!=0;
+}
+static void W112_Q_Select(BYTE *self)
+{
+    BYTE *mgr,*obj,*bestObj=0;
+    DWORD i,lo,hi,bestLo=0u,bestHi=0u,bestBand=3u;
+    float px,py,pz,bestPct=2.0f,bestD2=1600.0f;
+    if(!Ptr(self) || !W112_Q_NativeSignaturesValid() || W112_Q_ChatHasFocus())return;
+    mgr=*(BYTE**)ADDR_OBJMGR_GLOBAL;
+    if(!Ptr(mgr))return;
+    px=*(float*)(self+OFF_UNIT_X);
+    py=*(float*)(self+OFF_UNIT_Y);
+    pz=*(float*)(self+OFF_UNIT_Z);
+    if(!W112_Q_PosValid(px,py,pz))return;
+    obj=*(BYTE**)(mgr+OFF_OM_FIRST_OBJECT);
+    for(i=0u;i<4095u && Ptr(obj);++i) {
+        BYTE *next=*(BYTE**)(obj+OFF_OBJ_NEXT);
+        if(obj!=self && *(DWORD*)(obj+W112_Q_TYPE_ID_OFF)==W112_Q_TYPEID_PLAYER) {
+            DWORD *desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);
+            if(Ptr(desc)) {
+                DWORD hp=*(DWORD*)((BYTE*)desc+W112_Q_HEALTH_DESC_OFF);
+                DWORD maxHp=*(DWORD*)((BYTE*)desc+W112_Q_MAX_HEALTH_DESC_OFF);
+                if(hp>0u && maxHp>0u && hp<=maxHp) {
+                    float x=*(float*)(obj+OFF_UNIT_X),y=*(float*)(obj+OFF_UNIT_Y),z=*(float*)(obj+OFF_UNIT_Z);
+                    if(W112_Q_PosValid(x,y,z)) {
+                        float dx=x-px,dy=y-py,dz=z-pz,d2=dx*dx+dy*dy+dz*dz;
+                        if(d2<=1600.0f && d2>=0.0f) {
+                            DWORD band=(d2<=100.0f)?0u:(d2<=400.0f)?1u:2u;
+                            float pct=(float)hp/(float)maxHp;
+                            lo=*(DWORD*)(obj+OFF_OBJ_GUID_LOW);
+                            hi=*(DWORD*)(obj+OFF_OBJ_GUID_HIGH);
+                            if((lo|hi) &&
+                               (band<bestBand ||
+                                (band==bestBand && (pct<bestPct ||
+                                 (pct==bestPct && (d2<bestD2 ||
+                                  (d2==bestD2 && (hi<bestHi || (hi==bestHi && lo<bestLo)))))))) &&
+                               ((W112_Q_CanAttackFn)W112_Q_CAN_ATTACK_FN)((DWORD)self,(DWORD)obj)) {
+                                bestObj=obj;bestBand=band;bestPct=pct;bestD2=d2;
+                                bestLo=lo;bestHi=hi;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if(!Ptr(next) || next==obj || next==mgr)break;
+        obj=next;
+    }
+    if(bestObj) {
+        unsigned long long guid=((unsigned long long)bestHi<<32)|(unsigned long long)bestLo;
+        ((W112_Q_TargetGuidFn)W112_Q_TARGET_GUID_FN)(&guid);
+        ++g_qSelections;
+    } else ++g_qNoTargets;
+}
+static void W112_Q_Tick(BYTE *self,DWORD now,DWORD pressed)
+{
+    BYTE *mgr=*(BYTE**)ADDR_OBJMGR_GLOBAL;
+    if(!Ptr(self) || !Ptr(mgr)) {
+        g_qMgr=0u;g_qSelf=0u;g_qReadySince=0u;
+    } else if((DWORD)mgr!=g_qMgr || (DWORD)self!=g_qSelf) {
+        g_qMgr=(DWORD)mgr;g_qSelf=(DWORD)self;g_qReadySince=now;
+    } else if(pressed && !g_qWasDown &&
+              (DWORD)(now-g_qReadySince)>=750u) {
+        W112_Q_Select(self);
+    }
+    g_qWasDown=pressed;
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
     DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
@@ -210,6 +323,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     g_key7=k7;g_key8=k8;g_gatherKey9=k9;g_keyAlt=kAlt;g_key10=k10;g_key11=k11;g_autoOpenKey12=k12;
 
     p=LocalPlayer();
+    W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         GatherTick(p,now);
