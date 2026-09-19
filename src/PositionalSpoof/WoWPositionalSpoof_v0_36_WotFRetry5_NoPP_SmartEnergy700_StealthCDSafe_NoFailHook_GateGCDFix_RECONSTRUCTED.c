@@ -139,6 +139,7 @@ int _fltused=0;
 #define MECHANIC_SLEEP            10UL
 #define WOTF_RETRY_DELAY_MS        60UL /* WotFRetry5 binary patch: 0x5A -> 0x3C */
 #define WOTF_MAX_ATTEMPTS          5UL  /* WotFRetry5 binary patch: 3 -> 5 */
+#define WOTF_WATCHDOG_RETRY_MS     180UL /* Retry without relying on disabled CAST_FAIL hook. */
 #define PP_TRACK_SLOTS          1024UL
 #define STEALTH_SPEED_TIMER_MS   5UL
 #define NORMAL_RUN_SPEED        7.0f
@@ -262,6 +263,7 @@ static DWORD g_wotfLastSendTick;
 static DWORD g_wotfRetryTick;
 static DWORD g_wotfAttempts;
 static int g_wotfRetryPending;
+static int g_wotfServerGo;
 static DWORD g_wotfStoreHdr[6];
 static BYTE g_wotfPacket[16];
 
@@ -477,19 +479,23 @@ static void sendAutoWotf(DWORD aura,DWORD mechanic,DWORD tick){
  *(unsigned short*)(g_wotfPacket+8)=0;
  g_wotfStoreHdr[0]=CDATASTORE_VTABLE;g_wotfStoreHdr[1]=(DWORD)g_wotfPacket;g_wotfStoreHdr[2]=0;
  g_wotfStoreHdr[3]=(DWORD)sizeof(g_wotfPacket);g_wotfStoreHdr[4]=size;g_wotfStoreHdr[5]=0;
- ++g_wotfAttempts;g_wotfLastSendTick=tick;g_wotfAura=aura;g_wotfMechanic=mechanic;g_wotfRetryPending=0;
+ ++g_wotfAttempts;g_wotfLastSendTick=tick;g_wotfAura=aura;g_wotfMechanic=mechanic;
+  /* CAST_FAIL hook is disabled in the accepted binary. Arm a bounded watchdog
+     for a still-active CC aura; SPELL_GO or aura removal cancels all retries. */
+  g_wotfRetryPending=(g_wotfAttempts<WOTF_MAX_ATTEMPTS&&!g_wotfServerGo);
+  g_wotfRetryTick=tick+WOTF_WATCHDOG_RETRY_MS;
  logWotfTrigger("AUTO_WOTF_SEND",aura,mechanic,g_wotfAttempts);
  sendStore((DWORD)g_wotfStoreHdr);
 }
 static void autoWotfTick(DWORD tick){
- DWORD pl,aura,mechanic=0;pl=getPlayer();if(!pl){g_wotfCcActive=0;g_wotfRetryPending=0;g_wotfAttempts=0;return;}
+ DWORD pl,aura,mechanic=0;pl=getPlayer();if(!pl){g_wotfCcActive=0;g_wotfRetryPending=0;g_wotfAttempts=0;g_wotfServerGo=0;return;}
  aura=findWotfCcAura(pl,&mechanic);
  if(!aura){
    if(g_wotfCcActive)logs("AUTO_WOTF_CC_CLEAR\r\n");
-   g_wotfCcActive=0;g_wotfAura=0;g_wotfMechanic=0;g_wotfAttempts=0;g_wotfRetryPending=0;g_wotfRetryTick=0;return;
+   g_wotfCcActive=0;g_wotfAura=0;g_wotfMechanic=0;g_wotfAttempts=0;g_wotfRetryPending=0;g_wotfRetryTick=0;g_wotfServerGo=0;return;
  }
- if(!g_wotfCcActive){g_wotfCcActive=1;g_wotfAttempts=0;g_wotfRetryPending=0;g_wotfAura=aura;g_wotfMechanic=mechanic;logWotfTrigger("AUTO_WOTF_CC_DETECTED",aura,mechanic,0);sendAutoWotf(aura,mechanic,tick);return;}
- if(g_wotfRetryPending&&g_wotfAttempts<WOTF_MAX_ATTEMPTS&&(LONG)(tick-g_wotfRetryTick)>=0){sendAutoWotf(aura,mechanic,tick);}
+ if(!g_wotfCcActive){g_wotfCcActive=1;g_wotfAttempts=0;g_wotfRetryPending=0;g_wotfServerGo=0;g_wotfAura=aura;g_wotfMechanic=mechanic;logWotfTrigger("AUTO_WOTF_CC_DETECTED",aura,mechanic,0);sendAutoWotf(aura,mechanic,tick);return;}
+ if(g_wotfRetryPending&&!g_wotfServerGo&&g_wotfAttempts<WOTF_MAX_ATTEMPTS&&(LONG)(tick-g_wotfRetryTick)>=0){sendAutoWotf(aura,mechanic,tick);}
 }
 
 static void logSpoof(DWORD spell,DWORD player,DWORD target,float x,float y,float z,float o,float px,float py,float pz,float po,float sx,float sy,float sz,float so){
@@ -889,7 +895,7 @@ void STDCALL LogServerFail(DWORD spell,DWORD reason){
  p=ap(p,"SERVER_FAIL spell=");p=dec(p,spell);p=ap(p," reason=0x");p=hex8(p,(BYTE)reason);p=ap(p," candidate=");p=dec(p,g_candidate);p=ap(p,"\r\n");lograw(b,(DWORD)(p-b));
  if(spell==WILL_OF_THE_FORSAKEN_SPELL&&g_wotfCcActive){
    p=b;p=ap(p,"AUTO_WOTF_FAIL reason=0x");p=hex8(p,(BYTE)reason);p=ap(p,"\r\n");lograw(b,(DWORD)(p-b));
-   if(g_wotfAttempts<WOTF_MAX_ATTEMPTS){g_wotfRetryPending=1;g_wotfRetryTick=g_lastTimerTick+WOTF_RETRY_DELAY_MS;logs("AUTO_WOTF_RETRY_SCHEDULED\r\n");} /* WotFRetry5: retry any failure reason */
+   if(!g_wotfServerGo&&g_wotfAttempts<WOTF_MAX_ATTEMPTS){g_wotfRetryPending=1;g_wotfRetryTick=g_lastTimerTick+WOTF_RETRY_DELAY_MS;logs("AUTO_WOTF_RETRY_SCHEDULED\r\n");} /* WotFRetry5: retry any failure reason */
    else g_wotfRetryPending=0;
    return;
  }
@@ -915,7 +921,7 @@ void STDCALL LogServerFail(DWORD spell,DWORD reason){
  armResultRestore();
 }
 void STDCALL LogSpellGo(DWORD spell){
- if(spell==WILL_OF_THE_FORSAKEN_SPELL){g_wotfRetryPending=0;logs("AUTO_WOTF_GO spell=7744\r\n");return;}
+ if(spell==WILL_OF_THE_FORSAKEN_SPELL){g_wotfRetryPending=0;g_wotfServerGo=1;logs("AUTO_WOTF_GO spell=7744\r\n");return;}
  if(spell==PICK_POCKET_SPELL&&g_ppAutoPending){
    int openerWaiting=(g_phase==PHASE_WAIT_PP&&g_castPending);
    logs("AUTO_PP_GO spell=921\r\n");
