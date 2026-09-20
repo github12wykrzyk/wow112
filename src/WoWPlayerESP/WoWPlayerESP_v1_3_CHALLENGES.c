@@ -101,6 +101,7 @@ static void chal_world_reset(void) {
     g_bg_score_count=0u;
     g_bg_score_my_side=2u;
     g_bg_score_manager=0u;
+    g_bg_score_mode=0u;
     ++g_bg_score_version;
 }
 
@@ -384,7 +385,8 @@ static void chal_bg_score_main_thread(void) {
         "and (side==0 or side==1) then "
         "rows[table.getn(rows)+1]=nm..','..side;"
         "if nm==me then my=side end end end;"
-        "if my<2 then W112_ESP_BG_RESULT=my..';'..table.concat(rows,';') end;"
+        "if my<2 then W112_ESP_BG_RESULT=my..';'..table.concat(rows,';') "
+        "elseif n>0 then W112_ESP_BG_RESULT='P;' end;"
         "if type(RequestBattlefieldScoreData)=='function' then "
         "if not W112_ESP_BG_REQUEST or GetTime()-W112_ESP_BG_REQUEST>=3 then "
         "RequestBattlefieldScoreData();W112_ESP_BG_REQUEST=GetTime() end end end";
@@ -398,8 +400,18 @@ static void chal_bg_score_main_thread(void) {
     if (!g_render_manager || g_render_manager!=g_challenge_world_manager) return;
     exec(script,script);
     raw=getText("W112_ESP_BG_RESULT",-1,0u);
-    if (!raw || (raw[0]!='0' && raw[0]!='1') || raw[1]!=';')
+    if (!raw || raw[1]!=';' ||
+        (raw[0]!='0' && raw[0]!='1' && raw[0]!='P'))
         return;
+    if (raw[0]=='P') {
+        ++g_bg_score_version;
+        g_bg_score_mode=1u;
+        g_bg_score_manager=g_render_manager;
+        g_bg_score_count=0u;
+        g_bg_score_my_side=2u;
+        ++g_bg_score_version;
+        return;
+    }
     side=(DWORD)(raw[0]-'0');
     p=raw+2;
     /* Parse into the currently inactive snapshot before publishing the new
@@ -424,6 +436,7 @@ static void chal_bg_score_main_thread(void) {
     }
     manager=g_render_manager;
     g_bg_score_manager=manager;
+    g_bg_score_mode=1u;
     g_bg_score_frame=g_render_frame;
     g_bg_score_count=count;
     g_bg_score_my_side=side;
