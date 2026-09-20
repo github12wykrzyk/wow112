@@ -214,6 +214,19 @@ namespace WoW112Updater
 
 
                 sb.AppendLine();
+                // PositionalSpoof writes a plain-text log in the game directory.
+                // Include only a bounded tail; the default WoWDiagHub JSONL report
+                // does not contain cast attempts or client-side positional failures.
+                sb.AppendLine("### PositionalSpoof recent cast log");
+                var positionalLog = Path.Combine(root, "WoWPositionalSpoof_v0_36_NoPP_SmartEnergy700_SmoothStealth_GateGCDFix.log");
+                if (File.Exists(positionalLog))
+                {
+                    sb.AppendLine("```text");
+                    sb.AppendLine(Sanitize(TailFile(positionalLog, 8500), root, 8500));
+                    sb.AppendLine("```");
+                }
+                else sb.AppendLine("No PositionalSpoof cast log found in game directory.");
+                sb.AppendLine();
                 sb.AppendLine("### TaxiFlight hotkey / flight telemetry (CSV)");
                 var taxiFiles = GetRecentTaxiFiles(root);
                 if (taxiFiles.Length == 0)

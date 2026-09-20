@@ -115,6 +115,7 @@ int _fltused=0;
 #define PVP_BEHIND_MAX_DIST2      64.0f /* Real PvP BS/Ambush distance <= 8 yd; range module floor is 8 yd. */
 #define MAX_CANDIDATES          8UL
 #define RESULT_TIMEOUT_MS       350UL
+#define PVP_REAR_FOLLOW_MS       100UL /* Experimental sustained PvP rear pose; no PvE/world-wide movement. */
 #define RESULT_RESTORE_MS       1UL
 #define PP_RESULT_TIMEOUT_MS     180UL
 #define PP_OPENER_DELAY_MS     100UL
@@ -169,6 +170,7 @@ int _fltused=0;
 #define SETTING_PVE_WINDOW_MS          2u
 #define SETTING_PVP_GATE_ENABLED       3u
 #define SETTING_PVP_WINDOW_MS          4u
+#define SETTING_PVP_REAR_FOLLOW_ENABLED  5u
 #define OPENER_TIMING_CONTROL_VERSION  0x00010000u
 
 #define PHASE_IDLE              0
@@ -255,7 +257,11 @@ static volatile DWORD g_cfgPveGateEnabled=1UL;
 static volatile DWORD g_cfgPveWindowMs=ENERGY_GATE_DEFAULT_WINDOW_MS;
 static volatile DWORD g_cfgPvpGateEnabled=0UL; /* PvP instant opener by default; explicit GUI override remains available. */
 static volatile DWORD g_cfgPvpWindowMs=ENERGY_GATE_DEFAULT_WINDOW_MS;
-static W112_ControlSettingV1 g_controlSettings[4];
+static volatile DWORD g_cfgPvpRearFollowEnabled=1UL;
+static DWORD g_pvpRearPlayer,g_pvpRearTarget,g_pvpRearGuidLo,g_pvpRearGuidHi,g_pvpRearLastTick;
+static float g_pvpRearX,g_pvpRearY,g_pvpRearZ,g_pvpRearO;
+static int g_pvpRearActive;
+static W112_ControlSettingV1 g_controlSettings[5];
 static volatile DWORD g_controlDescriptorReady;
 static int g_wotfCcActive;
 static DWORD g_wotfAura;
@@ -763,6 +769,54 @@ static int sendCurrentCandidate(const char *tag){
  return 1;
 }
 
+/* Persistent PvP rear pose belongs to this DLL only. Never overwrite the player's
+   local XYZ/O outside the synchronous heartbeat send. This mode follows the currently
+   selected player inside real 8 yd, independently of the cast-result transaction. */
+static void pvpRearStop(const char *why){
+ DWORD pl=g_pvpRearPlayer;
+ if(!g_pvpRearActive)return;
+ g_pvpRearActive=0;g_pvpRearPlayer=0;g_pvpRearTarget=0;
+ if(pl&&getPlayer()==pl)sendHeartbeat(pl);
+ logs(why);
+}
+static int pvpRearCompute(DWORD pl,DWORD tg){
+ DWORD type,lo,hi;float px,py,pz,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
+ if(!pl||!tg||pl==tg)return 0;
+ type=*(DWORD*)(tg+OBJ_TYPE);if(type!=4UL)return 0;
+ lo=*(DWORD*)(tg+OBJ_GUID_LO);hi=*(DWORD*)(tg+OBJ_GUID_HI);
+ px=*(float*)(pl+UNIT_X);py=*(float*)(pl+UNIT_Y);pz=*(float*)(pl+UNIT_Z);
+ tx=*(float*)(tg+UNIT_X);ty=*(float*)(tg+UNIT_Y);tz=*(float*)(tg+UNIT_Z);to=*(float*)(tg+UNIT_O);
+ if(px!=px||py!=py||pz!=pz||tx!=tx||ty!=ty||tz!=tz||to!=to)return 0;
+ dx=px-tx;dy=py-ty;dz=pz-tz;
+ if(dx*dx+dy*dy+dz*dz>PVP_BEHIND_MAX_DIST2)return 0;
+ a=normAngle(to+PI_F);x=tx+SPOOF_DISTANCE*fcos1(a);y=ty+SPOOF_DISTANCE*fsin1(a);
+ z=tz;o=normAngle(a+PI_F);
+ if(x!=x||y!=y||z!=z||o!=o)return 0;
+ if(g_pvpRearActive&&(g_pvpRearPlayer!=pl||g_pvpRearTarget!=tg||
+    g_pvpRearGuidLo!=lo||g_pvpRearGuidHi!=hi))pvpRearStop("PVP_REAR_STOP target_changed\r\n");
+ g_pvpRearPlayer=pl;g_pvpRearTarget=tg;g_pvpRearGuidLo=lo;g_pvpRearGuidHi=hi;
+ g_pvpRearX=x;g_pvpRearY=y;g_pvpRearZ=z;g_pvpRearO=o;
+ return 1;
+}
+static void pvpRearTick(DWORD tick){
+ DWORD pl,tg;float px,py,pz,po;int first;
+ if(!installed)return;
+ /* Never inject a heartbeat into an active cast/PP/Gouge transaction. */
+ if(g_phase!=PHASE_IDLE)return;
+ if(!g_cfgPvpRearFollowEnabled){pvpRearStop("PVP_REAR_STOP gui_off\r\n");return;}
+ pl=getPlayer();tg=getTarget();
+ if(!pvpRearCompute(pl,tg)){pvpRearStop("PVP_REAR_STOP no_live_player_in_8yd\r\n");return;}
+ first=!g_pvpRearActive;
+ if(!first&&(DWORD)(tick-g_pvpRearLastTick)<PVP_REAR_FOLLOW_MS)return;
+ g_pvpRearActive=1;g_pvpRearLastTick=tick;
+ px=*(float*)(pl+UNIT_X);py=*(float*)(pl+UNIT_Y);pz=*(float*)(pl+UNIT_Z);po=*(float*)(pl+UNIT_O);
+ *(float*)(pl+UNIT_X)=g_pvpRearX;*(float*)(pl+UNIT_Y)=g_pvpRearY;
+ *(float*)(pl+UNIT_Z)=g_pvpRearZ;*(float*)(pl+UNIT_O)=g_pvpRearO;
+ sendHeartbeat(pl);sendHeartbeat(pl);
+ *(float*)(pl+UNIT_X)=px;*(float*)(pl+UNIT_Y)=py;*(float*)(pl+UNIT_Z)=pz;*(float*)(pl+UNIT_O)=po;
+ if(first)logs("PVP_REAR_START continuous_player_8yd\r\n");
+}
+
 static void beginQueuedPositionalCast(void);
 static void clearClientPendingCast(const char *tag){
  DWORD p=*(DWORD*)CLIENT_PENDING_SPELLCAST;
@@ -809,10 +863,10 @@ static void runDeferredClientUiClear(void){
 }
 static void clearState(void){W112_RogueFacingReset();g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_energyGateWindowMsForCast=ENERGY_GATE_DEFAULT_WINDOW_MS;g_energyGateEnabledForCast=1;g_energyGatePvpForCast=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
 static void cancelTimer(void){if(g_timer&&pKillTimer)pKillTimer(0,g_timer);g_timer=0;}
-static void restoreServerPosition(const char*tag){DWORD spell=g_spoofSpell,count=g_rewrittenMoveCount;if(g_player&&getPlayer()==g_player)sendHeartbeat(g_player);logSpellText(tag,spell);if(count)logCountText("MOVE_REWRITTEN",spell,count);clearState();}
+static void restoreServerPosition(const char*tag){DWORD spell=g_spoofSpell,count=g_rewrittenMoveCount;if(g_player&&getPlayer()==g_player)sendHeartbeat(g_player);if(g_pvpRearActive)g_pvpRearLastTick=0;logSpellText(tag,spell);if(count)logCountText("MOVE_REWRITTEN",spell,count);clearState();}
 
 void STDCALL SpeedTimerProc(PVOID hwnd,DWORD msg,DWORD id,DWORD tick){
- (void)hwnd;(void)msg;(void)id;g_lastTimerTick=tick;runDeferredClientUiClear();trackEnergyTick(tick);/* StealthCDSafe binary patch: applyStealthSpeed() CALL NOPed */autoWotfTick(tick);
+ (void)hwnd;(void)msg;(void)id;g_lastTimerTick=tick;runDeferredClientUiClear();trackEnergyTick(tick);pvpRearTick(tick);/* StealthCDSafe binary patch: applyStealthSpeed() CALL NOPed */autoWotfTick(tick);
  if(g_phase==PHASE_ENERGY_GATE&&g_castPending){
   DWORD pl=getPlayer(),tg=getTarget(),left,held;
   if(!pl){logs("ENERGY_GATE_CANCEL no_player\r\n");clearClientPendingCast("CLIENT_PENDING_CLEAR_CANCEL");clearState();return;}
@@ -927,8 +981,14 @@ static int movementHasExtra(DWORD op){
    candidate is currently being tested. */
 static int rewriteMovementStore(DWORD store){
  DWORD *ds=(DWORD*)store,size,base,buf,op,off;BYTE *p;float sx,sy,sz,so;
- if(!ds||g_phase!=PHASE_WAIT_RESULT||g_allowMovementSend||!g_target||!g_spoofSpell)return 0;
- if(isBehindSpell(g_spoofSpell)&&g_energyGatePvpForCast){
+ int followIdle=(g_phase==PHASE_IDLE&&g_cfgPvpRearFollowEnabled&&g_pvpRearActive);
+ if(!ds||g_allowMovementSend)return 0;
+ if(followIdle){
+  if(!pvpRearCompute(getPlayer(),getTarget())){
+   pvpRearStop("PVP_REAR_STOP outgoing_invalid\r\n");return 0;
+  }
+ }else if(g_phase!=PHASE_WAIT_RESULT||!g_target||!g_spoofSpell)return 0;
+ if(!followIdle&&isBehindSpell(g_spoofSpell)&&g_energyGatePvpForCast){
   DWORD pl=getPlayer(),tg=getTarget();
   float px,py,tx,ty;int fresh;
   if(!pl||pl!=g_player||!tg||tg!=g_target){
@@ -950,7 +1010,8 @@ static int rewriteMovementStore(DWORD store){
  }
  size=ds[4];base=ds[2];buf=ds[1];if(!buf||!size||buf<base)return 0;p=(BYTE*)(buf-base);if(size<28)return 0;
  op=*(DWORD*)p;off=4;if(movementHasGuid(op))off+=8;if(movementHasExtra(op))off+=4;if(size<off+24)return 0;
- if(!calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0))return 0;
+ if(followIdle){sx=g_pvpRearX;sy=g_pvpRearY;sz=g_pvpRearZ;so=g_pvpRearO;}
+ else if(!calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0))return 0;
  *(float*)(p+off+8)=sx;*(float*)(p+off+12)=sy;*(float*)(p+off+16)=sz;*(float*)(p+off+20)=so;++g_rewrittenMoveCount;return 1;
 }
 void STDCALL PrepareMovementSend(DWORD store){/* StealthCDSafe binary patch: applyStealthSpeed() CALL NOPed */rewriteMovementStore(store);}
@@ -1114,6 +1175,10 @@ static void initOpenerTimingControlDescriptor(void){
  s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVP_WINDOW_MS;
  s->key="pvp_pre_tick_ms";s->label="PvP pre-tick (ms)";s->type=W112_CTL_INT;
  s->default_value.i32=(w112_i32)ENERGY_GATE_DEFAULT_WINDOW_MS;s->min_value.i32=(w112_i32)ENERGY_GATE_MIN_WINDOW_MS;s->max_value.i32=(w112_i32)ENERGY_GATE_MAX_WINDOW_MS;s->step.i32=(w112_i32)ENERGY_GATE_WINDOW_STEP_MS;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_controlSettings[4];
+ s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVP_REAR_FOLLOW_ENABLED;
+ s->key="pvp_rear_follow";s->label="PvP continuous rear";s->type=W112_CTL_BOOL;
+ s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  g_controlDescriptorReady=1UL;
 }
 static int W112_CTL_STDCALL openerTimingControlGet(w112_u32 id,W112_ControlValueV1*out){
@@ -1122,18 +1187,20 @@ static int W112_CTL_STDCALL openerTimingControlGet(w112_u32 id,W112_ControlValue
  if(id==SETTING_PVE_WINDOW_MS){out->i32=(w112_i32)g_cfgPveWindowMs;return 1;}
  if(id==SETTING_PVP_GATE_ENABLED){out->u32=g_cfgPvpGateEnabled?1u:0u;return 1;}
  if(id==SETTING_PVP_WINDOW_MS){out->i32=(w112_i32)g_cfgPvpWindowMs;return 1;}
+ if(id==SETTING_PVP_REAR_FOLLOW_ENABLED){out->u32=g_cfgPvpRearFollowEnabled?1u:0u;return 1;}
  return 0;
 }
 static int W112_CTL_STDCALL openerTimingControlSet(w112_u32 id,const W112_ControlValueV1*v){
  if(!v)return 0;
  if(id==SETTING_PVE_GATE_ENABLED){if(v->u32>1u)return 0;g_cfgPveGateEnabled=(DWORD)v->u32;return 1;}
  if(id==SETTING_PVP_GATE_ENABLED){if(v->u32>1u)return 0;g_cfgPvpGateEnabled=(DWORD)v->u32;return 1;}
+ if(id==SETTING_PVP_REAR_FOLLOW_ENABLED){if(v->u32>1u)return 0;g_cfgPvpRearFollowEnabled=(DWORD)v->u32;return 1;}
  if(id==SETTING_PVE_WINDOW_MS){if(v->i32<(w112_i32)ENERGY_GATE_MIN_WINDOW_MS||v->i32>(w112_i32)ENERGY_GATE_MAX_WINDOW_MS)return 0;g_cfgPveWindowMs=(DWORD)v->i32;return 1;}
  if(id==SETTING_PVP_WINDOW_MS){if(v->i32<(w112_i32)ENERGY_GATE_MIN_WINDOW_MS||v->i32>(w112_i32)ENERGY_GATE_MAX_WINDOW_MS)return 0;g_cfgPvpWindowMs=(DWORD)v->i32;return 1;}
  return 0;
 }
 static const W112_ControlModuleV1 g_openerTimingControlModule={
- W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),"opener_timing","Opener Timing",OPENER_TIMING_CONTROL_VERSION,4u,g_controlSettings,openerTimingControlGet,openerTimingControlSet
+ W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),"opener_timing","Opener Timing",OPENER_TIMING_CONTROL_VERSION,5u,g_controlSettings,openerTimingControlGet,openerTimingControlSet
 };
 W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){initOpenerTimingControlDescriptor();return &g_openerTimingControlModule;}
 static BOOL prot(DWORD site,ULONG np,ULONG*op){PVOID b=(PVOID)(site&0xfffff000UL);ULONG sz=0x1000;return pProtect&&pProtect((HANDLE)(LONG)-1,&b,&sz,np,op)>=0;}
@@ -1152,7 +1219,7 @@ static BOOL install(void){ULONG op;
  /* NoFailHook binary patch: installer jumps over the CAST_FAIL_SITE hook-install block. Signature validation above and legacy restore path below remain, matching the final patched DLL. */
  if(!prot(SPELL_GO_SITE,PAGE_EXECUTE_READWRITE,&op)){logs("ERROR protect go\r\n");return 0;}jmppatch6(SPELL_GO_SITE,SpellGoHook);unprot(SPELL_GO_SITE,op);
  if(!prot(MOVEMENT_SEND_SITE,PAGE_EXECUTE_READWRITE,&op)){logs("ERROR protect movement-send\r\n");return 0;}callpatch(MOVEMENT_SEND_SITE,MovementSendHook);unprot(MOVEMENT_SEND_SITE,op);
- installed=1;logs("PATCH_OK WoWPositionalSpoof v0.36 NoPP SmartEnergy700 SmoothStealth GateGCDFix auto_wotf=1 adaptive_candidates=8 double_heartbeat=1 ambush=1 auto_pickpocket=0 pp_external_module=1 stealth_speed_100pct=1 speed_apply=native_CMovement_SetRunSpeed_0x7C7030 current_speed_cache=0xA2C speed_timer_ms=5 energy_gate=1 energy_gate_window_ms=control_api_pve_pvp_default_700 energy_gate_max_hold_ms=1900 energy_gate_frozen_target=1 energy_gate_release_on_tick=1 opener_hold=1 suppressed_native_gcd_skip=1 deferred_gcd_on_actual_send=1 deferred_gcd_exact_edx=1 gate_context_frozen_before_hold=1 candidate_order=back_half_first fresh_cdatastore_per_send=1 immediate_positional_cast=0 movement_rewrite=1 timeout=350 current_action_guid_clear=1 deferred_ui_only_clear=1 no_deferred_cast_clear=1\r\n");return 1;
+ installed=1;logs("PATCH_OK WoWPositionalSpoof v0.36 NoPP SmartEnergy700 SmoothStealth GateGCDFix auto_wotf=1 adaptive_candidates=8 double_heartbeat=1 ambush=1 auto_pickpocket=0 pp_external_module=1 stealth_speed_100pct=1 speed_apply=native_CMovement_SetRunSpeed_0x7C7030 current_speed_cache=0xA2C speed_timer_ms=5 energy_gate=1 energy_gate_window_ms=control_api_pve_pvp_default_700 energy_gate_max_hold_ms=1900 energy_gate_frozen_target=1 energy_gate_release_on_tick=1 opener_hold=1 suppressed_native_gcd_skip=1 deferred_gcd_on_actual_send=1 deferred_gcd_exact_edx=1 gate_context_frozen_before_hold=1 candidate_order=back_half_first fresh_cdatastore_per_send=1 immediate_positional_cast=0 movement_rewrite=1 timeout=350 current_action_guid_clear=1 deferred_ui_only_clear=1 no_deferred_cast_clear=1 pvp_continuous_rear=1 gui_switch=1\r\n");return 1;
 }
 static void restore(void){ULONG op;if(!installed)return;
  if(prot(CAST_SEND_SITE,PAGE_EXECUTE_READWRITE,&op)){cp((BYTE*)CAST_SEND_SITE,sendOrig,5);unprot(CAST_SEND_SITE,op);}
