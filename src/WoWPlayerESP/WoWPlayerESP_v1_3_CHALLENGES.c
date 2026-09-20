@@ -407,6 +407,16 @@ static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL;
 static DWORD g_ui_shown=0u;
+/* Stdcall exports may be decorated on Win32/x86. Resolve all supported
+   spellings, as the existing ControlHub adapter already does. */
+static W112_ControlGetModuleV1Fn ui_find_control_export(HMODULE dll) {
+    void *p;
+    if(!dll)return NULL;
+    p=GetProcAddress(dll,"W112_Control_GetModuleV1");
+    if(!p)p=GetProcAddress(dll,"_W112_Control_GetModuleV1@0");
+    if(!p)p=GetProcAddress(dll,"_W112_Control_GetModuleV1");
+    return (W112_ControlGetModuleV1Fn)p;
+}
 
 /* The canonical SpeedFloor source exports these stable setting IDs.
    Query its ABI and values on demand; never hardcode a displayed "7.1"
@@ -416,7 +426,7 @@ static const W112_ControlModuleV1* ui_speedfloor_module(void) {
     W112_ControlGetModuleV1Fn get;
     const W112_ControlModuleV1 *m;
     if (!dll) return NULL;
-    get=(W112_ControlGetModuleV1Fn)GetProcAddress(dll,"W112_Control_GetModuleV1");
+    get=ui_find_control_export(dll);
     if (!get) return NULL;
     m=get();
     if (!m || m->abi_version!=W112_CONTROL_API_V1 ||
@@ -440,7 +450,7 @@ static const W112_ControlModuleV1* ui_work_pp_module(const char* name,DWORD mini
     W112_ControlGetModuleV1Fn get;
     const W112_ControlModuleV1 *m;
     if(!dll)return NULL;
-    get=(W112_ControlGetModuleV1Fn)GetProcAddress(dll,"W112_Control_GetModuleV1");
+    get=ui_find_control_export(dll);
     if(!get)return NULL;
     m=get();
     if(!m||m->abi_version!=W112_CONTROL_API_V1||
