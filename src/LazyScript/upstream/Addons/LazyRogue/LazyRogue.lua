@@ -30,6 +30,33 @@ function lazyRogueLoad.OnLoad()
 	this:RegisterEvent("PLAYER_LOGIN")
 end
 
+-- Conservative tick estimate from vanilla UNIT_ENERGY events, not a native timer.
+-- Two uncapped +20 gains separated by ~2s are needed to establish a phase.
+function lazyRogueLoad.ResetEnergyTickClock()
+	lazyRogue.energyTickProbeAt = nil
+	lazyRogue.energyTickSyncedAt = nil
+	lazyRogue.latestEnergy = UnitMana("player")
+end
+
+function lazyRogueLoad.UpdateEnergyTickClock(previousEnergy, currentEnergy, now)
+	local gain = currentEnergy - previousEnergy
+	if (gain ~= 20 or previousEnergy > UnitManaMax("player") - 20) then
+		-- Tea, procs or otherwise unexpected energy gains invalidate synchronization.
+		if (gain > 0) then
+			lazyRogue.energyTickProbeAt = nil
+			lazyRogue.energyTickSyncedAt = nil
+		end
+		return
+	end
+	local previousTick = lazyRogue.energyTickProbeAt
+	lazyRogue.energyTickProbeAt = now
+	if (previousTick and now - previousTick >= 1.7 and now - previousTick <= 2.3) then
+		lazyRogue.energyTickSyncedAt = now
+	else
+		lazyRogue.energyTickSyncedAt = nil
+	end
+end
+
 function lazyRogueLoad.OnEvent()
 	if (event == "VARIABLES_LOADED") then
 		if (lrConf and not lazyRogue.perPlayerConf.importedOldLazyRogueSettings) then
@@ -50,6 +77,7 @@ function lazyRogueLoad.OnEvent()
 		
 		elseif (event == "PLAYER_LOGIN") then
 		
+		lazyRogueLoad.ResetEnergyTickClock()
 		this:RegisterEvent("UNIT_ENERGY")
 		this:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 		
@@ -68,10 +96,11 @@ function lazyRogueLoad.OnEvent()
 		elseif (event == "UNIT_ENERGY") then
 		if (arg1 == "player") then
 			local currentEnergy = UnitMana("player")
+			local now = GetTime()
+			lazyRogueLoad.UpdateEnergyTickClock(lazyRogue.latestEnergy, currentEnergy, now)
 			if (currentEnergy > lazyRogue.latestEnergy) then
-				-- a tick
-				lazyRogue.lastTickTime = GetTime()
-				--lazyRogue.d("ENERGY TICK: "..lazyRogue.lastTickTime)
+				-- Preserve original LastChance bookkeeping.
+				lazyRogue.lastTickTime = now
 			end
 			lazyRogue.latestEnergy = currentEnergy
 		end
