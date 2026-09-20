@@ -13,6 +13,7 @@
 #define DllMain W112_PlayerESP_Base_DllMain
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
+#include "../common/W112ControlAPI.h"
 
 
 #define WM_W112_ESP_BG_SCORE (0x8000u + 0x0113u)
@@ -339,8 +340,10 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 }
 
 
-/* PARALLEL: large native GUI runs in the ESP DLL's existing render thread.
-   This GUI never re-subclasses the game window, and controls ESP only. */
+/* PARALLEL: one native GUI for ESP and the rebuilt SpeedFloor control ABI.
+   The preserved AutoLootPP/LongPP binaries are reported as loaded, not
+   deceptively exposed as independently live-configurable modules.
+   Never load/unload a hooked legacy DLL from a GUI callback. */
 #define UI_CHILD 0x40000000u
 #define UI_VISIBLE 0x10000000u
 #define UI_CAPTION 0x00C00000u
@@ -351,7 +354,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_SETFONT 0x0030u
 #define UI_SETCHECK 0x00F1u
 #define UI_WIDTH 750
-#define UI_HEIGHT 475
+#define UI_HEIGHT 700
 typedef void* HFONT;
 __declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
 __declspec(dllimport) LONG WINAPI SendMessageA(HWND,UINT,DWORD,LONG);
@@ -359,6 +362,59 @@ __declspec(dllimport) BOOL WINAPI SetForegroundWindow(HWND);
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL, g_ui_title_font=NULL;
 static HWND g_ui_checks[4]={NULL,NULL,NULL,NULL};
+static HWND g_ui_speedfloor_check=NULL;
+static HWND g_ui_speedfloor_state=NULL;
+static HWND g_ui_autopp_state=NULL;
+static HWND g_ui_longpp_state=NULL;
+__declspec(dllimport) HMODULE WINAPI GetModuleHandleA(LPCSTR);
+__declspec(dllimport) void* WINAPI GetProcAddress(HMODULE,LPCSTR);
+__declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
+
+#define PAR_SPEED_DLL "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
+#define PAR_LOOT_DLL "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll"
+#define PAR_LONGPP_DLL "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
+
+/* Only the reconstructed SpeedFloor candidate implements the live control
+   ABI; the historical exact bytes are not assumed to export that interface. */
+static const W112_ControlModuleV1* ui_speedfloor_module(void) {
+    HMODULE dll=GetModuleHandleA(PAR_SPEED_DLL);
+    W112_ControlGetModuleV1Fn get;
+    const W112_ControlModuleV1 *m;
+    if (!dll) return NULL;
+    get=(W112_ControlGetModuleV1Fn)GetProcAddress(dll,"W112_Control_GetModuleV1");
+    if (!get) return NULL;
+    m=get();
+    if (!m || m->abi_version!=W112_CONTROL_API_V1 ||
+        m->struct_size!=sizeof(W112_ControlModuleV1) ||
+        m->setting_count<1u || !m->get_value || !m->set_value) return NULL;
+    return m;
+}
+static BOOL ui_speedfloor_state(DWORD *out) {
+    const W112_ControlModuleV1 *m=ui_speedfloor_module();
+    W112_ControlValueV1 value;
+    if (!m || !out || !m->get_value(1u,&value)) return FALSE;
+    *out=value.u32?1u:0u;
+    return TRUE;
+}
+static void ui_sync_rogue(void) {
+    DWORD enabled=0u;
+    BOOL live=ui_speedfloor_state(&enabled);
+    if (g_ui_speedfloor_check)
+        SendMessageA(g_ui_speedfloor_check,UI_SETCHECK,live&&enabled?1u:0u,0);
+    if (g_ui_speedfloor_state)
+        SetWindowTextA(g_ui_speedfloor_state,live?
+            "Stealth Floor: LIVE control (floor 7.1; hostile-player guard)" :
+            "Stealth Floor: control ABI unavailable; no state changed");
+    if (g_ui_autopp_state)
+        SetWindowTextA(g_ui_autopp_state,GetModuleHandleA(PAR_LOOT_DLL)?
+            "Auto PP + Auto Loot: legacy module LOADED (both always on)" :
+            "Auto PP + Auto Loot: legacy module NOT LOADED");
+    if (g_ui_longpp_state)
+        SetWindowTextA(g_ui_longpp_state,GetModuleHandleA(PAR_LONGPP_DLL)?
+            "Long PP: legacy 360 / range module LOADED" :
+            "Long PP: legacy 360 / range module NOT LOADED");
+}
+
 static DWORD g_ui_shown=0u;
 /* A control change must request a fresh, guarded scan instead of waiting
    for the normal cache timer. Scoreboard reads stay on the game WndProc. */
@@ -400,6 +456,16 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             g_parallel_show_hostile=g_parallel_show_hostile?0u:1u;
             ui_filters_changed();
             ui_check(3u,g_parallel_show_hostile);return 0;
+        }
+        if (id==105u) {
+            DWORD enabled=0u;
+            const W112_ControlModuleV1 *m=ui_speedfloor_module();
+            W112_ControlValueV1 value;
+            if (m && ui_speedfloor_state(&enabled)) {
+                value.u32=enabled?0u:1u;
+                m->set_value(1u,&value);
+            }
+            ui_sync_rogue();return 0;
         }
     }
     return g_ui_prev?CallWindowProcA(g_ui_prev,hwnd,msg,wp,lp):0;
@@ -452,9 +518,28 @@ static BOOL ui_create(HWND game) {
     ui_check(1u,g_parallel_show_horde);
     ui_check(2u,g_parallel_show_alliance);
     ui_check(3u,g_parallel_show_hostile);
+    ui_label(g_parallel_ui_hwnd,"PARALLEL / ROGUE",28,393,680,40,TRUE);
+    g_ui_speedfloor_check=CreateWindowExA(0u,"BUTTON",
+        "STEALTH FLOOR - enable live",UI_CHILD|UI_VISIBLE|UI_CHECKBOX,
+        42,443,670,43,g_parallel_ui_hwnd,(HANDLE)(DWORD)105u,g_self,NULL);
+    if (g_ui_speedfloor_check && g_ui_font)
+        SendMessageA(g_ui_speedfloor_check,UI_SETFONT,(DWORD)g_ui_font,1);
+    g_ui_speedfloor_state=CreateWindowExA(0u,"STATIC","",UI_CHILD|UI_VISIBLE,
+        42,488,680,29,g_parallel_ui_hwnd,NULL,g_self,NULL);
+    g_ui_autopp_state=CreateWindowExA(0u,"STATIC","",UI_CHILD|UI_VISIBLE,
+        42,528,680,29,g_parallel_ui_hwnd,NULL,g_self,NULL);
+    g_ui_longpp_state=CreateWindowExA(0u,"STATIC","",UI_CHILD|UI_VISIBLE,
+        42,568,680,29,g_parallel_ui_hwnd,NULL,g_self,NULL);
+    if (g_ui_speedfloor_state && g_ui_font)
+        SendMessageA(g_ui_speedfloor_state,UI_SETFONT,(DWORD)g_ui_font,1);
+    if (g_ui_autopp_state && g_ui_font)
+        SendMessageA(g_ui_autopp_state,UI_SETFONT,(DWORD)g_ui_font,1);
+    if (g_ui_longpp_state && g_ui_font)
+        SendMessageA(g_ui_longpp_state,UI_SETFONT,(DWORD)g_ui_font,1);
     ui_label(g_parallel_ui_hwnd,
-        "CLICK TO TARGET: ON  |  Filters combine (OR); mixed BG: HOSTILE only.",
-        30,405,700,34,FALSE);
+        "ESP: click live labels to target. PP/loot legacy modules have no live toggle.",
+        30,619,690,40,FALSE);
+    ui_sync_rogue();
     g_ui_shown=0u;return TRUE;
 }
 static void parallel_gui_tick(void) {
@@ -475,6 +560,7 @@ static void parallel_gui_tick(void) {
         if (!ui_create(game)) return;
     }
     if (!g_ui_shown || !IsWindowVisible(g_parallel_ui_hwnd)) {
+        ui_sync_rogue();
         ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);
         g_ui_shown=1u;
     }
@@ -486,6 +572,8 @@ static void parallel_gui_destroy(void) {
         DestroyWindow(g_parallel_ui_hwnd);
     }
     g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
+    g_ui_speedfloor_check=NULL;g_ui_speedfloor_state=NULL;
+    g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     if (g_ui_font) DeleteObject((HGDIOBJ)g_ui_font);
     if (g_ui_title_font) DeleteObject((HGDIOBJ)g_ui_title_font);
     g_ui_font=NULL;g_ui_title_font=NULL;

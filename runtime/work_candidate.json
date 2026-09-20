@@ -1,11 +1,13 @@
 {
   "schema_version": 1,
-  "purpose": "PARALLEL ESP-only test runtime",
+  "purpose": "PARALLEL ESP plus preserved Rogue PP/loot and rebuilt live-controlled SpeedFloor test runtime",
   "source_overrides": [
-    "WoWPlayerESP_v1_2_range_sweep.dll"
+    "WoWPlayerESP_v1_2_range_sweep.dll",
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
   ],
-  "note": "Large ESP GUI and additive Horde, Alliance and hostile filters; BG hostility only from the current scoreboard.",
+  "note": "Rebuild only ESP and SpeedFloor; AutoLootPP and LongPickPocket are exact accepted V69 DLL bytes because the reconstructed AutoLootPP source lacks the corpse-loot request/scanner. PP and loot are always on and shown as loaded, not fake independently controllable toggles.",
   "source_fingerprint_warning_allowlist": [
-    "WoWPlayerESP_v1_2_range_sweep.dll"
+    "WoWPlayerESP_v1_2_range_sweep.dll",
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
   ]
 }

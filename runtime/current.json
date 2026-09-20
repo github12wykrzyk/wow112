@@ -26,6 +26,74 @@
         "profile": "clangcl_i686_win32imports",
         "status": "verified_x86_candidate_build"
       }
+    },
+    {
+      "name": "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
+      "sha256": "a4dd0b0c44ecb4863231e0c92bab6767f3336003980fb552dc173448ab4b239c",
+      "source_state": "functionally_equivalent_reconstruction",
+      "source_origin": "static_reverse_engineering_from_final_dll_plus_W112_CONTROL_API_V1_extension",
+      "source_path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
+      "source_sha256": "411012697343fae738007fd0a8f8fa19e7ad0b28978667a8316704133757dfee",
+      "source_size": 20466,
+      "source_restore_doc": "artifacts/SpeedFloor/README_RECOVERY.md",
+      "binary_patch_audit": "artifacts/SpeedFloor/BINARY_REVERSE_AUDIT.txt",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/V69/runtime/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll.xz",
+        "sha256": "a4dd0b0c44ecb4863231e0c92bab6767f3336003980fb552dc173448ab4b239c",
+        "size": 9728
+      },
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "clangcl_i686_crtless",
+        "status": "verified_x86_candidate_build"
+      }
+    },
+    {
+      "name": "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
+      "sha256": "05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845",
+      "source_state": "functionally_equivalent_reconstruction",
+      "source_origin": "static_reverse_engineering_plus_exact_v013_binary_patch_lineage",
+      "source_path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
+      "source_sha256": "bbb3b38af7b96fff13e2bd2aa65142981d6cb15b92272ad906069e6d3a3bc2c1",
+      "source_size": 24519,
+      "source_restore_doc": "artifacts/AutoLootPP/README_RECOVERY.md",
+      "binary_patch_audit": "artifacts/AutoLootPP/BINARY_PATCH_AUDIT.txt",
+      "binary_reproducer": "artifacts/AutoLootPP/patch_v013_ONESHOT_to_v014_NOSKIP.py",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845.dll.xz",
+        "sha256": "05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845",
+        "size": 20992
+      },
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "clangcl_i686_crtless",
+        "status": "verified_x86_candidate_build"
+      }
+    },
+    {
+      "name": "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll",
+      "sha256": "dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2",
+      "source_state": "functionally_equivalent_reconstruction",
+      "source_origin": "static_reverse_engineering_plus_exact_v09_binary_patch_lineage",
+      "source_path": "src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c",
+      "source_sha256": "303ae0b2a4571044ca1d506f852448986dcfa94bbb987f3db43070ad20878da3",
+      "source_size": 22118,
+      "source_restore_doc": "artifacts/LongPickPocket/README_RECOVERY.md",
+      "binary_patch_audit": "artifacts/LongPickPocket/BINARY_PATCH_AUDIT.txt",
+      "binary_reproducer": "artifacts/LongPickPocket/patch_v09_FacingOnly_to_v10_ALLRANGE_360FACING.py",
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2.dll.xz",
+        "sha256": "dc4a8d85b850728f39e07a04c49a7f7b60e72b8ec2fdebb94b86dad3a47474d2",
+        "size": 14336
+      },
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "clangcl_i686_crtless",
+        "status": "verified_x86_candidate_build"
+      }
     }
   ]
 }
