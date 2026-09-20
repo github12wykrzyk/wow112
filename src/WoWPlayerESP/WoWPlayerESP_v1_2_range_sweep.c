@@ -1632,6 +1632,9 @@ static void range_sweep_tick(DWORD manager, DWORD localObj, DWORD guidLo, DWORD 
     }
 }
 
+/* Resolve by GUID on the game thread when a visible label is clicked. */
+static DWORD native_get_object_by_guid(DWORD lo, DWORD hi);
+
 static void native_target_guid(DWORD lo, DWORD hi) {
     QWORD guid;
     TargetGuidFn fn = (TargetGuidFn)FN_TARGET_GUID;
