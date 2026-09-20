@@ -121,6 +121,7 @@ namespace WoW112Updater
                             var file = expected.First(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
                             var dest = SafeDestination(root, file.Name);
                             var temp = dest + ".wow112repairtmp";
+                            Directory.CreateDirectory(Path.GetDirectoryName(dest));
                             File.WriteAllBytes(temp, file.Bytes);
                             if (!string.Equals(Sha256File(temp), file.Sha256, StringComparison.OrdinalIgnoreCase))
                                 throw new InvalidOperationException("SHA256 nie zgadza się po zapisie naprawczym: " + file.Name);
@@ -310,7 +311,12 @@ namespace WoW112Updater
                     var gotPackageSha = Sha256(inner);
                     if (!string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("SHA256 paczki zainstalowanego buildu nie zgadza się z candidate_metadata.json.");
-                    return BuildExpectedFiles(inner);
+                    var expected = BuildExpectedFiles(inner);
+                    foreach (var addon in UpdaterAddons.ReadFromArtifact(outer, 
+                        string.Equals(installedChannel, "test", StringComparison.OrdinalIgnoreCase),
+                        GetString(installed, "head_sha")))
+                        expected.Add(new ExpectedFile(addon.Name, addon.Bytes));
+                    return expected;
                 }
             }
 
@@ -431,7 +437,12 @@ namespace WoW112Updater
                 {
                     var src = SafeDestination(root, name);
                     var existed = File.Exists(src);
-                    if (existed) File.Copy(src, Path.Combine(dir, name), true);
+                    if (existed)
+                    {
+                        var backupPath = Path.Combine(dir, name.Replace('/', Path.DirectorySeparatorChar));
+                        Directory.CreateDirectory(Path.GetDirectoryName(backupPath));
+                        File.Copy(src, backupPath, true);
+                    }
                     rows.Add(new Dictionary<string, object> { { "name", name }, { "existed", existed } });
                 }
                 var manifest = new Dictionary<string, object>();
@@ -454,7 +465,11 @@ namespace WoW112Updater
                         var row = AsDictionary(item);
                         var name = GetString(row, "name");
                         var dest = SafeDestination(root, name);
-                        if (GetBool(row, "existed")) File.Copy(Path.Combine(dir, name), dest, true);
+                        if (GetBool(row, "existed"))
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                            File.Copy(Path.Combine(dir, name.Replace('/', Path.DirectorySeparatorChar)), dest, true);
+                        }
                         else if (File.Exists(dest)) File.Delete(dest);
                     }
                     var previous = GetValue(manifest, "previous_installed") as Dictionary<string, object>;
@@ -688,6 +703,7 @@ namespace WoW112Updater
 
             private static string SafeDestination(string root, string name)
             {
+                if (UpdaterAddons.IsAddonPath(name)) return UpdaterAddons.SafeAddonDestination(root, name);
                 if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || Path.GetFileName(name) != name)
                     throw new InvalidOperationException("Nieprawidłowa nazwa pliku: " + name);
                 var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;

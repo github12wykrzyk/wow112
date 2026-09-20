@@ -276,7 +276,8 @@ namespace WoW112Updater
                 var installRoot = Path.GetFullPath(gameDir.Text.Trim());
                 var installRemote = lastRemote;
                 status.Text = "Instalowanie zweryfikowanych plików...";
-                var result = await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot));
+                var addonFiles = new List<UpdaterAddonAsset>(cachedVerifiedAddons);
+                var result = await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot, addonFiles));
                 status.Text = result.Changed == 0
                     ? "EXE i pozostałe pliki już były aktualne."
                     : "Aktualizacja zakończona: " + result.Changed + " plików"
@@ -428,7 +429,7 @@ namespace WoW112Updater
             }
         }
 
-        private ApplyResult ApplyPackage(byte[] packageBytes, RemotePackageInfo remote, string root)
+        private ApplyResult ApplyPackage(byte[] packageBytes, RemotePackageInfo remote, string root, IList<UpdaterAddonAsset> addonFiles)
         {
             if (IsGameRunning(root)) throw new InvalidOperationException("Gra działa. Zamknij WoW przed instalacją.");
             var files = new List<PackageFile>();
@@ -453,6 +454,14 @@ namespace WoW112Updater
                 throw new InvalidOperationException("Paczka nie zawiera WoW.exe/canonical WoW executable.");
             if (!files.Any(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException("Paczka nie zawiera DLL-i.");
+            // Validated independently against addon_metadata.json and the source build SHA.
+            // Addons are never entered into dlls.txt, and unrelated AddOns are untouched.
+            foreach (var addon in addonFiles)
+            {
+                if (!packageNames.Add(addon.Name))
+                    throw new InvalidOperationException("Konflikt nazwy pliku dodatku: " + addon.Name);
+                files.Add(new PackageFile(addon.Name, addon.Bytes));
+            }
 
             var oldState = ReadInstalledState(root);
             var oldManaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -536,6 +545,7 @@ namespace WoW112Updater
                 {
                     var dest = SafeDestination(root, file.Name);
                     var temp = dest + ".wow112tmp";
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
                     File.WriteAllBytes(temp, file.Bytes);
                     if (!string.Equals(Sha256File(temp), file.Sha256, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("Błąd SHA256 po zapisie pliku tymczasowego: " + file.Name);
@@ -577,7 +587,12 @@ namespace WoW112Updater
             {
                 var src = SafeDestination(root, name);
                 var existed = File.Exists(src);
-                if (existed) File.Copy(src, Path.Combine(dir, name), true);
+                if (existed)
+                {
+                    var backupPath = Path.Combine(dir, name.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(backupPath));
+                    File.Copy(src, backupPath, true);
+                }
                 var row = new Dictionary<string, object>();
                 row["name"] = name;
                 row["existed"] = existed;
@@ -717,6 +732,7 @@ namespace WoW112Updater
                 {
                     var src = Path.Combine(dir, name);
                     if (!File.Exists(src)) throw new InvalidOperationException("Backup pliku jest niekompletny: " + name);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
                     File.Copy(src, dest, true);
                 }
                 else if (File.Exists(dest))
@@ -839,6 +855,7 @@ namespace WoW112Updater
 
         private static string SafeDestination(string root, string name)
         {
+            if (UpdaterAddons.IsAddonPath(name)) return UpdaterAddons.SafeAddonDestination(root, name);
             if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || Path.GetFileName(name) != name)
                 throw new InvalidOperationException("Nieprawidłowa nazwa pliku w paczce: " + name);
             var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;

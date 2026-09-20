@@ -16,6 +16,7 @@ namespace WoW112Updater
         private readonly List<DllUpdateStatus> lastDllInspection = new List<DllUpdateStatus>();
         private DllUpdateStatus lastExeInspection;
         private byte[] cachedVerifiedPackage;
+        private List<UpdaterAddonAsset> cachedVerifiedAddons = new List<UpdaterAddonAsset>();
         private long cachedVerifiedRunId;
         private string cachedVerifiedChannel = string.Empty;
 
@@ -50,6 +51,7 @@ namespace WoW112Updater
             lastDllInspection.Clear();
             lastExeInspection = null;
             cachedVerifiedPackage = null;
+            cachedVerifiedAddons = new List<UpdaterAddonAsset>();
             cachedVerifiedRunId = 0;
             cachedVerifiedChannel = string.Empty;
         }
@@ -74,7 +76,10 @@ namespace WoW112Updater
             if (!string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("SHA256 wewnętrznej paczki nie zgadza się z candidate_metadata.json.");
 
-            Log("SHA256 paczki OK: " + gotPackageSha.Substring(0, 16) + "...");
+            var addonFiles = UpdaterAddons.ReadFromArtifact(outerBytes,
+                string.Equals(remote.Channel, "test", StringComparison.OrdinalIgnoreCase), remote.HeadSha);
+            Log("SHA256 paczki OK: " + gotPackageSha.Substring(0, 16) + "...; LS/LazyRogue: " + addonFiles.Count + " plików.");
+            cachedVerifiedAddons = addonFiles;
             cachedVerifiedPackage = innerBytes;
             cachedVerifiedRunId = remote.RunId;
             cachedVerifiedChannel = remote.Channel;

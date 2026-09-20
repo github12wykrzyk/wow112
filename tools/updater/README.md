@@ -136,3 +136,10 @@ required. The probe uses a temporary configuration directory and no GitHub crede
 
 The TEST candidate workflow now triggers on root `*.exe` changes in addition to runtime manifests, so EXE-only patches create a new downloadable artifact. The updater compares and displays EXE SHA256 separately from DLL changes; its offline UI smoke covers EXE missing/current/changed. A successful installation logs whether EXE was replaced.
 
+
+## LazyScript + LazyRogue auto-install (Updater 2.3, TEST/work)
+
+- The newest successful TEST candidate artifact carries the separate `WoW112_LAZYROGUE_HYBRID_ADDONS.zip` and `addon_metadata.json` in addition to the strict root-only game runtime ZIP.
+- The updater validates the outer artifact's `git_sha`, SHA256, file count and exact addon path allowlist before touching game files; a missing or invalid addon archive blocks TEST installation instead of leaving incompatible DLL/addon versions.
+- UPDATE / UPDATE + PLAY installs `Interface/AddOns/LazyScript/` and `Interface/AddOns/LazyRogue/` automatically, with per-file SHA256 comparison, transactional backup/rollback and VERIFY / REPAIR from the exact installed build. It does not change unrelated addons, does not include the addon files in `dlls.txt`, and does not change the stable `main` channel.
+- Existing updater 2.2 cannot auto-install addons; use the built-in `AKTUALIZUJ UPDATER` on TEST once to acquire updater 2.3. The native hybrid data source is the existing experimental AutoKick V3 DLL, not an added LS-only DLL.

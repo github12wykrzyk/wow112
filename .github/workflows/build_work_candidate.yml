@@ -212,6 +212,22 @@ jobs:
         run: |
           python tools/package_lazyrogue_addons.py --output dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
           if ($LASTEXITCODE -ne 0) { throw "LazyRogue addon package failed" }
+          @'
+          import hashlib, json
+          from pathlib import Path
+          from zipfile import ZipFile
+          p = Path("dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip")
+          with ZipFile(p) as z:
+              names = [x.filename for x in z.infolist() if not x.is_dir()]
+              if z.testzip() or len(names) != len(set(x.lower() for x in names)):
+                  raise SystemExit("invalid addon package")
+          meta = {"schema_version": 1, "zip_name": p.name,
+                  "addon_sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  "file_count": len(names), "git_sha": "${{ github.sha }}"}
+          Path("dist/addon_metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+          print("ADDON_METADATA: PASS", meta)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "LazyRogue addon metadata failed" }
 
       - name: Write human-readable test card
         shell: pwsh
@@ -227,6 +243,7 @@ jobs:
           path: |
             dist/WoW112_WORK_CANDIDATE.zip
             dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
+            dist/addon_metadata.json
             dist/TEST_THIS.txt
             dist/candidate_metadata.json
             dist/candidate_summary.json
