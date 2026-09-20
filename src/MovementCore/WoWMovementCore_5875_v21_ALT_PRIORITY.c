@@ -297,9 +297,25 @@ static void W112_Q_Tick(BYTE *self,DWORD now,DWORD pressed)
     g_qWasDown=pressed;
 }
 
+/* The vanilla casting bar observes AB banner interactions even when the
+   spell-ID global is empty. Keep automated movement and new gather clicks
+   idle until the player's current action has completed. */
+static DWORD W112_PlayerActionActive(void)
+{
+    static const char script[]=
+        "W112_MC_ACTION_BUSY='0';"
+        "if CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling) then W112_MC_ACTION_BUSY='1' end";
+    typedef const char* (__fastcall *FrameScriptGetTextFn)(const char*,int,DWORD);
+    const char *value;
+    if(*(DWORD*)ADDR_CASTING_SPELLID)return 1u;
+    DebugChat(script);
+    value=((FrameScriptGetTextFn)0x00703BF0u)("W112_MC_ACTION_BUSY",-1,0u);
+    return (value&&value[0]=='1'&&value[1]==0)?1u:0u;
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
-    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
+    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused,actionBusy=0u;BYTE*p;
     (void)w;(void)m;(void)id;(void)tm;
     if(!GT()||!GK())return;
     now=GT()();
@@ -323,10 +339,11 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     g_key7=k7;g_key8=k8;g_gatherKey9=k9;g_keyAlt=kAlt;g_key10=k10;g_key11=k11;g_autoOpenKey12=k12;
 
     p=LocalPlayer();
+    if(p)actionBusy=W112_PlayerActionActive();
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
-        GatherTick(p,now);
+        if(!actionBusy||g_gatherActive||g_gatherLootWait)GatherTick(p,now);
     }else if(g_gatherActive||g_gatherLootWait){
         g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootStart=0u;
         g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;
@@ -334,6 +351,10 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         GatherFileLog("WORLD_LOST_ABORT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
     }
     if(g_mode==MODE_OFF)return;
+    if(actionBusy){
+        if(!g_safeBreakPauseTick)g_safeBreakPauseTick=now;
+        return;
+    }
 
     if(g_mode==MODE_LOCAL_STRONG){
         /* An already-started PP owns its current transaction. Pause only for

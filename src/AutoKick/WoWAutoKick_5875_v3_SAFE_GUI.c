@@ -170,6 +170,7 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char *script,const char *s
 static const u8 g_hookOriginal[7] = {0x8B,0xC7,0x2D,0x31,0x01,0x00,0x00};
 static const u8 g_detailHookOriginal[9] = {0x33,0xF6,0x56,0x8D,0x8D,0x1C,0xFF,0xFF,0xFF};
 static const char g_kickLua[] =
+    "if CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling) then return end;"
     "if type(UnitExists)=='function' and type(UnitCanAttack)=='function' and "
     "type(CastSpellByName)=='function' and UnitExists('player') and UnitExists('target') "
     "and UnitCanAttack('player','target') then CastSpellByName('Kick') end";
@@ -419,7 +420,7 @@ static int execute_kick_lua(void)
     if(!mask) return fn(g_kickLua,g_scriptName)?1:0;
 
     p=script; end=script+sizeof(script)-1;
-    p=append_text(p,end,"if type(UnitExists)=='function' and type(UnitCanAttack)=='function' and type(UnitClass)=='function' and type(CastSpellByName)=='function' and UnitExists('player') and UnitExists('target') and UnitCanAttack('player','target') then local _,c=UnitClass('target');if c");
+    p=append_text(p,end,"if CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling) then return end;if type(UnitExists)=='function' and type(UnitCanAttack)=='function' and type(UnitClass)=='function' and type(CastSpellByName)=='function' and UnitExists('player') and UnitExists('target') and UnitCanAttack('player','target') then local _,c=UnitClass('target');if c");
     if(mask&CLASSBIT_WARRIOR) p=append_text(p,end," and c~='WARRIOR'");
     if(mask&CLASSBIT_PALADIN) p=append_text(p,end," and c~='PALADIN'");
     if(mask&CLASSBIT_HUNTER) p=append_text(p,end," and c~='HUNTER'");

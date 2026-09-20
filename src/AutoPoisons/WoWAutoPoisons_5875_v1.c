@@ -170,6 +170,7 @@ static const char kBootstrapLua[] =
 "ReplaceEnchant();ClearCursor();return 1 end;"
 "function W112AP_Tick(en,mh,oh,th) "
 "if en~=1 then W112AP.pen=0;W112AP.mx=nil;W112AP.my=nil;W112AP.moveUntil=0;return end;"
+"if CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling) then return end;"
 "if UnitAffectingCombat('player') then return end;"
 "if CursorHasItem() or SpellIsTargeting() then return end;"
 "local t=GetTime();if W112AP_Moving(t)==1 then return end;"
