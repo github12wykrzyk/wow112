@@ -53,3 +53,11 @@ errors, unexpected movement and cast interruption. Verify a selected player
 target on BG is unaffected, including while leaving/re-entering BG. Finally
 confirm Auto PP and Auto Loot still work against an eligible humanoid/undead.
 If any cast/channel/capture is interrupted, reject the candidate.
+
+## Current work-module PP port — replaces historical PickPocketSelectiveRange binary test
+
+The **current** parallel candidate compiles `PickPocketSelectiveRange` and `MovementCore v21` from the same canonical source lineages used by `work`. It reuses exact work-runtime AutoLootPP v0.14 and LongPickPocket v1.0 bytes (do not rebuild AutoLootPP from the incomplete corpse-scanner reconstruction). The earlier text's "exact preserved PickPocketSelectiveRange", "no MovementCore", and "no PP control" statements apply only to the previous parallel candidate.
+
+After verified installation, open Insert -> ROGUE: toggle Auto PickPocket (work MovementCore setting 2 / F11) and AutoJunkbox (work PickPocketSelectiveRange setting 1) and confirm values persist while the live module is loaded. Confirm ordinary ability range is 8 yd and PP/Pick Lock client range remains 300 yd. Test PP on eligible unpickpocketed NPCs, including out-of-range attempts and blacklist reset following a death/respawn. Confirm actual corpse looting from the exact AutoLootPP/LongPP binaries. Check AutoJunkbox only while out of combat and stationary and **never while stealthed**. Switch to STATUS to confirm actual module load and live MovementCore AutoPP state, not to infer successful server transactions.
+
+Parallel's separate PvE Rear 360 now yields when work MovementCore reports movement/cast/PP ownership; verify Pick Pocket does not interrupt or become blocked by rear movement. Check on a normal NPC and on a BG player, and verify no regressions in ESP tab, click-targeting, zone/BG transitions or item casts/channels. Any missed loot, stuck cast or crash is a test failure; never promote to `main` without accepted in-game results.
