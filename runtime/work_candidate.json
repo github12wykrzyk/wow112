@@ -5,9 +5,16 @@
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
   ],
-  "note": "Rebuild only ESP and SpeedFloor; AutoLootPP and LongPickPocket are exact accepted V69 DLL bytes because the reconstructed AutoLootPP source lacks the corpse-loot request/scanner. PP and loot are always on and shown as loaded, not fake independently controllable toggles.",
+  "note": "Parallel candidate compiles only ESP and SpeedFloor. PickPocketSelectiveRange, AutoLootPP and LongPickPocket must use exact SHA256-verified accepted binaries; AutoLootPP's reconstructed source omits corpse scanning/loot requests, and PickPocketSelectiveRange/AutoLootPP candidate source fingerprints differ from the recorded stable lineage. Keep strict exact-artifact and final ZIP verification.",
   "source_fingerprint_warning_allowlist": [
     "WoWPlayerESP_v1_2_range_sweep.dll",
-    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
+    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+    "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll"
+  ],
+  "exact_byte_modules": [
+    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+    "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
+    "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
   ]
 }

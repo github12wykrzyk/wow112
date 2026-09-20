@@ -38,3 +38,10 @@ The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols wi
 - SpeedFloor uses its buildable reconstructed source and exports `W112_Control_GetModuleV1`. In the enlarged Insert ESP panel, its checkbox reads/sets setting 1 through the live ABI. Original default floor remains 7.1; the existing hostile-target guard remains active.
 - The GUI reports whether AutoLootPP/LongPickPocket are loaded; the exact legacy binaries do not expose supported independent PP/loot toggle controls. No pretend toggle, hot-unload of hooked DLLs, second WndProc subclass, or additional legacy gameplay modules.
 - Functional test: confirm ESP labels/target-by-click and BG filtering; toggle Stealth Floor live and verify speed change in stealth; in a suitable safe PvE test confirm automatic PP and corpse loot work while LongPP is loaded. Distinguish LOAD from successful server-side PP/loot. On a crash or missed corpse, report reproducible in-game outcome; do not promote to `main` without an accepted test.
+
+## Parallel Rogue candidate CI repair
+
+- `runtime/work_candidate.json` now explicitly permits the pre-existing candidate source-fingerprint drift for PickPocketSelectiveRange (current source size 27491 vs stable metadata size 9319) and AutoLootPP (24575 vs 24519). These are *not* source overrides and are not presented as stable source promotions.
+- The candidate builder now treats PickPocketSelectiveRange, AutoLootPP and LongPickPocket as explicit exact-byte-only inputs: rejects edits to their source without an explicit migration, rejects invalid exact-only names and conflicts with source overrides, and never uses their reconstructed binaries as candidate DLLs.
+- Existing fast/current, exact-runtime-artifact, symbol and final ZIP verifiers remain intact; exact-byte-only DLL artifacts must still match runtime SHA256/size and all final package invariants. Normal work candidates are unaffected because their `exact_byte_modules` list is absent.
+- Only ESP and SpeedFloor are compiled for the parallel candidate. Do not consider the candidate runnable until the latest branch-specific GitHub Actions run reports final package PASS.

@@ -160,6 +160,33 @@ def main():
     source_selected = [by_source[p] for p in changed if p in by_source]
     persistent_selected, work_candidate = load_persistent_overrides(by_name)
 
+    # An exact-byte-only DLL must be restored from its SHA256-checked artifact.
+    # In particular, compiling a historical reconstruction is NOT equivalent
+    # to the accepted runtime (AutoLootPP source lacks corpse-loot scanning).
+    # The binary artifacts are checked by verify_runtime_artifacts and the
+    # final ZIP gate; source edits to such DLLs fail closed until explicitly
+    # migrated out of this policy.
+    exact_names = work_candidate.get("exact_byte_modules", [])
+    if not isinstance(exact_names, list) or any(not isinstance(n, str) for n in exact_names):
+        raise SystemExit("exact_byte_modules must be a list of runtime DLL names")
+    exact_set = set(exact_names)
+    if len(exact_set) != len(exact_names):
+        raise SystemExit("exact_byte_modules contains duplicate entries")
+    unknown_exact = exact_set.difference(x.get("name") for x in items)
+    if unknown_exact:
+        raise SystemExit("exact_byte_modules contains non-active DLLs: " + ", ".join(sorted(unknown_exact)))
+    if exact_set.intersection(x["name"] for x in persistent_selected):
+        raise SystemExit("exact-byte-only DLL cannot also be a candidate source override")
+    edited_exact = [x["name"] for x in source_selected if x["name"] in exact_set]
+    if edited_exact:
+        raise SystemExit("exact-byte-only DLL has edited source; require explicit policy migration: " +
+                         ", ".join(edited_exact))
+    for item in items:
+        if item["name"] in exact_set:
+            artifact = item.get("binary_artifact")
+            if not isinstance(artifact, dict) or artifact.get("kind") != "xz":
+                raise SystemExit("exact-byte-only DLL has no XZ binary artifact: " + item["name"])
+
     force_all_paths = {
         "tools/build_active_module.py",
         "tools/build_changed_active.py",
@@ -173,6 +200,10 @@ def main():
         if item not in selected_for_candidate:
             selected_for_candidate.append(item)
     audit_selected = list(by_source.values()) if force_all else list(selected_for_candidate)
+    audit_selected = [item for item in audit_selected if item["name"] not in exact_set]
+    if exact_set:
+        print("EXACT_BYTE_ONLY: " + ", ".join(sorted(exact_set)))
+        print("Exact-byte-only DLLs are verified by verify_runtime_artifacts.py and the final ZIP gate.")
 
     relevant_infra = {
         "tools/build_active_module.py",
@@ -302,6 +333,7 @@ def main():
         "persistent_candidate_modules": [x["name"] for x in persistent_selected],
         "work_candidate_note": work_candidate.get("note") if isinstance(work_candidate, dict) else None,
         "candidate_required_modules": [],
+        "exact_byte_only_modules": sorted(exact_set),
         "audit_build_count": len(built),
         "audit_builds": build_rows,
         "candidate_override_count": len(overrides),
