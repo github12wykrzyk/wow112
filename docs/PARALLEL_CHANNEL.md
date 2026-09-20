@@ -59,3 +59,7 @@ The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols wi
 
 - CI preflights the documented Win32 `CreateFontA` 14-argument x86 `WINAPI` import and every GUI font allocation before candidate build. The prototype has five `int`, eight `DWORD`, and one `LPCSTR` parameters. The Windows x86 compiler remains authoritative.
 - Do not announce a build as ready based on source/static tests alone: inspect the newest `parallel` workflow run on the exact SHA and require success and `FINAL_PACKAGE: PASS` before asking the user to update.
+
+## LazyScript and LazyRogue updater integration (Parallel only)
+
+Parallel updater 2.3-parallel.3 publishes a separately SHA256-attested addon-only ZIP in the existing candidate workflow artifact and auto-installs only `Interface/AddOns/LazyScript` and `Interface/AddOns/LazyRogue`. It backs up/reverts/repairs managed addon files without touching other installed addons or inserting them into `dlls.txt`. Parallel's existing ESP, GUI, PP, loot and PvE Rear360 DLL runtime is unchanged. AutoKick V3's native cast bridge was **not** copied from work; interrupt decisions use the short Lua chat fallback until a parallel native integration is separately built and verified.

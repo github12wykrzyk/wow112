@@ -146,3 +146,9 @@ required. The probe uses a temporary configuration directory and no GitHub crede
 
 The TEST candidate workflow now triggers on root `*.exe` changes in addition to runtime manifests, so EXE-only patches create a new downloadable artifact. The updater compares and displays EXE SHA256 separately from DLL changes; its offline UI smoke covers EXE missing/current/changed. A successful installation logs whether EXE was replaced.
 
+
+## Parallel automatic LazyScript and LazyRogue update (2.3-parallel.3)
+
+- The newest successful `parallel` candidate artifact includes `WoW112_LAZYROGUE_HYBRID_ADDONS.zip` plus `addon_metadata.json` alongside the unchanged root-only EXE/DLL runtime ZIP. The updater requires the addon archive and verifies commit SHA, SHA256, file count and path allowlist before any installation.
+- `AKTUALIZUJ UPDATER` fetches version 2.3-parallel.3 from the branch-specific `WoW112ParallelUpdater-<sha>` workflow. `UPDATE + PLAY` then installs/updates `Interface/AddOns/LazyScript/` and `Interface/AddOns/LazyRogue/` with per-file hashes, backup, rollback and VERIFY/REPAIR; unrelated addons and `dlls.txt` are untouched.
+- Parallel is **not** work/main: no AutoKick V3 DLL was added to the parallel runtime. LazyScript's native cast bridge operates only when its existing optional native AutoKick module is present; parallel runs the conservative chat-only fallback pending a dedicated parallel native interrupt module. The addon has not been validated for SuperWoW compatibility in a live 5875 client.

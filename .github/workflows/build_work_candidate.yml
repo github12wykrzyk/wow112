@@ -27,6 +27,7 @@ on:
       - 'tools/build_autoflagwsg_candidate.py'
       - 'tools/build_openeruirecovery_candidate.py'
       - 'tools/package_current.py'
+      - 'tools/package_lazyrogue_addons.py'
       - 'tools/verify_current.py'
       - 'tools/verify_candidate_source_scope.py'
       - 'tools/verify_parallel_gui_abi.py'
@@ -238,6 +239,30 @@ jobs:
             --finalize
           if ($LASTEXITCODE -ne 0) { throw "final package verification failed" }
 
+      - name: Package and attest Parallel LazyScript + LazyRogue addons
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/package_lazyrogue_addons.py --output dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
+          if ($LASTEXITCODE -ne 0) { throw "Parallel LazyRogue addon packaging failed" }
+          @'
+          import hashlib, json
+          from pathlib import Path
+          from zipfile import ZipFile
+          p = Path("dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip")
+          with ZipFile(p) as z:
+              names = [x.filename for x in z.infolist() if not x.is_dir()]
+              if z.testzip() or len(names) != len(set(x.lower() for x in names)):
+                  raise SystemExit("invalid Parallel addon archive")
+          meta = {"schema_version": 1, "zip_name": p.name,
+                  "addon_sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  "file_count": len(names), "git_sha": "${{ github.sha }}"}
+          Path("dist/addon_metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+          print("ADDON_METADATA: PASS", meta)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Parallel addon metadata failed" }
+
       - name: Write human-readable test card
         shell: pwsh
         run: >-
@@ -251,6 +276,8 @@ jobs:
           name: WoW112-WORK-CANDIDATE-${{ github.sha }}
           path: |
             dist/WoW112_WORK_CANDIDATE.zip
+            dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
+            dist/addon_metadata.json
             dist/TEST_THIS.txt
             dist/candidate_metadata.json
             dist/candidate_summary.json
