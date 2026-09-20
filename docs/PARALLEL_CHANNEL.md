@@ -54,3 +54,8 @@ The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols wi
 - Status: ESP state and loaded/not-loaded indicators for PickPocketSelectiveRange, AutoLootPP and LongPickPocket; legacy PP/loot remain always-on with exact runtime DLLs and are *not* falsely represented as independently controllable.
 - Close and reopen with Insert; return to game focus as before. Existing ESP render worker and its hook ownership, current world/BG quarantine, and target-by-click behavior remain unchanged.
 - In-game checks: switch tabs repeatedly, toggle the four ESP filters and confirm immediate refresh and target clicks; change all three SpeedFloor settings and confirm live effect; reopen GUI and verify current runtime state; enter/leave BG, confirm ESP and GUI stability. Confirm Status 'LOADED' is not interpreted as proof of server-side PP/loot.
+
+## Native GUI compilation regression guard
+
+- CI preflights the documented Win32 `CreateFontA` 14-argument x86 `WINAPI` import and every GUI font allocation before candidate build. The prototype has five `int`, eight `DWORD`, and one `LPCSTR` parameters. The Windows x86 compiler remains authoritative.
+- Do not announce a build as ready based on source/static tests alone: inspect the newest `parallel` workflow run on the exact SHA and require success and `FINAL_PACKAGE: PASS` before asking the user to update.

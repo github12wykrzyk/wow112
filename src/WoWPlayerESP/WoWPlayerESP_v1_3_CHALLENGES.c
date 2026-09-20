@@ -362,7 +362,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_TAB_STATUS 2u
 
 typedef void* HFONT;
-__declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
+__declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
 __declspec(dllimport) LONG WINAPI SendMessageA(HWND,UINT,DWORD,LONG);
 __declspec(dllimport) BOOL WINAPI SetForegroundWindow(HWND);
 __declspec(dllimport) HMODULE WINAPI GetModuleHandleA(LPCSTR);
