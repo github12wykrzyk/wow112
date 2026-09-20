@@ -29,6 +29,12 @@ Scope: current selected hostile NPC (type 3), actual horizontal distance <=8 yd
 and vertical difference <=2.5 yd. Never active on player targets (PvP/BG).
 A moving/turning NPC's live orientation is resampled at most every 100ms.
 It pauses synthetic movement while the native cast/pending-cast fields are set.
+V1 started a NULL-HWND timer from DllMain, which depended on the DLL-loading
+thread having a Win32 message pump. The patched candidate uses a lightweight
+worker to bind the timer to the WoW game HWND (and rebind after window changes).
+The movement callback runs on the game-window thread, not the worker. STATUS
+shows timer state and cumulative heartbeat pulses; pulses do not prove server
+acceptance or an actual Backstab hit.
 The absence of a visible native casting ID for a particular item/channel is
 not yet independently verified: check mining, flag captures and poison crafts
 before keeping this candidate. During LongPickPocket's active transaction,
@@ -37,8 +43,8 @@ interpret its presence as proof of server rear acceptance.
 
 The module exports W112_CONTROL_API_V1 (`pve_rear360`, enable and interval
 80..250ms) and status/pulse-count exports. It is default-on in this experimental
-ZIP. The parallel ESP GUI currently does not expose the new setting; test the
-default behavior without interpreting the status counter as an in-game hit.
+ZIP. The parallel ESP GUI does not expose enable/interval settings. Existing STATUS
+shows timer state and pulse count, not confirmed server rear positioning.
 
 Test: target one stationary hostile NPC from the front, use Backstab; then
 approach from either side; repeat after the NPC turns/moves. Check the combat

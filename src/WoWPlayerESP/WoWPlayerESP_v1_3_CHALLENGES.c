@@ -373,6 +373,7 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 #define PAR_RANGE_DLL "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll"
 #define PAR_LOOT_DLL "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll"
 #define PAR_LONGPP_DLL "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
+#define PAR_REAR_DLL "WoWPVERear360_5875_v1.dll"
 
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
@@ -389,6 +390,7 @@ static HWND g_ui_autopp_state=NULL;
 static HWND g_ui_longpp_state=NULL;
 static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
+static HWND g_ui_rear_state=NULL;
 static DWORD g_ui_shown=0u;
 
 /* The canonical SpeedFloor source exports these stable setting IDs.
@@ -469,6 +471,32 @@ static void ui_sync_rogue(void) {
             "ESP: ON (click live labels to target)" :
             "ESP: OFF");
 }
+/* Passive diagnostics only. Pulse count is not server acceptance or a hit. */
+static void ui_sync_rear(void) {
+    HMODULE dll=GetModuleHandleA(PAR_REAR_DLL);
+    typedef DWORD (WINAPI *RearValueFn)(void);
+    RearValueFn status,count;
+    DWORD code,pulses;
+    const char* desc;
+    char buf[160],*p=buf;
+    if(!g_ui_rear_state)return;
+    if(!dll){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: NOT LOADED");return;}
+    status=(RearValueFn)GetProcAddress(dll,"PVERear360_GetStatus");
+    count=(RearValueFn)GetProcAddress(dll,"PVERear360_GetPulseCount");
+    if(!status||!count){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: diagnostics unavailable");return;}
+    code=status();pulses=count();
+    desc=code==0u?"IDLE (no eligible NPC)":
+         code==1u?"PULSING (unverified by server)":
+         code==2u?"PAUSED (cast/pending)":
+         code==3u?"BUILD MISMATCH":
+         code==4u?"TIMER ERROR":
+         code==5u?"DISABLED":
+         code==6u?"WAITING FOR GAME WINDOW":
+         code==7u?"WORKER START ERROR":"UNKNOWN";
+    p=app_str(p,"PvE Rear 360: ");p=app_str(p,desc);
+    p=app_str(p," | pulses: ");p=app_u32(p,pulses);*p=0;
+    SetWindowTextA(g_ui_rear_state,buf);
+}
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
    requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
@@ -488,6 +516,7 @@ static void ui_set_page(DWORD page) {
         }
     }
     if(page==UI_TAB_ESP)ui_sync_esp();
+    else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();}
     else ui_sync_rogue();
 }
 static void ui_add_to_page(DWORD page,HWND control) {
@@ -655,6 +684,8 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_STATUS,g_ui_autopp_state);
     g_ui_longpp_state=ui_label(g_parallel_ui_hwnd,"",46,391,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_longpp_state);
+    g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,440,665,31,FALSE);
+    ui_add_to_page(UI_TAB_STATUS,g_ui_rear_state);
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
         "Legacy PP / loot cannot be independently toggled in this build.",
         42,475,665,35,FALSE));
@@ -687,6 +718,7 @@ static void parallel_gui_tick(void) {
         ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);
         g_ui_shown=1u;
     }
+    if(g_ui_current_tab==UI_TAB_STATUS && (g_render_frame%15u)==0u)ui_sync_rear();
 }
 static void parallel_gui_destroy(void) {
     DWORD page;
@@ -704,7 +736,7 @@ static void parallel_gui_destroy(void) {
     g_ui_speedfloor_check=NULL;g_ui_hostile_guard_check=NULL;
     g_ui_speedfloor_state=NULL;g_ui_speedfloor_value=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
-    g_ui_range_state=NULL;
+    g_ui_range_state=NULL;g_ui_rear_state=NULL;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
     g_ui_font=NULL;g_ui_title_font=NULL;

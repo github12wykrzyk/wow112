@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/PVERear360/WoWPVERear360_5875_v1.c"
 DLL_NAME = "WoWPVERear360_5875_v1.dll"
 DLL_LIST_NAME = "dlls.txt"
-PROFILE = "clangcl_i686_crtless"
+PROFILE = "clangcl_i686_win32imports"
 
 
 def loader_manifest_bytes(names):
@@ -106,8 +106,8 @@ def main():
     timing, pe = build_one(PROFILE, SOURCE, obj, output)
     if pe.get("machine_hex") != "0x014C" or pe.get("entrypoint_rva") == 0:
         raise SystemExit("PvE Rear 360 PE32/x86/entrypoint verification failed")
-    if pe.get("has_import_directory"):
-        raise SystemExit("PvE Rear 360 unexpectedly has PE imports; crtless provider contract violated")
+    if not pe.get("has_import_directory"):
+        raise SystemExit("PvE Rear 360 requires Win32 imports for its game-window timer worker")
 
     module_meta = {
         "name": DLL_NAME,
@@ -165,6 +165,8 @@ def main():
         "scope": "hostile NPC only; target type 3; <=8yd actual horizontal distance",
         "heartbeat_interval_ms": 100,
         "no_cast_or_movement_hooks": True,
+        "timer_owner": "WoW game HWND; callback on game-window thread",
+        "diagnostic": "STATUS tab shows timer state and heartbeat pulse count",
         "client_position_restored_after_pulse": True,
         "server_side_acceptance": "unverified; in-game PvE test required",
     }
@@ -196,7 +198,7 @@ def main():
         and DLL_NAME in loader
         and pe.get("machine_hex") == "0x014C"
         and pe.get("entrypoint_rva") != 0
-        and not pe.get("has_import_directory")
+        and pe.get("has_import_directory")
     )
     summary["result"] = "PASS" if summary["ready_for_test"] else "FAIL"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

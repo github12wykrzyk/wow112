@@ -2,6 +2,7 @@
    WoW 1.12.1 build 5875, Windows x86. Newly written source.
    Only NPC (type 3), hostile reaction 1..3, actual distance <=8yd.
    No hooks, no cast replay, no client GCD edits, no player-target PvP.
+   The game-HWND timer runs on the game window thread (not the DLL loader thread).
    The client object pose is restored synchronously after each pulse.
    Server acceptance of the synthetic pose is not guaranteed. */
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -22,8 +23,16 @@ typedef unsigned char u8;
 typedef unsigned int u32;
 typedef int s32;
 typedef void *HWND32;
-typedef u32 (STDCALL *SetTimerFn)(HWND32,u32,u32,void (STDCALL *)(HWND32,u32,u32,u32));
-typedef int (STDCALL *KillTimerFn)(HWND32,u32);
+typedef HWND32 (__fastcall *GetGameWindowFn)(int);
+typedef u32 (STDCALL *RearThreadFn)(void*);
+__declspec(dllimport) void* STDCALL CreateThread(void*,u32,RearThreadFn,void*,u32,u32*);
+__declspec(dllimport) int STDCALL CloseHandle(void*);
+__declspec(dllimport) void STDCALL Sleep(u32);
+__declspec(dllimport) int STDCALL IsWindow(HWND32);
+__declspec(dllimport) u32 STDCALL GetWindowThreadProcessId(HWND32,u32*);
+__declspec(dllimport) u32 STDCALL GetCurrentProcessId(void);
+__declspec(dllimport) u32 STDCALL SetTimer(HWND32,u32,u32,void (STDCALL *)(HWND32,u32,u32,u32));
+__declspec(dllimport) int STDCALL KillTimer(HWND32,u32);
 typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define OBJMGR 0x00B41414u
 #define TARGET_LO 0x00B4E2D8u
@@ -46,6 +55,7 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define CASTING_SPELL_ID 0x00CECA88u
 #define PENDING_CAST 0x00CEAC48u
 #define SEND_MOVEMENT_WRAPPER 0x00600A10u
+#define FN_GET_GAME_WINDOW 0x00435C30u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
 #define PI_F 3.14159265358979323846f
@@ -58,12 +68,16 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define STATUS_BUILD_MISMATCH 3u
 #define STATUS_TIMER_ERROR 4u
 #define STATUS_DISABLED 5u
+#define STATUS_WAIT_WINDOW 6u
+#define STATUS_THREAD_ERROR 7u
 int _fltused=0;
 static volatile u32 g_enabled=1u;
 static volatile u32 g_period=100u;
 static volatile u32 g_status=STATUS_IDLE;
 static volatile u32 g_count=0u;
 static volatile u32 g_timer=0u;
+static volatile HWND32 g_timerWindow=0;
+static volatile u32 g_stop=0u;
 static volatile u32 g_lastTick=0u;
 static volatile u32 g_needsRestore=0u;
 static W112_ControlSettingV1 g_settings[2];
@@ -126,6 +140,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  u32 pl,tg,lo,hi;
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,x,y,z,o,a;
  (void)hwnd;(void)msg;(void)timer;
+ if(g_stop||!g_timer||timer!=g_timer||hwnd!=g_timerWindow)return;
  if(!g_enabled){g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;}
  if((u32)(now-g_lastTick)<g_period)return;
  g_lastTick=now;
@@ -134,9 +149,10 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   g_status=STATUS_IDLE;restoreHeartbeat(pl);return;
  }
  /* Reaction 1-3 is the verified hostile band for build 5875. */
- if(((ReactionFn)REACTION_FN)(pl,tg)<1||((ReactionFn)REACTION_FN)(pl,tg)>3){
+ {s32 reaction=((ReactionFn)REACTION_FN)(pl,tg);
+ if(reaction<1||reaction>3){
   g_status=STATUS_IDLE;restoreHeartbeat(pl);return;
- }
+ }}
  if(read32(CASTING_SPELL_ID)||read32(PENDING_CAST)){
   g_status=STATUS_CAST_PAUSE;return;
  }
@@ -200,17 +216,44 @@ W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetMod
 }
 __declspec(dllexport) u32 STDCALL PVERear360_GetStatus(void){return g_status;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetPulseCount(void){return g_count;}
+/* The DLL-loading thread may not pump WM_TIMER. A worker waits for the
+   real game HWND and installs an HWND-owned timer. The timer callback then
+   executes on the game-window thread, never on this bootstrap worker. */
+static u32 STDCALL rearBootstrap(void*unused){
+ (void)unused;
+ while(!g_stop){
+  HWND32 game=((GetGameWindowFn)FN_GET_GAME_WINDOW)(0);
+  u32 pid=0u;
+  int usable=game && IsWindow(game) &&
+      GetWindowThreadProcessId(game,&pid)!=0u && pid==GetCurrentProcessId();
+  if(g_timer && (!usable || game!=g_timerWindow)){
+   if(g_timerWindow && IsWindow(g_timerWindow))KillTimer(g_timerWindow,g_timer);
+   g_timer=0u;g_timerWindow=0;g_status=STATUS_WAIT_WINDOW;
+   g_needsRestore=0u; /* Avoid a stale-object heartbeat after window migration. */
+  }
+  if(usable&&!g_timer){
+   u32 id=SetTimer(game,0u,25u,tick);
+   if(id){g_timerWindow=game;g_timer=id;g_status=STATUS_IDLE;}
+   else g_status=STATUS_TIMER_ERROR;
+  }else if(!usable&&!g_timer)g_status=STATUS_WAIT_WINDOW;
+  Sleep(250u);
+ }
+ if(g_timer&&g_timerWindow&&IsWindow(g_timerWindow))KillTimer(g_timerWindow,g_timer);
+ g_timer=0u;g_timerWindow=0;
+ return 0u;
+}
 int STDCALL DllMain(void*m,u32 reason,void*reserved){
- SetTimerFn st;KillTimerFn kt;(void)m;(void)reserved;
+ void*worker;(void)m;(void)reserved;
  if(reason==1u){
   if(!build5875()){g_status=STATUS_BUILD_MISMATCH;return 1;}
-  st=(SetTimerFn)read32(IAT_SETTIMER);
-  g_timer=st(0,0,25u,tick);
-  if(!g_timer)g_status=STATUS_TIMER_ERROR;
+  g_stop=0u;g_status=STATUS_WAIT_WINDOW;
+  worker=CreateThread(0,0u,rearBootstrap,0,0u,0);
+  if(worker)CloseHandle(worker);
+  else g_status=STATUS_THREAD_ERROR;
  }else if(reason==0u){
-  kt=(KillTimerFn)read32(IAT_KILLTIMER);
-  if(kt&&g_timer)kt(0,g_timer);
-  g_timer=0u;g_status=STATUS_DISABLED;
+  g_stop=1u;
+  if(g_timer&&g_timerWindow&&IsWindow(g_timerWindow))KillTimer(g_timerWindow,g_timer);
+  g_timer=0u;g_timerWindow=0;g_status=STATUS_DISABLED;
  }
  return 1;
 }
