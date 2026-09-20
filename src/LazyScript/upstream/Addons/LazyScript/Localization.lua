@@ -2143,7 +2143,7 @@ function lazyScript.doLocaleLookup(locale, token)
 		return nil
 	end
 	local value = nil
-	for tokenBit in string.gfind(token, "[^\.]+") do
+	for tokenBit in string.gfind(token, "[^%.]+") do
 		if value then
 			value = value[tokenBit]
 			else
