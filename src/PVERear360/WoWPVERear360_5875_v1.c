@@ -71,8 +71,16 @@ static volatile u32 g_descriptorsReady=0u;
 static u32 read32(u32 a){return *(volatile u32*)a;}
 static float readf(u32 a){return *(volatile float*)a;}
 static int finitef(float v){union{float f;u32 x;}q;q.f=v;return (q.x&0x7F800000u)!=0x7F800000u;}
-static float fcos1(float v){float r;__asm{fld v fcos fstp r}return r;}
-static float fsin1(float v){float r;__asm{fld v fsin fstp r}return r;}
+static float fcos1(float v){float r;__asm {
+ fld v
+ fcos
+ fstp r
+}return r;}
+static float fsin1(float v){float r;__asm {
+ fld v
+ fsin
+ fstp r
+}return r;}
 static float angle(float a){while(a<0.0f)a+=TWO_PI_F;while(a>=TWO_PI_F)a-=TWO_PI_F;return a;}
 static int build5875(void){
  static const u8 sig[]={0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x4D,0x0C,0x8B,0xD0,0x0B,0xD1};
