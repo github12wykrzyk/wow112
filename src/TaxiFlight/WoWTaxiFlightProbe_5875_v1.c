@@ -1,12 +1,14 @@
 /*
  * TaxiFlightProbe V1 - WoW 1.12.1 build 5875, Windows x86.
  *
- * Read-only flight-path measurement. This is NOT an instant-flight hack:
- * the server controls actual taxi travel and no taxi opcode or ABI has
- * been verified for this executable. Do not alter movement or packet state.
+ * Taxi measurement plus opt-in, SINGLE early native CMSG_MOVE_SPLINE_DONE.
+ * The early ACK is only an experiment: its return value never establishes
+ * server acceptance, and this module never spoofs or teleports coordinates.
  *
  * Ctrl+Shift+F8: mark departure after choosing a Flight Master destination.
  * Ctrl+Shift+F9: mark arrival once the character is controllable.
+ * Ctrl+Shift+HOME: send one EARLY spline-done attempt for this marked trip.
+ * The instant attempt is DISABLED except for that explicit hotkey.
  * Only when the game window is in the foreground. Output is written to
  * <game folder>\.wow112_debug\taxi_probe_<pid>_<tick>.csv.
  */
@@ -32,6 +34,18 @@ int _fltused = 0;
 #define PLAYER_CURRENT_SPEED 0x0A2Cu
 #define PLAYER_RUN_SPEED 0x0A34u
 #define MAX_OBJECTS 1536u
+/* Byte-audited from the exact active 5875 EXE, SHA256 9a735271...ffd42a2. */
+#define PLAYER_MOVEMENT_THIS_OFF 0x09A8u
+#define MOVE_SPLINE_PTR_OFF 0x00A4u
+#define MOVE_PLAYER_PTR_OFF 0x015Cu
+#define SPLINE_FLAGS_OFF 0x18u
+#define SPLINE_ELAPSED_OFF 0x20u
+#define SPLINE_DURATION_OFF 0x24u
+#define SPLINE_ID_OFF 0x28u
+#define FN_NATIVE_SPLINE_DONE 0x00600B10u
+#define FN_NATIVE_SPLINE_TICK 0x00619D40u
+#define FN_FRAMESCRIPT_EXECUTE 0x00704CD0u
+#define FN_FRAME_GET_TEXT 0x00703BF0u
 
 typedef struct TaxiSample {
     LONG x100, y100, z100;
@@ -44,6 +58,12 @@ static volatile LONG g_status = 0; /* 0=detached, 1=idle, 2=recording */
 static DWORD g_start_tick = 0;
 static DWORD g_last_sample = 0;
 static char g_path[MAX_PATH];
+static volatile LONG g_instantPending = 0;
+static volatile LONG g_instantAttempted = 0;
+static DWORD g_instantScheduledAt = 0;
+static UINT_PTR g_instantTimer = 0;
+static HWND g_instantWindow = NULL;
+
 
 static int ReadBytes(DWORD addr, void *out, SIZE_T n)
 {
@@ -145,9 +165,136 @@ static int IsGameForeground(void)
     GetWindowThreadProcessId(hwnd, &pid);
     return pid == GetCurrentProcessId();
 }
+
+/*
+ * Exact EXE disassembly:
+ * 0x619D50 operates on player+0x9A8; it reads the spline pointer at
+ * movement+0xA4. 0x619DE0 reads the player owner at movement+0x15C,
+ * the spline ID at spline+0x28 and sends through 0x600B10.
+ * 0x619D40 returns the same movement timestamp used at the native callsite.
+ * This is a one-shot protocol experiment, NEVER an asserted teleport.
+ */
+static DWORD LocalPlayerObject(void)
+{
+    DWORD mgr, node, localLo, localHi, lo, hi, type, next;
+    DWORD count;
+    if ((DWORD)(ULONG_PTR)GetModuleHandleA(NULL) != 0x00400000u ||
+        !ReadU32(OBJMGR_GLOBAL, &mgr) || mgr < 0x10000u ||
+        !ReadU32(mgr + OM_LOCAL_GUID_LO, &localLo) ||
+        !ReadU32(mgr + OM_LOCAL_GUID_HI, &localHi) ||
+        (!localLo && !localHi) ||
+        !ReadU32(mgr + OM_FIRST_OBJECT, &node)) return 0;
+    for (count = 0; count < MAX_OBJECTS && node >= 0x10000u; ++count) {
+        if (!ReadU32(node + OBJ_TYPE, &type) ||
+            !ReadU32(node + OBJ_GUID_LO, &lo) ||
+            !ReadU32(node + OBJ_GUID_HI, &hi)) return 0;
+        if (type == TYPEID_PLAYER && lo == localLo && hi == localHi)
+            return node;
+        if (!ReadU32(node + OBJ_NEXT, &next) || next == node) return 0;
+        node = next;
+    }
+    return 0;
+}
+static int BytesEqual(const BYTE *a, const BYTE *b, unsigned len)
+{
+    unsigned i;
+    for (i = 0; i < len; ++i) if (a[i] != b[i]) return 0;
+    return 1;
+}
+static int NativeSignaturesMatch(void)
+{
+    static const BYTE prologue[] = {0x55,0x8B,0xEC,0x83,0xEC,0x18,0x53,0x8B,0x5D,0x08};
+    static const BYTE opcode[] = {0x68,0xC9,0x02,0x00,0x00};
+    static const BYTE tick[] = {0xE8,0xFB,0x6C,0x01,0x00,0x8B,0x80,0x2C,0x01};
+    BYTE actual[sizeof(prologue)];
+    if (!ReadBytes(FN_NATIVE_SPLINE_DONE, actual, sizeof(prologue))) return 0;
+    if (!BytesEqual(actual, prologue, sizeof(prologue))) return 0;
+    if (!ReadBytes(FN_NATIVE_SPLINE_DONE+0x14u, actual, sizeof(opcode))) return 0;
+    if (!BytesEqual(actual, opcode, sizeof(opcode))) return 0;
+    if (!ReadBytes(FN_NATIVE_SPLINE_TICK, actual, sizeof(tick))) return 0;
+    return BytesEqual(actual, tick, sizeof(tick));
+}
+static void ExecuteLua(const char *script)
+{
+    DWORD fn = FN_FRAMESCRIPT_EXECUTE;
+    if (!script) return;
+    /* Exact calling pattern used in canonical MovementCore 5875 source. */
+    __asm {
+        push ebx
+        mov ecx, script
+        mov edx, script
+        xor eax, eax
+        mov ebx, fn
+        call ebx
+        pop ebx
+    }
+}
+static int ServerTaxiStateReportedByLua(void)
+{
+    typedef const char *(__fastcall *GetLuaTextFn)(const char *, int, DWORD);
+    const char *result;
+    static const char script[] =
+        "W112_TAXI_ON=(UnitOnTaxi and UnitOnTaxi('player')) and '1' or '0'";
+    ExecuteLua(script);
+    result = ((GetLuaTextFn)FN_FRAME_GET_TEXT)("W112_TAXI_ON", -1, 0u);
+    return result && result[0] == '1' && result[1] == 0;
+}
+static void CALLBACK InstantTimerProc(HWND hwnd, UINT message, UINT_PTR id, DWORD ignored)
+{
+    DWORD player, movement, owner, spline, flags, elapsed, duration, splineId;
+    DWORD timestamp;
+    typedef DWORD (__cdecl *NativeTickFn)(void);
+    typedef int (__thiscall *NativeDoneFn)(void *, DWORD, DWORD, float);
+    int clientResult;
+    (void)message; (void)ignored;
+    KillTimer(hwnd, id);
+    g_instantTimer = 0;
+    if (InterlockedCompareExchange(&g_instantPending, 0, 1) != 1) return;
+    if (g_stop || !IsGameForeground() || !g_recording ||
+        (DWORD)(GetTickCount() - g_start_tick) < 2000u) {
+        LogSample(GetTickCount(), "EARLY_ACK_ABORT_NOT_READY");
+        return;
+    }
+    if (!NativeSignaturesMatch()) {
+        LogSample(GetTickCount(), "EARLY_ACK_ABORT_EXE_SIGNATURE");
+        return;
+    }
+    if (!ServerTaxiStateReportedByLua()) {
+        LogSample(GetTickCount(), "EARLY_ACK_ABORT_NOT_ON_TAXI");
+        return;
+    }
+    player = LocalPlayerObject();
+    if (!player) {
+        LogSample(GetTickCount(), "EARLY_ACK_ABORT_PLAYER_INVALID");
+        return;
+    }
+    movement = player + PLAYER_MOVEMENT_THIS_OFF;
+    if (!ReadU32(movement + MOVE_PLAYER_PTR_OFF, &owner) ||
+        owner != player || !ReadU32(movement + MOVE_SPLINE_PTR_OFF, &spline) ||
+        spline < 0x10000u || !ReadU32(spline + SPLINE_FLAGS_OFF, &flags) ||
+        !ReadU32(spline + SPLINE_ELAPSED_OFF, &elapsed) ||
+        !ReadU32(spline + SPLINE_DURATION_OFF, &duration) ||
+        !ReadU32(spline + SPLINE_ID_OFF, &splineId) ||
+        (flags & 4u) || duration < 2000u || duration > 1200000u ||
+        elapsed < 1000u || elapsed >= duration || splineId == 0u) {
+        LogSample(GetTickCount(), "EARLY_ACK_ABORT_SPLINE_INVALID");
+        return;
+    }
+    /* Do NOT edit elapsed time, flight path, position, mount, or client flags.
+     * Server behavior is unknown. One native packet only, with CURRENT
+     * movementInfo and splineId. Caller must confirm whether server accepted. */
+    LogSample(GetTickCount(), "EARLY_ACK_BEFORE_SEND");
+    timestamp = ((NativeTickFn)FN_NATIVE_SPLINE_TICK)();
+    clientResult = ((NativeDoneFn)FN_NATIVE_SPLINE_DONE)(
+        (void *)(ULONG_PTR)player, timestamp, splineId, 1.0f);
+    LogSample(GetTickCount(), clientResult ?
+              "EARLY_ACK_CLIENT_SEND_OK_NOT_SERVER_ACK" :
+              "EARLY_ACK_CLIENT_SEND_FAILED");
+}
+
 static DWORD WINAPI ProbeThread(LPVOID unused)
 {
-    int lastF8 = 0, lastF9 = 0;
+    int lastF8 = 0, lastF9 = 0, lastHome = 0;
     (void)unused;
     if (!PreparePath()) {
         InterlockedExchange(&g_status, 0);
@@ -168,19 +315,22 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
     LogSample(GetTickCount(), "PROBE_READY");
     while (!g_stop) {
         DWORD now;
-        int f8, f9, modifiers;
+        int f8, f9, home, modifiers;
         Sleep(80);
         if (!IsGameForeground()) {
             lastF8 = 0;
             lastF9 = 0;
+            lastHome = 0;
             continue;
         }
         now = GetTickCount();
         f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
         f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+        home = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
         modifiers = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) &&
                     ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
         if (modifiers && f8 && !lastF8 && !g_recording) {
+            InterlockedExchange(&g_instantAttempted, 0);
             g_start_tick = now;
             g_last_sample = now;
             InterlockedExchange(&g_recording, 1);
@@ -193,8 +343,34 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
             InterlockedExchange(&g_recording, 0);
             InterlockedExchange(&g_status, 1);
         }
+        if (modifiers && home && !lastHome && g_recording &&
+            (DWORD)(now - g_start_tick) >= 2000u &&
+            InterlockedCompareExchange(&g_instantAttempted, 1, 0) == 0) {
+            HWND hwnd = GetForegroundWindow();
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hwnd, &pid);
+            if (hwnd && pid == GetCurrentProcessId() &&
+                InterlockedCompareExchange(&g_instantPending, 1, 0) == 0) {
+                g_instantWindow = hwnd;
+                g_instantScheduledAt = now;
+                g_instantTimer = SetTimer(hwnd, 0u, 70u, InstantTimerProc);
+                LogSample(now, g_instantTimer ?
+                          "EARLY_ACK_SCHEDULED" : "EARLY_ACK_TIMER_FAILED");
+                if (!g_instantTimer)
+                    InterlockedExchange(&g_instantPending, 0);
+            } else {
+                LogSample(now, "EARLY_ACK_ABORT_NO_GAME_WINDOW");
+            }
+        }
         lastF8 = f8;
         lastF9 = f9;
+        lastHome = home;
+        if (g_instantPending && (DWORD)(now - g_instantScheduledAt) >= 2500u &&
+            InterlockedCompareExchange(&g_instantPending, 0, 1) == 1) {
+            if (g_instantTimer) KillTimer(g_instantWindow, g_instantTimer);
+            g_instantTimer = 0;
+            LogSample(now, "EARLY_ACK_TIMER_TIMEOUT");
+        }
         if (g_recording && (DWORD)(now - g_last_sample) >= 1000u) {
             g_last_sample = now;
             LogSample(now, "SAMPLE");

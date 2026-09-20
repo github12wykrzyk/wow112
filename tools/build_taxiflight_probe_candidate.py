@@ -66,8 +66,11 @@ def main():
         "pe_machine": pe["machine_hex"],
         "entrypoint_rva": pe["entrypoint_rva"],
         "has_import_directory": True,
-        "mode": "observer_only",
-        "writes_game_state": False,
+        "mode": "experiment_opt_in_early_spline_ack",
+        "native_opcode": "CMSG_MOVE_SPLINE_DONE",
+        "hotkey": "Ctrl+Shift+HOME",
+        "server_completion_verified": False,
+        "writes_game_state": True,
         "timings_ms": timing,
     }
     with zipfile.ZipFile(package, "r") as src:
