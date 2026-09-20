@@ -423,6 +423,8 @@ static DWORD g_relation_world_local_lo = 0u;
 static DWORD g_relation_world_local_hi = 0u;
 static DWORD g_relation_world_local_obj = 0u;
 static DWORD g_relation_world_stable_frames = 0u;
+/* The cached local-player pointer belongs to one Object Manager generation. */
+static DWORD g_render_manager = 0u;
 
 static volatile DWORD g_esp_enabled = 1u;
 static volatile DWORD g_esp_flag_enabled = 1u;
@@ -766,8 +768,9 @@ static void reset_world_runtime_cache(void) {
     }
 }
 
-/* Forward declaration: implementation is below the world guard. */
+/* Forward declarations: implementations follow the world guard. */
 static BOOL cached_object_matches(DWORD obj, DWORD guidLo, DWORD guidHi);
+static void log_line(const char* s);
 
 static BOOL relation_world_ready(DWORD manager, DWORD localObj, DWORD guidLo, DWORD guidHi) {
     struct UnitMeta localMeta;
@@ -791,8 +794,11 @@ static BOOL relation_world_ready(DWORD manager, DWORD localObj, DWORD guidLo, DW
         return FALSE;
     }
 
-    if (g_relation_world_stable_frames < WORLD_RELATION_STABLE_FRAMES)
+    if (g_relation_world_stable_frames < WORLD_RELATION_STABLE_FRAMES) {
         ++g_relation_world_stable_frames;
+        if (g_relation_world_stable_frames == WORLD_RELATION_STABLE_FRAMES)
+            log_line("ESP_WORLD_READY local_player_reacquired=1");
+    }
     return g_relation_world_stable_frames >= WORLD_RELATION_STABLE_FRAMES;
 }
 
@@ -1893,6 +1899,22 @@ next_object:
     return TRUE;
 }
 
+/* A BG/world switch can leave the previous player object readable with the
+   same GUID. GUID equality alone does not establish membership in the NEW
+   Object Manager. Forget that pointer, all old player labels and the relation
+   quarantine before querying the new manager. Never remove a live WndProc
+   subclass here: ControlHub / Challenges may be above our hook. */
+static void esp_forget_world(const char* reason) {
+    if (g_render_manager == 0u) return;
+    g_render_manager = 0u;
+    g_relation_world_manager = 0u;
+    g_relation_world_local_obj = 0u;
+    g_relation_world_stable_frames = 0u;
+    reset_world_runtime_cache();
+    overlay_hide();
+    log_line(reason);
+}
+
 static void render_frame_fast(void) {
     DWORD manager, linkBase, guidLo, guidHi, localObj = 0u, dummyCount = 0u;
     DWORD i;
@@ -1916,15 +1938,21 @@ static void render_frame_fast(void) {
         manager < 0x00010000u || manager > 0x7FFF0000u ||
         !readable4(manager + OM_FIRST_OBJECT) ||
         !rd_u32(manager + OM_LINK_BASE, &linkBase) || linkBase != 0x38u) {
+        esp_forget_world("ESP_WORLD_LOST object_manager_unavailable");
         overlay_hide();
         g_cache_age_frames = 0xFFFFFFFFu;
         return;
+    }
+    if (g_render_manager != manager) {
+        esp_forget_world("ESP_WORLD_CHANGED invalidate_cached_local_player");
+        g_render_manager = manager;
     }
     g_next_offset = linkBase + 4u;
 
     if (!rd_u32(manager + OM_LOCAL_GUID_LO, &guidLo) ||
         !rd_u32(manager + OM_LOCAL_GUID_HI, &guidHi) ||
         (guidLo == 0u && guidHi == 0u)) {
+        esp_forget_world("ESP_WORLD_LOST local_guid_unavailable");
         overlay_hide();
         g_cache_age_frames = 0xFFFFFFFFu;
         return;
@@ -1935,6 +1963,11 @@ static void render_frame_fast(void) {
         !cached_object_matches(localObj, guidLo, guidHi)) {
         lx = ly = lz = 0.0f;
         if (!find_local_player(manager, guidLo, guidHi, &localObj, &lx, &ly, &lz, &dummyCount, &reason)) {
+            if ((g_render_frame % DIAG_EVERY_FRAMES) == 0u) {
+                char b[160]; char* p = b;
+                p = app_str(p, "ESP_LOCAL_REACQUIRE_WAIT reason=");
+                p = app_str(p, reason); *p = 0; log_line(b);
+            }
             overlay_hide();
             g_cache_age_frames = 0xFFFFFFFFu;
             return;

@@ -34,6 +34,9 @@
     two independent position-spoof systems at once.
 */
 
+/* The included base now invalidates its local-object cache when the Object
+   Manager changes across a BG/world transition. Keep this wrapper marked as
+   the active build input so build_changed_active rebuilds PlayerESP. */
 #define DllMain W112_PlayerESP_Base_DllMain
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
