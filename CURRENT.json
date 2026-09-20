@@ -34,16 +34,5 @@
     "size": 4907008,
     "storage": "direct_binary"
   },
-  "movementcore": {
-    "runtime_name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
-    "source_state": "normal_source",
-    "source_origin": "v20_original_source_plus_v21_alt_priority_overlay_candidate",
-    "source_path": "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
-    "source_sha256": "764a216233ae4269cdc1c75ec4aec6cb7e2abe041a622923147f2e06192f7888",
-    "source_size": 107833,
-    "source_restore_doc": "artifacts/V68/source/README_RESTORE.md",
-    "source_parts_dir": "artifacts/V68/source",
-    "legacy_partial_source_dir": "source/V20_SOURCE_PARTS"
-  },
   "active_builder": "tools/build_active_module.py"
 }

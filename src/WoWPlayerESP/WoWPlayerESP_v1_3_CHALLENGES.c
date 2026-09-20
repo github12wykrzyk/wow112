@@ -14,9 +14,9 @@
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
 
-#include "../common/W112ControlAPI.h"
 
 #define WM_W112_ESP_BG_SCORE (0x8000u + 0x0113u)
+#define VK_INSERT 0x2Du
 #define BG_SCORE_POLL_FRAMES 30u /* ~1s at 33ms/render frame */
 #define CHALLENGE_WORLD_STABLE_POLLS 15u /* 15 x 100 ms = 1.5 s quarantine after world/BG rebuild */
 
@@ -219,6 +219,10 @@ static void chal_bg_score_main_thread(void) {
 }
 
 static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
+    if (msg==WM_KEYDOWN && wParam==VK_INSERT) {
+        g_parallel_gui_open=g_parallel_gui_open?0u:1u;
+        return 0;
+    }
     /* v1.2 consumes F8 to toggle its range sweep. In the aggregate active stack
        MovementCore also owns physical F8 for SafeBreak. Let the existing WndProc
        chain process the key, then force the ESP sweep back off before its next
@@ -334,112 +338,147 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
     return 0u;
 }
 
-/* Read-only pipeline states give the in-game GUI a precise diagnostic when
-   ESP is enabled but BG labels have not returned. */
-static const W112_ControlEnumOptionV1 g_espPipelineOptions[] = {
-    {0, "STARTING"}, {1, "WORLD_NOT_READY"}, {2, "LOCAL_GUID_MISSING"},
-    {3, "LOCAL_PLAYER_MISSING"}, {4, "WORLD_STABILIZING"},
-    {5, "ESP_DISABLED"}, {6, "PROJECTION_NOT_READY"},
-    {7, "GAME_RECT_INVALID"}, {8, "GAME_NOT_FOCUSED"},
-    {9, "LABEL_BUFFER_FAIL"}, {10, "NO_HOSTILE_RACES"},
-    {11, "HOSTILES_OFF_SCREEN"}, {12, "LABELS_DRAWN"},
-    {13, "NO_REMOTE_PLAYERS"}
-};
-static W112_ControlSettingV1 g_controlSettings[10];
-static volatile DWORD g_controlDescriptorReady=0u;
 
-static void init_control_descriptor(void)
-{
-    W112_ControlSettingV1*s;
-    if(g_controlDescriptorReady)return;
-
-    s=&g_controlSettings[0];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=1u;s->key="esp_enabled";s->label="ESP labels";
-    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[1];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=2u;s->key="range_sweep";s->label="Range sweep";
-    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[2];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=3u;s->key="cached_players";s->label="Cached hostile players";
-    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=128;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[3];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=4u;s->key="click_targets";s->label="Clickable ESP targets";
-    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=128;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[4];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=5u;s->key="world_ready";s->label="ESP world ready";
-    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[5];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="wsg_flag_carrier";s->label="WSG Flag Carrier";
-    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[6];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="pipeline";s->label="ESP render state";
-    s->type=W112_CTL_ENUM;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=13;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=g_espPipelineOptions;s->enum_option_count=(w112_u32)(sizeof(g_espPipelineOptions)/sizeof(g_espPipelineOptions[0]));
-
-    s=&g_controlSettings[7];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=8u;s->key="seen_players";s->label="Visible remote players";
-    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=4096;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[8];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=9u;s->key="drawn_labels";s->label="Labels rendered";
-    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=128;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    s=&g_controlSettings[9];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=10u;s->key="world_frames";s->label="World stable frames";
-    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=60;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
-
-    g_controlDescriptorReady=1u;
+/* PARALLEL: large native GUI runs in the ESP DLL's existing render thread.
+   This GUI never re-subclasses the game window, and controls ESP only. */
+#define UI_CHILD 0x40000000u
+#define UI_VISIBLE 0x10000000u
+#define UI_CAPTION 0x00C00000u
+#define UI_SYSMENU 0x00080000u
+#define UI_CHECKBOX 0x00000002u
+#define UI_COMMAND 0x0111u
+#define UI_CLOSE 0x0010u
+#define UI_SETFONT 0x0030u
+#define UI_SETCHECK 0x00F1u
+#define UI_WIDTH 750
+#define UI_HEIGHT 475
+typedef void* HFONT;
+__declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
+__declspec(dllimport) LONG WINAPI SendMessageA(HWND,UINT,DWORD,LONG);
+__declspec(dllimport) BOOL WINAPI SetForegroundWindow(HWND);
+static WNDPROC32 g_ui_prev=NULL;
+static HFONT g_ui_font=NULL, g_ui_title_font=NULL;
+static HWND g_ui_checks[4]={NULL,NULL,NULL,NULL};
+static DWORD g_ui_shown=0u;
+static void ui_check(DWORD n,DWORD on) {
+    if (n<4u && g_ui_checks[n]) SendMessageA(g_ui_checks[n],UI_SETCHECK,on?1u:0u,0);
 }
-
-static int W112_CTL_STDCALL esp_control_get(w112_u32 id,W112_ControlValueV1*out)
-{
-    if(!out)return 0;
-    if(id==1u){out->u32=g_esp_enabled?1u:0u;return 1;}
-    if(id==2u){out->u32=g_range_sweep_enabled?1u:0u;return 1;}
-    if(id==3u){out->i32=(w112_i32)g_esp_cache_count;return 1;}
-    if(id==4u){out->i32=(w112_i32)g_click_hit_count;return 1;}
-    if(id==5u){out->u32=g_challenge_world_ready?1u:0u;return 1;}
-    if(id==6u){out->u32=g_esp_flag_enabled?1u:0u;return 1;}
-    if(id==7u){out->i32=(w112_i32)g_esp_status;return 1;}
-    if(id==8u){out->i32=(w112_i32)g_esp_scan_players;return 1;}
-    if(id==9u){out->i32=(w112_i32)g_esp_drawn_labels;return 1;}
-    if(id==10u){out->i32=(w112_i32)g_relation_world_stable_frames;return 1;}
-    return 0;
-}
-
-static int W112_CTL_STDCALL esp_control_set(w112_u32 id,const W112_ControlValueV1*value)
-{
-    if(!value||value->u32>1u)return 0;
-    if(id==1u){
-        g_esp_enabled=value->u32;
-        if(!g_esp_enabled)g_range_sweep_enabled=0u;
-        return 1;
+static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
+    DWORD id;
+    if (msg==UI_CLOSE || (msg==WM_KEYDOWN && wp==VK_INSERT)) {
+        g_parallel_gui_open=0u;
+        ShowWindow(hwnd,SW_HIDE);
+        if (g_hooked_game_hwnd && IsWindow(g_hooked_game_hwnd))
+            SetForegroundWindow(g_hooked_game_hwnd);
+        return 0;
     }
-    if(id==2u){
-        if(value->u32&&!g_esp_enabled)return 0;
-        g_range_sweep_enabled=value->u32;
-        if(g_range_sweep_enabled)g_sweep_next_frame=g_render_frame+1u;
-        return 1;
+    if (msg==UI_COMMAND) {
+        id=wp&0xFFFFu;
+        if (id==101u) {
+            g_esp_enabled=g_esp_enabled?0u:1u;
+            if (!g_esp_enabled) g_range_sweep_enabled=0u;
+            ui_check(0u,g_esp_enabled);return 0;
+        }
+        if (id==102u) {
+            g_parallel_show_horde=g_parallel_show_horde?0u:1u;
+            ui_check(1u,g_parallel_show_horde);return 0;
+        }
+        if (id==103u) {
+            g_parallel_show_alliance=g_parallel_show_alliance?0u:1u;
+            ui_check(2u,g_parallel_show_alliance);return 0;
+        }
+        if (id==104u) {
+            g_parallel_show_hostile=g_parallel_show_hostile?0u:1u;
+            ui_check(3u,g_parallel_show_hostile);return 0;
+        }
     }
-    if(id==6u){g_esp_flag_enabled=value->u32;return 1;}
-    return 0;
+    return g_ui_prev?CallWindowProcA(g_ui_prev,hwnd,msg,wp,lp):0;
 }
-
-static const W112_ControlModuleV1 g_controlModule={
-    W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "playeresp","PlayerESP",0x00010401u,10u,g_controlSettings,
-    esp_control_get,esp_control_set
-};
-
-W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
-{
-    init_control_descriptor();
-    return &g_controlModule;
+static void ui_label(HWND parent,const char* label,int x,int y,int width,int height,BOOL title) {
+    HWND ctl=CreateWindowExA(0u,"STATIC",label,UI_CHILD|UI_VISIBLE,
+                            x,y,width,height,parent,NULL,g_self,NULL);
+    HFONT font=title?g_ui_title_font:g_ui_font;
+    if (ctl && font) SendMessageA(ctl,UI_SETFONT,(DWORD)font,1);
+}
+static BOOL ui_create(HWND game) {
+    struct POINT32 pt;
+    struct RECT32 rc;
+    DWORD i;
+    const char* names[4]={
+        "ESP - display player labels",
+        "HORDE - display Horde characters",
+        "ALLIANCE - display Alliance characters",
+        "HOSTILE TO ME - display opposing BG team"
+    };
+    if (!game || !IsWindow(game)) return FALSE;
+    pt.x=pt.y=0;
+    if (!GetClientRect(game,&rc) || !ClientToScreen(game,&pt)) return FALSE;
+    g_parallel_ui_hwnd=CreateWindowExA(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,
+        "STATIC","PARALLEL - Player ESP",WS_POPUP|UI_CAPTION|UI_SYSMENU,
+        (int)(pt.x+(rc.right-UI_WIDTH)/2),(int)(pt.y+(rc.bottom-UI_HEIGHT)/2),
+        UI_WIDTH,UI_HEIGHT,NULL,NULL,g_self,NULL);
+    if (!g_parallel_ui_hwnd) return FALSE;
+    g_ui_prev=(WNDPROC32)(DWORD)SetWindowLongA(
+        g_parallel_ui_hwnd,GWL_WNDPROC,(LONG)(DWORD)ui_wndproc);
+    if (!g_ui_prev) {
+        DestroyWindow(g_parallel_ui_hwnd);
+        g_parallel_ui_hwnd=NULL;return FALSE;
+    }
+    g_ui_font=CreateFontA(-22,0,0,0,500,0,0,0,1,0,0,0,0,"Segoe UI");
+    g_ui_title_font=CreateFontA(-29,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
+    ui_label(g_parallel_ui_hwnd,"PARALLEL / PLAYER ESP",28,22,685,42,TRUE);
+    ui_label(g_parallel_ui_hwnd,
+        "Independent ON/OFF switches. Changes apply immediately.",
+        30,73,690,36,FALSE);
+    for (i=0u;i<4u;++i) {
+        g_ui_checks[i]=CreateWindowExA(0u,"BUTTON",names[i],
+            UI_CHILD|UI_VISIBLE|UI_CHECKBOX,
+            42,125+(int)(i*66u),680,48,g_parallel_ui_hwnd,
+            (HANDLE)(DWORD)(101u+i),g_self,NULL);
+        if (g_ui_checks[i] && g_ui_font)
+            SendMessageA(g_ui_checks[i],UI_SETFONT,(DWORD)g_ui_font,1);
+    }
+    ui_check(0u,g_esp_enabled);
+    ui_check(1u,g_parallel_show_horde);
+    ui_check(2u,g_parallel_show_alliance);
+    ui_check(3u,g_parallel_show_hostile);
+    ui_label(g_parallel_ui_hwnd,
+        "Filters combine (OR). On mixed-faction BG enable HOSTILE only.",
+        30,405,700,34,FALSE);
+    g_ui_shown=0u;return TRUE;
+}
+static void parallel_gui_tick(void) {
+    HWND game=g_hooked_game_hwnd,fg;
+    if (!game || !IsWindow(game) || !g_parallel_gui_open) {
+        if (g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd))
+            ShowWindow(g_parallel_ui_hwnd,SW_HIDE);
+        g_ui_shown=0u;return;
+    }
+    fg=GetForegroundWindow();
+    if (fg!=game && fg!=g_parallel_ui_hwnd) {
+        if (g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd))
+            ShowWindow(g_parallel_ui_hwnd,SW_HIDE);
+        g_ui_shown=0u;return;
+    }
+    if (!g_parallel_ui_hwnd || !IsWindow(g_parallel_ui_hwnd)) {
+        g_parallel_ui_hwnd=NULL;
+        if (!ui_create(game)) return;
+    }
+    if (!g_ui_shown || !IsWindowVisible(g_parallel_ui_hwnd)) {
+        ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);
+        g_ui_shown=1u;
+    }
+}
+static void parallel_gui_destroy(void) {
+    if (g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd)) {
+        if (g_ui_prev)
+            SetWindowLongA(g_parallel_ui_hwnd,GWL_WNDPROC,(LONG)(DWORD)g_ui_prev);
+        DestroyWindow(g_parallel_ui_hwnd);
+    }
+    g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
+    if (g_ui_font) DeleteObject((HGDIOBJ)g_ui_font);
+    if (g_ui_title_font) DeleteObject((HGDIOBJ)g_ui_title_font);
+    g_ui_font=NULL;g_ui_title_font=NULL;
 }
 
 BOOL WINAPI DllMain(HMODULE hinst, DWORD reason, LPVOID reserved) {

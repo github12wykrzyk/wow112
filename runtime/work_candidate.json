@@ -1,22 +1,11 @@
 {
   "schema_version": 1,
-  "purpose": "Persistent source overrides for the aggregate TEST (work) updater candidate. These are experimental work-only binaries and do not change stable runtime/current.json identity.",
+  "purpose": "PARALLEL ESP-only test runtime",
   "source_overrides": [
-    "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
-    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
-    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
-    "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll"
   ],
-  "note": "Experimental BG PlayerESP candidate: replace unsafe native relation calls with read-only vanilla race team check, recover labels after world transition, and display live-only WSG flag aura marker. Prior v1.3 binary caused BG crash; require testing before stable promotion. AB cap startup recovery: rebuilt AutoLootPP reconstruction and new MovementCore cast guard withdrawn. Aggregate candidate keeps exact stable AutoLootPP DLL and pre-AB MovementCore candidate; only AutoKick/AutoPoisons casting-bar safeguards remain for in-game verification.",
+  "note": "Large ESP GUI and additive Horde, Alliance and hostile filters; BG hostility only from the current scoreboard.",
   "source_fingerprint_warning_allowlist": [
-    "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
-    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
-    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
-    "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
-    "WoWPlayerESP_v1_2_range_sweep.dll",
-    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
-    "WoWControlHub.dll",
-    "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll"
+    "WoWPlayerESP_v1_2_range_sweep.dll"
   ]
 }

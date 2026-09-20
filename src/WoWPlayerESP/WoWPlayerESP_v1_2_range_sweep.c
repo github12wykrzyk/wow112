@@ -270,6 +270,7 @@ struct EspCacheEntry {
     BYTE canAttack;
     BYTE pvpEnabled;
     BYTE source;
+    BYTE team; /* character faction, independent of BG side */
     DWORD lastSeenFrame;
     float x;
     float y;
@@ -288,6 +289,7 @@ struct TrackedPlayer {
     int reaction;
     BYTE canAttack;
     BYTE pvpEnabled;
+    BYTE team;
     DWORD lastSeenFrame;
     float x;
     float y;
@@ -442,6 +444,13 @@ static volatile DWORD g_bg_score_mode = 0u; /* Latched until world reset once sc
 static DWORD g_render_manager = 0u;
 
 static volatile DWORD g_esp_enabled = 1u;
+static volatile DWORD g_parallel_show_horde=0u;
+static volatile DWORD g_parallel_show_alliance=0u;
+static volatile DWORD g_parallel_show_hostile=1u;
+static volatile DWORD g_parallel_gui_open=0u;
+static HWND g_parallel_ui_hwnd=NULL;
+static void parallel_gui_tick(void);
+static void parallel_gui_destroy(void);
 /* Displayed in the PlayerESP GUI to identify why labels are not visible. */
 static volatile DWORD g_esp_status = 0u;
 static volatile DWORD g_esp_scan_players = 0u;
@@ -1749,6 +1758,7 @@ static int alloc_tracked_index(DWORD lo, DWORD hi) {
     g_tracked[freeIdx].reaction = 0;
     g_tracked[freeIdx].canAttack = 0u;
     g_tracked[freeIdx].pvpEnabled = 0u;
+    g_tracked[freeIdx].team=0u;
     g_tracked[freeIdx].lastSeenFrame = g_render_frame;
     g_tracked[freeIdx].x = g_tracked[freeIdx].y = g_tracked[freeIdx].z = 0.0f;
     g_tracked[freeIdx].health = g_tracked[freeIdx].maxHealth = 0u;
@@ -1890,18 +1900,8 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
             canAttack=(BYTE)(reaction==1 ? 1u : 0u);
             /* Hostile BG side / opposite race is NOT the player's PvP flag. */
             pvpEnabled=native_unit_is_pvp(obj);
-            if (!canAttack) {
-                /* Drop a former enemy immediately: persistent history must
-                   not keep rendering a now-friendly player's old label. */
-                ti=find_tracked_index(lo, hi);
-                if (ti>=0) {
-                    g_tracked[ti].used=0u;
-                    g_tracked[ti].seenThisRefresh=0u;
-                    g_tracked[ti].obj=0u;
-                }
-                goto next_object;
-            }
-            if (reaction >= 1 && reaction <= 3) {
+            /* Track both factions; apply independent filters in renderer. */
+            {
                 /* Reuse the scoreboard name when already resolved. */
                 if (!pname[0]) {
                     nameFound=lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
@@ -1914,6 +1914,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 g_tracked[ti].reaction = reaction;
                 g_tracked[ti].canAttack = canAttack;
                 g_tracked[ti].pvpEnabled = pvpEnabled;
+                g_tracked[ti].team=vanilla_race_team(meta.raceId);
 
                 if (rd_f32(obj + OBJ_POS_X, &px) && rd_f32(obj + OBJ_POS_Y, &py) && rd_f32(obj + OBJ_POS_Z, &pz)) {
                     dx = px - lx; dy = py - ly; dz = pz - lz; d2 = dx*dx + dy*dy + dz*dz;
@@ -1961,8 +1962,8 @@ next_object:
             }
         }
 
-        /* Preserve only enemies learned as hostile. */
-        if (!(t->reaction >= 1 && t->reaction <= 3)) continue;
+        /* Unknown races remain unclassified, never guessed. */
+        if (!t->team) continue;
 
         e = &g_esp_cache[count++];
         e->obj = resolved;
@@ -1972,6 +1973,7 @@ next_object:
         e->canAttack = t->canAttack;
         e->pvpEnabled = t->pvpEnabled;
         e->source = source;
+        e->team=t->team;
         e->lastSeenFrame = t->lastSeenFrame;
         e->x = t->x; e->y = t->y; e->z = t->z;
         e->health = t->health; e->maxHealth = t->maxHealth;
@@ -2028,6 +2030,7 @@ static void render_frame_fast(void) {
     g_esp_drawn_labels = 0u;
     if (g_cache_age_frames != 0xFFFFFFFFu) g_cache_age_frames++;
     pump_overlay_messages();
+    parallel_gui_tick();
 
     if (!rd_u32(OBJMGR_GLOBAL, &manager) ||
         manager < 0x00010000u || manager > 0x7FFF0000u ||
@@ -2144,7 +2147,8 @@ static void render_frame_fast(void) {
         overlay_hide();
         return;
     }
-    if (GetForegroundWindow() != projCtx.hwnd) {
+    if (GetForegroundWindow() != projCtx.hwnd &&
+        GetForegroundWindow() != g_parallel_ui_hwnd) {
         g_esp_status = 8u;
         g_click_hit_count = 0u;
         overlay_hide();
@@ -2193,6 +2197,22 @@ static void render_frame_fast(void) {
                 }
             }
 
+            {
+                BOOL hostileNow=FALSE;
+                /* In mixed-faction BG, assigned team from live scoreboard
+                   is authoritative. Stale/missing scoreboard fails closed. */
+                if (g_bg_score_mode) {
+                    if (g_bg_score_manager==manager && e->name[0] &&
+                        (g_render_frame-g_bg_score_frame)<=BG_SCORE_TTL_FRAMES)
+                        hostileNow=(bg_score_relation(manager,e->name)==1);
+                } else if (liveObject && e->canAttack && pvpNow==1u) {
+                    /* Do not call unsafe native relation helpers on BG edges. */
+                    hostileNow=TRUE;
+                }
+                if (!((g_parallel_show_alliance && e->team==1u) ||
+                      (g_parallel_show_horde && e->team==2u) ||
+                      (g_parallel_show_hostile && hostileNow))) continue;
+            }
             if(liveObject && g_esp_flag_enabled)
                 flagCarrier=live_wsg_flag_carrier(e->obj);
             dx = x - lx; dy = y - ly; dz = z - lz;
@@ -2485,6 +2505,7 @@ static DWORD WINAPI WorkerThread(LPVOID ignored) {
     }
 
     remove_game_click_hook();
+    parallel_gui_destroy();
     destroy_overlay();
     log_line("UNLOAD WoWPlayerESP v1.2 range_sweep");
     FlushFileBuffers(g_log);
