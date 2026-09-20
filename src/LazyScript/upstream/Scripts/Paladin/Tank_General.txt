@@ -1,0 +1,55 @@
+--
+--MISCELLANEOUS
+--
+hor-ifInCombat-ifNotTargetOfTarget-ifTargetNPC
+rightFury-ifNotHasBuff=rightFury
+dismount-ifMounted
+callForm=Gear_Swap
+callForm=Consumables
+--
+--OPENER
+--
+sealWisdom-ifNotInCombat-ifNotHasBuff=sealWisdom
+holyShield-ifNotInCombat-ifNotHasBuff=holyShield
+holyStrike-ifNotInCombat
+autoAttack
+--
+--SEALS AND JUDGEMENTS
+--
+sealRight-ifCooldown>1.5s=consecrate,holyShield,holyStrike-ifTargetHasDebuff=judgeWisdom-ifNotHasBuff=sealRight
+sealRight-ifCooldown>1.5s=holyShield,holyStrike,consecrate-ifTargetHasDebuff=judgeWisdom-ifNotHasBuff=sealRight
+sealRight-ifCooldown>1.5s=holyStrike,consecrate,holyShield-ifTargetHasDebuff=judgeWisdom-ifNotHasBuff=sealRight
+sealWisdom-ifCooldown>1.5s=consecrate,holyShield,holyStrike-ifNotTargetHasDebuff=judgeWisdom-ifNotHasBuff=sealWisdom
+sealWisdom-ifCooldown>1.5s=holyShield,consecrate,holyStrike-ifNotTargetHasDebuff=judgeWisdom-ifNotHasBuff=sealWisdom
+sealWisdom-ifCooldown>1.5s=holyStrike,consecrate,holyShield-ifNotTargetHasDebuff=judgeWisdom-ifNotHasBuff=sealWisdom
+judge-ifCooldown>1.5s=holyStrike
+judge-ifCooldown>1.5s=holyStrike
+--
+--GENERAL ROTATION
+--
+hmrWrath-ifHasBuffTitle=Focus
+holyWrath-ifHasBuffTitle=Focus-ifTargetType=Demon,Undead
+holyShield-ifNotHasBuff=holyShield
+holyStrike-ifCooldown>0.5s=holyShield
+consecrate-ifCooldown>0.1s=holyShield-ifInCombat-ifTargetInMeleeRange
+action=QH*-ifHasBuffTitle=Focus
+callForm=Utility
+--
+
+* - These lines try to execute macro named QH.
+The macros in question invoke QuickHeal Commands
+or more specifically:
+
+MACRO 16777229 "QH" Spell_Holy_FlashHeal
+#showtooltip Flash of Light
+/qh mt
+/qh
+END
+MACRO 16777231 "QH2" Spell_Holy_SearingLight
+#showtooltip Holy Shock
+/qh mt hot
+/qh hot
+
+Make sure to remove the [*] symbol in order to make the script work properly.
+
+
