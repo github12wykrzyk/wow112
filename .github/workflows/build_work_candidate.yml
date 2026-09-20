@@ -20,6 +20,7 @@ on:
       - 'tools/build_autopoisons_candidate.py'
       - 'tools/build_autokick_candidate.py'
       - 'tools/build_diaghub_candidate.py'
+      - 'tools/build_taxiflight_probe_candidate.py'
       - 'tools/build_groundtargetassist_candidate.py'
       - 'tools/build_autoflagwsg_candidate.py'
       - 'tools/build_openeruirecovery_candidate.py'
@@ -179,6 +180,20 @@ jobs:
               --build-metadata dist/diaghub_build.json `
               --output build/WoWDiagHub.dll
             if ($LASTEXITCODE -ne 0) { throw "DiagHub candidate failed" }
+          }
+
+      - name: Build and append Taxi Flight observer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/TaxiFlight/WoWTaxiFlightProbe_5875_v1.c') {
+            python tools/build_taxiflight_probe_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/taxiflight_build.json `
+              --output build/WoWTaxiFlightProbe_5875_v1.dll
+            if ($LASTEXITCODE -ne 0) { throw "Taxi Flight observer candidate failed" }
           }
 
       - name: Final fail-closed runnable ZIP gate
