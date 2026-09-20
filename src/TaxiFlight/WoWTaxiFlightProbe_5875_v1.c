@@ -5,9 +5,10 @@
  * The early ACK is only an experiment: its return value never establishes
  * server acceptance, and this module never spoofs or teleports coordinates.
  *
- * Ctrl+Shift+F8: mark departure after choosing a Flight Master destination.
- * Ctrl+Shift+F9: mark arrival once the character is controllable.
- * Ctrl+Shift+HOME: send one EARLY spline-done attempt for this marked trip.
+ * Numpad 1: mark departure after choosing a Flight Master destination.
+ * Numpad 2: send one EARLY spline-done attempt for this marked trip.
+ * Numpad 3: mark arrival once the character is controllable.
+ * Num Lock must be ON; these keys do not require Ctrl or Shift.
  * The instant attempt is DISABLED except for that explicit hotkey.
  * Only when the game window is in the foreground. Use a visible non-activating
  * status toast + two diagnostic files (.csv and .jsonl) in .wow112_debug.
@@ -353,7 +354,6 @@ static void TaxiToastTick(DWORD now)
 static DWORD WINAPI ProbeThread(LPVOID unused)
 {
     int lastStart = 0, lastEnd = 0, lastInstant = 0;
-    int oldF8 = 0, oldF9 = 0, oldHome = 0;
     (void)unused;
     if (!PreparePath()) {
         InterlockedExchange(&g_status, 0);
@@ -373,10 +373,10 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
     InterlockedExchange(&g_status, 1);
     TaxiToastInit();
     LogSample(GetTickCount(), "PROBE_READY");
-    TaxiToast("TaxiFlight READY | Ctrl+Shift+F8 start | F9 end | Home test", GetTickCount());
+    TaxiToast("TaxiFlight READY | Num1 START | Num2 TEST | Num3 END", GetTickCount());
     while (!g_stop) {
         DWORD now;
-        int f8, f9, home, modifiers, startCombo, endCombo, instantCombo;
+        int keyStart, keyEnd, keyInstant, startCombo, endCombo, instantCombo;
         Sleep(15);
         now = GetTickCount();
         TaxiToastTick(now);
@@ -384,21 +384,21 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
             lastStart = 0;
             lastEnd = 0;
             lastInstant = 0;
-            oldF8 = oldF9 = oldHome = 0;
             continue;
         }
         now = GetTickCount();
-        f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
-        f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
-        home = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
-        modifiers = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) &&
-                    ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
-        startCombo = modifiers && f8;
-        endCombo = modifiers && f9;
-        instantCombo = modifiers && home;
-        if (f8 && !oldF8 && !modifiers) LogSample(now, "F8_SEEN_WITHOUT_BOTH_MODIFIERS");
-        if (f9 && !oldF9 && !modifiers) LogSample(now, "F9_SEEN_WITHOUT_BOTH_MODIFIERS");
-        if (home && !oldHome && !modifiers) LogSample(now, "HOME_SEEN_WITHOUT_BOTH_MODIFIERS");
+        /* VK_NUMPADn requires Num Lock ON; no modifier key is necessary.
+         * Record each physical key edge independently of whether a taxi trip
+         * is marked, so reports distinguish hotkey detection from taxi logic. */
+        keyStart = (GetAsyncKeyState(VK_NUMPAD1) & 0x8000) != 0;
+        keyInstant = (GetAsyncKeyState(VK_NUMPAD2) & 0x8000) != 0;
+        keyEnd = (GetAsyncKeyState(VK_NUMPAD3) & 0x8000) != 0;
+        startCombo = keyStart;
+        endCombo = keyEnd;
+        instantCombo = keyInstant;
+        if (startCombo && !lastStart) LogSample(now, "NUMPAD1_KEY_DETECTED");
+        if (instantCombo && !lastInstant) LogSample(now, "NUMPAD2_KEY_DETECTED");
+        if (endCombo && !lastEnd) LogSample(now, "NUMPAD3_KEY_DETECTED");
         if (startCombo && !lastStart && !g_recording) {
             InterlockedExchange(&g_instantAttempted, 0);
             g_start_tick = now;
@@ -406,7 +406,7 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
             InterlockedExchange(&g_recording, 1);
             InterlockedExchange(&g_status, 2);
             LogSample(now, "MARK_START");
-            TaxiToast("TaxiFlight START registered | Ctrl+Shift+Home after 2s", now);
+            TaxiToast("TaxiFlight START | press Num2 after at least 2 sec", now);
             MessageBeep(MB_OK);
         } else if (startCombo && !lastStart) {
             LogSample(now, "MARK_START_IGNORED_ALREADY_RECORDING");
@@ -425,7 +425,7 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
         }
         if (instantCombo && !lastInstant && !g_recording) {
             LogSample(now, "EARLY_ACK_IGNORED_NOT_RECORDING");
-            TaxiToast("TaxiFlight instant ignored: start with Ctrl+Shift+F8", now);
+            TaxiToast("TaxiFlight instant ignored: start with Num1", now);
             MessageBeep(MB_ICONEXCLAMATION);
         } else if (instantCombo && !lastInstant &&
                    (DWORD)(now - g_start_tick) < 2000u) {
@@ -463,9 +463,6 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
         lastStart = startCombo;
         lastEnd = endCombo;
         lastInstant = instantCombo;
-        oldF8 = f8;
-        oldF9 = f9;
-        oldHome = home;
         if (g_instantPending && (DWORD)(now - g_instantScheduledAt) >= 2500u &&
             InterlockedCompareExchange(&g_instantPending, 0, 1) == 1) {
             if (g_instantTimer) KillTimer(g_instantWindow, g_instantTimer);
