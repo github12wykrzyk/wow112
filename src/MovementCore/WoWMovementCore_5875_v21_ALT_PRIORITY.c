@@ -24,6 +24,11 @@
 #undef DllMain
 
 #include "../common/W112ControlAPI.h"
+#if defined(_MSC_VER)
+#pragma comment(linker, "/EXPORT:MovementCore_CoordFlags=_MovementCore_CoordFlags@0")
+#pragma comment(linker, "/EXPORT:MovementCore_CoordAcquireRear=_MovementCore_CoordAcquireRear@4")
+#pragma comment(linker, "/EXPORT:MovementCore_CoordReleaseRear=_MovementCore_CoordReleaseRear@0")
+#endif
 
 static volatile DWORD g_altPriorityInstalled=0u;
 static volatile DWORD g_altPriorityBlockCurrent=0u;
@@ -41,6 +46,45 @@ static DWORD g_altPriorityBaseSendWrapper=0u;
 static volatile DWORD g_abCapGuardActive=0u,g_abCapGuardLastSeen=0u;
 static volatile DWORD g_abCapGuardBlockedPP=0u,g_abCapGuardBlockedMove=0u;
 static volatile DWORD g_abCapBlockMovementCurrent=0u;
+/* Single existing movement-hook owner. Publish a short-lived rear transaction
+   for PositionalSpoof without a new DLL, detour, worker or packet format. */
+#define COORD_CAST 0x01u
+#define COORD_PP 0x02u
+#define COORD_SAFE 0x04u
+#define COORD_GATHER 0x08u
+#define COORD_REAR 0x10u
+static volatile DWORD g_coordRearUntil=0u;
+static DWORD CoordRearOwned(void){
+ DWORD now;
+ if(!g_coordRearUntil)return 0u;
+ now=GT()?GT()():0u;
+ if(!now||(LONG)(now-g_coordRearUntil)>=0){
+  g_coordRearUntil=0u;return 0u;
+ }
+ return 1u;
+}
+__declspec(dllexport) DWORD __stdcall MovementCore_CoordFlags(void){
+ DWORD flags=0u;
+ if(g_abCapGuardActive)flags|=COORD_CAST;
+ if(LongPPActive()||LongPPInjecting()||
+    (*(volatile DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)flags|=COORD_PP;
+ if(g_mode!=MODE_OFF)flags|=COORD_SAFE;
+ if(g_gatherActive||g_gatherLootWait)flags|=COORD_GATHER;
+ if(CoordRearOwned())flags|=COORD_REAR;
+ return flags;
+}
+__declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell){
+ DWORD sid;
+ if(MovementCore_CoordFlags()&0x1Fu)return 0u;
+ sid=*(volatile DWORD*)ADDR_CASTING_SPELLID;
+ if(sid&&sid!=spell)return 0u;
+ if(!GT())return 0u;
+ g_coordRearUntil=GT()()+6000u;return 1u;
+}
+__declspec(dllexport) void __stdcall MovementCore_CoordReleaseRear(void){
+ g_coordRearUntil=0u;
+}
+
 
 static void __cdecl W112_AB_CheckMovement(void)
 {
@@ -75,6 +119,11 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
     }
     if(op!=0x12Eu)return;
     spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
+    if(CoordRearOwned()){
+        g_altPriorityBlockCurrent=1u;
+        ++g_altPriorityPPBlocks;
+        return;
+    }
     if(g_abCapGuardActive){
         g_altPriorityBlockCurrent=1u;
         ++g_abCapGuardBlockedPP;
@@ -363,10 +412,10 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
 
     if(k7&&!g_key7){AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
-    if(k8&&!g_key8)Start(MODE_LEGACY_FAST,now);
+    if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
-    if(kAlt&&!g_keyAlt&&!g_abCapGuardActive)AltPriority_Start(now);
-    if(k10&&!g_key10)Start(MODE_PURSUIT,now);
+    if(kAlt&&!g_keyAlt&&!g_abCapGuardActive&&!CoordRearOwned())AltPriority_Start(now);
+    if(k10&&!g_key10&&!CoordRearOwned())Start(MODE_PURSUIT,now);
     if(k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
     if(k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
     g_key7=k7;g_key8=k8;g_gatherKey9=k9;g_keyAlt=kAlt;g_key10=k10;g_key11=k11;g_autoOpenKey12=k12;
@@ -682,6 +731,7 @@ BOOL __stdcall DllMain(HINSTANCE h,DWORD r,LPVOID x)
     }
     if(r==DLL_PROCESS_DETACH){
         AltPriority_Remove();
+        g_coordRearUntil=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);
     }
     return TRUE;

@@ -307,6 +307,40 @@ static BYTE *peb(void){BYTE*p; __asm {
  mov p, eax
  } return p;}
 static void *findall(const char*w){BYTE*p=peb(),*ldr,*head,*cur;unsigned g=0;if(!p)return 0;ldr=*(BYTE**)(p+0xc);if(!ldr)return 0;head=ldr+0x14;cur=*(BYTE**)head;while(cur&&cur!=head&&g++<128){BYTE*e=cur-8,*b=*(BYTE**)(e+0x18);void*x=findexp(b,w);if(x)return x;cur=*(BYTE**)cur;}return 0;}
+/* PositionalSpoof is loaded before MovementCore: resolve lazily. */
+typedef DWORD (STDCALL *PFN_CoordFlags)(void);
+typedef DWORD (STDCALL *PFN_CoordAcquire)(DWORD);
+typedef void (STDCALL *PFN_CoordRelease)(void);
+static PFN_CoordFlags g_coordFlags;
+static PFN_CoordAcquire g_coordAcquire;
+static PFN_CoordRelease g_coordRelease;
+static int g_coordLeaseHeld;
+static DWORD coordFlags(void){
+ if(!g_coordFlags){
+  g_coordFlags=(PFN_CoordFlags)findall("MovementCore_CoordFlags");
+  if(!g_coordFlags)g_coordFlags=(PFN_CoordFlags)findall("_MovementCore_CoordFlags@0");
+ }
+ return g_coordFlags?g_coordFlags():0UL;
+}
+static int coordAcquireRear(DWORD spell){
+ if(!g_coordAcquire){
+  g_coordAcquire=(PFN_CoordAcquire)findall("MovementCore_CoordAcquireRear");
+  if(!g_coordAcquire)g_coordAcquire=(PFN_CoordAcquire)findall("_MovementCore_CoordAcquireRear@4");
+ }
+ if(!g_coordAcquire)return 1; /* Preserve previous behavior without the peer. */
+ if(!g_coordAcquire(spell))return 0;
+ g_coordLeaseHeld=1;return 1;
+}
+static void coordReleaseRear(void){
+ if(!g_coordLeaseHeld)return;
+ g_coordLeaseHeld=0;
+ if(!g_coordRelease){
+  g_coordRelease=(PFN_CoordRelease)findall("MovementCore_CoordReleaseRear");
+  if(!g_coordRelease)g_coordRelease=(PFN_CoordRelease)findall("_MovementCore_CoordReleaseRear@0");
+ }
+ if(g_coordRelease)g_coordRelease();
+}
+
 
 static void openlog(void){if(g_logHandle||!pCreate)return;g_logHandle=pCreate(logName,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);if(g_logHandle==INVALID_HANDLE_VALUE)g_logHandle=0;}
 static void closelog(void){if(g_logHandle&&pClose){pClose(g_logHandle);g_logHandle=0;}}
@@ -776,7 +810,7 @@ static void pvpRearStop(const char *why){
  DWORD pl=g_pvpRearPlayer;
  if(!g_pvpRearActive)return;
  g_pvpRearActive=0;g_pvpRearPlayer=0;g_pvpRearTarget=0;
- if(pl&&getPlayer()==pl)sendHeartbeat(pl);
+ if(pl&&getPlayer()==pl&&!(coordFlags()&0x1FUL))sendHeartbeat(pl);
  logs(why);
 }
 static int pvpRearCompute(DWORD pl,DWORD tg){
@@ -803,7 +837,7 @@ static void pvpRearTick(DWORD tick){
  if(!installed)return;
  /* The PvP-rear timer runs independently of opener state. A real cast
     must silence it without pvpRearStop(), which itself sends a heartbeat. */
- if(*(volatile DWORD*)CLIENT_CASTING_SPELL_ID){
+ if(*(volatile DWORD*)CLIENT_CASTING_SPELL_ID||(coordFlags()&0x1FUL)){
   if(g_pvpRearActive){
    g_pvpRearActive=0;g_pvpRearPlayer=0;g_pvpRearTarget=0;
    logs("PVP_REAR_PAUSE native_cast_active\r\n");
@@ -869,7 +903,7 @@ static void runDeferredClientUiClear(void){
   q=ap(q," action_guid=");q=hex32(q,ahi);q=ap(q,":");q=hex32(q,alo);q=ap(q," prev_guid=");q=hex32(q,pahi);q=ap(q,":");q=hex32(q,palo);q=ap(q," targeting=0x");q=hex32(q,(DWORD)targeting);q=ap(q,"\r\n");lograw(b,(DWORD)(q-b));
  }
 }
-static void clearState(void){W112_RogueFacingReset();g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_energyGateWindowMsForCast=ENERGY_GATE_DEFAULT_WINDOW_MS;g_energyGateEnabledForCast=1;g_energyGatePvpForCast=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
+static void clearState(void){coordReleaseRear();W112_RogueFacingReset();g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_energyGateWindowMsForCast=ENERGY_GATE_DEFAULT_WINDOW_MS;g_energyGateEnabledForCast=1;g_energyGatePvpForCast=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
 static void cancelTimer(void){if(g_timer&&pKillTimer)pKillTimer(0,g_timer);g_timer=0;}
 static void restoreServerPosition(const char*tag){DWORD spell=g_spoofSpell,count=g_rewrittenMoveCount;if(g_player&&getPlayer()==g_player)sendHeartbeat(g_player);if(g_pvpRearActive)g_pvpRearLastTick=0;logSpellText(tag,spell);if(count)logCountText("MOVE_REWRITTEN",spell,count);clearState();}
 
@@ -963,6 +997,10 @@ void STDCALL QueuePositionalCast(DWORD spell,DWORD store){
  type=*(DWORD*)(tg+OBJ_TYPE);
  if(type!=3&&type!=4){logs("CAST_QUEUE_BYPASS target_not_unit\r\n");return;}
  if(!cloneStore(store)){logs("CAST_QUEUE_FAIL clone\r\n");return;}
+ if(!coordAcquireRear(spell)){
+  g_suppressCurrent=1;g_skipNativeGcdCurrent=1;
+  logs("ROGUE_COORD_BLOCK peer_owns_cast_or_movement\r\n");return;
+ }
  /* From this point the original CMSG is intentionally suppressed. Keep the native GCD
     only if we manage to transmit our cloned cast synchronously during this same call. */
  g_skipNativeGcdCurrent=1;
@@ -991,6 +1029,7 @@ static int rewriteMovementStore(DWORD store){
  DWORD *ds=(DWORD*)store,size,base,buf,op,off;BYTE *p;float sx,sy,sz,so;
  int followIdle=(g_phase==PHASE_IDLE&&g_cfgPvpRearFollowEnabled&&g_pvpRearActive);
  if(!ds||g_allowMovementSend)return 0;
+ if(followIdle&&(coordFlags()&0x1FUL))return 0;
  /* Do not rewrite ordinary rear-follow movement during a native cast.
     MovementCore separately blocks item/channel movement using the cast bar. */
  if(followIdle&&*(volatile DWORD*)CLIENT_CASTING_SPELL_ID)return 0;
