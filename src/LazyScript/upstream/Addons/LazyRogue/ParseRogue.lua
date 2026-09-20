@@ -205,6 +205,49 @@ function lazyRogueLoad.LoadParseRogue()
 	end
 
 
+	-- The clock is an estimate, never a native/server-side tick timestamp.
+	-- Missing synchronization, capped energy and a missed expected tick fail closed.
+	function lazyRogue.masks.EnergyTickRemainingMs()
+		local syncedAt = lazyRogue.energyTickSyncedAt
+		if (not syncedAt or UnitMana("player") >= UnitManaMax("player")) then
+			return nil
+		end
+		local elapsed = GetTime() - syncedAt
+		if (elapsed < 0 or elapsed >= 2) then
+			return nil
+		end
+		return math.floor((2 - elapsed) * 1000 + 0.5)
+	end
+
+	function lazyRogue.masks.EnergyTickMs(operator, thresholdMs)
+		return function(sayNothing)
+			local remainingMs = lazyRogue.masks.EnergyTickRemainingMs()
+			if (not remainingMs) then
+				return false
+			end
+			if (operator == "<") then
+				return remainingMs < thresholdMs
+			elseif (operator == ">") then
+				return remainingMs > thresholdMs
+			end
+			return remainingMs == thresholdMs
+		end
+	end
+
+	function lazyRogue.bitParsers.ifEnergyTick(bit, actions, masks)
+		if (not lazyRogue.rebit(bit, "^ifEnergyTick([<=>])(%d+)ms$")) then
+			return false
+		end
+		local operator = lazyRogue.match1
+		local thresholdMs = tonumber(lazyRogue.match2)
+		if (not thresholdMs or thresholdMs < 0 or thresholdMs > 2000) then
+			return nil
+		end
+		table.insert(masks, lazyRogue.masks.EnergyTickMs(operator, thresholdMs))
+		return true
+	end
+
+
 	-- if you don't eviscerate now, will you have time for 2 ticks before the target dies?
 	-- we determine the rate of damage, and estimate when the target will be dead
 	-- then we look at the last tick, and add 4 seconds, and see if that's before he'll die.
@@ -1101,6 +1144,8 @@ function lazyRogueLoad.LoadParseRogue()
 		return [[
 			<P>-if[Not]Poisoned={MainHand,OffHand}</P>
 			<P>-if[Not]Stealthed</P>
+			<P>-ifEnergyTick&lt;200ms (estimated; requires two observed ticks)</P>
+			<P>-ifEnergyTick&gt;200ms</P>
 			<P>-if[{&lt;,=,&gt;}]Xcp</P>
 		]]
 	end
