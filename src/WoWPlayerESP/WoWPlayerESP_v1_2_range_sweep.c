@@ -1402,7 +1402,7 @@ static void draw_esp_label(HDC dc, const char* name,
     p = line3;
     p = app_u32(p, yd);
     p = app_str(p, " yd | PvP ");
-    p = app_str(p, pvpEnabled ? "ON" : "OFF");
+    p = app_str(p, pvpEnabled == 2u ? "?" : (pvpEnabled ? "ON" : "OFF"));
     if (source == SOURCE_GUID_LOOKUP) {
         p = app_str(p, " | MEM");
     } else if (source == SOURCE_STALE_CACHE) {
@@ -1888,7 +1888,8 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 }
             }
             canAttack=(BYTE)(reaction==1 ? 1u : 0u);
-            pvpEnabled=canAttack;
+            /* Hostile BG side / opposite race is NOT the player's PvP flag. */
+            pvpEnabled=native_unit_is_pvp(obj);
             if (!canAttack) {
                 /* Drop a former enemy immediately: persistent history must
                    not keep rendering a now-friendly player's old label. */
@@ -1952,6 +1953,8 @@ next_object:
             if (resolved && cached_object_matches(resolved, t->guidLo, t->guidHi)) {
                 source = SOURCE_GUID_LOOKUP;
                 update_tracked_from_object((int)i, resolved, localObj, NULL);
+                /* A GUID-resolved live player may toggle PvP after leaving the visible set. */
+                t->pvpEnabled=native_unit_is_pvp(resolved);
             } else {
                 resolved = 0u;
                 source = SOURCE_STALE_CACHE;
@@ -2170,6 +2173,7 @@ static void render_frame_fast(void) {
             DWORD ageSec = (ageFrames * RENDER_INTERVAL_MS) / 1000u;
             BOOL liveObject = FALSE;
             BYTE flagCarrier = 0u;
+            BYTE pvpNow = 2u; /* Unknown until this render confirms a live object. */
 
             x = e->x; y = e->y; z = e->z;
 
@@ -2179,6 +2183,7 @@ static void render_frame_fast(void) {
                 loCheck == e->guidLo && hiCheck == e->guidHi &&
                 rd_f32(e->obj + OBJ_POS_X, &x) && rd_f32(e->obj + OBJ_POS_Y, &y) && rd_f32(e->obj + OBJ_POS_Z, &z)) {
                 liveObject = TRUE;
+                pvpNow=e->pvpEnabled;
                 if (read_unit_meta(e->obj, &meta)) {
                     hpNow = meta.health;
                     maxHpNow = meta.maxHealth;
@@ -2204,9 +2209,9 @@ static void render_frame_fast(void) {
 
                 {
                     DWORD ydNow = (DWORD)(d + 0.5f);
-                    if (label_content_changed(drawn, e->guidLo, e->guidHi, hpNow, maxHpNow, ydNow, e->pvpEnabled, e->source, ageSec, flagCarrier)) {
+                    if (label_content_changed(drawn, e->guidLo, e->guidHi, hpNow, maxHpNow, ydNow, pvpNow, e->source, ageSec, flagCarrier)) {
                         clear_label_pixels();
-                        draw_esp_label(g_label_memdc, e->name, hpNow, maxHpNow, d, e->pvpEnabled, e->source, ageSec, flagCarrier);
+                        draw_esp_label(g_label_memdc, e->name, hpNow, maxHpNow, d, pvpNow, e->source, ageSec, flagCarrier);
                         finalize_label_alpha();
                         if (!update_label_alpha(g_labels[drawn].hwnd, absX, absY)) {
                             g_labels[drawn].contentValid = FALSE;
