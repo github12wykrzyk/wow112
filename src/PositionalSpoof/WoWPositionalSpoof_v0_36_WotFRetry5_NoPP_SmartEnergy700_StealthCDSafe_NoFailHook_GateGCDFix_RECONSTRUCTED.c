@@ -253,7 +253,7 @@ static int g_energySynced;
 static int g_energyGatePassed;
 static volatile DWORD g_cfgPveGateEnabled=1UL;
 static volatile DWORD g_cfgPveWindowMs=ENERGY_GATE_DEFAULT_WINDOW_MS;
-static volatile DWORD g_cfgPvpGateEnabled=1UL;
+static volatile DWORD g_cfgPvpGateEnabled=0UL; /* PvP instant opener by default; explicit GUI override remains available. */
 static volatile DWORD g_cfgPvpWindowMs=ENERGY_GATE_DEFAULT_WINDOW_MS;
 static W112_ControlSettingV1 g_controlSettings[4];
 static volatile DWORD g_controlDescriptorReady;
@@ -884,6 +884,13 @@ void STDCALL QueuePositionalCast(DWORD spell,DWORD store){
  DWORD pl,tg,type;
  g_suppressCurrent=0;g_skipNativeGcdCurrent=0;g_insideOriginalQueue=0;
  if(!isBehindSpell(spell)&&!isGouge(spell))return;
+ /* A PvP opener awaiting an old target/world must not block the next live
+    target. Never replay its packet: retire the stale pose and begin fresh. */
+ if(g_phase!=PHASE_IDLE && g_energyGatePvpForCast && isBehindSpell(g_spoofSpell) &&
+    (getPlayer()!=g_player || getTarget()!=g_target)){
+  cancelTimer();g_deferredUiClear=0;
+  restoreServerPosition("ROGUE_PVP_CONTEXT_REPLACED release_stale_queue");
+ }
  if(g_phase!=PHASE_IDLE){g_suppressCurrent=1;g_skipNativeGcdCurrent=1;logSpellText("CAST_DROP active",spell);return;}
  pl=getPlayer();tg=getTarget();
  /* Freeze the cast context BEFORE ENERGY_GATE can become active.  In v0.33-v0.35
@@ -1102,7 +1109,7 @@ static void initOpenerTimingControlDescriptor(void){
  s=&g_controlSettings[2];
  s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVP_GATE_ENABLED;
  s->key="pvp_energy_gate";s->label="PvP energy gate";s->type=W112_CTL_BOOL;
- s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  s=&g_controlSettings[3];
  s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=SETTING_PVP_WINDOW_MS;
  s->key="pvp_pre_tick_ms";s->label="PvP pre-tick (ms)";s->type=W112_CTL_INT;

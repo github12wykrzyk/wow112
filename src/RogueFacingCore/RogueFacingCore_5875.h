@@ -59,7 +59,9 @@ static int W112_RogueFacingRefresh(DWORD spell,DWORD candidate,DWORD target){
  angle=to-g_rogueFacing.targetO;
  if(angle<0.0f)angle=-angle;
  if(angle>PI_F)angle=TWO_PI_F-angle;
- if(dx*dx+dy*dy+dz*dz<=0.04f&&angle<=0.10f)return 1;
+ /* PvP: re-prime even for short strafes (~8 cm) or a 2-degree turn.
+    This is called only for rear openers on player targets, not PvE. */
+ if(dx*dx+dy*dy+dz*dz<=0.0064f&&angle<=0.035f)return 1;
  if(!W112_RogueFacingBegin(spell,candidate,target))return 0;
  return 2;
 }
