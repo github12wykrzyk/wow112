@@ -562,7 +562,11 @@ static void ui_sync_rear(void) {
          code==5u?"DISABLED":
          code==6u?"WAITING FOR GAME WINDOW":
          code==7u?"WORKER START ERROR":
-         code==8u?"PAUSED (PP / MovementCore owns movement)":"UNKNOWN";
+         code==8u?"PAUSED (PP / MovementCore owns movement)":
+         code==9u?"WAITING FOR WORK MOVEMENTCORE":
+         code==10u?"CAST HOOK CONFLICT (0x006E5872)":
+         code==11u?"MOVEMENT HOOK CONFLICT (0x00600ACA)":
+         code==12u?"HOOK MEMORY PATCH FAILED":"UNKNOWN";
     p=app_str(p,"PvE Rear 360: ");p=app_str(p,desc);
     p=app_str(p," | primed casts: ");p=app_u32(p,pulses);*p=0;
     SetWindowTextA(g_ui_rear_state,buf);

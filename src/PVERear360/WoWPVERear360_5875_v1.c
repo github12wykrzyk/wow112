@@ -84,6 +84,10 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define STATUS_WAIT_WINDOW 6u
 #define STATUS_THREAD_ERROR 7u
 #define STATUS_PP_PAUSE 8u
+#define STATUS_CORE_NOT_READY 9u
+#define STATUS_CAST_SITE_CONFLICT 10u
+#define STATUS_MOVEMENT_SITE_CONFLICT 11u
+#define STATUS_HOOK_PATCH_FAILED 12u
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
@@ -340,18 +344,27 @@ static int installCastAndMovement(void){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
  typedef u32 (STDCALL *IsCoreReadyFn)(void);
  IsCoreReadyFn ready;
- if(!core)return 0;
+ if(!core){g_status=STATUS_CORE_NOT_READY;return 0;}
+ /* clang-cl/MSVC x86 __stdcall exports may be decorated unless the linker
+    supplies an undecorated alias. Accept both ABI spellings. */
  ready=(IsCoreReadyFn)GetProcAddress(core,"MovementCore_GetAltPriorityInstalled");
- if(!ready||!ready())return 0;
- for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=kCastOriginal[i])return 0;
+ if(!ready)ready=(IsCoreReadyFn)GetProcAddress(core,"_MovementCore_GetAltPriorityInstalled@0");
+ if(!ready||!ready()){g_status=STATUS_CORE_NOT_READY;return 0;}
+ for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=kCastOriginal[i]){
+  g_status=STATUS_CAST_SITE_CONFLICT;return 0;
+ }
  target=callTarget(MOVE_SEND_SITE);
- if(!target||target==(u32)moveChainHook)return 0;
+ if(!target||target==(u32)moveChainHook){
+  g_status=STATUS_MOVEMENT_SITE_CONFLICT;return 0;
+ }
  g_prevMoveTarget=target;
- if(!patchCall(MOVE_SEND_SITE,moveChainHook))return 0;
+ if(!patchCall(MOVE_SEND_SITE,moveChainHook)){
+  g_status=STATUS_HOOK_PATCH_FAILED;return 0;
+ }
  g_moveInstalled=1u;
  if(!patchCall(CAST_SEND_SITE,castChainHook)){
   patchCall(MOVE_SEND_SITE,(void*)g_prevMoveTarget);
-  g_moveInstalled=0u;return 0;
+  g_moveInstalled=0u;g_status=STATUS_HOOK_PATCH_FAILED;return 0;
  }
  g_castInstalled=1u;
  return 1;
@@ -377,8 +390,8 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  (void)hwnd;(void)msg;(void)timer;
  if(g_stop)return;
  if(!g_castInstalled||!g_moveInstalled){
-  if(!installCastAndMovement())g_status=STATUS_TIMER_ERROR;
-  else g_status=STATUS_IDLE;
+  if(installCastAndMovement())g_status=STATUS_IDLE;
+  /* Preserve the installer's specific reason on failure. */
   return;
  }
  if(g_castActive){

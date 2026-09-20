@@ -28,6 +28,8 @@
 #pragma comment(linker, "/EXPORT:MovementCore_CoordFlags=_MovementCore_CoordFlags@0")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordAcquireRear=_MovementCore_CoordAcquireRear@4")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordReleaseRear=_MovementCore_CoordReleaseRear@0")
+/* PvERear360 resolves this explicit undecorated x86 Win32 ABI export. */
+#pragma comment(linker, "/EXPORT:MovementCore_GetAltPriorityInstalled=_MovementCore_GetAltPriorityInstalled@0")
 #endif
 
 static volatile DWORD g_altPriorityInstalled=0u;
