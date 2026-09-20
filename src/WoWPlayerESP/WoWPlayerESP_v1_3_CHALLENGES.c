@@ -369,7 +369,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_SETFONT 0x0030u
 #define UI_SETCHECK 0x00F1u
 #define UI_WIDTH 750
-#define UI_HEIGHT 555
+#define UI_HEIGHT 660
 #define UI_MAX_PAGE_CONTROLS 14u
 #define UI_TAB_ESP 0u
 #define UI_TAB_ROGUE 1u
@@ -386,6 +386,7 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 #define PAR_LOOT_DLL "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll"
 #define PAR_LONGPP_DLL "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
 #define PAR_REAR_DLL "WoWPVERear360_5875_v1.dll"
+#define PAR_CORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
@@ -398,6 +399,8 @@ static HWND g_ui_speedfloor_check=NULL;
 static HWND g_ui_hostile_guard_check=NULL;
 static HWND g_ui_speedfloor_state=NULL;
 static HWND g_ui_speedfloor_value=NULL;
+static HWND g_ui_pp_check=NULL,g_ui_junkbox_check=NULL;
+static HWND g_ui_pp_control_state=NULL,g_ui_core_state=NULL;
 static HWND g_ui_autopp_state=NULL;
 static HWND g_ui_longpp_state=NULL;
 static HWND g_ui_range_state=NULL;
@@ -428,6 +431,33 @@ static BOOL ui_floor_get(DWORD setting,W112_ControlValueV1 *out) {
 static BOOL ui_floor_set(DWORD setting,const W112_ControlValueV1 *value) {
     const W112_ControlModuleV1 *m=ui_speedfloor_module();
     return m && value && m->set_value(setting,value) ? TRUE : FALSE;
+}
+/* Only work-source controls are exposed: MovementCore id=2 gates AutoPP,
+   PickPocketSelectiveRange id=1 controls AutoJunkbox. The exact AutoLootPP
+   and LongPP binaries do not expose a verified live control ABI. */
+static const W112_ControlModuleV1* ui_work_pp_module(const char* name,DWORD minimum) {
+    HMODULE dll=GetModuleHandleA(name);
+    W112_ControlGetModuleV1Fn get;
+    const W112_ControlModuleV1 *m;
+    if(!dll)return NULL;
+    get=(W112_ControlGetModuleV1Fn)GetProcAddress(dll,"W112_Control_GetModuleV1");
+    if(!get)return NULL;
+    m=get();
+    if(!m||m->abi_version!=W112_CONTROL_API_V1||
+       m->struct_size!=sizeof(W112_ControlModuleV1)||
+       m->setting_count<minimum||!m->get_value||!m->set_value)return NULL;
+    return m;
+}
+static BOOL ui_work_pp_get(const char* dll,DWORD minimum,DWORD id,W112_ControlValueV1*out) {
+    const W112_ControlModuleV1*m=ui_work_pp_module(dll,minimum);
+    return m&&out&&m->get_value(id,out)?TRUE:FALSE;
+}
+static BOOL ui_work_pp_flip(const char* dll,DWORD minimum,DWORD id) {
+    const W112_ControlModuleV1*m=ui_work_pp_module(dll,minimum);
+    W112_ControlValueV1 value;
+    if(!m||!m->get_value(id,&value)||value.u32>1u)return FALSE;
+    value.u32=value.u32?0u:1u;
+    return m->set_value(id,&value)?TRUE:FALSE;
 }
 static void ui_sync_esp(void) {
     DWORD state[4]={g_esp_enabled,g_parallel_show_horde,
@@ -466,17 +496,34 @@ static void ui_sync_rogue(void) {
             SetWindowTextA(g_ui_speedfloor_value,"Minimum speed: unavailable");
         }
     }
+    {
+        W112_ControlValueV1 pp,junk;
+        BOOL ppLive=ui_work_pp_get(PAR_CORE_DLL,25u,2u,&pp);
+        BOOL junkLive=ui_work_pp_get(PAR_RANGE_DLL,7u,1u,&junk);
+        if(g_ui_pp_check)SendMessageA(g_ui_pp_check,UI_SETCHECK,
+                                      ppLive&&pp.u32?1u:0u,0);
+        if(g_ui_junkbox_check)SendMessageA(g_ui_junkbox_check,UI_SETCHECK,
+                                           junkLive&&junk.u32?1u:0u,0);
+        if(g_ui_pp_control_state)SetWindowTextA(g_ui_pp_control_state,
+            !ppLive?"AutoPP: MovementCore control unavailable":
+            pp.u32?"AutoPP: ON (work / F11; blacklist + retry)":
+                   "AutoPP: OFF (manual PP remains available)");
+        if(g_ui_core_state)SetWindowTextA(g_ui_core_state,
+            !ppLive?"MovementCore: NOT READY (PP control unavailable)":
+            pp.u32?"MovementCore AutoPP: ON (live control)":
+                   "MovementCore AutoPP: OFF (live control)");
+    }
     if(g_ui_autopp_state)
         SetWindowTextA(g_ui_autopp_state,GetModuleHandleA(PAR_LOOT_DLL)?
-            "Auto PP + Auto Loot: LOADED (legacy, always on)" :
-            "Auto PP + Auto Loot: NOT LOADED");
+            "AutoLootPP: LOADED (exact work-runtime binary)" :
+            "AutoLootPP: NOT LOADED");
     if(g_ui_longpp_state)
         SetWindowTextA(g_ui_longpp_state,GetModuleHandleA(PAR_LONGPP_DLL)?
-            "Long Pick Pocket: LOADED (legacy range/facing)" :
+            "Long Pick Pocket: LOADED (exact work-runtime binary)" :
             "Long Pick Pocket: NOT LOADED");
     if(g_ui_range_state)
         SetWindowTextA(g_ui_range_state,GetModuleHandleA(PAR_RANGE_DLL)?
-            "PickPocketSelectiveRange: LOADED" :
+            "PickPocketSelectiveRange: LOADED (work AutoJunkbox source)" :
             "PickPocketSelectiveRange: NOT LOADED");
     if(g_ui_esp_state)
         SetWindowTextA(g_ui_esp_state,g_esp_enabled?
@@ -504,7 +551,8 @@ static void ui_sync_rear(void) {
          code==4u?"TIMER ERROR":
          code==5u?"DISABLED":
          code==6u?"WAITING FOR GAME WINDOW":
-         code==7u?"WORKER START ERROR":"UNKNOWN";
+         code==7u?"WORKER START ERROR":
+         code==8u?"PAUSED (PP / MovementCore owns movement)":"UNKNOWN";
     p=app_str(p,"PvE Rear 360: ");p=app_str(p,desc);
     p=app_str(p," | pulses: ");p=app_u32(p,pulses);*p=0;
     SetWindowTextA(g_ui_rear_state,buf);
@@ -598,6 +646,11 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             }
             ui_sync_rogue();return 0;
         }
+        if(id==109u || id==110u) {
+            if(id==109u)ui_work_pp_flip(PAR_CORE_DLL,25u,2u);
+            else ui_work_pp_flip(PAR_RANGE_DLL,7u,1u);
+            ui_sync_rogue();return 0;
+        }
         if(id==107u || id==108u) {
             if(ui_floor_get(2u,&value)) {
                 /* Convert to tenths and clamp the exact module-supported
@@ -659,9 +712,9 @@ static BOOL ui_create(HWND game) {
         40,475,675,34,FALSE));
 
     ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
-        "ROGUE / STEALTH FLOOR",36,137,665,39,TRUE));
+        "ROGUE / STEALTH FLOOR + PP",36,137,665,39,TRUE));
     ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
-        "SpeedFloor is configurable live; PP and loot keep their exact legacy DLLs.",
+        "Current work AutoPP + Junkbox; exact AutoLootPP / LongPP binaries.",
         42,181,672,34,FALSE));
     g_ui_speedfloor_check=ui_button(g_parallel_ui_hwnd,
         "STEALTH FLOOR - enabled",46,228,650,43,105u,TRUE);
@@ -677,11 +730,17 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
         "+",606,338,72,47,108u,FALSE));
     g_ui_speedfloor_state=ui_label(g_parallel_ui_hwnd,
-        "",46,416,665,32,FALSE);
+        "",46,404,665,32,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_speedfloor_state);
-    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
-        "PP / Auto Loot: installed modules run automatically. See STATUS.",
-        42,475,675,34,FALSE));
+    g_ui_pp_check=ui_button(g_parallel_ui_hwnd,
+        "AUTO PICKPOCKET - work MovementCore (F11)",46,440,665,42,109u,TRUE);
+    ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_check);
+    g_ui_junkbox_check=ui_button(g_parallel_ui_hwnd,
+        "AUTO JUNKBOX - work PickPocketSelectiveRange",46,491,665,42,110u,TRUE);
+    ui_add_to_page(UI_TAB_ROGUE,g_ui_junkbox_check);
+    g_ui_pp_control_state=ui_label(g_parallel_ui_hwnd,
+        "",46,548,665,35,FALSE);
+    ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
 
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
         "ACTIVE MODULES",36,137,665,40,TRUE));
@@ -698,9 +757,11 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_STATUS,g_ui_longpp_state);
     g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,440,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_rear_state);
+    g_ui_core_state=ui_label(g_parallel_ui_hwnd,"",46,490,665,31,FALSE);
+    ui_add_to_page(UI_TAB_STATUS,g_ui_core_state);
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
-        "Legacy PP / loot cannot be independently toggled in this build.",
-        42,475,665,35,FALSE));
+        "AutoLootPP / LongPP remain exact-byte modules, not hot-unloaded.",
+        42,548,665,35,FALSE));
 
     ui_sync_esp();
     ui_sync_rogue();
@@ -730,7 +791,9 @@ static void parallel_gui_tick(void) {
         ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);
         g_ui_shown=1u;
     }
-    if(g_ui_current_tab==UI_TAB_STATUS && (g_render_frame%15u)==0u)ui_sync_rear();
+    if(g_ui_current_tab==UI_TAB_STATUS && (g_render_frame%15u)==0u){
+        ui_sync_rogue();ui_sync_rear();
+    }
 }
 static void parallel_gui_destroy(void) {
     DWORD page;
@@ -747,6 +810,8 @@ static void parallel_gui_destroy(void) {
     for(page=0u;page<4u;++page)g_ui_checks[page]=NULL;
     g_ui_speedfloor_check=NULL;g_ui_hostile_guard_check=NULL;
     g_ui_speedfloor_state=NULL;g_ui_speedfloor_value=NULL;
+    g_ui_pp_check=NULL;g_ui_junkbox_check=NULL;
+    g_ui_pp_control_state=NULL;g_ui_core_state=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
