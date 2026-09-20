@@ -216,23 +216,6 @@ static int sane_ptr(uptr p){ return p>=0x10000u && p<0x7FFE0000u && !(p&1u); }
 static int guid_eq(Guid64 a,Guid64 b){ return a.lo==b.lo && a.hi==b.hi; }
 static int guid_zero(Guid64 g){ return (g.lo|g.hi)==0u; }
 
-/* The stock 1.12.1 casting bar also tracks game-object interactions (AB flags).
-   Read only on a prospective auto-PP send, never from a packet hook. */
-static int W112_PlayerActionActive(void)
-{
-    static const char script[] =
-        "W112_PP_ACTION_BUSY='0';"
-        "if CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling) then W112_PP_ACTION_BUSY='1' end";
-    typedef void (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
-    typedef const char* (FASTCALL *FrameScriptGetTextFn)(const char*,int,u32);
-    const char *value;
-    /* Do not send a new PP while the native client has a pending spell. */
-    if(read_u32(0x00CECA88u))return 1;
-    ((FrameScriptExecuteFn)(uptr)0x00704CD0u)(script,script);
-    value=((FrameScriptGetTextFn)(uptr)0x00703BF0u)("W112_PP_ACTION_BUSY",-1,0u);
-    return value && value[0]=='1' && value[1]==0;
-}
-
 /* Minimal PEB/LDR export resolver: no normal PE import table is required. */
 static int str_eq(const char *a,const char *b){while(*a&&*b){if(*a++!=*b++)return 0;}return *a==*b;}
 static int wide_ascii_eq(const u16 *w,u16 bytes,const char *s)
@@ -465,10 +448,7 @@ static void service_pickpocket(uptr player,u32 now)
             uptr d=read_u32(o+OBJ_DESCRIPTOR_OFF);u32 life=sane_ptr(d)?read_u32(d+DESC_PP_LIFE_MARKER_OFF):0u;
             if(g_pp.life_marker==0u && life!=0u){log_line("AUTO_PP_RESPAWN_RESET","pickpocket",g_pp.guid,0,life);pp_reset();}
             else if(now-g_pp.send_tick>=350u){
-                if(g_pp.send_count<MAX_PP_ATTEMPTS){
-                    if(W112_PlayerActionActive()){g_pp.send_tick=now;return;}
-                    send_pickpocket(player,o,now,dist2(player,o));
-                }
+                if(g_pp.send_count<MAX_PP_ATTEMPTS){send_pickpocket(player,o,now,dist2(player,o));}
                 else {log_line("AUTO_PP_GIVEUP","pickpocket",g_pp.guid,g_pp.send_count,0);pp_set_backoff(g_pp.guid,now,g_pp.send_count);pp_reset();}
             }
             /* If stealth disappears the final scanner still keeps the tracked GUID; no
@@ -481,7 +461,6 @@ static void service_pickpocket(uptr player,u32 now)
     g_pp_scan_tick=now;
     target=select_pp_target(player,now,&d2);
     if(!target)return;
-    if(W112_PlayerActionActive())return;
     g_pp.send_count=0;
     log_line("AUTO_PP_READY_SCAN","scan",object_guid(target),0,0);
     send_pickpocket(player,target,now,d2);
