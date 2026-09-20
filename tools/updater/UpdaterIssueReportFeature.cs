@@ -214,6 +214,25 @@ namespace WoW112Updater
 
 
                 sb.AppendLine();
+                sb.AppendLine("### TaxiFlight hotkey / flight telemetry (CSV)");
+                var taxiFiles = GetRecentTaxiFiles(root);
+                if (taxiFiles.Length == 0)
+                {
+                    sb.AppendLine("No taxi_probe_*.csv diagnostic files found.");
+                }
+                else
+                {
+                    foreach (var file in taxiFiles)
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine("#### " + Path.GetFileName(file));
+                        sb.AppendLine("```text");
+                        sb.AppendLine(Sanitize(TailFile(file, 9500), root, 9500));
+                        sb.AppendLine("```");
+                    }
+                }
+
+                sb.AppendLine();
                 sb.AppendLine("### Recent WoW native crash reports (last 72h)");
                 var crashFiles = GetRecentCrashFiles(root);
                 if (crashFiles.Length == 0)
@@ -276,6 +295,11 @@ namespace WoW112Updater
                         sb.AppendLine(Path.GetFileName(file));
                         sb.AppendLine(Sanitize(TailFile(file, 12000), root, 12000));
                     }
+                }
+                foreach (var taxiFile in GetRecentTaxiFiles(root))
+                {
+                    sb.AppendLine(Path.GetFileName(taxiFile));
+                    sb.AppendLine(Sanitize(TailFile(taxiFile, 9500), root, 9500));
                 }
                 var crashFiles = GetRecentCrashFiles(root);
                 foreach (var file in crashFiles)
@@ -367,6 +391,16 @@ namespace WoW112Updater
                 return Directory.GetFiles(debugDir, "*.jsonl")
                     .OrderByDescending(File.GetLastWriteTimeUtc)
                     .Take(3)
+                    .ToArray();
+            }
+
+            private static string[] GetRecentTaxiFiles(string root)
+            {
+                var debugDir = Path.Combine(root, ".wow112_debug");
+                if (!Directory.Exists(debugDir)) return new string[0];
+                return Directory.GetFiles(debugDir, "taxi_probe_*.csv")
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Take(2)
                     .ToArray();
             }
 

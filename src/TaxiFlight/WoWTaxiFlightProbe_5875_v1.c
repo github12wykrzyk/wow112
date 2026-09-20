@@ -1,5 +1,5 @@
 /*
- * TaxiFlightProbe V1 - WoW 1.12.1 build 5875, Windows x86.
+ * TaxiFlightProbe V3 (hotkey telemetry) - WoW 1.12.1 build 5875, Windows x86.
  *
  * Taxi measurement plus opt-in, SINGLE early native CMSG_MOVE_SPLINE_DONE.
  * The early ACK is only an experiment: its return value never establishes
@@ -9,8 +9,8 @@
  * Ctrl+Shift+F9: mark arrival once the character is controllable.
  * Ctrl+Shift+HOME: send one EARLY spline-done attempt for this marked trip.
  * The instant attempt is DISABLED except for that explicit hotkey.
- * Only when the game window is in the foreground. Output is written to
- * <game folder>\.wow112_debug\taxi_probe_<pid>_<tick>.csv.
+ * Only when the game window is in the foreground. Use a visible non-activating
+ * status toast + two diagnostic files (.csv and .jsonl) in .wow112_debug.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error TaxiFlightProbe requires a 32-bit x86 target.
@@ -58,6 +58,10 @@ static volatile LONG g_status = 0; /* 0=detached, 1=idle, 2=recording */
 static DWORD g_start_tick = 0;
 static DWORD g_last_sample = 0;
 static char g_path[MAX_PATH];
+static char g_json_path[MAX_PATH];
+static HWND g_statusToast = NULL;
+static DWORD g_statusHideAt = 0;
+static LONG g_keyEvents = 0;
 static volatile LONG g_instantPending = 0;
 static volatile LONG g_instantAttempted = 0;
 static DWORD g_instantScheduledAt = 0;
@@ -132,6 +136,24 @@ static void AppendRow(DWORD tick, const char *event, int valid, const TaxiSample
     if (h == INVALID_HANDLE_VALUE) return;
     WriteFile(h, line, len, &written, NULL);
     CloseHandle(h);
+    if (g_json_path[0]) {
+        char json[320];
+        DWORD jsonLen = (DWORD)wsprintfA(json,
+            "{\"tick_ms\":%lu,\"module\":\"TaxiFlight\",\"event\":\"%s\",\"valid\":%u,"
+            "\"x100\":%ld,\"y100\":%ld,\"z100\":%ld,"
+            "\"current100\":%ld,\"run100\":%ld}\r\n",
+            (unsigned long)tick, event, (unsigned)valid,
+            valid ? s->x100 : 0, valid ? s->y100 : 0,
+            valid ? s->z100 : 0, valid ? s->current100 : 0,
+            valid ? s->run100 : 0);
+        HANDLE jsonFile = CreateFileA(g_json_path, FILE_APPEND_DATA,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL, NULL);
+        if (jsonFile != INVALID_HANDLE_VALUE) {
+            WriteFile(jsonFile, json, jsonLen, &written, NULL);
+            CloseHandle(jsonFile);
+        }
+    }
 }
 static void LogSample(DWORD now, const char *event)
 {
@@ -153,8 +175,12 @@ static int PreparePath(void)
     lstrcpyA(folder, exe);
     lstrcatA(folder, "\\.wow112_debug");
     CreateDirectoryA(folder, NULL);
-    wsprintfA(g_path, "%s\\taxi_probe_%lu_%lu.csv", folder,
-              GetCurrentProcessId(), GetTickCount());
+    {
+        DWORD t = GetTickCount();
+        DWORD pid = GetCurrentProcessId();
+        wsprintfA(g_path, "%s\\taxi_probe_%lu_%lu.csv", folder, pid, t);
+        wsprintfA(g_json_path, "%s\\taxi_probe_%lu_%lu.jsonl", folder, pid, t);
+    }
     return 1;
 }
 static int IsGameForeground(void)
@@ -292,9 +318,42 @@ static void CALLBACK InstantTimerProc(HWND hwnd, UINT message, UINT_PTR id, DWOR
               "EARLY_ACK_CLIENT_SEND_FAILED");
 }
 
+
+/* This is an auxiliary Windows status toast, not an in-engine UI overlay.
+ * Exclusive fullscreen can hide it; CSV/JSONL diagnostics are authoritative.
+ * Creating it on the probe thread avoids calling WoW UI functions off-thread. */
+static void TaxiToast(const char *message, DWORD now)
+{
+    if (!g_statusToast) return;
+    SetWindowTextA(g_statusToast, message);
+    SetWindowPos(g_statusToast, HWND_TOPMOST, 24, 56, 550, 42,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    g_statusHideAt = now + 5500u;
+}
+static void TaxiToastInit(void)
+{
+    g_statusToast = CreateWindowExA(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        "STATIC", "TaxiFlight: gotowy", WS_POPUP | WS_BORDER | SS_CENTER,
+        24, 56, 550, 42, NULL, NULL, GetModuleHandleA(NULL), NULL);
+}
+static void TaxiToastTick(DWORD now)
+{
+    MSG msg;
+    if (!g_statusToast) return;
+    while (PeekMessageA(&msg, g_statusToast, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    if (g_statusHideAt && (LONG)(now - g_statusHideAt) >= 0) {
+        ShowWindow(g_statusToast, SW_HIDE);
+        g_statusHideAt = 0;
+    }
+}
 static DWORD WINAPI ProbeThread(LPVOID unused)
 {
-    int lastF8 = 0, lastF9 = 0, lastHome = 0;
+    int lastStart = 0, lastEnd = 0, lastInstant = 0;
+    int oldF8 = 0, oldF9 = 0, oldHome = 0;
     (void)unused;
     if (!PreparePath()) {
         InterlockedExchange(&g_status, 0);
@@ -312,15 +371,20 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
         }
     }
     InterlockedExchange(&g_status, 1);
+    TaxiToastInit();
     LogSample(GetTickCount(), "PROBE_READY");
+    TaxiToast("TaxiFlight READY | Ctrl+Shift+F8 start | F9 end | Home test", GetTickCount());
     while (!g_stop) {
         DWORD now;
-        int f8, f9, home, modifiers;
-        Sleep(80);
+        int f8, f9, home, modifiers, startCombo, endCombo, instantCombo;
+        Sleep(15);
+        now = GetTickCount();
+        TaxiToastTick(now);
         if (!IsGameForeground()) {
-            lastF8 = 0;
-            lastF9 = 0;
-            lastHome = 0;
+            lastStart = 0;
+            lastEnd = 0;
+            lastInstant = 0;
+            oldF8 = oldF9 = oldHome = 0;
             continue;
         }
         now = GetTickCount();
@@ -329,21 +393,46 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
         home = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
         modifiers = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) &&
                     ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
-        if (modifiers && f8 && !lastF8 && !g_recording) {
+        startCombo = modifiers && f8;
+        endCombo = modifiers && f9;
+        instantCombo = modifiers && home;
+        if (f8 && !oldF8 && !modifiers) LogSample(now, "F8_SEEN_WITHOUT_BOTH_MODIFIERS");
+        if (f9 && !oldF9 && !modifiers) LogSample(now, "F9_SEEN_WITHOUT_BOTH_MODIFIERS");
+        if (home && !oldHome && !modifiers) LogSample(now, "HOME_SEEN_WITHOUT_BOTH_MODIFIERS");
+        if (startCombo && !lastStart && !g_recording) {
             InterlockedExchange(&g_instantAttempted, 0);
             g_start_tick = now;
             g_last_sample = now;
             InterlockedExchange(&g_recording, 1);
             InterlockedExchange(&g_status, 2);
             LogSample(now, "MARK_START");
+            TaxiToast("TaxiFlight START registered | Ctrl+Shift+Home after 2s", now);
+            MessageBeep(MB_OK);
+        } else if (startCombo && !lastStart) {
+            LogSample(now, "MARK_START_IGNORED_ALREADY_RECORDING");
+            TaxiToast("TaxiFlight already recording", now);
         }
-        if (modifiers && f9 && !lastF9 && g_recording) {
+        if (endCombo && !lastEnd && g_recording) {
             LogSample(now, "MARK_END");
             /* Duration is (MARK_END.tick_ms - MARK_START.tick_ms), modulo 2^32. */
             InterlockedExchange(&g_recording, 0);
             InterlockedExchange(&g_status, 1);
+            TaxiToast("TaxiFlight END registered | flight measurement saved", now);
+            MessageBeep(MB_OK);
+        } else if (endCombo && !lastEnd) {
+            LogSample(now, "MARK_END_IGNORED_NOT_RECORDING");
+            TaxiToast("TaxiFlight end ignored: start first", now);
         }
-        if (modifiers && home && !lastHome && g_recording &&
+        if (instantCombo && !lastInstant && !g_recording) {
+            LogSample(now, "EARLY_ACK_IGNORED_NOT_RECORDING");
+            TaxiToast("TaxiFlight instant ignored: start with Ctrl+Shift+F8", now);
+            MessageBeep(MB_ICONEXCLAMATION);
+        } else if (instantCombo && !lastInstant &&
+                   (DWORD)(now - g_start_tick) < 2000u) {
+            LogSample(now, "EARLY_ACK_IGNORED_WAIT_TWO_SECONDS");
+            TaxiToast("TaxiFlight instant: wait 2 seconds after start", now);
+        }
+        if (instantCombo && !lastInstant && g_recording &&
             (DWORD)(now - g_start_tick) >= 2000u &&
             InterlockedCompareExchange(&g_instantAttempted, 1, 0) == 0) {
             HWND hwnd = GetForegroundWindow();
@@ -356,26 +445,40 @@ static DWORD WINAPI ProbeThread(LPVOID unused)
                 g_instantTimer = SetTimer(hwnd, 0u, 70u, InstantTimerProc);
                 LogSample(now, g_instantTimer ?
                           "EARLY_ACK_SCHEDULED" : "EARLY_ACK_TIMER_FAILED");
+                TaxiToast(g_instantTimer ?
+                          "TaxiFlight hotkey OK | instant attempt scheduled" :
+                          "TaxiFlight hotkey OK | native timer failed", now);
+                MessageBeep(g_instantTimer ? MB_OK : MB_ICONEXCLAMATION);
                 if (!g_instantTimer)
                     InterlockedExchange(&g_instantPending, 0);
             } else {
                 LogSample(now, "EARLY_ACK_ABORT_NO_GAME_WINDOW");
+                TaxiToast("TaxiFlight instant rejected: game window unavailable", now);
             }
+        } else if (instantCombo && !lastInstant && g_recording &&
+                   (DWORD)(now - g_start_tick) >= 2000u) {
+            LogSample(now, "EARLY_ACK_IGNORED_ALREADY_ATTEMPTED");
+            TaxiToast("TaxiFlight instant limited to one try per flight", now);
         }
-        lastF8 = f8;
-        lastF9 = f9;
-        lastHome = home;
+        lastStart = startCombo;
+        lastEnd = endCombo;
+        lastInstant = instantCombo;
+        oldF8 = f8;
+        oldF9 = f9;
+        oldHome = home;
         if (g_instantPending && (DWORD)(now - g_instantScheduledAt) >= 2500u &&
             InterlockedCompareExchange(&g_instantPending, 0, 1) == 1) {
             if (g_instantTimer) KillTimer(g_instantWindow, g_instantTimer);
             g_instantTimer = 0;
             LogSample(now, "EARLY_ACK_TIMER_TIMEOUT");
+            TaxiToast("TaxiFlight instant timer timed out; see report", now);
         }
         if (g_recording && (DWORD)(now - g_last_sample) >= 1000u) {
             g_last_sample = now;
             LogSample(now, "SAMPLE");
         }
     }
+    if (g_statusToast) DestroyWindow(g_statusToast);
     InterlockedExchange(&g_status, 0);
     return 0;
 }

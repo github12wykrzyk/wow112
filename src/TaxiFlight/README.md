@@ -1,4 +1,4 @@
-# TaxiFlightProbe V2 (flight telemetry + explicit experimental early ACK)
+# TaxiFlightProbe V3 (hotkey reliability, telemetry + opt-in early ACK)
 
 Target: WoW 1.12.1 build 5875, Windows x86. Companion module, not in stable runtime.
 Only on Ctrl+Shift+HOME, once per marked flight, the module asks the native
@@ -32,3 +32,25 @@ object snapshot, not a teleport. Coordinates are client-reported, not server-con
 Hard stop: if initial load crashes, do NOT infer flight mechanics from that crash.
 Remove this candidate via updater rollback and inspect crash telemetry. Do not
 change run-speed or inject completion/teleport packets based on this probe alone.
+
+## Hotkey diagnostics (work candidate only)
+
+- Polling uses 15 ms, and detects the rising edge of the **entire** Ctrl+Shift+key
+  combination, not the bare F8/F9/Home key. Press Ctrl and Shift, then F8, or
+  hold F8 and press both modifiers; either order triggers once.
+- A non-activating small Windows toast and an audible system beep confirm
+  START, END and the attempted instant hotkey. This is a Win32 window, not
+  a WoW-rendered UI element: exclusive fullscreen may hide it, and muted
+  system audio may hide the beep.
+- TaxiFlight writes both taxi_probe_*.csv and taxi_probe_*.jsonl. The existing
+  updater can already attach the JSONL to its 3-most-recent diagnostics; the
+  updated updater additionally includes the two newest CSV traces explicitly.
+- PROBE_READY means the DLL worker initialized; MARK_START / MARK_END means
+  the full combination registered. EARLY_ACK_SCHEDULED means only that the
+  Win32 timer was scheduled. EARLY_ACK_BEFORE_SEND means the native callback
+  was reached. EARLY_ACK_CLIENT_SEND_OK_NOT_SERVER_ACK does NOT prove travel
+  was accepted by the server. EARLY_ACK_TIMER_TIMEOUT indicates the callback
+  did not run in time. If any abort or timeout occurs, report the exact event.
+- Once a flight is marked, wait at least 2 seconds before trying
+  Ctrl+Shift+Home. This remains experimental; stop at once if movement,
+  client control or connection behaves unexpectedly.
