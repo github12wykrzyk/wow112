@@ -37,6 +37,22 @@ static volatile DWORD g_altPriorityForceDirect=0u;
  * function when referenced as `offset symbol`. Keep the V20 send-wrapper
  * address in a normal data symbol and jump through that instead. */
 static DWORD g_altPriorityBaseSendWrapper=0u;
+/* Cast-bar-based cap guard; packet hooks only inspect this UI-timer snapshot. */
+static volatile DWORD g_abCapGuardActive=0u,g_abCapGuardLastSeen=0u;
+static volatile DWORD g_abCapGuardBlockedPP=0u,g_abCapGuardBlockedMove=0u;
+static volatile DWORD g_abCapBlockMovementCurrent=0u;
+
+static void __cdecl W112_AB_CheckMovement(void)
+{
+    g_abCapBlockMovementCurrent=0u;
+    if(!g_abCapGuardActive)return;
+    /* Never forward synthetic pulses while the AB banner interaction is live.
+       Ordinary physical player movement remains forwarded by the original chain. */
+    if(g_injecting||g_gatherSpoof||LongPPActive()||LongPPInjecting()){
+        g_abCapBlockMovementCurrent=1u;
+        ++g_abCapGuardBlockedMove;
+    }
+}
 
 static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
 {
@@ -49,10 +65,16 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
 {
     BYTE*raw;DWORD op,spell;
     g_altPriorityBlockCurrent=0u;
-    if(g_mode!=MODE_LOCAL_STRONG||!packet||packet->size<8u||packet->size>MAX_PACKET_SIZE)return;
+    if(!packet||packet->size<8u||packet->size>MAX_PACKET_SIZE)return;
     raw=PacketRawBase(packet);if(!raw)return;
     op=*(DWORD*)raw;if(op!=0x12Eu)return;
     spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
+    if(g_abCapGuardActive){
+        g_altPriorityBlockCurrent=1u;
+        ++g_abCapGuardBlockedPP;
+        return;
+    }
+    if(g_mode!=MODE_LOCAL_STRONG)return;
     /* Manual LALT is an explicit user action and owns movement until it ends.
        Block both automatic and manual PP starts so a new LongPP transaction
        cannot repeatedly pause/starve the reset. Existing PP is allowed to
@@ -90,6 +112,13 @@ alt_pp_blocked:
 __declspec(naked) static void AltPriority_MoveWrapper(void)
 {
     __asm {
+        pushfd
+        pushad
+        call W112_AB_CheckMovement
+        popad
+        popfd
+        cmp dword ptr [g_abCapBlockMovementCurrent],0
+        jne alt_suppress_packet
         pushfd
         pushad
         push ecx
@@ -297,6 +326,21 @@ static void W112_Q_Tick(BYTE *self,DWORD now,DWORD pressed)
     g_qWasDown=pressed;
 }
 
+/* Only the native casting-bar interaction in AB engages the guard.
+   This avoids altering ordinary movement and gathering in other zones. */
+static DWORD W112_AB_CapCastVisible(void)
+{
+    static const char script[]=
+        "W112_AB_CAP='0';"
+        "local z=GetRealZoneText and GetRealZoneText() or (GetZoneText and GetZoneText());"
+        "if z=='Arathi Basin' and CastingBarFrame and "
+        "(CastingBarFrame.casting or CastingBarFrame.channeling) then W112_AB_CAP='1' end";
+    const char *s;
+    DebugChat(script);
+    s=((W112_Q_FrameGetTextFn)W112_Q_FRAME_GET_TEXT_FN)("W112_AB_CAP",-1,0u);
+    return (s&&s[0]=='1'&&s[1]==0)?1u:0u;
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
     DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
@@ -323,17 +367,27 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     g_key7=k7;g_key8=k8;g_gatherKey9=k9;g_keyAlt=kAlt;g_key10=k10;g_key11=k11;g_autoOpenKey12=k12;
 
     p=LocalPlayer();
+    if(p && W112_AB_CapCastVisible()){
+        g_abCapGuardActive=1u;
+        g_abCapGuardLastSeen=now;
+        /* An already-running SafeBreak must not resume with a packet burst. */
+        if(g_mode!=MODE_OFF){g_mode=MODE_OFF;g_lastInject=0u;g_started=0u;}
+        if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"AB_CAP_GATHER_ABORT",0u,0u);
+    }else if(!p || !g_abCapGuardLastSeen || (DWORD)(now-g_abCapGuardLastSeen)>=200u){
+        g_abCapGuardActive=0u;
+        if(!p)g_abCapGuardLastSeen=0u;
+    }
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
-        GatherTick(p,now);
+        if(!g_abCapGuardActive)GatherTick(p,now);
     }else if(g_gatherActive||g_gatherLootWait){
         g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootStart=0u;
         g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;
         g_gatherStealthPending=0u;g_gatherSpoof=0u;
         GatherFileLog("WORLD_LOST_ABORT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
     }
-    if(g_mode==MODE_OFF)return;
+    if(g_mode==MODE_OFF||g_abCapGuardActive)return;
 
     if(g_mode==MODE_LOCAL_STRONG){
         /* An already-started PP owns its current transaction. Pause only for
@@ -600,6 +654,9 @@ __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityPPBlocks(void){
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityDirectPackets(void){return g_altPriorityDirectPackets;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityDirectRestores(void){return g_altPriorityDirectRestores;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityQuietBypasses(void){return g_altPriorityQuietBypasses;}
+__declspec(dllexport) DWORD __stdcall MovementCore_ABCapGuardActive(void){return g_abCapGuardActive;}
+__declspec(dllexport) DWORD __stdcall MovementCore_ABCapBlockedPP(void){return g_abCapGuardBlockedPP;}
+__declspec(dllexport) DWORD __stdcall MovementCore_ABCapBlockedMove(void){return g_abCapGuardBlockedMove;}
 
 BOOL __stdcall DllMain(HINSTANCE h,DWORD r,LPVOID x)
 {
