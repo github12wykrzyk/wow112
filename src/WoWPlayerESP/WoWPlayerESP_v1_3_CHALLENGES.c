@@ -779,7 +779,9 @@ static void parallel_gui_tick(void) {
         ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);
         g_ui_shown=1u;
     }
-    if(g_ui_current_tab==UI_TAB_STATUS && (g_render_frame%15u)==0u)ui_sync_rear();
+    if(g_ui_current_tab==UI_TAB_STATUS && (g_render_frame%15u)==0u){
+        ui_sync_rogue();ui_sync_rear();
+    }
 }
 static void parallel_gui_destroy(void) {
     DWORD page;
