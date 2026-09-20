@@ -205,18 +205,20 @@ function lazyRogueLoad.LoadParseRogue()
 	end
 
 
-	-- The clock is an estimate, never a native/server-side tick timestamp.
-	-- Missing synchronization, capped energy and a missed expected tick fail closed.
+	-- Phase is estimated from the most recently observed energy tick.
+	-- Retain a short 2-second-cycle estimate while energy is capped or a
+	-- UNIT_ENERGY notification is missed; discard stale estimates after 8s.
 	function lazyRogue.masks.EnergyTickRemainingMs()
 		local syncedAt = lazyRogue.energyTickSyncedAt
-		if (not syncedAt or UnitMana("player") >= UnitManaMax("player")) then
+		if (not syncedAt) then
 			return nil
 		end
-		local elapsed = GetTime() - syncedAt
-		if (elapsed < 0 or elapsed >= 2) then
+		local age = GetTime() - syncedAt
+		if (age < 0 or age > 8) then
 			return nil
 		end
-		return math.floor((2 - elapsed) * 1000 + 0.5)
+		local phaseSeconds = math.mod(age, 2)
+		return math.floor((2 - phaseSeconds) * 1000 + 0.5)
 	end
 
 	function lazyRogue.masks.EnergyTickMs(operator, thresholdMs)
@@ -1144,7 +1146,7 @@ function lazyRogueLoad.LoadParseRogue()
 		return [[
 			<P>-if[Not]Poisoned={MainHand,OffHand}</P>
 			<P>-if[Not]Stealthed</P>
-			<P>-ifEnergyTick{&lt;,=,&gt;}XXms |cffffff00(choose XX: 0-2000 ms; estimated tick, requires synchronization)|r</P>
+			<P>-ifEnergyTick{&lt;,=,&gt;}XXms |cffffff00(XX: 0-2000 ms; automatically estimated from energy gains; /lrtick shows status)|r</P>
 			<P>Examples: bs-ifEnergyTick&lt;100ms; ss-ifEnergyTick&lt;350ms</P>
 			<P>-if[{&lt;,=,&gt;}]Xcp</P>
 		]]

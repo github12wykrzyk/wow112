@@ -28,33 +28,60 @@ function lazyRogueLoad.OnLoad()
 	
 	this:RegisterEvent("VARIABLES_LOADED")
 	this:RegisterEvent("PLAYER_LOGIN")
+	-- LazyRogue is load-on-demand: PLAYER_LOGIN may already have fired.
+	-- Start listening as soon as this addon is loaded, not only at login.
+	lazyRogueLoad.ResetEnergyTickClock()
+	this:RegisterEvent("UNIT_ENERGY")
+	SLASH_LAZYROGUETICK1 = "/lrtick"
+	SlashCmdList["LAZYROGUETICK"] = lazyRogueLoad.PrintEnergyTickClock
 end
 
--- Conservative tick estimate from vanilla UNIT_ENERGY events, not a native timer.
--- Two uncapped +20 gains separated by ~2s are needed to establish a phase.
+-- An observed uncapped +20 energy gain sets the estimated 2s server-tick
+-- phase immediately. The old two-consecutive-uncapped-tick requirement often
+-- never synchronized while actively spending energy or approaching the cap.
+-- A capped partial (+1..+19) gain can also mark a tick when already near cap.
+-- This is an approximation based on client UNIT_ENERGY timing, not a DLL
+-- or a claim that GetTime reads the server's native tick clock.
 function lazyRogueLoad.ResetEnergyTickClock()
-	lazyRogue.energyTickProbeAt = nil
 	lazyRogue.energyTickSyncedAt = nil
+	lazyRogue.energyTickLastGain = nil
+	lazyRogue.energyTickLastEventAt = nil
 	lazyRogue.latestEnergy = UnitMana("player")
 end
 
 function lazyRogueLoad.UpdateEnergyTickClock(previousEnergy, currentEnergy, now)
-	local gain = currentEnergy - previousEnergy
-	if (gain ~= 20 or previousEnergy > UnitManaMax("player") - 20) then
-		-- Tea, procs or otherwise unexpected energy gains invalidate synchronization.
-		if (gain > 0) then
-			lazyRogue.energyTickProbeAt = nil
-			lazyRogue.energyTickSyncedAt = nil
-		end
+	if (type(previousEnergy) ~= "number" or type(currentEnergy) ~= "number") then
 		return
 	end
-	local previousTick = lazyRogue.energyTickProbeAt
-	lazyRogue.energyTickProbeAt = now
-	if (previousTick and now - previousTick >= 1.7 and now - previousTick <= 2.3) then
-		lazyRogue.energyTickSyncedAt = now
-	else
-		lazyRogue.energyTickSyncedAt = nil
+	local gain = currentEnergy - previousEnergy
+	lazyRogue.energyTickLastGain = gain
+	lazyRogue.energyTickLastEventAt = now
+	if (gain <= 0) then
+		return
 	end
+	local maxEnergy = UnitManaMax("player")
+	if (gain > 20) then
+		-- Thistle Tea or a nonstandard positive energy source changes the value
+		-- without proving that a natural regeneration tick occurred.
+		lazyRogue.energyTickSyncedAt = nil
+		return
+	end
+	if (gain == 20 or (maxEnergy and maxEnergy > 0 and currentEnergy == maxEnergy)) then
+		lazyRogue.energyTickSyncedAt = now
+	end
+end
+
+-- Optional observation only; synchronization is fully automatic.
+function lazyRogueLoad.PrintEnergyTickClock()
+	local remaining = lazyRogue.masks and lazyRogue.masks.EnergyTickRemainingMs
+		and lazyRogue.masks.EnergyTickRemainingMs()
+	local energy = UnitMana("player")
+	local maximum = UnitManaMax("player")
+	local state = remaining and (remaining.." ms to tick (estimated)")
+		or "UNSYNCED (wait for natural energy regeneration)"
+	local gain = lazyRogue.energyTickLastGain
+	lazyRogue.chat("Energy tick: "..state.."; energy "..energy.."/"..maximum
+		.."; last change "..(gain and tostring(gain) or "none")..".")
 end
 
 function lazyRogueLoad.OnEvent()
@@ -78,6 +105,7 @@ function lazyRogueLoad.OnEvent()
 		elseif (event == "PLAYER_LOGIN") then
 		
 		lazyRogueLoad.ResetEnergyTickClock()
+		-- Harmless if already registered by OnLoad; needed for login reloads.
 		this:RegisterEvent("UNIT_ENERGY")
 		this:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 		
