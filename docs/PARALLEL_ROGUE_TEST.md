@@ -14,3 +14,36 @@ Auto PP and Auto Loot share a historical binary with no verified per-feature con
 In-game checks: Insert -> ESP labels and four live filters -> click a visible live label to target. Rogue section -> toggle Stealth Floor, verify it acts immediately and cannot be toggled when its control API is missing. Test PP on a valid humanoid/undead NPC and automatic loot of an eligible nearby corpse; report actual loot, any stuck loot window, range errors, crashes or interruption. Re-enter/leave BG and confirm no loss of ESP or GUI.
 
 No test ZIP is considered ready until GitHub's `build_work_candidate.yml` on the exact commit concludes `FINAL_PACKAGE: PASS`. Leave `main` untouched.
+
+## PvE Rear 360 V1 — isolated parallel experiment
+
+`WoWPVERear360_5875_v1.dll` is a new companion DLL built from
+`src/PVERear360/WoWPVERear360_5875_v1.c`; it does not reinstall the older
+PositionalSpoof, cast/GCD hooks or MovementCore. It uses the verified build-5875
+object-manager fields and native movement heartbeat wrapper, and synchronously
+restores the local XYZ/O after emitting a double-heartbeat rear pose. The server
+may reject the resulting synthetic movement: this feature is not guaranteed
+to provide server-authoritative rear positioning.
+
+Scope: current selected hostile NPC (type 3), actual horizontal distance <=8 yd
+and vertical difference <=2.5 yd. Never active on player targets (PvP/BG).
+A moving/turning NPC's live orientation is resampled at most every 100ms.
+It pauses synthetic movement while the native cast/pending-cast fields are set.
+The absence of a visible native casting ID for a particular item/channel is
+not yet independently verified: check mining, flag captures and poison crafts
+before keeping this candidate. During LongPickPocket's active transaction,
+LongPickPocket's existing movement hook may own the outgoing heartbeat; do not
+interpret its presence as proof of server rear acceptance.
+
+The module exports W112_CONTROL_API_V1 (`pve_rear360`, enable and interval
+80..250ms) and status/pulse-count exports. It is default-on in this experimental
+ZIP. The parallel ESP GUI currently does not expose the new setting; test the
+default behavior without interpreting the status counter as an in-game hit.
+
+Test: target one stationary hostile NPC from the front, use Backstab; then
+approach from either side; repeat after the NPC turns/moves. Check the combat
+log for actual Backstab/Ambush success and watch for rubber-banding, "not behind"
+errors, unexpected movement and cast interruption. Verify a selected player
+target on BG is unaffected, including while leaving/re-entering BG. Finally
+confirm Auto PP and Auto Loot still work against an eligible humanoid/undead.
+If any cast/channel/capture is interrupted, reject the candidate.
