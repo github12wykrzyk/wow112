@@ -37,8 +37,10 @@
 /* The included base periodically confirms that the cached local player
    still belongs to the live Object Manager (also when BG transitions recycle
    the same manager address), invalidates stale world caches and repaints
-   layered labels. Keep this wrapper marked as the active build input for
-   build_changed_active. */
+   layered labels. The base now uses the live, guarded client UnitReaction
+   instead of race to classify cross-faction BG teams and purges former enemy
+   labels when a player is friendly. Keep this wrapper marked as the active
+   build input for build_changed_active. */
 #define DllMain W112_PlayerESP_Base_DllMain
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
