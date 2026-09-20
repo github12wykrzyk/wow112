@@ -37,7 +37,7 @@ static volatile DWORD g_altPriorityForceDirect=0u;
  * function when referenced as `offset symbol`. Keep the V20 send-wrapper
  * address in a normal data symbol and jump through that instead. */
 static DWORD g_altPriorityBaseSendWrapper=0u;
-/* Cast-bar-based cap guard; packet hooks only inspect this UI-timer snapshot. */
+/* Universal cast/channel movement guard; legacy AB diagnostic exports remain. */
 static volatile DWORD g_abCapGuardActive=0u,g_abCapGuardLastSeen=0u;
 static volatile DWORD g_abCapGuardBlockedPP=0u,g_abCapGuardBlockedMove=0u;
 static volatile DWORD g_abCapBlockMovementCurrent=0u;
@@ -45,13 +45,12 @@ static volatile DWORD g_abCapBlockMovementCurrent=0u;
 static void __cdecl W112_AB_CheckMovement(void)
 {
     g_abCapBlockMovementCurrent=0u;
+    /* Suppress all outgoing movement while casting/channeling, including
+       packets rewritten by downstream movement hooks. Outside a cast, leave
+       the original movement hook chain unchanged. */
     if(!g_abCapGuardActive)return;
-    /* Never forward synthetic pulses while the AB banner interaction is live.
-       Ordinary physical player movement remains forwarded by the original chain. */
-    if(g_injecting||g_gatherSpoof||LongPPActive()||LongPPInjecting()){
-        g_abCapBlockMovementCurrent=1u;
-        ++g_abCapGuardBlockedMove;
-    }
+    g_abCapBlockMovementCurrent=1u;
+    ++g_abCapGuardBlockedMove;
 }
 
 static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
@@ -67,7 +66,14 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
     g_altPriorityBlockCurrent=0u;
     if(!packet||packet->size<8u||packet->size>MAX_PACKET_SIZE)return;
     raw=PacketRawBase(packet);if(!raw)return;
-    op=*(DWORD*)raw;if(op!=0x12Eu)return;
+    op=*(DWORD*)raw;
+    /* Cover direct heartbeats that bypass the movement callsite. */
+    if(g_abCapGuardActive && op==MSG_MOVE_HEARTBEAT){
+        g_altPriorityBlockCurrent=1u;
+        ++g_abCapGuardBlockedMove;
+        return;
+    }
+    if(op!=0x12Eu)return;
     spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
     if(g_abCapGuardActive){
         g_altPriorityBlockCurrent=1u;
@@ -326,18 +332,17 @@ static void W112_Q_Tick(BYTE *self,DWORD now,DWORD pressed)
     g_qWasDown=pressed;
 }
 
-/* Only the native casting-bar interaction in AB engages the guard.
-   This avoids altering ordinary movement and gathering in other zones. */
+/* Observe the vanilla casting bar in every zone, including item casts
+   and channels. Only the existing UI timer invokes FrameScript. */
 static DWORD W112_AB_CapCastVisible(void)
 {
     static const char script[]=
-        "W112_AB_CAP='0';"
-        "local z=GetRealZoneText and GetRealZoneText() or (GetZoneText and GetZoneText());"
-        "if z=='Arathi Basin' and CastingBarFrame and "
-        "(CastingBarFrame.casting or CastingBarFrame.channeling) then W112_AB_CAP='1' end";
+        "W112_CAST_GUARD='0';"
+        "if CastingBarFrame and (CastingBarFrame.casting or "
+        "CastingBarFrame.channeling) then W112_CAST_GUARD='1' end";
     const char *s;
     DebugChat(script);
-    s=((W112_Q_FrameGetTextFn)W112_Q_FRAME_GET_TEXT_FN)("W112_AB_CAP",-1,0u);
+    s=((W112_Q_FrameGetTextFn)W112_Q_FRAME_GET_TEXT_FN)("W112_CAST_GUARD",-1,0u);
     return (s&&s[0]=='1'&&s[1]==0)?1u:0u;
 }
 
@@ -360,7 +365,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(k7&&!g_key7){AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
     if(k8&&!g_key8)Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
-    if(kAlt&&!g_keyAlt)AltPriority_Start(now);
+    if(kAlt&&!g_keyAlt&&!g_abCapGuardActive)AltPriority_Start(now);
     if(k10&&!g_key10)Start(MODE_PURSUIT,now);
     if(k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
     if(k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
@@ -372,7 +377,13 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_abCapGuardLastSeen=now;
         /* An already-running SafeBreak must not resume with a packet burst. */
         if(g_mode!=MODE_OFF){g_mode=MODE_OFF;g_lastInject=0u;g_started=0u;}
-        if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"AB_CAP_GATHER_ABORT",0u,0u);
+        /* Do not interrupt an existing gather cast or emit a real-position
+           restoration heartbeat during an unrelated cast. */
+        if(g_gatherActive||g_gatherLootWait){
+            DWORD castId=*(DWORD*)ADDR_CASTING_SPELLID;
+            if(!castId||!GatherCastMatches(g_gatherKind,castId))
+                GatherStop(p,now,"CAST_GUARD_FOREIGN_GATHER_ABORT",0u,0u);
+        }
     }else if(!p || !g_abCapGuardLastSeen || (DWORD)(now-g_abCapGuardLastSeen)>=200u){
         g_abCapGuardActive=0u;
         if(!p)g_abCapGuardLastSeen=0u;
@@ -380,7 +391,8 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
-        if(!g_abCapGuardActive)GatherTick(p,now);
+        if(!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)
+            GatherTick(p,now);
     }else if(g_gatherActive||g_gatherLootWait){
         g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootStart=0u;
         g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;

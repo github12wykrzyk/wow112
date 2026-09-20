@@ -801,7 +801,15 @@ static int pvpRearCompute(DWORD pl,DWORD tg){
 static void pvpRearTick(DWORD tick){
  DWORD pl,tg;float px,py,pz,po;int first;
  if(!installed)return;
- /* Never inject a heartbeat into an active cast/PP/Gouge transaction. */
+ /* The PvP-rear timer runs independently of opener state. A real cast
+    must silence it without pvpRearStop(), which itself sends a heartbeat. */
+ if(*(volatile DWORD*)CLIENT_CASTING_SPELL_ID){
+  if(g_pvpRearActive){
+   g_pvpRearActive=0;g_pvpRearPlayer=0;g_pvpRearTarget=0;
+   logs("PVP_REAR_PAUSE native_cast_active\r\n");
+  }
+  return;
+ }
  if(g_phase!=PHASE_IDLE)return;
  if(!g_cfgPvpRearFollowEnabled){pvpRearStop("PVP_REAR_STOP gui_off\r\n");return;}
  pl=getPlayer();tg=getTarget();
@@ -983,6 +991,9 @@ static int rewriteMovementStore(DWORD store){
  DWORD *ds=(DWORD*)store,size,base,buf,op,off;BYTE *p;float sx,sy,sz,so;
  int followIdle=(g_phase==PHASE_IDLE&&g_cfgPvpRearFollowEnabled&&g_pvpRearActive);
  if(!ds||g_allowMovementSend)return 0;
+ /* Do not rewrite ordinary rear-follow movement during a native cast.
+    MovementCore separately blocks item/channel movement using the cast bar. */
+ if(followIdle&&*(volatile DWORD*)CLIENT_CASTING_SPELL_ID)return 0;
  if(followIdle){
   if(!pvpRearCompute(getPlayer(),getTarget())){
    pvpRearStop("PVP_REAR_STOP outgoing_invalid\r\n");return 0;
