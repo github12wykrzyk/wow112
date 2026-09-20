@@ -6,6 +6,7 @@
 typedef struct W112_RogueFacingPose {
  DWORD spell,candidate,target,guidLo,guidHi;
  float x,y,z,o;
+ float targetX,targetY,targetZ,targetO;
  int valid;
 } W112_RogueFacingPose;
 static W112_RogueFacingPose g_rogueFacing;
@@ -29,6 +30,8 @@ static int W112_RogueFacingBegin(DWORD spell,DWORD candidate,DWORD target){
  g_rogueFacing.guidLo=*(DWORD*)(target+OBJ_GUID_LO);
  g_rogueFacing.guidHi=*(DWORD*)(target+OBJ_GUID_HI);
  g_rogueFacing.x=x;g_rogueFacing.y=y;g_rogueFacing.z=z;g_rogueFacing.o=o;
+ g_rogueFacing.targetX=tx;g_rogueFacing.targetY=ty;
+ g_rogueFacing.targetZ=tz;g_rogueFacing.targetO=to;
  g_rogueFacing.valid=1;return 1;
 }
 /* Refuse a stale pointer, switched target, stale candidate or recycled GUID. */
@@ -41,5 +44,23 @@ static int W112_RogueFacingRead(DWORD spell,DWORD candidate,DWORD target,
     g_rogueFacing.guidHi!=*(DWORD*)(target+OBJ_GUID_HI))return 0;
  *x=g_rogueFacing.x;*y=g_rogueFacing.y;
  *z=g_rogueFacing.z;*o=g_rogueFacing.o;return 1;
+}
+/* 0 = stale target/pose; 1 = unchanged; 2 = updated for live PvP target.
+   The caller uses one snapshot for a packet (or a double-heartbeat pair).
+   Never refresh a priming pair between its two heartbeats. */
+static int W112_RogueFacingRefresh(DWORD spell,DWORD candidate,DWORD target){
+ float x,y,z,o,tx,ty,tz,to,dx,dy,dz,angle;
+ if(!W112_RogueFacingRead(spell,candidate,target,&x,&y,&z,&o))return 0;
+ tx=*(float*)(target+UNIT_X);ty=*(float*)(target+UNIT_Y);
+ tz=*(float*)(target+UNIT_Z);to=*(float*)(target+UNIT_O);
+ if(tx!=tx||ty!=ty||tz!=tz||to!=to)return 0;
+ dx=tx-g_rogueFacing.targetX;dy=ty-g_rogueFacing.targetY;
+ dz=tz-g_rogueFacing.targetZ;
+ angle=to-g_rogueFacing.targetO;
+ if(angle<0.0f)angle=-angle;
+ if(angle>PI_F)angle=TWO_PI_F-angle;
+ if(dx*dx+dy*dy+dz*dz<=0.04f&&angle<=0.10f)return 1;
+ if(!W112_RogueFacingBegin(spell,candidate,target))return 0;
+ return 2;
 }
 #endif

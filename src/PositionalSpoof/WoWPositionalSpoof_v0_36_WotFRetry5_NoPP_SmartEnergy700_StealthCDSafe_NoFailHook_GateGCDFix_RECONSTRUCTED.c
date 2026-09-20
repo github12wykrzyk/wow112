@@ -111,7 +111,8 @@ int _fltused=0;
 #define OM_LOCAL_GUID_HI        0xC4UL
 
 #define SPOOF_DISTANCE          1.6f
-#define MAX_TARGET_DIST2        100.0f
+#define MAX_TARGET_DIST2        100.0f /* Preserve PvE and Gouge. */
+#define PVP_BEHIND_MAX_DIST2      64.0f /* Real PvP BS/Ambush distance <= 8 yd; range module floor is 8 yd. */
 #define MAX_CANDIDATES          8UL
 #define RESULT_TIMEOUT_MS       350UL
 #define RESULT_RESTORE_MS       1UL
@@ -712,9 +713,16 @@ static int sendCurrentCandidate(const char *tag){
  pl=getPlayer();tg=getTarget();if(!pl||!tg){logs("SPOOF_SKIP no_player_or_target\r\n");return 0;}
  type=*(DWORD*)(tg+OBJ_TYPE);if(type!=3&&type!=4){logs("SPOOF_SKIP target_not_unit\r\n");return 0;}
  if(g_target && tg!=g_target){logs("SPOOF_ABORT target_changed\r\n");return 0;}
+ if(g_player && pl!=g_player){logs("SPOOF_ABORT player_changed\r\n");return 0;}
  px=*(float*)(pl+UNIT_X);py=*(float*)(pl+UNIT_Y);pz=*(float*)(pl+UNIT_Z);po=*(float*)(pl+UNIT_O);
  tx=*(float*)(tg+UNIT_X);ty=*(float*)(tg+UNIT_Y);tz=*(float*)(tg+UNIT_Z);to=*(float*)(tg+UNIT_O);
- if((px-tx)*(px-tx)+(py-ty)*(py-ty)>MAX_TARGET_DIST2){logs("SPOOF_SKIP target_too_far\r\n");return 0;}
+ if((px-tx)*(px-tx)+(py-ty)*(py-ty)>(
+     (isBehindSpell(g_spoofSpell)&&type==4)?PVP_BEHIND_MAX_DIST2:MAX_TARGET_DIST2)){
+  logs(type==4&&isBehindSpell(g_spoofSpell)?
+       "ROGUE_PVP_RANGE_BYPASS real_distance_over_8yd\r\n":
+       "SPOOF_SKIP target_too_far\r\n");
+  return 0;
+ }
  if(!g_target){g_player=pl;g_target=tg;}
  if(isBehindSpell(g_spoofSpell)){
   if(!W112_RogueFacingBegin(g_spoofSpell,g_candidate,tg)){
@@ -732,6 +740,25 @@ static int sendCurrentCandidate(const char *tag){
    *(float*)(pl+UNIT_X)=sx;*(float*)(pl+UNIT_Y)=sy;*(float*)(pl+UNIT_Z)=sz;*(float*)(pl+UNIT_O)=so;
  }
  sendHeartbeat(pl);
+ /* The enemy may strafe/turn during the first pair. In PvP, resample once
+    just before the cloned cast; if geometry changed, PRIME THE NEW POSE
+    with a complete pair instead of mixing old and new heartbeat positions. */
+ if(type==4&&isBehindSpell(g_spoofSpell)){
+  int fresh=W112_RogueFacingRefresh(g_spoofSpell,g_candidate,tg);
+  if(fresh==0){
+   *(float*)(pl+UNIT_X)=px;*(float*)(pl+UNIT_Y)=py;*(float*)(pl+UNIT_Z)=pz;*(float*)(pl+UNIT_O)=po;
+   logs("ROGUE_PVP_POSE_ABORT target_changed_during_prime\r\n");return 0;
+  }
+  if(fresh==2){
+   if(!W112_RogueFacingRead(g_spoofSpell,g_candidate,tg,&sx,&sy,&sz,&so)){
+    *(float*)(pl+UNIT_X)=px;*(float*)(pl+UNIT_Y)=py;*(float*)(pl+UNIT_Z)=pz;*(float*)(pl+UNIT_O)=po;
+    return 0;
+   }
+   *(float*)(pl+UNIT_X)=sx;*(float*)(pl+UNIT_Y)=sy;*(float*)(pl+UNIT_Z)=sz;*(float*)(pl+UNIT_O)=so;
+   sendHeartbeat(pl);sendHeartbeat(pl);
+   logs("ROGUE_PVP_POSE_REPRIME target_moved_or_turned\r\n");
+  }
+ }
  *(float*)(pl+UNIT_X)=px;*(float*)(pl+UNIT_Y)=py;*(float*)(pl+UNIT_Z)=pz;*(float*)(pl+UNIT_O)=po;
  return 1;
 }
@@ -894,6 +921,26 @@ static int movementHasExtra(DWORD op){
 static int rewriteMovementStore(DWORD store){
  DWORD *ds=(DWORD*)store,size,base,buf,op,off;BYTE *p;float sx,sy,sz,so;
  if(!ds||g_phase!=PHASE_WAIT_RESULT||g_allowMovementSend||!g_target||!g_spoofSpell)return 0;
+ if(isBehindSpell(g_spoofSpell)&&g_energyGatePvpForCast){
+  DWORD pl=getPlayer(),tg=getTarget();
+  float px,py,tx,ty;int fresh;
+  if(!pl||pl!=g_player||!tg||tg!=g_target){
+   cancelTimer();restoreServerPosition("ROGUE_PVP_ABORT world_or_target_changed");
+   return 0;
+  }
+  px=*(float*)(pl+UNIT_X);py=*(float*)(pl+UNIT_Y);
+  tx=*(float*)(tg+UNIT_X);ty=*(float*)(tg+UNIT_Y);
+  if((px-tx)*(px-tx)+(py-ty)*(py-ty)>PVP_BEHIND_MAX_DIST2){
+   cancelTimer();restoreServerPosition("ROGUE_PVP_ABORT real_range_over_8yd");
+   return 0;
+  }
+  fresh=W112_RogueFacingRefresh(g_spoofSpell,g_candidate,tg);
+  if(!fresh){
+   cancelTimer();restoreServerPosition("ROGUE_PVP_ABORT invalid_live_pose");
+   return 0;
+  }
+  if(fresh==2)logs("ROGUE_PVP_POSE_REFRESH outgoing_movement\r\n");
+ }
  size=ds[4];base=ds[2];buf=ds[1];if(!buf||!size||buf<base)return 0;p=(BYTE*)(buf-base);if(size<28)return 0;
  op=*(DWORD*)p;off=4;if(movementHasGuid(op))off+=8;if(movementHasExtra(op))off+=4;if(size<off+24)return 0;
  if(!calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0))return 0;
