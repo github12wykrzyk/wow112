@@ -1714,7 +1714,7 @@ function lazyScript.LoadLocalization(locale)
 
 		TAB_LIST_ACTIONS = "<H1>已知的技能/动作列表</H1>"
 		TAB_ACTIONS_SYNTAX_SPECIFIC_SPELL_RANK = "<BR/><P>可以针对特定单位使用特定技能等级，语法：</P>"
-		TAB_ACTIONS_SYNTAX_SPECIFIC_SPELL_RANK_1 = "<BR/><P>|cff00ffff&lt;UnitId&gt;|r可以是任何有效的UnitId序列，见[http://web.archive.org/web/20070422180647/http://www.wowwiki.com/UnitId]。例如，\@player，\@pet，\@target，\@targettarget。请注意，法术的等级必须始终出现在“@”符号之前。</P>"
+		TAB_ACTIONS_SYNTAX_SPECIFIC_SPELL_RANK_1 = "<BR/><P>|cff00ffff&lt;UnitId&gt;|r可以是任何有效的UnitId序列，见[http://web.archive.org/web/20070422180647/http://www.wowwiki.com/UnitId]。例如，@player，@pet，@target，@targettarget。请注意，法术的等级必须始终出现在“@”符号之前。</P>"
 		TAB_ACTIONS_GREEN_ACTIONS = "<BR/><P>|cff40ff40绿色|r的技能/动作没有GCD，LazyScript可以在一行中执行任意数量的无GCD技能与最多一个有GCD技能。</P><BR/>"
 		TAB_ACTIONS_COMBO = "<H2>组合技</H2>"
 		TAB_ACTIONS_OTHER = "<H2>其他动作</H2>"

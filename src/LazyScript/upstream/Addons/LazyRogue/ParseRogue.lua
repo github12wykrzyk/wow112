@@ -649,7 +649,7 @@ function lazyRogueLoad.LoadParseRogue()
 		end
 
 		local bits = {}
-		for bit in string.gfind(arg, "[^\-]+") do
+		for bit in string.gfind(arg, "[^-]+") do
 			table.insert(bits, bit)
 		end
 
