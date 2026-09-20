@@ -1864,6 +1864,8 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 !cached_object_matches(obj, lo, hi) ||
                 !read_unit_meta(obj, &meta))
                 goto next_object;
+            pname[0]=0;
+            nameFound=FALSE;
 
             /* The native UnitReaction call used by an earlier ESP candidate
              * was disabled after a BG-transition crash. The game-thread
