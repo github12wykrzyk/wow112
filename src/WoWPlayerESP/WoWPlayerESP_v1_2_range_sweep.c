@@ -424,6 +424,19 @@ static DWORD g_relation_world_local_lo = 0u;
 static DWORD g_relation_world_local_hi = 0u;
 static DWORD g_relation_world_local_obj = 0u;
 static DWORD g_relation_world_stable_frames = 0u;
+/* BG scoreboard is read on the game-window thread by the active ESP wrapper.
+ * Fail closed for unknown players while a fresh, self-identified roster exists.
+ * Never call native UnitReaction in the renderer: its previous BG candidate
+ * crashed during world transfers, even when objects looked readable. */
+#define BG_SCORE_ROWS 80u
+#define BG_SCORE_TTL_FRAMES 90u
+struct BgScoreRow { char name[MAX_PLAYER_NAME + 1u]; BYTE side; };
+static struct BgScoreRow g_bg_score_rows[BG_SCORE_ROWS];
+static volatile DWORD g_bg_score_version = 0u;
+static volatile DWORD g_bg_score_count = 0u;
+static volatile DWORD g_bg_score_my_side = 2u;
+static volatile DWORD g_bg_score_frame = 0u;
+static volatile DWORD g_bg_score_manager = 0u;
 /* The cached local-player pointer belongs to one Object Manager generation. */
 static DWORD g_render_manager = 0u;
 
@@ -1781,6 +1794,31 @@ static void expire_old_tracked(void) {
     }
 }
 
+/* Returns -1 when no trustworthy BG score is available, 0 when the player
+ * is missing from an otherwise valid roster, 1 for an enemy, 5 for a teammate. */
+static int bg_score_relation(DWORD manager, const char* name) {
+    DWORD seq, count, mine, i, j, age;
+    if (!name || !name[0]) return -1;
+    seq=g_bg_score_version;
+    if (seq & 1u) return -1;
+    count=g_bg_score_count;
+    mine=g_bg_score_my_side;
+    age=g_render_frame-g_bg_score_frame;
+    if (g_bg_score_manager!=manager || mine>1u ||
+        count==0u || count>BG_SCORE_ROWS || age>BG_SCORE_TTL_FRAMES)
+        return -1;
+    for (i=0u; i<count; ++i) {
+        for (j=0u; j<=MAX_PLAYER_NAME; ++j) {
+            if (name[j]!=g_bg_score_rows[i].name[j]) break;
+            if (!name[j]) {
+                int relation=(g_bg_score_rows[i].side==mine) ? 5 : 1;
+                return (seq==g_bg_score_version) ? relation : -1;
+            }
+        }
+    }
+    return (seq==g_bg_score_version) ? 0 : -1;
+}
+
 static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD guidHi, float lx, float ly, float lz) {
     DWORD obj, next, type, lo, hi, visited = 0u;
     DWORD count = 0u, i;
@@ -1820,23 +1858,30 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
             rd_u32(obj + OBJ_GUID_LO, &lo) && rd_u32(obj + OBJ_GUID_HI, &hi) &&
             !(lo == guidLo && hi == guidHi)) {
             ++scannedPlayers;
-            /* Revalidate both objects and require initialized unit metadata
-               immediately before entering native relation code. */
+            /* Read only stable, live player metadata; relation comes from the
+               BG scoreboard rather than unsafe native relation functions. */
             if (!cached_object_matches(localObj, guidLo, guidHi) ||
                 !cached_object_matches(obj, lo, hi) ||
                 !read_unit_meta(obj, &meta))
                 goto next_object;
 
-            /*
-             * The render path has already held the world identity stable for
-             * WORLD_RELATION_STABLE_FRAMES. Only query live, GUID-matched
-             * objects; never call the native relation helper from GUID/MEM or
-             * LAST cache fallbacks. The client's actual reaction reflects BG
-             * allegiance, including cross-faction teammates/opponents; race
-             * and the original faction of a character do not.
-             */
-            reaction=native_unit_reaction(localObj, obj);
-            canAttack=(BYTE)(reaction>=1 && reaction<=3 ? 1u : 0u);
+            /* The native UnitReaction call used by an earlier ESP candidate
+             * was disabled after a BG-transition crash. The game-thread
+             * scoreboard gives the actual assigned BG team without native
+             * relation calls. Outside BG, preserve the legacy race fallback. */
+            reaction=(vanilla_race_team(localMeta.raceId) &&
+                      vanilla_race_team(meta.raceId) &&
+                      vanilla_race_team(localMeta.raceId)!=vanilla_race_team(meta.raceId)) ? 1 : 5;
+            if (g_bg_score_manager==manager && g_bg_score_my_side<=1u &&
+                g_bg_score_count>0u &&
+                (g_render_frame-g_bg_score_frame)<=BG_SCORE_TTL_FRAMES) {
+                int bgReaction;
+                pname[0]=0;
+                nameFound=lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
+                bgReaction=nameFound ? bg_score_relation(manager,pname) : 0;
+                if (bgReaction>=0) reaction=bgReaction;
+            }
+            canAttack=(BYTE)(reaction==1 ? 1u : 0u);
             pvpEnabled=canAttack;
             if (!canAttack) {
                 /* Drop a former enemy immediately: persistent history must
@@ -1850,9 +1895,11 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 goto next_object;
             }
             if (reaction >= 1 && reaction <= 3) {
-                pname[0] = 0;
-                nameFound = lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
-                if (!nameFound) copy_name_small(pname, "Unknown");
+                /* Reuse the scoreboard name when already resolved. */
+                if (!pname[0]) {
+                    nameFound=lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
+                    if (!nameFound) copy_name_small(pname, "Unknown");
+                }
 
                 ti = get_or_create_tracked(lo, hi);
                 g_tracked[ti].seenThisRefresh = 1u;
@@ -1942,6 +1989,11 @@ static void esp_forget_world(const char* reason) {
     g_relation_world_manager = 0u;
     g_relation_world_local_obj = 0u;
     g_relation_world_stable_frames = 0u;
+    g_bg_score_version++;
+    g_bg_score_count=0u;
+    g_bg_score_my_side=2u;
+    g_bg_score_manager=0u;
+    g_bg_score_version++;
     reset_world_runtime_cache();
     overlay_hide();
     log_line(reason);
