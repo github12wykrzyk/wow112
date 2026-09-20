@@ -1418,7 +1418,7 @@ static void draw_esp_label(HDC dc, const char* name,
     draw_text_centered(dc, LABEL_W / 2, 20, line2, COLOR_TEXT);
     draw_text_centered(dc, LABEL_W / 2, 35, line3,
                        source == SOURCE_STALE_CACHE ? COLOR_PVP_OFF :
-                       (pvpEnabled ? COLOR_PVP_ON : COLOR_PVP_OFF));
+                       (pvpEnabled == 1u ? COLOR_PVP_ON : COLOR_PVP_OFF));
 }
 
 static void log_render_summary(DWORD remotePlayers, DWORD hostilePlayers,
