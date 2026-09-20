@@ -681,14 +681,24 @@ static float candidateAngle(DWORD spell,DWORD idx,float targetO){
  return normAngle(a);
 }
 
+#include "../RogueFacingCore/RogueFacingCore_5875.h"
+
 static int calcCurrentCandidate(float *sx,float *sy,float *sz,float *so,float *txo,float *tyo,float *tzo,float *too){
  DWORD tg,type;float tx,ty,tz,to,a;
  tg=getTarget();if(!tg||tg!=g_target)return 0;
  type=*(DWORD*)(tg+OBJ_TYPE);if(type!=3&&type!=4)return 0;
- tx=*(float*)(tg+UNIT_X);ty=*(float*)(tg+UNIT_Y);tz=*(float*)(tg+UNIT_Z);to=*(float*)(tg+UNIT_O);
- a=candidateAngle(g_spoofSpell,g_candidate,to);
- *sx=tx+SPOOF_DISTANCE*fcos1(a);*sy=ty+SPOOF_DISTANCE*fsin1(a);*sz=tz;*so=normAngle(a+PI_F);
- if(txo)*txo=tx;if(tyo)*tyo=ty;if(tzo)*tzo=tz;if(too)*too=to;
+ if(isBehindSpell(g_spoofSpell)){
+  if(!W112_RogueFacingRead(g_spoofSpell,g_candidate,tg,sx,sy,sz,so))return 0;
+ }else{
+  /* Gouge retains its established geometry and timing. */
+  tx=*(float*)(tg+UNIT_X);ty=*(float*)(tg+UNIT_Y);
+  tz=*(float*)(tg+UNIT_Z);to=*(float*)(tg+UNIT_O);
+  a=candidateAngle(g_spoofSpell,g_candidate,to);
+  *sx=tx+SPOOF_DISTANCE*fcos1(a);*sy=ty+SPOOF_DISTANCE*fsin1(a);
+  *sz=tz;*so=normAngle(a+PI_F);
+ }
+ if(txo)*txo=*(float*)(tg+UNIT_X);if(tyo)*tyo=*(float*)(tg+UNIT_Y);
+ if(tzo)*tzo=*(float*)(tg+UNIT_Z);if(too)*too=*(float*)(tg+UNIT_O);
  return 1;
 }
 
@@ -706,14 +716,19 @@ static int sendCurrentCandidate(const char *tag){
  tx=*(float*)(tg+UNIT_X);ty=*(float*)(tg+UNIT_Y);tz=*(float*)(tg+UNIT_Z);to=*(float*)(tg+UNIT_O);
  if((px-tx)*(px-tx)+(py-ty)*(py-ty)>MAX_TARGET_DIST2){logs("SPOOF_SKIP target_too_far\r\n");return 0;}
  if(!g_target){g_player=pl;g_target=tg;}
+ if(isBehindSpell(g_spoofSpell)){
+  if(!W112_RogueFacingBegin(g_spoofSpell,g_candidate,tg)){
+   logs("ROGUE_FACINGCORE_ABORT invalid_pose\r\n");return 0;
+  }
+  logCountText("ROGUE_FACINGCORE_BEGIN",g_spoofSpell,g_candidate);
+ }
  if(!calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0))return 0;
  if(g_candidate==0)logSpoof(g_spoofSpell,pl,tg,tx,ty,tz,to,px,py,pz,po,sx,sy,sz,so);
  else logCandidate(tag,g_spoofSpell,g_candidate,sx,sy,sz,so);
  *(float*)(pl+UNIT_X)=sx;*(float*)(pl+UNIT_Y)=sy;*(float*)(pl+UNIT_Z)=sz;*(float*)(pl+UNIT_O)=so;
  sendHeartbeat(pl);
- /* Refresh target XYZ/O between spoof heartbeats.  This narrows the stale-facing
-    window for a rotating or strafing target without changing the cast/GCD pipeline. */
- if(calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0)){
+ /* Both rear-opener heartbeats use one immutable pose. Gouge is unchanged. */
+ if(!isBehindSpell(g_spoofSpell) && calcCurrentCandidate(&sx,&sy,&sz,&so,0,0,0,0)){
    *(float*)(pl+UNIT_X)=sx;*(float*)(pl+UNIT_Y)=sy;*(float*)(pl+UNIT_Z)=sz;*(float*)(pl+UNIT_O)=so;
  }
  sendHeartbeat(pl);
@@ -765,9 +780,9 @@ static void runDeferredClientUiClear(void){
   q=ap(q," action_guid=");q=hex32(q,ahi);q=ap(q,":");q=hex32(q,alo);q=ap(q," prev_guid=");q=hex32(q,pahi);q=ap(q,":");q=hex32(q,palo);q=ap(q," targeting=0x");q=hex32(q,(DWORD)targeting);q=ap(q,"\r\n");lograw(b,(DWORD)(q-b));
  }
 }
-static void clearState(void){g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_energyGateWindowMsForCast=ENERGY_GATE_DEFAULT_WINDOW_MS;g_energyGateEnabledForCast=1;g_energyGatePvpForCast=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
+static void clearState(void){W112_RogueFacingReset();g_phase=PHASE_IDLE;g_castPending=0;g_player=0;g_target=0;g_spoofSpell=0;g_rewrittenMoveCount=0;g_candidate=0;g_energyGatePassed=0;g_energyGateStartTick=0;g_energyGateReleaseDelay=0;g_energyGateTickSerialAtStart=0;g_energyGateWindowMsForCast=ENERGY_GATE_DEFAULT_WINDOW_MS;g_energyGateEnabledForCast=1;g_energyGatePvpForCast=0;g_deferredClientGcd=0;g_deferredClientGcdArg=0;}
 static void cancelTimer(void){if(g_timer&&pKillTimer)pKillTimer(0,g_timer);g_timer=0;}
-static void restoreServerPosition(const char*tag){DWORD spell=g_spoofSpell,count=g_rewrittenMoveCount;if(g_player)sendHeartbeat(g_player);logSpellText(tag,spell);if(count)logCountText("MOVE_REWRITTEN",spell,count);clearState();}
+static void restoreServerPosition(const char*tag){DWORD spell=g_spoofSpell,count=g_rewrittenMoveCount;if(g_player&&getPlayer()==g_player)sendHeartbeat(g_player);logSpellText(tag,spell);if(count)logCountText("MOVE_REWRITTEN",spell,count);clearState();}
 
 void STDCALL SpeedTimerProc(PVOID hwnd,DWORD msg,DWORD id,DWORD tick){
  (void)hwnd;(void)msg;(void)id;g_lastTimerTick=tick;runDeferredClientUiClear();trackEnergyTick(tick);/* StealthCDSafe binary patch: applyStealthSpeed() CALL NOPed */autoWotfTick(tick);
