@@ -21,6 +21,7 @@ namespace WoW112Updater
             System.Windows.Forms.Application.DoEvents();
             ClientSize = new Size(1040, 680);
             AssertExeInspection(folder);
+            AssertOriginalUpdaterDirectoryAllowed(folder);
             string[] cases = { "first-run", "long-path", "available", "current", "build-running", "network-error", "downloading", "installing", "game-running" };
             foreach (var state in cases)
             {
@@ -81,9 +82,35 @@ namespace WoW112Updater
                 viewport.Controls.Remove(dashboard);
             }
             Controls.Add(dashboard);
-            File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; EXE SHA256 missing/current/changed; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
+            File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: original-updater folder coexistence, Windows WinForms rendering; EXE SHA256 missing/current/changed; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
             Close();
         }
+        private void AssertOriginalUpdaterDirectoryAllowed(string folder)
+        {
+            // Regression: an existing original updater marker must not block
+            // PARALLEL's independent game-folder selection.
+            var root = Path.Combine(folder, "legacy-updater-folder-fixture");
+            var legacy = Path.Combine(root, ".wow112_updater");
+            Directory.CreateDirectory(legacy);
+            var marker = Path.Combine(legacy, "installed.json");
+            File.WriteAllText(marker, "offline legacy updater fixture");
+            var originalDirectory = gameDir.Text;
+            var originalToken = token.Text;
+            try
+            {
+                gameDir.Text = root;
+                token.Text = "offline-smoke-token";
+                ValidateInputs();
+                if (!File.Exists(marker))
+                    throw new Exception("Directory validation modified original updater state");
+            }
+            finally
+            {
+                gameDir.Text = originalDirectory;
+                token.Text = originalToken;
+            }
+        }
+
         private void AssertExeInspection(string folder)
         {
             // No GitHub token or actual game required: exercise the same EXE SHA256

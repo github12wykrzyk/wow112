@@ -14,3 +14,9 @@
 - Press `Insert` while in-game to open the 750x475 native ESP panel (Segoe UI 22/29 px). Four independent live checkboxes: ESP display, Horde, Alliance, Hostile to me. Defaults: ESP ON, faction filters OFF, hostile filter ON. Faction/hostility filters combine by OR; toggling is immediate, without restarting or reloading the DLL.
 - Horde and Alliance refer to the *character faction* by Vanilla race, never BG-assigned side. Hostile mode on mixed-faction BG uses current scoreboard team assignment and fails closed when the roster is unavailable. Outside BG a live target PvP flag is also required; some attackable unflagged players on PvP realms may be omitted.
 - No settings for other DLLs are included; those can be integrated when rewritten for the parallel channel. This is a candidate, not a new stable Vxx release.
+
+## Directory validation (updater 2.2-parallel.2)
+
+- PARALLEL does not reject a directory solely because `.wow112_updater/installed.json` exists. This is compatible with selecting an existing/copy of an original-updater game directory.
+- The original updater's state files stay untouched; PARALLEL uses its own `.wow112_parallel_updater/` state and backup namespace. When both channels install into the *same* folder, game EXE/DLL files with matching names can replace each other, so separate game folders remain useful for two simultaneous installations.
+- Check directory existence, GitHub credentials, verified artifact SHA256, path normalization, running-game guard and backup/rollback mechanisms remain in force.

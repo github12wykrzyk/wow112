@@ -204,8 +204,6 @@ namespace WoW112Updater
             if (busy) throw new InvalidOperationException("Updater już wykonuje operację.");
             if (string.IsNullOrWhiteSpace(gameDir.Text) || !Directory.Exists(gameDir.Text.Trim()))
                 throw new InvalidOperationException("Wybierz istniejący katalog gry.");
-            if (File.Exists(Path.Combine(gameDir.Text.Trim(), ".wow112_updater", "installed.json")))
-                throw new InvalidOperationException("Ten katalog jest zarzadzany przez oryginalny updater. Dla PARALLEL wybierz osobny katalog gry, aby nie nadpisac dotychczasowej wersji.");
             if (string.IsNullOrWhiteSpace(token.Text))
                 throw new InvalidOperationException("Wpisz GitHub token z prawem odczytu repozytorium i Actions.");
         }
