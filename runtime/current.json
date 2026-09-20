@@ -50,6 +50,26 @@
       }
     },
     {
+      "name": "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+      "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba",
+      "source_state": "normal_source",
+      "source_origin": "original_source",
+      "source_path": "src/PickPocketSelectiveRange/PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.c",
+      "source_sha256": "80130b9cb988dc9c60345aa764f9465a1d6e515bcfd9ff5e2128bb865d91206a",
+      "source_size": 9319,
+      "binary_artifact": {
+        "kind": "xz",
+        "path": "artifacts/runtime_cache/efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba.dll.xz",
+        "sha256": "efea7ea55788abf8bf7b6302c5576590b386d3cb29f78639e596e3984fd6c7ba",
+        "size": 4096
+      },
+      "build_recipe": {
+        "tool": "tools/build_active_module.py",
+        "profile": "msvc_x86_crtless",
+        "status": "verified_x86_candidate_build"
+      }
+    },
+    {
       "name": "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
       "sha256": "05f1e031008a2ecb7b88bd5028bc6877b220565e92dc4bd92bfb21a18357f845",
       "source_state": "functionally_equivalent_reconstruction",

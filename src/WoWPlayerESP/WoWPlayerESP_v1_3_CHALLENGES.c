@@ -537,7 +537,7 @@ static BOOL ui_create(HWND game) {
     if (g_ui_longpp_state && g_ui_font)
         SendMessageA(g_ui_longpp_state,UI_SETFONT,(DWORD)g_ui_font,1);
     ui_label(g_parallel_ui_hwnd,
-        "ESP: click live labels to target. PP/loot legacy modules have no live toggle.",
+        "ESP: click labels to target. PP/loot legacy modules: always on.",
         30,619,690,40,FALSE);
     ui_sync_rogue();
     g_ui_shown=0u;return TRUE;

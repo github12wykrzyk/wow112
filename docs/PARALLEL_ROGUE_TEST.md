@@ -5,8 +5,9 @@ Build: World of Warcraft 1.12.1 (5875), Windows x86. Branch `parallel`, stable b
 Runtime composition:
 1. Rebuilt Player ESP: native enlarged Insert GUI, faction/hostility switches and click-to-target.
 2. Rebuilt SpeedFloor: live GUI checkbox through `W112_Control_GetModuleV1`; minimum 7.1 and existing hostile-target guard.
-3. Exact preserved AutoLootPP v0.14: automatic Pick Pocket and loot logic from the accepted DLL, **not** the incomplete reconstructed source.
-4. Exact preserved LongPickPocket v1.0: hook-based PP range/facing/loot transaction layer.
+3. Exact preserved PickPocketSelectiveRange v10: original PP/Pick Lock range and spell-specific dispatch path.
+4. Exact preserved AutoLootPP v0.14: automatic Pick Pocket and loot logic from the accepted DLL, **not** the incomplete reconstructed source.
+5. Exact preserved LongPickPocket v1.0: hook-based PP range/facing/loot transaction layer.
 
 Auto PP and Auto Loot share a historical binary with no verified per-feature control ABI; the GUI only displays its load status. Do not interpret LOADED as proof that server-authorized PP/loot occurred. Do not hot-unload hooked DLLs.
 

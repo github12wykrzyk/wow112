@@ -33,8 +33,8 @@ The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols wi
 
 ## Rogue PP/loot candidate (2026-09-20)
 
-- Only on `parallel`: add the exact V69 AutoLootPP and LongPickPocket runtime DLLs, in that order, after the rebuilt SpeedFloor and ESP. No original `work`/stable `main` runtime is modified.
-- AutoLootPP and LongPickPocket use their exact content-addressed runtime caches. Their source files under `src/` are maintained as *reconstructions*, not asserted byte-for-byte equivalent. In particular the AutoLootPP reconstruction omits the original corpse scanner/request path; it MUST NOT replace the exact binary in a runtime test.
+- Only on `parallel`: add the exact V69 PickPocketSelectiveRange, AutoLootPP and LongPickPocket runtime DLLs, in that order, after the rebuilt SpeedFloor and ESP. No original `work`/stable `main` runtime is modified.
+- PickPocketSelectiveRange, AutoLootPP and LongPickPocket use their exact content-addressed runtime caches. Their source files under `src/` are maintained as *reconstructions*, not asserted byte-for-byte equivalent. In particular the AutoLootPP reconstruction omits the original corpse scanner/request path; it MUST NOT replace the exact binary in a runtime test.
 - SpeedFloor uses its buildable reconstructed source and exports `W112_Control_GetModuleV1`. In the enlarged Insert ESP panel, its checkbox reads/sets setting 1 through the live ABI. Original default floor remains 7.1; the existing hostile-target guard remains active.
 - The GUI reports whether AutoLootPP/LongPickPocket are loaded; the exact legacy binaries do not expose supported independent PP/loot toggle controls. No pretend toggle, hot-unload of hooked DLLs, second WndProc subclass, or additional legacy gameplay modules.
 - Functional test: confirm ESP labels/target-by-click and BG filtering; toggle Stealth Floor live and verify speed change in stealth; in a suitable safe PvE test confirm automatic PP and corpse loot work while LongPP is loaded. Distinguish LOAD from successful server-side PP/loot. On a crash or missed corpse, report reproducible in-game outcome; do not promote to `main` without an accepted test.
