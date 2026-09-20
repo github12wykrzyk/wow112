@@ -380,13 +380,19 @@ static void chal_bg_score_main_thread(void) {
         "and type(UnitName)=='function' then "
         "local me=UnitName('player');local my=2;local rows={};"
         "local n=GetNumBattlefieldScores() or 0;if n>80 then n=80 end;"
+        "local bt=nil;if type(GetBattlefieldInstanceRunTime)=='function' then "
+        "bt=GetBattlefieldInstanceRunTime() "
+        "elseif type(GetBattleFieldInstanceRunTime)=='function' then "
+        "bt=GetBattleFieldInstanceRunTime() end;"
+        "local active=(type(bt)=='number' and bt>0) or (bt==nil and n>0);"
         "for i=1,n do local nm,_,_,_,_,side=GetBattlefieldScore(i);"
         "if type(nm)=='string' and string.len(nm)>0 and string.len(nm)<=31 "
         "and (side==0 or side==1) then "
         "rows[table.getn(rows)+1]=nm..','..side;"
         "if nm==me then my=side end end end;"
-        "if my<2 then W112_ESP_BG_RESULT=my..';'..table.concat(rows,';') "
-        "elseif n>0 then W112_ESP_BG_RESULT='P;' end;"
+        "if active and my<2 then W112_ESP_BG_RESULT=my..';'..table.concat(rows,';') "
+        "elseif active then W112_ESP_BG_RESULT='P;' "
+        "else W112_ESP_BG_RESULT='W;' end;"
         "if type(RequestBattlefieldScoreData)=='function' then "
         "if not W112_ESP_BG_REQUEST or GetTime()-W112_ESP_BG_REQUEST>=3 then "
         "RequestBattlefieldScoreData();W112_ESP_BG_REQUEST=GetTime() end end end";
@@ -401,8 +407,17 @@ static void chal_bg_score_main_thread(void) {
     exec(script,script);
     raw=getText("W112_ESP_BG_RESULT",-1,0u);
     if (!raw || raw[1]!=';' ||
-        (raw[0]!='0' && raw[0]!='1' && raw[0]!='P'))
+        (raw[0]!='0' && raw[0]!='1' && raw[0]!='P' && raw[0]!='W'))
         return;
+    if (raw[0]=='W') {
+        ++g_bg_score_version;
+        g_bg_score_mode=0u;
+        g_bg_score_manager=0u;
+        g_bg_score_count=0u;
+        g_bg_score_my_side=2u;
+        ++g_bg_score_version;
+        return;
+    }
     if (raw[0]=='P') {
         ++g_bg_score_version;
         g_bg_score_mode=1u;
