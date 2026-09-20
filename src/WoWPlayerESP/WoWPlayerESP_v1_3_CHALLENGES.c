@@ -48,6 +48,8 @@
 #include "../common/W112ControlAPI.h"
 
 #define WM_W112_ESP_CHALLENGE (0x8000u + 0x0112u)
+#define WM_W112_ESP_BG_SCORE (0x8000u + 0x0113u)
+#define BG_SCORE_POLL_FRAMES 30u /* ~1s at 33ms/render frame */
 #define CHALLENGE_CACHE_SIZE 256u
 #define CHALLENGE_REQUERY_FRAMES 60u
 #define CHALLENGE_POST_GAP_FRAMES 15u
@@ -77,6 +79,8 @@ static WNDPROC32 g_challenge_prev_wndproc = NULL;
 static HWND g_challenge_hwnd = NULL;
 static BOOL g_challenge_hooked = FALSE;
 static DWORD g_next_challenge_post_frame = 0u;
+static DWORD g_next_bg_score_post_frame = 0u;
+static DWORD g_bg_score_last_request_frame = 0u;
 static BOOL g_challenge_logged = FALSE;
 static volatile DWORD g_challenge_world_ready = 0u;
 static DWORD g_challenge_world_polls = 0u;
@@ -93,6 +97,12 @@ static void chal_world_reset(void) {
     g_challenge_world_guid_hi = 0u;
     g_challenge_world_hwnd = NULL;
     g_next_challenge_post_frame = g_render_frame + CHALLENGE_POST_GAP_FRAMES;
+    g_next_bg_score_post_frame = g_render_frame + BG_SCORE_POLL_FRAMES;
+    ++g_bg_score_version;
+    g_bg_score_count=0u;
+    g_bg_score_my_side=2u;
+    g_bg_score_manager=0u;
+    ++g_bg_score_version;
 }
 
 static BOOL chal_probe_world(DWORD* outManager, DWORD* outLo, DWORD* outHi, HWND* outHwnd) {
@@ -358,6 +368,69 @@ static void chal_query_main_thread(DWORD lo, DWORD hi) {
     }
 }
 
+/* Scoreboard is queried ONLY through the game-window WndProc, not from the
+ * ESP render worker. This avoids the native UnitReaction/CanAttack BG crash
+ * path and uses the actual assigned BG side, not the character's race.
+ * The player must appear on the same scoreboard: otherwise no BG override
+ * is published. Empty/partial scoreboards never mark anyone as hostile. */
+static void chal_bg_score_main_thread(void) {
+    static const char script[] =
+        "W112_ESP_BG_RESULT='';"
+        "if type(GetNumBattlefieldScores)=='function' and type(GetBattlefieldScore)=='function' "
+        "and type(UnitName)=='function' then "
+        "local me=UnitName('player');local my=2;local rows={};"
+        "local n=GetNumBattlefieldScores() or 0;if n>80 then n=80 end;"
+        "for i=1,n do local nm,_,_,_,_,side=GetBattlefieldScore(i);"
+        "if type(nm)=='string' and string.len(nm)>0 and string.len(nm)<=31 "
+        "and (side==0 or side==1) then "
+        "rows[table.getn(rows)+1]=nm..','..side;"
+        "if nm==me then my=side end end end;"
+        "if my<2 then W112_ESP_BG_RESULT=my..';'..table.concat(rows,';') end;"
+        "if type(RequestBattlefieldScoreData)=='function' then "
+        "if not W112_ESP_BG_REQUEST or GetTime()-W112_ESP_BG_REQUEST>=3 then "
+        "RequestBattlefieldScoreData();W112_ESP_BG_REQUEST=GetTime() end end end";
+    FrameScriptExecuteFn exec=(FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
+    FrameScriptGetTextFn getText=(FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
+    const char* raw;
+    const char* p;
+    DWORD count=0u, side=2u, manager=0u;
+    DWORD i;
+    if (!chal_world_identity_ready()) return;
+    if (!g_render_manager || g_render_manager!=g_challenge_world_manager) return;
+    exec(script,script);
+    raw=getText("W112_ESP_BG_RESULT",-1,0u);
+    if (!raw || (raw[0]!='0' && raw[0]!='1') || raw[1]!=';')
+        return;
+    side=(DWORD)(raw[0]-'0');
+    p=raw+2;
+    /* Parse into the currently inactive snapshot before publishing the new
+       count/team. Reader ignores the odd version during the short write. */
+    ++g_bg_score_version;
+    g_bg_score_count=0u;
+    g_bg_score_my_side=2u;
+    for (i=0u; i<BG_SCORE_ROWS && *p; ++i) {
+        DWORD j=0u;
+        char name[MAX_PLAYER_NAME+1u];
+        while (*p && *p!=',' && *p!=';' && j<MAX_PLAYER_NAME)
+            name[j++]=*p++;
+        name[j]=0;
+        if (*p!=',' || !name[0]) break;
+        ++p;
+        if (*p!='0' && *p!='1') break;
+        g_bg_score_rows[count].side=(BYTE)(*p++-'0');
+        chal_copy(g_bg_score_rows[count].name,sizeof(g_bg_score_rows[count].name),name);
+        ++count;
+        if (*p!=';' && *p) break;
+        if (*p==';') ++p;
+    }
+    manager=g_render_manager;
+    g_bg_score_manager=manager;
+    g_bg_score_frame=g_render_frame;
+    g_bg_score_count=count;
+    g_bg_score_my_side=side;
+    ++g_bg_score_version;
+}
+
 static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
     /* v1.2 consumes F8 to toggle its range sweep. In the aggregate active stack
        MovementCore also owns physical F8 for SafeBreak. Let the existing WndProc
@@ -375,6 +448,10 @@ static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPa
     }
     if (msg == WM_W112_ESP_CHALLENGE) {
         chal_query_main_thread((DWORD)wParam, (DWORD)lParam);
+        return 0;
+    }
+    if (msg == WM_W112_ESP_BG_SCORE) {
+        chal_bg_score_main_thread();
         return 0;
     }
     if (g_challenge_prev_wndproc)
@@ -484,6 +561,10 @@ static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
         if (g_challenge_world_ready) {
             if (!chal_hook_is_current()) chal_try_install_hook();
             if (chal_hook_is_current() && chal_world_identity_ready()) {
+                if (g_render_frame>=g_next_bg_score_post_frame) {
+                    if (PostMessageA(g_challenge_hwnd,WM_W112_ESP_BG_SCORE,0u,0))
+                        g_next_bg_score_post_frame=g_render_frame+BG_SCORE_POLL_FRAMES;
+                }
                 chal_apply_known_names();
                 chal_schedule_query();
             }
