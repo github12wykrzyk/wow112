@@ -8,8 +8,10 @@
  *   - never changes range, facing, movement, packets, GCD or opener timing;
  *   - manual recovery follows the native 5875 SpellStopCasting path (not ESC),
  *     restricted to opener evidence; no broad raw cast-state memory erasure;
- *   - auto-clear remains OFF by default and waits 2300 ms of unchanged
- *     opener state before invoking native cancellation, protecting energy holds;
+ *   - auto-clear remains OFF by default; only orphaned opener UI state after
+ *     every active/queued cast has ended can be cancelled (250 ms default);
+ *   - no automatic cancellation of an active/queued spell, even on timeout,
+ *     protecting energy holds and preventing unintended active-cast interrupts;
  *   - exposes counters and last observed opener through W112_CONTROL_API_V1.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -68,8 +70,7 @@ typedef void (__fastcall *StopActiveCastFn)(u32,u32,u32);
 
 #define TIMER_PERIOD_MS 20u
 #define WORLD_SETTLE_MS 1500u
-#define ACTIVE_AUTO_RECOVERY_MS 2300u
-#define VERSION_1_0 0x00010200u
+#define VERSION_1_1 0x00010300u
 
 #define SETTING_CLEAR_NOW      1u
 #define SETTING_AUTO_CLEAR     2u
@@ -80,7 +81,7 @@ typedef void (__fastcall *StopActiveCastFn)(u32,u32,u32);
 
 static volatile UINT_PTR32 g_timerId=0u;
 static volatile u32 g_cfgAutoClear=0u;
-static volatile u32 g_cfgGraceMs=300u;
+static volatile u32 g_cfgGraceMs=250u;
 static volatile u32 g_clearCount=0u;
 static volatile u32 g_activeSkips=0u;
 static volatile u32 g_lastOpener=0u;
@@ -153,7 +154,13 @@ static int clear_stale_ui(int manual){
   if(manual)g_activeSkips++;
   return 0;
  }
- if(!manual && (!g_watch || (u32)(now-g_watchStart)<ACTIVE_AUTO_RECOVERY_MS))return 0;
+ /* Auto recovery is strictly cosmetic/idle: never cancel an active cast,
+    pending cast, queued spell or energy-gated opener. The manual GUI button
+    retains the native SpellStopCasting fallback for explicit user recovery. */
+ if(!manual){
+  if(pending||sid||handle||queued)return 0;
+  if(!g_watch || (u32)(now-g_watchStart)<g_cfgGraceMs)return 0;
+ }
  if(queued){
   /* Matches the queued-spell branch in native SpellStopCasting. */
   ((StopQueuedSpellFn)SPELL_STOP_QUEUED_INTERNAL)();
@@ -220,10 +227,9 @@ static void STDCALL TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 id,u32 unused){
  if(!g_cfgAutoClear)return;
  age=(u32)(now-g_watchStart);
  if(age<g_cfgGraceMs)return;
- if(pending||sid||handle||queued){
-  if(age<ACTIVE_AUTO_RECOVERY_MS)return;
-  if(sid&&!isOpener(sid))return;
- }
+ /* The timer is an observer until the entire cast/queue pipeline is idle.
+    Never interpret a long, unchanged active cast as a stuck yellow border. */
+ if(pending||sid||handle||queued)return;
  clear_stale_ui(0);
 }
 
@@ -232,7 +238,7 @@ static void init_desc(void){
  if(g_descReady)return;
  s=&g_settings[0];s->struct_size=sizeof(*s);s->setting_id=SETTING_CLEAR_NOW;s->key="clear_now";s->label="Clear stuck opener";s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[1];s->struct_size=sizeof(*s);s->setting_id=SETTING_AUTO_CLEAR;s->key="auto_clear";s->label="Auto clear";s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
- s=&g_settings[2];s->struct_size=sizeof(*s);s->setting_id=SETTING_GRACE_MS;s->key="grace_ms";s->label="Auto grace (ms)";s->type=W112_CTL_INT;s->default_value.i32=300;s->min_value.i32=100;s->max_value.i32=1000;s->step.i32=50;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_settings[2];s->struct_size=sizeof(*s);s->setting_id=SETTING_GRACE_MS;s->key="grace_ms";s->label="Auto grace (ms)";s->type=W112_CTL_INT;s->default_value.i32=250;s->min_value.i32=150;s->max_value.i32=1000;s->step.i32=50;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[3];s->struct_size=sizeof(*s);s->setting_id=SETTING_CLEAR_COUNT;s->key="clear_count";s->label="Cancel attempts";s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[4];s->struct_size=sizeof(*s);s->setting_id=SETTING_ACTIVE_SKIPS;s->key="active_skips";s->label="Active-cast skips";s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[5];s->struct_size=sizeof(*s);s->setting_id=SETTING_LAST_OPENER;s->key="last_opener";s->label="Last opener spell ID";s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=20000;s->step.i32=1;s->flags=W112_CTL_READ_ONLY;s->enum_options=0;s->enum_option_count=0u;
@@ -252,11 +258,11 @@ static int W112_CTL_STDCALL ctl_set(w112_u32 id,const W112_ControlValueV1*v){
  if(!v)return 0;
  if(id==SETTING_CLEAR_NOW){if(v->u32>1u)return 0;if(v->u32)clear_stale_ui(1);return 1;}
  if(id==SETTING_AUTO_CLEAR){if(v->u32>1u)return 0;g_cfgAutoClear=v->u32;g_watch=0u;return 1;}
- if(id==SETTING_GRACE_MS){if(v->i32<100||v->i32>1000)return 0;g_cfgGraceMs=(u32)v->i32;return 1;}
+ if(id==SETTING_GRACE_MS){if(v->i32<150||v->i32>1000)return 0;g_cfgGraceMs=(u32)v->i32;return 1;}
  return 0;
 }
 static const W112_ControlModuleV1 g_module={
- W112_CONTROL_API_V1,sizeof(W112_ControlModuleV1),"opener_ui_recovery","Opener UI Recovery",VERSION_1_0,6u,g_settings,ctl_get,ctl_set
+ W112_CONTROL_API_V1,sizeof(W112_ControlModuleV1),"opener_ui_recovery","Opener UI Recovery",VERSION_1_1,6u,g_settings,ctl_get,ctl_set
 };
 W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_desc();return &g_module;}
 
