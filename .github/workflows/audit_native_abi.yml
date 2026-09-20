@@ -1,0 +1,36 @@
+name: Read-only native ABI audit
+
+on:
+  push:
+    branches:
+      - work
+    paths:
+      - 'tools/audit_attackable_abi.py'
+      - '.github/workflows/audit_native_abi.yml'
+      - 'src/AutoLootPP/**'
+      - 'src/MovementCore/**'
+      - 'src/WoWPlayerESP/**'
+      - 'runtime/current.json'
+      - 'CURRENT.json'
+      - '*.exe'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify canonical repository state
+        run: python tools/verify_current.py
+      - name: Inspect exact EXE and AutoLootPP DLL
+        run: python tools/audit_attackable_abi.py
+      - name: Attach read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attackable-abi-evidence
+          path: dist/attackable_abi_audit.json
+          if-no-files-found: ignore
