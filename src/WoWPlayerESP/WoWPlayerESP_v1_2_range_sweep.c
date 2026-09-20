@@ -47,6 +47,7 @@ typedef LONG (WINAPI *WNDPROC32)(HWND, UINT, DWORD, LONG);
 #define SWP_NOACTIVATE      0x0010u
 #define SWP_SHOWWINDOW      0x0040u
 #define WM_LBUTTONDOWN      0x0201u
+#define WM_PARALLEL_TARGET_CLICK (0x8000u + 0x0115u)
 #define WM_KEYDOWN          0x0100u
 #define VK_F8               0x77u
 #define GWL_WNDPROC         (-4)
@@ -314,6 +315,8 @@ struct LabelOverlay {
     BYTE lastFlagCarrier;
     DWORD lastAgeSec;
     BOOL contentValid;
+    DWORD targetGuidLo; /* currently rendered LIVE label only */
+    DWORD targetGuidHi;
 };
 
 struct ClickHit {
@@ -359,6 +362,7 @@ __declspec(dllimport) HDC    WINAPI GetDC(HWND);
 __declspec(dllimport) int    WINAPI ReleaseDC(HWND, HDC);
 __declspec(dllimport) HWND   WINAPI GetForegroundWindow(void);
 __declspec(dllimport) BOOL   WINAPI IsWindow(HWND);
+__declspec(dllimport) BOOL   WINAPI PostMessageA(HWND, UINT, DWORD, LONG);
 __declspec(dllimport) BOOL   WINAPI PeekMessageA(struct MSG32*, HWND, UINT, UINT, UINT);
 __declspec(dllimport) BOOL   WINAPI TranslateMessage(const struct MSG32*);
 __declspec(dllimport) LONG   WINAPI DispatchMessageA(const struct MSG32*);
@@ -413,6 +417,7 @@ static volatile DWORD g_click_hit_count = 0u;
 static HWND g_hooked_game_hwnd = NULL;
 static WNDPROC32 g_old_game_wndproc = NULL;
 static BOOL g_click_hook_logged = FALSE;
+static WNDPROC32 g_label_old_wndproc = NULL;
 static float g_current_farthest_sq = 0.0f;
 static DWORD g_current_over150 = 0u;
 static DWORD g_current_over300 = 0u;
@@ -447,6 +452,10 @@ static volatile DWORD g_esp_enabled = 1u;
 static volatile DWORD g_parallel_show_horde=0u;
 static volatile DWORD g_parallel_show_alliance=0u;
 static volatile DWORD g_parallel_show_hostile=1u;
+/* UI publishes one revision per toggle; the render worker consumes it only
+   after safe current-world discovery. No scanning/native calls in UI WndProc. */
+static volatile DWORD g_parallel_filter_revision=1u;
+static DWORD g_parallel_filter_applied_revision=0u;
 static volatile DWORD g_parallel_gui_open=0u;
 static HWND g_parallel_ui_hwnd=NULL;
 static void parallel_gui_tick(void);
@@ -788,6 +797,7 @@ static void reset_world_runtime_cache(void) {
     g_cached_local_guid_lo = 0u;
     g_cached_local_guid_hi = 0u;
     g_click_hit_count = 0u;
+    g_parallel_filter_applied_revision=0u;
     g_sweep_state = 0u;
     g_sweep_index = 0u;
     for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
@@ -1215,6 +1225,8 @@ static void destroy_label_backbuffer(void) {
 static void hide_all_labels(void) {
     DWORD i;
     for (i = 0u; i < MAX_ESP_PLAYERS; ++i) {
+        g_labels[i].targetGuidLo=0u;
+        g_labels[i].targetGuidHi=0u;
         if (g_labels[i].hwnd && IsWindow(g_labels[i].hwnd) && g_labels[i].visible) {
             ShowWindow(g_labels[i].hwnd, SW_HIDE);
             g_labels[i].visible = FALSE;
@@ -1234,7 +1246,10 @@ static void destroy_overlay(void) {
         g_labels[i].hwnd = NULL;
         g_labels[i].visible = FALSE;
         g_labels[i].x = g_labels[i].y = 0;
+        g_labels[i].targetGuidLo=0u;
+        g_labels[i].targetGuidHi=0u;
     }
+    g_label_old_wndproc=NULL;
 }
 
 static void overlay_hide(void) {
@@ -1311,15 +1326,43 @@ static BOOL update_label_alpha(HWND hwnd, LONG absX, LONG absY) {
     return UpdateLayeredWindow(hwnd, NULL, &dst, &size, g_label_memdc, &src, 0u, &blend, ULW_ALPHA);
 }
 
+/* The layered window's opaque pixels accept direct clicks; transparent pixels
+   continue to reach the original game hit-test path. Dispatch target selection
+   on the game's message thread, never on the overlay render worker. */
+static LONG WINAPI esp_label_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
+    if (msg==WM_LBUTTONDOWN && g_esp_enabled && g_hooked_game_hwnd && IsWindow(g_hooked_game_hwnd)) {
+        DWORD i;
+        for (i=0u;i<MAX_ESP_PLAYERS;++i) {
+            if (g_labels[i].hwnd==hwnd) {
+                DWORD lo=g_labels[i].targetGuidLo, hi=g_labels[i].targetGuidHi;
+                if ((lo || hi) && PostMessageA(g_hooked_game_hwnd,WM_PARALLEL_TARGET_CLICK,lo,(LONG)hi))
+                    return 0;
+                break;
+            }
+        }
+    }
+    return g_label_old_wndproc ? CallWindowProcA(g_label_old_wndproc,hwnd,msg,wParam,lParam) : 0;
+}
+
 static BOOL ensure_label_window(DWORD index, LONG absX, LONG absY) {
     DWORD exStyle;
     if (index >= MAX_ESP_PLAYERS) return FALSE;
     if (!g_labels[index].hwnd || !IsWindow(g_labels[index].hwnd)) {
-        exStyle = WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE;
+        LONG oldProc;
+        exStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE;
         g_labels[index].hwnd = CreateWindowExA(exStyle, "STATIC", "", WS_POPUP,
                                                (int)absX, (int)absY, LABEL_W, LABEL_H,
                                                NULL, NULL, g_self, NULL);
         if (!g_labels[index].hwnd) return FALSE;
+        oldProc=SetWindowLongA(g_labels[index].hwnd,GWL_WNDPROC,(LONG)(DWORD)esp_label_wndproc);
+        if (!oldProc || (g_label_old_wndproc && g_label_old_wndproc!=(WNDPROC32)(DWORD)oldProc)) {
+            DestroyWindow(g_labels[index].hwnd);
+            g_labels[index].hwnd=NULL;
+            return FALSE;
+        }
+        if (!g_label_old_wndproc) g_label_old_wndproc=(WNDPROC32)(DWORD)oldProc;
+        g_labels[index].targetGuidLo=0u;
+        g_labels[index].targetGuidHi=0u;
         g_labels[index].x = absX;
         g_labels[index].y = absY;
         g_labels[index].visible = FALSE;
@@ -1341,6 +1384,8 @@ static BOOL ensure_label_window(DWORD index, LONG absX, LONG absY) {
 static void hide_unused_labels(DWORD used) {
     DWORD i;
     for (i = used; i < MAX_ESP_PLAYERS; ++i) {
+        g_labels[i].targetGuidLo=0u;
+        g_labels[i].targetGuidHi=0u;
         if (g_labels[i].hwnd && IsWindow(g_labels[i].hwnd) && g_labels[i].visible) {
             ShowWindow(g_labels[i].hwnd, SW_HIDE);
             g_labels[i].visible = FALSE;
@@ -1594,7 +1639,31 @@ static void native_target_guid(DWORD lo, DWORD hi) {
     fn(&guid);
 }
 
+/* Revalidate every click against the current live, visible GUID set; stale
+   LAST/MEM labels are never actionable, nor are filtered-out labels. */
+static BOOL esp_target_click_live(DWORD lo,DWORD hi) {
+    DWORD i,count,object;
+    if (!g_esp_enabled || (!lo && !hi) || !g_hooked_game_hwnd ||
+        !g_render_manager || g_relation_world_stable_frames<WORLD_RELATION_STABLE_FRAMES)
+        return FALSE;
+    count=g_click_hit_count;
+    if (count>MAX_ESP_PLAYERS) count=MAX_ESP_PLAYERS;
+    for (i=0u;i<count;++i) {
+        if (g_click_hits[i].guidLo==lo && g_click_hits[i].guidHi==hi) {
+            object=native_get_object_by_guid(lo,hi);
+            if (!object || !cached_object_matches(object,lo,hi)) return FALSE;
+            native_target_guid(lo,hi);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 static LONG WINAPI esp_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
+    if (msg==WM_PARALLEL_TARGET_CLICK) {
+        esp_target_click_live(wParam,(DWORD)lParam);
+        return 0;
+    }
     if (msg == WM_KEYDOWN && wParam == VK_F8) {
         g_range_sweep_enabled = g_range_sweep_enabled ? 0u : 1u;
         if (g_range_sweep_enabled) {
@@ -1614,7 +1683,8 @@ static LONG WINAPI esp_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPar
         for (i = 0u; i < count; ++i) {
             struct ClickHit* h = &g_click_hits[i];
             if (mx >= h->left && mx < h->right && my >= h->top && my < h->bottom) {
-                native_target_guid(h->guidLo, h->guidHi);
+                if (!esp_target_click_live(h->guidLo,h->guidHi))
+                    break; /* stale/hidden: preserve normal game click */
                 if (g_log != INVALID_HANDLE_VALUE) {
                     char b[192]; char* p = b;
                     p = app_str(p, "CLICK_TARGET guid=0x"); p = app_hex8(p, h->guidHi); p = app_hex8(p, h->guidLo);
@@ -2069,7 +2139,8 @@ static void render_frame_fast(void) {
      */
     if (g_cached_local_obj && guidLo == g_cached_local_guid_lo &&
         guidHi == g_cached_local_guid_hi &&
-        (g_render_frame % CACHE_REFRESH_FRAMES) == 0u) {
+        ((g_render_frame % CACHE_REFRESH_FRAMES) == 0u ||
+         g_parallel_filter_revision!=g_parallel_filter_applied_revision)) {
         DWORD liveLocal = 0u, liveCount = 0u;
         float liveX = 0.0f, liveY = 0.0f, liveZ = 0.0f;
         const char* liveReason = "UNKNOWN";
@@ -2124,8 +2195,11 @@ static void render_frame_fast(void) {
         return;
     }
 
-    if (g_cache_age_frames == 0xFFFFFFFFu || g_cache_age_frames >= CACHE_REFRESH_FRAMES || needRefresh) {
-        refresh_esp_cache(manager, localObj, guidLo, guidHi, lx, ly, lz);
+    if (g_cache_age_frames == 0xFFFFFFFFu || g_cache_age_frames >= CACHE_REFRESH_FRAMES || needRefresh ||
+        g_parallel_filter_revision!=g_parallel_filter_applied_revision) {
+        DWORD requested=g_parallel_filter_revision;
+        if (refresh_esp_cache(manager, localObj, guidLo, guidHi, lx, ly, lz))
+            g_parallel_filter_applied_revision=requested;
     }
 
     if (!g_esp_enabled) g_range_sweep_enabled = 0u;
@@ -2226,6 +2300,8 @@ static void render_frame_fast(void) {
                 absX = screenLeft + (LONG)proj.screenX - (LABEL_W / 2);
                 absY = screenTop + (LONG)proj.screenY - LABEL_TOP_PAD;
                 if (!ensure_label_window(drawn, absX, absY)) continue;
+                g_labels[drawn].targetGuidLo=0u;
+                g_labels[drawn].targetGuidHi=0u;
 
                 {
                     DWORD ydNow = (DWORD)(d + 0.5f);
@@ -2249,7 +2325,9 @@ static void render_frame_fast(void) {
                             continue;
                         }
                     }
-                    if (liveObject && drawn < MAX_ESP_PLAYERS) {
+                    if (liveObject && drawn < MAX_ESP_PLAYERS && g_old_game_wndproc) {
+                        g_labels[drawn].targetGuidLo=e->guidLo;
+                        g_labels[drawn].targetGuidHi=e->guidHi;
                         g_click_hits[g_click_hit_count].left = (LONG)proj.screenX - (LABEL_W / 2);
                         g_click_hits[g_click_hit_count].top = (LONG)proj.screenY - LABEL_TOP_PAD;
                         g_click_hits[g_click_hit_count].right = g_click_hits[g_click_hit_count].left + LABEL_W;

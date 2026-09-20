@@ -24,3 +24,9 @@
 ## ESP-only symbol provenance
 
 The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols with active PlayerESP translation-unit evidence. Symbols that were supported solely by removed SpeedFloor/AutoLootPP source were removed from this *derived parallel index*, not from the original work/main registry. The verifier remains unchanged and requires real current source evidence for every retained symbol.
+
+## ESP filter rescans and target-by-click test
+
+- Each of the four large ESP GUI checkboxes increments a revision counter and schedules a guarded live player-cache refresh on the next eligible render frame (~33 ms). A BG scoreboard refresh is requested separately on the game WndProc (next worker poll, ~100 ms); switching filters never executes native queries from the GUI callback and never skips the transition quarantine.
+- Live, currently rendered ESP labels are clickable to target using two paths: direct opaque-pixel layered-label click sends a GUID message to the game window, while transparent pixels go through the original game-window hit-test path. Both resolve a live GUID again and require a current visible hit entry before invoking the build-5875 native target function. Stale/history labels are display-only, not clickable. Only a user click changes target.
+- Test filters toggled quickly on mixed-faction BG, inspect that players reappear without waiting for the periodic cache and teammates remain excluded in Hostile-only mode. Click the rendered *opaque text/HP bar* for a nearby live player, verify the in-game target frame matches; clicking an obsolete/stale label must not switch target. Repeat after entering/leaving BG. Unknown or unloaded player objects cannot be materialized by refresh.

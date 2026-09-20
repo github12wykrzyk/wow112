@@ -360,6 +360,12 @@ static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL, g_ui_title_font=NULL;
 static HWND g_ui_checks[4]={NULL,NULL,NULL,NULL};
 static DWORD g_ui_shown=0u;
+/* A control change must request a fresh, guarded scan instead of waiting
+   for the normal cache timer. Scoreboard reads stay on the game WndProc. */
+static void ui_filters_changed(void) {
+    ++g_parallel_filter_revision;
+    g_next_bg_score_post_frame=0u;
+}
 static void ui_check(DWORD n,DWORD on) {
     if (n<4u && g_ui_checks[n]) SendMessageA(g_ui_checks[n],UI_SETCHECK,on?1u:0u,0);
 }
@@ -377,18 +383,22 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if (id==101u) {
             g_esp_enabled=g_esp_enabled?0u:1u;
             if (!g_esp_enabled) g_range_sweep_enabled=0u;
+            ui_filters_changed();
             ui_check(0u,g_esp_enabled);return 0;
         }
         if (id==102u) {
             g_parallel_show_horde=g_parallel_show_horde?0u:1u;
+            ui_filters_changed();
             ui_check(1u,g_parallel_show_horde);return 0;
         }
         if (id==103u) {
             g_parallel_show_alliance=g_parallel_show_alliance?0u:1u;
+            ui_filters_changed();
             ui_check(2u,g_parallel_show_alliance);return 0;
         }
         if (id==104u) {
             g_parallel_show_hostile=g_parallel_show_hostile?0u:1u;
+            ui_filters_changed();
             ui_check(3u,g_parallel_show_hostile);return 0;
         }
     }
@@ -428,7 +438,7 @@ static BOOL ui_create(HWND game) {
     g_ui_title_font=CreateFontA(-29,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
     ui_label(g_parallel_ui_hwnd,"PARALLEL / PLAYER ESP",28,22,685,42,TRUE);
     ui_label(g_parallel_ui_hwnd,
-        "Independent ON/OFF switches. Changes apply immediately.",
+        "Each switch refreshes nearby players. Click live ESP labels to target.",
         30,73,690,36,FALSE);
     for (i=0u;i<4u;++i) {
         g_ui_checks[i]=CreateWindowExA(0u,"BUTTON",names[i],
@@ -443,7 +453,7 @@ static BOOL ui_create(HWND game) {
     ui_check(2u,g_parallel_show_alliance);
     ui_check(3u,g_parallel_show_hostile);
     ui_label(g_parallel_ui_hwnd,
-        "Filters combine (OR). On mixed-faction BG enable HOSTILE only.",
+        "CLICK TO TARGET: ON  |  Filters combine (OR); mixed BG: HOSTILE only.",
         30,405,700,34,FALSE);
     g_ui_shown=0u;return TRUE;
 }
