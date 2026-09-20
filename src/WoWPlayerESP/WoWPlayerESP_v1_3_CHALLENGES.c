@@ -37,7 +37,7 @@
 /* The included base periodically confirms that the cached local player
    still belongs to the live Object Manager (also when BG transitions recycle
    the same manager address), invalidates stale world caches and repaints
-   layered labels. The base now uses the live, guarded client UnitReaction
+   layered labels. The base now uses the guarded BG scoreboard bridge
    instead of race to classify cross-faction BG teams and purges former enemy
    labels when a player is friendly. Keep this wrapper marked as the active
    build input for build_changed_active. */
@@ -80,7 +80,6 @@ static HWND g_challenge_hwnd = NULL;
 static BOOL g_challenge_hooked = FALSE;
 static DWORD g_next_challenge_post_frame = 0u;
 static DWORD g_next_bg_score_post_frame = 0u;
-static DWORD g_bg_score_last_request_frame = 0u;
 static BOOL g_challenge_logged = FALSE;
 static volatile DWORD g_challenge_world_ready = 0u;
 static DWORD g_challenge_world_polls = 0u;
