@@ -34,9 +34,9 @@
     two independent position-spoof systems at once.
 */
 
-/* The included base now invalidates its local-object cache when the Object
-   Manager changes across a BG/world transition. Keep this wrapper marked as
-   the active build input so build_changed_active rebuilds PlayerESP. */
+/* The included base invalidates cached local objects, repaints layered labels
+   after BG/world transitions and exports live rendering diagnostics to GUI.
+   Keep this wrapper marked as active input for build_changed_active. */
 #define DllMain W112_PlayerESP_Base_DllMain
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
@@ -489,7 +489,18 @@ static DWORD WINAPI ChallengeWorker(LPVOID ignored) {
     return 0u;
 }
 
-static W112_ControlSettingV1 g_controlSettings[6];
+/* Read-only pipeline states give the in-game GUI a precise diagnostic when
+   ESP is enabled but BG labels have not returned. */
+static const W112_ControlEnumOptionV1 g_espPipelineOptions[] = {
+    {0, "STARTING"}, {1, "WORLD_NOT_READY"}, {2, "LOCAL_GUID_MISSING"},
+    {3, "LOCAL_PLAYER_MISSING"}, {4, "WORLD_STABILIZING"},
+    {5, "ESP_DISABLED"}, {6, "PROJECTION_NOT_READY"},
+    {7, "GAME_RECT_INVALID"}, {8, "GAME_NOT_FOCUSED"},
+    {9, "LABEL_BUFFER_FAIL"}, {10, "NO_HOSTILE_RACES"},
+    {11, "HOSTILES_OFF_SCREEN"}, {12, "LABELS_DRAWN"},
+    {13, "NO_REMOTE_PLAYERS"}
+};
+static W112_ControlSettingV1 g_controlSettings[10];
 static volatile DWORD g_controlDescriptorReady=0u;
 
 static void init_control_descriptor(void)
@@ -521,6 +532,22 @@ static void init_control_descriptor(void)
     s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="wsg_flag_carrier";s->label="WSG Flag Carrier";
     s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
+    s=&g_controlSettings[6];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="pipeline";s->label="ESP render state";
+    s->type=W112_CTL_ENUM;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=13;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=g_espPipelineOptions;s->enum_option_count=(w112_u32)(sizeof(g_espPipelineOptions)/sizeof(g_espPipelineOptions[0]));
+
+    s=&g_controlSettings[7];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=8u;s->key="seen_players";s->label="Visible remote players";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=4096;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[8];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=9u;s->key="drawn_labels";s->label="Labels rendered";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=128;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
+    s=&g_controlSettings[9];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=10u;s->key="world_frames";s->label="World stable frames";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=60;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
     g_controlDescriptorReady=1u;
 }
 
@@ -533,6 +560,10 @@ static int W112_CTL_STDCALL esp_control_get(w112_u32 id,W112_ControlValueV1*out)
     if(id==4u){out->i32=(w112_i32)g_click_hit_count;return 1;}
     if(id==5u){out->u32=g_challenge_world_ready?1u:0u;return 1;}
     if(id==6u){out->u32=g_esp_flag_enabled?1u:0u;return 1;}
+    if(id==7u){out->i32=(w112_i32)g_esp_status;return 1;}
+    if(id==8u){out->i32=(w112_i32)g_esp_scan_players;return 1;}
+    if(id==9u){out->i32=(w112_i32)g_esp_drawn_labels;return 1;}
+    if(id==10u){out->i32=(w112_i32)g_relation_world_stable_frames;return 1;}
     return 0;
 }
 
@@ -556,7 +587,7 @@ static int W112_CTL_STDCALL esp_control_set(w112_u32 id,const W112_ControlValueV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "playeresp","PlayerESP",0x00010400u,6u,g_controlSettings,
+    "playeresp","PlayerESP",0x00010401u,10u,g_controlSettings,
     esp_control_get,esp_control_set
 };
 

@@ -349,6 +349,7 @@ __declspec(dllimport) BOOL   WINAPI ClientToScreen(HWND, struct POINT32*);
 __declspec(dllimport) HWND   WINAPI CreateWindowExA(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HANDLE, HMODULE, LPVOID);
 __declspec(dllimport) BOOL   WINAPI DestroyWindow(HWND);
 __declspec(dllimport) BOOL   WINAPI ShowWindow(HWND, int);
+__declspec(dllimport) BOOL   WINAPI IsWindowVisible(HWND);
 __declspec(dllimport) BOOL   WINAPI SetWindowPos(HWND, HWND, int, int, int, int, UINT);
 __declspec(dllimport) BOOL   WINAPI SetLayeredWindowAttributes(HWND, COLORREF, BYTE, DWORD);
 __declspec(dllimport) BOOL   WINAPI UpdateLayeredWindow(HWND, HDC, struct POINT32*, struct SIZE32*, HDC, struct POINT32*, COLORREF, struct BLENDFUNCTION32*, DWORD);
@@ -427,6 +428,10 @@ static DWORD g_relation_world_stable_frames = 0u;
 static DWORD g_render_manager = 0u;
 
 static volatile DWORD g_esp_enabled = 1u;
+/* Displayed in the PlayerESP GUI to identify why labels are not visible. */
+static volatile DWORD g_esp_status = 0u;
+static volatile DWORD g_esp_scan_players = 0u;
+static volatile DWORD g_esp_drawn_labels = 0u;
 static volatile DWORD g_esp_flag_enabled = 1u;
 static volatile DWORD g_range_sweep_enabled = 0u;
 static DWORD g_sweep_state = 0u;
@@ -753,6 +758,8 @@ static const char* reaction_name(int r) {
 static void reset_world_runtime_cache(void) {
     DWORD i;
     g_esp_cache_count = 0u;
+    g_esp_scan_players = 0u;
+    g_esp_drawn_labels = 0u;
     g_cache_age_frames = 0xFFFFFFFFu;
     g_cached_local_obj = 0u;
     g_cached_local_guid_lo = 0u;
@@ -1189,6 +1196,10 @@ static void hide_all_labels(void) {
             ShowWindow(g_labels[i].hwnd, SW_HIDE);
             g_labels[i].visible = FALSE;
         }
+        /* A hidden layered window can lose its previous pixels during loading,
+           even if its last player/HP text did not change. Force a full repaint
+           on the first frame after it becomes visible again. */
+        g_labels[i].contentValid = FALSE;
     }
 }
 
@@ -1310,6 +1321,7 @@ static void hide_unused_labels(DWORD used) {
         if (g_labels[i].hwnd && IsWindow(g_labels[i].hwnd) && g_labels[i].visible) {
             ShowWindow(g_labels[i].hwnd, SW_HIDE);
             g_labels[i].visible = FALSE;
+            g_labels[i].contentValid = FALSE;
         }
     }
 }
@@ -1772,6 +1784,7 @@ static void expire_old_tracked(void) {
 static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD guidHi, float lx, float ly, float lz) {
     DWORD obj, next, type, lo, hi, visited = 0u;
     DWORD count = 0u, i;
+    DWORD scannedPlayers = 0u;
     int reaction, ti;
     BYTE canAttack, pvpEnabled, localTeam;
     struct UnitMeta localMeta;
@@ -1806,6 +1819,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
         if (type == TYPEID_PLAYER &&
             rd_u32(obj + OBJ_GUID_LO, &lo) && rd_u32(obj + OBJ_GUID_HI, &hi) &&
             !(lo == guidLo && hi == guidHi)) {
+            ++scannedPlayers;
             /* Revalidate both objects and require initialized unit metadata
                immediately before entering native relation code. */
             if (!cached_object_matches(localObj, guidLo, guidHi) ||
@@ -1891,6 +1905,7 @@ next_object:
         copy_name_small(e->name, t->name);
     }
 
+    g_esp_scan_players = scannedPlayers;
     g_esp_cache_count = count;
     g_cache_age_frames = 0u;
     g_cached_local_obj = localObj;
@@ -1931,6 +1946,7 @@ static void render_frame_fast(void) {
     DWORD loCheck, hiCheck;
 
     g_render_frame++;
+    g_esp_drawn_labels = 0u;
     if (g_cache_age_frames != 0xFFFFFFFFu) g_cache_age_frames++;
     pump_overlay_messages();
 
@@ -1938,6 +1954,7 @@ static void render_frame_fast(void) {
         manager < 0x00010000u || manager > 0x7FFF0000u ||
         !readable4(manager + OM_FIRST_OBJECT) ||
         !rd_u32(manager + OM_LINK_BASE, &linkBase) || linkBase != 0x38u) {
+        g_esp_status = 1u;
         esp_forget_world("ESP_WORLD_LOST object_manager_unavailable");
         overlay_hide();
         g_cache_age_frames = 0xFFFFFFFFu;
@@ -1952,6 +1969,7 @@ static void render_frame_fast(void) {
     if (!rd_u32(manager + OM_LOCAL_GUID_LO, &guidLo) ||
         !rd_u32(manager + OM_LOCAL_GUID_HI, &guidHi) ||
         (guidLo == 0u && guidHi == 0u)) {
+        g_esp_status = 2u;
         esp_forget_world("ESP_WORLD_LOST local_guid_unavailable");
         overlay_hide();
         g_cache_age_frames = 0xFFFFFFFFu;
@@ -1968,6 +1986,7 @@ static void render_frame_fast(void) {
                 p = app_str(p, "ESP_LOCAL_REACQUIRE_WAIT reason=");
                 p = app_str(p, reason); *p = 0; log_line(b);
             }
+            g_esp_status = 3u;
             overlay_hide();
             g_cache_age_frames = 0xFFFFFFFFu;
             return;
@@ -1986,6 +2005,7 @@ static void render_frame_fast(void) {
        initialized. Hold ESP relation scanning until the same world identity has
        remained valid for ~2 seconds. */
     if (!relation_world_ready(manager, localObj, guidLo, guidHi)) {
+        g_esp_status = 4u;
         g_click_hit_count = 0u;
         overlay_hide();
         return;
@@ -1998,20 +2018,24 @@ static void render_frame_fast(void) {
     if (!g_esp_enabled) g_range_sweep_enabled = 0u;
     range_sweep_tick(manager, localObj, guidLo, guidHi, lx, ly, lz);
     if (!g_esp_enabled) {
+        g_esp_status = 5u;
         g_click_hit_count = 0u;
         overlay_hide();
         return;
     }
 
     if (!init_projection_context(&projCtx, &projReason) || !projCtx.ready) {
+        g_esp_status = 6u;
         overlay_hide();
         return;
     }
     if (!game_client_screen_rect(projCtx.hwnd, &screenLeft, &screenTop, &width, &height)) {
+        g_esp_status = 7u;
         overlay_hide();
         return;
     }
     if (GetForegroundWindow() != projCtx.hwnd) {
+        g_esp_status = 8u;
         g_click_hit_count = 0u;
         overlay_hide();
         return;
@@ -2020,12 +2044,14 @@ static void render_frame_fast(void) {
         g_click_hit_count = 0u;
     }
     if (!ensure_label_backbuffer(projCtx.hwnd)) {
+        g_esp_status = 9u;
         overlay_hide();
         return;
     }
 
     SetBkMode(g_label_memdc, TRANSPARENT_BK);
     g_click_hit_count = 0u;
+    g_esp_status = g_esp_cache_count ? 11u : (g_esp_scan_players ? 10u : 13u);
 
     for (i = 0u; i < g_esp_cache_count && drawn < MAX_ESP_PLAYERS; ++i) {
         struct EspCacheEntry* e = &g_esp_cache[i];
@@ -2080,9 +2106,16 @@ static void render_frame_fast(void) {
                             continue;
                         }
                     }
-                    if (!g_labels[drawn].visible) {
+                    /* OS/world transitions can hide a layered HWND without
+                       touching our own visible flag. Re-show whenever Windows
+                       reports it hidden, not only when our flag is false. */
+                    if (!g_labels[drawn].visible || !IsWindowVisible(g_labels[drawn].hwnd)) {
                         ShowWindow(g_labels[drawn].hwnd, SW_SHOWNOACTIVATE);
-                        g_labels[drawn].visible = TRUE;
+                        g_labels[drawn].visible = IsWindowVisible(g_labels[drawn].hwnd) ? TRUE : FALSE;
+                        if (!g_labels[drawn].visible) {
+                            g_labels[drawn].contentValid = FALSE;
+                            continue;
+                        }
                     }
                     if (liveObject && drawn < MAX_ESP_PLAYERS) {
                         g_click_hits[g_click_hit_count].left = (LONG)proj.screenX - (LABEL_W / 2);
@@ -2101,6 +2134,8 @@ static void render_frame_fast(void) {
     }
 
     hide_unused_labels(drawn);
+    g_esp_drawn_labels = drawn;
+    if (drawn) g_esp_status = 12u;
 
     if ((g_render_frame % DIAG_EVERY_FRAMES) == 0u) {
         log_render_summary(g_esp_cache_count, g_esp_cache_count, projected, drawn, width, height);
