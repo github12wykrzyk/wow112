@@ -8,7 +8,7 @@
     "WoWStealthCDGuardian_5875_v2_HARD5S_WATCHDOG.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll"
   ],
-  "note": "Experimental BG PlayerESP candidate: replace unsafe native relation calls with read-only vanilla race team check, recover labels after world transition, and display live-only WSG flag aura marker. Prior v1.3 binary caused BG crash; require testing before stable promotion.",
+  "note": "Experimental BG PlayerESP candidate: replace unsafe native relation calls with read-only vanilla race team check, recover labels after world transition, and display live-only WSG flag aura marker. Prior v1.3 binary caused BG crash; require testing before stable promotion. AB cap startup recovery: rebuilt AutoLootPP reconstruction and new MovementCore cast guard withdrawn. Aggregate candidate keeps exact stable AutoLootPP DLL and pre-AB MovementCore candidate; only AutoKick/AutoPoisons casting-bar safeguards remain for in-game verification.",
   "source_fingerprint_warning_allowlist": [
     "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
