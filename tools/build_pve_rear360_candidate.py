@@ -122,7 +122,7 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "pve_rear360",
-        "settings": ["PvE 360 rear", "PvE rear interval (ms)"],
+        "settings": ["PvE 360 rear", "PvE rear hold (ms)"],
         "timings_ms": timing,
     }
 
@@ -163,11 +163,14 @@ def main():
         "branch": "parallel",
         "default_enabled": True,
         "scope": "hostile NPC only; target type 3; <=8yd actual horizontal distance",
-        "heartbeat_interval_ms": 100,
-        "no_cast_or_movement_hooks": True,
-        "dispatch_owner": "ESP game WndProc handles posted WM_W112_REAR_TICK on game thread",
-        "diagnostic": "STATUS tab shows timer state and heartbeat pulse count",
+        "rear_hold_ms": 350,
+        "work_reference": "work/src/PositionalSpoof: clone cast after paired rear heartbeats; rewrite outgoing movement during transaction",
+        "cast_hook": "native 5875 SendCast 0x006E5872 (verified original callsite bytes)",
+        "movement_hook": "chain existing work MovementCore/LongPP via current 0x00600ACA target",
+        "dispatch_owner": "ESP game WndProc handles posted WM_W112_REAR_TICK for transaction restore",
+        "diagnostic": "STATUS shows cast priming count, not server acceptance",
         "client_position_restored_after_pulse": True,
+        "other_spells_and_player_targets": "native unmodified",
         "server_side_acceptance": "unverified; in-game PvE test required",
     }
     hub = package_meta.get("controlhub_pilot")

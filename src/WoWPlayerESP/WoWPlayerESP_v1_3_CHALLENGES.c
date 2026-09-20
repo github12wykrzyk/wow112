@@ -544,17 +544,17 @@ static void ui_sync_rear(void) {
     count=(RearValueFn)GetProcAddress(dll,"PVERear360_GetPulseCount");
     if(!status||!count){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: diagnostics unavailable");return;}
     code=status();pulses=count();
-    desc=code==0u?"IDLE (no eligible NPC)":
-         code==1u?"PULSING (unverified by server)":
+    desc=code==0u?"READY (cast-synchronized, NPC only)":
+         code==1u?"CAST PRIMED (awaiting restore)":
          code==2u?"PAUSED (cast/pending)":
          code==3u?"BUILD MISMATCH":
-         code==4u?"TIMER ERROR":
+         code==4u?"CAST/MOVEMENT HOOK NOT READY":
          code==5u?"DISABLED":
          code==6u?"WAITING FOR GAME WINDOW":
          code==7u?"WORKER START ERROR":
          code==8u?"PAUSED (PP / MovementCore owns movement)":"UNKNOWN";
     p=app_str(p,"PvE Rear 360: ");p=app_str(p,desc);
-    p=app_str(p," | pulses: ");p=app_u32(p,pulses);*p=0;
+    p=app_str(p," | primed casts: ");p=app_u32(p,pulses);*p=0;
     SetWindowTextA(g_ui_rear_state,buf);
 }
 /* Switching tabs changes only HWND visibility; ESP cache rescans are

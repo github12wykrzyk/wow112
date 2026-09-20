@@ -64,3 +64,29 @@ The **current** parallel candidate compiles `PickPocketSelectiveRange` and `Move
 After verified installation, open Insert -> ROGUE: toggle Auto PickPocket (work MovementCore setting 2 / F11) and AutoJunkbox (work PickPocketSelectiveRange setting 1) and confirm values persist while the live module is loaded. Confirm ordinary ability range is 8 yd and PP/Pick Lock client range remains 300 yd. Test PP on eligible unpickpocketed NPCs, including out-of-range attempts and blacklist reset following a death/respawn. Confirm actual corpse looting from the exact AutoLootPP/LongPP binaries. Check AutoJunkbox only while out of combat and stationary and **never while stealthed**. Switch to STATUS to confirm actual module load and live MovementCore AutoPP state, not to infer successful server transactions.
 
 Parallel's separate PvE Rear 360 now yields when work MovementCore reports movement/cast/PP ownership; verify Pick Pocket does not interrupt or become blocked by rear movement. Check on a normal NPC and on a BG player, and verify no regressions in ESP tab, click-targeting, zone/BG transitions or item casts/channels. Any missed loot, stuck cast or crash is a test failure; never promote to `main` without accepted in-game results.
+
+## PvE Rear 360 — work-derived cast synchronization candidate (current)
+
+This section supersedes the older V1 continuous-heartbeat notes above. Unlike the
+first parallel pilot, the current module only enters rear spoof during a native
+Backstab or Ambush CMSG on a selected hostile NPC within actual 8 yd. It hooks
+the exact 5875 native SendCast callsite used by the work PositionalSpoof,
+clones that original CDataStore, sends two rear movement heartbeats and the
+cloned cast *synchronously*, and suppresses only that original cast packet.
+It temporarily chains the existing MovementCore -> LongPP movement callsite
+and rewrites recognized outgoing movement XYZ/O to the same rear pose while
+a short cast transaction is active. Outside that transaction, all other casts
+and movement pass unchanged. Player targets are not intercepted (no PvP).
+MovementCore's existing rear lease arbitrates against Auto PP, gathering,
+SafeBreak and cast/channel movement; if it is unavailable or busy, the native
+cast proceeds without rear modification. No cast retry, native GCD edits,
+server-failure hooks, persistent idle fake movement, or broad work DLL import.
+
+In Insert -> STATUS, "primed casts" counts synchronous rear+cast submissions,
+not timer ticks and not confirmed server hits. If it stays at zero while
+Backstab is attempted, inspect module status and exact client/callsite.
+If it rises but the server still rejects the opener, investigate downstream
+normal movement override, server-side orientation/range and cast result.
+Test a stationary hostile NPC from front/side before a moving NPC, then
+confirm PP/AutoLoot, crafting/channeling and BG player combat remain intact.
+Never promote solely on heartbeat or cast-prime counter growth.
