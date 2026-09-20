@@ -45,3 +45,12 @@ The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols wi
 - The candidate builder now treats PickPocketSelectiveRange, AutoLootPP and LongPickPocket as explicit exact-byte-only inputs: rejects edits to their source without an explicit migration, rejects invalid exact-only names and conflicts with source overrides, and never uses their reconstructed binaries as candidate DLLs.
 - Existing fast/current, exact-runtime-artifact, symbol and final ZIP verifiers remain intact; exact-byte-only DLL artifacts must still match runtime SHA256/size and all final package invariants. Normal work candidates are unaffected because their `exact_byte_modules` list is absent.
 - Only ESP and SpeedFloor are compiled for the parallel candidate. Do not consider the candidate runnable until the latest branch-specific GitHub Actions run reports final package PASS.
+
+## Three-tab ESP / Rogue / Status GUI (parallel candidate)
+
+- The Insert GUI is a 750x555 Win32 native window with **ESP**, **ROGUE**, and **STATUS** tabs. Each tab retains large 22 px readable controls while showing only its own page; switching tabs does not trigger a player rescan, reload or new WndProc subclass.
+- ESP: four existing independent live filters and click-to-target continue unchanged. Actual checkbox changes alone increment the cache-refresh revision.
+- Rogue: SpeedFloor live enabled (control ID 1), disable-on-hostile-target guard (ID 3), and minimum speed stepper (-/+ 0.1, 1.0..14.0, control ID 2); displayed speed and checkbox state are queried from the active DLL, not hardcoded.
+- Status: ESP state and loaded/not-loaded indicators for PickPocketSelectiveRange, AutoLootPP and LongPickPocket; legacy PP/loot remain always-on with exact runtime DLLs and are *not* falsely represented as independently controllable.
+- Close and reopen with Insert; return to game focus as before. Existing ESP render worker and its hook ownership, current world/BG quarantine, and target-by-click behavior remain unchanged.
+- In-game checks: switch tabs repeatedly, toggle the four ESP filters and confirm immediate refresh and target clicks; change all three SpeedFloor settings and confirm live effect; reopen GUI and verify current runtime state; enter/leave BG, confirm ESP and GUI stability. Confirm Status 'LOADED' is not interpreted as proof of server-side PP/loot.
