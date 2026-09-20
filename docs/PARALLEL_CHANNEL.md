@@ -20,3 +20,7 @@
 - PARALLEL does not reject a directory solely because `.wow112_updater/installed.json` exists. This is compatible with selecting an existing/copy of an original-updater game directory.
 - The original updater's state files stay untouched; PARALLEL uses its own `.wow112_parallel_updater/` state and backup namespace. When both channels install into the *same* folder, game EXE/DLL files with matching names can replace each other, so separate game folders remain useful for two simultaneous installations.
 - Check directory existence, GitHub credentials, verified artifact SHA256, path normalization, running-game guard and backup/rollback mechanisms remain in force.
+
+## ESP-only symbol provenance
+
+The branch-specific `runtime/verified_symbols_5875.json` indexes only symbols with active PlayerESP translation-unit evidence. Symbols that were supported solely by removed SpeedFloor/AutoLootPP source were removed from this *derived parallel index*, not from the original work/main registry. The verifier remains unchanged and requires real current source evidence for every retained symbol.

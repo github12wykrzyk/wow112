@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Fast AI lookup of verified WoW 1.12.1 build 5875 x86 native primitives. This is a derived index only; listed provenance remains authoritative.",
+  "purpose": "PARALLEL ESP-only derived index of verified native 5875 symbols. Out-of-scope symbols remain in the original work/main registry.",
   "target": {
     "game": "World of Warcraft",
     "version": "1.12.1",
@@ -25,12 +25,6 @@
       "c_type": "volatile uint32_t*",
       "provenance": [
         {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_OBJECT_MANAGER_PTR 0x00B41414u"
-          ]
-        },
-        {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define OBJMGR_GLOBAL       0x00B41414u"
@@ -46,12 +40,6 @@
       "value_hex": "0x00AC",
       "semantics": "Offset from object manager to first object pointer.",
       "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OM_FIRST_OBJECT_OFF     0x00ACu"
-          ]
-        },
         {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
@@ -69,12 +57,6 @@
       "semantics": "Low 32 bits of local-player GUID in object manager.",
       "provenance": [
         {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OM_PLAYER_GUID_LO_OFF   0x00C0u"
-          ]
-        },
-        {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define OM_LOCAL_GUID_LO    0x000000C0u"
@@ -90,12 +72,6 @@
       "value_hex": "0x00C4",
       "semantics": "High 32 bits of local-player GUID in object manager.",
       "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OM_PLAYER_GUID_HI_OFF   0x00C4u"
-          ]
-        },
         {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
@@ -113,12 +89,6 @@
       "semantics": "Low 32 bits of object GUID.",
       "provenance": [
         {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_GUID_LO_OFF         0x0030u"
-          ]
-        },
-        {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define OBJ_GUID_LO         0x00000030u"
@@ -134,12 +104,6 @@
       "value_hex": "0x0034",
       "semantics": "High 32 bits of object GUID.",
       "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_GUID_HI_OFF         0x0034u"
-          ]
-        },
         {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
@@ -157,12 +121,6 @@
       "semantics": "Linked-list next-object pointer offset.",
       "provenance": [
         {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_NEXT_OFF            0x003Cu"
-          ]
-        },
-        {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define OBJ_NEXT_EXPECTED   0x0000003Cu"
@@ -178,12 +136,6 @@
       "value_hex": "0x0014",
       "semantics": "Object type-id field offset.",
       "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_TYPE_ID_OFF         0x0014u"
-          ]
-        },
         {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
@@ -201,47 +153,9 @@
       "semantics": "Build-5875 object type id for player objects.",
       "provenance": [
         {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define TYPEID_PLAYER           4u"
-          ]
-        },
-        {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define TYPEID_PLAYER       4u"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "selected_target.guid_lo_global",
-      "status": "verified",
-      "kind": "absolute_address",
-      "value_u32": 11854552,
-      "value_hex": "0x00B4E2D8",
-      "semantics": "Low 32 bits of selected/current target GUID used by active SpeedFloor lineage; distinct from loot-target globals.",
-      "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_SELECTED_GUID_LO   0x00B4E2D8u"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "selected_target.guid_hi_global",
-      "status": "verified",
-      "kind": "absolute_address",
-      "value_u32": 11854556,
-      "value_hex": "0x00B4E2DC",
-      "semantics": "High 32 bits of selected/current target GUID used by active SpeedFloor lineage; distinct from loot-target globals.",
-      "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_SELECTED_GUID_HI   0x00B4E2DCu"
           ]
         }
       ]
@@ -276,13 +190,6 @@
       "c_signature": "int (__thiscall *)(uint32_t selfObj, uint32_t targetObj)",
       "provenance": [
         {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_UNIT_REACTION_FN   0x006061E0u",
-            "typedef s32 (THISCALL *UnitReactionFn)(uptr32 selfObj, uptr32 targetObj);"
-          ]
-        },
-        {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define FN_UNIT_REACTION    0x006061E0u",
@@ -301,13 +208,6 @@
       "calling_convention": "__thiscall",
       "c_signature": "uint8_or_u32 (__thiscall *)(unit_object)",
       "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_PVP_STATE_FN       0x00605FF0u",
-            "typedef u32 (THISCALL *PvpStateFn)(void *player);"
-          ]
-        },
         {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
@@ -338,73 +238,6 @@
       ]
     },
     {
-      "id": "native.speed_recalc",
-      "status": "verified",
-      "kind": "function",
-      "value_u32": 8150048,
-      "value_hex": "0x007C5C20",
-      "semantics": "Movement speed recalculation helper used by SpeedFloor.",
-      "calling_convention": "__thiscall",
-      "c_signature": "void (__thiscall *)(void* movementThis, uint32_t zero)",
-      "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_SPEED_RECALC_FN    0x007C5C20u",
-            "typedef void (THISCALL *SpeedRecalcFn)(void *movementThis, u32 zero);"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "movement.recalc_this_offset",
-      "status": "verified",
-      "kind": "offset",
-      "value_u32": 2472,
-      "value_hex": "0x09A8",
-      "semantics": "Offset from player object to movement subobject passed as this to speed recalculation.",
-      "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define PLAYER_MOVEMENT_RECALC_THIS_OFF 0x09A8u"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "movement.current_speed_offset",
-      "status": "verified",
-      "kind": "offset",
-      "value_u32": 2604,
-      "value_hex": "0x0A2C",
-      "semantics": "Player current-speed field used by SpeedFloor.",
-      "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define PLAYER_CURRENT_SPEED_OFF        0x0A2Cu"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "movement.run_speed_offset",
-      "status": "verified",
-      "kind": "offset",
-      "value_u32": 2612,
-      "value_hex": "0x0A34",
-      "semantics": "Player run-speed field used by SpeedFloor.",
-      "provenance": [
-        {
-          "path": "src/SpeedFloor/WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG_RECONSTRUCTED.c",
-          "evidence": [
-            "#define PLAYER_RUN_SPEED_OFF            0x0A34u"
-          ]
-        }
-      ]
-    },
-    {
       "id": "object.position_x_offset",
       "status": "verified",
       "kind": "offset",
@@ -416,12 +249,6 @@
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define OBJ_POS_X           0x000009B8u"
-          ]
-        },
-        {
-          "path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_X_OFF                   0x09B8u"
           ]
         }
       ]
@@ -439,12 +266,6 @@
           "evidence": [
             "#define OBJ_POS_Y           0x000009BCu"
           ]
-        },
-        {
-          "path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_Y_OFF                   0x09BCu"
-          ]
         }
       ]
     },
@@ -461,12 +282,6 @@
           "evidence": [
             "#define OBJ_POS_Z           0x000009C0u"
           ]
-        },
-        {
-          "path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
-          "evidence": [
-            "#define OBJ_Z_OFF                   0x09C0u"
-          ]
         }
       ]
     }
@@ -474,20 +289,13 @@
   "omitted_unresolved": [
     {
       "topic": "CanAttack / attackable helper at 0x00606980",
-      "reason": "Not registered because current active sources agree on the address but disagree on ABI/signature (__thiscall self,target versus reconstructed __stdcall unit). Resolve by binary audit before using as shared primitive.",
+      "reason": "Not promoted as a shared primitive: PlayerESP has an active __thiscall self/target typedef; historical non-active AutoLootPP reconstructed source used an incompatible __stdcall unit signature. A binary ABI audit is required before sharing this symbol across future PARALLEL modules.",
       "provenance": [
         {
           "path": "src/WoWPlayerESP/WoWPlayerESP_v1_2_range_sweep.c",
           "evidence": [
             "#define FN_CAN_ATTACK       0x00606980u",
             "typedef BYTE (__thiscall *CanAttackFn)(DWORD selfObj, DWORD targetObj);"
-          ]
-        },
-        {
-          "path": "src/AutoLootPP/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK_RECONSTRUCTED.c",
-          "evidence": [
-            "#define WOW_ATTACKABLE_FN           0x00606980u",
-            "typedef int  (STDCALL *AttackableFn)(void *unit);"
           ]
         }
       ]
