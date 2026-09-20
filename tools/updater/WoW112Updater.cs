@@ -321,21 +321,10 @@ namespace WoW112Updater
 
             using (var client = CreateClient())
             {
-                var runsUrl = ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50";
-                var runsRoot = AsDictionary(json.DeserializeObject(await GetStringAsync(client, runsUrl)));
-                var runs = AsArray(GetValue(runsRoot, "workflow_runs"));
-                Dictionary<string, object> chosen;
-                try
-                {
-                    chosen = UpdaterSafety.RequireLatestSuccessfulRun(runs, workflowName, branch);
-                }
-                catch (InvalidOperationException)
-                {
-                    if (stable && !runs.Any(item => string.Equals(GetString(item as Dictionary<string, object>, "name"), workflowName, StringComparison.Ordinal)))
-                        throw new InvalidOperationException("Kanał STABLE nie ma jeszcze opublikowanej paczki updatera. Na razie wybierz TEST (work).");
-                    throw;
-                }
-
+                // A new Parallel commit may trigger a build while the user presses Update.
+                // Wait for that exact latest run instead of treating a normal 45s CI build
+                // as a permanent error. Never silently install an older artifact.
+                var chosen = await WaitForLatestSuccessfulRunAsync(client, workflowName, branch);
                 var runId = GetLong(chosen, "id");
                 var artifactsRoot = AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100")));
                 var artifacts = AsArray(GetValue(artifactsRoot, "artifacts"));
@@ -362,6 +351,44 @@ namespace WoW112Updater
                     DownloadUrl = GetString(artifact, "archive_download_url"),
                     InnerZipName = innerName
                 };
+            }
+        }
+
+        private async Task<Dictionary<string, object>> WaitForLatestSuccessfulRunAsync(HttpClient client, string workflowName, string branch)
+        {
+            var deadlineUtc = DateTime.UtcNow.AddMinutes(3);
+            var waitingRunId = 0L;
+            while (true)
+            {
+                var url = ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50";
+                var root = AsDictionary(json.DeserializeObject(await GetStringAsync(client, url)));
+                var runs = AsArray(GetValue(root, "workflow_runs"));
+                var newest = runs.Select(item => item as Dictionary<string, object>)
+                    .FirstOrDefault(row => row != null
+                        && string.Equals(GetString(row, "name"), workflowName, StringComparison.Ordinal)
+                        && string.Equals(GetString(row, "head_branch"), branch, StringComparison.Ordinal));
+                var state = GetString(newest, "status");
+                if (newest != null && !string.Equals(state, "completed", StringComparison.OrdinalIgnoreCase)
+                    && DateTime.UtcNow < deadlineUtc)
+                {
+                    var runId = GetLong(newest, "id");
+                    if (waitingRunId != runId)
+                    {
+                        waitingRunId = runId;
+                        Log("Build Parallel #" + runId + " jest w toku (" + state
+                            + "). Czekam automatycznie na wynik; starszych paczek nie instaluję.");
+                    }
+                    status.Text = "Trwa build Parallel • sprawdzam automatycznie co 8 s...";
+                    await Task.Delay(8000);
+                    continue;
+                }
+
+                // This still fails closed for unsuccessful/cancelled/timed-out runs, or
+                // if the latest run remains pending after the three-minute wait.
+                var chosen = UpdaterSafety.RequireLatestSuccessfulRun(runs, workflowName, branch);
+                if (waitingRunId != 0)
+                    Log("Build Parallel #" + GetLong(chosen, "id") + " zakończony sukcesem; pobieram zweryfikowaną paczkę.");
+                return chosen;
             }
         }
 
