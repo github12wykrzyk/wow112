@@ -1144,8 +1144,8 @@ function lazyRogueLoad.LoadParseRogue()
 		return [[
 			<P>-if[Not]Poisoned={MainHand,OffHand}</P>
 			<P>-if[Not]Stealthed</P>
-			<P>-ifEnergyTick&lt;200ms (estimated; requires two observed ticks)</P>
-			<P>-ifEnergyTick&gt;200ms</P>
+			<P>-ifEnergyTick{&lt;,=,&gt;}XXms |cffffff00(choose XX: 0-2000 ms; estimated tick, requires synchronization)|r</P>
+			<P>Examples: bs-ifEnergyTick&lt;100ms; ss-ifEnergyTick&lt;350ms</P>
 			<P>-if[{&lt;,=,&gt;}]Xcp</P>
 		]]
 	end
