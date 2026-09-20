@@ -437,6 +437,7 @@ static volatile DWORD g_bg_score_count = 0u;
 static volatile DWORD g_bg_score_my_side = 2u;
 static volatile DWORD g_bg_score_frame = 0u;
 static volatile DWORD g_bg_score_manager = 0u;
+static volatile DWORD g_bg_score_mode = 0u; /* Latched until world reset once scoreboard proves BG. */
 /* The cached local-player pointer belongs to one Object Manager generation. */
 static DWORD g_render_manager = 0u;
 
@@ -1874,14 +1875,17 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
             reaction=(vanilla_race_team(localMeta.raceId) &&
                       vanilla_race_team(meta.raceId) &&
                       vanilla_race_team(localMeta.raceId)!=vanilla_race_team(meta.raceId)) ? 1 : 5;
-            if (g_bg_score_manager==manager && g_bg_score_my_side<=1u &&
-                g_bg_score_count>0u &&
-                (g_render_frame-g_bg_score_frame)<=BG_SCORE_TTL_FRAMES) {
-                int bgReaction;
-                pname[0]=0;
-                nameFound=lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
-                bgReaction=nameFound ? bg_score_relation(manager,pname) : 0;
-                if (bgReaction>=0) reaction=bgReaction;
+            if (g_bg_score_mode && g_bg_score_manager==manager) {
+                int bgReaction=0;
+                /* Once a BG has been observed never fall back to race on a
+                   missing, outdated or partially refreshed scoreboard. */
+                reaction=5;
+                if (g_bg_score_my_side<=1u && g_bg_score_count>0u &&
+                    (g_render_frame-g_bg_score_frame)<=BG_SCORE_TTL_FRAMES) {
+                    nameFound=lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
+                    if (nameFound) bgReaction=bg_score_relation(manager,pname);
+                    if (bgReaction==1) reaction=1;
+                }
             }
             canAttack=(BYTE)(reaction==1 ? 1u : 0u);
             pvpEnabled=canAttack;
@@ -1995,6 +1999,7 @@ static void esp_forget_world(const char* reason) {
     g_bg_score_count=0u;
     g_bg_score_my_side=2u;
     g_bg_score_manager=0u;
+    g_bg_score_mode=0u;
     g_bg_score_version++;
     reset_world_runtime_cache();
     overlay_hide();
