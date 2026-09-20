@@ -1786,7 +1786,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
     DWORD count = 0u, i;
     DWORD scannedPlayers = 0u;
     int reaction, ti;
-    BYTE canAttack, pvpEnabled, localTeam;
+    BYTE canAttack, pvpEnabled;
     struct UnitMeta localMeta;
     char pname[MAX_PLAYER_NAME + 1u];
     DWORD nameNodes = 0u;
@@ -1800,7 +1800,7 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
     g_current_over300 = 0u;
 
     if (!manager || !localObj || !read_unit_meta(localObj,&localMeta)) return FALSE;
-    localTeam=vanilla_race_team(localMeta.raceId);
+    /* Race is not a team identifier on cross-faction battlegrounds. */
     expire_old_tracked();
 
     for (i = 0u; i < MAX_TRACKED_PLAYERS; ++i) {
@@ -1827,11 +1827,28 @@ static BOOL refresh_esp_cache(DWORD manager, DWORD localObj, DWORD guidLo, DWORD
                 !read_unit_meta(obj, &meta))
                 goto next_object;
 
-            /* Avoid BG transition crashes in the native relation path. */
-            reaction=(localTeam && vanilla_race_team(meta.raceId) &&
-                      localTeam!=vanilla_race_team(meta.raceId)) ? 1 : 5;
-            canAttack=(BYTE)(reaction==1 ? 1u : 0u);
+            /*
+             * The render path has already held the world identity stable for
+             * WORLD_RELATION_STABLE_FRAMES. Only query live, GUID-matched
+             * objects; never call the native relation helper from GUID/MEM or
+             * LAST cache fallbacks. The client's actual reaction reflects BG
+             * allegiance, including cross-faction teammates/opponents; race
+             * and the original faction of a character do not.
+             */
+            reaction=native_unit_reaction(localObj, obj);
+            canAttack=(BYTE)(reaction>=1 && reaction<=3 ? 1u : 0u);
             pvpEnabled=canAttack;
+            if (!canAttack) {
+                /* Drop a former enemy immediately: persistent history must
+                   not keep rendering a now-friendly player's old label. */
+                ti=find_tracked_index(lo, hi);
+                if (ti>=0) {
+                    g_tracked[ti].used=0u;
+                    g_tracked[ti].seenThisRefresh=0u;
+                    g_tracked[ti].obj=0u;
+                }
+                goto next_object;
+            }
             if (reaction >= 1 && reaction <= 3) {
                 pname[0] = 0;
                 nameFound = lookup_player_name(lo, hi, pname, &nameNodes, &nameReason);
