@@ -1,37 +1,107 @@
 lazyScript.metadata:updateRevisionFromKeyword("$Revision: 622 $")
 
--- Interrupt support
-
+-- Build-5875 hybrid observer: native AutoKick remains sole automatic Kick owner.
 lazyScript.interrupt = {}
+local I = lazyScript.interrupt
+I.targetCasting = nil
+I.castingDetectedAt = 0
+I.lastSpellInterrupted = nil -- only an explicit verified success may set this
+I.native = {seen=false,guid=nil,spell=0,remaining=0,kind=0,owned=false,updatedAt=0}
+I.lastAttempt = nil
 
-lazyScript.interrupt.targetCasting = nil
-lazyScript.interrupt.castingDetectedAt = 0
-lazyScript.interrupt.lastSpellInterrupted = nil
+function I.OnTargetChanged()
+    I.targetCasting = nil
+    I.castingDetectedAt = 0
+    I.chatGuid = nil
+    I.lastAttempt = nil
+    I.native.guid = nil
+    I.native.updatedAt = 0
+    I.native.spell = 0
+    I.native.kind = 0
+end
 
+function I.OnNativeCast(guid,spell,remaining,kind,owned)
+    if type(guid) ~= "string" or string.len(guid) ~= 16 or
+       not UnitExists("target") then return end
+    local n = I.native
+    if n.guid ~= guid then
+        I.targetCasting = nil
+        I.castingDetectedAt = 0
+        I.chatGuid = nil
+        I.lastAttempt = nil
+    end
+    n.seen = true
+    n.guid = guid
+    n.spell = tonumber(spell) or 0
+    n.remaining = tonumber(remaining) or 0
+    n.kind = tonumber(kind) or 0
+    n.owned = owned == 1
+    n.updatedAt = GetTime()
+    if n.spell == 0 or n.kind == 0 then
+        I.targetCasting = nil
+        I.chatGuid = nil
+    end
+end
 
-function lazyScript.interrupt.OnChatMsgSpell(arg1)
-	local tName = UnitName("target")
-	local spellCastOtherStart = lazyScript.getLocaleString("SPELLCASTOTHERSTART")
-	local spellPerformOtherStart = lazyScript.getLocaleString("SPELLPERFORMOTHERSTART")
-	if (not spellCastOtherStart) or (not spellPerformOtherStart) then
-		lazyScript.d(INTERRUPTS_NOT_SUPPORTED)
-		return
-	end
-	if (tName) then
-		for idx, pat in ipairs({ spellCastOtherStart, spellPerformOtherStart }) do
-			for mob, spell in string.gfind(arg1, pat) do
-				if (mob == tName) then
-					lazyScript.d(DETECTED_YOUR_TARGET..spell..SUGGEST_INTERRUPT)
-					if (lazyScript.perPlayerConf.showTargetCasts) then
-						lazyScript.p(tName..IS_CASTING..spell..".")
-					end
-					lazyScript.interrupt.targetCasting = spell
-					lazyScript.interrupt.castingDetectedAt = GetTime()
-					return
-				end
-			end
-		end
-	end
+function I.NativeFresh()
+    local n = I.native
+    return n.seen and n.guid and n.updatedAt > 0 and
+           GetTime() - n.updatedAt <= 0.25 and UnitExists("target")
+end
+
+function I.NativeKickOwner()
+    -- Losing the bridge must not reactivate a competing automatic Lua Kick.
+    return I.native.seen and I.native.owned
+end
+
+function I.OnAttempt(action)
+    -- CastSpell/UseAction is not proof that an interrupt succeeded.
+    I.lastAttempt = {action=action, at=GetTime(), guid=I.native.guid,
+                     spell=I.native.spell}
+end
+
+function I.TargetIsCasting(nameRegex)
+    local now = GetTime()
+    local n = I.native
+    if n.seen then
+        if not I.NativeFresh() or n.spell == 0 or n.kind == 0 then return false end
+        if n.kind == 1 and n.remaining <= 350 then return false end
+        if not nameRegex or nameRegex == "" then return true end
+        if not I.targetCasting or I.chatGuid ~= n.guid or
+           now - I.castingDetectedAt > 0.7 then return false end
+    else
+        -- Legacy-only fallback when no native observer has ever been seen.
+        if not I.targetCasting or now - I.castingDetectedAt > 0.35 or
+           not UnitExists("target") then return false end
+        if I.lastAttempt and now - I.lastAttempt.at < 0.4 then return false end
+        if not nameRegex or nameRegex == "" then return true end
+    end
+    if lsConfGlobal.SpellType[I.targetCasting] and
+       lsConfGlobal.SpellType[I.targetCasting][nameRegex] then return true end
+    return string.find(I.targetCasting,nameRegex) ~= nil
+end
+
+function I.OnChatMsgSpell(arg1)
+    local tName = UnitName("target")
+    local starts = lazyScript.getLocaleString("SPELLCASTOTHERSTART")
+    local performs = lazyScript.getLocaleString("SPELLPERFORMOTHERSTART")
+    if not starts or not performs or not tName or not arg1 then return end
+    local n = I.native
+    if n.seen and not I.NativeFresh() then return end
+    for _,pat in ipairs({starts,performs}) do
+        for mob,spell in string.gfind(arg1,pat) do
+            if mob == tName then
+                I.targetCasting = spell
+                I.castingDetectedAt = GetTime()
+                I.chatGuid = I.NativeFresh() and n.guid or nil
+                I.lastAttempt = nil
+                if lazyScript.perPlayerConf.showTargetCasts then
+                    lazyScript.p(tName..IS_CASTING..spell..".")
+                end
+                return
+            end
+        end
+    end
 end
 
 

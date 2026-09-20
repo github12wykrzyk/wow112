@@ -207,6 +207,12 @@ jobs:
             --finalize
           if ($LASTEXITCODE -ne 0) { throw "final package verification failed" }
 
+      - name: Package optional LazyScript and LazyRogue
+        shell: pwsh
+        run: |
+          python tools/package_lazyrogue_addons.py --output dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
+          if ($LASTEXITCODE -ne 0) { throw "LazyRogue addon package failed" }
+
       - name: Write human-readable test card
         shell: pwsh
         run: >-
@@ -220,6 +226,7 @@ jobs:
           name: WoW112-WORK-CANDIDATE-${{ github.sha }}
           path: |
             dist/WoW112_WORK_CANDIDATE.zip
+            dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
             dist/TEST_THIS.txt
             dist/candidate_metadata.json
             dist/candidate_summary.json

@@ -23,3 +23,11 @@ For new work, use this exact source lineage on `work` and keep changes localized
 ## Compatibility caveat
 
 The supplied upstream README explicitly states that the addon did not work with SuperWoW as of 2025-04-30. No in-game compatibility or interoperability with this project's DLLs has been confirmed; test any future modified addon separately before packaging or promotion to `main`.
+
+## Hybrid AutoKick / LazyRogue candidate (work only)
+- AutoKick V3 alone owns automatic Kick. Its existing 5875 signature-checked normal-cast and channel probes publish a GUID/spell/remaining-time observation to LazyScript every >=80 ms on the UI timer. No new packet detour or movement hook.
+- `ifTargetIsCasting` uses a native-confirmed snapshot (250 ms freshness). If this session has never seen the native module, a short 350 ms chat-only fallback remains. A missing or stale native snapshot fails closed instead of trusting an old five-second chat message.
+- Automatic Lua Kick is suppressed while native AutoKick owns it. Default Rogue interruption fallback lines (Kidney Shot/Gouge) are suppressed during native ownership, to avoid competing cast commands. Manual keybinds remain user-controlled.
+- Casting an interrupt does not prove that it succeeded. The old immediate `lastSpellInterrupted` assignment was removed; an independent confirmed-success event would be needed to populate it.
+- This source-only addon is a separate `Interface/AddOns` package. The optional AutoKick V3 DLL is built as an experimental work companion module; it is not part of the accepted stable baseline. In-game testing is required. If native AutoKick is disabled mid-session, reload the addon/client before relying on legacy chat-only behavior.
+- Package addons with `python tools/package_lazyrogue_addons.py`; they must not be appended to the strict root-only WoW.exe/DLL candidate ZIP.

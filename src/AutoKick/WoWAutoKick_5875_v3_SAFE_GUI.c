@@ -200,6 +200,9 @@ static volatile u32 g_pendingGuidHi = 0u;
 static volatile u32 g_pendingSpell = 0u;
 static volatile u32 g_pendingCastMs = 0u;
 static volatile u32 g_pendingStartTick = 0u;
+/* Read-only native state for the optional LazyRogue hybrid observer. */
+static volatile u32 g_bridgeGuidLo=0u,g_bridgeGuidHi=0u,g_bridgeSpell=0u;
+static volatile u32 g_bridgeCastMs=0u,g_bridgeStartTick=0u,g_bridgeLastPublish=0u;
 
 static volatile u32 g_queued = 0u;
 static volatile u32 g_queueGuidLo = 0u;
@@ -351,6 +354,7 @@ static void clear_transient_state(void)
 {
     g_pendingNormal=0u;
     g_pendingGuidLo=0u; g_pendingGuidHi=0u; g_pendingSpell=0u; g_pendingCastMs=0u; g_pendingStartTick=0u;
+    g_bridgeGuidLo=0u;g_bridgeGuidHi=0u;g_bridgeSpell=0u;g_bridgeCastMs=0u;g_bridgeStartTick=0u;
     g_queued=0u; g_queueGuidLo=0u; g_queueGuidHi=0u; g_queueSpell=0u; g_queueDue=0u; g_queueAttemptsRemaining=0u; g_queueKind=0u; g_queueDeadline=0u;
     g_lastChannelGuidLo=0u; g_lastChannelGuidHi=0u; g_lastChannelSpell=0u;
 }
@@ -485,6 +489,60 @@ static void schedule_normal_kick(u32 lo,u32 hi,u32 spell,u32 castMs,u32 startTic
     /* Retry is allowed only while the native unit cast ID still matches.
        Every attempt is revalidated immediately before firing. */
     schedule_kick_after(lo,hi,spell,now,extra,QUEUE_KIND_NORMAL,startTick+castMs);
+}
+
+
+/* No new hook: publish current selected GUID and live unit casting state
+   over the existing UI-thread FrameScript bridge. A packet edge alone never
+   asserts casting; every positive snapshot re-reads the live 5875 unit. */
+static char *append_decimal(char *p,const char *end,u32 v)
+{
+    char digits[11];u32 n=0u;
+    do{digits[n++]=(char)('0'+v%10u);v/=10u;}while(v && n<sizeof(digits));
+    while(n && p<end)*p++=digits[--n];
+    return p;
+}
+static char *append_guid_hex(char *p,const char *end,u32 v)
+{
+    static const char hex[]="0123456789ABCDEF";s32 shift;
+    for(shift=28;shift>=0 && p<end;shift-=4)*p++=hex[(v>>(u32)shift)&15u];
+    return p;
+}
+static void publish_rogue_native_cast(u32 now)
+{
+    u32 lo,hi,obj,typeId,spell=0u,kind=0u,remaining=0u,owner=0u,channel;
+    char script[480];char *p=script,*end=script+sizeof(script)-1;
+    FrameScriptExecuteFn fn;
+    if((u32)(now-g_bridgeLastPublish)<80u || !g_captureReady || !g_cfgEnabled)return;
+    g_bridgeLastPublish=now;
+    if(!current_target_snapshot(&lo,&hi,&obj,&typeId))return;
+    owner=(!g_cfgPlayersOnly || typeId==TYPE_PLAYER) &&
+          (g_cfgNormalCasts || g_cfgChannels);
+    if(g_cfgNormalCasts && g_bridgeSpell && lo==g_bridgeGuidLo && hi==g_bridgeGuidHi &&
+       g_bridgeCastMs && g_bridgeCastMs<=60000u &&
+       (u32)(now-g_bridgeStartTick)<g_bridgeCastMs){
+        u32 left=g_bridgeCastMs-(u32)(now-g_bridgeStartTick);
+        if(left>NORMAL_CAST_SAFETY_MS && target_normal_cast_live(obj,g_bridgeSpell)){
+            spell=g_bridgeSpell;kind=QUEUE_KIND_NORMAL;remaining=left;
+        }
+    }
+    if(!spell && g_cfgChannels){
+        channel=target_channel_spell(lo,hi,0);
+        if(channel && !is_known_instant_form(channel)){
+            spell=channel;kind=QUEUE_KIND_CHANNEL;remaining=0u;
+        }
+    }
+    if(!framescript_signature_ok())return;
+    p=append_text(p,end,"if lazyScript and lazyScript.interrupt and lazyScript.interrupt.OnNativeCast then lazyScript.interrupt.OnNativeCast('");
+    p=append_guid_hex(p,end,hi);p=append_guid_hex(p,end,lo);
+    p=append_text(p,end,"',");
+    p=append_decimal(p,end,spell);p=append_text(p,end,",");
+    p=append_decimal(p,end,remaining);p=append_text(p,end,",");
+    p=append_decimal(p,end,kind);p=append_text(p,end,",");
+    p=append_decimal(p,end,owner);p=append_text(p,end,") end");
+    *p=0;
+    fn=(FrameScriptExecuteFn)(uptr32)WOW_FRAMESCRIPT_EXECUTE;
+    (void)fn(script,"W112RogueCastBridge");
 }
 
 static void fire_queued_kick(u32 now)
@@ -719,9 +777,12 @@ static void STDCALL AutoKick_TimerProc(HWND32 hwnd,UINT32 msg,UINT_PTR32 timerId
         /* SPELL_START also covers instant abilities (e.g. druid shapeshifts).
            A decoded zero-duration cast is not an interruptible normal cast.
            Fail closed if the detail hook has not supplied a valid duration. */
+        g_bridgeGuidLo=lo;g_bridgeGuidHi=hi;g_bridgeSpell=(castMs>0u && castMs<=60000u && !is_known_instant_form(spell))?spell:0u;
+        g_bridgeCastMs=castMs;g_bridgeStartTick=startTick;
         if(castMs>0u) schedule_normal_kick(lo,hi,spell,castMs,startTick,now);
     }
     poll_channel(now);
+    publish_rogue_native_cast(now);
     fire_queued_kick(now);
     g_busy=0u;
 }

@@ -2105,44 +2105,25 @@ function lazyScript.masks.InterruptExceptionCriteria(sayNothing)
 end
 
 function lazyScript.masks.TargetIsCasting(nameRegex)
-	local spellTypeStrings = lazyScript.getLocaleString("SPELLTYPE", false, true)
-	if spellTypeStrings and nameRegex then
-		for k, v in pairs(spellTypeStrings) do
-			lazyScript.d(KEY..k..VALUE..v.." SpellTypeRegex: "..nameRegex)
-			if string.upper(nameRegex) == string.upper(k) then
-				nameRegex = string.upper(v)
-				lazyScript.d(MATCHKEY..k..VALUE..v.." SpellTypeRegex: "..nameRegex)
-				break
-			end
-		end
-	end
+    local spellTypeStrings = lazyScript.getLocaleString("SPELLTYPE", false, true)
+    if spellTypeStrings and nameRegex then
+        for k,v in pairs(spellTypeStrings) do
+            if string.upper(nameRegex) == string.upper(k) then
+                nameRegex = string.upper(v)
+                break
+            end
+        end
+    end
+    return function(sayNothing)
+        return lazyScript.interrupt.TargetIsCasting(nameRegex)
+    end
+end
 
-	return function(sayNothing)
-		if (lazyScript.interrupt.targetCasting and ((GetTime() - lazyScript.interrupt.castingDetectedAt) <= 5)) then
-			-- If there is no nameRegex, it's an automatic match
-			if (nameRegex == nil or nameRegex == "") then
-				return true
-			end
-
-			--if (not sayNothing) then
-			--   lazyScript.d("TargetIsCasting: targetCasting="..lazyScript.interrupt.targetCasting..", nameRegex="..nameRegex)
-			--end
-
-			-- Check if the nameRegex matches the school of the spell being cast
-			if lsConfGlobal.SpellType[lazyScript.interrupt.targetCasting] then
-				if lsConfGlobal.SpellType[lazyScript.interrupt.targetCasting][nameRegex] then
-					return true
-				end
-			end
-
-			-- Check if the nameRegex matches the spell being cast
-			if (string.find(lazyScript.interrupt.targetCasting, nameRegex)) then
-				return true
-				else
-				return false
-			end
-		end
-	end
+function lazyScript.bitParsers.ifNativeKickOwner(bit, actions, masks)
+    if not lazyScript.rebit(bit, "^if(Not)?NativeKickOwner$") then return false end
+    table.insert(masks,lazyScript.negWrapper(lazyScript.interrupt.NativeKickOwner,
+                                             lazyScript.negate1()))
+    return true
 end
 
 function lazyScript.bitParsers.ifTargetIsCasting(bit, actions, masks)

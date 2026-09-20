@@ -333,10 +333,9 @@ function lazyScript.Action:Use()
 		UseAction(self.slot)
 	end
 
-	if (self.interrupts and lazyScript.interrupt.targetCasting) then
-		lazyScript.interrupt.lastSpellInterrupted = lazyScript.interrupt.targetCasting
-		lazyScript.interrupt.targetCasting = nil
-	end
+	if self.interrupts and lazyScript.interrupt.OnAttempt then
+        lazyScript.interrupt.OnAttempt(self.code)
+    end
 
 	lazyScript.recordAction(self.code)
 	self.everyTimer = GetTime()
@@ -344,6 +343,10 @@ function lazyScript.Action:Use()
 end
 
 function lazyScript.Action:IsUsable(sayNothing)
+    if self.code == "kick" and lazyScript.interrupt and
+       lazyScript.interrupt.NativeKickOwner and lazyScript.interrupt.NativeKickOwner() then
+        return false -- Native AutoKick is sole automatic Kick owner.
+    end
 	-- Run this here to make Action:Use quicker by not always having to search the spell book
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(sayNothing)
 	if (self:GetSlot(sayNothing)) then
@@ -509,7 +512,9 @@ function lazyScript.ComboAction:Use()
 		if (first) then
 			first = false
 		else
-			SpellStopCasting()
+			if not lazyScript.spellcastInProgress and not lazyScript.channellingInProgress then
+                SpellStopCasting()
+            end
 		end
 		action:Use()
 	end

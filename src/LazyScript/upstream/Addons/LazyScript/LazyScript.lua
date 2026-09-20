@@ -384,7 +384,7 @@ function lazyScript.OnEvent()
 		lazyScript.lastBlockTime["target"] = nil
 		lazyScript.lastParryTime["target"] = nil
 		lazyScript.lastResistTime["target"] = nil
-		lazyScript.interrupt.targetCasting = nil
+		lazyScript.interrupt.OnTargetChanged()
 		lazyScript.ResetEveryTimers()
 		lazyScript.ResetNowAndEveryTimers()
 		lazyScript.targetHealthHistory:Reset()
