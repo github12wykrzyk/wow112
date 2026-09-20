@@ -14,6 +14,8 @@
 #error TaxiFlightProbe requires a 32-bit x86 target.
 #endif
 #include <windows.h>
+/* CRT-less /NODEFAULTLIB x86 builds need the compiler's floating-point marker. */
+int _fltused = 0;
 
 #define OBJMGR_GLOBAL 0x00B41414u
 #define OM_FIRST_OBJECT 0x00ACu
