@@ -64,15 +64,15 @@ namespace WoW112Updater
 
         public MainForm()
         {
-            Text = "WoW112 Updater v" + UpdaterVersion;
+            Text = "WoW112 PARALLEL Updater v" + UpdaterVersion;
             ClientSize = new Size(860, 660);
             MinimumSize = new Size(860, 660);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9F);
 
-            configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112Updater");
+            configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112ParallelUpdater");
             if (Environment.GetCommandLineArgs().Contains("--ui-smoke"))
-                configDir = Path.Combine(Path.GetTempPath(), "WoW112UiSmoke-" + Guid.NewGuid().ToString("N"));
+                configDir = Path.Combine(Path.GetTempPath(), "WoW112ParallelUiSmoke-" + Guid.NewGuid().ToString("N"));
             configPath = Path.Combine(configDir, "config.json");
 
             BuildUi();
@@ -83,7 +83,7 @@ namespace WoW112Updater
         private void BuildUi()
         {
             channel.DropDownStyle = ComboBoxStyle.DropDownList;
-            channel.Items.AddRange(new object[] { "TEST (work)", "STABLE (main)" });
+            channel.Items.AddRange(new object[] { "PARALLEL (parallel)" });
             channel.SelectedIndex = 0;
             rollbackChoice.DropDownStyle = ComboBoxStyle.DropDownList;
             token.UseSystemPasswordChar = true;
@@ -150,7 +150,7 @@ namespace WoW112Updater
                 var root = AsDictionary(json.DeserializeObject(File.ReadAllText(configPath, Encoding.UTF8)));
                 gameDir.Text = GetString(root, "game_dir");
                 var selected = GetString(root, "channel");
-                if (selected == "stable") channel.SelectedIndex = 1;
+                // This dedicated updater never adopts the original stable/work channel.
                 LoadDllUpdatePreferences(root);
                 var protectedToken = GetString(root, "token_dpapi");
                 if (!string.IsNullOrWhiteSpace(protectedToken))
@@ -177,7 +177,7 @@ namespace WoW112Updater
                 }
                 var root = new Dictionary<string, object>();
                 root["game_dir"] = gameDir.Text.Trim();
-                root["channel"] = IsStable() ? "stable" : "test";
+                root["channel"] = "parallel";
                 root["token_dpapi"] = protectedToken;
                 root["dll_update_enabled"] = GetDllUpdatePreferencesForSave();
                 File.WriteAllText(configPath, json.Serialize(root), Encoding.UTF8);
@@ -196,7 +196,7 @@ namespace WoW112Updater
 
         private bool IsStable()
         {
-            return channel.SelectedIndex == 1;
+            return false; // No route to main or work from this updater.
         }
 
         private void ValidateInputs()
@@ -204,6 +204,8 @@ namespace WoW112Updater
             if (busy) throw new InvalidOperationException("Updater już wykonuje operację.");
             if (string.IsNullOrWhiteSpace(gameDir.Text) || !Directory.Exists(gameDir.Text.Trim()))
                 throw new InvalidOperationException("Wybierz istniejący katalog gry.");
+            if (File.Exists(Path.Combine(gameDir.Text.Trim(), ".wow112_updater", "installed.json")))
+                throw new InvalidOperationException("Ten katalog jest zarzadzany przez oryginalny updater. Dla PARALLEL wybierz osobny katalog gry, aby nie nadpisac dotychczasowej wersji.");
             if (string.IsNullOrWhiteSpace(token.Text))
                 throw new InvalidOperationException("Wpisz GitHub token z prawem odczytu repozytorium i Actions.");
         }
@@ -313,7 +315,7 @@ namespace WoW112Updater
         private async Task<RemotePackageInfo> FindLatestPackageAsync()
         {
             var stable = IsStable();
-            var branch = stable ? "main" : "work";
+            var branch = "parallel";
             var workflowName = stable ? StableWorkflowName : TestWorkflowName;
             var prefix = stable ? StableArtifactPrefix : TestArtifactPrefix;
             var innerName = stable ? StableInnerZip : TestInnerZip;
@@ -354,7 +356,7 @@ namespace WoW112Updater
 
                 return new RemotePackageInfo
                 {
-                    Channel = stable ? "stable" : "test",
+                    Channel = "parallel",
                     RunId = runId,
                     HeadSha = GetString(chosen, "head_sha"),
                     ArtifactName = GetString(artifact, "name"),
@@ -567,7 +569,7 @@ namespace WoW112Updater
 
         private string CreateBackup(string root, IList<string> touchedNames, Dictionary<string, object> oldState, RemotePackageInfo remote)
         {
-            var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+            var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
             Directory.CreateDirectory(backupRoot);
             var dir = Path.Combine(backupRoot, DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_run" + remote.RunId);
             Directory.CreateDirectory(dir);
@@ -622,7 +624,7 @@ namespace WoW112Updater
                     + whenText;
             }
 
-            var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+            var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
             if (Directory.Exists(backupRoot))
             {
                 foreach (var dir in Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase))
@@ -661,7 +663,7 @@ namespace WoW112Updater
         {
             try
             {
-                var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
                 if (!Directory.Exists(backupRoot)) return;
                 var dirs = Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
                 foreach (var dir in dirs.Skip(Math.Max(keep, 1))) Directory.Delete(dir, true);
@@ -684,7 +686,7 @@ namespace WoW112Updater
                 string dir = choice == null ? null : choice.Path;
                 if (dir == null)
                 {
-                    var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                    var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
                     if (Directory.Exists(backupRoot))
                         dir = Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
                 }
@@ -784,7 +786,7 @@ namespace WoW112Updater
 
         private static string InstalledStatePath(string root)
         {
-            return Path.Combine(root, ".wow112_updater", "installed.json");
+            return Path.Combine(root, ".wow112_parallel_updater", "installed.json");
         }
 
         private void LaunchGame()

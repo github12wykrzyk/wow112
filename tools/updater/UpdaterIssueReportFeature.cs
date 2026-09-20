@@ -164,7 +164,7 @@ namespace WoW112Updater
                 sb.AppendLine("Updater: " + UpdaterBuildInfo.Version);
                 sb.AppendLine("Generated UTC: " + DateTime.UtcNow.ToString("o"));
 
-                var installedPath = Path.Combine(root, ".wow112_updater", "installed.json");
+                var installedPath = Path.Combine(root, ".wow112_parallel_updater", "installed.json");
                 Dictionary<string, object> installed = null;
                 if (File.Exists(installedPath))
                 {
@@ -509,12 +509,12 @@ namespace WoW112Updater
 
             private static string ReportTokenPath()
             {
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112Updater", "report_token.dpapi");
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112ParallelUpdater", "report_token.dpapi");
             }
 
             private static byte[] ReportEntropy()
             {
-                return Encoding.UTF8.GetBytes("WoW112Updater-report-token-v1");
+                return Encoding.UTF8.GetBytes("WoW112ParallelUpdater-report-token-v1");
             }
 
             private string LoadReportToken()

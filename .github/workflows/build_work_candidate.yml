@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work
+      - parallel
     paths:
       - '*.exe'
       - 'src/**'

@@ -3,8 +3,7 @@ name: Build WoW112 updater
 on:
   push:
     branches:
-      - work
-      - main
+      - parallel
     paths:
       - 'tools/updater/**'
       - '.github/workflows/build_updater.yml'
@@ -51,7 +50,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "bootstrap csc failed with exit code $LASTEXITCODE" }
 
           & $csc /nologo /target:winexe /platform:x86 /optimize+ /langversion:latest `
-            /out:dist\WoW112Updater.exe `
+            /out:dist\WoW112ParallelUpdater.exe `
             /win32manifest:tools\updater\Updater.manifest `
             /reference:"$ref\mscorlib.dll" `
             /reference:"$ref\System.dll" `
@@ -79,7 +78,7 @@ jobs:
       - name: Render and verify Windows dashboard
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath ./dist/WoW112Updater.exe -ArgumentList '--ui-smoke', 'dist/ui-checks' -PassThru
+          $process = Start-Process -FilePath ./dist/WoW112ParallelUpdater.exe -ArgumentList '--ui-smoke', 'dist/ui-checks' -PassThru
           if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'GUI smoke test timed out' }
           if ($process.ExitCode -ne 0) {
             Get-Content dist/ui-checks/failure.txt -ErrorAction SilentlyContinue
@@ -121,7 +120,7 @@ jobs:
               raise SystemExit('UpdaterBuildInfo.Version not found')
           updater_version = match.group(1)
 
-          updater = Path('dist/WoW112Updater.exe')
+          updater = Path('dist/WoW112ParallelUpdater.exe')
           bootstrap = Path('dist/WoW112UpdaterBootstrap.exe')
           updater_data, updater_machine = inspect(updater)
           bootstrap_data, bootstrap_machine = inspect(bootstrap)
@@ -150,9 +149,9 @@ jobs:
       - name: Upload updater
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112Updater-${{ github.sha }}
+          name: WoW112ParallelUpdater-${{ github.sha }}
           path: |
-            dist/WoW112Updater.exe
+            dist/WoW112ParallelUpdater.exe
             dist/WoW112UpdaterBootstrap.exe
             dist/updater_build.json
             dist/README_UPDATER.md

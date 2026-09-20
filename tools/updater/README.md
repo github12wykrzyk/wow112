@@ -1,3 +1,13 @@
+# PARALLEL updater — independent experimental line
+
+This copy is built only on branch `parallel` and installed as `WoW112ParallelUpdater.exe`. It retrieves **only** the newest successful `Build work candidate` run scoped to `parallel`, and its self-update retrieves **only** the `Build WoW112 updater` run scoped to `parallel`. It never offers `work` or `main` as a channel. The candidate build ZIP names remain unchanged but GitHub Actions run selection is branch-scoped.
+
+Config and read-only GitHub credentials use `%APPDATA%/WoW112ParallelUpdater` (separate from the original updater). Managed state, backups, diagnostics and self-update stage use `.wow112_parallel_updater/` (separate from `.wow112_updater/`). Choose a **different WoW game folder** for this line: the updater blocks a folder already managed by the original updater. Self-update verifies the `parallel` channel and updater binary name in `updater_build.json` before replacement. The original `main`/`work` updater is unchanged.
+
+The sections below describe the shared engine; their older TEST/STABLE labels refer to the original updater and are not available in this branch-specific build.
+
+---
+
 # WoW112Updater
 
 Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository.

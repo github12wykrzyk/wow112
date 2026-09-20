@@ -35,7 +35,7 @@ namespace WoW112Updater
             private const string Repo = "wow112";
             private const string ApiRoot = "https://api.github.com/repos/" + Owner + "/" + Repo;
             private const string UpdaterWorkflowName = "Build WoW112 updater";
-            private const string UpdaterArtifactPrefix = "WoW112Updater-";
+            private const string UpdaterArtifactPrefix = "WoW112ParallelUpdater-";
             private const int AddedHeight = 62;
             private const int MaxBackups = 10;
 
@@ -81,7 +81,7 @@ namespace WoW112Updater
                     var root = Path.GetFullPath(host.GameDirectory);
                     var installed = ReadInstalledState(root);
                     if (installed == null)
-                        throw new InvalidOperationException("Brak .wow112_updater/installed.json. Najpierw wykonaj aktualizację updaterem.");
+                        throw new InvalidOperationException("Brak .wow112_parallel_updater/installed.json. Najpierw wykonaj aktualizację updaterem.");
 
                     var expected = await DownloadExpectedInstalledFilesAsync(installed);
                     var comparison = CompareInstalledFiles(root, installed, expected);
@@ -186,9 +186,9 @@ namespace WoW112Updater
                     }
 
                     var currentDir = Path.GetDirectoryName(currentExe);
-                    var stageDir = Path.Combine(currentDir, ".wow112_updater", "selfupdate");
+                    var stageDir = Path.Combine(currentDir, ".wow112_parallel_updater", "selfupdate");
                     Directory.CreateDirectory(stageDir);
-                    var stagedUpdater = Path.Combine(stageDir, "WoW112Updater.next.exe");
+                    var stagedUpdater = Path.Combine(stageDir, "WoW112ParallelUpdater.next.exe");
                     var bootstrapPath = Path.Combine(stageDir, "WoW112UpdaterBootstrap.exe");
                     File.WriteAllBytes(stagedUpdater, remote.UpdaterBytes);
                     File.WriteAllBytes(bootstrapPath, remote.BootstrapBytes);
@@ -239,7 +239,7 @@ namespace WoW112Updater
                     root = Path.GetFullPath(root);
                     SetBusy(true, "Tworzenie diagnostyki...");
 
-                    var outDir = Path.Combine(root, ".wow112_updater", "diagnostics");
+                    var outDir = Path.Combine(root, ".wow112_parallel_updater", "diagnostics");
                     Directory.CreateDirectory(outDir);
                     var path = Path.Combine(outDir, "WoW112_diagnostics_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".zip");
                     using (var fs = File.Create(path))
@@ -316,7 +316,7 @@ namespace WoW112Updater
 
             private async Task<RemoteUpdaterBuild> DownloadLatestUpdaterAsync()
             {
-                var branch = host.IsStableChannel ? "main" : "work";
+                var branch = "parallel";
                 using (var client = CreateClient())
                 {
                     var runs = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50"))), "workflow_runs"));
@@ -341,7 +341,7 @@ namespace WoW112Updater
                     using (var ms = new MemoryStream(outer, false))
                     using (var zip = new ZipArchive(ms, ZipArchiveMode.Read, false))
                     {
-                        var updaterEntry = FindEntry(zip, "WoW112Updater.exe");
+                        var updaterEntry = FindEntry(zip, "WoW112ParallelUpdater.exe");
                         var bootstrapEntry = FindEntry(zip, "WoW112UpdaterBootstrap.exe");
                         var metaEntry = FindEntry(zip, "updater_build.json");
                         if (updaterEntry == null || bootstrapEntry == null || metaEntry == null)
@@ -352,6 +352,9 @@ namespace WoW112Updater
                         var meta = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(metaEntry))));
                         var protocol = GetLong(meta, "self_update_protocol");
                         if (protocol != 1) throw new InvalidOperationException("Nieobsługiwany self_update_protocol: " + protocol);
+                        if (!string.Equals(GetString(meta, "channel"), "parallel", StringComparison.Ordinal) ||
+                            !string.Equals(GetString(meta, "name"), "WoW112ParallelUpdater.exe", StringComparison.Ordinal))
+                            throw new InvalidOperationException("Zablokowano self-update z obcego kanalu updatera.");
                         var updaterSha = GetString(meta, "sha256");
                         var bootstrapSha = GetString(meta, "bootstrap_sha256");
                         if (!UpdaterSafety.IsSha256Hex(updaterSha) || !string.Equals(Sha256(updaterBytes), updaterSha, StringComparison.OrdinalIgnoreCase))
@@ -422,7 +425,7 @@ namespace WoW112Updater
 
             private string CreateRepairBackup(string root, IList<string> touchedNames, Dictionary<string, object> installed)
             {
-                var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
                 Directory.CreateDirectory(backupRoot);
                 var dir = Path.Combine(backupRoot, DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + "_repair_run" + GetLong(installed, "run_id"));
                 Directory.CreateDirectory(dir);
@@ -569,7 +572,7 @@ namespace WoW112Updater
 
             private Dictionary<string, object> ReadInstalledState(string root)
             {
-                var path = Path.Combine(root, ".wow112_updater", "installed.json");
+                var path = Path.Combine(root, ".wow112_parallel_updater", "installed.json");
                 var current = TryReadInstalledStateFile(path);
                 if (current != null) return current;
                 return TryReadInstalledStateFile(path + ".previous");
@@ -587,7 +590,7 @@ namespace WoW112Updater
 
             private void WriteInstalledState(string root, Dictionary<string, object> state)
             {
-                var path = Path.Combine(root, ".wow112_updater", "installed.json");
+                var path = Path.Combine(root, ".wow112_parallel_updater", "installed.json");
                 UpdaterSafety.WriteUtf8Atomic(path, json.Serialize(state), ".tmp", ".previous");
             }
 
@@ -642,7 +645,7 @@ namespace WoW112Updater
 
             private static string BuildBackupIndex(string root)
             {
-                var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
                 if (!Directory.Exists(backupRoot)) return "no backups\r\n";
                 return string.Join("\r\n", Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).Select(Path.GetFileName).ToArray()) + "\r\n";
             }
@@ -785,7 +788,7 @@ namespace WoW112Updater
             {
                 try
                 {
-                    var backupRoot = Path.Combine(root, ".wow112_updater", "backups");
+                    var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
                     if (!Directory.Exists(backupRoot)) return;
                     foreach (var dir in Directory.GetDirectories(backupRoot).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).Skip(Math.Max(keep, 1)))
                         Directory.Delete(dir, true);
