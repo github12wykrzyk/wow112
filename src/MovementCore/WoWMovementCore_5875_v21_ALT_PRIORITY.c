@@ -44,6 +44,12 @@ static volatile DWORD g_altPriorityForceDirect=0u;
  * function when referenced as `offset symbol`. Keep the V20 send-wrapper
  * address in a normal data symbol and jump through that instead. */
 static DWORD g_altPriorityBaseSendWrapper=0u;
+/* Login/world transition guard: forward native movement, never apply synthetic
+ * XYZ or NoFall edits until the 5875 local player settles in a world. */
+#define W112_LOGIN_SETTLE_MS 3000u
+static volatile DWORD g_loginGuardReady=0u,g_loginGuardSince=0u;
+static volatile DWORD g_loginGuardMgr=0u,g_loginGuardPlayer=0u;
+static volatile DWORD g_loginGuardGuidLo=0u,g_loginGuardGuidHi=0u;
 /* Universal cast/channel movement guard; legacy AB diagnostic exports remain. */
 static volatile DWORD g_abCapGuardActive=0u,g_abCapGuardLastSeen=0u;
 static volatile DWORD g_abCapGuardBlockedPP=0u,g_abCapGuardBlockedMove=0u;
@@ -77,7 +83,7 @@ __declspec(dllexport) DWORD __stdcall MovementCore_CoordFlags(void){
 }
 __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell){
  DWORD sid;
- if(MovementCore_CoordFlags()&0x1Fu)return 0u;
+ if(!g_loginGuardReady||(MovementCore_CoordFlags()&0x1Fu))return 0u;
  sid=*(volatile DWORD*)ADDR_CASTING_SPELLID;
  if(sid&&sid!=spell)return 0u;
  if(!GT())return 0u;
@@ -121,6 +127,7 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
     }
     if(op!=0x12Eu)return;
     spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
+    if(!g_loginGuardReady){g_altPriorityBlockCurrent=1u;return;}
     if(CoordRearOwned()){
         g_altPriorityBlockCurrent=1u;
         ++g_altPriorityPPBlocks;
@@ -169,6 +176,10 @@ alt_pp_blocked:
 __declspec(naked) static void AltPriority_MoveWrapper(void)
 {
     __asm {
+        /* Preserve native/LongPP forwarding, bypass MovementCore's NoFall,
+         * gather rewriting and SafeBreak decisions until world readiness. */
+        cmp dword ptr [g_loginGuardReady],0
+        je  alt_login_passthrough
         pushfd
         pushad
         call W112_AB_CheckMovement
@@ -216,6 +227,11 @@ alt_forward_packet:
         call PPHardApplySpoof
         popad
         popfd
+        mov  eax,dword ptr [g_nextMoveTarget]
+        call eax
+        ret
+
+alt_login_passthrough:
         mov  eax,dword ptr [g_nextMoveTarget]
         call eax
         ret
@@ -397,12 +413,53 @@ static DWORD W112_AB_CapCastVisible(void)
     return (s&&s[0]=='1'&&s[1]==0)?1u:0u;
 }
 
+/* A disappearing/replaced player invalidates every synthetic transaction.
+ * Do not send a restoration heartbeat while a world is being replaced. */
+static void W112_LoginGuardTick(BYTE*p,DWORD now)
+{
+    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL;
+    DWORD lo=0u,hi=0u;
+    if(Ptr(m)){
+        lo=*(DWORD*)(m+OFF_OM_LOCAL_GUID_LOW);
+        hi=*(DWORD*)(m+OFF_OM_LOCAL_GUID_HIGH);
+    }
+    if(!Ptr(p)||!Ptr(m)||!(lo|hi)||
+       !ValidWorldPos(*(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),*(float*)(p+OFF_UNIT_Z))){
+        if(g_loginGuardReady||g_loginGuardSince){
+            if(g_gatherActive||g_gatherLootWait||g_gatherSpoof)GatherClearForPPFast(now,0u);
+            g_mode=MODE_OFF;g_lastInject=0u;g_coordRearUntil=0u;
+            g_abCapGuardActive=0u;
+        }
+        g_loginGuardReady=0u;g_loginGuardSince=0u;
+        g_loginGuardMgr=g_loginGuardPlayer=0u;
+        g_loginGuardGuidLo=g_loginGuardGuidHi=0u;
+        return;
+    }
+    if(g_loginGuardMgr!=(DWORD)m||g_loginGuardPlayer!=(DWORD)p||
+       g_loginGuardGuidLo!=lo||g_loginGuardGuidHi!=hi){
+        if(g_loginGuardReady||g_loginGuardSince){
+            if(g_gatherActive||g_gatherLootWait||g_gatherSpoof)GatherClearForPPFast(now,0u);
+            g_mode=MODE_OFF;g_lastInject=0u;g_coordRearUntil=0u;
+            g_abCapGuardActive=0u;
+        }
+        g_loginGuardReady=0u;g_loginGuardSince=now;
+        g_loginGuardMgr=(DWORD)m;g_loginGuardPlayer=(DWORD)p;
+        g_loginGuardGuidLo=lo;g_loginGuardGuidHi=hi;
+        return;
+    }
+    if(!g_loginGuardReady&&(DWORD)(now-g_loginGuardSince)>=W112_LOGIN_SETTLE_MS)
+        g_loginGuardReady=1u;
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
     DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
     (void)w;(void)m;(void)id;(void)tm;
     if(!GT()||!GK())return;
     now=GT()();
+    p=LocalPlayer();
+    W112_LoginGuardTick(p,now);
+    if(!g_loginGuardReady)return;
     PPBlacklistTick(now);
     FlushPendingPPLog();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
@@ -422,7 +479,6 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
     g_key7=k7;g_key8=k8;g_gatherKey9=k9;g_keyAlt=kAlt;g_key10=k10;g_key11=k11;g_autoOpenKey12=k12;
 
-    p=LocalPlayer();
     if(p && W112_AB_CapCastVisible()){
         g_abCapGuardActive=1u;
         g_abCapGuardLastSeen=now;
@@ -712,6 +768,7 @@ W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetMo
 
 __declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
+__declspec(dllexport) DWORD __stdcall MovementCore_GetLoginGuardReady(void){return g_loginGuardReady;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityStarts(void){return g_altPriorityStarts;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityPPBlocks(void){return g_altPriorityPPBlocks;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityDirectPackets(void){return g_altPriorityDirectPackets;}
