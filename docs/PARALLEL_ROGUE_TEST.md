@@ -30,10 +30,13 @@ and vertical difference <=2.5 yd. Never active on player targets (PvP/BG).
 A moving/turning NPC's live orientation is resampled at most every 100ms.
 It pauses synthetic movement while the native cast/pending-cast fields are set.
 V1 started a NULL-HWND timer from DllMain, which depended on the DLL-loading
-thread having a Win32 message pump. The patched candidate uses a lightweight
-worker to bind the timer to the WoW game HWND (and rebind after window changes).
-The movement callback runs on the game-window thread, not the worker. STATUS
-shows timer state and cumulative heartbeat pulses; pulses do not prove server
+thread having a Win32 message pump. A window timer cannot be installed from
+another thread: Win32 requires its creating thread to own that window. The
+patched candidate instead has a worker post a private message to the game's
+existing ESP WndProc, which dispatches the native movement pulse on the game
+window thread. No new movement hook or timer is installed. The ESP module is
+a required companion for this parallel-only experiment. STATUS shows the
+execution state and cumulative heartbeat pulses; pulses do not prove server
 acceptance or an actual Backstab hit.
 The absence of a visible native casting ID for a particular item/channel is
 not yet independently verified: check mining, flag captures and poison crafts

@@ -17,6 +17,7 @@
 
 
 #define WM_W112_ESP_BG_SCORE (0x8000u + 0x0113u)
+#define WM_W112_REAR_TICK (0x8000u + 0x0119u)
 #define VK_INSERT 0x2Du
 #define BG_SCORE_POLL_FRAMES 30u /* ~1s at 33ms/render frame */
 #define CHALLENGE_WORLD_STABLE_POLLS 15u /* 15 x 100 ms = 1.5 s quarantine after world/BG rebuild */
@@ -25,6 +26,8 @@
 #define FN_FRAMESCRIPT_GETTEXT 0x00703BF0u
 
 __declspec(dllimport) BOOL WINAPI PostMessageA(HWND, UINT, DWORD, LONG);
+__declspec(dllimport) HMODULE WINAPI GetModuleHandleA(LPCSTR);
+__declspec(dllimport) void* WINAPI GetProcAddress(HMODULE,LPCSTR);
 __declspec(dllimport) LONG WINAPI GetWindowLongA(HWND, int);
 
 typedef void        (__fastcall *FrameScriptExecuteFn)(const char* code, const char* codeAgain);
@@ -242,6 +245,17 @@ static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPa
         chal_bg_score_main_thread();
         return 0;
     }
+    if (msg == WM_W112_REAR_TICK) {
+        /* This WndProc owns the game's thread. The worker only posts here;
+           never call native pose/heartbeat from a foreign worker thread. */
+        HMODULE rear=GetModuleHandleA("WoWPVERear360_5875_v1.dll");
+        if(rear) {
+            typedef DWORD (WINAPI *RearTickFn)(HWND);
+            RearTickFn fn=(RearTickFn)GetProcAddress(rear,"PVERear360_GameWindowTick");
+            if(fn)fn(hwnd);
+        }
+        return 0;
+    }
     if (g_challenge_prev_wndproc)
         return CallWindowProcA(g_challenge_prev_wndproc, hwnd, msg, wParam, lParam);
     return 0;
@@ -365,8 +379,6 @@ typedef void* HFONT;
 __declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
 __declspec(dllimport) LONG WINAPI SendMessageA(HWND,UINT,DWORD,LONG);
 __declspec(dllimport) BOOL WINAPI SetForegroundWindow(HWND);
-__declspec(dllimport) HMODULE WINAPI GetModuleHandleA(LPCSTR);
-__declspec(dllimport) void* WINAPI GetProcAddress(HMODULE,LPCSTR);
 __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 
 #define PAR_SPEED_DLL "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"

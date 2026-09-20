@@ -2,7 +2,7 @@
    WoW 1.12.1 build 5875, Windows x86. Newly written source.
    Only NPC (type 3), hostile reaction 1..3, actual distance <=8yd.
    No hooks, no cast replay, no client GCD edits, no player-target PvP.
-   The game-HWND timer runs on the game window thread (not the DLL loader thread).
+   GUI-window messages are dispatched on the game window thread, not the DLL loader thread.
    The client object pose is restored synchronously after each pulse.
    Server acceptance of the synthetic pose is not guaranteed. */
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -15,6 +15,7 @@
 #pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GetStatus=_PVERear360_GetStatus@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GetPulseCount=_PVERear360_GetPulseCount@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GameWindowTick=_PVERear360_GameWindowTick@4")
 #else
 #define STDCALL __attribute__((stdcall))
 #define THISCALL __attribute__((thiscall))
@@ -31,8 +32,8 @@ __declspec(dllimport) void STDCALL Sleep(u32);
 __declspec(dllimport) int STDCALL IsWindow(HWND32);
 __declspec(dllimport) u32 STDCALL GetWindowThreadProcessId(HWND32,u32*);
 __declspec(dllimport) u32 STDCALL GetCurrentProcessId(void);
-__declspec(dllimport) u32 STDCALL SetTimer(HWND32,u32,u32,void (STDCALL *)(HWND32,u32,u32,u32));
-__declspec(dllimport) int STDCALL KillTimer(HWND32,u32);
+__declspec(dllimport) int STDCALL PostMessageA(HWND32,u32,u32,s32);
+__declspec(dllimport) u32 STDCALL GetTickCount(void);
 typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define OBJMGR 0x00B41414u
 #define TARGET_LO 0x00B4E2D8u
@@ -48,14 +49,13 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define OM_FIRST 0xACu
 #define OM_PLAYER_LO 0xC0u
 #define OM_PLAYER_HI 0xC4u
-#define IAT_SETTIMER 0x007FF4F4u
-#define IAT_KILLTIMER 0x007FF4F8u
 #define GET_OBJECT_BY_GUID 0x00464870u
 #define REACTION_FN 0x006061E0u
 #define CASTING_SPELL_ID 0x00CECA88u
 #define PENDING_CAST 0x00CEAC48u
 #define SEND_MOVEMENT_WRAPPER 0x00600A10u
 #define FN_GET_GAME_WINDOW 0x00435C30u
+#define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
 #define PI_F 3.14159265358979323846f
@@ -98,8 +98,10 @@ static float fsin1(float v){float r;__asm {
 static float angle(float a){while(a<0.0f)a+=TWO_PI_F;while(a>=TWO_PI_F)a-=TWO_PI_F;return a;}
 static int build5875(void){
  static const u8 sig[]={0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x4D,0x0C,0x8B,0xD0,0x0B,0xD1};
+ static const u8 windowSig[]={0x83,0xE9,0x00,0x74,0x15,0x49,0x74,0x0C,0x49,0x74,0x03,0x33,0xC0,0xC3};
  u32 i;for(i=0u;i<(u32)sizeof(sig);++i)if(*(volatile u8*)(GET_OBJECT_BY_GUID+i)!=sig[i])return 0;
- return read32(IAT_SETTIMER)!=0u&&read32(IAT_KILLTIMER)!=0u;
+ for(i=0u;i<(u32)sizeof(windowSig);++i)if(*(volatile u8*)(FN_GET_GAME_WINDOW+i)!=windowSig[i])return 0;
+ return 1;
 }
 static u32 objectByGuid(u32 lo,u32 hi){
  u32 om=read32(OBJMGR),p,steps=0u;
@@ -216,9 +218,20 @@ W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetMod
 }
 __declspec(dllexport) u32 STDCALL PVERear360_GetStatus(void){return g_status;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetPulseCount(void){return g_count;}
-/* The DLL-loading thread may not pump WM_TIMER. A worker waits for the
-   real game HWND and installs an HWND-owned timer. The timer callback then
-   executes on the game-window thread, never on this bootstrap worker. */
+/* Invoked only by the existing ESP WndProc on the game window's owner thread. */
+__declspec(dllexport) u32 STDCALL PVERear360_GameWindowTick(HWND32 game){
+ if(g_stop||!game||!IsWindow(game)||g_status==STATUS_BUILD_MISMATCH||
+    g_status==STATUS_THREAD_ERROR||game!=((GetGameWindowFn)FN_GET_GAME_WINDOW)(0))return 0u;
+ if(!g_timer||g_timerWindow!=game){
+  g_timerWindow=game;g_timer=1u;g_lastTick=0u;g_status=STATUS_IDLE;
+ }
+ tick(game,WM_W112_REAR_TICK,1u,GetTickCount());
+ return 1u;
+}
+/* The worker only posts a private message. The existing parallel ESP game
+   WndProc dispatches PVERear360_GameWindowTick on the actual game GUI thread.
+   SetTimer(NULL) in DllMain can be silent; SetTimer(hwnd) from a foreign
+   worker thread is forbidden by Win32. No timer or new WndProc hook is used. */
 static u32 STDCALL rearBootstrap(void*unused){
  (void)unused;
  while(!g_stop){
@@ -226,19 +239,18 @@ static u32 STDCALL rearBootstrap(void*unused){
   u32 pid=0u;
   int usable=game && IsWindow(game) &&
       GetWindowThreadProcessId(game,&pid)!=0u && pid==GetCurrentProcessId();
-  if(g_timer && (!usable || game!=g_timerWindow)){
-   if(g_timerWindow && IsWindow(g_timerWindow))KillTimer(g_timerWindow,g_timer);
-   g_timer=0u;g_timerWindow=0;g_status=STATUS_WAIT_WINDOW;
-   g_needsRestore=0u; /* Avoid a stale-object heartbeat after window migration. */
+  if(!usable){
+   g_timer=0u;g_timerWindow=0;g_needsRestore=0u;
+   g_status=STATUS_WAIT_WINDOW;
+  }else{
+   if(g_timerWindow && game!=g_timerWindow){
+    g_timer=0u;g_timerWindow=0;g_needsRestore=0u;
+    g_status=STATUS_WAIT_WINDOW;
+   }
+   PostMessageA(game,WM_W112_REAR_TICK,0u,0);
   }
-  if(usable&&!g_timer){
-   u32 id=SetTimer(game,0u,25u,tick);
-   if(id){g_timerWindow=game;g_timer=id;g_status=STATUS_IDLE;}
-   else g_status=STATUS_TIMER_ERROR;
-  }else if(!usable&&!g_timer)g_status=STATUS_WAIT_WINDOW;
-  Sleep(250u);
+  Sleep(50u);
  }
- if(g_timer&&g_timerWindow&&IsWindow(g_timerWindow))KillTimer(g_timerWindow,g_timer);
  g_timer=0u;g_timerWindow=0;
  return 0u;
 }
@@ -252,7 +264,6 @@ int STDCALL DllMain(void*m,u32 reason,void*reserved){
   else g_status=STATUS_THREAD_ERROR;
  }else if(reason==0u){
   g_stop=1u;
-  if(g_timer&&g_timerWindow&&IsWindow(g_timerWindow))KillTimer(g_timerWindow,g_timer);
   g_timer=0u;g_timerWindow=0;g_status=STATUS_DISABLED;
  }
  return 1;

@@ -165,7 +165,7 @@ def main():
         "scope": "hostile NPC only; target type 3; <=8yd actual horizontal distance",
         "heartbeat_interval_ms": 100,
         "no_cast_or_movement_hooks": True,
-        "timer_owner": "WoW game HWND; callback on game-window thread",
+        "dispatch_owner": "ESP game WndProc handles posted WM_W112_REAR_TICK on game thread",
         "diagnostic": "STATUS tab shows timer state and heartbeat pulse count",
         "client_position_restored_after_pulse": True,
         "server_side_acceptance": "unverified; in-game PvE test required",
