@@ -28,6 +28,8 @@ typedef u32 (STDCALL *RearThreadFn)(void*);
 __declspec(dllimport) void* STDCALL CreateThread(void*,u32,RearThreadFn,void*,u32,u32*);
 __declspec(dllimport) int STDCALL CloseHandle(void*);
 __declspec(dllimport) void STDCALL Sleep(u32);
+__declspec(dllimport) void* STDCALL GetModuleHandleA(const char*);
+__declspec(dllimport) void* STDCALL GetProcAddress(void*,const char*);
 __declspec(dllimport) int STDCALL IsWindow(HWND32);
 __declspec(dllimport) u32 STDCALL GetWindowThreadProcessId(HWND32,u32*);
 __declspec(dllimport) u32 STDCALL GetCurrentProcessId(void);
@@ -70,6 +72,8 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define STATUS_DISABLED 5u
 #define STATUS_WAIT_WINDOW 6u
 #define STATUS_THREAD_ERROR 7u
+#define STATUS_PP_PAUSE 8u
+#define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
 static volatile u32 g_period=100u;
@@ -82,6 +86,18 @@ static volatile u32 g_lastTick=0u;
 static volatile u32 g_needsRestore=0u;
 static W112_ControlSettingV1 g_settings[2];
 static volatile u32 g_descriptorsReady=0u;
+typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
+/* PP, cast/channel, SafeBreak and gathering share MovementCore movement hooks.
+   Fail closed while that module/ABI is absent: never pulse rear heartbeats
+   without verified work-source arbitration. */
+static int workMovementBusy(void){
+ void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
+ WorkCoordFlagsFn flags;
+ if(!core)return 1;
+ flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
+ if(!flags)return 1;
+ return (flags()&0x1Fu)!=0u;
+}
 static u32 read32(u32 a){return *(volatile u32*)a;}
 static float readf(u32 a){return *(volatile float*)a;}
 static int finitef(float v){union{float f;u32 x;}q;q.f=v;return (q.x&0x7F800000u)!=0x7F800000u;}
@@ -132,7 +148,7 @@ __declspec(naked) void STDCALL nativeHeartbeat(u32 unit){
 }
 static void restoreHeartbeat(u32 pl){
  if(!g_needsRestore||!pl)return;
- if(read32(CASTING_SPELL_ID)||read32(PENDING_CAST))return;
+ if(read32(CASTING_SPELL_ID)||read32(PENDING_CAST)||workMovementBusy())return;
  g_needsRestore=0u;
  nativeHeartbeat(pl);
 }
@@ -144,6 +160,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  if(!g_enabled){g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;}
  if((u32)(now-g_lastTick)<g_period)return;
  g_lastTick=now;
+ if(workMovementBusy()){g_status=STATUS_PP_PAUSE;return;}
  pl=localPlayer();tg=selectedTarget();
  if(!pl||!tg||pl==tg||read32(tg+OBJ_TYPE)!=3u){
   g_status=STATUS_IDLE;restoreHeartbeat(pl);return;
@@ -173,6 +190,9 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  a=angle(to+PI_F);
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return;
+ if(workMovementBusy()||read32(CASTING_SPELL_ID)||read32(PENDING_CAST)){
+  g_status=STATUS_PP_PAUSE;return;
+ }
  /* No persistent local movement: two priming heartbeats, then restore
     client XYZ/O. Never send a third real heartbeat in the same cast window. */
  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
