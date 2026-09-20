@@ -1976,6 +1976,37 @@ static void render_frame_fast(void) {
         return;
     }
 
+    /*
+     * A BG transfer may recycle the Object Manager address and leave the old
+     * local-player object readable with the same GUID. A GUID/pointer check
+     * alone cannot prove that it is linked into the current manager.
+     * Periodically confirm membership using the live enumeration; only a
+     * confirmed new pointer or a missing local player invalidates the world.
+     * Keep the transition quarantine rather than invoking unsafe relation
+     * methods during a partially rebuilt BG object list.
+     */
+    if (g_cached_local_obj && guidLo == g_cached_local_guid_lo &&
+        guidHi == g_cached_local_guid_hi &&
+        (g_render_frame % CACHE_REFRESH_FRAMES) == 0u) {
+        DWORD liveLocal = 0u, liveCount = 0u;
+        float liveX = 0.0f, liveY = 0.0f, liveZ = 0.0f;
+        const char* liveReason = "UNKNOWN";
+        if (!find_local_player(manager, guidLo, guidHi,
+                               &liveLocal, &liveX, &liveY, &liveZ,
+                               &liveCount, &liveReason)) {
+            g_esp_status = 3u;
+            esp_forget_world("ESP_LOCAL_MEMBERSHIP_LOST invalidate_stale_world");
+            g_render_manager = manager;
+            overlay_hide();
+            return;
+        }
+        if (liveLocal != g_cached_local_obj) {
+            esp_forget_world("ESP_LOCAL_REBOUND invalidate_old_BG_player_cache");
+            g_render_manager = manager;
+            needRefresh = TRUE;
+        }
+    }
+
     localObj = g_cached_local_obj;
     if (guidLo != g_cached_local_guid_lo || guidHi != g_cached_local_guid_hi ||
         !cached_object_matches(localObj, guidLo, guidHi)) {

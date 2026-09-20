@@ -34,9 +34,11 @@
     two independent position-spoof systems at once.
 */
 
-/* The included base invalidates cached local objects, repaints layered labels
-   after BG/world transitions and exports live rendering diagnostics to GUI.
-   Keep this wrapper marked as active input for build_changed_active. */
+/* The included base periodically confirms that the cached local player
+   still belongs to the live Object Manager (also when BG transitions recycle
+   the same manager address), invalidates stale world caches and repaints
+   layered labels. Keep this wrapper marked as the active build input for
+   build_changed_active. */
 #define DllMain W112_PlayerESP_Base_DllMain
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain
