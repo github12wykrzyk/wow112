@@ -978,7 +978,24 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
     {"skip_indurium","Skip Indurium"},
     {"skip_hakkari_thorium","Skip Hakkari Thorium"}
 };
-static W112_ControlSettingV1 g_controlSettings[7u+14u+4u];
+/* Keep the vein selections when the global blacklist is paused. The V20
+ * scanner and Mining-first PP arbitration read only the effective mask. */
+static volatile DWORD g_miningBlacklistEnabled=1u;
+static volatile DWORD g_miningBlacklistSavedMask=0u;
+static W112_ControlSettingV1 g_controlSettings[7u+14u+5u];
+
+static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
+{
+    g_miningBlacklistMask=g_miningBlacklistEnabled?g_miningBlacklistSavedMask:0u;
+    g_miningPriorityValidUntil=0u;
+    g_miningPriorityEntry=g_miningPriorityLo=g_miningPriorityHi=0u;
+    g_miningPriorityD2=0.0f;
+    g_miningPriorityNextScan=0u;
+    g_gatherNextScan=0u;
+    if(g_gatherActive&&g_gatherKind==2u&&
+       (MiningBlacklistBit(g_gatherEntry)&g_miningBlacklistMask))
+        GatherStop(p,now,"GUI_MINING_BLACKLIST",1u,0u);
+}
 static volatile DWORD g_controlDescriptorReady=0u;
 
 static void init_control_descriptor(void)
@@ -1041,6 +1058,12 @@ static void init_control_descriptor(void)
     s->key="mining_below_node";s->label="Mining below ore - Z 4yd (TEST)";
     s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
+    s=&g_controlSettings[25u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=26u;
+    s->key="vein_blacklist_enabled";s->label="Vein Blacklist ON/OFF";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
+    s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+
     g_controlDescriptorReady=1u;
 }
 
@@ -1054,11 +1077,12 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==5u){out->u32=(g_gatherActive||g_gatherLootWait)?1u:0u;return 1;}
     if(id==6u){out->i32=(w112_i32)g_altPriorityStarts;return 1;}
     if(id==7u){out->i32=(w112_i32)g_altPriorityPPBlocks;return 1;}
-    if(id>=8u&&id<22u){out->u32=(g_miningBlacklistMask&(1u<<(id-8u)))?1u:0u;return 1;}
+    if(id>=8u&&id<22u){out->u32=(g_miningBlacklistSavedMask&(1u<<(id-8u)))?1u:0u;return 1;}
     if(id==22u){out->u32=g_miningEarlyRestoreEnabled?1u:0u;return 1;}
     if(id==23u){out->i32=(w112_i32)g_miningEarlyRestoreCount;return 1;}
     if(id==24u){out->i32=(w112_i32)g_miningEarlyCancelCount;return 1;}
     if(id==25u){out->u32=g_miningBelowNodeEnabled?1u:0u;return 1;}
+    if(id==26u){out->u32=g_miningBlacklistEnabled?1u:0u;return 1;}
     return 0;
 }
 
@@ -1073,6 +1097,11 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     if(id==1u){
         g_gatherEnabled=value->u32;
         if(!g_gatherEnabled&&(g_gatherActive||g_gatherLootWait))GatherStop(p,now,"GUI_GATHER_DISABLED",1u,0u);
+        return 1;
+    }
+    if(id==26u){
+        g_miningBlacklistEnabled=value->u32;
+        W112_MiningBlacklistApply(p,now);
         return 1;
     }
     if(id==2u){g_autoPPEnabled=value->u32;return 1;}
@@ -1101,18 +1130,9 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     }
     if(id>=8u&&id<22u){
         DWORD bit=1u<<(id-8u);
-        if(value->u32)g_miningBlacklistMask|=bit;
-        else g_miningBlacklistMask&=~bit;
-        /* Invalidate the Mining-first cache immediately: a skipped vein must
-         * never continue blocking AutoPP until its old cache TTL expires. */
-        g_miningPriorityValidUntil=0u;
-        g_miningPriorityEntry=g_miningPriorityLo=g_miningPriorityHi=0u;
-        g_miningPriorityD2=0.0f;
-        g_miningPriorityNextScan=0u;
-        g_gatherNextScan=0u;
-        if(value->u32&&g_gatherActive&&g_gatherKind==2u&&
-           (MiningBlacklistBit(g_gatherEntry)&bit))
-            GatherStop(p,now,"GUI_MINING_BLACKLIST",1u,0u);
+        if(value->u32)g_miningBlacklistSavedMask|=bit;
+        else g_miningBlacklistSavedMask&=~bit;
+        W112_MiningBlacklistApply(p,now);
         return 1;
     }
     return 0;
@@ -1120,7 +1140,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,25u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,26u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
