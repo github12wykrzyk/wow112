@@ -30,8 +30,11 @@ Machine-readable routing wins over stale prose.
 ## Branch contract
 
 - `main` = accepted stable.
-- `work` = development.
+- `work` = existing development; `parallel` = independent alternative development.
+- `feature/**` = short-lived isolated experiments based on the correct live SHA.
 - `promote/**` = curated stable candidate only.
+
+Route new requests through `runtime/ai_experiments.json`, `tools/ai_experiments.py` and live GitHub module/branch inspection. Respect explicit `parallel`; do not transfer unaccepted state between branches. See `docs/AI_EXPERIMENTS.md`.
 
 Do not push an unverified promotion directly to `main`. The exact `promote/**` SHA must first pass `.github/workflows/pre_promote_stable.yml`.
 
