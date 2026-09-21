@@ -645,6 +645,18 @@ static void ui_scroll_to(DWORD page,int position) {
     SetScrollInfo(g_ui_content,UI_SB_VERT,&si,TRUE);
 }
 static LONG WINAPI ui_content_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
+    /* All ESP/Rogue buttons are children of the clipped scroll viewport.
+       Win32 delivers their BN_CLICKED/WM_COMMAND to that immediate parent,
+       not to the top-level panel where the existing setting handlers live.
+       Route only genuine viewport button clicks to the original dispatch;
+       sidebar buttons still notify the top-level window directly. */
+    if(msg==UI_COMMAND) {
+        DWORD id=wp&0xffffu;
+        DWORD notification=(wp>>16)&0xffffu;
+        if(lp!=0 && notification==0u && id>=101u && id<=110u &&
+           g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd))
+            return SendMessageA(g_parallel_ui_hwnd,UI_COMMAND,wp,lp);
+    }
     if(msg==UI_VSCROLL) {
         int p=g_ui_scroll[g_ui_current_tab];
         UINT code=wp&0xffffu;
