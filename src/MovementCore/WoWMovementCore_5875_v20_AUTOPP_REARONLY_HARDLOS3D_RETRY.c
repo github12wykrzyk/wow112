@@ -695,7 +695,11 @@ static void PPScanBlacklistDeaths(DWORD now)
 static void PPBlacklistTick(DWORD now)
 {
     DWORD ev=g_ppFailLogEvent,lo,hi,aux;
-    if(g_ppFailPendingAuto){if(LongPPActive())g_ppFailPendingSawActive=1u;else if(g_ppFailPendingSawActive){g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;PPHardRetryCancel();}else if((LONG)(now-g_ppFailPendingUntil)>=0){g_ppFailPendingAuto=0u;PPHardRetryCancel();}}
+    if(g_ppFailPendingAuto){if(LongPPActive())g_ppFailPendingSawActive=1u;else if(g_ppFailPendingSawActive){
+        /* A delayed 0x72 NO_POCKETS may arrive just after LongPP drops its active
+           flag. Keep the serialized GUID briefly instead of losing attribution. */
+        g_ppFailPendingSawActive=0u;g_ppFailPendingUntil=now+300u;PPHardRetryCancel();
+    }else if((LONG)(now-g_ppFailPendingUntil)>=0){g_ppFailPendingAuto=0u;PPHardRetryCancel();}}
     if(ev){lo=g_ppFailLogLo;hi=g_ppFailLogHi;aux=g_ppFailLogVariant;g_ppFailLogEvent=0u;if(ev==1u)GatherFileLog("AUTOPP_BLACKLIST_EMPTY_POCKETS",now,0u,lo,hi,0.0f,0u,aux);else if(ev==2u)GatherFileLog("AUTOPP_BLACKLIST_ALREADY",now,0u,lo,hi,0.0f,0u,aux);else if(ev==3u)GatherFileLog("AUTOPP_HARDLOS_LOS_RETRY",now,0u,lo,hi,0.0f,0u,aux);else if(ev==4u)GatherFileLog("AUTOPP_HARDLOS_SWEEP_EXHAUSTED",now,0u,lo,hi,0.0f,0u,aux);}
     PPScanBlacklistDeaths(now);
     PPHardRetryTick(now);
@@ -1337,7 +1341,9 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
        reaches ClientServices::Send from its relocated module address. */
     isAutoSource=(returnAddr>=0x01000000u&&returnAddr<=0x7FFDFFFFu)?1u:0u;
     PPDecodeTargetGuid(packet,&tlo,&thi);
-    if(isAutoSource&&CurrentTargetIsPlayer()){g_ppForward=0u;++g_autoPPBlocked;++g_autoPPTargetPlayerBlocks;g_ppQuietUntil=0u;return;}
+    /* AutoPP has its own GUID: preserve the user's combat target, even if it is a player.
+       Never fall back to the user's selected target for an automatic PP packet. */
+    if(isAutoSource&&(packet->size<=11u||raw[10u]==0u)){g_ppForward=0u;++g_autoPPBlocked;++g_autoPPTargetPlayerBlocks;g_ppQuietUntil=0u;return;}
     if(!g_autoPPEnabled&&isAutoSource){g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;}
     /* One auto PP transaction at a time: failure callbacks have no GUID in 5875.
        Serialization makes 0x72 -> GUID mapping deterministic even under scanner pressure. */
