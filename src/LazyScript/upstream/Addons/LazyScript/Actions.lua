@@ -325,15 +325,17 @@ end
 function lazyScript.Action:Use()
 	lazyScript.d(ACTION_1 .. self.name)
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(false)
+	local rearRequest = nil
 
 	-- Keep the previous timers until the game accepts this rear attack.
 	-- UI_ERROR_MESSAGE can undo them if the server rejects its position.
 	if (self.code == "bs" or self.code == "ambush") then
 		if lazyScript.RearTrace then lazyScript.RearTrace("ls_dispatch",self.code) end
-		lazyScript.pendingRearAction = {
+		rearRequest = {
 			action = self, at = GetTime(), target = UnitName("target"),
 			everyTimer = self.everyTimer, nowAndEveryTimer = self.nowAndEveryTimer
 		}
+		lazyScript.pendingRearAction = rearRequest
 	end
 
 	if spellIndexStart then
@@ -341,6 +343,13 @@ function lazyScript.Action:Use()
 		CastSpell(spellIndex, "spell")
 	else
 		UseAction(self.slot)
+	end
+
+	-- UI_ERROR_MESSAGE may run synchronously inside CastSpell/UseAction.
+	-- Do not re-consume timers or re-add history after a rejected rear spell.
+	if rearRequest and rearRequest.rejected then
+		if lazyScript.RearTrace then lazyScript.RearTrace("ls_recovery",self.code.." synchronous_reject") end
+		return
 	end
 
 	if self.interrupts and lazyScript.interrupt.OnAttempt then
@@ -362,21 +371,33 @@ function lazyScript.Action:IsUsable(sayNothing)
             return false
         end
         local pending = lazyScript.pendingRearAction
-        if pending and pending.target == UnitName("target") then
+        if pending and pending.target ~= UnitName("target") then
+            lazyScript.pendingRearAction = nil
+            pending = nil
+        end
+        if pending then
             local age = now - pending.at
             if age >= 0 and age < 0.65 then
                 if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." pending") end
                 return false -- other action lines may proceed meanwhile
             end
-            -- Do not cancel legitimate energy or GCD waits, nor casts/channels.
-            -- Only one expired, STILL current rear action that is NOW usable
-            -- can be considered stale. Never send ESC or cancel another spell.
+            -- The native owner has a bounded rear lease and its own positional
+            -- retry. Never create another Lua-side cast/cancel loop during it.
+            -- Expire a rejected/orphaned request even when its bar is yellow,
+            -- its energy is low, or its cooldown has not yet cleared.
+            if lazyScript.spellcastInProgress or lazyScript.channellingInProgress then
+                if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." real_cast_or_channel") end
+                return false
+            end
+            if age >= 0 and age < 1.2 then
+                if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." native_settle") end
+                return false
+            end
             local slot = pending.action.slot
             if slot and IsCurrentAction(slot) and
-               IsUsableAction(slot) == 1 and
-               GetActionCooldown(slot) == 0 and
-               not lazyScript.spellcastInProgress and
-               not lazyScript.channellingInProgress then
+               IsUsableAction(slot) == 1 and GetActionCooldown(slot) == 0 then
+                -- Only an expired, still-current, NOW-usable rear action can
+                -- hold a stale client queue. No ESC and no valid cast/channel.
                 if lazyScript.RearTrace then lazyScript.RearTrace("ls_recovery",self.code.." stale_current") end
                 SpellStopCasting()
                 lazyScript.rearStaleClears = (lazyScript.rearStaleClears or 0) + 1
@@ -384,14 +405,10 @@ function lazyScript.Action:IsUsable(sayNothing)
                 lazyScript.pendingRearAction = nil
                 return false
             end
-            -- The selected action changed: the previous request is no longer
-            -- ours. Otherwise keep its original age for the next inspection.
-            if slot and not IsCurrentAction(slot) then
-                lazyScript.pendingRearAction = nil
-            else
-                if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." current_or_busy") end
-                return false
-            end
+            lazyScript.pendingRearAction = nil
+            if lazyScript.RearTrace then lazyScript.RearTrace("ls_recovery",self.code.." expired_pending") end
+            -- A yellow/unusable bar is not proof of a live cast. Let normal
+            -- usability checks choose a ready fallback instead of a wait loop.
         end
     end
     if self.code == "kick" then
@@ -408,15 +425,22 @@ function lazyScript.Action:IsUsable(sayNothing)
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(sayNothing)
 	if (self:GetSlot(sayNothing)) then
 		local inRange = IsActionInRange(self.slot)
-		if (IsUsableAction(self.slot) == 1 and
-			GetActionCooldown(self.slot) == 0 and -- not in cooldown
-			(not IsCurrentAction(self.slot) or self.code == "bs" or self.code == "ambush") and -- native rear owner coalesces repeated attempts
+		local usable = IsUsableAction(self.slot)
+		local cooldown = GetActionCooldown(self.slot)
+		local current = IsCurrentAction(self.slot)
+		if (usable == 1 and
+			cooldown == 0 and -- not in cooldown
+			(not current or self.code == "bs" or self.code == "ambush") and -- native rear owner coalesces repeated attempts
 			(inRange == 1 or inRange == nil or (self.parent and self.parent.target == "player"))) then
 			return true
 		end
-	end
-	if (self.code == "bs" or self.code == "ambush") and lazyScript.RearTrace then
-		lazyScript.RearTrace("ls_unusable",self.code.." action_bar_gate")
+		if (self.code == "bs" or self.code == "ambush") and lazyScript.RearTrace then
+			lazyScript.RearTrace("ls_unusable",self.code.." action_bar_gate slot="..tostring(self.slot)..
+				" usable="..tostring(usable).." cd="..tostring(cooldown)..
+				" current="..tostring(current).." range="..tostring(inRange))
+		end
+	elseif (self.code == "bs" or self.code == "ambush") and lazyScript.RearTrace then
+		lazyScript.RearTrace("ls_unusable",self.code.." no_action_slot")
 	end
 	return false
 end

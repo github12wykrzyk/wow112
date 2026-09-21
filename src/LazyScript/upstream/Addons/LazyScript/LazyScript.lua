@@ -457,8 +457,16 @@ function lazyScript.OnEvent()
 				local sameAction = lazyScript.actionHistory and
 					lazyScript.actionHistory[1] == pending.action.code
 				local slot = pending.action.slot
-				if sameAction and slot and IsCurrentAction(slot) and
-					now - pending.at <= 0.65 and
+				pending.rejected = true
+				-- Native Rear360 may be replaying the same rejected transaction.
+				-- Never cancel a real cast/channel or the native owner's live retry.
+				local trace = lazyScript.rearTrace
+				local native = trace and trace.native
+				local nativeOwner = native and trace.nativeAt and
+					now - trace.nativeAt <= 2 and native.castHook == 1 and
+					native.moveHook == 1
+				if slot and IsCurrentAction(slot) and
+					now - pending.at <= 0.65 and not nativeOwner and
 					not lazyScript.spellcastInProgress and
 					not lazyScript.channellingInProgress then
 					SpellStopCasting()
