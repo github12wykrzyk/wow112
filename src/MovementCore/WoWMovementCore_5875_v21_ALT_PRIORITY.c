@@ -523,9 +523,7 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_HIT_POS_OFF   0x360u
 #define W112_TELE_LMB           0x01u
 #define W112_TELE_F6            0x75u
-#define W112_TELE_MAX_D2        100.0f
-#define W112_TELE_MIN_D2        0.25f
-#define W112_TELE_MAX_DZ        1.25f
+#define W112_TELE_MIN_D2        0.25f /* ignore same-point clicks */
 #define W112_TELE_COOLDOWN_MS   1200u
 #define W112_TELE_CTM_ACTION    0x00C4D888u
 #define W112_TELE_CTM_OBSERVED  12u /* empirically seen after LMB terrain hit */
@@ -542,7 +540,7 @@ static DWORD g_teleLastAttempt=0u,g_teleWaitSince=0u,g_teleWaitLast=0u;
 static DWORD g_telePending=0u;
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static float g_teleStartX=0.0f,g_teleStartY=0.0f,g_teleStartZ=0.0f;
-static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r ON: CTM ON; left-click FLAT ground within 10yd; F7 abort') end";
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r ON: CTM ON; left-click GROUND; no distance/height limit; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r one pulse sent; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele Click]|r ground captured; waiting for stationary player (CTM unchanged)') end";
@@ -556,7 +554,7 @@ static void W112_TeleReportUnknownAction(DWORD action)
     q=AppStr(q," (LMB observed 0xC); no pulse') end");*q=0;
     DebugChat(script);
 }
-static const char g_teleFarChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ground point too far/steep (max 10 yd, 1.25 Z)') end";
+static const char g_teleTooCloseChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r click another point (minimum 0.5 units away)') end";
 /* Every attempted left click gets one stage-specific report; never claim an
  * accepted teleport merely because the client sent a movement heartbeat. */
 static const char g_teleBlockedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, blocked: combat/cast/another movement module') end";
@@ -731,9 +729,12 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     if(!W112_Q_PosValid(x,y,z)||!W112_Q_PosValid(px,py,pz)){
         DebugChat(g_teleBadPosChat);return;
     }
-    dx=x-px;dy=y-py;dz=z-pz;
-    if(dx*dx+dy*dy>W112_TELE_MAX_D2||dx*dx+dy*dy<W112_TELE_MIN_D2||
-       AbsF(dz)>W112_TELE_MAX_DZ){DebugChat(g_teleFarChat);return;}
+    /* No artificial horizontal range or vertical offset limit: retain only
+     * finite-world-coordinate validation, type-1 terrain hit, ownership and
+     * stationary-player guards. Native collision/server acceptance NOT proven
+     * for long jumps, steep slopes, cross-continent or non-navigable terrain. */
+    dx=x-px;dy=y-py;
+    if(dx*dx+dy*dy<W112_TELE_MIN_D2){DebugChat(g_teleTooCloseChat);return;}
     /* 0xC is observed after LMB terrain hits on this patched EXE.
      * Neither 0xC nor the old 0/3/4 values prove that native CTM is stopped.
      * Only the passive LMB + stable-state + stationary-player path may pulse.
