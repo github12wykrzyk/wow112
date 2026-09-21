@@ -431,13 +431,19 @@ function lazyScript.OnEvent()
 		lazyScript.DeCacheItemSlots()
 		
 		elseif (event == "UI_ERROR_MESSAGE") then
-		if (arg1 == SPELL_FAILED_NOT_BEHIND) then
-			lazyScript.d(BEHIND_ATTACK_FAILED)
+		if (arg1 == SPELL_FAILED_NOT_BEHIND or
+			(SPELL_FAILED_OUT_OF_RANGE and arg1 == SPELL_FAILED_OUT_OF_RANGE)) then
+			local rearBehindError = (arg1 == SPELL_FAILED_NOT_BEHIND)
+			if rearBehindError then
+				lazyScript.d(BEHIND_ATTACK_FAILED)
+			end
 			local now = GetTime()
-			lazyScript.behindAttackLastFailedAt = now
+			if rearBehindError then lazyScript.behindAttackLastFailedAt = now end
 			local pending = lazyScript.pendingRearAction
 			if pending and pending.target == UnitName("target") and
-				now >= pending.at and now - pending.at <= 0.6 then
+				now >= pending.at and now - pending.at <= 1.5 and
+				(rearBehindError or (lazyScript.actionHistory and
+					lazyScript.actionHistory[1] == pending.action.code)) then
 				-- A rejected BS/Ambush must not consume its everyXs timer.
 				pending.action.everyTimer = pending.everyTimer
 				pending.action.nowAndEveryTimer = pending.nowAndEveryTimer
