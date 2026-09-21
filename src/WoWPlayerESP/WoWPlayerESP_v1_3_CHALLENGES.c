@@ -549,10 +549,10 @@ static void ui_sync_rear(void) {
     const char* desc;
     char buf[240],*p=buf;
     if(!g_ui_rear_state)return;
-    if(!dll){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: NOT LOADED");return;}
+    if(!dll){SetWindowTextA(g_ui_rear_state,"Rear 360 PvE/PvP: NOT LOADED");return;}
     status=(RearValueFn)GetProcAddress(dll,"PVERear360_GetStatus");
     count=(RearValueFn)GetProcAddress(dll,"PVERear360_GetPulseCount");
-    if(!status||!count){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: diagnostics unavailable");return;}
+    if(!status||!count){SetWindowTextA(g_ui_rear_state,"Rear 360 PvE/PvP: diagnostics unavailable");return;}
     attempts=(RearValueFn)GetProcAddress(dll,"PVERear360_GetAttempts");
     tx=(RearValueFn)GetProcAddress(dll,"PVERear360_GetCastCount");
     go=(RearValueFn)GetProcAddress(dll,"PVERear360_GetServerGo");
@@ -576,7 +576,7 @@ static void ui_sync_rear(void) {
          code==12u?"HOOK MEMORY PATCH FAILED":
          code==13u?"SPELL FAIL HOOK CONFLICT":
          code==14u?"SPELL GO HOOK CONFLICT":"UNKNOWN";
-    p=app_str(p,"PvE Rear 360: ");p=app_str(p,desc);
+    p=app_str(p,"Rear 360 PvE/PvP: ");p=app_str(p,desc);
     p=app_str(p,"\r\nTry ");p=app_u32(p,attempts?attempts():0u);
     p=app_str(p," | prime ");p=app_u32(p,pulses);
     p=app_str(p," | sent ");p=app_u32(p,tx?tx():0u);
