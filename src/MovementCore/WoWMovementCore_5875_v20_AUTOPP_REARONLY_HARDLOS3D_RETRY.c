@@ -318,6 +318,12 @@ static volatile DWORD g_longPPBase=0u,g_longPPReasonPtr=0u,g_longPPGuidLoPtr=0u,
 static volatile DWORD g_nextPPFailTarget=0u,g_ppFailHookOk=0u,g_ppFailLogEvent=0u,g_ppFailLogLo=0u,g_ppFailLogHi=0u,g_ppFailLogVariant=0u;
 static volatile DWORD g_ppHardArmed=0u,g_ppHardLo=0u,g_ppHardHi=0u;
 static float g_ppHardX=0.0f,g_ppHardY=0.0f,g_ppHardZ=0.0f,g_ppHardO=0.0f;
+#if defined(W112_PP_ALWAYS_BEHIND)
+#define PP_REAR_FOLLOW_REFRESH_MS 50u
+static float g_ppRearBack=2.75f,g_ppRearSide=0.0f,g_ppRearDz=0.0f;
+static float g_ppRearTargetX=0.0f,g_ppRearTargetY=0.0f,g_ppRearTargetZ=0.0f,g_ppRearTargetO=0.0f;
+static volatile DWORD g_ppRearLastRefresh=0u,g_ppRearLiveRefresh=0u;
+#endif
 static volatile DWORD g_suppressed=0,g_hb=0,g_moveInfoFailures=0;
 static volatile DWORD g_worldLost=0,g_worldReadySince=0,g_worldGuardHits=0;
 static float g_x=0,g_y=0,g_z=0,g_o=0;
@@ -622,13 +628,50 @@ static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
     g_ppHardY=y-(fy*back)+(ry*side);
     g_ppHardZ=z+zbase+dz;
     g_ppHardO=PPAtan2YX(y-g_ppHardY,x-g_ppHardX);if(g_ppHardO<0.0f)g_ppHardO+=6.28318530717958647692f;
+#if defined(W112_PP_ALWAYS_BEHIND)
+    /* Remember the selected LOS rear-sector variant; follow this target's
+       current facing/XYZ without changing retry offsets or its GUID owner. */
+    g_ppRearBack=back;g_ppRearSide=side;g_ppRearDz=zbase+dz;
+    g_ppRearTargetX=x;g_ppRearTargetY=y;g_ppRearTargetZ=z;g_ppRearTargetO=o;
+    g_ppRearLastRefresh=0u;
+#endif
     g_ppHardLo=lo;g_ppHardHi=hi;g_ppHardArmed=1u;g_ppFailPendingVariant=idx;++g_ppHardLOSArms;if(variantOut)*variantOut=idx;
 }
+#if defined(W112_PP_ALWAYS_BEHIND)
+/* Refresh at most every 50 ms, only inside the existing active PP movement
+   chain. Re-resolve by GUID (never trust a potentially stale object pointer).
+   A target turn/move updates the same rear-sector offset before LongPP
+   rewrites this movement packet; the 56-way HARDLOS retry sweep is intact. */
+static void PPHardRefreshBehind(void)
+{
+    DWORD now;BYTE*t;float x,y,z,o,sn=0.0f,cs=1.0f;
+    if(!g_ppHardArmed||(g_ppHardLo|g_ppHardHi)==0u)return;
+    now=GT()?GT()():0u;
+    if(g_ppRearLastRefresh&&(DWORD)(now-g_ppRearLastRefresh)<PP_REAR_FOLLOW_REFRESH_MS)return;
+    g_ppRearLastRefresh=now;
+    t=ObjByGuid(g_ppHardLo,g_ppHardHi);if(!Ptr(t))return;
+    if(*(DWORD*)(t+OFF_OBJ_GUID_LOW)!=g_ppHardLo||*(DWORD*)(t+OFF_OBJ_GUID_HIGH)!=g_ppHardHi)return;
+    x=*(float*)(t+OFF_UNIT_X);y=*(float*)(t+OFF_UNIT_Y);
+    z=*(float*)(t+OFF_UNIT_Z);o=*(float*)(t+OFF_UNIT_O);
+    if(x==g_ppRearTargetX&&y==g_ppRearTargetY&&z==g_ppRearTargetZ&&o==g_ppRearTargetO)return;
+    SinCosF(o,&sn,&cs);
+    g_ppHardX=x-cs*g_ppRearBack-sn*g_ppRearSide;
+    g_ppHardY=y-sn*g_ppRearBack+cs*g_ppRearSide;
+    g_ppHardZ=z+g_ppRearDz;
+    g_ppHardO=PPAtan2YX(y-g_ppHardY,x-g_ppHardX);
+    if(g_ppHardO<0.0f)g_ppHardO+=6.28318530717958647692f;
+    g_ppRearTargetX=x;g_ppRearTargetY=y;g_ppRearTargetZ=z;g_ppRearTargetO=o;
+    ++g_ppRearLiveRefresh;
+}
+#endif
 static void PPHardApplySpoof(void)
 {
     if(!g_ppHardArmed||!g_ppChainOk||!LongPPActive())return;
     if(!Ptr((void*)g_longPPSpoofXPtr)||!Ptr((void*)g_longPPSpoofYPtr)||!Ptr((void*)g_longPPSpoofZPtr)||!Ptr((void*)g_longPPSpoofOPtr)||!Ptr((void*)g_longPPGuidLoPtr)||!Ptr((void*)g_longPPGuidHiPtr))return;
     if(*(DWORD*)g_longPPGuidLoPtr!=g_ppHardLo||*(DWORD*)g_longPPGuidHiPtr!=g_ppHardHi)return;
+#if defined(W112_PP_ALWAYS_BEHIND)
+    PPHardRefreshBehind();
+#endif
     *(float*)g_longPPSpoofXPtr=g_ppHardX;*(float*)g_longPPSpoofYPtr=g_ppHardY;*(float*)g_longPPSpoofZPtr=g_ppHardZ;*(float*)g_longPPSpoofOPtr=g_ppHardO;++g_ppHardLOSOverrides;
 }
 static void PPHardRetryCancel(void)

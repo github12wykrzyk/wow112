@@ -17,6 +17,7 @@
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
  */
 
+#define W112_PP_ALWAYS_BEHIND 1
 #define W112_PP_SELECTOR_BLACKLIST_BRIDGE 1
 #define DllMain W112_MovementCoreV20_DllMain
 #define MovementCore_GetVersion W112_MovementCoreV20_GetVersion
@@ -38,6 +39,7 @@
 #pragma comment(linker, "/EXPORT:MovementCore_PPSelectorBridgeReady=_MovementCore_PPSelectorBridgeReady@0")
 #pragma comment(linker, "/EXPORT:MovementCore_PPSelectorSkipped=_MovementCore_PPSelectorSkipped@0")
 #pragma comment(linker, "/EXPORT:MovementCore_PPSelectorReleased=_MovementCore_PPSelectorReleased@0")
+#pragma comment(linker, "/EXPORT:MovementCore_PPRearLiveRefreshes=_MovementCore_PPRearLiveRefreshes@0")
 #endif
 
 
@@ -1257,6 +1259,10 @@ W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetMo
     return &g_controlModule;
 }
 
+/* Diagnostic only: counts real target XYZ/O changes followed while LongPP is
+   active. A nonzero count does not prove server-side acceptance of the spoof. */
+__declspec(dllexport) DWORD __stdcall MovementCore_PPRearLiveRefreshes(void)
+{return g_ppRearLiveRefresh;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetRearPriorityPackets(void){return g_rearPriorityDirectPackets;}
