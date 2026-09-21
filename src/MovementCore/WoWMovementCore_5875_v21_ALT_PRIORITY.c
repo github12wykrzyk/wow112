@@ -341,6 +341,11 @@ __declspec(naked) static void AltPriority_MoveWrapper(void)
          * gather rewriting and SafeBreak decisions until world readiness. */
         cmp dword ptr [g_loginGuardReady],0
         je  alt_login_passthrough
+        /* Explicit Tele E one-shot takes precedence over cast/rear packet
+         * suppressors and all downstream movement rewrites. Ordinary cast
+         * and movement packets still use the existing ownership chain. */
+        cmp dword ptr [g_stepMoveInjecting],0
+        jne alt_direct_packet
         /* Protected casts and channels take priority over a stale rear lease. */
         cmp dword ptr [g_abCapGuardActive],0
         jne alt_rear_guarded
@@ -650,8 +655,8 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
  * require the same state for E and fail closed if the key path differs.
  * Require the same state and a stationary player across the settle interval;
  * never pulse when the state changes or the player walks.
- * Combat itself is allowed; fail closed on invalid cursor, casting, native
- * movement or another movement-owner lease.
+ * Combat and concurrent cast/movement ownership are allowed for the explicit
+ * E pulse; keep cursor, world-readiness and native stationary checks.
  */
 #define W112_TELE_CLICK_INFO_PTR 0x00B4B2BCu
 #define W112_TELE_REFRESH_FN     0x00481F00u
@@ -698,7 +703,7 @@ static void W112_TeleReportUnknownAction(DWORD action)
 static const char g_teleTooCloseChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r aim at a different point (minimum 0.5 units away)') end";
 /* Every E press gets one stage-specific report; never claim an
  * accepted teleport merely because the client sent a movement heartbeat. */
-static const char g_teleBlockedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r blocked: cast/another movement module') end";
+static const char g_teleBlockedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r unavailable: teleport disabled or world not ready') end";
 static const char g_teleChatFocusChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r blocked: chat edit box') end";
 static const char g_teleMemoryChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele E]|r cursor raycast memory unavailable') end";
 /* A non-terrain hit may mean no intersection (0), world hit (1) or object (2);
@@ -782,11 +787,11 @@ static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
 }
 static DWORD W112_TeleAvailable(BYTE *p)
 {
+    /* E is an explicit one-shot: do not reject it solely because a cast,
+     * AutoPP, gather, SafeBreak or rear module currently owns movement.
+     * Prevent re-entry during the pulse; retain the world/player checks. */
     if(!g_stepEnabled||!g_loginGuardReady||!Ptr(p)||
-       (MovementCore_CoordFlags()&0x3Fu)||g_abCapGuardActive||
-       LongPPActive()||LongPPInjecting()||
-       *(volatile DWORD*)ADDR_CASTING_SPELLID||
-       g_gatherActive||g_gatherLootWait)return 0u;
+       g_stepMoveInjecting)return 0u;
     return 1u;
 }
 static void W112_KeyTeleTick(BYTE *p,DWORD now)
@@ -985,9 +990,14 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     }
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     W112_KeyTeleTick(p,now);
+    /* Hold competing periodic movement writers only while the E destination
+     * is settling; do not cancel their casts or persistently disable them. */
+    if(g_telePending&&g_mode!=MODE_OFF&&!g_safeBreakPauseTick)
+        g_safeBreakPauseTick=now;
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
-        if(!CoordRearOwned()&&(!g_abCapGuardActive||g_gatherActive||g_gatherLootWait))
+        if(!g_telePending&&!CoordRearOwned()&&
+           (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait))
             GatherTick(p,now);
     }else if(g_gatherActive||g_gatherLootWait){
         g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootStart=0u;
@@ -1005,7 +1015,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
             AltPriority_Start(now);
         }
     }
-    if(g_mode==MODE_OFF||g_abCapGuardActive)return;
+    if(g_mode==MODE_OFF||g_abCapGuardActive||g_telePending)return;
     /* A physical Blink has the existing rear lease: do not inject an
      * independent SafeBreak XYZ into the same movement transaction. Preserve
      * the SafeBreak time budget and resume it after the Blink releases. */
