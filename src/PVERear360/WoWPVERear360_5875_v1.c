@@ -17,6 +17,7 @@
 #pragma comment(linker, "/EXPORT:PVERear360_GetPulseCount=_PVERear360_GetPulseCount@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GameWindowTick=_PVERear360_GameWindowTick@4")
 #pragma comment(linker, "/EXPORT:PVERear360_GetCastCount=_PVERear360_GetCastCount@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetBusyDrops=_PVERear360_GetBusyDrops@0")
 #else
 #define STDCALL __attribute__((stdcall))
 #define THISCALL __attribute__((thiscall))
@@ -41,6 +42,8 @@ __declspec(dllimport) int STDCALL VirtualProtect(void*,u32,u32,u32*);
 __declspec(dllimport) int STDCALL FlushInstructionCache(void*,const void*,u32);
 __declspec(dllimport) void* STDCALL GetCurrentProcess(void);
 typedef s32 (THISCALL *ReactionFn)(u32,u32);
+/* NPC-only call; same 5875 CanAttack ABI used by active PlayerESP. */
+typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define OBJMGR 0x00B41414u
 #define TARGET_LO 0x00B4E2D8u
 #define TARGET_HI 0x00B4E2DCu
@@ -57,11 +60,14 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define OM_PLAYER_HI 0xC4u
 #define GET_OBJECT_BY_GUID 0x00464870u
 #define REACTION_FN 0x006061E0u
+#define CAN_ATTACK_FN 0x00606980u
 #define CASTING_SPELL_ID 0x00CECA88u
 #define PENDING_CAST 0x00CEAC48u
 #define SEND_MOVEMENT_WRAPPER 0x00600A10u
 #define FN_GET_GAME_WINDOW 0x00435C30u
 #define CAST_SEND_SITE 0x006E5872u
+#define GCD_CALL_SITE 0x006E58FBu
+#define START_GLOBAL_COOLDOWN 0x006E2DE0u
 #define MOVE_SEND_SITE 0x00600ACAu
 #define CLIENTSERVICES_SEND 0x005AB630u
 #define CMSG_CAST_SPELL 0x0000012Eu
@@ -103,10 +109,12 @@ static volatile u32 g_lastTick=0u;
 static volatile u32 g_needsRestore=0u;
 static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
-static volatile u32 g_rearLease=0u,g_castInstalled=0u,g_moveInstalled=0u;
+static volatile u32 g_rearLease=0u,g_castInstalled=0u,g_moveInstalled=0u,g_gcdInstalled=0u;
+static volatile u32 g_skipNativeGcdCurrent=0u,g_busyDrops=0u;
 static volatile u32 g_suppressCast=0u,g_prevMoveTarget=0u;
 static float g_rearX,g_rearY,g_rearZ,g_rearO;
 static const u8 kCastOriginal[5]={0xE8u,0xB9u,0x5Du,0xECu,0xFFu};
+static const u8 kGcdOriginal[5]={0xE8u,0xE0u,0xD4u,0xFFu,0xFFu};
 static W112_ControlSettingV1 g_settings[2];
 static volatile u32 g_descriptorsReady=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
@@ -285,11 +293,18 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
     fresh cast for the SAME NPC instead of sending it at the unprimed real
     position; never steal a lease from PP, gather or an unrelated cast. */
  if(g_castActive){
+  /* Do not send a naked native opener while the old rear pose is leased. */
   if(!g_rearLease||g_castPlayer!=pl||g_castTarget!=tg||
-     (s32)(GetTickCount()-(g_castStarted+CAST_MAX_LEASE_MS))>=0)return 0u;
- }else if(workMovementBusy())return 0u;
+     (s32)(GetTickCount()-(g_castStarted+CAST_MAX_LEASE_MS))>=0){
+   g_skipNativeGcdCurrent=1u;++g_busyDrops;g_status=STATUS_CAST_PAUSE;return 1u;
+  }
+ }
  reaction=((ReactionFn)REACTION_FN)(pl,tg);
- if(reaction<1||reaction>3)return 0u;
+ /* Reaction 4 is a neutral (yellow) NPC, not a friendly NPC. Previous gate
+    ignored these stationary targets completely. Check native attackability
+    for type-3 NPCs only; never use this path on players/BG targets. */
+ if(reaction<1||reaction>4||
+    !((CanAttackFn)CAN_ATTACK_FN)(pl,tg))return 0u;
  if(read32(CASTING_SPELL_ID) && read32(CASTING_SPELL_ID)!=spell)return 0u;
  sz=original[4];read=original[5];base=original[2];buf=original[1];
  if(!buf||buf<base||sz<10u||sz>MAX_CAST_PACKET||read>sz)return 0u;
@@ -306,7 +321,14 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  a=angle(to+PI_F);
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return 0u;
- if(!g_castActive && !acquireRear(spell))return 0u;
+ /* The old code silently forwarded an unprimed Backstab/Ambush whenever
+    PP/gather/another owner held movement. Work's position pipeline instead
+    drops that stale CMSG and its native GCD so LazyScript may retry after
+    ownership clears. Never override the concurrent owner's coordinates. */
+ if(!g_castActive && (workMovementBusy()||!acquireRear(spell))){
+  g_skipNativeGcdCurrent=1u;++g_busyDrops;g_status=STATUS_PP_PAUSE;
+  return 1u;
+ }
  for(i=0u;i<sz;++i)copyPacket[i]=src[i];
  for(i=0u;i<6u;++i)copyHeader[i]=original[i];
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
@@ -329,6 +351,7 @@ __declspec(naked) static void castChainHook(void){
   pushfd
   pushad
   mov dword ptr [g_suppressCast],0
+  mov dword ptr [g_skipNativeGcdCurrent],0
   mov eax,[ebp-8]
   test eax,eax
   je rear_queue_done
@@ -347,6 +370,19 @@ __declspec(naked) static void castChainHook(void){
   call eax
  rear_cast_done:
   ret
+ }
+}
+/* The original native GCD CALL follows CAST_SEND_SITE. A deferred/busy
+   opener must not consume a phantom client GCD while no CMSG was sent. */
+__declspec(naked) static void gcdChainHook(void){
+ __asm{
+  cmp dword ptr [g_skipNativeGcdCurrent],0
+  je gcd_original
+  mov dword ptr [g_skipNativeGcdCurrent],0
+  ret
+ gcd_original:
+  mov eax,START_GLOBAL_COOLDOWN
+  jmp eax
  }
 }
 static int patchCall(u32 site,void* fn){
@@ -373,7 +409,8 @@ static int installCastAndMovement(void){
  ready=(IsCoreReadyFn)GetProcAddress(core,"MovementCore_GetAltPriorityInstalled");
  if(!ready)ready=(IsCoreReadyFn)GetProcAddress(core,"_MovementCore_GetAltPriorityInstalled@0");
  if(!ready||!ready()){g_status=STATUS_CORE_NOT_READY;return 0;}
- for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=kCastOriginal[i]){
+ for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=kCastOriginal[i]||
+                           *(volatile u8*)(GCD_CALL_SITE+i)!=kGcdOriginal[i]){
   g_status=STATUS_CAST_SITE_CONFLICT;return 0;
  }
  target=callTarget(MOVE_SEND_SITE);
@@ -390,10 +427,21 @@ static int installCastAndMovement(void){
   g_moveInstalled=0u;g_status=STATUS_HOOK_PATCH_FAILED;return 0;
  }
  g_castInstalled=1u;
+ if(!patchCall(GCD_CALL_SITE,gcdChainHook)){
+  patchCall(CAST_SEND_SITE,(void*)CLIENTSERVICES_SEND);
+  patchCall(MOVE_SEND_SITE,(void*)g_prevMoveTarget);
+  g_castInstalled=0u;g_moveInstalled=0u;
+  g_status=STATUS_HOOK_PATCH_FAILED;return 0;
+ }
+ g_gcdInstalled=1u;
  return 1;
 }
 static void removeHooks(void){
  u32 i,match=1u,ignored=0u,old=0u;
+ if(g_gcdInstalled&&callTarget(GCD_CALL_SITE)==(u32)gcdChainHook){
+  patchCall(GCD_CALL_SITE,(void*)START_GLOBAL_COOLDOWN);
+ }
+ g_gcdInstalled=0u;g_skipNativeGcdCurrent=0u;
  if(g_castInstalled){
   for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=
    (i==0u?0xE8u:(u8)(((u32)castChainHook-(CAST_SEND_SITE+5u))>>(8u*(i-1u)))))match=0u;
@@ -412,7 +460,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  u32 pl;
  (void)hwnd;(void)msg;(void)timer;
  if(g_stop)return;
- if(!g_castInstalled||!g_moveInstalled){
+ if(!g_castInstalled||!g_moveInstalled||!g_gcdInstalled){
   if(installCastAndMovement())g_status=STATUS_IDLE;
   /* Preserve the installer's specific reason on failure. */
   return;
@@ -471,6 +519,7 @@ W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetMod
 __declspec(dllexport) u32 STDCALL PVERear360_GetStatus(void){return g_status;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetPulseCount(void){return g_count;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetCastCount(void){return g_castCount;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetBusyDrops(void){return g_busyDrops;}
 /* Invoked only by the existing ESP WndProc on the game window's owner thread. */
 __declspec(dllexport) u32 STDCALL PVERear360_GameWindowTick(HWND32 game){
  if(g_stop||!game||!IsWindow(game)||g_status==STATUS_BUILD_MISMATCH||
