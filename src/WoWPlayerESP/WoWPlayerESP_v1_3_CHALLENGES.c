@@ -748,6 +748,7 @@ static const W112_ControlSettingV1 *ui_profile_descriptor(const W112_ControlModu
             return &m->settings[i];
     return NULL;
 }
+static void ui_filters_changed(void); /* callback defined below; required by x86 C99 compiler */
 static void ui_profile_bootstrap(void) {
     DWORD n,start,i,bits;
     if(g_ui_profile_initialized)return;
