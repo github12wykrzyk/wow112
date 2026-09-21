@@ -506,13 +506,15 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 
 /*
  * EXPERIMENTAL TELE-ON-CLICK, build 5875 x86, defaults OFF.
- * Left-click nearby terrain with F6 enabled and native CTM ON; CTM is used
- * only to obtain a type-1 ground hit, then native pathing is stopped.
+ * Left-click nearby terrain with F6 enabled and native CTM ON. The client
+ * supplies a type-1 ground hit. LMB does not issue an explicit RMB ground-walk
+ * command; do not write guesses into the client's CTM action state.
  * Exact 5875 native ray picker: click-info pointer 0xB4B2BC, refresh 0x481F00,
  * hit type at +0x350 (1 = terrain), world XYZ at +0x360.
  * The patched project EXE has not yet been in-game validated for this path.
- * CTM action STOP is provisional; require observed stable player position
- * before a single movement pulse; never use stale type-2 coordinates.
+ * A captured 0xC CTM state is empirical data, NOT a verified STOP/WALK enum.
+ * Require the same state and a stationary player across the settle interval;
+ * never pulse when the state changes or the player walks.
  * Fail closed on invalid memory, cursor not on ground, ownership and combat.
  */
 #define W112_TELE_CLICK_INFO_PTR 0x00B4B2BCu
@@ -526,9 +528,8 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_MAX_DZ        1.25f
 #define W112_TELE_COOLDOWN_MS   1200u
 #define W112_TELE_CTM_ACTION    0x00C4D888u
-#define W112_TELE_CTM_STOP      3u
-#define W112_TELE_CTM_WALK      4u
-#define W112_TELE_SETTLE_MS     200u
+#define W112_TELE_CTM_OBSERVED  12u /* empirically seen after LMB terrain hit */
+#define W112_TELE_SETTLE_MS     250u
 #define W112_TELE_TIMEOUT_MS    700u
 #define W112_TELE_MAX_DRIFT_D2  0.04f
 typedef struct W112_TELE_MBI {
@@ -544,15 +545,15 @@ static float g_teleStartX=0.0f,g_teleStartY=0.0f,g_teleStartZ=0.0f;
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r ON: CTM ON; left-click FLAT ground within 8yd; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r one pulse sent; SERVER acceptance NOT confirmed') end";
-static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele Click]|r ground captured; requesting CTM stop') end";
+static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele Click]|r ground captured; waiting for stationary player (CTM unchanged)') end";
 static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ABORT: native walking/position drift/CTM state; no pulse') end";
-static const char g_teleUnsupportedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ABORT: CTM action memory NOT writable; no pulse') end";
+static const char g_teleUnsupportedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ABORT: CTM state memory unreadable; no pulse') end";
 static void W112_TeleReportUnknownAction(DWORD action)
 {
     char script[190];char*q=script;
     q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele Click] ABORT: unknown CTM state=0x");
     q=AppHex32(q,action);
-    q=AppStr(q," (expected 0,3,4); no pulse') end");*q=0;
+    q=AppStr(q," (LMB observed 0xC); no pulse') end");*q=0;
     DebugChat(script);
 }
 static const char g_teleFarChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ground point too far/steep (max 8 yd, 1.25 Z)') end";
@@ -641,16 +642,6 @@ static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
     return protect==0x02u||protect==0x04u||protect==0x08u||
            protect==0x20u||protect==0x40u||protect==0x80u;
 }
-/* CTM STOP writes must never rely on the read-only pointer check. */
-static DWORD W112_TeleCtmWritable(void)
-{
-    W112_TELE_MBI mbi;DWORD addr=W112_TELE_CTM_ACTION,end,protect;
-    if(VirtualQuery((const void*)addr,&mbi,sizeof(mbi))!=sizeof(mbi))return 0u;
-    end=mbi.base+mbi.region_size;protect=mbi.protect&0xFFu;
-    if(end<mbi.base||addr<mbi.base||addr+4u>end||
-       mbi.state!=0x1000u||(mbi.protect&0x100u))return 0u;
-    return protect==0x04u||protect==0x08u||protect==0x40u||protect==0x80u;
-}
 static DWORD W112_TeleAvailable(BYTE *p)
 {
     if(!g_stepEnabled||!g_loginGuardReady||!Ptr(p)||
@@ -669,20 +660,17 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     g_teleLmbWasDown=pressed;
     if(!g_stepEnabled){g_telePending=0u;g_stepActive=0u;return;}
     if(g_telePending){
-        /* A second click is not allowed to replace an in-flight destination. */
+        /* A second click replaces the destination; never apply a stale point. */
         if(click){g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;}
         if(!W112_TeleAvailable(p)||
-           !W112_TeleCtmWritable()||
+           !W112_TeleRangeValid(W112_TELE_CTM_ACTION,4u,0u)||
            (DWORD)(now-g_teleWaitSince)>W112_TELE_TIMEOUT_MS){
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
         }
         action=*(volatile DWORD*)W112_TELE_CTM_ACTION;
-        if(action==W112_TELE_CTM_WALK){
-            /* Native pathing was reasserted: retry STOP, NEVER move this tick. */
-            *(volatile DWORD*)W112_TELE_CTM_ACTION=W112_TELE_CTM_STOP;
-            g_teleWaitLast=now;return;
-        }
-        if(action!=0u&&action!=W112_TELE_CTM_STOP){
+        /* 0xC is observed with this LMB path, but is NOT treated as a
+         * universal stop or walk enum. Any transition fails closed. */
+        if(action!=W112_TELE_CTM_OBSERVED){
             g_telePending=0u;g_stepActive=0u;
             W112_TeleReportUnknownAction(action);return;
         }
@@ -692,9 +680,15 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
         if(!W112_Q_PosValid(px,py,pz)||dx*dx+dy*dy+dz*dz>W112_TELE_MAX_DRIFT_D2){
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
         }
-        /* Never inject during native STOP settling or while the button is held.
-         * One pulse only; no repeated coordinate chase on correction. */
+        /* Local movement flags are an additional safeguard against issuing
+         * a pulse while the client is walking despite a stable position. */
+        {DWORD *flags=MoveFlags(p);
+         if(!flags||(*flags&0x3Fu)!=0u){
+            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+         }
+        }
         if((DWORD)(now-g_teleWaitLast)<W112_TELE_SETTLE_MS||pressed)return;
+        /* One pulse; never chase server corrections or touch CTM action. */
         g_telePending=0u;g_teleLastAttempt=now;
         g_stepMoveInjecting=1u;
         *(float*)(p+OFF_UNIT_X)=g_teleDestX;
@@ -740,20 +734,25 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     dx=x-px;dy=y-py;dz=z-pz;
     if(dx*dx+dy*dy>W112_TELE_MAX_D2||dx*dx+dy*dy<W112_TELE_MIN_D2||
        AbsF(dz)>W112_TELE_MAX_DZ){DebugChat(g_teleFarChat);return;}
-    /* STOP=3 and WALK=4 derive from the old CTM experiment; enforce a readable,
-     * writable address and recognized action; fail closed otherwise. */
-    if(!W112_TeleCtmWritable()){
+    /* 0xC is observed after LMB terrain hits on this patched EXE.
+     * Neither 0xC nor the old 0/3/4 values prove that native CTM is stopped.
+     * Only the passive LMB + stable-state + stationary-player path may pulse.
+     * Never issue native STOP=3 based on an unverified enum. */
+    if(!W112_TeleRangeValid(W112_TELE_CTM_ACTION,4u,0u)){
         DebugChat(g_teleUnsupportedChat);return;
     }
     action=*(volatile DWORD*)W112_TELE_CTM_ACTION;
-    if(action!=0u&&action!=W112_TELE_CTM_STOP&&action!=W112_TELE_CTM_WALK){
+    if(action!=W112_TELE_CTM_OBSERVED){
         W112_TeleReportUnknownAction(action);return;
+    }
+    {DWORD *flags=MoveFlags(p);
+     if(!flags||(*flags&0x3Fu)!=0u){
+        DebugChat(g_teleAbortChat);return;
+     }
     }
     g_teleDestX=x;g_teleDestY=y;g_teleDestZ=z;
     g_teleStartX=px;g_teleStartY=py;g_teleStartZ=pz;
     g_telePending=1u;g_stepActive=1u;g_teleWaitSince=now;g_teleWaitLast=now;
-    if(action==W112_TELE_CTM_WALK)
-        *(volatile DWORD*)W112_TELE_CTM_ACTION=W112_TELE_CTM_STOP;
     DebugChat(g_teleStopChat);
 }
 
@@ -765,7 +764,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     now=GT()();
     p=LocalPlayer();
     W112_LoginGuardTick(p,now);
-    if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;return;}
+    if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;}
     PPBlacklistTick(now);
     FlushPendingPPLog();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
