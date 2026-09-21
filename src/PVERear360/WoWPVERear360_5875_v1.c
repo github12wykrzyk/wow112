@@ -105,10 +105,14 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 /* Physical NPC Backstab/Ambush blink: intercept the
    existing native cast CMSG; pre-CMSG local 'not behind' UI rejects remain
    a separate, unverified interception problem. */
-#define BLINK_BS_SETTLE_MS 125u
-#define BLINK_BS_TIMEOUT_MS 500u
-#define BLINK_BS_MAX_JUMP_D2 20.25f
-#define BLINK_BS_MAX_DZ 1.25f
+/* The previous 8-yard native rear gate and 4.5-yard physical jump cap
+   prevented a blink from distance. Keep a distinct NPC-only 30-yard
+   candidate envelope; client CMSG/remote acceptance may still reject it. */
+#define BLINK_BS_SETTLE_MS 50u
+#define BLINK_BS_TIMEOUT_MS 400u
+#define BLINK_BS_MAX_TARGET_D2 900.0f
+#define BLINK_BS_MAX_JUMP_D2 1024.0f
+#define BLINK_BS_MAX_DZ 2.5f
 #define BLINK_BS_STABLE_D2 0.1225f
 #define BLINK_BS_TARGET_D2 0.1225f
 #define BLINK_BS_TARGET_TURN 0.0873f
@@ -149,6 +153,7 @@ static volatile u32 g_status=STATUS_IDLE;
 static volatile u32 g_blinkNpcEnabled=1u; /* parallel NPC Backstab/Ambush pilot */
 static volatile u32 g_blinkPending=0u,g_blinkResult=0u,g_blinkStarted=0u,g_blinkNotice=0u;
 static volatile u32 g_blinkAttempts=0u,g_blinkPulses=0u,g_blinkCasts=0u,g_blinkAborts=0u;
+static volatile u32 g_blinkFailureReason=0u;
 static float g_blinkX,g_blinkY,g_blinkZ,g_blinkO;
 static float g_blinkTx,g_blinkTy,g_blinkTz,g_blinkTo;
 static volatile u32 g_count=0u;
@@ -570,7 +575,15 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  if(!finitef(px)||!finitef(py)||!finitef(pz)||!finitef(po)||
     !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))return 0u;
  dx=px-tx;dy=py-ty;dz=pz-tz;
- if(dx*dx+dy*dy>REAL_MAX_RANGE_SQ||dz>2.5f||dz< -2.5f)return 0u;
+ if(g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&npcBlinkSpell(spell)){
+  /* A physical NPC Blink may begin outside native melee. Other opener
+     paths keep the old range check. Do not forward an unprimed CMSG when
+     an otherwise eligible Blink request is outside its own test envelope. */
+  if(dx*dx+dy*dy>BLINK_BS_MAX_TARGET_D2||
+     dz>BLINK_BS_MAX_DZ||dz< -BLINK_BS_MAX_DZ){
+   g_skipNativeGcdCurrent=1u;++g_busyDrops;return 1u;
+  }
+ }else if(dx*dx+dy*dy>REAL_MAX_RANGE_SQ||dz>2.5f||dz< -2.5f)return 0u;
  lo=read32(tg+OBJ_LO);hi=read32(tg+OBJ_HI);
  if((!lo&&!hi)||lo!=read32(TARGET_LO)||hi!=read32(TARGET_HI))return 0u;
  a=angle(to+PI_F);
@@ -618,6 +631,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
   g_blinkX=x;g_blinkY=y;g_blinkZ=z;g_blinkO=o;
   g_blinkTx=tx;g_blinkTy=ty;g_blinkTz=tz;g_blinkTo=to;
   g_blinkPending=1u;g_blinkResult=0u;g_blinkStarted=GetTickCount();
+  g_blinkFailureReason=0u;
   g_castActive=0u;g_sendPending=0u;g_resultPending=0u;
   g_retryPending=0u;g_deferredGcdValid=0u;g_needsRestore=0u;
   *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
@@ -696,7 +710,7 @@ static void STDCALL observeServerFailure(u32 spell,u32 reason){
  if(g_blinkResult){
   /* No automatic second jump or synthetic rear retries after Blink. */
   g_blinkResult=0u;g_retryPending=0u;g_savedValid=0u;
-  g_blinkNotice=4u;return;
+  g_blinkFailureReason=reason;g_blinkNotice=4u;return;
  }
  if(reason!=0x33u&&reason!=0x7Cu){
   g_savedValid=0u;g_castUntil=now+50u;return;
@@ -1115,7 +1129,7 @@ static void autoRearTick(u32 now){
 }
 #endif
 /* One bounded physical blink attempt, then ONE preserved Backstab/Ambush CMSG.
-   A stable local XYZ after 125 ms is NOT a server acknowledgement: verify
+   A stable local XYZ after 50 ms is NOT a server acknowledgement: verify
    server behavior in game. No spoof fallback or repeated cast is triggered. */
 static void tickPhysicalBlink(u32 now){
  u32 pl,tg,sz,i,header[6],arg;
@@ -1169,18 +1183,26 @@ abort_blink:
  g_castPlayer=0u;g_castTarget=0u;g_status=STATUS_IDLE;
  releaseRear();++g_blinkAborts;g_blinkNotice=2u;
 }
-/* Chat only from the existing window tick; never from cast packet hook. */
+/* Chat only from the existing window tick; never from cast packet hook.
+   Failure codes are numeric diagnostics, not a claim of server acceptance. */
+static char* rearTraceCat(char*p,const char*s);
+static char* rearTraceDecimal(char*p,u32 v);
 static void publishBlinkNotice(void){
  static const u8 sig[]={0x56u,0x6Au,0x00u,0x8Bu,0xF1u,0x52u,0x56u,0xE8u};
  typedef u32 (__fastcall *BlinkScriptFn)(const char*,const char*);
- const char*lua;u32 i,n=g_blinkNotice;
+ const char*lua;u32 i,n=g_blinkNotice;char detail[220],*end;
  if(!n)return;
  for(i=0u;i<(u32)sizeof(sig);++i)
   if(*(volatile u8*)(REAR_TRACE_SCRIPT_EXECUTE+i)!=sig[i])return;
  if(n==1u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] pulse sent, waiting for stable landing') end";
  else if(n==2u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] ABORT: position/target changed; opener not sent') end";
  else if(n==3u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] opener sent ONCE after local position check; server outcome unverified') end";
- else lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] server rejected opener; no automatic retry') end";
+ else {
+  end=rearTraceCat(detail,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] server rejected opener: reason=");
+  end=rearTraceDecimal(end,g_blinkFailureReason);
+  end=rearTraceCat(end,"; no automatic retry') end");
+  *end=0;lua=detail;
+ }
  g_blinkNotice=0u;
  ((BlinkScriptFn)REAR_TRACE_SCRIPT_EXECUTE)(lua,"WoW112Blink");
 }
@@ -1288,6 +1310,7 @@ __declspec(dllexport) u32 STDCALL PVERear360_GetBlinkAttempts(void){return g_bli
 __declspec(dllexport) u32 STDCALL PVERear360_GetBlinkPulses(void){return g_blinkPulses;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetBlinkCasts(void){return g_blinkCasts;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetBlinkAborts(void){return g_blinkAborts;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetBlinkFailureReason(void){return g_blinkFailureReason;}
 /* Publish only from the already-existing game-window tick. Counter changes are
    asynchronous observations, not individually attributed server cast outcomes. */
 static char* rearTraceCat(char*p,const char*s){while(*s)*p++=*s++;return p;}
