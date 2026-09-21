@@ -389,9 +389,15 @@ function lazyScript.Action:IsUsable(sayNothing)
             end
         end
     end
-    if self.code == "kick" and lazyScript.interrupt and
-       lazyScript.interrupt.NativeKickOwner and lazyScript.interrupt.NativeKickOwner() then
-        return false -- Native AutoKick is sole automatic Kick owner.
+    if self.code == "kick" then
+        -- Mandatory even for custom forms without ifTargetIsCasting:
+        -- no chat-only or completed-cast Kick can reach CastSpell/UseAction.
+        if not lazyScript.interrupt or
+           not lazyScript.interrupt.NativeFresh() or
+           lazyScript.interrupt.NativeKickOwner() or
+           not lazyScript.interrupt.TargetIsCasting() then
+            return false
+        end
     end
 	-- Run this here to make Action:Use quicker by not always having to search the spell book
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(sayNothing)

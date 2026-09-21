@@ -79,6 +79,11 @@ function I.TargetIsCasting(nameRegex)
     -- Fail closed: chat start messages alone never authorize a Kick.
     -- The current selected target must have an ongoing native cast/channel.
     if not I.NativeFresh() or n.spell == 0 or n.kind == 0 then return false end
+    -- Avoid repeated Kick on the same still-active native cast when the
+    -- rotation key is pressed rapidly; a new GUID/spell can fire immediately.
+    if I.lastAttempt and I.lastAttempt.action == "kick" and
+       I.lastAttempt.guid == n.guid and I.lastAttempt.spell == n.spell and
+       now - I.lastAttempt.at < 0.12 then return false end
     -- 65535 is "unknown remaining", not 65.5 seconds of cast. The native
     -- unit slot must still be live; never infer activity from a cached time.
     if n.kind == 1 and n.remaining ~= 65535 and n.remaining <= 250 then
