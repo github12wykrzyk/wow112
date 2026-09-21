@@ -32,6 +32,13 @@ jobs:
           python tools/verify_parallel_gui_abi.py
           if ($LASTEXITCODE -ne 0) { throw "Parallel GUI Win32 ABI preflight failed" }
 
+      - name: Audit registered Parallel DLL hook ownership and arbitration
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          python tools/verify_parallel_dependency_registry.py
+          if ($LASTEXITCODE -ne 0) { throw "Parallel DLL conflict audit failed" }
+
       - name: Fail closed on unapproved candidate source drift
         shell: pwsh
         run: |
@@ -274,6 +281,8 @@ jobs:
             dist/candidate_summary.json
             dist/final_package_verification.json
             dist/candidate_attestation.json
+            dist/dll_conflict_audit.json
+            dist/parallel_gui_regression.json
             dist/*_build.json
           if-no-files-found: error
           compression-level: 0

@@ -5,6 +5,7 @@ The Windows x86 compiler is still authoritative. This fast check reports a
 specific ABI mismatch early, before a candidate can be advertised as ready.
 """
 from pathlib import Path
+import json
 import re
 import sys
 
@@ -71,6 +72,70 @@ def main():
     else:
         print("ERROR: unrecognized control-parent layout; cannot verify click routing")
         return 1
+    # Include the actual base render-loop wiring: merely declaring the GUI
+    # functions in the wrapper does not prove they are ever invoked.
+    base = (SOURCE.parent / "WoWPlayerESP_v1_2_range_sweep.c").read_text(encoding="utf-8")
+    required_base = ("static void parallel_gui_tick(void);",
+                     "static void parallel_gui_destroy(void);",
+                     "    parallel_gui_tick();", "    parallel_gui_destroy();")
+    if any(base.count(token) != 1 for token in required_base):
+        print("ERROR: ESP base render-loop GUI tick or teardown is missing/duplicated")
+        return 1
+    if "pump_overlay_messages();\n    parallel_gui_tick();" not in base:
+        print("ERROR: GUI tick is no longer integrated with ESP overlay message pump")
+        return 1
+    # The panel buttons all notify their immediate parent. A tab only changes
+    # visibility; it must not steal WM_COMMAND routing from the root panel.
+    for token in (
+        'g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd',
+        'g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd',
+        'g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd',
+        'g_ui_speedfloor_check=ui_button(g_parallel_ui_hwnd',
+        'g_ui_hostile_guard_check=ui_button(g_parallel_ui_hwnd',
+        'g_ui_pp_check=ui_button(g_parallel_ui_hwnd',
+        'g_ui_junkbox_check=ui_button(g_parallel_ui_hwnd',
+        'ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_check)',
+        'ui_add_to_page(UI_TAB_ROGUE,g_ui_junkbox_check)',
+        'if(id>=201u && id<=203u)',
+        'ui_set_page(id-201u);return 0;',
+    ):
+        if token not in text:
+            print("ERROR: GUI control creation/tab routing regression:", token)
+            return 1
+    if not all(token in text for token in (
+        'g_parallel_gui_open=g_parallel_gui_open?0u:1u;',
+        'if(!game || !IsWindow(game) || !g_parallel_gui_open)',
+        'if(!g_ui_shown || !IsWindowVisible(g_parallel_ui_hwnd))',
+        'ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);',
+        'ShowWindow(g_parallel_ui_hwnd,SW_HIDE);',
+        'g_ui_current_tab=page;',
+        'if(g_ui_prev)',
+        'DestroyWindow(g_parallel_ui_hwnd);',
+        'g_ui_pp_check=NULL;g_ui_junkbox_check=NULL;',
+    )):
+        print("ERROR: Insert/open/close/recreate or GUI state retention guard failed")
+        return 1
+    hook = text.split("static LONG WINAPI chal_game_wndproc(", 1)[1].split(
+        "static DWORD WINAPI EspBgWorker(", 1)[0]
+    if not all(token in hook for token in (
+        'g_challenge_prev_wndproc)',
+        'CallWindowProcA(g_challenge_prev_wndproc, hwnd, msg, wParam, lParam)',
+        'if (chal_hook_is_current()) return TRUE;',
+        'if (!chal_release_for_migration()) return FALSE;',
+        'if ((WNDPROC32)(DWORD)oldProc == chal_game_wndproc) return FALSE;',
+        'if ((WNDPROC32)(DWORD)current != chal_game_wndproc)',
+        'if ((WNDPROC32)(DWORD)current == chal_game_wndproc)',
+    )):
+        print("ERROR: game WndProc chain/duplicate install/migration guard failed")
+        return 1
+    Path("dist").mkdir(exist_ok=True)
+    Path("dist/parallel_gui_regression.json").write_text(
+        json.dumps({"result": "PASS", "scope": "source/Win32 ABI and render-loop wiring",
+                    "game_runtime_tested": False, "insert": True,
+                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203],
+                    "wndproc_chain": True, "render_tick_and_destroy": True},
+                   indent=2) + "\n", encoding="utf-8")
+    print("PARALLEL_GUI_REGRESSION: PASS (source guards only; in-game test required)")
     print("PARALLEL_GUI_WIN32_ABI: PASS (CreateFontA prototype and %d calls)" % (len(calls)-1))
     return 0
 

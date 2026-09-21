@@ -76,6 +76,19 @@ def main():
             set(report.get("candidate_required_modules", [])),
             "companion module metadata does not match final ZIP")
 
+    gui_result = audit_result = None
+    if args.branch == "parallel":
+        gui_result = load(ROOT / "dist/parallel_gui_regression.json")
+        audit_result = load(ROOT / "dist/dll_conflict_audit.json")
+        require(gui_result.get("result") == "PASS"
+                and gui_result.get("game_runtime_tested") is False,
+                "Parallel GUI regression guards were not executed")
+        require(audit_result.get("result") == "PASS"
+                and audit_result.get("branch") == args.branch
+                and audit_result.get("commit_sha") == args.sha
+                and audit_result.get("game_runtime_tested") is False,
+                "Parallel DLL ownership audit is missing or belongs to another commit")
+
     builds = summary.get("audit_builds", [])
     require(all(row.get("pe_machine") == "0x014C" for row in builds),
             "an audited active module is not x86")
@@ -87,6 +100,10 @@ def main():
         "package_size": size,
         "active_dlls": report.get("dlls", []),
         "built_native_module_count": len(builds),
+        "gui_regression": "STATIC_SOURCE_GUARDS_PASS" if gui_result else "NOT_APPLICABLE",
+        "dll_conflict_audit": "REGISTERED_SOURCE_EVIDENCE_PASS" if audit_result else "NOT_APPLICABLE",
+        "known_limitations": audit_result.get("limitations", []) if audit_result else [],
+
         "source_check": "SOURCE_CHECK_PASS",
         "native_build": "X86_BUILD_PASS" if builds else "X86_BUILD_NOT_REQUIRED",
         "package_status": "PACKAGE_VERIFIED",
@@ -94,6 +111,10 @@ def main():
         "game_test_accepted": False,
         "result": "PASS",
     }
+    if args.branch == "parallel":
+        summary["gui_regression"] = gui_result
+        summary["dll_conflict_audit"] = audit_result
+        (ROOT / args.summary).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     dest = ROOT / args.output
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")

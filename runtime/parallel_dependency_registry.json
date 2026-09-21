@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "branch": "parallel",
+  "wow_build": 5875,
+  "scope": "evidence-based subset; not a proof of live Win32 or game behavior",
+  "active_loader_manifest": "runtime/work_base_dlls.txt",
+  "hooks": [
+    {
+      "resource": "wow5875:0x00600ACA:movement_send_call",
+      "policy": "ordered_chain",
+      "owners": [
+        {
+          "module": "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll",
+          "source": "src/LongPickPocket/WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025_RECONSTRUCTED.c",
+          "evidence": [
+            "#define WOW_MOVE_CALLSITE        0x00600ACAu",
+            "PatchRel32(WOW_MOVE_CALLSITE,0xE8",
+            "g_nextMove=target"
+          ]
+        },
+        {
+          "module": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
+          "source": "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
+          "supporting_source": "src/MovementCore/WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c",
+          "evidence": [
+            "#define ADDR_MOVE_SEND_CALL        0x00600ACAu",
+            "g_nextMoveTarget=t;",
+            "PCall(ADDR_MOVE_SEND_CALL,(DWORD)(LPVOID)&MovementCore_MoveWrapper)",
+            "DecodeLongPPMoveHook(t,"
+          ]
+        }
+      ]
+    },
+    {
+      "resource": "wow5875:game_window:WndProc",
+      "policy": "chainable",
+      "owners": [
+        {
+          "module": "WoWPlayerESP_v1_2_range_sweep.dll",
+          "source": "src/WoWPlayerESP/WoWPlayerESP_v1_3_CHALLENGES.c",
+          "evidence": [
+            "static LONG WINAPI chal_game_wndproc(",
+            "g_challenge_prev_wndproc",
+            "CallWindowProcA(g_challenge_prev_wndproc",
+            "if (chal_hook_is_current()) return TRUE;",
+            "if (!chal_release_for_migration()) return FALSE;"
+          ]
+        }
+      ]
+    }
+  ],
+  "arbitrated_writers": [
+    {
+      "resource": "synthetic_rear_movement",
+      "provider_module": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
+      "provider_source": "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
+      "consumer_module": "WoWPVERear360_5875_v1.dll",
+      "consumer_source": "src/PVERear360/WoWPVERear360_5875_v1.c",
+      "required_exports": [
+        "MovementCore_CoordFlags",
+        "MovementCore_CoordAcquireRear",
+        "MovementCore_CoordReleaseRear"
+      ],
+      "consumer_evidence": [
+        "if(!core)return 1;",
+        "if(!flags)return 1;",
+        "if(!acquire||!acquire(spell))return 0;",
+        "if(release)release();"
+      ]
+    }
+  ],
+  "exclusions": [
+    "Exact-binary and transient companion modules without source-backed hook declarations are not certified by this registry.",
+    "The verifier cannot prove real runtime load order, Windows subclass ownership or in-game movement arbitration."
+  ]
+}
