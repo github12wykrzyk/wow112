@@ -90,3 +90,22 @@ normal movement override, server-side orientation/range and cast result.
 Test a stationary hostile NPC from front/side before a moving NPC, then
 confirm PP/AutoLoot, crafting/channeling and BG player combat remain intact.
 Never promote solely on heartbeat or cast-prime counter growth.
+
+## PvE stationary NPC Backstab — same-call send experiment
+
+The parallel-only PvE Rear candidate sends the *initial* NPC Backstab/Ambush
+CMSG synchronously within the native SendCast hook, immediately after the paired
+rear movement heartbeats. The previous parallel variant deferred this initial
+CMSG by 100 ms, unlike the earlier work lineage; that gap could permit
+intervening movement before the server's rear-position check. PvP and positional
+failure retries retain their existing timing. During an unresolved PvE cast,
+the bounded 100 ms rear refresh remains active but is not proof of server
+position acceptance. The native GCD executes normally for the synchronous
+initial PvE send; deferred PvP sends retain their separate GCD path.
+
+In game: use a stationary NPC with Backstab repeatedly from the front,
+then report both actual hits and any `You must be behind your target` error.
+In Insert -> STATUS capture Rear360 status + Try/prime/sent/GO/posfail/retry/
+busy/aborted counters after testing. Also verify Auto PickPocket, crafting/
+channeling, and no rubber-banding. Do not promote this experiment to main
+without user-accepted in-game evidence.

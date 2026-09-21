@@ -364,7 +364,7 @@ static void refreshActiveRear(u32 now){
    Backstab/Ambush. Cast clone, pair of heartbeats and the cast are sent
    synchronously before the original call could send the unprimed position. */
 static u32 STDCALL primeCast(u32 spell,u32 store){
- u32 pl,tg,lo,hi,sz,read,base,buf,i;
+ u32 pl,tg,lo,hi,sz,read,base,buf,i,now;
  u32 *original=(u32*)store,copyHeader[6];
  u8 copyPacket[MAX_CAST_PACKET],*src;
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
@@ -455,11 +455,25 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  nativeHeartbeat(pl);nativeHeartbeat(pl);
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
- g_skipNativeGcdCurrent=1u;
  g_lastRearRefresh=GetTickCount();
  g_needsRestore=1u;g_status=STATUS_ACTIVE;
  ++g_count;
- return 1u; /* defer cloned CMSG and GCD until rear pose has settled */
+ if(g_savedType==3u){
+  /* Work's accepted PvE path sent heartbeat -> cast synchronously from the
+     native SendCast hook. The old parallel 100 ms gap let intervening real
+     movement/target facing invalidate the server-side rear check. Preserve
+     this same-call ordering while keeping the immutable cloned CDataStore.
+     PvP retains its existing deferred path. */
+  now=GetTickCount();
+  g_sendPending=0u;g_resultPending=1u;
+  g_lastSendTick=now;g_lastRearRefresh=now;g_castUntil=now+g_period;
+  sendStore((u32)copyHeader);
+  ++g_castCount;
+  g_skipNativeGcdCurrent=0u; /* the original callsite starts GCD normally */
+  return 1u; /* original unprimed CMSG is always suppressed */
+ }
+ g_skipNativeGcdCurrent=1u;
+ return 1u; /* PvP retains its existing deferred cloned CMSG and GCD */
 }
 __declspec(naked) static void castChainHook(void){
  __asm{
