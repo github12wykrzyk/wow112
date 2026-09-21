@@ -25,6 +25,7 @@
 
 #include "../common/W112ControlAPI.h"
 #if defined(_MSC_VER)
+#pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordFlags=_MovementCore_CoordFlags@0")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordAcquireRear=_MovementCore_CoordAcquireRear@4")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordReleaseRear=_MovementCore_CoordReleaseRear@0")

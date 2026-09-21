@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import zipfile
@@ -25,6 +26,34 @@ CANONICAL = (
     "src/PVERear360/WoWPVERear360_5875_v1.c",
     "src/common/W112ControlAPI.h",
 )
+
+def exported_names(path):
+    data = path.read_bytes()
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    opt = pe + 24
+    section_table = opt + struct.unpack_from("<H", data, pe + 20)[0]
+    section_count = struct.unpack_from("<H", data, pe + 6)[0]
+    def offset(rva):
+        for i in range(section_count):
+            row = section_table + i * 40
+            virtual_size, virtual_addr, raw_size, raw_ptr = struct.unpack_from("<IIII", data, row + 8)
+            if virtual_addr <= rva < virtual_addr + max(virtual_size, raw_size):
+                return raw_ptr + rva - virtual_addr
+        raise SystemExit("unmapped PE export RVA")
+    export_rva = struct.unpack_from("<I", data, opt + 96)[0]
+    if not export_rva:
+        raise SystemExit("consolidated Rogue DLL has no PE export directory")
+    directory = offset(export_rva)
+    count = struct.unpack_from("<I", data, directory + 24)[0]
+    names = offset(struct.unpack_from("<I", data, directory + 32)[0])
+    result = set()
+    for i in range(count):
+        name_offset = offset(struct.unpack_from("<I", data, names + 4 * i)[0])
+        name_end = data.find(bytes([0]), name_offset)
+        if name_end < 0:
+            raise SystemExit("unterminated PE export name")
+        result.add(data[name_offset:name_end].decode("ascii"))
+    return result
 
 def build(output):
     vcvars, _ = find_vcvars32()
@@ -49,6 +78,15 @@ def build(output):
     info = pe_info(output)
     if info["machine_hex"] != "0x014C" or not info["entrypoint_rva"] or not info["has_import_directory"]:
         raise SystemExit("consolidated Rogue DLL failed PE32/x86/Win32-import gate")
+    exports = exported_names(output)
+    required = {
+        "W112_Control_GetModuleV1", "MovementCore_CoordFlags",
+        "MovementCore_CoordAcquireRear", "MovementCore_CoordReleaseRear",
+        "MovementCore_GetAltPriorityInstalled", "PVERear360_GameWindowTick",
+        "PVERear360_GetStatus", "PVERear360_GetPulseCount",
+    }
+    if required - exports:
+        raise SystemExit("consolidated Rogue DLL missing ABI exports: " + ", ".join(sorted(required - exports)))
     return info
 
 def main():
