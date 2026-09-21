@@ -68,6 +68,8 @@ typedef s32 (THISCALL *ReactionFn)(u32,u32);
 #define PAGE_EXECUTE_READWRITE 0x40u
 #define MAX_CAST_PACKET 512u
 #define CAST_HOLD_MS 350u
+/* Bound an opener transaction even if LazyScript repeats every 100 ms. */
+#define CAST_MAX_LEASE_MS 1000u
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
@@ -99,7 +101,7 @@ static volatile HWND32 g_timerWindow=0;
 static volatile u32 g_stop=0u;
 static volatile u32 g_lastTick=0u;
 static volatile u32 g_needsRestore=0u;
-static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u;
+static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
 static volatile u32 g_rearLease=0u,g_castInstalled=0u,g_moveInstalled=0u;
 static volatile u32 g_suppressCast=0u,g_prevMoveTarget=0u;
@@ -227,9 +229,22 @@ static int moveHasExtra(u32 op){
    Preserve its old target/LongPP chain and change only ordinary XYZ/O while
    an NPC opener is actually in flight. No new movement format/opcodes. */
 static void STDCALL rewriteMovement(u32 store){
- u32 *ds=(u32*)store,size,buf,base,op,off;
+ u32 *ds=(u32*)store,size,buf,base,op,off,tg;
  u8 *p;
+ float tx,ty,tz,to,a,x,y,z,o;
  if(!g_castActive||!g_rearLease||!store)return;
+ /* Never keep sending a stale pose after the NPC moves, turns or the user
+    changes target. Preserve every other movement packet unchanged. */
+ if(g_castPlayer!=localPlayer()||
+    (tg=selectedTarget())==0u||tg!=g_castTarget||
+    read32(tg+OBJ_TYPE)!=3u)return;
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);
+ tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ if(!finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))return;
+ a=angle(to+PI_F);
+ x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
+ z=tz;o=angle(a+PI_F);
+ if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return;
  size=ds[4];buf=ds[1];base=ds[2];
  if(!buf||buf<base||size<28u||size>0x10000u)return;
  p=(u8*)(buf-base);op=*(u32*)p;off=4u;
@@ -237,8 +252,8 @@ static void STDCALL rewriteMovement(u32 store){
  if(moveHasGuid(op))off+=8u;
  if(moveHasExtra(op))off+=4u;
  if(size<off+24u)return;
- *(float*)(p+off+8u)=g_rearX;*(float*)(p+off+12u)=g_rearY;
- *(float*)(p+off+16u)=g_rearZ;*(float*)(p+off+20u)=g_rearO;
+ *(float*)(p+off+8u)=x;*(float*)(p+off+12u)=y;
+ *(float*)(p+off+16u)=z;*(float*)(p+off+20u)=o;
 }
 __declspec(naked) static void moveChainHook(void){
  __asm{
@@ -262,10 +277,17 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  u8 copyPacket[MAX_CAST_PACKET],*src;
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
  s32 reaction;
- if(!g_enabled||!g_castInstalled||!g_moveInstalled||g_stop||g_castActive||
-    !behindSpell(spell)||!store||workMovementBusy())return 0u;
+ if(!g_enabled||!g_castInstalled||!g_moveInstalled||g_stop||
+    !behindSpell(spell)||!store)return 0u;
  pl=localPlayer();tg=selectedTarget();
  if(!pl||!tg||pl==tg||read32(tg+OBJ_TYPE)!=3u)return 0u;
+ /* A previous opener already holds MovementCore's rear lease. Re-prime a
+    fresh cast for the SAME NPC instead of sending it at the unprimed real
+    position; never steal a lease from PP, gather or an unrelated cast. */
+ if(g_castActive){
+  if(!g_rearLease||g_castPlayer!=pl||g_castTarget!=tg||
+     (s32)(GetTickCount()-(g_castStarted+CAST_MAX_LEASE_MS))>=0)return 0u;
+ }else if(workMovementBusy())return 0u;
  reaction=((ReactionFn)REACTION_FN)(pl,tg);
  if(reaction<1||reaction>3)return 0u;
  if(read32(CASTING_SPELL_ID) && read32(CASTING_SPELL_ID)!=spell)return 0u;
@@ -284,12 +306,13 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  a=angle(to+PI_F);
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return 0u;
- if(!acquireRear(spell))return 0u;
+ if(!g_castActive && !acquireRear(spell))return 0u;
  for(i=0u;i<sz;++i)copyPacket[i]=src[i];
  for(i=0u;i<6u;++i)copyHeader[i]=original[i];
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
+ if(!g_castActive)g_castStarted=GetTickCount();
  g_castActive=1u;g_castUntil=GetTickCount()+g_period;
  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
  *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
@@ -395,7 +418,12 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   return;
  }
  if(g_castActive){
-  if((s32)(now-g_castUntil)<0)return;
+  /* An NPC turn is handled by movement rewriting and the next cast re-prime;
+     target/world changes and disable retire the lease without stale sends. */
+  if(g_enabled&&g_castPlayer==localPlayer()&&
+     g_castTarget==selectedTarget()&&
+     (s32)(now-g_castUntil)<0&&
+     (s32)(now-(g_castStarted+CAST_MAX_LEASE_MS))<0)return;
   pl=g_castPlayer;
   g_castActive=0u;g_castPlayer=0u;g_castTarget=0u;
   releaseRear();
