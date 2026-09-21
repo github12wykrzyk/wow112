@@ -43,6 +43,9 @@ static volatile DWORD g_altPriorityDirectPackets=0u;
 static volatile DWORD g_altPriorityDirectRestores=0u;
 static volatile DWORD g_altPriorityQuietBypasses=0u;
 static volatile DWORD g_altPriorityForceDirect=0u;
+static volatile DWORD g_stepMoveInjecting=0u;
+static volatile DWORD g_stepActive=0u;
+
 /* Preserve a manual LALT edge while PvERear owns its short rear lease or a
  * cast/channel guard is active. Never steal an active pose or cast. */
 static volatile DWORD g_altPriorityPendingUntil=0u;
@@ -68,6 +71,7 @@ static volatile DWORD g_abCapBlockMovementCurrent=0u;
 #define COORD_GATHER 0x08u
 #define COORD_REAR 0x10u
 #define COORD_MANUAL_PENDING 0x20u
+#define COORD_STEP_MOVE 0x40u
 static volatile DWORD g_coordRearUntil=0u;
 /* A short rear lease gates only competing synthetic movement transformations. */
 static volatile DWORD g_rearPriorityMoveCurrent=0u,g_rearPriorityDirectPackets=0u;
@@ -89,11 +93,12 @@ __declspec(dllexport) DWORD __stdcall MovementCore_CoordFlags(void){
  if(g_gatherActive||g_gatherLootWait)flags|=COORD_GATHER;
  if(CoordRearOwned())flags|=COORD_REAR;
  if(g_altPriorityPendingUntil)flags|=COORD_MANUAL_PENDING;
+ if(g_stepMoveInjecting||g_stepActive)flags|=COORD_STEP_MOVE;
  return flags;
 }
 __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell){
  DWORD sid;
- if(!g_loginGuardReady||(MovementCore_CoordFlags()&0x3Fu))return 0u;
+ if(!g_loginGuardReady||(MovementCore_CoordFlags()&0x7Fu))return 0u;
  sid=*(volatile DWORD*)ADDR_CASTING_SPELLID;
  if(sid&&sid!=spell)return 0u;
  if(!GT())return 0u;
@@ -230,6 +235,8 @@ alt_rear_guarded:
         popad
         popfd
 
+        cmp  dword ptr [g_stepMoveInjecting],0
+        jne  alt_direct_packet
         cmp  dword ptr [g_altPriorityForceDirect],0
         jne  alt_direct_packet
         cmp  dword ptr [g_injecting],0
@@ -315,6 +322,7 @@ static void AltPriority_Stop(BOOL sendReal)
 static void AltPriority_Start(DWORD now)
 {
     BYTE*p=LocalPlayer();
+    g_stepActive=0u;
     if(!p)return;
     /* Abort any gather ownership before LALT starts. GatherStop clears spoof
        state before its optional real heartbeat, so the first LALT injection
@@ -496,6 +504,106 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
         g_loginGuardReady=1u;
 }
 
+/*
+ * OPTIONAL CTM step-movement experiment; defaults OFF (F6 toggles).
+ * Uses the native ground-click destination rather than an extra WndProc/raycast
+ * or a second movement hook. Addresses are provisional evidence for 1.12.1
+ * from https://www.elitepvpers.com/forum/wow-bots/2394322-1-12-1-ctm.html
+ * (quoted offsets 0x84D888/890/894/898 rebased by the 0x400000 image base).
+ * Not verified against the patched WoW.exe. Fail closed on uncommitted memory,
+ * unrecognized action, invalid coordinates, competing owner and combat.
+ * Only the player's own explicit F6 opt-in plus RMB ground-click starts a step.
+ */
+#define W112_STEP_ACTION_ADDR 0x00C4D888u
+#define W112_STEP_Y_ADDR      0x00C4D890u
+#define W112_STEP_X_ADDR      0x00C4D894u
+#define W112_STEP_Z_ADDR      0x00C4D898u
+#define W112_STEP_F6          0x75u
+#define W112_STEP_RBUTTON     0x02u
+#define W112_STEP_GAP_MS      50u
+#define W112_STEP_MAX_MS      4500u
+#define W112_STEP_MAX_D2      100.0f
+#define W112_STEP_SIZE        0.50f
+typedef struct W112_STEP_MBI {
+    DWORD base,allocation_base,allocation_protect,region_size,state,protect,type;
+} W112_STEP_MBI;
+__declspec(dllimport) DWORD __stdcall VirtualQuery(const void*,void*,DWORD);
+static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_stepRmbWasDown=0u;
+static DWORD g_stepStart=0u,g_stepLast=0u;
+static float g_stepDestX=0.0f,g_stepDestY=0.0f,g_stepDestZ=0.0f;
+static float g_stepPrevX=0.0f,g_stepPrevY=0.0f,g_stepPrevZ=0.0f;
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[CTM Step]|r ON - F6 toggles, click ground to start, F7 aborts') end";
+static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[CTM Step]|r OFF') end";
+static DWORD W112_StepCtmWritable(void)
+{
+    W112_STEP_MBI mbi;DWORD from,to,protection;
+    if(VirtualQuery((const void*)W112_STEP_ACTION_ADDR,&mbi,sizeof(mbi))!=sizeof(mbi))
+        return 0u;
+    from=mbi.base;to=from+mbi.region_size;protection=mbi.protect&0xFFu;
+    if(to<from||from>W112_STEP_ACTION_ADDR||to<W112_STEP_Z_ADDR+4u||
+       mbi.state!=0x1000u||(mbi.protect&0x100u)||
+       !(protection==0x04u||protection==0x08u||
+         protection==0x40u||protection==0x80u))return 0u;
+    return 1u;
+}
+static DWORD W112_StepAvailable(BYTE *p)
+{
+    if(!g_stepEnabled||!g_loginGuardReady||!Ptr(p)||
+       (MovementCore_CoordFlags()&0x3Fu)||
+       g_abCapGuardActive||Combat(p)||LongPPActive()||LongPPInjecting()||
+       *(volatile DWORD*)ADDR_CASTING_SPELLID||g_gatherActive||g_gatherLootWait)return 0u;
+    return 1u;
+}
+static void W112_StepTick(BYTE *p,DWORD now)
+{
+    DWORD right=(GK()(W112_STEP_RBUTTON)&(short)0x8000)?1u:0u;
+    DWORD clickReleased=g_stepRmbWasDown&&!right;
+    float px,py,pz,dx,dy,dz,largest,scale,nx,ny,nz,delta;
+    g_stepRmbWasDown=right;
+    if(!g_stepEnabled||!p||!g_loginGuardReady){g_stepActive=0u;return;}
+    if(!W112_StepAvailable(p)){g_stepActive=0u;return;}
+    px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);
+    if(!W112_Q_PosValid(px,py,pz)){g_stepActive=0u;return;}
+    if(clickReleased&&!W112_Q_ChatHasFocus()&&W112_StepCtmWritable()&&
+       *(volatile DWORD*)W112_STEP_ACTION_ADDR==4u){
+        float x=*(volatile float*)W112_STEP_X_ADDR;
+        float y=*(volatile float*)W112_STEP_Y_ADDR;
+        float z=*(volatile float*)W112_STEP_Z_ADDR;
+        float ux=x-px,uy=y-py,uz=z-pz;
+        if(W112_Q_PosValid(x,y,z)&&ux*ux+uy*uy<=W112_STEP_MAX_D2&&
+           ux*ux+uy*uy>0.25f&&AbsF(uz)<=2.0f){
+            g_stepDestX=x;g_stepDestY=y;g_stepDestZ=z;
+            g_stepPrevX=px;g_stepPrevY=py;g_stepPrevZ=pz;
+            g_stepStart=now;g_stepLast=0u;g_stepActive=1u;
+            /* Cancel only the ground-walk command we just captured. */
+            *(volatile DWORD*)W112_STEP_ACTION_ADDR=0u;
+        }
+    }
+    if(!g_stepActive)return;
+    if((DWORD)(now-g_stepStart)>W112_STEP_MAX_MS){g_stepActive=0u;return;}
+    if(g_stepLast&&(DWORD)(now-g_stepLast)<W112_STEP_GAP_MS)return;
+    dx=px-g_stepPrevX;dy=py-g_stepPrevY;dz=pz-g_stepPrevZ;
+    if(dx*dx+dy*dy+dz*dz>4.0f){g_stepActive=0u;return;}
+    dx=g_stepDestX-px;dy=g_stepDestY-py;dz=g_stepDestZ-pz;
+    if(dx*dx+dy*dy+dz*dz<0.09f){g_stepActive=0u;return;}
+    if(dx*dx+dy*dy>W112_STEP_MAX_D2||AbsF(dz)>2.0f){
+        g_stepActive=0u;return;
+    }
+    largest=AbsF(dx);delta=AbsF(dy);if(delta>largest)largest=delta;
+    delta=AbsF(dz);if(delta>largest)largest=delta;
+    scale=largest>W112_STEP_SIZE?W112_STEP_SIZE/largest:1.0f;
+    nx=px+dx*scale;ny=py+dy*scale;nz=pz+dz*scale;
+    /* One owner, existing 5875 native movement send and direct synthetic path. */
+    g_stepPrevX=nx;g_stepPrevY=ny;g_stepPrevZ=nz;
+    g_stepLast=now;
+    g_stepMoveInjecting=1u;
+    *(float*)(p+OFF_UNIT_X)=nx;
+    *(float*)(p+OFF_UNIT_Y)=ny;
+    *(float*)(p+OFF_UNIT_Z)=nz;
+    ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
+    g_stepMoveInjecting=0u;
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
     DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
@@ -504,7 +612,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     now=GT()();
     p=LocalPlayer();
     W112_LoginGuardTick(p,now);
-    if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;return;}
+    if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;return;}
     PPBlacklistTick(now);
     FlushPendingPPLog();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
@@ -514,8 +622,16 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k10=(GK()(VK_F10)&(short)0x8000)?1u:0u;
     k11=(GK()(VK_F11)&(short)0x8000)?1u:0u;
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
+    {DWORD f6=(GK()(W112_STEP_F6)&(short)0x8000)?1u:0u;
+     if(f6&&!g_stepKey6&&!W112_Q_ChatHasFocus()){
+        g_stepEnabled=g_stepEnabled?0u:1u;
+        g_stepActive=0u;
+        DebugChat(g_stepEnabled?g_stepOnChat:g_stepOffChat);
+     }
+     g_stepKey6=f6;
+    }
 
-    if(k7&&!g_key7){g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
+    if(k7&&!g_key7){g_stepActive=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
     if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
     /* A key edge used to be discarded while PvERear had the rear lease.
@@ -543,6 +659,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         if(!p)g_abCapGuardLastSeen=0u;
     }
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
+    W112_StepTick(p,now);
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         if(!CoordRearOwned()&&(!g_abCapGuardActive||g_gatherActive||g_gatherLootWait))
@@ -853,7 +970,7 @@ BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
     }
     if(r==DLL_PROCESS_DETACH){
         AltPriority_Remove();
-        g_coordRearUntil=0u;
+        g_coordRearUntil=0u;g_stepActive=0u;g_stepEnabled=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);
     }
     return TRUE;
