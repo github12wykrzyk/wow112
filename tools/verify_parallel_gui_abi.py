@@ -35,33 +35,42 @@ def main():
         if argc != 14:
             print("ERROR: CreateFontA declaration/call has", argc, "arguments; expected 14")
             return 1
-    # Regression guard: toggles live inside a child STATIC scroll viewport.
-    # BN_CLICKED is sent to the immediate parent, not to the top-level panel.
-    # If this relay disappears, every ESP/Rogue toggle appears to be stuck.
-    content_proc = text.split("static LONG WINAPI ui_content_wndproc(", 1)
+    # Regression: a control notifies its immediate HWND parent. In the
+    # conservative 3-tab layout that parent is the root window; in the
+    # experimental scrolled layout the viewport must explicitly relay clicks.
+    # Verify the *actual* selected creation path and every live setting ID.
     top_proc = text.split("static LONG WINAPI ui_wndproc(", 1)
-    if len(content_proc) != 2 or len(top_proc) != 2:
-        print("ERROR: Parallel GUI viewport/top-level WndProc missing")
+    if len(top_proc) != 2:
+        print("ERROR: Parallel panel WndProc missing")
         return 1
-    content_body = content_proc[1].split("static void ui_set_page(", 1)[0]
     top_body = top_proc[1].split("static BOOL ui_create(", 1)[0]
-    if not (
-        'ui_button(g_ui_content' in text
-        and 'if(msg==UI_COMMAND)' in content_body
-        and 'return SendMessageA(g_parallel_ui_hwnd,UI_COMMAND,wp,lp);' in content_body
-        and 'if(msg==UI_COMMAND)' in top_body
-        and 'id>=101u && id<=110u' in content_body
-    ):
-        print("ERROR: scroll-viewport BN_CLICKED relay missing; ESP/Rogue toggles would be unclickable")
+    if 'if(msg==UI_COMMAND)' not in top_body:
+        print("ERROR: root UI is missing WM_COMMAND dispatch")
         return 1
     for setting_id in range(101, 111):
-        if 'id==%du' % setting_id not in top_body and not (
-            setting_id in (102, 103, 104) and
-            ('id==%du' % setting_id) in top_body
-        ):
-            print("ERROR: missing live GUI action for control", setting_id)
+        if 'id==%du' % setting_id not in top_body:
+            print("ERROR: root GUI action missing for control", setting_id)
             return 1
-    print("PARALLEL_GUI_CLICK_ROUTING: PASS (viewport -> panel -> 101..110 handlers)")
+    if 'g_ui_checks[i]=ui_button(g_parallel_ui_hwnd' in text:
+        if 'g_ui_pp_check=ui_button(g_parallel_ui_hwnd' not in text or (
+            'g_ui_junkbox_check=ui_button(g_parallel_ui_hwnd' not in text
+        ):
+            print("ERROR: direct-parent GUI has settings with divergent parent")
+            return 1
+        print("PARALLEL_GUI_CLICK_ROUTING: PASS (direct-parent -> handlers 101..110)")
+    elif 'g_ui_checks[i]=ui_button(g_ui_content' in text:
+        content_proc = text.split("static LONG WINAPI ui_content_wndproc(", 1)
+        if len(content_proc) != 2:
+            print("ERROR: scroll viewport has no command relay")
+            return 1
+        content_body = content_proc[1].split("static void ui_set_page(", 1)[0]
+        if 'return SendMessageA(g_parallel_ui_hwnd,UI_COMMAND,wp,lp);' not in content_body:
+            print("ERROR: scroll-viewport WM_COMMAND relay missing")
+            return 1
+        print("PARALLEL_GUI_CLICK_ROUTING: PASS (viewport -> root -> handlers)")
+    else:
+        print("ERROR: unrecognized control-parent layout; cannot verify click routing")
+        return 1
     print("PARALLEL_GUI_WIN32_ABI: PASS (CreateFontA prototype and %d calls)" % (len(calls)-1))
     return 0
 

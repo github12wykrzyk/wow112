@@ -368,28 +368,12 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_CLOSE 0x0010u
 #define UI_SETFONT 0x0030u
 #define UI_SETCHECK 0x00F1u
-#define UI_WIDTH 820
-#define UI_HEIGHT 630
-#define UI_MAX_PAGE_CONTROLS 40u
+#define UI_WIDTH 750
+#define UI_HEIGHT 660
+#define UI_MAX_PAGE_CONTROLS 14u
 #define UI_TAB_ESP 0u
 #define UI_TAB_ROGUE 1u
-#define UI_TAB_MOVEMENT 2u
-#define UI_TAB_STATUS 3u
-#define UI_TAB_SETTINGS 4u
-#define UI_PAGE_COUNT 5u
-#define UI_CONTENT_X 198
-#define UI_CONTENT_Y 96
-#define UI_CONTENT_W 600
-#define UI_CONTENT_H 476
-#define UI_SCROLL_STEP 52
-#define UI_MOUSEWHEEL 0x020Au
-#define UI_VSCROLL 0x0115u
-#define UI_SB_VERT 1
-#define UI_SIF_ALL 0x0017u
-#define UI_SIF_TRACKPOS 0x0010u
-#define UI_WS_VSCROLL 0x00200000u
-#define UI_WS_BORDER 0x00800000u
-#define UI_SWP_NOZORDER 0x0004u
+#define UI_TAB_STATUS 2u
 
 typedef void* HFONT;
 __declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
@@ -406,23 +390,9 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
-struct UIPageItem { HWND hwnd; int x,y,w,h; };
-struct UIScrollInfo {
-    UINT cbSize; UINT fMask; int nMin; int nMax;
-    UINT nPage; int nPos; int nTrackPos;
-};
-__declspec(dllimport) BOOL WINAPI GetWindowRect(HWND,struct RECT32*);
-__declspec(dllimport) BOOL WINAPI ScreenToClient(HWND,struct POINT32*);
-__declspec(dllimport) int WINAPI SetScrollInfo(HWND,int,const struct UIScrollInfo*,BOOL);
-__declspec(dllimport) BOOL WINAPI GetScrollInfo(HWND,int,struct UIScrollInfo*);
-static HWND g_ui_tabs[UI_PAGE_COUNT]={NULL,NULL,NULL,NULL,NULL};
-static struct UIPageItem g_ui_pages[UI_PAGE_COUNT][UI_MAX_PAGE_CONTROLS];
-static DWORD g_ui_page_count[UI_PAGE_COUNT]={0u,0u,0u,0u,0u};
-static int g_ui_scroll[UI_PAGE_COUNT]={0,0,0,0,0};
-static int g_ui_page_h[UI_PAGE_COUNT]={0,0,0,0,0};
-static int g_ui_view_h=UI_CONTENT_H;
-static HWND g_ui_content=NULL;
-static WNDPROC32 g_ui_prev_content=NULL;
+static HWND g_ui_tabs[3]={NULL,NULL,NULL};
+static HWND g_ui_pages[3][UI_MAX_PAGE_CONTROLS];
+static DWORD g_ui_page_count[3]={0u,0u,0u};
 static DWORD g_ui_current_tab=UI_TAB_ESP;
 static HWND g_ui_checks[4]={NULL,NULL,NULL,NULL};
 static HWND g_ui_speedfloor_check=NULL;
@@ -436,7 +406,6 @@ static HWND g_ui_longpp_state=NULL;
 static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL;
-static HWND g_ui_speed_loaded_state=NULL,g_ui_wotf_state=NULL,g_ui_ground_state=NULL;
 static DWORD g_ui_shown=0u;
 /* Stdcall exports may be decorated on Win32/x86. Resolve all supported
    spellings, as the existing ControlHub adapter already does. */
@@ -610,115 +579,40 @@ static void ui_sync_rear(void) {
     p=app_str(p,"Rear 360 PvE/PvP: ");p=app_str(p,desc);
     p=app_str(p,"\r\nTry ");p=app_u32(p,attempts?attempts():0u);
     p=app_str(p," | prime ");p=app_u32(p,pulses);
-    p=app_str(p,"\r\nsent ");p=app_u32(p,tx?tx():0u);
+    p=app_str(p," | sent ");p=app_u32(p,tx?tx():0u);
     p=app_str(p," | GO ");p=app_u32(p,go?go():0u);
-    p=app_str(p,"\r\nposfail ");p=app_u32(p,err?err():0u);
+    p=app_str(p," | posfail ");p=app_u32(p,err?err():0u);
     p=app_str(p," | retry ");p=app_u32(p,retry?retry():0u);
-    p=app_str(p,"\r\nbusy ");p=app_u32(p,busy?busy():0u);
+    p=app_str(p," | busy ");p=app_u32(p,busy?busy():0u);
     p=app_str(p," | cancel ");p=app_u32(p,aborted?aborted():0u);*p=0;
     SetWindowTextA(g_ui_rear_state,buf);
 }
-
-/* A single clipped child viewport owns all scrollable page controls.
-   The sidebar, title and footer remain on the root and never scroll.
-   No new subclass is installed on the game window. */
-static void ui_scroll_to(DWORD page,int position) {
-    DWORD i;
-    int max;
-    struct UIScrollInfo si;
-    if(page>=UI_PAGE_COUNT||!g_ui_content)return;
-    max=g_ui_page_h[page]-g_ui_view_h;
-    if(max<0)max=0;
-    if(position<0)position=0;
-    if(position>max)position=max;
-    g_ui_scroll[page]=position;
-    if(page!=g_ui_current_tab)return;
-    for(i=0u;i<g_ui_page_count[page];++i) {
-        struct UIPageItem *item=&g_ui_pages[page][i];
-        if(item->hwnd)SetWindowPos(item->hwnd,NULL,item->x,
-            item->y-position,item->w,item->h,
-            SWP_NOACTIVATE|UI_SWP_NOZORDER);
-    }
-    si.cbSize=sizeof(si);si.fMask=UI_SIF_ALL;
-    si.nMin=0;si.nMax=g_ui_page_h[page]>0?g_ui_page_h[page]-1:0;
-    si.nPage=(UINT)g_ui_view_h;si.nPos=position;si.nTrackPos=0;
-    SetScrollInfo(g_ui_content,UI_SB_VERT,&si,TRUE);
-}
-static LONG WINAPI ui_content_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
-    /* All ESP/Rogue buttons are children of the clipped scroll viewport.
-       Win32 delivers their BN_CLICKED/WM_COMMAND to that immediate parent,
-       not to the top-level panel where the existing setting handlers live.
-       Route only genuine viewport button clicks to the original dispatch;
-       sidebar buttons still notify the top-level window directly. */
-    if(msg==UI_COMMAND) {
-        DWORD id=wp&0xffffu;
-        DWORD notification=(wp>>16)&0xffffu;
-        if(lp!=0 && notification==0u && id>=101u && id<=110u &&
-           g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd))
-            return SendMessageA(g_parallel_ui_hwnd,UI_COMMAND,wp,lp);
-    }
-    if(msg==UI_VSCROLL) {
-        int p=g_ui_scroll[g_ui_current_tab];
-        UINT code=wp&0xffffu;
-        struct UIScrollInfo si;
-        if(code==0u)p-=UI_SCROLL_STEP;       /* SB_LINEUP */
-        else if(code==1u)p+=UI_SCROLL_STEP;  /* SB_LINEDOWN */
-        else if(code==2u)p-=g_ui_view_h;     /* SB_PAGEUP */
-        else if(code==3u)p+=g_ui_view_h;     /* SB_PAGEDOWN */
-        else if(code==4u||code==5u) {
-            si.cbSize=sizeof(si);si.fMask=UI_SIF_TRACKPOS;
-            if(GetScrollInfo(hwnd,UI_SB_VERT,&si))p=si.nTrackPos;
-        }
-        else if(code==6u)p=0;
-        else if(code==7u)p=g_ui_page_h[g_ui_current_tab];
-        ui_scroll_to(g_ui_current_tab,p);
-        return 0;
-    }
-    if(msg==UI_MOUSEWHEEL) {
-        ui_scroll_to(g_ui_current_tab,g_ui_scroll[g_ui_current_tab]-
-            ((short)((wp>>16)&0xffffu)>0?UI_SCROLL_STEP*3:-UI_SCROLL_STEP*3));
-        return 0;
-    }
-    return g_ui_prev_content?CallWindowProcA(g_ui_prev_content,hwnd,msg,wp,lp):0;
-}
+/* Switching tabs changes only HWND visibility; ESP cache rescans are
+   requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
-    static const char *names[UI_PAGE_COUNT]={"ESP","ROGUE","MOVEMENT","STATUS","SETTINGS"};
+    static const char *tab_names[3][3]={
+        {"[ ESP ]","ROGUE","STATUS"},
+        {"ESP","[ ROGUE ]","STATUS"},
+        {"ESP","ROGUE","[ STATUS ]"}
+    };
     DWORD t,i;
-    if(page>=UI_PAGE_COUNT)return;
+    if(page>UI_TAB_STATUS)return;
     g_ui_current_tab=page;
-    for(t=0u;t<UI_PAGE_COUNT;++t) {
-        if(g_ui_tabs[t]) {
-            char label[28],*p=label;
-            if(t==page)p=app_str(p,"> ");
-            p=app_str(p,names[t]);*p=0;
-            SetWindowTextA(g_ui_tabs[t],label);
-        }
+    for(t=0u;t<3u;++t) {
+        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[page][t]);
         for(i=0u;i<g_ui_page_count[t];++i) {
-            HWND ctl=g_ui_pages[t][i].hwnd;
-            if(ctl)ShowWindow(ctl,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
+            HWND control=g_ui_pages[t][i];
+            if(control)ShowWindow(control,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
         }
     }
-    ui_scroll_to(page,g_ui_scroll[page]);
     if(page==UI_TAB_ESP)ui_sync_esp();
-    else if(page==UI_TAB_ROGUE || page==UI_TAB_MOVEMENT)ui_sync_rogue();
     else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();}
+    else ui_sync_rogue();
 }
 static void ui_add_to_page(DWORD page,HWND control) {
-    struct RECT32 rc;
-    struct POINT32 a,b;
-    struct UIPageItem *item;
-    if(page>=UI_PAGE_COUNT||!control||!g_ui_content)return;
-    if(g_ui_page_count[page]>=UI_MAX_PAGE_CONTROLS)return;
-    if(!GetWindowRect(control,&rc))return;
-    a.x=rc.left;a.y=rc.top;
-    b.x=rc.right;b.y=rc.bottom;
-    if(!ScreenToClient(g_ui_content,&a) ||
-       !ScreenToClient(g_ui_content,&b))return;
-    item=&g_ui_pages[page][g_ui_page_count[page]++];
-    item->hwnd=control;item->x=a.x;item->y=a.y;
-    item->w=b.x-a.x;item->h=b.y-a.y;
-    if(item->y+item->h+24>g_ui_page_h[page])
-        g_ui_page_h[page]=item->y+item->h+24;
+    if(page>UI_TAB_STATUS || !control)return;
+    if(g_ui_page_count[page]<UI_MAX_PAGE_CONTROLS)
+        g_ui_pages[page][g_ui_page_count[page]++]=control;
 }
 static HWND ui_label(HWND parent,const char* label,
                      int x,int y,int width,int height,BOOL title) {
@@ -751,15 +645,10 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             SetForegroundWindow(g_hooked_game_hwnd);
         return 0;
     }
-    if(msg==UI_MOUSEWHEEL) {
-        ui_scroll_to(g_ui_current_tab,g_ui_scroll[g_ui_current_tab]-
-            ((short)((wp>>16)&0xffffu)>0?UI_SCROLL_STEP*3:-UI_SCROLL_STEP*3));
-        return 0;
-    }
     if(msg==UI_COMMAND) {
         W112_ControlValueV1 value;
         id=wp&0xFFFFu;
-        if(id>=201u && id<=205u) {
+        if(id>=201u && id<=203u) {
             ui_set_page(id-201u);return 0;
         }
         if(id==101u) {
@@ -807,165 +696,105 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
     }
     return g_ui_prev?CallWindowProcA(g_ui_prev,hwnd,msg,wp,lp):0;
 }
-
-/* Compact native layout: fixed navigation and footer, independent per-tab scroll.
-   All gameplay-setting buttons retain their pre-existing verified ABI IDs. */
 static BOOL ui_create(HWND game) {
     struct POINT32 pt;
     struct RECT32 rc;
     DWORD i;
-    int window_h;
-    const char *nav[UI_PAGE_COUNT]={"ESP","ROGUE","MOVEMENT","STATUS","SETTINGS"};
-    const char *filters[4]={
-        "ESP - show player labels",
-        "Show Horde characters",
-        "Show Alliance characters",
-        "Show hostile players (BG team)"
+    static const char* filters[4]={
+        "ESP - display player labels",
+        "HORDE - display Horde characters",
+        "ALLIANCE - display Alliance characters",
+        "HOSTILE TO ME - opposing BG team"
     };
-    if(!game||!IsWindow(game))return FALSE;
+    if(!game || !IsWindow(game))return FALSE;
     pt.x=pt.y=0;
-    if(!GetClientRect(game,&rc)||!ClientToScreen(game,&pt))return FALSE;
-    window_h=UI_HEIGHT;
-    if(rc.bottom>440 && window_h>rc.bottom-16)window_h=rc.bottom-16;
-    g_ui_view_h=window_h-UI_CONTENT_Y-53;
-    if(g_ui_view_h<260)g_ui_view_h=260;
+    if(!GetClientRect(game,&rc) || !ClientToScreen(game,&pt))return FALSE;
     g_parallel_ui_hwnd=CreateWindowExA(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,
-        "STATIC","PARALLEL / CONTROL CENTER",WS_POPUP|UI_CAPTION|UI_SYSMENU,
-        (int)(pt.x+(rc.right-UI_WIDTH)/2),(int)(pt.y+(rc.bottom-window_h)/2),
-        UI_WIDTH,window_h,NULL,NULL,g_self,NULL);
+        "STATIC","PARALLEL - ESP / Rogue",WS_POPUP|UI_CAPTION|UI_SYSMENU,
+        (int)(pt.x+(rc.right-UI_WIDTH)/2),(int)(pt.y+(rc.bottom-UI_HEIGHT)/2),
+        UI_WIDTH,UI_HEIGHT,NULL,NULL,g_self,NULL);
     if(!g_parallel_ui_hwnd)return FALSE;
     g_ui_prev=(WNDPROC32)(DWORD)SetWindowLongA(
         g_parallel_ui_hwnd,GWL_WNDPROC,(LONG)(DWORD)ui_wndproc);
-    if(!g_ui_prev){DestroyWindow(g_parallel_ui_hwnd);g_parallel_ui_hwnd=NULL;return FALSE;}
-    g_ui_font=CreateFontA(-19,0,0,0,500,0,0,0,1,0,0,0,0,"Segoe UI");
-    g_ui_title_font=CreateFontA(-27,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
-    ui_label(g_parallel_ui_hwnd,"PARALLEL / CONTROL CENTER",20,12,748,36,TRUE);
-    ui_label(g_parallel_ui_hwnd,"WoW 1.12.1  |  Build 5875  |  PARALLEL TEST",
-        22,51,760,24,FALSE);
-    for(i=0u;i<UI_PAGE_COUNT;++i)
-        g_ui_tabs[i]=ui_button(g_parallel_ui_hwnd,nav[i],18,97+(int)i*61,
-                              164,48,201u+i,FALSE);
-    ui_label(g_parallel_ui_hwnd,"PARALLEL - TEST CANDIDATE",18,window_h-44,370,28,FALSE);
-    ui_label(g_parallel_ui_hwnd,"Insert - Close",650,window_h-44,150,28,FALSE);
-    g_ui_content=CreateWindowExA(0u,"STATIC","",
-        UI_CHILD|UI_VISIBLE|UI_WS_VSCROLL|UI_WS_BORDER,
-        UI_CONTENT_X,UI_CONTENT_Y,UI_CONTENT_W,g_ui_view_h,
-        g_parallel_ui_hwnd,NULL,g_self,NULL);
-    if(!g_ui_content)return FALSE;
-    g_ui_prev_content=(WNDPROC32)(DWORD)SetWindowLongA(
-        g_ui_content,GWL_WNDPROC,(LONG)(DWORD)ui_content_wndproc);
-    if(!g_ui_prev_content)return FALSE;
+    if(!g_ui_prev) {
+        DestroyWindow(g_parallel_ui_hwnd);
+        g_parallel_ui_hwnd=NULL;return FALSE;
+    }
+    g_ui_font=CreateFontA(-22,0,0,0,500,0,0,0,1,0,0,0,0,"Segoe UI");
+    g_ui_title_font=CreateFontA(-29,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
+    ui_label(g_parallel_ui_hwnd,"PARALLEL / CONTROL",26,15,680,42,TRUE);
+    g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd,"ESP",30,75,212,47,201u,FALSE);
+    g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd,"ROGUE",267,75,212,47,202u,FALSE);
+    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",503,75,212,47,203u,FALSE);
 
-    /* ESP -- native cache/filter behavior remains unchanged. */
-    ui_add_to_page(UI_TAB_ESP,ui_label(g_ui_content,"PLAYER ESP",18,15,525,38,TRUE));
-    ui_add_to_page(UI_TAB_ESP,ui_label(g_ui_content,
-        "Live filters. Click a visible ESP label to target.",20,60,535,49,FALSE));
+    ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
+        "PLAYER ESP",36,137,670,37,TRUE));
+    ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
+        "Live filters refresh nearby players. Click a visible label to target.",
+        42,179,665,30,FALSE));
     for(i=0u;i<4u;++i) {
-        g_ui_checks[i]=ui_button(g_ui_content,filters[i],20,120+(int)i*61,
-                                 526,47,101u+i,TRUE);
+        g_ui_checks[i]=ui_button(g_parallel_ui_hwnd,filters[i],
+            46,224+(int)i*59,650,44,101u+i,TRUE);
         ui_add_to_page(UI_TAB_ESP,g_ui_checks[i]);
     }
-    ui_add_to_page(UI_TAB_ESP,ui_label(g_ui_content,
-        "Faction filters combine (OR). Hostile mode follows BG teams.",
-        22,379,528,64,FALSE));
+    ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
+        "Faction filters combine (OR). HOSTILE uses BG team on mixed BG.",
+        40,475,675,34,FALSE));
 
-    /* Rogue -- short, separate function rows; all toggles are live values. */
-    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_ui_content,"ROGUE",18,12,527,39,TRUE));
-    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_ui_content,
-        "Stealth Floor",21,61,526,34,TRUE));
-    g_ui_speedfloor_check=ui_button(g_ui_content,"Enable Stealth Floor",
-        24,103,522,41,105u,TRUE);
+    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
+        "ROGUE / STEALTH FLOOR + PP",36,137,665,39,TRUE));
+    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
+        "Current work AutoPP + Junkbox; exact AutoLootPP / LongPP binaries.",
+        42,181,672,34,FALSE));
+    g_ui_speedfloor_check=ui_button(g_parallel_ui_hwnd,
+        "STEALTH FLOOR - enabled",46,228,650,43,105u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_speedfloor_check);
-    g_ui_hostile_guard_check=ui_button(g_ui_content,
-        "Disable floor on hostile player target",24,151,522,44,106u,TRUE);
+    g_ui_hostile_guard_check=ui_button(g_parallel_ui_hwnd,
+        "Disable floor when targeting a hostile player",46,283,665,42,106u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_hostile_guard_check);
-    g_ui_speedfloor_value=ui_label(g_ui_content,"",24,213,340,32,FALSE);
+    g_ui_speedfloor_value=ui_label(g_parallel_ui_hwnd,
+        "",48,351,440,38,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_speedfloor_value);
-    ui_add_to_page(UI_TAB_ROGUE,ui_button(g_ui_content,"-",387,204,62,46,107u,FALSE));
-    ui_add_to_page(UI_TAB_ROGUE,ui_button(g_ui_content,"+",478,204,62,46,108u,FALSE));
-    g_ui_speedfloor_state=ui_label(g_ui_content,"",24,263,532,49,FALSE);
+    ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
+        "-",508,338,72,47,107u,FALSE));
+    ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
+        "+",606,338,72,47,108u,FALSE));
+    g_ui_speedfloor_state=ui_label(g_parallel_ui_hwnd,
+        "",46,404,665,32,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_speedfloor_state);
-    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_ui_content,"Pick Pocket",21,332,524,37,TRUE));
-    g_ui_pp_check=ui_button(g_ui_content,"Automatic Pick Pocket (F11)",
-                            24,377,522,44,109u,TRUE);
+    g_ui_pp_check=ui_button(g_parallel_ui_hwnd,
+        "AUTO PICKPOCKET - work MovementCore (F11)",46,440,665,42,109u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_check);
-    g_ui_pp_control_state=ui_label(g_ui_content,"",24,430,530,60,FALSE);
-    ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
-    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_ui_content,"Auto Junkbox",21,515,524,37,TRUE));
-    g_ui_junkbox_check=ui_button(g_ui_content,"Open eligible junkboxes",
-                                 24,559,522,44,110u,TRUE);
+    g_ui_junkbox_check=ui_button(g_parallel_ui_hwnd,
+        "AUTO JUNKBOX - work PickPocketSelectiveRange",46,491,665,42,110u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_junkbox_check);
-    ui_add_to_page(UI_TAB_ROGUE,ui_label(g_ui_content,
-        "AutoLootPP and LongPP are exact-byte loaded modules, not hot-unloaded.",
-        24,624,525,74,FALSE));
+    g_ui_pp_control_state=ui_label(g_parallel_ui_hwnd,
+        "",46,548,665,35,FALSE);
+    ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
 
-    /* Movement exposes *verified* runtime status, not fictional new controls. */
-    ui_add_to_page(UI_TAB_MOVEMENT,ui_label(g_ui_content,"MOVEMENT",18,12,520,39,TRUE));
-    ui_add_to_page(UI_TAB_MOVEMENT,ui_label(g_ui_content,
-        "MovementCore",22,63,516,39,TRUE));
-    ui_add_to_page(UI_TAB_MOVEMENT,ui_label(g_ui_content,
-        "Shared movement / PP arbitration and current F11 state.",24,110,520,66,FALSE));
-    ui_add_to_page(UI_TAB_MOVEMENT,ui_label(g_ui_content,
-        "Rear 360",22,201,516,39,TRUE));
-    ui_add_to_page(UI_TAB_MOVEMENT,ui_label(g_ui_content,
-        "Cast-synchronized NPC-only diagnostics are shown in Status.",24,253,518,76,FALSE));
-    ui_add_to_page(UI_TAB_MOVEMENT,ui_label(g_ui_content,
-        "Movement settings will appear here only after their native control ABI is verified.",
-        24,355,515,100,FALSE));
-
-    /* Status: distinguish loader presence, live setting and server outcome.
-       Use multiple short rows; rear diagnostics get room for all counters. */
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"MODULE STATUS",18,12,526,39,TRUE));
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,
-        "LOADED = DLL present. PP / loot / rear success requires an in-game test.",
-        20,61,528,74,FALSE));
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"Player ESP",22,147,519,32,TRUE));
-    g_ui_esp_state=ui_label(g_ui_content,"",24,182,522,43,FALSE);
+    ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
+        "ACTIVE MODULES",36,137,665,40,TRUE));
+    ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
+        "LOADED means the DLL is present; successful PP/loot needs a game test.",
+        42,179,665,37,FALSE));
+    g_ui_esp_state=ui_label(g_parallel_ui_hwnd,"",46,244,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_esp_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,
-        "PickPocketSelectiveRange",22,237,525,34,TRUE));
-    g_ui_range_state=ui_label(g_ui_content,"",24,275,520,50,FALSE);
+    g_ui_range_state=ui_label(g_parallel_ui_hwnd,"",46,293,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_range_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"AutoLootPP",22,339,518,34,TRUE));
-    g_ui_autopp_state=ui_label(g_ui_content,"",24,376,520,46,FALSE);
+    g_ui_autopp_state=ui_label(g_parallel_ui_hwnd,"",46,342,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_autopp_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"Long Pick Pocket",22,438,518,34,TRUE));
-    g_ui_longpp_state=ui_label(g_ui_content,"",24,477,520,47,FALSE);
+    g_ui_longpp_state=ui_label(g_parallel_ui_hwnd,"",46,391,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_longpp_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"MovementCore",22,536,518,34,TRUE));
-    g_ui_core_state=ui_label(g_ui_content,"",24,574,520,47,FALSE);
-    ui_add_to_page(UI_TAB_STATUS,g_ui_core_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"SpeedFloor",22,638,518,34,TRUE));
-    g_ui_speed_loaded_state=ui_label(g_ui_content,"",24,676,520,45,FALSE);
-    ui_add_to_page(UI_TAB_STATUS,g_ui_speed_loaded_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"Rear 360",22,738,518,34,TRUE));
-    g_ui_rear_state=ui_label(g_ui_content,"",24,778,518,145,FALSE);
+    g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,440,665,47,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_rear_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"Auto WotF",22,941,518,34,TRUE));
-    g_ui_wotf_state=ui_label(g_ui_content,"",24,979,520,45,FALSE);
-    ui_add_to_page(UI_TAB_STATUS,g_ui_wotf_state);
-    ui_add_to_page(UI_TAB_STATUS,ui_label(g_ui_content,"Ground Target Assist",22,1038,518,35,TRUE));
-    g_ui_ground_state=ui_label(g_ui_content,"",24,1080,520,47,FALSE);
-    ui_add_to_page(UI_TAB_STATUS,g_ui_ground_state);
+    g_ui_core_state=ui_label(g_parallel_ui_hwnd,"",46,490,665,31,FALSE);
+    ui_add_to_page(UI_TAB_STATUS,g_ui_core_state);
+    ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
+        "AutoLootPP / LongPP remain exact-byte modules, not hot-unloaded.",
+        42,548,665,35,FALSE));
 
-    ui_add_to_page(UI_TAB_SETTINGS,ui_label(g_ui_content,"SETTINGS",18,12,530,39,TRUE));
-    ui_add_to_page(UI_TAB_SETTINGS,ui_label(g_ui_content,
-        "Insert: open / close this panel.",24,72,521,47,FALSE));
-    ui_add_to_page(UI_TAB_SETTINGS,ui_label(g_ui_content,
-        "Use the mouse wheel or the right scrollbar to navigate each page.",
-        24,137,521,72,FALSE));
-    ui_add_to_page(UI_TAB_SETTINGS,ui_label(g_ui_content,
-        "All gameplay settings are available under ESP or Rogue. Legacy PP / loot DLLs cannot be safely hot-unloaded.",
-        24,232,518,109,FALSE));
-
-    ui_sync_esp();ui_sync_rogue();ui_sync_rear();
-    if(g_ui_speed_loaded_state)SetWindowTextA(g_ui_speed_loaded_state,
-        GetModuleHandleA(PAR_SPEED_DLL)?"LOADED - live stealth floor control":"NOT LOADED");
-    if(g_ui_wotf_state)SetWindowTextA(g_ui_wotf_state,
-        GetModuleHandleA("WoWAutoWotF_5875_v1.dll")?"LOADED - verify CC break in game":"NOT LOADED");
-    if(g_ui_ground_state)SetWindowTextA(g_ui_ground_state,
-        GetModuleHandleA("WoWGroundTargetAssist_5875_v1.dll")?
-            "LOADED - verify targeting in game":"NOT LOADED");
+    ui_sync_esp();
+    ui_sync_rogue();
     ui_set_page(g_ui_current_tab);
     g_ui_shown=0u;
     return TRUE;
@@ -1004,12 +833,10 @@ static void parallel_gui_destroy(void) {
         DestroyWindow(g_parallel_ui_hwnd);
     }
     g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
-    for(page=0u;page<UI_PAGE_COUNT;++page) {
+    for(page=0u;page<3u;++page) {
         g_ui_tabs[page]=NULL;
         g_ui_page_count[page]=0u;
-        g_ui_scroll[page]=0;g_ui_page_h[page]=0;
     }
-    g_ui_content=NULL;g_ui_prev_content=NULL;
     for(page=0u;page<4u;++page)g_ui_checks[page]=NULL;
     g_ui_speedfloor_check=NULL;g_ui_hostile_guard_check=NULL;
     g_ui_speedfloor_state=NULL;g_ui_speedfloor_value=NULL;
@@ -1017,7 +844,6 @@ static void parallel_gui_destroy(void) {
     g_ui_pp_control_state=NULL;g_ui_core_state=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;
-    g_ui_speed_loaded_state=NULL;g_ui_wotf_state=NULL;g_ui_ground_state=NULL;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
     g_ui_font=NULL;g_ui_title_font=NULL;
