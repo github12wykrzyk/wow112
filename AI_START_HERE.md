@@ -18,7 +18,8 @@ Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or rec
 ## Hard invariants
 
 - `main` = last accepted stable state.
-- `work` = normal development branch.
+- `work` = existing development branch; `parallel` = independent alternative branch.
+- `feature/**` = short-lived branch for an independent experiment.
 - `promote/**` = curated stable-candidate gate branches.
 - `work` must contain current `main`.
 - `runtime/current.json` decides active runtime/source lineage.
@@ -26,11 +27,15 @@ Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or rec
 - Stable runtime packages use exact accepted bytes, never an unverified rebuild.
 - No direct promotion to `main` before the exact `promote/**` SHA passes `Pre-promote stable`.
 
+## Experiment routing
+
+After mandatory startup, use `runtime/ai_experiments.json` and `python tools/ai_experiments.py route --module <Module>` to identify related experiments. Explicitly selected `parallel` remains `parallel`. Confirm GitHub HEAD and module/dependency ownership; for unrelated changes create a temporary `feature/<purpose>` from the correct live base. Inspect branch-specific CI/build triggers rather than assuming work's builder supports every branch. See `docs/AI_EXPERIMENTS.md`.
+
 ## Fast TEST path
 
 ```text
 read routing -> edit canonical source -> verify_current ->
-one logical commit on work -> Build work candidate ->
+one logical commit on selected branch -> branch-specific candidate workflow ->
 verify_candidate_package -> artifact -> user test
 ```
 
