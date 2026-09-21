@@ -6,6 +6,13 @@ Config and read-only GitHub credentials use `%APPDATA%/WoW112ParallelUpdater` (s
 
 The sections below describe the shared engine; their older TEST/STABLE labels refer to the original updater and are not available in this branch-specific build.
 
+## Konta WoW — poprawka zapisu i wpisywania (2.4-parallel.2)
+
+- Wybrany profil pokazuje teraz status **Hasło zapisane i możliwe do odczytu (DPAPI)** zamiast pustego pola bez wyjaśnienia. Puste pole przy edycji oznacza „zachowaj dotychczasowe hasło”. Po kliknięciu **Zapisz profil** updater ponownie otwiera lokalny plik kont i odszyfrowuje hasło; nie zgłasza sukcesu, jeśli zapis lub odczyt się nie powiedzie. Dotychczasowe profile i szyfrowanie pozostają niezmienione.
+- Po restarcie updatera **Wpisz dane do gry** potrafi odnaleźć uruchomione klienty w wybranym katalogu gry. Jeżeli działa kilka okien i nie ma zapamiętanego powiązania profilu z procesem, użytkownik wybiera okno po PID — dane nie są kierowane losowo do innego klienta.
+- Do wprowadzania loginu i hasła używane są fizyczne skankody klawiszy Windows zamiast `KEYEVENTF_UNICODE`; cały tekst jest mapowany według układu klawiatury okna gry przed wpisywaniem, z kontrolą aktywnego PID przed wysłaniem każdego klawisza. Po zatwierdzeniu okna logowania podawany jest login, TAB, hasło, bez Enter. Jeśli WoW 5875 ignoruje symulowane skankody albo uprawnienia gry blokują wejście, potrzebny jest test w grze; nie potwierdzamy skuteczności tylko na podstawie testu offline.
+- Zwykłe **Uruchom grę** nadal tylko uruchamia klienta — wpisanie danych jest oddzielną, świadomą akcją **Wpisz dane do gry** na ekranie logowania. Magazyn Parallel pozostaje niezależny od magazynu `work`.
+
 ## Konta WoW (2.4-parallel.1, PARALLEL)
 
 - The **Konta WoW** button on the Parallel dashboard adds, edits, deletes and selects a default game account profile. It does not modify the original work/main updater.
