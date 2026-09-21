@@ -21,6 +21,9 @@
 #pragma comment(linker, "/EXPORT:PVERear360_GetPositionalFailures=_PVERear360_GetPositionalFailures@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GetAdaptiveRetries=_PVERear360_GetAdaptiveRetries@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GetLastFailReason=_PVERear360_GetLastFailReason@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetAttempts=_PVERear360_GetAttempts@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetServerGo=_PVERear360_GetServerGo@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetAborted=_PVERear360_GetAborted@0")
 #else
 #define STDCALL __attribute__((stdcall))
 #define THISCALL __attribute__((thiscall))
@@ -70,6 +73,8 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define FN_GET_GAME_WINDOW 0x00435C30u
 #define CAST_SEND_SITE 0x006E5872u
 #define SPELL_FAIL_SITE 0x006E73ACu
+#define SPELL_GO_SITE 0x006E768Bu
+#define SPELL_GO_CONTINUE 0x006E7691u
 #define GCD_CALL_SITE 0x006E58FBu
 #define START_GLOBAL_COOLDOWN 0x006E2DE0u
 #define MOVE_SEND_SITE 0x00600ACAu
@@ -82,6 +87,8 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define CAST_MAX_LEASE_MS 1000u
 #define RETRY_MAX_ATTEMPTS 2u
 #define RETRY_DELAY_MS 50u
+#define REAR_SETTLE_MS 100u
+#define REAR_RESULT_WAIT_MS 850u
 #define RETRY_FEEDBACK_WINDOW_MS 1200u
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
@@ -104,6 +111,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define STATUS_MOVEMENT_SITE_CONFLICT 11u
 #define STATUS_HOOK_PATCH_FAILED 12u
 #define STATUS_FAIL_SITE_CONFLICT 13u
+#define STATUS_GO_SITE_CONFLICT 14u
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
@@ -118,7 +126,10 @@ static volatile u32 g_needsRestore=0u;
 static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
 static volatile u32 g_rearLease=0u,g_castInstalled=0u,g_moveInstalled=0u,g_gcdInstalled=0u,g_failInstalled=0u;
-static volatile u32 g_prevFailTarget=0u;
+static volatile u32 g_prevFailTarget=0u,g_goInstalled=0u;
+static volatile u32 g_sendPending=0u,g_sendDue=0u,g_resultPending=0u;
+static volatile u32 g_deferredGcdValid=0u,g_deferredGcdArg=0u;
+static volatile u32 g_attempts=0u,g_serverGo=0u,g_aborted=0u;
 /* Keep only the newest NPC opener CMSG: never replay old target/world data. */
 static u8 g_savedPacket[MAX_CAST_PACKET];
 static u32 g_savedHeader[6],g_savedSpell=0u,g_savedPlayer=0u,g_savedTarget=0u;
@@ -129,6 +140,7 @@ static volatile u32 g_suppressCast=0u,g_prevMoveTarget=0u;
 static float g_rearX,g_rearY,g_rearZ,g_rearO;
 static const u8 kCastOriginal[5]={0xE8u,0xB9u,0x5Du,0xECu,0xFFu};
 static const u8 kGcdOriginal[5]={0xE8u,0xE0u,0xD4u,0xFFu,0xFFu};
+static const u8 kGoOriginal[6]={0x8Bu,0x4Du,0xF0u,0x8Bu,0x55u,0xF4u};
 static W112_ControlSettingV1 g_settings[2];
 static volatile u32 g_descriptorsReady=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
@@ -136,6 +148,13 @@ typedef u32 (STDCALL *WorkCoordAcquireFn)(u32);
 typedef void (STDCALL *WorkCoordReleaseFn)(void);
 /* This game's work MovementCore owns PP/cast/gather/SafeBreak movement hooks.
    Absent module or export means no verified arbitration: do not send rear pulses. */
+static int competingMovementBusy(void){
+ void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
+ WorkCoordFlagsFn flags;
+ if(!core)return 1;
+ flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
+ return !flags||(flags()&0x0Fu)!=0u; /* exclude our own rear lease */
+}
 static int workMovementBusy(void){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
  WorkCoordFlagsFn flags;
@@ -263,7 +282,10 @@ static void STDCALL rewriteMovement(u32 store){
  tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);
  tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
  if(!finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))return;
- a=angle(to+PI_F);
+ /* The movement rewriter must retain the selected 180/160/200 degree
+    retry candidate; otherwise every retry silently becomes 180 again. */
+ a=angle(to+PI_F+(g_retryAttempt==1u?-PI_F/9.0f:
+                       g_retryAttempt==2u?PI_F/9.0f:0.0f));
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
  z=tz;o=angle(a+PI_F);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return;
@@ -303,6 +325,12 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
     !behindSpell(spell)||!store)return 0u;
  pl=localPlayer();tg=selectedTarget();
  if(!pl||!tg||pl==tg||read32(tg+OBJ_TYPE)!=3u)return 0u;
+ ++g_attempts;
+ /* Reject repeated input while an existing NPC transaction is pending. */
+ if(g_savedValid&&(g_sendPending||g_resultPending||g_retryPending)&&
+    g_savedPlayer==pl&&g_savedTarget==tg){
+  g_skipNativeGcdCurrent=1u;return 1u;
+ }
  /* Do not race an already scheduled server-failure retry with LazyScript. */
  if(g_retryPending&&g_savedValid&&g_savedPlayer==pl&&
     g_savedTarget==tg&&g_savedSpell==spell){
@@ -357,6 +385,9 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  g_savedHeader[3]=MAX_CAST_PACKET;
  g_savedPlayer=pl;g_savedTarget=tg;g_savedSpell=spell;
  g_savedValid=1u;g_retryAttempt=0u;g_retryPending=0u;
+ g_sendPending=1u;g_resultPending=0u;
+ g_sendDue=GetTickCount()+REAR_SETTLE_MS;
+ g_deferredGcdValid=0u;
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
@@ -367,11 +398,10 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  nativeHeartbeat(pl);nativeHeartbeat(pl);
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
- sendStore((u32)copyHeader);
- g_lastSendTick=GetTickCount();
+ g_skipNativeGcdCurrent=1u;
  g_needsRestore=1u;g_status=STATUS_ACTIVE;
- ++g_count;++g_castCount;
- return 1u; /* suppress the now-stale original CDataStore send */
+ ++g_count;
+ return 1u; /* defer cloned CMSG and GCD until rear pose has settled */
 }
 __declspec(naked) static void castChainHook(void){
  __asm{
@@ -410,10 +440,15 @@ static void STDCALL observeServerFailure(u32 spell,u32 reason){
     g_savedPlayer!=localPlayer()||g_savedTarget!=selectedTarget()||
     read32(g_savedTarget+OBJ_TYPE)!=3u||
     (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
- g_lastFailReason=reason;
- if(reason!=0x33u&&reason!=0x7Cu)return;
+ if(!g_resultPending)return;
+ g_resultPending=0u;g_lastFailReason=reason;
+ if(reason!=0x33u&&reason!=0x7Cu){
+  g_savedValid=0u;g_castUntil=now+50u;return;
+ }
  ++g_positionalFailures;
- if(g_retryPending||g_retryAttempt>=RETRY_MAX_ATTEMPTS)return;
+ if(g_retryPending||g_retryAttempt>=RETRY_MAX_ATTEMPTS){
+  g_savedValid=0u;g_castUntil=now+50u;return;
+ }
  g_retryPending=1u;g_retryDue=now+RETRY_DELAY_MS;
 }
 __declspec(naked) static void failChainHook(void){
@@ -429,6 +464,31 @@ __declspec(naked) static void failChainHook(void){
   popad
   popfd
   mov eax,dword ptr [g_prevFailTarget]
+  jmp eax
+ }
+}
+/* Observe native spell-go for this NPC; preserving original six bytes. */
+static void STDCALL observeServerGo(u32 spell){
+ u32 now=GetTickCount();
+ if(!g_savedValid||!g_resultPending||spell!=g_savedSpell||
+    g_savedPlayer!=localPlayer()||g_savedTarget!=selectedTarget()||
+    (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
+ ++g_serverGo;
+ g_resultPending=0u;g_savedValid=0u;g_retryPending=0u;
+ g_castUntil=now+50u;
+}
+__declspec(naked) static void goChainHook(void){
+ __asm{
+  pushfd
+  pushad
+  mov eax,[ebp-4]
+  push eax
+  call observeServerGo
+  popad
+  popfd
+  mov ecx,[ebp-10h]
+  mov edx,[ebp-0Ch]
+  mov eax,SPELL_GO_CONTINUE
   jmp eax
  }
 }
@@ -482,19 +542,71 @@ static void tryPositionalRetry(u32 now){
  for(i=0u;i<6u;++i)header[i]=g_savedHeader[i];
  header[1]=(u32)packet;header[2]=0u;header[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
- if(!g_castActive)g_castStarted=now;
+ g_castStarted=now;
  g_castActive=1u;g_castUntil=now+g_period;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
  g_retryPending=0u;g_retryAttempt=idx;
+ g_sendPending=1u;g_sendDue=now+REAR_SETTLE_MS;
+ g_resultPending=0u;
  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
  *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
  nativeHeartbeat(pl);nativeHeartbeat(pl);
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
- sendStore((u32)header);
- g_lastSendTick=GetTickCount();g_needsRestore=1u;
- ++g_adaptiveRetries;++g_count;++g_castCount;
+ g_needsRestore=1u;
+ ++g_adaptiveRetries;++g_count;
  g_status=STATUS_ACTIVE;
+}
+/* Deferred NPC opener: use a fresh packet, current NPC pose and the same
+   rear candidate as all outgoing movement. Executed only on game window
+   thread, never from the worker timer thread. */
+static void sendSettledCast(u32 now){
+ u32 pl=localPlayer(),tg=selectedTarget(),sz,i,header[6];
+ u8 packet[MAX_CAST_PACKET];
+ float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
+ if(!g_sendPending||(s32)(now-g_sendDue)<0)return;
+ if(!g_enabled||!g_savedValid||!g_rearLease||!g_castActive||
+    !pl||!tg||g_savedPlayer!=pl||g_savedTarget!=tg||
+    g_castPlayer!=pl||g_castTarget!=tg||read32(tg+OBJ_TYPE)!=3u||
+    competingMovementBusy()||
+    (s32)(now-(g_castStarted+CAST_MAX_LEASE_MS))>=0)goto abort_send;
+ sz=g_savedHeader[4];
+ if(sz<10u||sz>MAX_CAST_PACKET||*(u32*)g_savedPacket!=CMSG_CAST_SPELL||
+    *(u32*)(g_savedPacket+4u)!=g_savedSpell)goto abort_send;
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);po=readf(pl+OBJ_O);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||!finitef(po)||
+    !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))goto abort_send;
+ dx=px-tx;dy=py-ty;dz=pz-tz;
+ if(dx*dx+dy*dy>REAL_MAX_RANGE_SQ||dz>2.5f||dz< -2.5f)goto abort_send;
+ a=angle(to+PI_F+(g_retryAttempt==1u?-PI_F/9.0f:
+                        g_retryAttempt==2u?PI_F/9.0f:0.0f));
+ x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
+ z=tz;o=angle(a+PI_F);
+ if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))goto abort_send;
+ for(i=0u;i<sz;++i)packet[i]=g_savedPacket[i];
+ for(i=0u;i<6u;++i)header[i]=g_savedHeader[i];
+ header[1]=(u32)packet;header[2]=0u;header[3]=MAX_CAST_PACKET;
+ g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
+ *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
+ *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
+ nativeHeartbeat(pl);nativeHeartbeat(pl);
+ *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
+ *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
+ g_sendPending=0u;g_resultPending=1u;
+ g_lastSendTick=now;g_castUntil=now+g_period;
+ sendStore((u32)header);
+ ++g_castCount;
+ if(g_deferredGcdValid){
+  u32 arg=g_deferredGcdArg;
+  g_deferredGcdValid=0u;
+  ((void (__fastcall *)(u32,u32))START_GLOBAL_COOLDOWN)(g_savedSpell,arg);
+ }
+ return;
+abort_send:
+ g_sendPending=0u;g_resultPending=0u;g_savedValid=0u;
+ g_deferredGcdValid=0u;g_retryPending=0u;
+ g_castUntil=now;++g_aborted;
 }
 /* The original native GCD CALL follows CAST_SEND_SITE. A deferred/busy
    opener must not consume a phantom client GCD while no CMSG was sent. */
@@ -502,6 +614,11 @@ __declspec(naked) static void gcdChainHook(void){
  __asm{
   cmp dword ptr [g_skipNativeGcdCurrent],0
   je gcd_original
+  cmp dword ptr [g_sendPending],0
+  je gcd_skip
+  mov dword ptr [g_deferredGcdArg],edx
+  mov dword ptr [g_deferredGcdValid],1
+ gcd_skip:
   mov dword ptr [g_skipNativeGcdCurrent],0
   ret
  gcd_original:
@@ -516,6 +633,16 @@ static int patchCall(u32 site,void* fn){
  *(volatile u32*)(site+1u)=(u32)fn-(site+5u);
  FlushInstructionCache(GetCurrentProcess(),(void*)site,5u);
  VirtualProtect((void*)site,5u,old,&ignored);
+ return 1;
+}
+static int patchGoJump(void*fn){
+ u32 old=0,ignored=0;
+ if(!VirtualProtect((void*)SPELL_GO_SITE,6u,PAGE_EXECUTE_READWRITE,&old))return 0;
+ *(volatile u8*)SPELL_GO_SITE=0xE9u;
+ *(volatile u32*)(SPELL_GO_SITE+1u)=(u32)fn-(SPELL_GO_SITE+5u);
+ *(volatile u8*)(SPELL_GO_SITE+5u)=0x90u;
+ FlushInstructionCache(GetCurrentProcess(),(void*)SPELL_GO_SITE,6u);
+ VirtualProtect((void*)SPELL_GO_SITE,6u,old,&ignored);
  return 1;
 }
 static u32 callTarget(u32 site){
@@ -536,6 +663,9 @@ static int installCastAndMovement(void){
  for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=kCastOriginal[i]||
                            *(volatile u8*)(GCD_CALL_SITE+i)!=kGcdOriginal[i]){
   g_status=STATUS_CAST_SITE_CONFLICT;return 0;
+ }
+ for(i=0u;i<6u;++i)if(*(volatile u8*)(SPELL_GO_SITE+i)!=kGoOriginal[i]){
+  g_status=STATUS_GO_SITE_CONFLICT;return 0;
  }
  failTarget=callTarget(SPELL_FAIL_SITE);
  if(!failTarget||failTarget==(u32)failChainHook){
@@ -571,11 +701,29 @@ static int installCastAndMovement(void){
   g_status=STATUS_HOOK_PATCH_FAILED;return 0;
  }
  g_failInstalled=1u;
+ if(!patchGoJump(goChainHook)){
+  patchCall(SPELL_FAIL_SITE,(void*)g_prevFailTarget);
+  patchCall(GCD_CALL_SITE,(void*)START_GLOBAL_COOLDOWN);
+  patchCall(CAST_SEND_SITE,(void*)CLIENTSERVICES_SEND);
+  patchCall(MOVE_SEND_SITE,(void*)g_prevMoveTarget);
+  g_failInstalled=0u;g_castInstalled=0u;g_moveInstalled=0u;g_gcdInstalled=0u;
+  g_status=STATUS_HOOK_PATCH_FAILED;return 0;
+ }
+ g_goInstalled=1u;
  return 1;
 }
 static void removeHooks(void){
  u32 i,match=1u,ignored=0u,old=0u;
- g_retryPending=0u;g_savedValid=0u;
+ g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;g_resultPending=0u;
+ g_deferredGcdValid=0u;
+ if(g_goInstalled&&*(volatile u8*)SPELL_GO_SITE==0xE9u&&
+    SPELL_GO_SITE+5u+(u32)*(volatile s32*)(SPELL_GO_SITE+1u)==(u32)goChainHook&&
+    VirtualProtect((void*)SPELL_GO_SITE,6u,PAGE_EXECUTE_READWRITE,&old)){
+  for(i=0u;i<6u;++i)*(volatile u8*)(SPELL_GO_SITE+i)=kGoOriginal[i];
+  FlushInstructionCache(GetCurrentProcess(),(void*)SPELL_GO_SITE,6u);
+  VirtualProtect((void*)SPELL_GO_SITE,6u,old,&ignored);
+ }
+ g_goInstalled=0u;
  if(g_failInstalled&&callTarget(SPELL_FAIL_SITE)==(u32)failChainHook)
   patchCall(SPELL_FAIL_SITE,(void*)g_prevFailTarget);
  g_failInstalled=0u;
@@ -601,28 +749,37 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  u32 pl;
  (void)hwnd;(void)msg;(void)timer;
  if(g_stop)return;
- if(!g_castInstalled||!g_moveInstalled||!g_gcdInstalled||!g_failInstalled){
+ if(!g_castInstalled||!g_moveInstalled||!g_gcdInstalled||!g_failInstalled||!g_goInstalled){
   if(installCastAndMovement())g_status=STATUS_IDLE;
   /* Preserve the installer's specific reason on failure. */
   return;
  }
  if(g_retryPending)tryPositionalRetry(now);
+ if(g_sendPending)sendSettledCast(now);
+ if(g_resultPending&&g_lastSendTick&&
+    (u32)(now-g_lastSendTick)>REAR_RESULT_WAIT_MS){
+  g_resultPending=0u;g_savedValid=0u;g_castUntil=now;
+ }
  if(g_castActive){
   /* An NPC turn is handled by movement rewriting and the next cast re-prime;
      target/world changes and disable retire the lease without stale sends. */
   if(g_enabled&&g_castPlayer==localPlayer()&&
      g_castTarget==selectedTarget()&&
-     (s32)(now-g_castUntil)<0&&
-     (s32)(now-(g_castStarted+CAST_MAX_LEASE_MS))<0)return;
+     (s32)(now-(g_castStarted+CAST_MAX_LEASE_MS))<0&&
+     (g_sendPending||g_retryPending||g_resultPending||
+      (s32)(now-g_castUntil)<0))return;
   pl=g_castPlayer;
   g_castActive=0u;g_castPlayer=0u;g_castTarget=0u;
+  g_sendPending=0u;g_resultPending=0u;g_retryPending=0u;
+  g_deferredGcdValid=0u;g_savedValid=0u;
   releaseRear();
   g_status=STATUS_IDLE;
   restoreHeartbeat(pl==localPlayer()?pl:0u);
   return;
  }
  if(!g_enabled){
-  g_retryPending=0u;g_savedValid=0u;
+  g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;
+  g_resultPending=0u;g_deferredGcdValid=0u;
   g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
  }
  restoreHeartbeat(localPlayer());
@@ -666,6 +823,9 @@ __declspec(dllexport) u32 STDCALL PVERear360_GetBusyDrops(void){return g_busyDro
 __declspec(dllexport) u32 STDCALL PVERear360_GetPositionalFailures(void){return g_positionalFailures;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetAdaptiveRetries(void){return g_adaptiveRetries;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetLastFailReason(void){return g_lastFailReason;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetAttempts(void){return g_attempts;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetServerGo(void){return g_serverGo;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetAborted(void){return g_aborted;}
 /* Invoked only by the existing ESP WndProc on the game window's owner thread. */
 __declspec(dllexport) u32 STDCALL PVERear360_GameWindowTick(HWND32 game){
  if(g_stop||!game||!IsWindow(game)||g_status==STATUS_BUILD_MISMATCH||

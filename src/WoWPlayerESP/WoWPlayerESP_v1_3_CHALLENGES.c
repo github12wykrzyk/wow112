@@ -544,15 +544,22 @@ static void ui_sync_rogue(void) {
 static void ui_sync_rear(void) {
     HMODULE dll=GetModuleHandleA(PAR_REAR_DLL);
     typedef DWORD (WINAPI *RearValueFn)(void);
-    RearValueFn status,count;
+    RearValueFn status,count,attempts,tx,go,err,retry,busy,aborted;
     DWORD code,pulses;
     const char* desc;
-    char buf[160],*p=buf;
+    char buf[240],*p=buf;
     if(!g_ui_rear_state)return;
     if(!dll){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: NOT LOADED");return;}
     status=(RearValueFn)GetProcAddress(dll,"PVERear360_GetStatus");
     count=(RearValueFn)GetProcAddress(dll,"PVERear360_GetPulseCount");
     if(!status||!count){SetWindowTextA(g_ui_rear_state,"PvE Rear 360: diagnostics unavailable");return;}
+    attempts=(RearValueFn)GetProcAddress(dll,"PVERear360_GetAttempts");
+    tx=(RearValueFn)GetProcAddress(dll,"PVERear360_GetCastCount");
+    go=(RearValueFn)GetProcAddress(dll,"PVERear360_GetServerGo");
+    err=(RearValueFn)GetProcAddress(dll,"PVERear360_GetPositionalFailures");
+    retry=(RearValueFn)GetProcAddress(dll,"PVERear360_GetAdaptiveRetries");
+    busy=(RearValueFn)GetProcAddress(dll,"PVERear360_GetBusyDrops");
+    aborted=(RearValueFn)GetProcAddress(dll,"PVERear360_GetAborted");
     code=status();pulses=count();
     desc=code==0u?"READY (cast-synchronized, NPC only)":
          code==1u?"CAST PRIMED (awaiting restore)":
@@ -566,9 +573,18 @@ static void ui_sync_rear(void) {
          code==9u?"WAITING FOR WORK MOVEMENTCORE":
          code==10u?"CAST HOOK CONFLICT (0x006E5872)":
          code==11u?"MOVEMENT HOOK CONFLICT (0x00600ACA)":
-         code==12u?"HOOK MEMORY PATCH FAILED":"UNKNOWN";
+         code==12u?"HOOK MEMORY PATCH FAILED":
+         code==13u?"SPELL FAIL HOOK CONFLICT":
+         code==14u?"SPELL GO HOOK CONFLICT":"UNKNOWN";
     p=app_str(p,"PvE Rear 360: ");p=app_str(p,desc);
-    p=app_str(p," | primed casts: ");p=app_u32(p,pulses);*p=0;
+    p=app_str(p,"\r\nTry ");p=app_u32(p,attempts?attempts():0u);
+    p=app_str(p," | prime ");p=app_u32(p,pulses);
+    p=app_str(p," | sent ");p=app_u32(p,tx?tx():0u);
+    p=app_str(p," | GO ");p=app_u32(p,go?go():0u);
+    p=app_str(p," | posfail ");p=app_u32(p,err?err():0u);
+    p=app_str(p," | retry ");p=app_u32(p,retry?retry():0u);
+    p=app_str(p," | busy ");p=app_u32(p,busy?busy():0u);
+    p=app_str(p," | cancel ");p=app_u32(p,aborted?aborted():0u);*p=0;
     SetWindowTextA(g_ui_rear_state,buf);
 }
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
@@ -769,7 +785,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_STATUS,g_ui_autopp_state);
     g_ui_longpp_state=ui_label(g_parallel_ui_hwnd,"",46,391,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_longpp_state);
-    g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,440,665,31,FALSE);
+    g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,440,665,47,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_rear_state);
     g_ui_core_state=ui_label(g_parallel_ui_hwnd,"",46,490,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_core_state);
