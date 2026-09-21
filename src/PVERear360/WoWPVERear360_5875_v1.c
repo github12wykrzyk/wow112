@@ -18,6 +18,9 @@
 #pragma comment(linker, "/EXPORT:PVERear360_GameWindowTick=_PVERear360_GameWindowTick@4")
 #pragma comment(linker, "/EXPORT:PVERear360_GetCastCount=_PVERear360_GetCastCount@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GetBusyDrops=_PVERear360_GetBusyDrops@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetPositionalFailures=_PVERear360_GetPositionalFailures@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetAdaptiveRetries=_PVERear360_GetAdaptiveRetries@0")
+#pragma comment(linker, "/EXPORT:PVERear360_GetLastFailReason=_PVERear360_GetLastFailReason@0")
 #else
 #define STDCALL __attribute__((stdcall))
 #define THISCALL __attribute__((thiscall))
@@ -66,6 +69,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define SEND_MOVEMENT_WRAPPER 0x00600A10u
 #define FN_GET_GAME_WINDOW 0x00435C30u
 #define CAST_SEND_SITE 0x006E5872u
+#define SPELL_FAIL_SITE 0x006E73ACu
 #define GCD_CALL_SITE 0x006E58FBu
 #define START_GLOBAL_COOLDOWN 0x006E2DE0u
 #define MOVE_SEND_SITE 0x00600ACAu
@@ -76,6 +80,9 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define CAST_HOLD_MS 350u
 /* Bound an opener transaction even if LazyScript repeats every 100 ms. */
 #define CAST_MAX_LEASE_MS 1000u
+#define RETRY_MAX_ATTEMPTS 2u
+#define RETRY_DELAY_MS 50u
+#define RETRY_FEEDBACK_WINDOW_MS 1200u
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
@@ -96,6 +103,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define STATUS_CAST_SITE_CONFLICT 10u
 #define STATUS_MOVEMENT_SITE_CONFLICT 11u
 #define STATUS_HOOK_PATCH_FAILED 12u
+#define STATUS_FAIL_SITE_CONFLICT 13u
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
@@ -109,7 +117,13 @@ static volatile u32 g_lastTick=0u;
 static volatile u32 g_needsRestore=0u;
 static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
-static volatile u32 g_rearLease=0u,g_castInstalled=0u,g_moveInstalled=0u,g_gcdInstalled=0u;
+static volatile u32 g_rearLease=0u,g_castInstalled=0u,g_moveInstalled=0u,g_gcdInstalled=0u,g_failInstalled=0u;
+static volatile u32 g_prevFailTarget=0u;
+/* Keep only the newest NPC opener CMSG: never replay old target/world data. */
+static u8 g_savedPacket[MAX_CAST_PACKET];
+static u32 g_savedHeader[6],g_savedSpell=0u,g_savedPlayer=0u,g_savedTarget=0u;
+static volatile u32 g_savedValid=0u,g_lastSendTick=0u,g_retryPending=0u,g_retryDue=0u,g_retryAttempt=0u;
+static volatile u32 g_positionalFailures=0u,g_adaptiveRetries=0u,g_lastFailReason=0u;
 static volatile u32 g_skipNativeGcdCurrent=0u,g_busyDrops=0u;
 static volatile u32 g_suppressCast=0u,g_prevMoveTarget=0u;
 static float g_rearX,g_rearY,g_rearZ,g_rearO;
@@ -289,6 +303,11 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
     !behindSpell(spell)||!store)return 0u;
  pl=localPlayer();tg=selectedTarget();
  if(!pl||!tg||pl==tg||read32(tg+OBJ_TYPE)!=3u)return 0u;
+ /* Do not race an already scheduled server-failure retry with LazyScript. */
+ if(g_retryPending&&g_savedValid&&g_savedPlayer==pl&&
+    g_savedTarget==tg&&g_savedSpell==spell){
+  g_skipNativeGcdCurrent=1u;return 1u;
+ }
  /* A previous opener already holds MovementCore's rear lease. Re-prime a
     fresh cast for the SAME NPC instead of sending it at the unprimed real
     position; never steal a lease from PP, gather or an unrelated cast. */
@@ -331,6 +350,13 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  }
  for(i=0u;i<sz;++i)copyPacket[i]=src[i];
  for(i=0u;i<6u;++i)copyHeader[i]=original[i];
+ /* Immutable retry template; original stack store is invalid after return. */
+ for(i=0u;i<sz;++i)g_savedPacket[i]=copyPacket[i];
+ for(i=0u;i<6u;++i)g_savedHeader[i]=copyHeader[i];
+ g_savedHeader[1]=(u32)g_savedPacket;g_savedHeader[2]=0u;
+ g_savedHeader[3]=MAX_CAST_PACKET;
+ g_savedPlayer=pl;g_savedTarget=tg;g_savedSpell=spell;
+ g_savedValid=1u;g_retryAttempt=0u;g_retryPending=0u;
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
@@ -342,6 +368,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
  sendStore((u32)copyHeader);
+ g_lastSendTick=GetTickCount();
  g_needsRestore=1u;g_status=STATUS_ACTIVE;
  ++g_count;++g_castCount;
  return 1u; /* suppress the now-stale original CDataStore send */
@@ -372,6 +399,103 @@ __declspec(naked) static void castChainHook(void){
   ret
  }
 }
+/* Read the server's actual reason, rather than guessing from a 350 ms
+   lease. This exact 5875 callsite is already hooked by LongPickPocket;
+   preserve its callback chain. Only the documented positional errors can
+   schedule one of two strictly bounded NPC-only retries. */
+static void STDCALL observeServerFailure(u32 spell,u32 reason){
+ u32 now=GetTickCount();
+ if(!g_enabled||!g_savedValid||!g_failInstalled||
+    !behindSpell(spell)||spell!=g_savedSpell||
+    g_savedPlayer!=localPlayer()||g_savedTarget!=selectedTarget()||
+    read32(g_savedTarget+OBJ_TYPE)!=3u||
+    (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
+ g_lastFailReason=reason;
+ if(reason!=0x33u&&reason!=0x7Cu)return;
+ ++g_positionalFailures;
+ if(g_retryPending||g_retryAttempt>=RETRY_MAX_ATTEMPTS)return;
+ g_retryPending=1u;g_retryDue=now+RETRY_DELAY_MS;
+}
+__declspec(naked) static void failChainHook(void){
+ __asm{
+  pushfd
+  pushad
+  mov eax,[esp+24]
+  mov edx,[esp+20]
+  and edx,0FFh
+  push edx
+  push eax
+  call observeServerFailure
+  popad
+  popfd
+  mov eax,dword ptr [g_prevFailTarget]
+  jmp eax
+ }
+}
+/* Re-prime only after a confirmed positional failure. Never retry on
+   insufficient energy, cooldown, invalid target, range or a competing PP.
+   The game-window tick is the only thread allowed to send native heartbeats. */
+static void tryPositionalRetry(u32 now){
+ u32 pl,tg,i,header[6],sz,idx;
+ u8 packet[MAX_CAST_PACKET];
+ float px,py,pz,po,tx,ty,tz,to,a,x,y,z,o,dx,dy,dz;
+ if(!g_retryPending||(s32)(now-g_retryDue)<0)return;
+ pl=localPlayer();tg=selectedTarget();
+ if(!g_enabled||!g_savedValid||g_savedPlayer!=pl||g_savedTarget!=tg||
+    !pl||!tg||read32(tg+OBJ_TYPE)!=3u||
+    (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS||
+    g_retryAttempt>=RETRY_MAX_ATTEMPTS){g_retryPending=0u;return;}
+ if(read32(CASTING_SPELL_ID)&&read32(CASTING_SPELL_ID)!=g_savedSpell){
+  g_retryPending=0u;return;
+ }
+ if(!g_castActive){
+  if(workMovementBusy()||!acquireRear(g_savedSpell)){
+   g_retryDue=now+RETRY_DELAY_MS;return;
+  }
+ }else if(!g_rearLease||g_castPlayer!=pl||g_castTarget!=tg){
+  g_retryPending=0u;return;
+ }
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);po=readf(pl+OBJ_O);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ dx=px-tx;dy=py-ty;dz=pz-tz;
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||!finitef(po)||
+    !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to)||
+    dx*dx+dy*dy>REAL_MAX_RANGE_SQ||dz>2.5f||dz< -2.5f){
+  g_retryPending=0u;return;
+ }
+ /* Work PositionalSpoof's first two rear-hemisphere fallback poses:
+    160 and 200 degrees relative to the NPC's current facing. */
+ idx=g_retryAttempt+1u;
+ a=angle(to+PI_F+(idx==1u?-PI_F/9.0f:PI_F/9.0f));
+ x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
+ z=tz;o=angle(a+PI_F);
+ if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o)){
+  g_retryPending=0u;return;
+ }
+ sz=g_savedHeader[4];
+ if(sz<10u||sz>MAX_CAST_PACKET||
+    *(u32*)g_savedPacket!=CMSG_CAST_SPELL||
+    *(u32*)(g_savedPacket+4u)!=g_savedSpell){
+  g_retryPending=0u;return;
+ }
+ for(i=0u;i<sz;++i)packet[i]=g_savedPacket[i];
+ for(i=0u;i<6u;++i)header[i]=g_savedHeader[i];
+ header[1]=(u32)packet;header[2]=0u;header[3]=MAX_CAST_PACKET;
+ g_castPlayer=pl;g_castTarget=tg;
+ if(!g_castActive)g_castStarted=now;
+ g_castActive=1u;g_castUntil=now+g_period;
+ g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
+ g_retryPending=0u;g_retryAttempt=idx;
+ *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
+ *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
+ nativeHeartbeat(pl);nativeHeartbeat(pl);
+ *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
+ *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
+ sendStore((u32)header);
+ g_lastSendTick=GetTickCount();g_needsRestore=1u;
+ ++g_adaptiveRetries;++g_count;++g_castCount;
+ g_status=STATUS_ACTIVE;
+}
 /* The original native GCD CALL follows CAST_SEND_SITE. A deferred/busy
    opener must not consume a phantom client GCD while no CMSG was sent. */
 __declspec(naked) static void gcdChainHook(void){
@@ -399,7 +523,7 @@ static u32 callTarget(u32 site){
  return site+5u+(u32)*(volatile s32*)(site+1u);
 }
 static int installCastAndMovement(void){
- u32 i,target;
+ u32 i,target,failTarget;
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
  typedef u32 (STDCALL *IsCoreReadyFn)(void);
  IsCoreReadyFn ready;
@@ -412,6 +536,10 @@ static int installCastAndMovement(void){
  for(i=0u;i<5u;++i)if(*(volatile u8*)(CAST_SEND_SITE+i)!=kCastOriginal[i]||
                            *(volatile u8*)(GCD_CALL_SITE+i)!=kGcdOriginal[i]){
   g_status=STATUS_CAST_SITE_CONFLICT;return 0;
+ }
+ failTarget=callTarget(SPELL_FAIL_SITE);
+ if(!failTarget||failTarget==(u32)failChainHook){
+  g_status=STATUS_FAIL_SITE_CONFLICT;return 0;
  }
  target=callTarget(MOVE_SEND_SITE);
  if(!target||target==(u32)moveChainHook){
@@ -434,10 +562,23 @@ static int installCastAndMovement(void){
   g_status=STATUS_HOOK_PATCH_FAILED;return 0;
  }
  g_gcdInstalled=1u;
+ g_prevFailTarget=failTarget;
+ if(!patchCall(SPELL_FAIL_SITE,failChainHook)){
+  patchCall(GCD_CALL_SITE,(void*)START_GLOBAL_COOLDOWN);
+  patchCall(CAST_SEND_SITE,(void*)CLIENTSERVICES_SEND);
+  patchCall(MOVE_SEND_SITE,(void*)g_prevMoveTarget);
+  g_castInstalled=0u;g_moveInstalled=0u;g_gcdInstalled=0u;
+  g_status=STATUS_HOOK_PATCH_FAILED;return 0;
+ }
+ g_failInstalled=1u;
  return 1;
 }
 static void removeHooks(void){
  u32 i,match=1u,ignored=0u,old=0u;
+ g_retryPending=0u;g_savedValid=0u;
+ if(g_failInstalled&&callTarget(SPELL_FAIL_SITE)==(u32)failChainHook)
+  patchCall(SPELL_FAIL_SITE,(void*)g_prevFailTarget);
+ g_failInstalled=0u;
  if(g_gcdInstalled&&callTarget(GCD_CALL_SITE)==(u32)gcdChainHook){
   patchCall(GCD_CALL_SITE,(void*)START_GLOBAL_COOLDOWN);
  }
@@ -460,11 +601,12 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  u32 pl;
  (void)hwnd;(void)msg;(void)timer;
  if(g_stop)return;
- if(!g_castInstalled||!g_moveInstalled||!g_gcdInstalled){
+ if(!g_castInstalled||!g_moveInstalled||!g_gcdInstalled||!g_failInstalled){
   if(installCastAndMovement())g_status=STATUS_IDLE;
   /* Preserve the installer's specific reason on failure. */
   return;
  }
+ if(g_retryPending)tryPositionalRetry(now);
  if(g_castActive){
   /* An NPC turn is handled by movement rewriting and the next cast re-prime;
      target/world changes and disable retire the lease without stale sends. */
@@ -480,6 +622,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   return;
  }
  if(!g_enabled){
+  g_retryPending=0u;g_savedValid=0u;
   g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
  }
  restoreHeartbeat(localPlayer());
@@ -520,6 +663,9 @@ __declspec(dllexport) u32 STDCALL PVERear360_GetStatus(void){return g_status;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetPulseCount(void){return g_count;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetCastCount(void){return g_castCount;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetBusyDrops(void){return g_busyDrops;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetPositionalFailures(void){return g_positionalFailures;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetAdaptiveRetries(void){return g_adaptiveRetries;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetLastFailReason(void){return g_lastFailReason;}
 /* Invoked only by the existing ESP WndProc on the game window's owner thread. */
 __declspec(dllexport) u32 STDCALL PVERear360_GameWindowTick(HWND32 game){
  if(g_stop||!game||!IsWindow(game)||g_status==STATUS_BUILD_MISMATCH||
