@@ -12,6 +12,7 @@ namespace WoW112Updater
         string GitHubToken { get; }
         bool IsStableChannel { get; }
         string SessionLogText { get; }
+        string[] DisabledDllNames { get; }
         event EventHandler GameDirectoryChanged;
         void RegisterUiControl(string key, Control control);
         void SetBusy(bool value, string text);
@@ -45,6 +46,11 @@ namespace WoW112Updater
         bool IUpdaterHost.IsStableChannel
         {
             get { return IsStable(); }
+        }
+
+        string[] IUpdaterHost.DisabledDllNames
+        {
+            get { return GetDllInstallDisabledForSave(); }
         }
 
         string IUpdaterHost.SessionLogText

@@ -68,6 +68,7 @@ jobs:
             tools\updater\UpdaterHost.cs `
             tools\updater\UpdaterGitHubMonitor.cs `
             tools\updater\UpdaterDllSelectionFeature.cs `
+            tools\updater\UpdaterDllCleanupFeature.cs `
             tools\updater\UpdaterSafety.cs `
             tools\updater\UpdaterAddons.cs `
             tools\updater\UpdaterNetworkCompat.cs `

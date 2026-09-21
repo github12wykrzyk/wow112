@@ -136,7 +136,13 @@ namespace WoW112Updater
                 string localSha = string.Empty;
                 string state;
                 bool change;
-                if (!File.Exists(localPath))
+                if (IsDllInstallDisabled(dll.Name))
+                {
+                    localSha = File.Exists(localPath) ? Sha256File(localPath) : string.Empty;
+                    state = File.Exists(localPath) ? "WYŁĄCZONA / DO USUNIĘCIA" : "WYŁĄCZONA";
+                    change = File.Exists(localPath);
+                }
+                else if (!File.Exists(localPath))
                 {
                     state = "BRAK LOKALNIE";
                     change = true;
@@ -228,7 +234,7 @@ namespace WoW112Updater
                 root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
                 root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
                 root.Controls.Add(TextLabel(
-                    "Zaznaczone = updater może zmienić tę DLL. Odznaczone = zachowaj lokalną wersję i pomijaj update/usunięcie.\nStatus jest liczony osobno z SHA256 każdej DLL.",
+                    "To okno steruje tylko aktualizacją DLL. Odznaczenie zachowuje lokalny plik.\nAby USUNĄĆ i trwale wyłączyć DLL, użyj przycisku «Oczyść DLL» w głównym oknie.",
                     9, Muted), 0, 0);
 
                 var list = new CheckedListBox

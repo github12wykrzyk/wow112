@@ -88,6 +88,8 @@ namespace WoW112Updater
             tokenSettings.Click += delegate { EditAccessToken(); };
 
             featureControls["dllUpdates"] = dllUpdatesButton;
+            featureControls["dllCleanup"] = dllCleanupButton;
+            dllCleanupButton.Click += delegate { ShowDllCleanupDialog(); };
             dllUpdatesButton.Click += async delegate { await ShowDllUpdateDialogAsync(); };
 
             var update = Card("AKTUALIZACJA", 4);
@@ -118,10 +120,11 @@ namespace WoW112Updater
             string[] captions = { "Sprawdź / napraw", "Diagnostyka ZIP", "Wyślij raport", "Aktualizuj updater", "Konta WoW" };
             for (int i = 0; i < keys.Length; i++) utilities.Controls.Add(ActionButton((Button)featureControls[keys[i]], captions[i]), i, 0);
             tools.Controls.Add(utilities, 0, 1);
-            var backups = Grid(3, 1); Columns(backups, 120, -1, 140);
+            var backups = Grid(4, 1); Columns(backups, 120, -1, 120, 132);
             backups.Controls.Add(TextLabel("Przywróć kopię", 9, Muted), 0, 0);
             PrepareInput(rollbackChoice); backups.Controls.Add(rollbackChoice, 1, 0);
             backups.Controls.Add(ActionButton(rollbackButton, "Przywróć"), 2, 0);
+            backups.Controls.Add(ActionButton(dllCleanupButton, "Oczyść DLL"), 3, 0);
             tools.Controls.Add(backups, 0, 2);
 
             var logs = Grid(1, 2); logs.Margin = new Padding(0, 6, 0, 0);

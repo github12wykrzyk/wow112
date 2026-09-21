@@ -152,6 +152,7 @@ namespace WoW112Updater
                 var selected = GetString(root, "channel");
                 // This dedicated updater never adopts the original stable/work channel.
                 LoadDllUpdatePreferences(root);
+                LoadDllInstallDisabled(root);
                 var protectedToken = GetString(root, "token_dpapi");
                 if (!string.IsNullOrWhiteSpace(protectedToken))
                 {
@@ -180,6 +181,7 @@ namespace WoW112Updater
                 root["channel"] = "parallel";
                 root["token_dpapi"] = protectedToken;
                 root["dll_update_enabled"] = GetDllUpdatePreferencesForSave();
+                root["dll_install_disabled"] = GetDllInstallDisabledForSave();
                 File.WriteAllText(configPath, json.Serialize(root), Encoding.UTF8);
                 if (announce) Log("Ustawienia zapisane lokalnie.");
             }
@@ -569,7 +571,11 @@ namespace WoW112Updater
                 }
 
                 var dest = SafeDestination(root, file.Name);
-                if (IsDllUpdateEnabled(file.Name))
+                if (IsDllInstallDisabled(file.Name))
+                {
+                    Log("DISABLED " + file.Name + " (nie instaluję ani nie aktywuję)");
+                }
+                else if (IsDllUpdateEnabled(file.Name))
                 {
                     installFiles.Add(file);
                     finalDllNames.Add(file.Name);
@@ -588,7 +594,7 @@ namespace WoW112Updater
             foreach (var oldName in oldManaged.Where(name => name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !remoteDllNames.Contains(name)))
             {
                 var dest = SafeDestination(root, oldName);
-                if (!IsDllUpdateEnabled(oldName) && File.Exists(dest) && !finalDllNames.Contains(oldName, StringComparer.OrdinalIgnoreCase))
+                if (!IsDllInstallDisabled(oldName) && !IsDllUpdateEnabled(oldName) && File.Exists(dest) && !finalDllNames.Contains(oldName, StringComparer.OrdinalIgnoreCase))
                 {
                     finalDllNames.Add(oldName);
                     Log("HOLD " + oldName + " (DLL nie ma już w paczce, ale usunięcie jest wyłączone)");
@@ -612,7 +618,7 @@ namespace WoW112Updater
             var stale = oldManaged.Where(name =>
                 !newManaged.Contains(name)
                 && File.Exists(SafeDestination(root, name))
-                && (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || IsDllUpdateEnabled(name))).ToList();
+                && (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || IsDllInstallDisabled(name) || IsDllUpdateEnabled(name))).ToList();
 
             var backupDir = string.Empty;
             if (changed.Count > 0 || stale.Count > 0)

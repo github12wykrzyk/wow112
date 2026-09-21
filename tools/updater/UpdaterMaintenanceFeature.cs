@@ -387,6 +387,7 @@ namespace WoW112Updater
             private List<ExpectedFile> BuildExpectedFiles(byte[] packageBytes)
             {
                 var files = new List<ExpectedFile>();
+                var disabledDlls = new HashSet<string>(host.DisabledDllNames, StringComparer.OrdinalIgnoreCase);
                 var packageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 using (var ms = new MemoryStream(packageBytes, false))
                 using (var zip = new ZipArchive(ms, ZipArchiveMode.Read, false))
@@ -400,12 +401,14 @@ namespace WoW112Updater
                             throw new InvalidOperationException("Paczka zawiera powieloną nazwę pliku (bez rozróżniania wielkości liter): " + entry.Name);
                         var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
                         if (ext != ".dll" && ext != ".exe") continue;
+                        if (ext == ".dll" && disabledDlls.Contains(entry.Name)) continue;
                         files.Add(new ExpectedFile(entry.Name, ReadEntry(entry)));
                     }
                 }
-                if (!files.Any(x => x.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) || !files.Any(x => x.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)))
+                if (!files.Any(x => x.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
                     throw new InvalidOperationException("Paczka zainstalowanego buildu jest niekompletna.");
-                var dllList = string.Join("\r\n", files.Where(x => x.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).Select(x => x.Name).ToArray()) + "\r\n";
+                var enabledDllNames = files.Where(x => x.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).Select(x => x.Name).ToArray();
+                var dllList = enabledDllNames.Length == 0 ? string.Empty : string.Join("\r\n", enabledDllNames) + "\r\n";
                 files.Add(new ExpectedFile("dlls.txt", Encoding.ASCII.GetBytes(dllList)));
                 return files;
             }

@@ -171,3 +171,7 @@ The TEST candidate workflow now triggers on root `*.exe` changes in addition to 
 ## GitHub activity monitor (2.5-parallel.5)
 
 The **Monitor GH** button shows current branch HEAD and recent GitHub Actions status for `parallel`, `work` and `main`. It refreshes every 60 seconds while the parallel updater is open and supports manual refresh. A successful build on an older SHA is not treated as a build for the current HEAD. Monitoring is read-only, uses the existing token with Contents and Actions read permissions, does not change game files, and cannot determine whether ChatGPT is generating a reply without interacting with GitHub.
+
+## Oczyść DLL (2.5-parallel.6)
+
+Przycisk **Oczyść DLL** wyświetla DLL z głównego katalogu gry i poprzednio wyłączone pozycje. Zaznaczenie pliku oznacza usunięcie i zablokowanie ponownej instalacji; odznaczenie wcześniej wyłączonego modułu pozwala przywrócić go przy następnej aktualizacji. Czyszczenie wymaga zamkniętej gry i potwierdzenia. Pliki nieznane updaterowi są oznaczone i nie są wybierane automatycznie. Backup obejmuje usuwane DLL, `dlls.txt` i stan instalacji; rollback odtwarza te pliki, ale lista wyłączeń pozostaje w lokalnej konfiguracji do czasu świadomej zmiany. VERIFY/REPAIR respektuje wyłączenia. Przełączniki w oknie **DLL-e** nadal sterują wyłącznie aktualizowaniem istniejących plików.
