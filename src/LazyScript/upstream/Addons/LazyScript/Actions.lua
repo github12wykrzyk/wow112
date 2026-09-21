@@ -425,10 +425,35 @@ function lazyScript.Action:IsUsable(sayNothing)
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(sayNothing)
 	if (self:GetSlot(sayNothing)) then
 		local inRange = IsActionInRange(self.slot)
-		local usable = IsUsableAction(self.slot)
+		local usable, notEnoughEnergy = IsUsableAction(self.slot)
 		local cooldown = GetActionCooldown(self.slot)
 		local current = IsCurrentAction(self.slot)
-		if (usable == 1 and
+		-- WoW 5875 can mark a ready rear attack unusable when facing an NPC.
+		-- Only the installed native rear owner may arbitrate a bounded probe;
+		-- preserve cooldown, energy, range, stealth and regular action gates.
+		local rearProbe = false
+		if (self.code == "bs" or self.code == "ambush") and usable == nil and
+			(not notEnoughEnergy) and cooldown == 0 and
+			(inRange == 1 or inRange == nil) and
+			UnitExists("target") and not UnitIsPlayer("target") and
+			UnitCanAttack("player", "target") and
+			UnitMana("player") >= 60 and spellIndexStart and rankCount and rankCount > 0 then
+			local trace = lazyScript.rearTrace
+			local native = trace and trace.native
+			if native and trace.nativeAt and GetTime() - trace.nativeAt <= 3 and
+				native.castHook == 1 and native.moveHook == 1 then
+				local stealthReady = true
+				if self.code == "ambush" then
+					local _, _, active = GetShapeshiftFormInfo(1)
+					stealthReady = active == 1
+				end
+				rearProbe = stealthReady
+			end
+		end
+		if rearProbe and lazyScript.RearTrace then
+			lazyScript.RearTrace("ls_rear_probe",self.code.." action_bar_position_gate")
+		end
+		if ((usable == 1 or rearProbe) and
 			cooldown == 0 and -- not in cooldown
 			(not current or self.code == "bs" or self.code == "ambush") and -- native rear owner coalesces repeated attempts
 			(inRange == 1 or inRange == nil or (self.parent and self.parent.target == "player"))) then
