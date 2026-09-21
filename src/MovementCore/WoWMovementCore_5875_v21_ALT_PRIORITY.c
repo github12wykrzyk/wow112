@@ -17,6 +17,7 @@
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
  */
 
+#define W112_PP_SELECTOR_BLACKLIST_BRIDGE 1
 #define DllMain W112_MovementCoreV20_DllMain
 #define MovementCore_GetVersion W112_MovementCoreV20_GetVersion
 #include "WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c"
@@ -34,7 +35,123 @@
 #pragma comment(linker, "/EXPORT:MovementCore_GetAltPriorityInstalled=_MovementCore_GetAltPriorityInstalled@0")
 #pragma comment(linker, "/EXPORT:MovementCore_GetRearPriorityPackets=_MovementCore_GetRearPriorityPackets@0")
 #pragma comment(linker, "/EXPORT:MovementCore_UserIsTyping=_MovementCore_UserIsTyping@0")
+#pragma comment(linker, "/EXPORT:MovementCore_PPSelectorBridgeReady=_MovementCore_PPSelectorBridgeReady@0")
+#pragma comment(linker, "/EXPORT:MovementCore_PPSelectorSkipped=_MovementCore_PPSelectorSkipped@0")
+#pragma comment(linker, "/EXPORT:MovementCore_PPSelectorReleased=_MovementCore_PPSelectorReleased@0")
 #endif
+
+
+/* Parallel TEST: filter only AutoLootPP's original CanAttack selector call.
+   The intact v0.14 DLL has callsite RVA 0x4F80: push ecx; push ebx;
+   mov eax,0x00606980; call eax.  Native 5875 ABI is ECX=self/player,
+   [ESP+4]=candidate unit, RET 4. Unblocked calls tail-jump to native.
+   No global WoW.exe CanAttack hook, no reconstructed AutoLootPP recompile. */
+__declspec(dllimport) HINSTANCE __stdcall GetModuleHandleA(const char *);
+static const char g_ppSelectorDllName[] =
+  "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll";
+static BYTE *g_ppSelectorBase=0;
+static volatile DWORD g_ppSelectorInstalled=0u,g_ppSelectorSkipped=0u,g_ppSelectorReleased=0u;
+#define PPSEL_CALL_RVA 0x4F80u
+#define PPSEL_IMM_RVA 0x4F83u
+#define PPSEL_FLAG_RVA 0xEAD8u
+#define PPSEL_LO_RVA 0xEADCu
+#define PPSEL_HI_RVA 0xEAE0u
+static const BYTE g_ppSelectorSignature[] = {
+  0x51u,0x53u,0xB8u,0x80u,0x69u,0x60u,0x00u,
+  0xFFu,0xD0u,0x59u,0x84u,0xC0u,0x0Fu,0x84u
+};
+static DWORD __cdecl W112_PPSelector_ShouldSkip(BYTE*unit)
+{
+  DWORD lo,hi;
+  if(!g_ppSelectorInstalled||!Ptr(unit))return 0u;
+  lo=*(DWORD*)(unit+OFF_OBJ_GUID_LOW);
+  hi=*(DWORD*)(unit+OFF_OBJ_GUID_HIGH);
+  if(!PPBlackFind(lo,hi))return 0u;
+  ++g_ppSelectorSkipped;
+  return 1u;
+}
+/* Preserve registers and original native ECX + single stack argument. */
+__declspec(naked) static void W112_PPSelector_AttackableThunk(void)
+{
+  __asm {
+    pushfd
+    pushad
+    push dword ptr [esp+40]
+    call W112_PPSelector_ShouldSkip
+    add esp,4
+    mov dword ptr [esp+28],eax
+    popad
+    popfd
+    test eax,eax
+    jne pp_selector_deny
+    mov eax,0x00606980
+    jmp eax
+pp_selector_deny:
+    xor eax,eax
+    ret 4
+  }
+}
+static BOOL W112_PPSelector_Install(void)
+{
+  BYTE*base,*site;
+  DWORD i,dest,orig=0x00606980u;
+  if(g_ppSelectorInstalled)return TRUE;
+  if(!g_ppFailHookOk||!g_ppChainOk)return FALSE;
+  base=(BYTE*)GetModuleHandleA(g_ppSelectorDllName);
+  if(!Ptr(base)||!Ptr(base+PPSEL_HI_RVA))return FALSE;
+  site=base+PPSEL_CALL_RVA;
+  for(i=0u;i<sizeof(g_ppSelectorSignature);i++)
+    if(site[i]!=g_ppSelectorSignature[i])return FALSE;
+  /* Exact original v0.14 with the verified 100 -> 20ms PP-only patch. */
+  if(base[0x201Bu]!=0x83u||base[0x201Cu]!=0xF8u||
+     base[0x201Du]!=0x14u||base[0x201Eu]!=0x72u)return FALSE;
+  /* The tracked-active flag and GUID accessors must match relocated slots. */
+  if(base[0x1461u]!=0x80u||base[0x1462u]!=0x3Du||
+     *(DWORD*)(base+0x1463u)!=(DWORD)(base+PPSEL_FLAG_RVA)||
+     base[0x1467u]!=0x01u||
+     base[0x19DBu]!=0x8Bu||base[0x19DCu]!=0x15u||
+     *(DWORD*)(base+0x19DDu)!=(DWORD)(base+PPSEL_HI_RVA)||
+     base[0x19E1u]!=0x8Bu||base[0x19E2u]!=0x0Du||
+     *(DWORD*)(base+0x19E3u)!=(DWORD)(base+PPSEL_LO_RVA))
+    return FALSE;
+  if(*(DWORD*)(base+PPSEL_IMM_RVA)!=orig)return FALSE;
+  dest=(DWORD)(LPVOID)&W112_PPSelector_AttackableThunk;
+  if(!Ptr((void*)dest)||!WMem(base+PPSEL_IMM_RVA,(BYTE*)&dest,4u))
+    return FALSE;
+  if(*(DWORD*)(base+PPSEL_IMM_RVA)!=dest){
+    WMem(base+PPSEL_IMM_RVA,(BYTE*)&orig,4u);return FALSE;
+  }
+  g_ppSelectorBase=base;
+  g_ppSelectorInstalled=1u;
+  return TRUE;
+}
+static void W112_PPSelector_ReleaseTracked(DWORD lo,DWORD hi)
+{
+  BYTE*base=g_ppSelectorBase;
+  if(!g_ppSelectorInstalled||!base||(lo|hi)==0u)return;
+  if(*(volatile DWORD*)(base+PPSEL_LO_RVA)!=lo||
+     *(volatile DWORD*)(base+PPSEL_HI_RVA)!=hi)return;
+  if(*(volatile BYTE*)(base+PPSEL_FLAG_RVA)!=1u)return;
+  *(volatile BYTE*)(base+PPSEL_FLAG_RVA)=0u;
+  ++g_ppSelectorReleased;
+}
+static void W112_PPSelector_Remove(void)
+{
+  BYTE*base=g_ppSelectorBase;
+  DWORD orig=0x00606980u;
+  if(g_ppSelectorInstalled&&base&&
+     (BYTE*)GetModuleHandleA(g_ppSelectorDllName)==base&&
+     *(DWORD*)(base+PPSEL_IMM_RVA)==
+        (DWORD)(LPVOID)&W112_PPSelector_AttackableThunk)
+    WMem(base+PPSEL_IMM_RVA,(BYTE*)&orig,4u);
+  g_ppSelectorInstalled=0u;g_ppSelectorBase=0;
+}
+__declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorBridgeReady(void)
+{return g_ppSelectorInstalled?1u:0u;}
+__declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorSkipped(void)
+{return g_ppSelectorSkipped;}
+__declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorReleased(void)
+{return g_ppSelectorReleased;}
 
 static volatile DWORD g_altPriorityInstalled=0u;
 static volatile DWORD g_altPriorityBlockCurrent=0u;
@@ -1201,9 +1318,15 @@ BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
             W112_MovementCoreV20_DllMain(h,DLL_PROCESS_DETACH,x);
             return FALSE;
         }
+        if(W112_PPSelector_Install())
+            GatherFileLog("AUTOPP_SELECTOR_BLACKLIST_BRIDGE_READY",
+                          GT()?GT()():0u,0u,0u,0u,0.0f,0u,20u);
+        else GatherFileLog("AUTOPP_SELECTOR_BRIDGE_UNAVAILABLE",
+                           GT()?GT()():0u,0u,0u,0u,0.0f,0u,0u);
         return TRUE;
     }
     if(r==DLL_PROCESS_DETACH){
+        W112_PPSelector_Remove();
         AltPriority_Remove();
         g_coordRearUntil=0u;g_stepActive=0u;g_stepEnabled=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);

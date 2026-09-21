@@ -657,6 +657,9 @@ static void PPHardRetryTick(DWORD now)
        do not consume a HARDLOS variant in that case. */
     if(g_ppHardRetryActive&&!g_ppFailPendingAuto){if(g_ppHardRetryAttempts>1u)--g_ppHardRetryAttempts;g_ppHardRetryScheduled=1u;g_ppHardRetryDue=now+100u;}
 }
+#if defined(W112_PP_SELECTOR_BLACKLIST_BRIDGE)
+static void W112_PPSelector_ReleaseTracked(DWORD lo,DWORD hi);
+#endif
 static void __cdecl PPBlacklistOnFail(DWORD reason)
 {
     DWORD lo,hi,added,now;
@@ -664,6 +667,11 @@ static void __cdecl PPBlacklistOnFail(DWORD reason)
     lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;g_ppHardArmed=0u;
     if(reason==SPELL_FAILED_TARGET_NO_POCKETS){
         added=PPBlackAdd(lo,hi);g_ppFailLogEvent=added?1u:2u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppBlackCount;PPHardRetryCancel();
+#if defined(W112_PP_SELECTOR_BLACKLIST_BRIDGE)
+        /* A no-pockets result must release the tracked PP transaction now;
+           waiting for its original 350-ms retries would starve the selector. */
+        W112_PPSelector_ReleaseTracked(lo,hi);
+#endif
     }else if(reason==SPELL_FAILED_LINE_OF_SIGHT){
         ++g_ppHardLOSLOSFailures;g_ppFailLogEvent=3u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppFailPendingVariant;
         if(g_ppHardRetryActive&&g_ppHardRetryLo==lo&&g_ppHardRetryHi==hi&&g_ppHardRetryAttempts<PP_HARDLOS_VARIANTS){now=GT()?GT()():0u;g_ppHardRetryScheduled=1u;g_ppHardRetryDue=now+PP_HARDLOS_RETRY_DELAY_MS;}else PPHardRetryCancel();
