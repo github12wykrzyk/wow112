@@ -329,6 +329,7 @@ function lazyScript.Action:Use()
 	-- Keep the previous timers until the game accepts this rear attack.
 	-- UI_ERROR_MESSAGE can undo them if the server rejects its position.
 	if (self.code == "bs" or self.code == "ambush") then
+		if lazyScript.RearTrace then lazyScript.RearTrace("ls_dispatch",self.code) end
 		lazyScript.pendingRearAction = {
 			action = self, at = GetTime(), target = UnitName("target"),
 			everyTimer = self.everyTimer, nowAndEveryTimer = self.nowAndEveryTimer
@@ -357,12 +358,14 @@ function lazyScript.Action:IsUsable(sayNothing)
     if self.code == "bs" or self.code == "ambush" then
         local now = GetTime()
         if lazyScript.rearRetryUntil and now < lazyScript.rearRetryUntil then
+            if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." retry_delay") end
             return false
         end
         local pending = lazyScript.pendingRearAction
         if pending and pending.target == UnitName("target") then
             local age = now - pending.at
             if age >= 0 and age < 0.65 then
+                if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." pending") end
                 return false -- other action lines may proceed meanwhile
             end
             -- Do not cancel legitimate energy or GCD waits, nor casts/channels.
@@ -374,6 +377,7 @@ function lazyScript.Action:IsUsable(sayNothing)
                GetActionCooldown(slot) == 0 and
                not lazyScript.spellcastInProgress and
                not lazyScript.channellingInProgress then
+                if lazyScript.RearTrace then lazyScript.RearTrace("ls_recovery",self.code.." stale_current") end
                 SpellStopCasting()
                 lazyScript.rearStaleClears = (lazyScript.rearStaleClears or 0) + 1
                 lazyScript.rearRetryUntil = now + 0.12
@@ -385,6 +389,7 @@ function lazyScript.Action:IsUsable(sayNothing)
             if slot and not IsCurrentAction(slot) then
                 lazyScript.pendingRearAction = nil
             else
+                if lazyScript.RearTrace then lazyScript.RearTrace("ls_wait",self.code.." current_or_busy") end
                 return false
             end
         end
@@ -409,6 +414,9 @@ function lazyScript.Action:IsUsable(sayNothing)
 			(inRange == 1 or inRange == nil or (self.parent and self.parent.target == "player"))) then
 			return true
 		end
+	end
+	if (self.code == "bs" or self.code == "ambush") and lazyScript.RearTrace then
+		lazyScript.RearTrace("ls_unusable",self.code.." action_bar_gate")
 	end
 	return false
 end

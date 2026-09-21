@@ -434,6 +434,11 @@ function lazyScript.OnEvent()
 		lazyScript.DeCacheItemSlots()
 		
 		elseif (event == "UI_ERROR_MESSAGE") then
+		if lazyScript.RearTrace and (arg1 == SPELL_FAILED_NOT_BEHIND or
+			(SPELL_FAILED_OUT_OF_RANGE and arg1 == SPELL_FAILED_OUT_OF_RANGE)) then
+			lazyScript.RearTrace("ui_reject",(arg1 == SPELL_FAILED_NOT_BEHIND and "behind" or "range")..
+				" pending="..(lazyScript.pendingRearAction and lazyScript.pendingRearAction.action.code or "none"))
+		end
 		if (arg1 == SPELL_FAILED_NOT_BEHIND or
 			(SPELL_FAILED_OUT_OF_RANGE and arg1 == SPELL_FAILED_OUT_OF_RANGE)) then
 			local rearBehindError = (arg1 == SPELL_FAILED_NOT_BEHIND)
@@ -815,6 +820,9 @@ function lazyScript.SlashCommand(line)
 		end
 		local doNothing = false
 		lazyScript.TryActions(actions, doNothing)
+		
+		elseif (cmd == "reartrace") then
+		if lazyScript.PrintRearTrace then lazyScript.PrintRearTrace(args[1]) end
 		
 		elseif (cmd == "help") then
 		lazyScript.Help()

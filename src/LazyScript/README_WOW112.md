@@ -59,3 +59,7 @@ The DLL never starts/stops movement; existing cast/channel observer and Kick
 semantics are unchanged. Criteria are listed in LS help. Native coordinate
 behavior in combat, BG transitions and synthetic-position scenarios requires
 in-game validation before promotion to main.
+
+## Parallel LazyScript / MovementCore trace bridge (experimental)
+
+The existing embedded Rear360 game-window tick publishes read-only status and cumulative counters through the verified 5875 FrameScript_Execute ABI. LazyScript logs its BS/Ambush action dispatch, wait and bar checks, UI behind/range rejection, and native status/counter changes in a bounded in-memory buffer. Use `/ls reartrace`, `/ls reartrace 25`, `/ls reartrace clear`, `/ls reartrace on`, `/ls reartrace off`. LIVE means the native bridge is emitting; ABSENT/STALE is not proof of a server cast rejection. Native SPELL_GO is an observed game callback, not a separately confirmed server-side outcome. Counter deltas are asynchronous and cannot be attributed one-to-one to one LazyScript action. This diagnostic change adds no separate DLL, hooks, movement mutations, cast cancellation or retries; capture the last 25 events immediately after a failure in PvE or PvP.

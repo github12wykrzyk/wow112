@@ -74,6 +74,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define PENDING_CAST 0x00CEAC48u
 #define SEND_MOVEMENT_WRAPPER 0x00600A10u
 #define FN_GET_GAME_WINDOW 0x00435C30u
+#define REAR_TRACE_SCRIPT_EXECUTE 0x00704CD0u
 #define CAST_SEND_SITE 0x006E5872u
 #define SPELL_FAIL_SITE 0x006E73ACu
 #define SPELL_GO_SITE 0x006E768Bu
@@ -155,6 +156,10 @@ static const u8 kGcdOriginal[5]={0xE8u,0xE0u,0xD4u,0xFFu,0xFFu};
 static const u8 kGoOriginal[6]={0x8Bu,0x4Du,0xF0u,0x8Bu,0x55u,0xF4u};
 static W112_ControlSettingV1 g_settings[3];
 static volatile u32 g_descriptorsReady=0u;
+/* Read-only native diagnostic snapshot; no gameplay state modifications. */
+static volatile u32 g_rearTraceLastEmit=0u;
+static u32 g_rearTraceLastValues[13];
+static u32 g_rearTraceObserved=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
 typedef u32 (STDCALL *WorkCoordAcquireFn)(u32);
 typedef void (STDCALL *WorkCoordReleaseFn)(void);
@@ -908,6 +913,41 @@ __declspec(dllexport) u32 STDCALL PVERear360_GetLastFailReason(void){return g_la
 __declspec(dllexport) u32 STDCALL PVERear360_GetAttempts(void){return g_attempts;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetServerGo(void){return g_serverGo;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetAborted(void){return g_aborted;}
+/* Publish only from the already-existing game-window tick. Counter changes are
+   asynchronous observations, not individually attributed server cast outcomes. */
+static char* rearTraceCat(char*p,const char*s){while(*s)*p++=*s++;return p;}
+static char* rearTraceDecimal(char*p,u32 v){
+ char d[11];u32 n=0u;
+ do{d[n++]=(char)('0'+v%10u);v/=10u;}while(v);
+ while(n)*p++=d[--n];return p;
+}
+static void publishRearTrace(u32 now){
+ static const u8 sig[]={0x56u,0x6Au,0x00u,0x8Bu,0xF1u,0x52u,0x56u,0xE8u};
+ typedef u32 (__fastcall *RearTraceScriptFn)(const char*,const char*);
+ u32 values[13],i,changed=0u;
+ char lua[320],*p=lua;
+ if(g_rearTraceLastEmit&&(u32)(now-g_rearTraceLastEmit)<100u)return;
+ for(i=0u;i<(u32)sizeof(sig);++i)
+  if(*(volatile u8*)(REAR_TRACE_SCRIPT_EXECUTE+i)!=sig[i])return;
+ values[0]=g_status;values[1]=g_attempts;values[2]=g_castCount;
+ values[3]=g_busyDrops;values[4]=g_positionalFailures;
+ values[5]=g_adaptiveRetries;values[6]=g_lastFailReason;
+ values[7]=g_serverGo;values[8]=g_aborted;
+ values[9]=g_sendPending;values[10]=g_resultPending;
+ values[11]=g_castInstalled;values[12]=g_moveInstalled;
+ for(i=0u;i<13u;++i)
+  if(!g_rearTraceObserved||values[i]!=g_rearTraceLastValues[i])changed=1u;
+ if(!changed&&g_rearTraceLastEmit&&(u32)(now-g_rearTraceLastEmit)<1500u)return;
+ p=rearTraceCat(p,"if lazyScript and lazyScript.OnRearNativeTelemetry then lazyScript.OnRearNativeTelemetry(");
+ for(i=0u;i<13u;++i){
+  if(i)*p++=',';
+  p=rearTraceDecimal(p,values[i]);
+  g_rearTraceLastValues[i]=values[i];
+ }
+ p=rearTraceCat(p,") end");*p=0;
+ ((RearTraceScriptFn)REAR_TRACE_SCRIPT_EXECUTE)(lua,"WoW112RearTrace");
+ g_rearTraceObserved=1u;g_rearTraceLastEmit=now;
+}
 /* Invoked only by the existing ESP WndProc on the game window's owner thread. */
 __declspec(dllexport) u32 STDCALL PVERear360_GameWindowTick(HWND32 game){
  if(g_stop||!game||!IsWindow(game)||g_status==STATUS_BUILD_MISMATCH||
@@ -916,6 +956,7 @@ __declspec(dllexport) u32 STDCALL PVERear360_GameWindowTick(HWND32 game){
   g_timerWindow=game;g_timer=1u;g_lastTick=0u;g_status=STATUS_IDLE;
  }
  tick(game,WM_W112_REAR_TICK,1u,GetTickCount());
+ publishRearTrace(GetTickCount());
  return 1u;
 }
 /* The worker only posts a private message. The existing parallel ESP game
