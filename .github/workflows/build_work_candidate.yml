@@ -5,38 +5,8 @@ on:
     branches:
       - work
       - parallel
-    paths:
-      - '*.exe'
-      - 'src/**'
-      - 'runtime/current.json'
-      - 'runtime/work_base_dlls.txt'
-      - 'runtime/work_candidate.json'
-      - 'runtime/verified_symbols_5875.json'
-      - 'manifests/SHA256SUMS_WORK.txt'
-      - 'CURRENT.json'
-      - 'AI_INDEX.json'
-      - 'tools/build_active_module.py'
-      - 'tools/build_changed_active.py'
-      - 'tools/build_controlhub_candidate.py'
-      - 'tools/build_autopoisons_candidate.py'
-      - 'tools/build_autokick_candidate.py'
-      - 'tools/build_diaghub_candidate.py'
-      - 'tools/build_taxiflight_probe_candidate.py'
-      - 'tools/build_groundtargetassist_candidate.py'
-      - 'tools/build_pve_rear360_candidate.py'
-      - 'tools/build_autowotf_candidate.py'
-      - 'tools/build_autoflagwsg_candidate.py'
-      - 'tools/build_openeruirecovery_candidate.py'
-      - 'tools/package_current.py'
-      - 'tools/package_lazyrogue_addons.py'
-      - 'tools/verify_current.py'
-      - 'tools/verify_candidate_source_scope.py'
-      - 'tools/verify_parallel_gui_abi.py'
-      - 'tools/verify_runtime_artifacts.py'
-      - 'tools/verify_verified_symbols.py'
-      - 'tools/verify_candidate_package.py'
-      - 'tools/write_candidate_test_card.py'
-      - '.github/workflows/build_work_candidate.yml'
+    # Every branch HEAD must have a corresponding verified candidate. The builder
+    # skips unchanged native modules and packages exact runtime bytes for doc-only commits.
   workflow_dispatch:
 
 permissions:
@@ -78,6 +48,7 @@ jobs:
           }
           python tools/build_changed_active.py `
             --base "$base" `
+            --package-unchanged `
             --output-dir build `
             --package dist/WoW112_WORK_CANDIDATE.zip `
             --package-metadata dist/candidate_metadata.json `
