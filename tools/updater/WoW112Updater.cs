@@ -849,8 +849,9 @@ namespace WoW112Updater
                     exe = candidates.FirstOrDefault();
                 }
                 if (exe == null) throw new InvalidOperationException("Nie znalazłem WoW*.exe w wybranym katalogu.");
-                Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true });
+                var game = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true });
                 Log("Uruchomiono: " + Path.GetFileName(exe));
+                RememberGameSession(game);
             }
             catch (Exception ex)
             {

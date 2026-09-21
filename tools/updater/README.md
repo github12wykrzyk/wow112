@@ -6,6 +6,14 @@ Config and read-only GitHub credentials use `%APPDATA%/WoW112ParallelUpdater` (s
 
 The sections below describe the shared engine; their older TEST/STABLE labels refer to the original updater and are not available in this branch-specific build.
 
+## Konta WoW (2.4-parallel.1, PARALLEL)
+
+- The **Konta WoW** button on the Parallel dashboard adds, edits, deletes and selects a default game account profile. It does not modify the original work/main updater.
+- The credential vault is local to the Parallel updater: \`%APPDATA%\WoW112ParallelUpdater\wow_accounts.json\`. Passwords are encrypted with Windows DPAPI \`CurrentUser\`, never transmitted to GitHub or written to the game directory, diagnostic archives, or updater logs. The vault cannot be decrypted under a different Windows account; account vaults from work and parallel remain deliberately separate.
+- **Uruchom grę z profilem** associates the profile with the newly launched Parallel game process. **Uruchom grę** and **Aktualizuj i uruchom** use the default selected profile. Multiple simultaneous clients can be associated with different profiles.
+- **Wpisz dane do gry** requires the user to select a profile, manually focus its client login screen and cursor in the login field, and confirm. It checks the foreground process before each keystroke, sends login, TAB, password, and never Enter. This is an experimental Win32 keyboard-input feature for the WoW 1.12.1 (5875) login UI: fullscreen, keyboard layout and in-game behavior still require manual testing. Do not invoke this control while in chat or in the game world.
+- The Windows CI UI smoke tests local DPAPI vault persistence and account UI registration. The updater self-update mechanism continues to retrieve only successful Parallel updater artifacts from branch \`parallel\`.
+
 ---
 
 # WoW112Updater
