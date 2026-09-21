@@ -72,7 +72,7 @@ namespace WoW112Updater
             PrepareInput(gameDir); path.Controls.Add(gameDir, 1, 0);
             path.Controls.Add(ActionButton(browseButton, "Wybierz…"), 2, 0);
             config.Controls.Add(path, 0, 1);
-            var choices = Grid(5, 1); Columns(choices, 98, 180, 70, -1, 112);
+            var choices = Grid(5, 1); Columns(choices, 98, 244, 70, -1, 112);
             choices.Controls.Add(TextLabel("Kanał", 9, Muted), 0, 0);
             PrepareInput(channel); choices.Controls.Add(channel, 1, 0);
             choices.Controls.Add(TextLabel("Serwer", 9, Muted), 2, 0);
@@ -245,7 +245,8 @@ namespace WoW112Updater
         }
         private void ShowRemotePackage()
         {
-            remoteInfo.Text = lastRemote.Channel.ToUpperInvariant() + " • " + ShortSha(lastRemote.HeadSha) + " • run " + lastRemote.RunId + "\nBuild zakończony pomyślnie";
+            remoteInfo.Text = (IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL / ANGLE-ONLY PvE" : "PARALLEL / STANDARD")
+                + " • " + ShortSha(lastRemote.HeadSha) + " • run " + lastRemote.RunId + "\nBuild zakończony pomyślnie";
             detailsTip.SetToolTip(remoteInfo, remoteInfo.Text);
         }
         private void ShowRemoteFailure(Exception error)

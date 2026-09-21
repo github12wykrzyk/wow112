@@ -37,6 +37,7 @@ namespace WoW112Updater
         private const string TestArtifactPrefix = "WoW112-WORK-CANDIDATE-";
         private const string StableArtifactPrefix = "WoW112-STABLE-CANDIDATE-";
         private const string TestInnerZip = "WoW112_WORK_CANDIDATE.zip";
+        private const string AngleInnerZip = "WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip";
         private const string StableInnerZip = "WoW112_STABLE_CANDIDATE.zip";
         private const string UpdaterVersion = UpdaterBuildInfo.Version;
         private const int MaxBackups = 10;
@@ -83,7 +84,7 @@ namespace WoW112Updater
         private void BuildUi()
         {
             channel.DropDownStyle = ComboBoxStyle.DropDownList;
-            channel.Items.AddRange(new object[] { "PARALLEL (parallel)" });
+            channel.Items.AddRange(new object[] { "PARALLEL / STANDARD", "PARALLEL / ANGLE-ONLY PvE" });
             channel.SelectedIndex = 0;
             rollbackChoice.DropDownStyle = ComboBoxStyle.DropDownList;
             token.UseSystemPasswordChar = true;
@@ -151,6 +152,7 @@ namespace WoW112Updater
                 gameDir.Text = GetString(root, "game_dir");
                 var selected = GetString(root, "channel");
                 // This dedicated updater never adopts the original stable/work channel.
+                channel.SelectedIndex = string.Equals(GetString(root, "package_variant"), "angle-only", StringComparison.Ordinal) ? 1 : 0;
                 LoadDllUpdatePreferences(root);
                 LoadDllInstallDisabled(root);
                 var protectedToken = GetString(root, "token_dpapi");
@@ -179,6 +181,7 @@ namespace WoW112Updater
                 var root = new Dictionary<string, object>();
                 root["game_dir"] = gameDir.Text.Trim();
                 root["channel"] = "parallel";
+                root["package_variant"] = IsAngleOnly() ? "angle-only" : "full";
                 root["token_dpapi"] = protectedToken;
                 root["dll_update_enabled"] = GetDllUpdatePreferencesForSave();
                 root["dll_install_disabled"] = GetDllInstallDisabledForSave();
@@ -199,6 +202,12 @@ namespace WoW112Updater
         private bool IsStable()
         {
             return false; // No route to main or work from this updater.
+        }
+
+        private bool IsAngleOnly() { return channel.SelectedIndex == 1; }
+        private static bool IsAnglePackage(string name)
+        {
+            return string.Equals(name, AngleInnerZip, StringComparison.OrdinalIgnoreCase);
         }
 
         private void ValidateInputs()
@@ -323,7 +332,7 @@ namespace WoW112Updater
             var branch = "parallel";
             var workflowName = stable ? StableWorkflowName : TestWorkflowName;
             var prefix = stable ? StableArtifactPrefix : TestArtifactPrefix;
-            var innerName = stable ? StableInnerZip : TestInnerZip;
+            var innerName = stable ? StableInnerZip : (IsAngleOnly() ? AngleInnerZip : TestInnerZip);
 
             using (var client = CreateClient())
             {
@@ -471,14 +480,28 @@ namespace WoW112Updater
                 if (inner == null) throw new InvalidOperationException("Artefakt nie zawiera " + innerZipName + ".");
                 innerBytes = ReadEntry(inner);
 
-                var metaEntry = zip.Entries.FirstOrDefault(e => string.Equals(Path.GetFileName(e.FullName), "candidate_metadata.json", StringComparison.OrdinalIgnoreCase));
+                var angle = IsAnglePackage(innerZipName);
+                var metadataFile = angle ? "rogue_angle_metadata.json" : "candidate_metadata.json";
+                var summaryFile = angle ? "rogue_angle_summary.json" : "candidate_summary.json";
+                var finalFile = angle ? "rogue_angle_final_verification.json" : "final_package_verification.json";
+                var attestationFile = angle ? "rogue_angle_attestation.json" : "candidate_attestation.json";
+                var metaEntry = zip.Entries.FirstOrDefault(e => string.Equals(Path.GetFileName(e.FullName), metadataFile, StringComparison.OrdinalIgnoreCase));
                 if (metaEntry == null)
-                    throw new InvalidOperationException("Artefakt nie zawiera candidate_metadata.json; instalacja została zablokowana.");
+                    throw new InvalidOperationException("Artefakt nie zawiera " + metadataFile + "; instalacja została zablokowana.");
                 var metaText = Encoding.UTF8.GetString(ReadEntry(metaEntry));
                 var meta = AsDictionary(json.DeserializeObject(metaText));
+                if (angle)
+                {
+                    var angleProof = AsDictionary(GetValue(meta, "angle_only_diagnostic"));
+                    if (!string.Equals(GetString(angleProof, "name"), "parallel_rogue_angle_only", StringComparison.Ordinal)
+                        || !string.Equals(GetString(angleProof, "commit_sha"), expectedHeadSha, StringComparison.OrdinalIgnoreCase)
+                        || !GetBool(angleProof, "real_xyz_preserved") || !GetBool(angleProof, "player_orientation_only")
+                        || GetBool(angleProof, "npc_server_facing_spoofed"))
+                        throw new InvalidOperationException("Paczka ANGLE-ONLY nie ma zgodnego manifestu wariantu; instalacja zablokowana.");
+                }
                 expectedSha = GetString(meta, "package_sha256");
                 if (!UpdaterSafety.IsSha256Hex(expectedSha))
-                    throw new InvalidOperationException("candidate_metadata.json nie zawiera poprawnego package_sha256; instalacja została zablokowana.");
+                    throw new InvalidOperationException(metadataFile + " nie zawiera poprawnego package_sha256; instalacja została zablokowana.");
 
                 if (expectedHeadSha.Length != 40 || !string.Equals(GetString(meta, "git_head"), expectedHeadSha, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Paczka nie pochodzi z commita wybranego runu CI.");
@@ -488,11 +511,11 @@ namespace WoW112Updater
                     || !GetBool(proof, "loader_exact") || !GetBool(proof, "all_binary_entries_pe32_x86"))
                     throw new InvalidOperationException("Paczka nie zawiera zgodnego raportu FINAL_PACKAGE: PASS.");
 
-                var reportEntry = zip.Entries.FirstOrDefault(e => e.FullName == "final_package_verification.json");
-                var summaryEntry = zip.Entries.FirstOrDefault(e => e.FullName == "candidate_summary.json");
-                var attestationEntry = zip.Entries.FirstOrDefault(e => e.FullName == "candidate_attestation.json");
+                var reportEntry = zip.Entries.FirstOrDefault(e => e.FullName == finalFile);
+                var summaryEntry = zip.Entries.FirstOrDefault(e => e.FullName == summaryFile);
+                var attestationEntry = zip.Entries.FirstOrDefault(e => e.FullName == attestationFile);
                 if (reportEntry == null || summaryEntry == null || attestationEntry == null)
-                    throw new InvalidOperationException("Brakuje raportu FINAL_PACKAGE, podsumowania lub candidate_attestation.json.");
+                    throw new InvalidOperationException("Brakuje raportu FINAL_PACKAGE, podsumowania lub " + attestationFile + ".");
                 var report = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(reportEntry))));
                 var summary = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(summaryEntry))));
                 var attestation = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(attestationEntry))));

@@ -274,7 +274,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "candidate provenance/verification attestation failed" }
 
       - name: Build and verify orientation-only Rogue PvE comparison
-        if: github.ref_name == 'parallel' && contains(github.event.head_commit.message, '[angle-only]')
+        if: github.ref_name == 'parallel'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

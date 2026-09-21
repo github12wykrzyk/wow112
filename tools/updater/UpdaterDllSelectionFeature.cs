@@ -19,6 +19,7 @@ namespace WoW112Updater
         private List<UpdaterAddonAsset> cachedVerifiedAddons = new List<UpdaterAddonAsset>();
         private long cachedVerifiedRunId;
         private string cachedVerifiedChannel = string.Empty;
+        private string cachedVerifiedInnerZip = string.Empty;
 
         private int LastDllChangeCount { get { return lastDllInspection.Count(x => x.HasChange); } }
         private int LastEnabledDllChangeCount { get { return lastDllInspection.Count(x => x.HasChange && IsDllUpdateEnabled(x.Name)); } }
@@ -54,12 +55,14 @@ namespace WoW112Updater
             cachedVerifiedAddons = new List<UpdaterAddonAsset>();
             cachedVerifiedRunId = 0;
             cachedVerifiedChannel = string.Empty;
+            cachedVerifiedInnerZip = string.Empty;
         }
 
         private async Task<byte[]> GetVerifiedPackageBytesAsync(RemotePackageInfo remote)
         {
             if (cachedVerifiedPackage != null && cachedVerifiedRunId == remote.RunId
-                && string.Equals(cachedVerifiedChannel, remote.Channel, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(cachedVerifiedChannel, remote.Channel, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(cachedVerifiedInnerZip, remote.InnerZipName, StringComparison.OrdinalIgnoreCase))
             {
                 Log("Używam zweryfikowanej paczki z bieżącej sesji.");
                 return cachedVerifiedPackage;
@@ -82,6 +85,7 @@ namespace WoW112Updater
             cachedVerifiedPackage = innerBytes;
             cachedVerifiedRunId = remote.RunId;
             cachedVerifiedChannel = remote.Channel;
+            cachedVerifiedInnerZip = remote.InnerZipName;
             return innerBytes;
         }
 
@@ -181,7 +185,8 @@ namespace WoW112Updater
             var enabled = LastEnabledDllChangeCount;
             var held = changed - enabled;
             var exeText = lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State;
-            remoteInfo.Text = lastRemote.Channel.ToUpperInvariant() + " • " + ShortSha(lastRemote.HeadSha)
+            remoteInfo.Text = (IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL ANGLE-ONLY PvE" : "PARALLEL PEŁNY")
+                + " • " + ShortSha(lastRemote.HeadSha)
                 + " • run " + lastRemote.RunId + "\nEXE: " + exeText + " • DLL: " + enabled + " do aktualizacji";
             detailsTip.SetToolTip(remoteInfo, remoteInfo.Text
                 + (lastExeInspection == null ? string.Empty : "\nEXE: " + lastExeInspection.Name
