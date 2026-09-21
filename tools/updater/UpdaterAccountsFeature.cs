@@ -86,7 +86,7 @@ namespace WoW112Updater
 
     internal sealed class WowAccountSession
     {
-        public Process Game;
+        public System.Diagnostics.Process Game;
         public string AccountId;
     }
 
@@ -113,7 +113,7 @@ namespace WoW112Updater
             }
         }
 
-        private void RememberGameSession(Process game)
+        private void RememberGameSession(System.Diagnostics.Process game)
         {
             if (game == null || accountVault == null || accountVault.Selected == null) return;
             accountSessions.RemoveAll(s => { try { return s.Game.HasExited; } catch { return true; } });
@@ -337,7 +337,7 @@ namespace WoW112Updater
 
         // A password is sent only after the user explicitly confirms the login screen.
         // Each key is preceded by a foreground PID check; no clipboard or command line is used.
-        private static void FillCredentials(Process process, WowAccount account, string password)
+        private static void FillCredentials(System.Diagnostics.Process process, WowAccount account, string password)
         {
             if (process == null || process.HasExited) throw new InvalidOperationException("Klient jest zamknięty.");
             process.Refresh();
