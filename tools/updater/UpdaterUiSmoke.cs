@@ -21,6 +21,7 @@ namespace WoW112Updater
             System.Windows.Forms.Application.DoEvents();
             ClientSize = new Size(1040, 680);
             AssertExeInspection(folder);
+            AccountSmoke(folder);
             string[] cases = { "first-run", "long-path", "available", "current", "build-running", "network-error", "downloading", "installing", "game-running" };
             foreach (var state in cases)
             {

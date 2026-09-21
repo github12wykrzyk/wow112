@@ -29,6 +29,7 @@ namespace WoW112Updater
             RealmlistFeature.Attach(mainForm);
             MaintenanceFeature.Attach(mainForm);
             IssueReportFeature.Attach(mainForm);
+            ((MainForm)mainForm).AttachAccounts();
             ((MainForm)mainForm).BuildDashboard();
             var args = Environment.GetCommandLineArgs();
             if (args.Length == 3 && args[1] == "--ui-smoke")
