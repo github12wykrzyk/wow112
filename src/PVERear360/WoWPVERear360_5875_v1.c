@@ -114,8 +114,6 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define BLINK_BS_MAX_JUMP_D2 1024.0f
 #define BLINK_BS_MAX_DZ 2.5f
 #define BLINK_BS_STABLE_D2 0.1225f
-#define BLINK_BS_TARGET_D2 0.1225f
-#define BLINK_BS_TARGET_TURN 0.0873f
 #define PI_F 3.14159265358979323846f
 #define TWO_PI_F 6.28318530717958647692f
 #define SETTING_ENABLED 1u
@@ -155,7 +153,6 @@ static volatile u32 g_blinkPending=0u,g_blinkResult=0u,g_blinkStarted=0u,g_blink
 static volatile u32 g_blinkAttempts=0u,g_blinkPulses=0u,g_blinkCasts=0u,g_blinkAborts=0u;
 static volatile u32 g_blinkFailureReason=0u;
 static float g_blinkX,g_blinkY,g_blinkZ,g_blinkO;
-static float g_blinkTx,g_blinkTy,g_blinkTz,g_blinkTo;
 static volatile u32 g_count=0u;
 static volatile u32 g_timer=0u;
 static volatile HWND32 g_timerWindow=0;
@@ -643,7 +640,6 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
      Keep real local XYZ at the destination; do NOT restore the old pose.
      No new DLL, movement detour or cast hook is installed. */
   g_blinkX=x;g_blinkY=y;g_blinkZ=z;g_blinkO=o;
-  g_blinkTx=tx;g_blinkTy=ty;g_blinkTz=tz;g_blinkTo=to;
   g_blinkPending=1u;g_blinkResult=0u;g_blinkStarted=GetTickCount();
   g_blinkFailureReason=0u;
   g_castActive=0u;g_sendPending=0u;g_resultPending=0u;
@@ -1148,7 +1144,7 @@ static void autoRearTick(u32 now){
 static void tickPhysicalBlink(u32 now){
  u32 pl,tg,sz,i,header[6],arg;
  u8 packet[MAX_CAST_PACKET];
- float px,py,pz,tx,ty,tz,to,dx,dy,dz,turn;
+ float px,py,pz,tx,ty,tz,to,dx,dy,dz;
  if(!g_blinkPending)return;
  pl=localPlayer();tg=selectedTarget();
  if(!pl||!tg||pl!=g_savedPlayer||!savedTargetStillValid(tg)||
@@ -1169,11 +1165,10 @@ static void tickPhysicalBlink(u32 now){
  dx=px-tx;dy=py-ty;dz=pz-tz;
  if(dx*dx+dy*dy>20.25f||dz>2.5f||dz< -2.5f||
     dx*fcos1(to)+dy*fsin1(to)> -0.30f)goto abort_blink;
- dx=tx-g_blinkTx;dy=ty-g_blinkTy;dz=tz-g_blinkTz;
- turn=angle(to-g_blinkTo);
- if(turn>PI_F)turn=TWO_PI_F-turn;
- if(dx*dx+dy*dy+dz*dz>BLINK_BS_TARGET_D2||
-    turn>BLINK_BS_TARGET_TURN)goto abort_blink;
+ /* NPC movement or turning while settling is allowed. The preceding
+    range/rear test uses the CURRENT target pose; never require the target
+    to remain at the original XYZ or facing. Preserve same-GUID and
+    movement ownership checks; no additional pulse/retry is introduced. */
  if((u32)(now-g_blinkStarted)<BLINK_BS_SETTLE_MS)return;
  sz=g_savedHeader[4];
  if(!g_savedValid||sz<10u||sz>MAX_CAST_PACKET||
@@ -1213,7 +1208,7 @@ static void publishBlinkNotice(void){
  for(i=0u;i<(u32)sizeof(sig);++i)
   if(*(volatile u8*)(REAR_TRACE_SCRIPT_EXECUTE+i)!=sig[i])return;
  if(n==1u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] pulse sent, waiting for stable landing') end";
- else if(n==2u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] ABORT: position/target changed; opener not sent') end";
+ else if(n==2u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] ABORT: current rear/range, target identity or movement ownership invalid; opener not sent') end";
  else if(n==3u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] opener sent ONCE after local position check; server outcome unverified') end";
  else {
   end=rearTraceCat(detail,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] server rejected opener: reason=");
