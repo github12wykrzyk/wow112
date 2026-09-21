@@ -19,7 +19,8 @@ local function saveRearTrace()
    " queue="..tostring(n.sendPending).."/"..tostring(n.resultPending)..
    " hooks="..tostring(n.castHook).."/"..tostring(n.moveHook)..
    " prearm="..tostring(n.prearm).."/"..tostring(n.prearmPulses)..
-   " starts="..tostring(n.prearmStarts)
+   " starts="..tostring(n.prearmStarts)..
+   " autoRear="..tostring(n.autoRearMode).."/"..tostring(n.autoRearState)
  end
  lsRearDiag="W112-REAR-V1|"..table.concat(d.rows,"|").."|"..snap
 end
@@ -36,7 +37,7 @@ function lazyScript.RearTrace(kind, detail)
 end
 function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
  retries,failReason,spellGo,aborted,sendPending,resultPending,castHook,moveHook,
- prearm,prearmPulses,prearmStarts)
+ prearm,prearmPulses,prearmStarts,autoRearMode,autoRearState)
  local d=lazyScript.rearTrace
  if not d then return end
  local now=GetTime()
@@ -44,7 +45,8 @@ function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
   positional=positional,retries=retries,failReason=failReason,
   spellGo=spellGo,aborted=aborted,sendPending=sendPending,
   resultPending=resultPending,castHook=castHook,moveHook=moveHook,
-  prearm=prearm,prearmPulses=prearmPulses,prearmStarts=prearmStarts}
+  prearm=prearm,prearmPulses=prearmPulses,prearmStarts=prearmStarts,
+  autoRearMode=autoRearMode or 0,autoRearState=autoRearState or 0
  local old=d.native
  d.native=snap;d.nativeAt=now
  saveRearTrace()
@@ -54,7 +56,7 @@ function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
    " hooks="..tostring(castHook).."/"..tostring(moveHook))
   return
  end
- local keys={"attempts","sends","busy","positional","retries","spellGo","aborted","prearmStarts"}
+ local keys={"attempts","sends","busy","positional","retries","spellGo","aborted","prearmStarts","autoRearState"}
  for _,key in ipairs(keys) do
   if snap[key]~=old[key] then
    lazyScript.RearTrace("native_"..key,tostring(old[key]).."->"..tostring(snap[key])..

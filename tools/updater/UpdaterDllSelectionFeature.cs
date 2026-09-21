@@ -185,7 +185,7 @@ namespace WoW112Updater
             var enabled = LastEnabledDllChangeCount;
             var held = changed - enabled;
             var exeText = lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State;
-            remoteInfo.Text = (IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL ANGLE-ONLY PvE" : "PARALLEL PEŁNY")
+            remoteInfo.Text = (IsAutoRearPackage(lastRemote.InnerZipName) ? "PARALLEL AUTO-REAR PvE" : IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL ANGLE-ONLY PvE" : "PARALLEL STANDARD")
                 + " • " + ShortSha(lastRemote.HeadSha)
                 + " • run " + lastRemote.RunId + "\nEXE: " + exeText + " • DLL: " + enabled + " do aktualizacji";
             detailsTip.SetToolTip(remoteInfo, remoteInfo.Text

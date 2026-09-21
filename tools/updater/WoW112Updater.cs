@@ -38,6 +38,7 @@ namespace WoW112Updater
         private const string StableArtifactPrefix = "WoW112-STABLE-CANDIDATE-";
         private const string TestInnerZip = "WoW112_WORK_CANDIDATE.zip";
         private const string AngleInnerZip = "WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip";
+        private const string AutoRearInnerZip = "WoW112_PARALLEL_ROGUE_AUTO_REAR.zip";
         private const string StableInnerZip = "WoW112_STABLE_CANDIDATE.zip";
         private const string UpdaterVersion = UpdaterBuildInfo.Version;
         private const int MaxBackups = 10;
@@ -84,7 +85,7 @@ namespace WoW112Updater
         private void BuildUi()
         {
             channel.DropDownStyle = ComboBoxStyle.DropDownList;
-            channel.Items.AddRange(new object[] { "PARALLEL / STANDARD", "PARALLEL / ANGLE-ONLY PvE" });
+            channel.Items.AddRange(new object[] { "PARALLEL / STANDARD", "PARALLEL / ANGLE-ONLY PvE", "PARALLEL / AUTO-REAR PvE" });
             channel.SelectedIndex = 0;
             rollbackChoice.DropDownStyle = ComboBoxStyle.DropDownList;
             token.UseSystemPasswordChar = true;
@@ -152,7 +153,9 @@ namespace WoW112Updater
                 gameDir.Text = GetString(root, "game_dir");
                 var selected = GetString(root, "channel");
                 // This dedicated updater never adopts the original stable/work channel.
-                channel.SelectedIndex = string.Equals(GetString(root, "package_variant"), "angle-only", StringComparison.Ordinal) ? 1 : 0;
+                var variant = GetString(root, "package_variant");
+                channel.SelectedIndex = string.Equals(variant, "auto-rear", StringComparison.Ordinal) ? 2
+                    : string.Equals(variant, "angle-only", StringComparison.Ordinal) ? 1 : 0;
                 LoadDllUpdatePreferences(root);
                 LoadDllInstallDisabled(root);
                 var protectedToken = GetString(root, "token_dpapi");
@@ -181,7 +184,7 @@ namespace WoW112Updater
                 var root = new Dictionary<string, object>();
                 root["game_dir"] = gameDir.Text.Trim();
                 root["channel"] = "parallel";
-                root["package_variant"] = IsAngleOnly() ? "angle-only" : "full";
+                root["package_variant"] = IsAutoRear() ? "auto-rear" : IsAngleOnly() ? "angle-only" : "full";
                 root["token_dpapi"] = protectedToken;
                 root["dll_update_enabled"] = GetDllUpdatePreferencesForSave();
                 root["dll_install_disabled"] = GetDllInstallDisabledForSave();
@@ -205,6 +208,11 @@ namespace WoW112Updater
         }
 
         private bool IsAngleOnly() { return channel.SelectedIndex == 1; }
+        private bool IsAutoRear() { return channel.SelectedIndex == 2; }
+        private static bool IsAutoRearPackage(string name)
+        {
+            return string.Equals(name, AutoRearInnerZip, StringComparison.OrdinalIgnoreCase);
+        }
         private static bool IsAnglePackage(string name)
         {
             return string.Equals(name, AngleInnerZip, StringComparison.OrdinalIgnoreCase);
@@ -332,7 +340,8 @@ namespace WoW112Updater
             var branch = "parallel";
             var workflowName = stable ? StableWorkflowName : TestWorkflowName;
             var prefix = stable ? StableArtifactPrefix : TestArtifactPrefix;
-            var innerName = stable ? StableInnerZip : (IsAngleOnly() ? AngleInnerZip : TestInnerZip);
+            var innerName = stable ? StableInnerZip : (IsAutoRear() ? AutoRearInnerZip
+                : IsAngleOnly() ? AngleInnerZip : TestInnerZip);
 
             using (var client = CreateClient())
             {
@@ -481,10 +490,11 @@ namespace WoW112Updater
                 innerBytes = ReadEntry(inner);
 
                 var angle = IsAnglePackage(innerZipName);
-                var metadataFile = angle ? "rogue_angle_metadata.json" : "candidate_metadata.json";
-                var summaryFile = angle ? "rogue_angle_summary.json" : "candidate_summary.json";
-                var finalFile = angle ? "rogue_angle_final_verification.json" : "final_package_verification.json";
-                var attestationFile = angle ? "rogue_angle_attestation.json" : "candidate_attestation.json";
+                var autoRear = IsAutoRearPackage(innerZipName);
+                var metadataFile = autoRear ? "rogue_auto_rear_metadata.json" : angle ? "rogue_angle_metadata.json" : "candidate_metadata.json";
+                var summaryFile = autoRear ? "rogue_auto_rear_summary.json" : angle ? "rogue_angle_summary.json" : "candidate_summary.json";
+                var finalFile = autoRear ? "rogue_auto_rear_final_verification.json" : angle ? "rogue_angle_final_verification.json" : "final_package_verification.json";
+                var attestationFile = autoRear ? "rogue_auto_rear_attestation.json" : angle ? "rogue_angle_attestation.json" : "candidate_attestation.json";
                 var metaEntry = zip.Entries.FirstOrDefault(e => string.Equals(Path.GetFileName(e.FullName), metadataFile, StringComparison.OrdinalIgnoreCase));
                 if (metaEntry == null)
                     throw new InvalidOperationException("Artefakt nie zawiera " + metadataFile + "; instalacja została zablokowana.");
@@ -498,6 +508,15 @@ namespace WoW112Updater
                         || !GetBool(angleProof, "real_xyz_preserved") || !GetBool(angleProof, "player_orientation_only")
                         || GetBool(angleProof, "npc_server_facing_spoofed"))
                         throw new InvalidOperationException("Paczka ANGLE-ONLY nie ma zgodnego manifestu wariantu; instalacja zablokowana.");
+                }
+                if (autoRear)
+                {
+                    var autoProof = AsDictionary(GetValue(meta, "auto_rear_diagnostic"));
+                    if (!string.Equals(GetString(autoProof, "name"), "parallel_rogue_auto_rear", StringComparison.Ordinal)
+                        || !string.Equals(GetString(autoProof, "commit_sha"), expectedHeadSha, StringComparison.OrdinalIgnoreCase)
+                        || !GetBool(autoProof, "real_xyz_preserved") || !GetBool(autoProof, "physical_strafe_input")
+                        || GetBool(autoProof, "npc_server_facing_spoofed"))
+                        throw new InvalidOperationException("Paczka AUTO-REAR nie ma zgodnego manifestu wariantu; instalacja zablokowana.");
                 }
                 expectedSha = GetString(meta, "package_sha256");
                 if (!UpdaterSafety.IsSha256Hex(expectedSha))

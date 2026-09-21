@@ -19,12 +19,15 @@ namespace WoW112Updater
             MaximumSize = new Size(4096, 4096);
             Show();
             System.Windows.Forms.Application.DoEvents();
-            if (channel.Items.Count != 2 || IsAngleOnly() || !IsAnglePackage(AngleInnerZip))
-                throw new Exception("Rogue angle-only package selector was not initialized");
+            if (channel.Items.Count != 3 || IsAngleOnly() || IsAutoRear() ||
+                !IsAnglePackage(AngleInnerZip) || !IsAutoRearPackage(AutoRearInnerZip))
+                throw new Exception("Rogue diagnostic package selectors were not initialized");
             channel.SelectedIndex = 1;
-            if (!IsAngleOnly()) throw new Exception("Rogue angle-only selection did not activate");
+            if (!IsAngleOnly() || IsAutoRear()) throw new Exception("Rogue angle-only selection did not activate");
+            channel.SelectedIndex = 2;
+            if (!IsAutoRear() || IsAngleOnly()) throw new Exception("Rogue real-movement selection did not activate");
             channel.SelectedIndex = 0;
-            if (IsAngleOnly()) throw new Exception("Full-stack selection did not restore");
+            if (IsAngleOnly() || IsAutoRear()) throw new Exception("Full-stack selection did not restore");
             ClientSize = new Size(1040, 680);
             AssertExeInspection(folder);
             AssertOriginalUpdaterDirectoryAllowed(folder);

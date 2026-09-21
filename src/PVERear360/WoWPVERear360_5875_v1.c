@@ -127,8 +127,8 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 int _fltused=0;
 static volatile u32 g_enabled=1u;
 static volatile u32 g_pvpEnabled=
-#if defined(PVE_REAR_ANGLE_ONLY)
-0u; /* isolated PvE angle experiment */
+#if defined(PVE_REAR_ANGLE_ONLY) || defined(PVE_REAR_AUTOPATH)
+0u; /* dedicated PvE test, never modify PvP */
 #else
 1u;
 #endif
@@ -142,6 +142,7 @@ static volatile u32 g_lastTick=0u;
 static volatile u32 g_lastRearRefresh=0u;
 static volatile u32 g_prearmActive=0u,g_prearmLastPulse=0u,g_prearmLeaseAt=0u;
 static volatile u32 g_prearmPulses=0u,g_prearmStarts=0u;
+static volatile u32 g_autoRearState=0u; /* 0 idle, 1 moving, 2 real rear, 3 abort */
 static volatile u32 g_needsRestore=0u;
 static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
@@ -166,7 +167,7 @@ static W112_ControlSettingV1 g_settings[3];
 static volatile u32 g_descriptorsReady=0u;
 /* Read-only native diagnostic snapshot; no gameplay state modifications. */
 static volatile u32 g_rearTraceLastEmit=0u;
-static u32 g_rearTraceLastValues[16];
+static u32 g_rearTraceLastValues[18];
 static u32 g_rearTraceObserved=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
 typedef u32 (STDCALL *WorkCoordAcquireFn)(u32);
@@ -287,7 +288,9 @@ static void restoreHeartbeat(u32 pl){
  nativeHeartbeat(pl);
 }
 static int eligibleRearTarget(u32 type){
-#if defined(PVE_REAR_ANGLE_ONLY)
+#if defined(PVE_REAR_AUTOPATH)
+ (void)type;return 0; /* no rear cast or movement spoof in real-motion pilot */
+#elif defined(PVE_REAR_ANGLE_ONLY)
  return type==3u&&g_enabled; /* force PvE-only even if GUI requests PvP */
 #else
  return (type==3u&&g_enabled)||(type==4u&&g_pvpEnabled);
@@ -934,18 +937,131 @@ static void removeHooks(void){
   patchCall(MOVE_SEND_SITE,(void*)g_prevMoveTarget);
  g_moveInstalled=0u;
 }
+
+#if defined(PVE_REAR_AUTOPATH)
+/* Real-movement diagnostic: send bounded ordinary strafe input with the
+   user's WoW binding, preserve actual XYZ in all native heartbeats and turn
+   the real client player towards the target. Never spoof enemy orientation. */
+#define AUTO_REAR_GET_TEXT 0x00703BF0u
+#define AUTO_REAR_BIND_TIMEOUT 2200u
+#define AUTO_REAR_STALL_TIMEOUT 650u
+#define AUTO_REAR_PAUSE 1800u
+#define AUTO_REAR_KEYUP 2u
+typedef const char* (__fastcall *AutoRearTextFn)(const char*,int,u32);
+typedef u32 (__fastcall *AutoRearScriptFn)(const char*,const char*);
+__declspec(dllimport) short STDCALL GetAsyncKeyState(int);
+__declspec(dllimport) HWND32 STDCALL GetForegroundWindow(void);
+__declspec(dllimport) void STDCALL keybd_event(u8,u8,u32,u32);
+static volatile u32 g_autoHeld=0u,g_autoVk=0u,g_autoTarget=0u;
+static volatile u32 g_autoTargetLo=0u,g_autoTargetHi=0u;
+static volatile u32 g_autoStarted=0u,g_autoLastMotion=0u,g_autoBlockedUntil=0u;
+static float g_autoStartX=0.0f,g_autoStartY=0.0f;
+static float autoFacing(float dy,float dx){float v;__asm{
+ fld dy
+ fld dx
+ fpatan
+ fstp v
+ }return angle(v);}
+static int autoKeyDown(u32 key){return (GetAsyncKeyState((int)key)&(short)0x8000)!=0;}
+static int autoManualInput(void){
+ static const u8 keys[]={0x57u,0x41u,0x53u,0x44u,0x51u,
+ 0x25u,0x26u,0x27u,0x28u,0x02u,0x10u,0x11u,0x12u};
+ u32 i;
+ for(i=0u;i<(u32)sizeof(keys);++i)
+  if(keys[i]!=g_autoVk&&autoKeyDown(keys[i]))return 1;
+ return 0;
+}
+static void autoRelease(u32 now,u32 state){
+ if(g_autoHeld){keybd_event((u8)g_autoVk,0u,AUTO_REAR_KEYUP,0u);g_autoHeld=0u;}
+ g_autoVk=0u;g_autoTarget=0u;g_autoStarted=0u;
+ g_autoRearState=state;
+ if(state==3u)g_autoBlockedUntil=now+AUTO_REAR_PAUSE;
+}
+static int autoTyping(void){
+ void*core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
+ typedef u32(STDCALL *TypingFn)(void);
+ TypingFn fn;
+ if(!core)return 1;
+ fn=(TypingFn)GetProcAddress(core,"MovementCore_UserIsTyping");
+ return !fn||fn()!=0u;
+}
+static u32 autoBinding(void){
+ static const u8 sig[]={0x56u,0x6Au,0x00u,0x8Bu,0xF1u,0x52u,0x56u,0xE8u};
+ const char*k;u32 i;
+ for(i=0u;i<(u32)sizeof(sig);++i)
+  if(*(volatile u8*)(REAR_TRACE_SCRIPT_EXECUTE+i)!=sig[i])return 0u;
+ ((AutoRearScriptFn)REAR_TRACE_SCRIPT_EXECUTE)(
+   "W112_REAR_STRAFE_BINDING=(GetBindingKey('STRAFERIGHT') or '')",
+   "WoW112AutoRearBinding");
+ k=((AutoRearTextFn)AUTO_REAR_GET_TEXT)("W112_REAR_STRAFE_BINDING",-1,0u);
+ if(!k||k[0]<'A'||k[0]>'Z'||k[1]!=0)return 0u;
+ return (u8)k[0];
+}
+static void autoRearTick(u32 now){
+ u32 pl=localPlayer(),tg=selectedTarget(),vk;
+ float px,py,pz,tx,ty,tz,to,dx,dy,dz,d2,dot,yaw;
+ if(!g_enabled||!g_timerWindow||GetForegroundWindow()!=(HWND32)g_timerWindow||
+    !npcMeleeCombat(pl,tg)||read32(CASTING_SPELL_ID)||read32(PENDING_CAST)||
+    competingMovementBusy()||autoManualInput()||autoTyping()){
+  if(g_autoHeld)autoRelease(now,3u);
+  else if((s32)(now-g_autoBlockedUntil)>=0)g_autoRearState=0u;
+  return;
+ }
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||!finitef(tx)||
+    !finitef(ty)||!finitef(tz)||!finitef(to)){autoRelease(now,3u);return;}
+ dx=px-tx;dy=py-ty;dz=pz-tz;d2=dx*dx+dy*dy;
+ if(d2>20.25f||d2<2.25f||dz>2.0f||dz< -2.0f){autoRelease(now,3u);return;}
+ dot=dx*fcos1(to)+dy*fsin1(to);
+ if(dot< -0.7f&&dot*dot>0.36f*d2){autoRelease(now,2u);return;}
+ if((s32)(now-g_autoBlockedUntil)<0){g_autoRearState=3u;return;}
+ if(g_autoHeld){
+  if(g_autoTarget!=tg||g_autoTargetLo!=read32(tg+OBJ_LO)||
+     g_autoTargetHi!=read32(tg+OBJ_HI)||
+     (u32)(now-g_autoStarted)>=AUTO_REAR_BIND_TIMEOUT){
+   autoRelease(now,3u);return;
+  }
+  if((u32)(now-g_autoLastMotion)>=AUTO_REAR_STALL_TIMEOUT){
+   float ddx=px-g_autoStartX,ddy=py-g_autoStartY;
+   if(ddx*ddx+ddy*ddy<0.0225f){autoRelease(now,3u);return;}
+   g_autoStartX=px;g_autoStartY=py;g_autoLastMotion=now;
+  }
+ }else{
+  vk=autoBinding();
+  if(!vk){g_autoRearState=3u;g_autoBlockedUntil=now+AUTO_REAR_PAUSE;return;}
+  if(autoKeyDown(vk)){g_autoRearState=0u;return;}
+  g_autoVk=vk;g_autoTarget=tg;
+  g_autoTargetLo=read32(tg+OBJ_LO);g_autoTargetHi=read32(tg+OBJ_HI);
+  g_autoStarted=now;g_autoLastMotion=now;g_autoStartX=px;g_autoStartY=py;
+  keybd_event((u8)vk,0u,0u,0u);g_autoHeld=1u;
+ }
+ yaw=autoFacing(ty-py,tx-px);
+ if(!finitef(yaw)){autoRelease(now,3u);return;}
+ *(float*)(pl+OBJ_O)=yaw; /* actual client facing, not a transient spoof */
+ nativeHeartbeat(pl); /* actual unchanged world XYZ */
+ g_autoRearState=1u;
+}
+#endif
 static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  u32 pl;
  (void)hwnd;(void)msg;(void)timer;
  if(g_stop)return;
  if(!g_castInstalled||!g_moveInstalled||!g_gcdInstalled||!g_failInstalled||!g_goInstalled){
+#if defined(PVE_REAR_AUTOPATH)
+  if(g_autoHeld)autoRelease(now,3u);
+#endif
   if(installCastAndMovement())g_status=STATUS_IDLE;
   /* Preserve the installer's specific reason on failure. */
   return;
  }
  if(g_retryPending)tryPositionalRetry(now);
  if(g_sendPending)sendSettledCast(now);
+#if defined(PVE_REAR_AUTOPATH)
+ autoRearTick(now);
+#else
  if(!g_castActive)tickMeleePrearm(now);
+#endif
  refreshActiveRear(now);
  if(g_resultPending&&g_lastSendTick&&
     (u32)(now-g_lastSendTick)>REAR_RESULT_WAIT_MS){
@@ -1034,7 +1150,7 @@ static char* rearTraceDecimal(char*p,u32 v){
 static void publishRearTrace(u32 now){
  static const u8 sig[]={0x56u,0x6Au,0x00u,0x8Bu,0xF1u,0x52u,0x56u,0xE8u};
  typedef u32 (__fastcall *RearTraceScriptFn)(const char*,const char*);
- u32 values[16],i,changed=0u;
+ u32 values[18],i,changed=0u;
  char lua[320],*p=lua;
  if(g_rearTraceLastEmit&&(u32)(now-g_rearTraceLastEmit)<100u)return;
  for(i=0u;i<(u32)sizeof(sig);++i)
@@ -1046,11 +1162,16 @@ static void publishRearTrace(u32 now){
  values[9]=g_sendPending;values[10]=g_resultPending;
  values[11]=g_castInstalled;values[12]=g_moveInstalled;
  values[13]=g_prearmActive;values[14]=g_prearmPulses;values[15]=g_prearmStarts;
- for(i=0u;i<16u;++i)
+#if defined(PVE_REAR_AUTOPATH)
+ values[16]=1u;values[17]=g_autoRearState;
+#else
+ values[16]=0u;values[17]=0u;
+#endif
+ for(i=0u;i<18u;++i)
   if(!g_rearTraceObserved||(i!=14u&&values[i]!=g_rearTraceLastValues[i]))changed=1u;
  if(!changed&&g_rearTraceLastEmit&&(u32)(now-g_rearTraceLastEmit)<1500u)return;
  p=rearTraceCat(p,"if lazyScript and lazyScript.OnRearNativeTelemetry then lazyScript.OnRearNativeTelemetry(");
- for(i=0u;i<16u;++i){
+ for(i=0u;i<18u;++i){
   if(i)*p++=',';
   p=rearTraceDecimal(p,values[i]);
   g_rearTraceLastValues[i]=values[i];
@@ -1105,6 +1226,9 @@ int STDCALL DllMain(void*m,u32 reason,void*reserved){
   if(worker)CloseHandle(worker);
   else g_status=STATUS_THREAD_ERROR;
  }else if(reason==0u){
+#if defined(PVE_REAR_AUTOPATH)
+  autoRelease(GetTickCount(),0u);
+#endif
   g_stop=1u;stopMeleePrearm();removeHooks();releaseRear();g_castActive=0u;
   g_timer=0u;g_timerWindow=0;g_status=STATUS_DISABLED;
  }

@@ -362,6 +362,15 @@ function lazyScript.Action:Use()
 end
 
 function lazyScript.Action:IsUsable(sayNothing)
+    -- In the real-movement variant do not cast while the native strafe key
+    -- is held; only a stopped, naturally usable rear spell may be issued.
+    local autoTrace = lazyScript.rearTrace
+    local autoNative = autoTrace and autoTrace.native
+    if autoNative and autoNative.autoRearMode == 1 and
+        autoTrace.nativeAt and GetTime() - autoTrace.nativeAt < 3 and
+        autoNative.autoRearState == 1 then
+        return false
+    end
     -- Parallel: one outstanding rear request per target. Do not refresh its
     -- timestamp just because the player keeps pressing the rotation key.
     if self.code == "bs" or self.code == "ambush" then
@@ -441,7 +450,8 @@ function lazyScript.Action:IsUsable(sayNothing)
 			local trace = lazyScript.rearTrace
 			local native = trace and trace.native
 			if native and trace.nativeAt and GetTime() - trace.nativeAt <= 3 and
-				native.castHook == 1 and native.moveHook == 1 then
+				native.castHook == 1 and native.moveHook == 1 and
+                native.autoRearMode ~= 1 then
 				local stealthReady = true
 				if self.code == "ambush" then
 					local _, _, active = GetShapeshiftFormInfo(1)

@@ -55,7 +55,7 @@ def exported_names(path):
         result.add(data[name_offset:name_end].decode("ascii"))
     return result
 
-def build(output, rear_angle_only=False):
+def build(output, rear_angle_only=False, rear_auto_path=False):
     vcvars, _ = find_vcvars32()
     env, _ = capture_vcvars_env(vcvars)
     compiler = shutil.which("clang-cl.exe", path=env.get("PATH", "")) or shutil.which("clang-cl", path=env.get("PATH", ""))
@@ -68,8 +68,12 @@ def build(output, rear_angle_only=False):
         cmd = [compiler, "--target=i686-pc-windows-msvc", "/nologo", "/c", "/O2",
                "/GS-", "/GR-", "/EHsc-", "/Zl", "/Brepro", "/clang:-fno-builtin",
                "/Fo" + str(obj), str(ROOT / source)]
-        if rear_angle_only and i == 1:
+        if rear_angle_only and rear_auto_path:
+            raise SystemExit("Rogue angle-only and real-movement modes are mutually exclusive")
+        if i == 1 and rear_angle_only:
             cmd.insert(-2, "/DPVE_REAR_ANGLE_ONLY=1")
+        if i == 1 and rear_auto_path:
+            cmd.insert(-2, "/DPVE_REAR_AUTOPATH=1")
         subprocess.run(cmd, cwd=ROOT, env=env, check=True)
         objs.append(obj)
     cmd = [linker, "/nologo", "/DLL", "/MACHINE:X86", "/NODEFAULTLIB",

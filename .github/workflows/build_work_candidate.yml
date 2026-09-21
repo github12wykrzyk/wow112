@@ -241,6 +241,30 @@ jobs:
             --finalize
           if ($LASTEXITCODE -ne 0) { throw "final package verification failed" }
 
+      - name: Build and verify real-movement Rogue AutoRear PvE variant
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_rogue_auto_rear_candidate.py --sha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "real-movement Rogue AutoRear build failed" }
+          python tools/verify_candidate_package.py `
+            --package dist/WoW112_PARALLEL_ROGUE_AUTO_REAR.zip `
+            --package-metadata dist/rogue_auto_rear_metadata.json `
+            --summary dist/rogue_auto_rear_summary.json `
+            --report dist/rogue_auto_rear_final_verification.json `
+            --finalize
+          if ($LASTEXITCODE -ne 0) { throw "real-movement Rogue AutoRear ZIP failed final package verification" }
+          python tools/verify_candidate_provenance.py `
+            --sha "${{ github.sha }}" `
+            --branch parallel `
+            --package dist/WoW112_PARALLEL_ROGUE_AUTO_REAR.zip `
+            --metadata dist/rogue_auto_rear_metadata.json `
+            --summary dist/rogue_auto_rear_summary.json `
+            --final-report dist/rogue_auto_rear_final_verification.json `
+            --output dist/rogue_auto_rear_attestation.json
+          if ($LASTEXITCODE -ne 0) { throw "AutoRear commit, branch or package attestation failed" }
+
       - name: Package and attest Parallel LazyScript + LazyRogue addons
         if: github.ref_name == 'parallel'
         shell: pwsh
@@ -311,6 +335,12 @@ jobs:
           path: |
             dist/WoW112_WORK_CANDIDATE.zip
             dist/WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip
+            dist/WoW112_PARALLEL_ROGUE_AUTO_REAR.zip
+            dist/ROGUE_AUTO_REAR_TEST.txt
+            dist/rogue_auto_rear_metadata.json
+            dist/rogue_auto_rear_summary.json
+            dist/rogue_auto_rear_final_verification.json
+            dist/rogue_auto_rear_attestation.json
             dist/ROGUE_ANGLE_ONLY_TEST.txt
             dist/rogue_angle_metadata.json
             dist/rogue_angle_summary.json

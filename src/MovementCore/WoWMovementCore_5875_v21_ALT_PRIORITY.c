@@ -32,6 +32,7 @@
 /* PvERear360 resolves this explicit undecorated x86 Win32 ABI export. */
 #pragma comment(linker, "/EXPORT:MovementCore_GetAltPriorityInstalled=_MovementCore_GetAltPriorityInstalled@0")
 #pragma comment(linker, "/EXPORT:MovementCore_GetRearPriorityPackets=_MovementCore_GetRearPriorityPackets@0")
+#pragma comment(linker, "/EXPORT:MovementCore_UserIsTyping=_MovementCore_UserIsTyping@0")
 #endif
 
 static volatile DWORD g_altPriorityInstalled=0u;
@@ -826,6 +827,8 @@ __declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x001
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetRearPriorityPackets(void){return g_rearPriorityDirectPackets;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetLoginGuardReady(void){return g_loginGuardReady;}
+/* Fail-closed auto-rear input guard, shared with the existing Q/chat query. */
+__declspec(dllexport) DWORD __stdcall MovementCore_UserIsTyping(void){return W112_Q_ChatHasFocus()?1u:0u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityStarts(void){return g_altPriorityStarts;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityPPBlocks(void){return g_altPriorityPPBlocks;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityDirectPackets(void){return g_altPriorityDirectPackets;}
