@@ -77,6 +77,19 @@ jobs:
             tools\updater\UpdaterIssueReportFeature.cs
           if ($LASTEXITCODE -ne 0) { throw "updater csc failed with exit code $LASTEXITCODE" }
 
+          # Exercise the actual updater gate against missing, stale and mutated
+          # attestations on Windows x86; do not rely on text/regex checks alone.
+          & $csc /nologo /target:exe /platform:x86 /optimize+ /langversion:latest `
+            /out:dist\\UpdaterAttestationTests.exe `
+            /reference:"$ref\\mscorlib.dll" `
+            /reference:"$ref\\System.dll" `
+            /reference:"$ref\\System.Core.dll" `
+            tools\\updater\\UpdaterSafety.cs `
+            tools\\updater\\UpdaterAttestationTests.cs
+          if ($LASTEXITCODE -ne 0) { throw "updater attestation test compile failed" }
+          & ./dist/UpdaterAttestationTests.exe
+          if ($LASTEXITCODE -ne 0) { throw "updater attestation test failed" }
+
       - name: Render and verify Windows dashboard
         shell: pwsh
         run: |

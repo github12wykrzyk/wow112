@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.4-parallel.2";
+        public const string Version = "2.4-parallel.3";
     }
 
     internal static class UpdaterSafety
@@ -50,6 +50,43 @@ namespace WoW112Updater
             }
 
             return chosen;
+        }
+
+        // The attestation is produced only after FINAL_PACKAGE: PASS. An older
+        // CI artifact (or a partial artifact without this file) is never eligible.
+        // This gate checks the complete candidate identity, not in-game behavior.
+        public static void RequireCandidateAttestation(
+            Dictionary<string, object> proof, string expectedHeadSha, string expectedPackageSha, long expectedSize)
+        {
+            if (proof == null || !IsSha256Hex(expectedPackageSha) ||
+                expectedHeadSha == null || expectedHeadSha.Length != 40 || expectedSize <= 0 ||
+                !string.Equals(GetString(proof, "branch"), "parallel", StringComparison.Ordinal) ||
+                !string.Equals(GetString(proof, "commit_sha"), expectedHeadSha, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetString(proof, "package_sha256"), expectedPackageSha, StringComparison.OrdinalIgnoreCase) ||
+                GetInt64(proof, "package_size") != expectedSize ||
+                GetInt64(proof, "schema_version") != 1 ||
+                !string.Equals(GetString(proof, "result"), "PASS", StringComparison.Ordinal) ||
+                !string.Equals(GetString(proof, "source_check"), "SOURCE_CHECK_PASS", StringComparison.Ordinal) ||
+                !(string.Equals(GetString(proof, "native_build"), "X86_BUILD_PASS", StringComparison.Ordinal) ||
+                  string.Equals(GetString(proof, "native_build"), "X86_BUILD_NOT_REQUIRED", StringComparison.Ordinal)) ||
+                !string.Equals(GetString(proof, "package_status"), "PACKAGE_VERIFIED", StringComparison.Ordinal) ||
+                !string.Equals(GetString(proof, "delivery_status"), "READY_FOR_GAME_TEST", StringComparison.Ordinal) ||
+                !IsExplicitFalse(proof, "game_test_accepted"))
+                throw new InvalidOperationException("Brak poprawnego attestation dokładnego commita PARALLEL: instalacja zablokowana.");
+        }
+
+        private static long GetInt64(Dictionary<string, object> dict, string key)
+        {
+            object value;
+            return dict != null && dict.TryGetValue(key, out value) && value != null
+                ? Convert.ToInt64(value) : -1L;
+        }
+
+        private static bool IsExplicitFalse(Dictionary<string, object> dict, string key)
+        {
+            object value;
+            return dict != null && dict.TryGetValue(key, out value) &&
+                value is bool && !(bool)value;
         }
 
         public static bool IsSha256Hex(string value)

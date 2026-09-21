@@ -472,17 +472,25 @@ namespace WoW112Updater
 
                 var reportEntry = zip.Entries.FirstOrDefault(e => e.FullName == "final_package_verification.json");
                 var summaryEntry = zip.Entries.FirstOrDefault(e => e.FullName == "candidate_summary.json");
-                if (reportEntry == null || summaryEntry == null)
-                    throw new InvalidOperationException("Brakuje końcowego raportu CI lub podsumowania kandydata.");
+                var attestationEntry = zip.Entries.FirstOrDefault(e => e.FullName == "candidate_attestation.json");
+                if (reportEntry == null || summaryEntry == null || attestationEntry == null)
+                    throw new InvalidOperationException("Brakuje raportu FINAL_PACKAGE, podsumowania lub candidate_attestation.json.");
                 var report = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(reportEntry))));
                 var summary = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(summaryEntry))));
-                if (!string.Equals(GetString(report, "result"), "PASS", StringComparison.Ordinal)
+                var attestation = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(attestationEntry))));
+                var packageSize = innerBytes.LongLength;
+                if (GetLong(meta, "package_size") != packageSize
+                    || GetLong(proof, "package_size") != packageSize
+                    || !string.Equals(GetString(report, "result"), "PASS", StringComparison.Ordinal)
                     || !string.Equals(GetString(report, "package_sha256"), expectedSha, StringComparison.OrdinalIgnoreCase)
+                    || GetLong(report, "package_size") != packageSize
                     || !string.Equals(GetString(summary, "head"), expectedHeadSha, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(GetString(summary, "result"), "PASS", StringComparison.Ordinal)
                     || !GetBool(summary, "ready_for_test")
-                    || !string.Equals(GetString(summary, "package_sha256"), expectedSha, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Raport końcowy, commit i metadane paczki nie są spójne.");
+                    || !string.Equals(GetString(summary, "package_sha256"), expectedSha, StringComparison.OrdinalIgnoreCase)
+                    || GetLong(summary, "package_size") != packageSize)
+                    throw new InvalidOperationException("Raport końcowy, commit, rozmiar i metadane paczki nie są spójne.");
+                UpdaterSafety.RequireCandidateAttestation(attestation, expectedHeadSha, expectedSha, packageSize);
             }
         }
 
