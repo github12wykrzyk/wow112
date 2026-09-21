@@ -541,7 +541,16 @@ static const char g_teleBlockedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_F
 static const char g_teleChatFocusChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, blocked: chat edit box') end";
 static const char g_teleCooldownChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, wait for cooldown') end";
 static const char g_teleMemoryChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele Click]|r LMB detected, cursor raycast memory unavailable') end";
-static const char g_teleNoGroundChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, cursor raycast returned no terrain hit') end";
+/* A non-terrain hit may mean no intersection (0), world hit (1) or object (2);
+ * report raw pre/post values before changing offsets or treating it as ground. */
+static void W112_TeleReportHit(DWORD before,DWORD after)
+{
+    char script[220];char*q=script;
+    q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele Click] ray hit before=");
+    q=AppU32(q,before);q=AppStr(q," after=");q=AppU32(q,after);
+    q=AppStr(q," (0=none, 1=terrain, 2=object)') end");*q=0;
+    DebugChat(script);
+}
 static const char g_teleBadPosChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele Click]|r LMB detected, invalid hit/player XYZ') end";
 static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
 {
@@ -569,7 +578,7 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
 {
     DWORD pressed=(GK()(W112_TELE_LMB)&(short)0x8000)?1u:0u;
     DWORD click=pressed&&!g_teleLmbWasDown;
-    DWORD info,hitType;
+    DWORD info,hitType,hitBefore;
     float px,py,pz,x,y,z,dx,dy,dz;
     g_teleLmbWasDown=pressed;
     if(!click||!g_stepEnabled)return;
@@ -586,10 +595,12 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     if(!Ptr((void*)info)||!W112_TeleRangeValid(info,W112_TELE_HIT_POS_OFF+12u,0u)){
         DebugChat(g_teleMemoryChat);return;
     }
-    /* Use the game's terrain raycast only after native memory checks. */
+    /* Compare the engine's cached hit type with the forced fresh raycast;
+     * do not turn type 0/2 into a guessed XYZ movement destination. */
+    hitBefore=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
     ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
     hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
-    if(hitType!=1u){DebugChat(g_teleNoGroundChat);return;}
+    if(hitType!=1u){W112_TeleReportHit(hitBefore,hitType);return;}
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
     y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
     z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
