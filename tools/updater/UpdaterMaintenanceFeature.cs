@@ -259,6 +259,7 @@ namespace WoW112Updater
                         AddText(zip, "managed_hashes.txt", BuildManagedHashes(root, installed));
                         AddText(zip, "backup_index.txt", BuildBackupIndex(root));
                         AddText(zip, "session_log.txt", host.SessionLogText);
+                        AddRearTraceSnapshots(zip, root);
                     }
 
                     finalStatus = "Diagnostyka zapisana: " + path;
@@ -274,6 +275,38 @@ namespace WoW112Updater
                 finally
                 {
                     SetBusy(false, finalStatus);
+                }
+            }
+
+
+            // Only the dedicated diagnostic variable; never copy private addon
+            // settings/scripts or expose account names in the exported archive.
+            private static void AddRearTraceSnapshots(ZipArchive zip, string root)
+            {
+                var accounts = Path.Combine(root, "WTF", "Account");
+                if (!Directory.Exists(accounts)) return;
+                var files = Directory.GetDirectories(accounts)
+                    .Select(account => Path.Combine(account, "SavedVariables", "LazyScript.lua"))
+                    .Where(File.Exists)
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Take(8);
+                var index = 0;
+                foreach (var file in files)
+                {
+                    if (new FileInfo(file).Length > 8 * 1024 * 1024) continue;
+                    var content = File.ReadAllText(file, Encoding.UTF8);
+                    var match = System.Text.RegularExpressions.Regex.Match(
+                        content, @"(?m)^lsRearDiag\s*=\s*""([^""\r\n]{1,16000})""\s*$");
+                    if (!match.Success) continue;
+                    var snapshot = match.Groups[1].Value;
+                    if (!snapshot.StartsWith("W112-REAR-V1|", StringComparison.Ordinal))
+                        continue;
+                    const string allowed = " |:.,/_=+><-";
+                    if (snapshot.Any(c => !(c <= 127 && char.IsLetterOrDigit(c))
+                        && allowed.IndexOf(c) < 0))
+                        continue;
+                    AddText(zip, "rear_trace_" + index + ".txt", snapshot);
+                    ++index;
                 }
             }
 

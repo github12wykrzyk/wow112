@@ -4,6 +4,23 @@ lazyScript.rearTrace = {
  rows={}, max=72, enabled=true, native=nil, nativeAt=nil,
  lastKey=nil, lastKeyAt=0
 }
+-- Bounded diagnostic snapshot; WoW saves this on logout, without chat spam.
+lsRearDiag = "W112-REAR-V1|empty"
+local function saveRearTrace()
+ local d=lazyScript.rearTrace
+ if not d then return end
+ local n=d.native
+ local snap="native:none"
+ if n then
+  snap="native:status="..tostring(n.status).." attempts="..tostring(n.attempts)..
+   " sends="..tostring(n.sends).." positional="..tostring(n.positional)..
+   " retries="..tostring(n.retries).." reason="..tostring(n.failReason)..
+   " spellgo="..tostring(n.spellGo).." aborted="..tostring(n.aborted)..
+   " queue="..tostring(n.sendPending).."/"..tostring(n.resultPending)..
+   " hooks="..tostring(n.castHook).."/"..tostring(n.moveHook)
+ end
+ lsRearDiag="W112-REAR-V1|"..table.concat(d.rows,"|").."|"..snap
+end
 function lazyScript.RearTrace(kind, detail)
  local d=lazyScript.rearTrace
  if not d or not d.enabled then return end
@@ -13,6 +30,7 @@ function lazyScript.RearTrace(kind, detail)
  d.lastKey=key;d.lastKeyAt=now
  table.insert(d.rows,string.format("%.2f",now).." "..key)
  if table.getn(d.rows)>d.max then table.remove(d.rows,1) end
+ saveRearTrace()
 end
 function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
  retries,failReason,spellGo,aborted,sendPending,resultPending,castHook,moveHook)
@@ -25,6 +43,7 @@ function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
   resultPending=resultPending,castHook=castHook,moveHook=moveHook}
  local old=d.native
  d.native=snap;d.nativeAt=now
+ saveRearTrace()
  if not d.enabled then return end
  if not old then
   lazyScript.RearTrace("native_attach","status="..tostring(status)..
@@ -51,6 +70,7 @@ function lazyScript.PrintRearTrace(option)
  if not d then return end
  if option=="clear" then
   d.rows={};d.native=nil;d.nativeAt=nil;d.lastKey=nil
+  saveRearTrace()
   lazyScript.chat("[RearTrace] cleared.")
   return
  end
