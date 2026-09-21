@@ -665,6 +665,172 @@ static void ui_sync_rear(void) {
     p=app_str(p,"  |  cancelled ");p=app_u32(p,aborted?aborted():0u);*p=0;
     SetWindowTextA(g_ui_rear_details_state,buf);
 }
+
+/* Parallel's actual in-game GUI lives in PlayerESP, not ControlHub. Save only
+ * writable controls shown in that GUI, with an INI next to the game EXE.
+ * Updater-managed EXE/DLL replacement does not touch this local preference file. */
+#define UI_PROFILE_NAME "wow112_parallel_gui.ini"
+#define UI_PROFILE_POLL_FRAMES 30u
+__declspec(dllimport) DWORD WINAPI GetPrivateProfileStringA(LPCSTR,LPCSTR,LPCSTR,char*,DWORD,LPCSTR);
+__declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCSTR,LPCSTR);
+static char g_ui_profile_path[512];
+static BOOL g_ui_profile_initialized=FALSE;
+static DWORD g_ui_profile_next_frame=0u;
+static const DWORD g_ui_profile_core_ids[]={1u,2u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,26u};
+static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
+static const DWORD g_ui_profile_single_ids[]={1u};
+struct UiProfileModule {
+    const char *dll;
+    DWORD minimum;
+    const DWORD *ids;
+    DWORD count;
+    BOOL restored;
+    DWORD last[17];
+    BYTE seen[17];
+};
+static struct UiProfileModule g_ui_profile_modules[]={
+    {PAR_CORE_DLL,26u,g_ui_profile_core_ids,17u,FALSE,{0},{0}},
+    {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
+    {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
+    {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
+};
+static volatile DWORD *const g_ui_profile_esp_flags[]={
+    &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile
+};
+static DWORD g_ui_profile_esp_last[4];
+
+static void ui_profile_key(char key[16],DWORD id) {
+    char *end=app_u32(key,id);
+    *end=0;
+}
+static BOOL ui_profile_read(const char *section,const char *key,DWORD *out) {
+    static const char hex[]="0123456789ABCDEF";
+    char value[16];
+    DWORD i,bits=0u;
+    if(!g_ui_profile_path[0]||!section||!key||!out)return FALSE;
+    if(GetPrivateProfileStringA(section,key,"",value,sizeof(value),g_ui_profile_path)!=8u)
+        return FALSE;
+    for(i=0u;i<8u;++i) {
+        const char *p=hex;
+        while(*p && *p!=value[i])++p;
+        if(!*p)return FALSE;
+        bits=(bits<<4u)|(DWORD)(p-hex);
+    }
+    *out=bits;
+    return TRUE;
+}
+static BOOL ui_profile_write(const char *section,const char *key,DWORD bits) {
+    static const char hex[]="0123456789ABCDEF";
+    char text[9];
+    DWORD i;
+    if(!g_ui_profile_path[0]||!section||!key)return FALSE;
+    for(i=0u;i<8u;++i)text[i]=hex[(bits>>(28u-i*4u))&15u];
+    text[8]=0;
+    return WritePrivateProfileStringA(section,key,text,g_ui_profile_path);
+}
+static BOOL ui_profile_value_valid(const W112_ControlSettingV1 *s,W112_ControlValueV1 value) {
+    DWORD i;
+    if(!s||(s->flags&W112_CTL_READ_ONLY))return FALSE;
+    if(s->type==W112_CTL_BOOL)return value.u32<=1u;
+    if(s->type==W112_CTL_INT)return value.i32>=s->min_value.i32&&value.i32<=s->max_value.i32;
+    if(s->type==W112_CTL_FLOAT)return value.f32>=s->min_value.f32&&value.f32<=s->max_value.f32;
+    if(s->type==W112_CTL_ENUM) {
+        for(i=0u;i<s->enum_option_count;++i)
+            if(s->enum_options&&s->enum_options[i].value==value.i32)return TRUE;
+    }
+    return FALSE;
+}
+static const W112_ControlSettingV1 *ui_profile_descriptor(const W112_ControlModuleV1 *m,DWORD id) {
+    DWORD i;
+    if(!m||!m->settings)return NULL;
+    for(i=0u;i<m->setting_count;++i)
+        if(m->settings[i].setting_id==id&&m->settings[i].struct_size>=sizeof(W112_ControlSettingV1))
+            return &m->settings[i];
+    return NULL;
+}
+static void ui_profile_bootstrap(void) {
+    DWORD n,start,i,bits;
+    if(g_ui_profile_initialized)return;
+    g_ui_profile_initialized=TRUE;
+    n=GetModuleFileNameA(NULL,g_ui_profile_path,sizeof(g_ui_profile_path));
+    if(!n||n>=sizeof(g_ui_profile_path)){g_ui_profile_path[0]=0;return;}
+    start=n;
+    while(start&&g_ui_profile_path[start-1u]!='\\'&&g_ui_profile_path[start-1u]!='/')--start;
+    if(!start||start+sizeof(UI_PROFILE_NAME)>sizeof(g_ui_profile_path)) {
+        g_ui_profile_path[0]=0;return;
+    }
+    for(i=0u;i<sizeof(UI_PROFILE_NAME);++i)
+        g_ui_profile_path[start+i]=UI_PROFILE_NAME[i];
+    for(i=0u;i<4u;++i) {
+        char key[16];
+        ui_profile_key(key,i+1u);
+        if(ui_profile_read("esp",key,&bits)&&bits<=1u)
+            *g_ui_profile_esp_flags[i]=bits;
+        g_ui_profile_esp_last[i]=*g_ui_profile_esp_flags[i]?1u:0u;
+    }
+    if(!g_esp_enabled)g_range_sweep_enabled=0u;
+    ui_filters_changed();
+}
+/* A module can load later than ESP. Restore it only when its control API is
+ * live; missing providers cannot overwrite old preferences with defaults.
+ * Subsequent polling also catches F9/F11 hotkey changes while the GUI is shut. */
+static void ui_profile_sync(void) {
+    DWORD i,j,bits;
+    if(!g_ui_profile_initialized)ui_profile_bootstrap();
+    if(!g_ui_profile_path[0])return;
+    for(i=0u;i<4u;++i) {
+        DWORD live=*g_ui_profile_esp_flags[i]?1u:0u;
+        if(live!=g_ui_profile_esp_last[i]) {
+            char key[16];
+            ui_profile_key(key,i+1u);
+            if(ui_profile_write("esp",key,live))g_ui_profile_esp_last[i]=live;
+        }
+    }
+    for(i=0u;i<sizeof(g_ui_profile_modules)/sizeof(g_ui_profile_modules[0]);++i) {
+        struct UiProfileModule *p=&g_ui_profile_modules[i];
+        const W112_ControlModuleV1 *m=ui_work_pp_module(p->dll,p->minimum);
+        if(!m||!m->module_id||!m->settings)continue;
+        if(!p->restored) {
+            BOOL ready=TRUE;
+            for(j=0u;j<p->count;++j) {
+                const W112_ControlSettingV1 *s=ui_profile_descriptor(m,p->ids[j]);
+                W112_ControlValueV1 value;
+                char key[16];
+                if(!s||(s->flags&W112_CTL_READ_ONLY)||!m->get_value(p->ids[j],&value)) {
+                    ready=FALSE;break;
+                }
+                ui_profile_key(key,p->ids[j]);
+                if(ui_profile_read(m->module_id,key,&bits)) {
+                    W112_ControlValueV1 saved;
+                    saved.u32=bits;
+                    if(ui_profile_value_valid(s,saved)) {
+                        if(!m->set_value(p->ids[j],&saved)||!m->get_value(p->ids[j],&value)) {
+                            ready=FALSE;break;
+                        }
+                    }
+                }
+                p->last[j]=value.u32;
+                p->seen[j]=1u;
+            }
+            if(ready)p->restored=TRUE;
+            continue;
+        }
+        for(j=0u;j<p->count;++j) {
+            const W112_ControlSettingV1 *s=ui_profile_descriptor(m,p->ids[j]);
+            W112_ControlValueV1 value;
+            char key[16];
+            if(!s||(s->flags&W112_CTL_READ_ONLY)||!m->get_value(p->ids[j],&value))
+                continue;
+            if(p->seen[j]&&p->last[j]==value.u32)continue;
+            ui_profile_key(key,p->ids[j]);
+            if(ui_profile_write(m->module_id,key,value.u32)) {
+                p->last[j]=value.u32;
+                p->seen[j]=1u;
+            }
+        }
+    }
+}
+
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
    requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
@@ -741,24 +907,24 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id>=112u&&id<=127u) {
             DWORD setting=id==112u?1u:(id==113u?26u:id-106u);
             ui_work_pp_flip(PAR_CORE_DLL,26u,setting);
-            ui_sync_gather();return 0;
+            ui_sync_gather();ui_profile_sync();return 0;
         }
         if(id==101u) {
             g_esp_enabled=g_esp_enabled?0u:1u;
             if(!g_esp_enabled)g_range_sweep_enabled=0u;
-            ui_filters_changed();ui_sync_esp();return 0;
+            ui_filters_changed();ui_sync_esp();ui_profile_sync();return 0;
         }
         if(id==102u) {
             g_parallel_show_horde=g_parallel_show_horde?0u:1u;
-            ui_filters_changed();ui_sync_esp();return 0;
+            ui_filters_changed();ui_sync_esp();ui_profile_sync();return 0;
         }
         if(id==103u) {
             g_parallel_show_alliance=g_parallel_show_alliance?0u:1u;
-            ui_filters_changed();ui_sync_esp();return 0;
+            ui_filters_changed();ui_sync_esp();ui_profile_sync();return 0;
         }
         if(id==104u) {
             g_parallel_show_hostile=g_parallel_show_hostile?0u:1u;
-            ui_filters_changed();ui_sync_esp();return 0;
+            ui_filters_changed();ui_sync_esp();ui_profile_sync();return 0;
         }
         if(id==105u || id==106u) {
             DWORD key=id==105u?1u:3u;
@@ -766,16 +932,16 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
                 value.u32=value.u32?0u:1u;
                 ui_floor_set(key,&value);
             }
-            ui_sync_rogue();return 0;
+            ui_sync_rogue();ui_profile_sync();return 0;
         }
         if(id==111u) {
             ui_work_pp_flip(PAR_WSG_DLL,4u,1u);
-            ui_sync_wsg();return 0;
+            ui_sync_wsg();ui_profile_sync();return 0;
         }
         if(id==109u || id==110u) {
             if(id==109u)ui_work_pp_flip(PAR_CORE_DLL,25u,2u);
             else ui_work_pp_flip(PAR_RANGE_DLL,7u,1u);
-            ui_sync_rogue();return 0;
+            ui_sync_rogue();ui_profile_sync();return 0;
         }
         if(id==107u || id==108u) {
             if(ui_floor_get(2u,&value)) {
@@ -787,7 +953,7 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
                 value.f32=(float)tenths/10.0f;
                 ui_floor_set(2u,&value);
             }
-            ui_sync_rogue();return 0;
+            ui_sync_rogue();ui_profile_sync();return 0;
         }
     }
     return g_ui_prev?CallWindowProcA(g_ui_prev,hwnd,msg,wp,lp):0;
@@ -945,6 +1111,11 @@ static BOOL ui_create(HWND game) {
 }
 static void parallel_gui_tick(void) {
     HWND game=g_hooked_game_hwnd,fg;
+    if(!g_ui_profile_initialized)ui_profile_bootstrap();
+    if(g_render_frame>=g_ui_profile_next_frame) {
+        g_ui_profile_next_frame=g_render_frame+UI_PROFILE_POLL_FRAMES;
+        ui_profile_sync();
+    }
     if(!game || !IsWindow(game) || !g_parallel_gui_open) {
         if(g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd))
             ShowWindow(g_parallel_ui_hwnd,SW_HIDE);
