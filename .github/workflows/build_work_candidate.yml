@@ -246,6 +246,14 @@ jobs:
           '@ | python -
           if ($LASTEXITCODE -ne 0) { throw "Parallel addon metadata failed" }
 
+      - name: Attest exact branch, commit and finalized ZIP
+        shell: pwsh
+        run: |
+          python tools/verify_candidate_provenance.py `
+            --sha "${{ github.sha }}" `
+            --branch "${{ github.ref_name }}"
+          if ($LASTEXITCODE -ne 0) { throw "candidate provenance/verification attestation failed" }
+
       - name: Write human-readable test card
         shell: pwsh
         run: >-
@@ -265,6 +273,7 @@ jobs:
             dist/candidate_metadata.json
             dist/candidate_summary.json
             dist/final_package_verification.json
+            dist/candidate_attestation.json
             dist/*_build.json
           if-no-files-found: error
           compression-level: 0
