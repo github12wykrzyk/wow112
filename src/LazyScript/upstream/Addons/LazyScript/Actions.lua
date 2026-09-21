@@ -352,18 +352,41 @@ function lazyScript.Action:Use()
 end
 
 function lazyScript.Action:IsUsable(sayNothing)
-    -- Parallel: suppress duplicate rear requests briefly, not all skills.
-    -- Other actions stay eligible, and a genuine energy wait is not cancelled.
+    -- Parallel: one outstanding rear request per target. Do not refresh its
+    -- timestamp just because the player keeps pressing the rotation key.
     if self.code == "bs" or self.code == "ambush" then
         local now = GetTime()
-        local pending = lazyScript.pendingRearAction
-        if pending and pending.action == self and
-           pending.target == UnitName("target") then
-            local age = now - pending.at
-            if age >= 0 and age < 0.30 then return false end
-        end
         if lazyScript.rearRetryUntil and now < lazyScript.rearRetryUntil then
             return false
+        end
+        local pending = lazyScript.pendingRearAction
+        if pending and pending.target == UnitName("target") then
+            local age = now - pending.at
+            if age >= 0 and age < 0.65 then
+                return false -- other action lines may proceed meanwhile
+            end
+            -- Do not cancel legitimate energy or GCD waits, nor casts/channels.
+            -- Only one expired, STILL current rear action that is NOW usable
+            -- can be considered stale. Never send ESC or cancel another spell.
+            local slot = pending.action.slot
+            if slot and IsCurrentAction(slot) and
+               IsUsableAction(slot) == 1 and
+               GetActionCooldown(slot) == 0 and
+               not lazyScript.spellcastInProgress and
+               not lazyScript.channellingInProgress then
+                SpellStopCasting()
+                lazyScript.rearStaleClears = (lazyScript.rearStaleClears or 0) + 1
+                lazyScript.rearRetryUntil = now + 0.12
+                lazyScript.pendingRearAction = nil
+                return false
+            end
+            -- The selected action changed: the previous request is no longer
+            -- ours. Otherwise keep its original age for the next inspection.
+            if slot and not IsCurrentAction(slot) then
+                lazyScript.pendingRearAction = nil
+            else
+                return false
+            end
         end
     end
     if self.code == "kick" and lazyScript.interrupt and
