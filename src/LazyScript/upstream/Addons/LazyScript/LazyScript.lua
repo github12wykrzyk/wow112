@@ -131,8 +131,25 @@ lazyScript.perPlayerDefaults = {
 	["Immunities"] = {} ,
 }
 
+-- PARALLEL: suppress chat spam from an external SCDP cooldown diagnostic probe.
+-- Keep its underlying diagnostics untouched; filter only its distinct chat prefix.
+function lazyScript.HideSCDPChatDebug()
+	if not DEFAULT_CHAT_FRAME or not DEFAULT_CHAT_FRAME.AddMessage then return end
+	if lazyScript.scdpChatFilterInstalled then return end
+	local previousAddMessage = DEFAULT_CHAT_FRAME.AddMessage
+	DEFAULT_CHAT_FRAME.AddMessage = function(frame, message, red, green, blue, messageId)
+		if type(message) == "string" then
+			local uncolored = string.gsub(message, "^|c%x%x%x%x%x%x%x%x", "")
+			if string.sub(uncolored, 1, 6) == "[SCDP]" then return end
+		end
+		return previousAddMessage(frame, message, red, green, blue, messageId)
+	end
+	lazyScript.scdpChatFilterInstalled = true
+end
+
 function lazyScript.OnLoad()
 	lazyScript.addOnIsActive = true
+	lazyScript.HideSCDPChatDebug()
 	
 	lazyScript.LoadLocalization(GetLocale())
 	lazyScript.loadBuffTable()
