@@ -326,6 +326,14 @@ namespace WoW112Updater
                 // as a permanent error. Never silently install an older artifact.
                 var chosen = await WaitForLatestSuccessfulRunAsync(client, workflowName, branch);
                 var runId = GetLong(chosen, "id");
+                var chosenSha = GetString(chosen, "head_sha");
+                var branchInfo = AsDictionary(json.DeserializeObject(
+                    await GetStringAsync(client, ApiRoot + "/branches/" + branch)));
+                var currentHead = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
+                if (currentHead.Length != 40 || !string.Equals(chosenSha, currentHead, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Najnowszy udany build nie pochodzi z aktualnego commita " + branch
+                        + ". Aktualny HEAD: " + ShortSha(currentHead) + "; build: " + ShortSha(chosenSha)
+                        + ". Instalacja starszej paczki zablokowana.");
                 var artifactsRoot = AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100")));
                 var artifacts = AsArray(GetValue(artifactsRoot, "artifacts"));
                 Dictionary<string, object> artifact = null;
@@ -334,7 +342,7 @@ namespace WoW112Updater
                     var row = AsDictionary(item);
                     var name = GetString(row, "name");
                     var expired = GetBool(row, "expired");
-                    if (!expired && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    if (!expired && string.Equals(name, prefix + chosenSha, StringComparison.OrdinalIgnoreCase))
                     {
                         artifact = row;
                         break;
@@ -434,7 +442,7 @@ namespace WoW112Updater
             }
         }
 
-        private void ExtractInnerPackage(byte[] outerBytes, string innerZipName, out byte[] innerBytes, out string expectedSha)
+        private void ExtractInnerPackage(byte[] outerBytes, string innerZipName, string expectedHeadSha, out byte[] innerBytes, out string expectedSha)
         {
             innerBytes = null;
             expectedSha = string.Empty;
@@ -453,6 +461,28 @@ namespace WoW112Updater
                 expectedSha = GetString(meta, "package_sha256");
                 if (!UpdaterSafety.IsSha256Hex(expectedSha))
                     throw new InvalidOperationException("candidate_metadata.json nie zawiera poprawnego package_sha256; instalacja została zablokowana.");
+
+                if (expectedHeadSha.Length != 40 || !string.Equals(GetString(meta, "git_head"), expectedHeadSha, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Paczka nie pochodzi z commita wybranego runu CI.");
+                var proof = AsDictionary(GetValue(meta, "final_package_verification"));
+                if (!string.Equals(GetString(proof, "result"), "PASS", StringComparison.Ordinal)
+                    || !string.Equals(GetString(proof, "package_sha256"), expectedSha, StringComparison.OrdinalIgnoreCase)
+                    || !GetBool(proof, "loader_exact") || !GetBool(proof, "all_binary_entries_pe32_x86"))
+                    throw new InvalidOperationException("Paczka nie zawiera zgodnego raportu FINAL_PACKAGE: PASS.");
+
+                var reportEntry = zip.Entries.FirstOrDefault(e => e.FullName == "final_package_verification.json");
+                var summaryEntry = zip.Entries.FirstOrDefault(e => e.FullName == "candidate_summary.json");
+                if (reportEntry == null || summaryEntry == null)
+                    throw new InvalidOperationException("Brakuje końcowego raportu CI lub podsumowania kandydata.");
+                var report = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(reportEntry))));
+                var summary = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(summaryEntry))));
+                if (!string.Equals(GetString(report, "result"), "PASS", StringComparison.Ordinal)
+                    || !string.Equals(GetString(report, "package_sha256"), expectedSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(GetString(summary, "head"), expectedHeadSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(GetString(summary, "result"), "PASS", StringComparison.Ordinal)
+                    || !GetBool(summary, "ready_for_test")
+                    || !string.Equals(GetString(summary, "package_sha256"), expectedSha, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Raport końcowy, commit i metadane paczki nie są spójne.");
             }
         }
 
