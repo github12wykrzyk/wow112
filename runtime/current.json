@@ -130,7 +130,7 @@
       },
       "build_recipe": {
         "tool": "tools/build_active_module.py",
-        "profile": "clangcl_i686_crtless",
+        "profile": "clangcl_i686_win32imports",
         "status": "verified_x86_candidate_build"
       }
     }
