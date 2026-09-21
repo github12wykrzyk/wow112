@@ -1,6 +1,6 @@
 lazyScript.metadata:updateRevisionFromKeyword("$Revision: 622 $")
 
--- Build-5875 hybrid observer: native AutoKick remains sole automatic Kick owner.
+-- Parallel: native read-only CastObserver provides spell state; LazyScript alone dispatches Kick.
 lazyScript.interrupt = {}
 local I = lazyScript.interrupt
 I.targetCasting = nil
@@ -21,9 +21,22 @@ function I.OnTargetChanged()
 end
 
 function I.OnNativeCast(guid,spell,remaining,kind,owned)
-    if type(guid) ~= "string" or string.len(guid) ~= 16 or
-       not UnitExists("target") then return end
+    if type(guid) ~= "string" then return end
     local n = I.native
+    -- Explicit idle snapshot: cleared native slot/channel; no stale chat Kick.
+    if guid == "" then
+        n.seen = true
+        n.guid = nil
+        n.spell = 0
+        n.remaining = 0
+        n.kind = 0
+        n.owned = false
+        n.updatedAt = GetTime()
+        I.targetCasting = nil
+        I.chatGuid = nil
+        return
+    end
+    if string.len(guid) ~= 16 or not UnitExists("target") then return end
     if n.guid ~= guid then
         I.targetCasting = nil
         I.castingDetectedAt = 0
@@ -35,7 +48,7 @@ function I.OnNativeCast(guid,spell,remaining,kind,owned)
     n.spell = tonumber(spell) or 0
     n.remaining = tonumber(remaining) or 0
     n.kind = tonumber(kind) or 0
-    n.owned = owned == 1
+    n.owned = false -- Observer NEVER owns or dispatches Kick.
     n.updatedAt = GetTime()
     if n.spell == 0 or n.kind == 0 then
         I.targetCasting = nil
@@ -46,11 +59,11 @@ end
 function I.NativeFresh()
     local n = I.native
     return n.seen and n.guid and n.updatedAt > 0 and
-           GetTime() - n.updatedAt <= 0.25 and UnitExists("target")
+           GetTime() - n.updatedAt <= 0.12 and UnitExists("target")
 end
 
 function I.NativeKickOwner()
-    -- Losing the bridge must not reactivate a competing automatic Lua Kick.
+    -- Only an explicitly owned observer would suppress LazyScript Kick.
     return I.native.seen and I.native.owned
 end
 
@@ -63,19 +76,19 @@ end
 function I.TargetIsCasting(nameRegex)
     local now = GetTime()
     local n = I.native
-    if n.seen then
-        if not I.NativeFresh() or n.spell == 0 or n.kind == 0 then return false end
-        if n.kind == 1 and n.remaining <= 350 then return false end
-        if not nameRegex or nameRegex == "" then return true end
-        if not I.targetCasting or I.chatGuid ~= n.guid or
-           now - I.castingDetectedAt > 0.7 then return false end
-    else
-        -- Legacy-only fallback when no native observer has ever been seen.
-        if not I.targetCasting or now - I.castingDetectedAt > 0.35 or
-           not UnitExists("target") then return false end
-        if I.lastAttempt and now - I.lastAttempt.at < 0.4 then return false end
-        if not nameRegex or nameRegex == "" then return true end
+    -- Fail closed: chat start messages alone never authorize a Kick.
+    -- The current selected target must have an ongoing native cast/channel.
+    if not I.NativeFresh() or n.spell == 0 or n.kind == 0 then return false end
+    -- 65535 is "unknown remaining", not 65.5 seconds of cast. The native
+    -- unit slot must still be live; never infer activity from a cached time.
+    if n.kind == 1 and n.remaining ~= 65535 and n.remaining <= 250 then
+        return false
     end
+    if not nameRegex or nameRegex == "" then return true end
+    -- Optional name/regex filters retain the chat-derived *name* only when
+    -- it belongs to the exact same active native GUID.
+    if not I.targetCasting or I.chatGuid ~= n.guid or
+       now - I.castingDetectedAt > 0.7 then return false end
     if lsConfGlobal.SpellType[I.targetCasting] and
        lsConfGlobal.SpellType[I.targetCasting][nameRegex] then return true end
     return string.find(I.targetCasting,nameRegex) ~= nil

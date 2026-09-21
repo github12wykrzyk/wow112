@@ -217,6 +217,19 @@ jobs:
             --output build/WoWAutoWotF_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Auto WotF candidate failed" }
 
+      - name: Build and append Parallel native cast observer
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_castobserver_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --build-metadata dist/castobserver_build.json `
+            --output build/WoWCastObserver_5875_v1.dll
+          if ($LASTEXITCODE -ne 0) { throw "Parallel CastObserver build/package failed" }
+
       - name: Final fail-closed runnable ZIP gate
         shell: pwsh
         run: |

@@ -21,3 +21,25 @@ LazyRogue accepts `bs-ifEnergyTick<200ms` and custom integer values 0..2000 ms, 
 - `WoWOpenerUIRecovery_5875_v1.dll` is included in the Parallel candidate ZIP with conservative idle-only auto-clear enabled by default (250 ms unchanged state, stable world, no pending/active/queued cast). It does not automatically cancel an active or queued spell. Its manual control API remains optional.
 - This does not guarantee recovery for every active queue lock: unconfirmed cases need diagnostics. V69/main/work are unchanged.
 - In-game test: rejected BS/Ambush should not permanently block subsequent rotation; verify energy waits, casts/channels, poisons and BG transitions are not interrupted.
+
+## Native cast/channel observer (parallel test candidate)
+Only parallel adds src/CastObserver/WoWCastObserver_5875_v1.c compiled to
+WoWCastObserver_5875_v1.dll as a root loader companion. The DLL observes the
+selected target GUID plus current 5875 CGUnit native casting spell slot
+(0xC8C) and UNIT_CHANNEL_SPELL descriptor index 0x90. It publishes a fresh
+native snapshot every ~25ms via FrameScript_Execute to
+lazyScript.interrupt.OnNativeCast(guid, spellID, remaining, kind, owned=0).
+Here remaining=65535 means UNKNOWN; it is not a real remaining-cast clock.
+A 0-kind snapshot invalidates a finished cast/channel. No native Kick,
+CastSpellByName, movement, player cast, or game-state hooks are introduced.
+The normal cast/channel spell slots and signature-guarded native read are
+build-5875 lineage taken from the separate AutoKick V3 source. The observer
+checks the exact signatures and becomes inert if they do not match.
+LazyScript alone decides and dispatches Kick: chat messages may label
+spells but never authorize a Kick without a fresh positive native snapshot.
+If the DLL is absent/inert the automatic LS Kick intentionally does not fire.
+AutoKick V3 is excluded from parallel; main/work remain untouched.
+The addon-only ZIP and DLL candidate are separately SHA256 attested within
+one successful branch-specific workflow artifact. Native slot liveness is
+not proof of server-side interrupt acceptance: test normal casts, channels,
+completed casts, target switching, relog, and BG transitions in game.
