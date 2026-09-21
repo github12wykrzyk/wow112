@@ -47,6 +47,24 @@
           ]
         }
       ]
+    },
+    {
+      "resource": "wow5875:0x006E5872:cast_send_call",
+      "policy": "exclusive",
+      "owners": [
+        {
+          "module": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
+          "source": "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
+          "embedded_source": "src/PVERear360/WoWPVERear360_5875_v1.c",
+          "evidence": [
+            "#define PVE_REAR_EMBEDDED 1",
+            "#define CAST_SEND_SITE 0x006E5872u",
+            "patchCall(CAST_SEND_SITE,castChainHook)"
+          ],
+          "movement_adapter": "src/RogueMovementCore/WoWRogueMovementCore_Movement.c",
+          "embedded_adapter": "src/RogueMovementCore/WoWRogueMovementCore_Rear.c"
+        }
+      ]
     }
   ],
   "arbitrated_writers": [
@@ -54,7 +72,7 @@
       "resource": "synthetic_rear_movement",
       "provider_module": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
       "provider_source": "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
-      "consumer_module": "WoWPVERear360_5875_v1.dll",
+      "consumer_module": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
       "consumer_source": "src/PVERear360/WoWPVERear360_5875_v1.c",
       "required_exports": [
         "MovementCore_CoordFlags",
@@ -66,11 +84,13 @@
         "if(!flags)return 1;",
         "if(!acquire||!acquire(spell))return 0;",
         "if(release)release();"
-      ]
+      ],
+      "embedded_adapter": "src/RogueMovementCore/WoWRogueMovementCore_Rear.c"
     }
   ],
   "exclusions": [
     "Exact-binary and transient companion modules without source-backed hook declarations are not certified by this registry.",
-    "The verifier cannot prove real runtime load order, Windows subclass ownership or in-game movement arbitration."
+    "The verifier cannot prove real runtime load order, Windows subclass ownership or in-game movement arbitration.",
+    "Consolidated candidate builder must replace MovementCore with embedded rear; active legacy PositionalSpoof and independent PVERear360 are prohibited."
   ]
 }

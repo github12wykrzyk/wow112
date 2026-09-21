@@ -8,29 +8,6 @@
   },
   "active_dlls": [
     {
-      "name": "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
-      "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
-      "source_state": "binary_verified_reconstruction",
-      "source_origin": "binary_patch_lineage_from_exact_ancestor",
-      "source_path": "src/PositionalSpoof/WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix_RECONSTRUCTED.c",
-      "source_sha256": "bf4e738330d936c1af62db606a21d3e53bedc0b84d5b7864dc655369c127bbe2",
-      "source_size": 53725,
-      "source_restore_doc": "artifacts/PositionalSpoof/README_RECOVERY.md",
-      "binary_patch_audit": "artifacts/PositionalSpoof/FINAL_BINARY_PATCH_AUDIT.txt",
-      "binary_reproducer": "artifacts/PositionalSpoof/patch_WotFRetry5_to_final.py",
-      "binary_artifact": {
-        "kind": "xz",
-        "path": "artifacts/runtime_cache/deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b.dll.xz",
-        "sha256": "deab16a21ab201e8edc4d8a245a739a6b879e57f7c11efe922451ee0eea9823b",
-        "size": 45056
-      },
-      "build_recipe": {
-        "tool": "tools/build_active_module.py",
-        "profile": "clangcl_i686_crtless",
-        "status": "verified_x86_candidate_build"
-      }
-    },
-    {
       "name": "WoWPlayerESP_v1_2_range_sweep.dll",
       "sha256": "d0fd868b9ae61570da095b66d2fb59d446ef9d6dd238c9cfb74100e636b06cd5",
       "source_state": "normal_source",

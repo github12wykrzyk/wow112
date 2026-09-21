@@ -248,7 +248,7 @@ static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPa
     if (msg == WM_W112_REAR_TICK) {
         /* This WndProc owns the game's thread. The worker only posts here;
            never call native pose/heartbeat from a foreign worker thread. */
-        HMODULE rear=GetModuleHandleA("WoWPVERear360_5875_v1.dll");
+        HMODULE rear=GetModuleHandleA("MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll");
         if(rear) {
             typedef DWORD (WINAPI *RearTickFn)(HWND);
             RearTickFn fn=(RearTickFn)GetProcAddress(rear,"PVERear360_GameWindowTick");
@@ -387,7 +387,7 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 #define PAR_RANGE_DLL "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll"
 #define PAR_LOOT_DLL "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll"
 #define PAR_LONGPP_DLL "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
-#define PAR_REAR_DLL "WoWPVERear360_5875_v1.dll"
+#define PAR_REAR_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 #define PAR_CORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 #define PAR_WSG_DLL "WoWAutoFlagWSG_5875_v1.dll"
 

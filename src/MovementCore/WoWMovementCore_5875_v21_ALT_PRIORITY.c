@@ -832,7 +832,10 @@ __declspec(dllexport) DWORD __stdcall MovementCore_ABCapGuardActive(void){return
 __declspec(dllexport) DWORD __stdcall MovementCore_ABCapBlockedPP(void){return g_abCapGuardBlockedPP;}
 __declspec(dllexport) DWORD __stdcall MovementCore_ABCapBlockedMove(void){return g_abCapGuardBlockedMove;}
 
-BOOL __stdcall DllMain(HINSTANCE h,DWORD r,LPVOID x)
+#ifndef W112_V21_ENTRY
+#define W112_V21_ENTRY DllMain
+#endif
+BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
 {
     if(r==DLL_PROCESS_ATTACH){
         if(!W112_MovementCoreV20_DllMain(h,r,x))return FALSE;

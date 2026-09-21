@@ -1,16 +1,14 @@
 {
   "schema_version": 1,
-  "purpose": "PARALLEL: work Rogue PP/AutoJunkbox + source-built work PositionalSpoof, independent ESP/SpeedFloor/PvE Rear",
+  "purpose": "PARALLEL: consolidated Rogue MovementCore v21 + PVERear360 and independent ESP/SpeedFloor/PickPocket",
   "source_overrides": [
-    "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
     "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
   ],
-  "note": "PickPocketSelectiveRange (8yd ordinary/300yd PP+Pick Lock, live AutoJunkbox) and MovementCore v21 (work AutoPP blacklist/HARDLOS3D retry and GUI ABI) compile from the same canonical work source paths. AutoLootPP and LongPickPocket are the exact accepted binaries also used by work; never compile AutoLootPP's incomplete reconstruction (corpse-scanner path missing). Preserve ESP/SpeedFloor and PP-first movement arbitration on parallel. Runtime metadata remains stable V69 identity; these are candidate source overrides only. PositionalSpoof compiles from the byte-identical canonical source shared with work; the accepted stable DLL fingerprint intentionally remains unchanged while this test candidate uses a source override.",
+  "note": "PickPocketSelectiveRange (8yd ordinary/300yd PP+Pick Lock, live AutoJunkbox) and MovementCore v21 (work AutoPP blacklist/HARDLOS3D retry and GUI ABI) compile from the same canonical work source paths. AutoLootPP and LongPickPocket are the exact accepted binaries also used by work; never compile AutoLootPP's incomplete reconstruction (corpse-scanner path missing). Preserve ESP/SpeedFloor and PP-first movement arbitration on parallel. Runtime metadata remains stable V69 identity; these are candidate source overrides only. PositionalSpoof compiles from the byte-identical canonical source shared with work; the accepted stable DLL fingerprint intentionally remains unchanged while this test candidate uses a source override. Consolidated Rogue MovementCore is built from separate canonical V21 and rear translation units and replaces the base MovementCore DLL. PositionalSpoof and separate Rear360 are not packaged. Independent AutoWotF retains WotF retry; PositionalSpoof-specific stealth speed is not asserted equivalent.",
   "source_fingerprint_warning_allowlist": [
-    "WoWPositionalSpoof_v0_36_WotFRetry5_NoPP_SmartEnergy700_StealthCDSafe_NoFailHook_GateGCDFix.dll",
     "WoWPlayerESP_v1_2_range_sweep.dll",
     "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
     "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",

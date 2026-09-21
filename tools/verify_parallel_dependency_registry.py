@@ -44,6 +44,11 @@ def main():
         fail("registry channel/build/schema mismatch")
     if len(order) != len(set(order)) or order != list(active):
         fail("active dlls.txt order differs from runtime/current.json")
+    if any("PositionalSpoof" in n or "PVERear360" in n for n in active):
+        fail("legacy positional or independent PVERear DLL cannot be an active owner")
+    candidate = json.loads((ROOT / "runtime/work_candidate.json").read_text(encoding="utf-8"))
+    if any("PositionalSpoof" in n for n in candidate.get("source_overrides", [])):
+        fail("legacy cast hook is still a candidate source override")
     covered = set()
     for hook in registry["hooks"]:
         owners = hook["owners"]
@@ -65,6 +70,20 @@ def main():
                 if '#include "' + Path(supporting).name + '"' not in text:
                     fail("supporting movement source no longer included by canonical overlay")
                 text += "\n" + read_source(supporting)
+            movement_adapter = row.get("movement_adapter")
+            if movement_adapter:
+                adapter_source = read_source(movement_adapter)
+                if '#include "../MovementCore/' + Path(row["source"]).name + '"' not in adapter_source:
+                    fail("canonical movement source is not included by movement adapter")
+                text += "\n" + adapter_source
+            embedded = row.get("embedded_source")
+            if embedded:
+                rear_adapter = read_source(row["embedded_adapter"])
+                if '#define PVE_REAR_EMBEDDED 1' not in rear_adapter or (
+                    '#include "../PVERear360/' + Path(embedded).name + '"' not in rear_adapter
+                ):
+                    fail("embedded cast source is not included by the registered adapter")
+                text += "\n" + rear_adapter + "\n" + read_source(embedded)
             evidence_in(text, row["evidence"], hook["resource"] + "/" + row["module"])
             covered.add(row["module"])
         if hook["policy"] == "ordered_chain":
@@ -76,6 +95,15 @@ def main():
         if provider not in active or active[provider] != writer["provider_source"]:
             fail("missing arbitration provider " + provider)
         provider_source = read_source(writer["provider_source"])
+        adapter = writer.get("embedded_adapter")
+        if adapter:
+            if consumer != provider:
+                fail("embedded arbitration must use one provider/consumer DLL")
+            adapter_source = read_source(adapter)
+            if '#define PVE_REAR_EMBEDDED 1' not in adapter_source or (
+                '#include "../PVERear360/' + Path(writer["consumer_source"]).name + '"' not in adapter_source
+            ):
+                fail("embedded arbitration source not linked into core adapter")
         consumer_source = read_source(writer["consumer_source"])
         evidence_in(consumer_source, writer["consumer_evidence"], consumer)
         for export in writer["required_exports"]:

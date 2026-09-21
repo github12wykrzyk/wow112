@@ -13,7 +13,9 @@
 #if defined(_MSC_VER)
 #define STDCALL __stdcall
 #define THISCALL __thiscall
+#if !defined(PVE_REAR_EMBEDDED)
 #pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
+#endif
 #pragma comment(linker, "/EXPORT:PVERear360_GetStatus=_PVERear360_GetStatus@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GetPulseCount=_PVERear360_GetPulseCount@0")
 #pragma comment(linker, "/EXPORT:PVERear360_GameWindowTick=_PVERear360_GameWindowTick@4")

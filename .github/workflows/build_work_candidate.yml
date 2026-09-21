@@ -191,18 +191,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Taxi Flight observer candidate failed" }
           }
 
-      - name: Build and append Parallel PvE Rear 360
+      - name: Build and replace Parallel Rogue MovementCore (v21 + Rear360)
         if: github.ref_name == 'parallel'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python tools/build_pve_rear360_candidate.py `
+          python tools/build_rogue_movement_candidate.py `
             --package dist/WoW112_WORK_CANDIDATE.zip `
             --package-metadata dist/candidate_metadata.json `
             --summary dist/candidate_summary.json `
-            --build-metadata dist/pve_rear360_build.json `
-            --output build/WoWPVERear360_5875_v1.dll
-          if ($LASTEXITCODE -ne 0) { throw "PvE Rear 360 candidate failed" }
+            --build-metadata dist/rogue_movement_build.json `
+            --output build/MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll
+          if ($LASTEXITCODE -ne 0) { throw "Consolidated Rogue MovementCore candidate failed" }
 
       - name: Build and append Parallel Auto WotF
         if: github.ref_name == 'parallel'
