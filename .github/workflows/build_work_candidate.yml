@@ -24,6 +24,7 @@ on:
       - 'tools/build_taxiflight_probe_candidate.py'
       - 'tools/build_groundtargetassist_candidate.py'
       - 'tools/build_pve_rear360_candidate.py'
+      - 'tools/build_autowotf_candidate.py'
       - 'tools/build_autoflagwsg_candidate.py'
       - 'tools/build_openeruirecovery_candidate.py'
       - 'tools/package_current.py'
@@ -226,6 +227,19 @@ jobs:
             --build-metadata dist/pve_rear360_build.json `
             --output build/WoWPVERear360_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "PvE Rear 360 candidate failed" }
+
+      - name: Build and append Parallel Auto WotF
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_autowotf_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --build-metadata dist/autowotf_build.json `
+            --output build/WoWAutoWotF_5875_v1.dll
+          if ($LASTEXITCODE -ne 0) { throw "Auto WotF candidate failed" }
 
       - name: Final fail-closed runnable ZIP gate
         shell: pwsh
