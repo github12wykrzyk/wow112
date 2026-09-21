@@ -1,0 +1,49 @@
+name: Verify AI experiment registry
+
+on:
+  push:
+    branches:
+      - main
+      - work
+      - parallel
+      - 'feature/**'
+    paths:
+      - 'runtime/ai_experiments.json'
+      - 'tools/ai_experiments.py'
+      - 'tools/test_ai_experiments.py'
+      - '.github/workflows/ai_experiments.yml'
+  pull_request:
+    branches:
+      - main
+      - work
+      - parallel
+    paths:
+      - 'runtime/ai_experiments.json'
+      - 'tools/ai_experiments.py'
+      - 'tools/test_ai_experiments.py'
+      - '.github/workflows/ai_experiments.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-experiments-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v5
+      - name: Validate experiment registry
+        run: python3 tools/ai_experiments.py validate
+      - name: Test branch routing and test evidence
+        run: python3 -m unittest discover -s tools -p 'test_ai_experiments.py' -v
+      - name: Verify current runtime references
+        run: python3 tools/verify_current.py
+      - name: Verify recoverable runtime artifacts
+        run: python3 tools/verify_runtime_artifacts.py
+      - name: Verify shared native symbols
+        run: python3 tools/verify_verified_symbols.py
