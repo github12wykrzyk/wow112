@@ -13,6 +13,7 @@
 ## X-LazyScriptVersion: 1.0
 
 LazyRogue.lua
+PPSilentLoot.lua
 EviscerateTracking.lua
 ParseRogue.lua
 Localization.lua
