@@ -535,6 +535,14 @@ static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r pulse sent; check if position stays') end";
 static const char g_teleFarChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ground point too far/steep (max 8 yd, 1.25 Z)') end";
+/* Every attempted left click gets one stage-specific report; never claim an
+ * accepted teleport merely because the client sent a movement heartbeat. */
+static const char g_teleBlockedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, blocked: combat/cast/another movement module') end";
+static const char g_teleChatFocusChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, blocked: chat edit box') end";
+static const char g_teleCooldownChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, wait for cooldown') end";
+static const char g_teleMemoryChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele Click]|r LMB detected, cursor raycast memory unavailable') end";
+static const char g_teleNoGroundChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r LMB detected, cursor raycast returned no terrain hit') end";
+static const char g_teleBadPosChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele Click]|r LMB detected, invalid hit/player XYZ') end";
 static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
 {
     W112_TELE_MBI mbi;DWORD end,protect;
@@ -564,26 +572,34 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     DWORD info,hitType;
     float px,py,pz,x,y,z,dx,dy,dz;
     g_teleLmbWasDown=pressed;
-    if(!click||!W112_TeleAvailable(p)||W112_Q_ChatHasFocus())return;
-    if(g_teleLastAttempt&&(DWORD)(now-g_teleLastAttempt)<W112_TELE_COOLDOWN_MS)return;
+    if(!click||!g_stepEnabled)return;
+    if(W112_Q_ChatHasFocus()){DebugChat(g_teleChatFocusChat);return;}
+    if(!W112_TeleAvailable(p)){DebugChat(g_teleBlockedChat);return;}
+    if(g_teleLastAttempt&&(DWORD)(now-g_teleLastAttempt)<W112_TELE_COOLDOWN_MS){
+        DebugChat(g_teleCooldownChat);return;
+    }
     if(!W112_TeleRangeValid(W112_TELE_CLICK_INFO_PTR,4u,0u)||
-       !W112_TeleRangeValid(W112_TELE_REFRESH_FN,16u,1u))return;
+       !W112_TeleRangeValid(W112_TELE_REFRESH_FN,16u,1u)){
+        DebugChat(g_teleMemoryChat);return;
+    }
     info=*(volatile DWORD*)W112_TELE_CLICK_INFO_PTR;
-    if(!Ptr((void*)info)||!W112_TeleRangeValid(info,W112_TELE_HIT_POS_OFF+12u,0u))return;
+    if(!Ptr((void*)info)||!W112_TeleRangeValid(info,W112_TELE_HIT_POS_OFF+12u,0u)){
+        DebugChat(g_teleMemoryChat);return;
+    }
     /* Use the game's terrain raycast only after native memory checks. */
     ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
     hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
-    if(hitType!=1u)return;  /* UI, unit, object, or no terrain intersection */
+    if(hitType!=1u){DebugChat(g_teleNoGroundChat);return;}
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
     y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
     z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);
-    if(!W112_Q_PosValid(x,y,z)||!W112_Q_PosValid(px,py,pz))return;
+    if(!W112_Q_PosValid(x,y,z)||!W112_Q_PosValid(px,py,pz)){DebugChat(g_teleBadPosChat);return;}
     dx=x-px;dy=y-py;dz=z-pz;
     if(dx*dx+dy*dy>W112_TELE_MAX_D2||dx*dx+dy*dy<W112_TELE_MIN_D2||
        AbsF(dz)>W112_TELE_MAX_DZ){DebugChat(g_teleFarChat);return;}
     /* Recheck ownership after the engine's synchronous raycast. */
-    if(!W112_TeleAvailable(p))return;
+    if(!W112_TeleAvailable(p)){DebugChat(g_teleBlockedChat);return;}
     g_teleLastAttempt=now;
     g_stepActive=1u;
     g_stepMoveInjecting=1u;
