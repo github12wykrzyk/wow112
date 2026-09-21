@@ -102,7 +102,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
-/* Physical NPC Backstab blink: this initial implementation intercepts the
+/* Physical NPC Backstab/Ambush blink: intercept the
    existing native cast CMSG; pre-CMSG local 'not behind' UI rejects remain
    a separate, unverified interception problem. */
 #define BLINK_BS_SETTLE_MS 125u
@@ -146,7 +146,7 @@ static volatile u32 g_pvpEnabled=
 #endif
 static volatile u32 g_period=350u;
 static volatile u32 g_status=STATUS_IDLE;
-static volatile u32 g_blinkNpcEnabled=1u; /* parallel NPC Backstab pilot */
+static volatile u32 g_blinkNpcEnabled=1u; /* parallel NPC Backstab/Ambush pilot */
 static volatile u32 g_blinkPending=0u,g_blinkResult=0u,g_blinkStarted=0u,g_blinkNotice=0u;
 static volatile u32 g_blinkAttempts=0u,g_blinkPulses=0u,g_blinkCasts=0u,g_blinkAborts=0u;
 static float g_blinkX,g_blinkY,g_blinkZ,g_blinkO;
@@ -343,6 +343,15 @@ static int npcBackstabSpell(u32 spell){
  return spell==53u||spell==2589u||spell==2590u||spell==2591u||
         spell==8721u||spell==11279u||spell==11280u||spell==11281u;
 }
+static int npcAmbushSpell(u32 spell){
+ return spell==8676u||spell==8724u||spell==8725u||
+        spell==11267u||spell==11268u||spell==11269u;
+}
+/* Preserve the original PvE/PvP rear and hook owner, but route both native
+   Rogue opener families through the same physical NPC-only Blink pilot. */
+static int npcBlinkSpell(u32 spell){
+ return npcBackstabSpell(spell)||npcAmbushSpell(spell);
+}
 static int behindSpell(u32 spell){
  return spell==53u||spell==2589u||spell==2590u||spell==2591u||
   spell==8721u||spell==11279u||spell==11280u||spell==11281u||
@@ -503,7 +512,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
  s32 reaction;
  if(g_prearmActive&&(!behindSpell(spell)||!store))stopMeleePrearm();
- if(g_blinkPending&&npcBackstabSpell(spell)){
+ if(g_blinkPending&&npcBlinkSpell(spell)){
   g_skipNativeGcdCurrent=1u;return 1u; /* no duplicate input while settling */
  }
  if((!g_enabled&&!g_pvpEnabled)||!g_castInstalled||!g_moveInstalled||g_stop||
@@ -522,7 +531,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  }
  ++g_attempts;
  if(g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&
-    npcBackstabSpell(spell)&&g_castActive){
+    npcBlinkSpell(spell)&&g_castActive){
   g_skipNativeGcdCurrent=1u;++g_busyDrops;return 1u;
  }
  /* Reject repeated input while an existing NPC transaction is pending. */
@@ -568,7 +577,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
  angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return 0u;
- if(g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&npcBackstabSpell(spell)){
+ if(g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&npcBlinkSpell(spell)){
   float jx=x-px,jy=y-py,jz=z-pz;
   if(jx*jx+jy*jy>BLINK_BS_MAX_JUMP_D2||
      jz>BLINK_BS_MAX_DZ||jz< -BLINK_BS_MAX_DZ){
@@ -602,7 +611,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
- if(g_blinkNpcEnabled&&g_savedType==3u&&npcBackstabSpell(spell)){
+ if(g_blinkNpcEnabled&&g_savedType==3u&&npcBlinkSpell(spell)){
   /* Reuse the existing MovementCore rear lease and native heartbeat.
      Keep real local XYZ at the destination; do NOT restore the old pose.
      No new DLL, movement detour or cast hook is installed. */
@@ -616,7 +625,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
   nativeHeartbeat(pl);
   g_skipNativeGcdCurrent=1u;g_status=STATUS_BLINK_PENDING;
   g_blinkNotice=1u;++g_blinkAttempts;++g_blinkPulses;
-  return 1u; /* original unprimed Backstab CMSG is suppressed */
+  return 1u; /* original unprimed Backstab/Ambush CMSG is suppressed */
  }
  if(!g_castActive)g_castStarted=GetTickCount();
  g_castActive=1u;g_castUntil=GetTickCount()+g_period;
@@ -1105,7 +1114,7 @@ static void autoRearTick(u32 now){
  g_autoRearState=1u;
 }
 #endif
-/* One bounded physical blink attempt, then ONE preserved Backstab CMSG.
+/* One bounded physical blink attempt, then ONE preserved Backstab/Ambush CMSG.
    A stable local XYZ after 125 ms is NOT a server acknowledgement: verify
    server behavior in game. No spoof fallback or repeated cast is triggered. */
 static void tickPhysicalBlink(u32 now){
@@ -1115,7 +1124,7 @@ static void tickPhysicalBlink(u32 now){
  if(!g_blinkPending)return;
  pl=localPlayer();tg=selectedTarget();
  if(!pl||!tg||pl!=g_savedPlayer||!savedTargetStillValid(tg)||
-    g_savedType!=3u||!npcBackstabSpell(g_savedSpell)||
+    g_savedType!=3u||!npcBlinkSpell(g_savedSpell)||
     !g_rearLease||competingMovementBusy()||
     (u32)(now-g_blinkStarted)>BLINK_BS_TIMEOUT_MS||
     (read32(CASTING_SPELL_ID)&&read32(CASTING_SPELL_ID)!=g_savedSpell))
@@ -1168,10 +1177,10 @@ static void publishBlinkNotice(void){
  if(!n)return;
  for(i=0u;i<(u32)sizeof(sig);++i)
   if(*(volatile u8*)(REAR_TRACE_SCRIPT_EXECUTE+i)!=sig[i])return;
- if(n==1u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] pulse sent, waiting for stable landing') end";
- else if(n==2u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] ABORT: position/target changed; Backstab not sent') end";
- else if(n==3u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] Backstab sent ONCE after local position check; server outcome unverified') end";
- else lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] server rejected Backstab; no automatic retry') end";
+ if(n==1u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] pulse sent, waiting for stable landing') end";
+ else if(n==2u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] ABORT: position/target changed; opener not sent') end";
+ else if(n==3u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] opener sent ONCE after local position check; server outcome unverified') end";
+ else lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS/Ambush] server rejected opener; no automatic retry') end";
  g_blinkNotice=0u;
  ((BlinkScriptFn)REAR_TRACE_SCRIPT_EXECUTE)(lua,"WoW112Blink");
 }
