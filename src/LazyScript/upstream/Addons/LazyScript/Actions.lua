@@ -432,8 +432,8 @@ function lazyScript.Action:IsUsable(sayNothing)
 		-- Only the installed native rear owner may arbitrate a bounded probe;
 		-- preserve cooldown, energy, range, stealth and regular action gates.
 		local rearProbe = false
-		if (self.code == "bs" or self.code == "ambush") and usable == nil and
-			(not notEnoughEnergy) and cooldown == 0 and
+		if (self.code == "bs" or self.code == "ambush") and usable ~= 1 and
+			(notEnoughEnergy ~= 1) and cooldown == 0 and
 			(inRange == 1 or inRange == nil) and
 			UnitExists("target") and not UnitIsPlayer("target") and
 			UnitCanAttack("player", "target") and
@@ -451,7 +451,7 @@ function lazyScript.Action:IsUsable(sayNothing)
 			end
 		end
 		if rearProbe and lazyScript.RearTrace then
-			lazyScript.RearTrace("ls_rear_probe",self.code.." action_bar_position_gate")
+			lazyScript.RearTrace("ls_client_gate_bypass",self.code.." positional_unusable="..tostring(usable))
 		end
 		if ((usable == 1 or rearProbe) and
 			cooldown == 0 and -- not in cooldown

@@ -96,9 +96,9 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define REAR_RESULT_WAIT_MS 850u
 #define RETRY_FEEDBACK_WINDOW_MS 1200u
 /* While an NPC Backstab/Ambush transaction is unresolved, keep refreshing
-   the same server-facing rear pose every 100 ms. This is intentionally
+   the same server-facing rear pose every 50 ms. This is intentionally
    bounded by the existing lease/result timeout and MovementCore arbitration. */
-#define REAR_REFRESH_MS 100u
+#define REAR_REFRESH_MS 50u
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
@@ -122,6 +122,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define STATUS_HOOK_PATCH_FAILED 12u
 #define STATUS_FAIL_SITE_CONFLICT 13u
 #define STATUS_GO_SITE_CONFLICT 14u
+#define STATUS_MELEE_PREARM 15u
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
@@ -134,6 +135,8 @@ static volatile HWND32 g_timerWindow=0;
 static volatile u32 g_stop=0u;
 static volatile u32 g_lastTick=0u;
 static volatile u32 g_lastRearRefresh=0u;
+static volatile u32 g_prearmActive=0u,g_prearmLastPulse=0u,g_prearmLeaseAt=0u;
+static volatile u32 g_prearmPulses=0u,g_prearmStarts=0u;
 static volatile u32 g_needsRestore=0u;
 static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
@@ -158,7 +161,7 @@ static W112_ControlSettingV1 g_settings[3];
 static volatile u32 g_descriptorsReady=0u;
 /* Read-only native diagnostic snapshot; no gameplay state modifications. */
 static volatile u32 g_rearTraceLastEmit=0u;
-static u32 g_rearTraceLastValues[13];
+static u32 g_rearTraceLastValues[16];
 static u32 g_rearTraceObserved=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
 typedef u32 (STDCALL *WorkCoordAcquireFn)(u32);
@@ -170,7 +173,7 @@ static int competingMovementBusy(void){
  WorkCoordFlagsFn flags;
  if(!core)return 1;
  flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
- return !flags||(flags()&0x0Fu)!=0u; /* exclude our own rear lease */
+ return !flags||(flags()&0x2Fu)!=0u; /* ignore own rear lease; respect manual ALT */
 }
 static int workMovementBusy(void){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
@@ -178,7 +181,7 @@ static int workMovementBusy(void){
  if(!core)return 1;
  flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
  if(!flags)return 1;
- return (flags()&0x1Fu)!=0u;
+ return (flags()&0x3Fu)!=0u;
 }
 static int acquireRear(u32 spell){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
@@ -274,6 +277,28 @@ static int savedTargetStillValid(u32 tg){
  return tg&&tg==g_savedTarget&&read32(tg+OBJ_TYPE)==g_savedType&&
         read32(tg+OBJ_LO)==g_savedGuidLo&&read32(tg+OBJ_HI)==g_savedGuidHi;
 }
+/* Keep unrelated DLLs loaded: reserve only synthetic movement ownership. */
+static void stopMeleePrearm(void){
+ u32 pl=g_castPlayer;
+ if(!g_prearmActive)return;
+ g_prearmActive=0u;g_prearmLastPulse=0u;g_prearmLeaseAt=0u;
+ g_castPlayer=0u;g_castTarget=0u;
+ releaseRear();restoreHeartbeat(pl==localPlayer()?pl:0u);
+}
+static int npcMeleeCombat(u32 pl,u32 tg){
+ u32 desc;
+ float px,py,pz,tx,ty,tz,dx,dy,dz;
+ if(!g_enabled||!pl||!tg||pl==tg||read32(tg+OBJ_TYPE)!=3u)return 0;
+ desc=read32(pl+8u); /* verified V20: descriptor ptr, flags index 0x2E */
+ if(desc<0x10000u||!(read32(desc+0x2Eu*4u)&0x00080000u))return 0;
+ if(!((CanAttackFn)CAN_ATTACK_FN)(pl,tg))return 0;
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);tz=readf(tg+OBJ_Z);
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||
+    !finitef(tx)||!finitef(ty)||!finitef(tz))return 0;
+ dx=px-tx;dy=py-ty;dz=pz-tz;
+ return dx*dx+dy*dy<=REAL_MAX_RANGE_SQ&&dz<=2.5f&&dz>=-2.5f;
+}
 static int behindSpell(u32 spell){
  return spell==53u||spell==2589u||spell==2590u||spell==2591u||
   spell==8721u||spell==11279u||spell==11280u||spell==11281u||
@@ -297,7 +322,7 @@ static void STDCALL rewriteMovement(u32 store){
  u32 *ds=(u32*)store,size,buf,base,op,off,tg;
  u8 *p;
  float tx,ty,tz,to,a,x,y,z,o;
- if(!g_castActive||!g_rearLease||!store)return;
+ if((!g_castActive&&!g_prearmActive)||!g_rearLease||!store)return;
  /* Never keep sending a stale pose after the NPC moves, turns or the user
     changes target. Preserve every other movement packet unchanged. */
  if(g_castPlayer!=localPlayer()||
@@ -367,6 +392,54 @@ static void refreshActiveRear(u32 now){
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
  g_lastRearRefresh=now;g_needsRestore=1u;++g_count;
 }
+/* Bounded game-thread NPC melee prearm. Never move the local real XYZ
+   permanently; preserve one rear lease and refresh at most every 50 ms. */
+static void tickMeleePrearm(u32 now){
+ u32 pl=localPlayer(),tg=selectedTarget(),lo,hi;
+ float px,py,pz,po,tx,ty,tz,to,a,x,y,z,o;
+ if(g_castActive||g_savedValid||g_sendPending||g_resultPending||g_retryPending||g_stop){
+  if(g_prearmActive)stopMeleePrearm();
+  return;
+ }
+ if(!npcMeleeCombat(pl,tg)||competingMovementBusy()||
+    read32(CASTING_SPELL_ID)||read32(PENDING_CAST)){
+  stopMeleePrearm();return;
+ }
+ lo=read32(tg+OBJ_LO);hi=read32(tg+OBJ_HI);
+ if((!lo&&!hi)||lo!=read32(TARGET_LO)||hi!=read32(TARGET_HI)){
+  stopMeleePrearm();return;
+ }
+ if(g_prearmActive&&(g_castPlayer!=pl||g_castTarget!=tg||
+    g_savedGuidLo!=lo||g_savedGuidHi!=hi||
+    (u32)(now-g_prearmLeaseAt)>=5000u))stopMeleePrearm();
+ if(!g_prearmActive){
+  if(workMovementBusy()||!acquireRear(0u))return;
+  g_prearmActive=1u;g_prearmLeaseAt=now;g_prearmLastPulse=0u;
+  g_castPlayer=pl;g_castTarget=tg;
+  g_savedPlayer=pl;g_savedTarget=tg;g_savedType=3u;
+  g_savedGuidLo=lo;g_savedGuidHi=hi;
+  ++g_prearmStarts;g_status=STATUS_MELEE_PREARM;
+ }
+ if(g_prearmLastPulse&&(u32)(now-g_prearmLastPulse)<REAR_REFRESH_MS)return;
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);po=readf(pl+OBJ_O);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||!finitef(po)||
+    !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to)){
+  stopMeleePrearm();return;
+ }
+ a=angle(to+PI_F);x=tx+REAR_DISTANCE*fcos1(a);
+ y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
+ if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o)){
+  stopMeleePrearm();return;
+ }
+ g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
+ *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
+ *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
+ nativeHeartbeat(pl);
+ *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
+ *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
+ g_prearmLastPulse=now;g_needsRestore=1u;++g_prearmPulses;
+}
 /* Called at the exact work-verified SendCast callsite. Select only NPC
    Backstab/Ambush. Cast clone, pair of heartbeats and the cast are sent
    synchronously before the original call could send the unprimed position. */
@@ -376,9 +449,12 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  u8 copyPacket[MAX_CAST_PACKET],*src;
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
  s32 reaction;
+ if(g_prearmActive&&(!behindSpell(spell)||!store))stopMeleePrearm();
  if((!g_enabled&&!g_pvpEnabled)||!g_castInstalled||!g_moveInstalled||g_stop||
     !behindSpell(spell)||!store)return 0u;
  pl=localPlayer();tg=selectedTarget();
+ if(g_prearmActive&&(g_castPlayer!=pl||g_castTarget!=tg||
+    !savedTargetStillValid(tg)))stopMeleePrearm();
  if(!pl||!tg||pl==tg||!eligibleRearTarget(read32(tg+OBJ_TYPE)))return 0u;
  /* Drop old world/target state instead of waiting for a previous opener to expire. */
  if(g_castActive&&(g_castPlayer!=pl||g_castTarget!=tg||
@@ -435,10 +511,13 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
     PP/gather/another owner held movement. Work's position pipeline instead
     drops that stale CMSG and its native GCD so LazyScript may retry after
     ownership clears. Never override the concurrent owner's coordinates. */
- if(!g_castActive && (workMovementBusy()||!acquireRear(spell))){
+ if(!g_castActive &&
+    !(g_prearmActive&&g_rearLease&&g_castPlayer==pl&&g_castTarget==tg) &&
+    (workMovementBusy()||!acquireRear(spell))){
   g_skipNativeGcdCurrent=1u;++g_busyDrops;g_status=STATUS_PP_PAUSE;
   return 1u;
  }
+ if(g_prearmActive){g_prearmActive=0u;g_prearmLastPulse=0u;g_prearmLeaseAt=0u;}
  for(i=0u;i<sz;++i)copyPacket[i]=src[i];
  for(i=0u;i<6u;++i)copyHeader[i]=original[i];
  /* Immutable retry template; original stack store is invalid after return. */
@@ -836,6 +915,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  }
  if(g_retryPending)tryPositionalRetry(now);
  if(g_sendPending)sendSettledCast(now);
+ if(!g_castActive)tickMeleePrearm(now);
  refreshActiveRear(now);
  if(g_resultPending&&g_lastSendTick&&
     (u32)(now-g_lastSendTick)>REAR_RESULT_WAIT_MS){
@@ -861,7 +941,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  if(!g_enabled&&!g_pvpEnabled){
   g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;g_lastRearRefresh=0u;
   g_resultPending=0u;g_deferredGcdValid=0u;
-  g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
+  stopMeleePrearm();g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
  }
  restoreHeartbeat(localPlayer());
 }
@@ -924,7 +1004,7 @@ static char* rearTraceDecimal(char*p,u32 v){
 static void publishRearTrace(u32 now){
  static const u8 sig[]={0x56u,0x6Au,0x00u,0x8Bu,0xF1u,0x52u,0x56u,0xE8u};
  typedef u32 (__fastcall *RearTraceScriptFn)(const char*,const char*);
- u32 values[13],i,changed=0u;
+ u32 values[16],i,changed=0u;
  char lua[320],*p=lua;
  if(g_rearTraceLastEmit&&(u32)(now-g_rearTraceLastEmit)<100u)return;
  for(i=0u;i<(u32)sizeof(sig);++i)
@@ -935,11 +1015,12 @@ static void publishRearTrace(u32 now){
  values[7]=g_serverGo;values[8]=g_aborted;
  values[9]=g_sendPending;values[10]=g_resultPending;
  values[11]=g_castInstalled;values[12]=g_moveInstalled;
- for(i=0u;i<13u;++i)
-  if(!g_rearTraceObserved||values[i]!=g_rearTraceLastValues[i])changed=1u;
+ values[13]=g_prearmActive;values[14]=g_prearmPulses;values[15]=g_prearmStarts;
+ for(i=0u;i<16u;++i)
+  if(!g_rearTraceObserved||(i!=14u&&values[i]!=g_rearTraceLastValues[i]))changed=1u;
  if(!changed&&g_rearTraceLastEmit&&(u32)(now-g_rearTraceLastEmit)<1500u)return;
  p=rearTraceCat(p,"if lazyScript and lazyScript.OnRearNativeTelemetry then lazyScript.OnRearNativeTelemetry(");
- for(i=0u;i<13u;++i){
+ for(i=0u;i<16u;++i){
   if(i)*p++=',';
   p=rearTraceDecimal(p,values[i]);
   g_rearTraceLastValues[i]=values[i];
@@ -994,7 +1075,7 @@ int STDCALL DllMain(void*m,u32 reason,void*reserved){
   if(worker)CloseHandle(worker);
   else g_status=STATUS_THREAD_ERROR;
  }else if(reason==0u){
-  g_stop=1u;removeHooks();releaseRear();g_castActive=0u;
+  g_stop=1u;stopMeleePrearm();removeHooks();releaseRear();g_castActive=0u;
   g_timer=0u;g_timerWindow=0;g_status=STATUS_DISABLED;
  }
  return 1;

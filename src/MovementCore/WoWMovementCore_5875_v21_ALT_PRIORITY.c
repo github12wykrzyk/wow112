@@ -66,6 +66,7 @@ static volatile DWORD g_abCapBlockMovementCurrent=0u;
 #define COORD_SAFE 0x04u
 #define COORD_GATHER 0x08u
 #define COORD_REAR 0x10u
+#define COORD_MANUAL_PENDING 0x20u
 static volatile DWORD g_coordRearUntil=0u;
 /* A short rear lease gates only competing synthetic movement transformations. */
 static volatile DWORD g_rearPriorityMoveCurrent=0u,g_rearPriorityDirectPackets=0u;
@@ -86,11 +87,12 @@ __declspec(dllexport) DWORD __stdcall MovementCore_CoordFlags(void){
  if(g_mode!=MODE_OFF)flags|=COORD_SAFE;
  if(g_gatherActive||g_gatherLootWait)flags|=COORD_GATHER;
  if(CoordRearOwned())flags|=COORD_REAR;
+ if(g_altPriorityPendingUntil)flags|=COORD_MANUAL_PENDING;
  return flags;
 }
 __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell){
  DWORD sid;
- if(!g_loginGuardReady||(MovementCore_CoordFlags()&0x1Fu))return 0u;
+ if(!g_loginGuardReady||(MovementCore_CoordFlags()&0x3Fu))return 0u;
  sid=*(volatile DWORD*)ADDR_CASTING_SPELLID;
  if(sid&&sid!=spell)return 0u;
  if(!GT())return 0u;

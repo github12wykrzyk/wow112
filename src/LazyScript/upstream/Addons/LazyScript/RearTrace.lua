@@ -17,7 +17,9 @@ local function saveRearTrace()
    " retries="..tostring(n.retries).." reason="..tostring(n.failReason)..
    " spellgo="..tostring(n.spellGo).." aborted="..tostring(n.aborted)..
    " queue="..tostring(n.sendPending).."/"..tostring(n.resultPending)..
-   " hooks="..tostring(n.castHook).."/"..tostring(n.moveHook)
+   " hooks="..tostring(n.castHook).."/"..tostring(n.moveHook)..
+   " prearm="..tostring(n.prearm).."/"..tostring(n.prearmPulses)..
+   " starts="..tostring(n.prearmStarts)
  end
  lsRearDiag="W112-REAR-V1|"..table.concat(d.rows,"|").."|"..snap
 end
@@ -33,14 +35,16 @@ function lazyScript.RearTrace(kind, detail)
  saveRearTrace()
 end
 function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
- retries,failReason,spellGo,aborted,sendPending,resultPending,castHook,moveHook)
+ retries,failReason,spellGo,aborted,sendPending,resultPending,castHook,moveHook,
+ prearm,prearmPulses,prearmStarts)
  local d=lazyScript.rearTrace
  if not d then return end
  local now=GetTime()
  local snap={status=status,attempts=attempts,sends=sends,busy=busy,
   positional=positional,retries=retries,failReason=failReason,
   spellGo=spellGo,aborted=aborted,sendPending=sendPending,
-  resultPending=resultPending,castHook=castHook,moveHook=moveHook}
+  resultPending=resultPending,castHook=castHook,moveHook=moveHook,
+  prearm=prearm,prearmPulses=prearmPulses,prearmStarts=prearmStarts}
  local old=d.native
  d.native=snap;d.nativeAt=now
  saveRearTrace()
@@ -50,17 +54,18 @@ function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
    " hooks="..tostring(castHook).."/"..tostring(moveHook))
   return
  end
- local keys={"attempts","sends","busy","positional","retries","spellGo","aborted"}
+ local keys={"attempts","sends","busy","positional","retries","spellGo","aborted","prearmStarts"}
  for _,key in ipairs(keys) do
   if snap[key]~=old[key] then
    lazyScript.RearTrace("native_"..key,tostring(old[key]).."->"..tostring(snap[key])..
     " status="..tostring(status).." reason="..tostring(failReason))
   end
  end
- if status~=old.status or sendPending~=old.sendPending or
+ if status~=old.status or prearm~=old.prearm or sendPending~=old.sendPending or
   resultPending~=old.resultPending or castHook~=old.castHook or
   moveHook~=old.moveHook then
   lazyScript.RearTrace("native_state","status="..tostring(status)..
+   " prearm="..tostring(prearm).." pulses="..tostring(prearmPulses)..
    " queue="..tostring(sendPending).."/"..tostring(resultPending)..
    " hooks="..tostring(castHook).."/"..tostring(moveHook))
  end
@@ -88,7 +93,8 @@ function lazyScript.PrintRearTrace(option)
    "s status="..tostring(s.status).." hooks="..tostring(s.castHook).."/"..tostring(s.moveHook)..
    " attempts="..tostring(s.attempts).." sends="..tostring(s.sends)..
    " busy="..tostring(s.busy).." behind/range="..tostring(s.positional)..
-   " spell_go="..tostring(s.spellGo).." aborted="..tostring(s.aborted))
+   " spell_go="..tostring(s.spellGo).." aborted="..tostring(s.aborted)..
+   " prearm="..tostring(s.prearm).." pulses="..tostring(s.prearmPulses))
  else
   lazyScript.chat("[RearTrace] native ABSENT/STALE; bridge not confirmed.")
  end
