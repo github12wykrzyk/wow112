@@ -67,6 +67,7 @@ jobs:
             tools\updater\UpdaterStableUi.cs `
             tools\updater\UpdaterUiSmoke.cs `
             tools\updater\UpdaterHost.cs `
+            tools\updater\UpdaterGitHubMonitor.cs `
             tools\updater\UpdaterDllSelectionFeature.cs `
             tools\updater\UpdaterSafety.cs `
             tools\updater\UpdaterAddons.cs `

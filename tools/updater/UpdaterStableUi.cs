@@ -128,11 +128,13 @@ namespace WoW112Updater
             logs.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             logs.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.Controls.Add(logs, 0, 4);
-            var logHead = Grid(3, 1); Columns(logHead, -1, 100, 100);
+            var logHead = Grid(4, 1); Columns(logHead, -1, 130, 100, 100);
             logHead.Controls.Add(TextLabel("DZIENNIK SESJI", 9, Muted, true), 0, 0);
+            logHead.Controls.Add(ActionButton(githubMonitorButton, "Monitor GH"), 1, 0);
+            githubMonitorButton.Click += delegate { ShowGitHubMonitor(); };
             var copy = ActionButton(new Button(), "Kopiuj"); copy.Click += delegate { CopyText(log.Text); };
             var expand = ActionButton(new Button(), "Powiększ"); expand.Click += delegate { ExpandLog(); };
-            logHead.Controls.Add(copy, 1, 0); logHead.Controls.Add(expand, 2, 0);
+            logHead.Controls.Add(copy, 2, 0); logHead.Controls.Add(expand, 3, 0);
             logs.Controls.Add(logHead, 0, 0);
             log.Dock = DockStyle.Fill; log.BackColor = Canvas; log.ForeColor = Muted;
             log.Font = new Font("Consolas", 9F); log.BorderStyle = BorderStyle.FixedSingle;
@@ -150,7 +152,7 @@ namespace WoW112Updater
                 if (busy && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; status.Text = "Poczekaj na zakończenie bieżącej operacji."; }
             };
             FormClosed += delegate { detailsTip.Dispose(); token.Dispose(); };
-            Shown += delegate { FitWorkingArea(); };
+            Shown += delegate { FitWorkingArea(); StartGitHubMonitor(); };
             DpiChanged += delegate { BeginInvoke(new Action(FitWorkingArea)); };
             ResetRemote(true);
             RefreshLocalState();

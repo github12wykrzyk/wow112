@@ -153,3 +153,13 @@ The TEST candidate workflow now triggers on root `*.exe` changes in addition to 
 - **Wpisz dane do gry** is an explicit, user-confirmed action after opening the game's *login screen* and putting the cursor in the login field. It activates only the previously updater-launched window belonging to the selected profile's process ID, checks the foreground process before sending each key, types login + TAB + password using Windows \`SendInput\` and does **not** press Enter. Do not invoke it from chat, the character-selection screen or while already in-game. Unicode keyboard input on the 5875 client and fullscreen focus behavior require an in-game test; if unsupported, type credentials manually.
 - The updater has no automatic login on launch, cannot recover passwords for another Windows user, and does not modify WoW.exe, DLLs or realmlist for account profiles. The feature does not inject code, persist a plaintext password in Config.wtf or bypass the game's login UI.
 - The Windows offline \`--ui-smoke\` now checks profile persistence, encryption/DPAPI roundtrip, deletion and the registered dashboard action, without using real accounts or sending keystrokes.
+
+## GitHub activity monitor (Updater 2.5 / TEST work)
+
+The **Monitor GH** button opens a read-only status window for `work`, `parallel`, and `main`.
+While the updater is open, it polls GitHub once every 60 seconds and shows branch HEAD commit,
+recent candidate workflow conclusion, running/queued workflows, and the last successful check time.
+An older successful run is explicitly marked as older than branch HEAD. A manual refresh is available.
+The monitor reuses the existing read-only GitHub token (Contents + Actions), stores no new credentials,
+does not alter game files, and is disabled during the offline UI smoke test. GitHub inactivity
+cannot establish whether an AI conversation is still generating text outside GitHub.
