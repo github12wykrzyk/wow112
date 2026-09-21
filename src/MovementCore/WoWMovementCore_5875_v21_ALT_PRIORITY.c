@@ -15,6 +15,10 @@
  *
  * Ordinary NoFall, AutoGather, AutoOpen, AutoPP, F8/F10 SafeBreak modes and
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
+ *
+ * AutoPP V21 includes the V20 packet-arbiter fix: a scanner-supplied packed
+ * GUID does not depend on or overwrite the selected combat target, and a
+ * late NO_POCKETS error retains its serialized GUID for 300 ms after cast end.
  */
 
 #define DllMain W112_MovementCoreV20_DllMain
