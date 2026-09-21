@@ -141,7 +141,6 @@ jobs:
           }
 
       - name: Build and append GroundTarget Assist when present
-        if: github.ref_name != 'parallel'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
