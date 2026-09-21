@@ -30,6 +30,7 @@
 #pragma comment(linker, "/EXPORT:MovementCore_CoordReleaseRear=_MovementCore_CoordReleaseRear@0")
 /* PvERear360 resolves this explicit undecorated x86 Win32 ABI export. */
 #pragma comment(linker, "/EXPORT:MovementCore_GetAltPriorityInstalled=_MovementCore_GetAltPriorityInstalled@0")
+#pragma comment(linker, "/EXPORT:MovementCore_GetRearPriorityPackets=_MovementCore_GetRearPriorityPackets@0")
 #endif
 
 static volatile DWORD g_altPriorityInstalled=0u;
@@ -65,6 +66,8 @@ static volatile DWORD g_abCapBlockMovementCurrent=0u;
 #define COORD_GATHER 0x08u
 #define COORD_REAR 0x10u
 static volatile DWORD g_coordRearUntil=0u;
+/* A short rear lease gates only competing synthetic movement transformations. */
+static volatile DWORD g_rearPriorityMoveCurrent=0u,g_rearPriorityDirectPackets=0u;
 static DWORD CoordRearOwned(void){
  DWORD now;
  if(!g_coordRearUntil)return 0u;
@@ -106,6 +109,20 @@ static void __cdecl W112_AB_CheckMovement(void)
     if(!g_abCapGuardActive)return;
     g_abCapBlockMovementCurrent=1u;
     ++g_abCapGuardBlockedMove;
+}
+
+static void __cdecl RearPriority_CheckMovement(void)
+{
+    g_rearPriorityMoveCurrent=CoordRearOwned() && !g_abCapGuardActive ? 1u:0u;
+}
+
+static void __cdecl RearPriority_DirectMovement(DataStore5875* packet)
+{
+    if(!packet)return;
+    /* Bypass only downstream movement rewriters, not ClientServices::Send.
+       PP/cast guards on the ClientServices hook remain in place. */
+    DirectClientSend(packet);
+    ++g_rearPriorityDirectPackets;
 }
 
 static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
@@ -183,6 +200,17 @@ __declspec(naked) static void AltPriority_MoveWrapper(void)
          * gather rewriting and SafeBreak decisions until world readiness. */
         cmp dword ptr [g_loginGuardReady],0
         je  alt_login_passthrough
+        /* Protected casts and channels take priority over a stale rear lease. */
+        cmp dword ptr [g_abCapGuardActive],0
+        jne alt_rear_guarded
+        pushfd
+        pushad
+        call RearPriority_CheckMovement
+        popad
+        popfd
+        cmp dword ptr [g_rearPriorityMoveCurrent],0
+        jne alt_rear_direct
+alt_rear_guarded:
         pushfd
         pushad
         call W112_AB_CheckMovement
@@ -239,7 +267,17 @@ alt_login_passthrough:
         call eax
         ret
 
-alt_direct_packet:
+alt_rear_direct:
+         pushfd
+         pushad
+         push ecx
+         call RearPriority_DirectMovement
+         add  esp,4
+         popad
+         popfd
+         ret
+
+ alt_direct_packet:
         pushfd
         pushad
         push ecx
@@ -503,7 +541,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
-        if(!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)
+        if(!CoordRearOwned()&&(!g_abCapGuardActive||g_gatherActive||g_gatherLootWait))
             GatherTick(p,now);
     }else if(g_gatherActive||g_gatherLootWait){
         g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootStart=0u;
@@ -783,6 +821,7 @@ W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetMo
 
 __declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00120000u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
+__declspec(dllexport) DWORD __stdcall MovementCore_GetRearPriorityPackets(void){return g_rearPriorityDirectPackets;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetLoginGuardReady(void){return g_loginGuardReady;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityStarts(void){return g_altPriorityStarts;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityPPBlocks(void){return g_altPriorityPPBlocks;}
