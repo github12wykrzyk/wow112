@@ -326,6 +326,15 @@ function lazyScript.Action:Use()
 	lazyScript.d(ACTION_1 .. self.name)
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(false)
 
+	-- Keep the previous timers until the game accepts this rear attack.
+	-- UI_ERROR_MESSAGE can undo them if the server rejects its position.
+	if (self.code == "bs" or self.code == "ambush") then
+		lazyScript.pendingRearAction = {
+			action = self, at = GetTime(), target = UnitName("target"),
+			everyTimer = self.everyTimer, nowAndEveryTimer = self.nowAndEveryTimer
+		}
+	end
+
 	if spellIndexStart then
 		local spellIndex = spellIndexStart + rankCount - 1
 		CastSpell(spellIndex, "spell")
@@ -2061,7 +2070,17 @@ function lazyScript.TryActions(actionLines, doNothing)
 
 	if (not doNothing) then
 		if (not UnitExists("target") and lazyScript.perPlayerConf.autoTarget) then
-			TargetNearestEnemy()
+			-- Native PP owns scanning; a rotation press in Stealth must not
+			-- select a nearby mob or unexpectedly change the planned opener.
+			local _, playerClass = UnitClass("player")
+			local inStealth = false
+			if playerClass == "ROGUE" then
+				local _, _, active = GetShapeshiftFormInfo(1)
+				inStealth = (active == 1)
+			end
+			if not inStealth then
+				TargetNearestEnemy()
+			end
 		end
 	end
 

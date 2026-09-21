@@ -6,3 +6,10 @@ The independent addons-only ZIP is published in the parallel candidate artifact 
 ## Parallel Rogue energy-tick criterion (experimental)
 
 LazyRogue accepts `bs-ifEnergyTick<200ms` and custom integer values 0..2000 ms, with `<`, `>` and `=` comparisons. Clock sync is **automatic**: the load-on-demand addon registers for `UNIT_ENERGY` during OnLoad even if `PLAYER_LOGIN` has already passed; a natural +20 energy gain, or a partial gain that reaches full energy, establishes a 2-second tick-phase estimate from `GetTime()`. A nonstandard gain above 20 (e.g. Thistle Tea) invalidates synchronization. The phase remains usable for up to 8s, including at full energy, to avoid permanently false conditions when capped or when an event is missed; beyond 8s without another recognized tick it returns false until a fresh observation. This is **not** a direct server/DLL timer and may be inaccurate when energy procs overlap regeneration. `/lrtick` prints the observed synchronization state and remaining estimated milliseconds, with no manual synchronization action. Existing LastChance and interrupt behavior is preserved. The action still needs enough energy and to pass its other eligibility checks when the condition becomes true. No new DLL/EXE/GUI control or `dlls.txt` entry is required. In-game timing remains to be verified.
+
+## Parallel Rogue first-pass rotation fixes (experimental)
+
+- `ifLastChance` checks >=75 energy before >=55, uses the estimated upcoming tick if available, and falls back to a relative estimate if it is not synchronized.
+- A timely, same-target `SPELL_FAILED_NOT_BEHIND` after BS/Ambush restores its previous `everyXs` timers and removes the newest failed history entry. Other attempts remain unconfirmed until tested in-game.
+- LazyScript does not automatically invoke `TargetNearestEnemy()` for a Rogue in Stealth. Explicit targeting and existing targets remain unaffected; regular auto-target outside Stealth remains unchanged. The PP DLL remains responsible for scan targeting.
+- This iteration does not modify DLLs, EXE, accepted baseline, or main/work branches.

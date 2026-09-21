@@ -281,14 +281,27 @@ function lazyRogueLoad.LoadParseRogue()
 			-- Okay, for simplicity let's just assume the player will SS (40).
 			local ticksNeeded = 2
 			local currentEnergy = lazyRogue.masks.GetUnitMana("player", false, false, sayNothing)
-			-- 35 (evisc) + 40 (ss) - 20 (regen) = 55
-			if (currentEnergy >= 55) then
-				ticksNeeded = 1
-				-- 35 (evisc) + 40 (ss) = 75
-				elseif (currentEnergy >= 75) then
-				ticksNeeded = 0
+			if (not currentEnergy) then
+				return false
 			end
-			local whenTicks = lazyRogue.lastTickTime + (ticksNeeded * 2)
+			-- Eviscerate (35) plus the next Sinister Strike (40).
+			-- Check the higher threshold first; >=75 needs no regen tick.
+			if (currentEnergy >= 75) then
+				ticksNeeded = 0
+			elseif (currentEnergy >= 55) then
+				ticksNeeded = 1
+			end
+			local now = GetTime()
+			local whenTicks = now
+			if (ticksNeeded > 0) then
+				local nextTickMs = lazyRogue.masks.EnergyTickRemainingMs()
+				if (nextTickMs) then
+					whenTicks = now + (nextTickMs / 1000) + ((ticksNeeded - 1) * 2)
+				else
+					-- Do not interpret an uninitialized/stale lastTickTime as now.
+					whenTicks = now + ticksNeeded * 2
+				end
+			end
 
 			local isLastChance
 			if ((whenTicks + fudgeFactor) > (GetTime() + secondsTilDeath)) then

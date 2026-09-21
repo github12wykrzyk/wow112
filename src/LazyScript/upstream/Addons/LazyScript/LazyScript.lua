@@ -402,6 +402,8 @@ function lazyScript.OnEvent()
 		lazyScript.lastParryTime["target"] = nil
 		lazyScript.lastResistTime["target"] = nil
 		lazyScript.interrupt.OnTargetChanged()
+		-- A delayed error for an old target must not roll back a new attempt.
+		lazyScript.pendingRearAction = nil
 		lazyScript.ResetEveryTimers()
 		lazyScript.ResetNowAndEveryTimers()
 		lazyScript.targetHealthHistory:Reset()
@@ -431,7 +433,20 @@ function lazyScript.OnEvent()
 		elseif (event == "UI_ERROR_MESSAGE") then
 		if (arg1 == SPELL_FAILED_NOT_BEHIND) then
 			lazyScript.d(BEHIND_ATTACK_FAILED)
-			lazyScript.behindAttackLastFailedAt = GetTime()
+			local now = GetTime()
+			lazyScript.behindAttackLastFailedAt = now
+			local pending = lazyScript.pendingRearAction
+			if pending and pending.target == UnitName("target") and
+				now >= pending.at and now - pending.at <= 0.6 then
+				-- A rejected BS/Ambush must not consume its everyXs timer.
+				pending.action.everyTimer = pending.everyTimer
+				pending.action.nowAndEveryTimer = pending.nowAndEveryTimer
+				if lazyScript.actionHistory and
+					lazyScript.actionHistory[1] == pending.action.code then
+					table.remove(lazyScript.actionHistory, 1)
+				end
+			end
+			lazyScript.pendingRearAction = nil
 			
 			elseif (arg1 == SPELL_FAILED_NOT_INFRONT) then
 			lazyScript.d(INFRONT_ATTACK_FAILED)
