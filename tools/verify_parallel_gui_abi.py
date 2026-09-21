@@ -72,6 +72,53 @@ def main():
     else:
         print("ERROR: unrecognized control-parent layout; cannot verify click routing")
         return 1
+    # Layout guard: never render rear counters inside the compact STATUS row.
+    # The full metrics have their own fourth *internal* page. All interactive
+    # buttons must still parent directly to the original top-level HWND.
+    if not all(token in text for token in (
+        '#define UI_SS_WHITERECT 0x00000006u',
+        'WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT',
+        '#define UI_TAB_REAR 3u',
+        'g_ui_pages[4][UI_MAX_PAGE_CONTROLS]',
+        'if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}',
+        'if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}',
+        'ui_button(g_parallel_ui_hwnd,',
+        'g_ui_rear_details_state=ui_label(g_parallel_ui_hwnd',
+        'if(g_ui_current_tab==UI_TAB_REAR)ui_sync_rear();',
+    )):
+        print("ERROR: compact STATUS / Rear360 separate diagnostics page regression")
+        return 1
+    rear = text.split("static void ui_sync_rear(void)", 1)
+    if len(rear) != 2:
+        print("ERROR: missing Rear360 GUI diagnostics sync")
+        return 1
+    rear_body = rear[1].split("static void ui_set_page(", 1)[0]
+    compact = rear_body.split("SetWindowTextA(g_ui_rear_state,buf);", 1)
+    if len(compact) != 2 or ('p=app_str(p,"\\r\\n' in compact[0]):
+        print("ERROR: multiline counters rendered into compact STATUS row")
+        return 1
+    rear_row = re.search(
+        r'g_ui_rear_state=ui_label\(g_parallel_ui_hwnd,"",46,(\d+),665,(\d+),FALSE\);',
+        text,
+    )
+    core_row = re.search(
+        r'g_ui_core_state=ui_label\(g_parallel_ui_hwnd,"",46,(\d+),665,(\d+),FALSE\);',
+        text,
+    )
+    wsg_row = re.search(
+        r'g_ui_wsg_state=ui_label\(g_parallel_ui_hwnd,"",46,(\d+),665,(\d+),FALSE\);',
+        text,
+    )
+    if not rear_row or not core_row or not wsg_row:
+        print("ERROR: missing/changed STATUS row rectangle")
+        return 1
+    rear_y, rear_h = map(int, rear_row.groups())
+    core_y, core_h = map(int, core_row.groups())
+    wsg_y, wsg_h = map(int, wsg_row.groups())
+    if rear_y+rear_h > core_y or core_y+core_h > wsg_y or wsg_y+wsg_h > 634:
+        print("ERROR: STATUS rows overlap or overflow minimum 660px window")
+        return 1
+    print("PARALLEL_GUI_STATUS_LAYOUT: PASS (one-line summary, separate details)")
     # Include the actual base render-loop wiring: merely declaring the GUI
     # functions in the wrapper does not prove they are ever invoked.
     base = (SOURCE.parent / "WoWPlayerESP_v1_2_range_sweep.c").read_text(encoding="utf-8")

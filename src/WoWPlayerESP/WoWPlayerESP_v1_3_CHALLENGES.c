@@ -362,6 +362,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_VISIBLE 0x10000000u
 #define UI_CAPTION 0x00C00000u
 #define UI_SYSMENU 0x00080000u
+#define UI_SS_WHITERECT 0x00000006u /* suppress duplicate client STATIC caption */
 #define UI_CHECKBOX 0x00000002u
 #define UI_BUTTON 0x00000000u
 #define UI_COMMAND 0x0111u
@@ -374,6 +375,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_TAB_ESP 0u
 #define UI_TAB_ROGUE 1u
 #define UI_TAB_STATUS 2u
+#define UI_TAB_REAR 3u /* internal details page, same root HWND */
 
 typedef void* HFONT;
 __declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
@@ -392,8 +394,8 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
 static HWND g_ui_tabs[3]={NULL,NULL,NULL};
-static HWND g_ui_pages[3][UI_MAX_PAGE_CONTROLS];
-static DWORD g_ui_page_count[3]={0u,0u,0u};
+static HWND g_ui_pages[4][UI_MAX_PAGE_CONTROLS];
+static DWORD g_ui_page_count[4]={0u,0u,0u,0u};
 static DWORD g_ui_current_tab=UI_TAB_ESP;
 static HWND g_ui_checks[4]={NULL,NULL,NULL,NULL};
 static HWND g_ui_speedfloor_check=NULL;
@@ -406,7 +408,7 @@ static HWND g_ui_autopp_state=NULL;
 static HWND g_ui_longpp_state=NULL;
 static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
-static HWND g_ui_rear_state=NULL;
+static HWND g_ui_rear_state=NULL,g_ui_rear_details_state=NULL;
 static HWND g_ui_wsg_check=NULL,g_ui_wsg_state=NULL;
 static DWORD g_ui_shown=0u;
 /* Stdcall exports may be decorated on Win32/x86. Resolve all supported
@@ -573,12 +575,20 @@ static void ui_sync_rear(void) {
     RearValueFn status,count,attempts,tx,go,err,retry,busy,aborted;
     DWORD code,pulses;
     const char* desc;
-    char buf[240],*p=buf;
+    char buf[320],*p=buf;
     if(!g_ui_rear_state)return;
-    if(!dll){SetWindowTextA(g_ui_rear_state,"Rear 360 PvE/PvP: NOT LOADED");return;}
+    if(!dll){
+        SetWindowTextA(g_ui_rear_state,"Rear360: NOT LOADED");
+        if(g_ui_rear_details_state)SetWindowTextA(g_ui_rear_details_state,"Rear360: NOT LOADED");
+        return;
+    }
     status=(RearValueFn)GetProcAddress(dll,"PVERear360_GetStatus");
     count=(RearValueFn)GetProcAddress(dll,"PVERear360_GetPulseCount");
-    if(!status||!count){SetWindowTextA(g_ui_rear_state,"Rear 360 PvE/PvP: diagnostics unavailable");return;}
+    if(!status||!count){
+        SetWindowTextA(g_ui_rear_state,"Rear360: diagnostics unavailable");
+        if(g_ui_rear_details_state)SetWindowTextA(g_ui_rear_details_state,"Rear360: diagnostics unavailable");
+        return;
+    }
     attempts=(RearValueFn)GetProcAddress(dll,"PVERear360_GetAttempts");
     tx=(RearValueFn)GetProcAddress(dll,"PVERear360_GetCastCount");
     go=(RearValueFn)GetProcAddress(dll,"PVERear360_GetServerGo");
@@ -602,16 +612,23 @@ static void ui_sync_rear(void) {
          code==12u?"HOOK MEMORY PATCH FAILED":
          code==13u?"SPELL FAIL HOOK CONFLICT":
          code==14u?"SPELL GO HOOK CONFLICT":"UNKNOWN";
-    p=app_str(p,"Rear 360 PvE/PvP: ");p=app_str(p,desc);
-    p=app_str(p,"\r\nTry ");p=app_u32(p,attempts?attempts():0u);
-    p=app_str(p," | prime ");p=app_u32(p,pulses);
-    p=app_str(p," | sent ");p=app_u32(p,tx?tx():0u);
-    p=app_str(p," | GO ");p=app_u32(p,go?go():0u);
-    p=app_str(p," | posfail ");p=app_u32(p,err?err():0u);
-    p=app_str(p," | retry ");p=app_u32(p,retry?retry():0u);
-    p=app_str(p," | busy ");p=app_u32(p,busy?busy():0u);
-    p=app_str(p," | cancel ");p=app_u32(p,aborted?aborted():0u);*p=0;
+    /* The STATUS list uses one bounded visual row; never render live counters
+       underneath the next module's child HWND. All counters stay on a separate
+       native page, with the same existing Win32 parent and message routing. */
+    p=app_str(p,"Rear360: ");p=app_str(p,desc);*p=0;
     SetWindowTextA(g_ui_rear_state,buf);
+    if(!g_ui_rear_details_state)return;
+    p=buf;
+    p=app_str(p,"Rear360: ");p=app_str(p,desc);
+    p=app_str(p,"\r\n\r\nAttempts ");p=app_u32(p,attempts?attempts():0u);
+    p=app_str(p,"  |  primed ");p=app_u32(p,pulses);
+    p=app_str(p,"\r\nSent ");p=app_u32(p,tx?tx():0u);
+    p=app_str(p,"  |  GO ");p=app_u32(p,go?go():0u);
+    p=app_str(p,"\r\nPositional failures ");p=app_u32(p,err?err():0u);
+    p=app_str(p,"  |  retries ");p=app_u32(p,retry?retry():0u);
+    p=app_str(p,"\r\nBusy ");p=app_u32(p,busy?busy():0u);
+    p=app_str(p,"  |  cancelled ");p=app_u32(p,aborted?aborted():0u);*p=0;
+    SetWindowTextA(g_ui_rear_details_state,buf);
 }
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
    requested solely when a filter actually changes. */
@@ -622,21 +639,23 @@ static void ui_set_page(DWORD page) {
         {"ESP","ROGUE","[ STATUS ]"}
     };
     DWORD t,i;
-    if(page>UI_TAB_STATUS)return;
+    DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:page;
+    if(page>UI_TAB_REAR)return;
     g_ui_current_tab=page;
-    for(t=0u;t<3u;++t) {
-        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[page][t]);
+    for(t=0u;t<3u;++t)
+        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
+    for(t=0u;t<4u;++t)
         for(i=0u;i<g_ui_page_count[t];++i) {
             HWND control=g_ui_pages[t][i];
             if(control)ShowWindow(control,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
         }
-    }
     if(page==UI_TAB_ESP){ui_sync_esp();ui_sync_wsg();}
     else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();ui_sync_wsg();}
+    else if(page==UI_TAB_REAR)ui_sync_rear();
     else ui_sync_rogue();
 }
 static void ui_add_to_page(DWORD page,HWND control) {
-    if(page>UI_TAB_STATUS || !control)return;
+    if(page>UI_TAB_REAR || !control)return;
     if(g_ui_page_count[page]<UI_MAX_PAGE_CONTROLS)
         g_ui_pages[page][g_ui_page_count[page]++]=control;
 }
@@ -677,6 +696,8 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id>=201u && id<=203u) {
             ui_set_page(id-201u);return 0;
         }
+        if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
+        if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
         if(id==101u) {
             g_esp_enabled=g_esp_enabled?0u:1u;
             if(!g_esp_enabled)g_range_sweep_enabled=0u;
@@ -740,7 +761,7 @@ static BOOL ui_create(HWND game) {
     pt.x=pt.y=0;
     if(!GetClientRect(game,&rc) || !ClientToScreen(game,&pt))return FALSE;
     g_parallel_ui_hwnd=CreateWindowExA(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,
-        "STATIC","PARALLEL - ESP / Rogue",WS_POPUP|UI_CAPTION|UI_SYSMENU,
+        "STATIC","PARALLEL - ESP / Rogue",WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT,
         (int)(pt.x+(rc.right-UI_WIDTH)/2),(int)(pt.y+(rc.bottom-UI_HEIGHT)/2),
         UI_WIDTH,UI_HEIGHT,NULL,NULL,g_self,NULL);
     if(!g_parallel_ui_hwnd)return FALSE;
@@ -808,25 +829,40 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
         "ACTIVE MODULES",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
-        "LOADED means the DLL is present; successful PP/loot needs a game test.",
-        42,179,665,37,FALSE));
-    g_ui_esp_state=ui_label(g_parallel_ui_hwnd,"",46,244,665,31,FALSE);
+        "LOADED = present. Function results require an in-game test.",
+        42,179,665,32,FALSE));
+    g_ui_esp_state=ui_label(g_parallel_ui_hwnd,"",46,229,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_esp_state);
-    g_ui_range_state=ui_label(g_parallel_ui_hwnd,"",46,293,665,31,FALSE);
+    g_ui_range_state=ui_label(g_parallel_ui_hwnd,"",46,274,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_range_state);
-    g_ui_autopp_state=ui_label(g_parallel_ui_hwnd,"",46,342,665,31,FALSE);
+    g_ui_autopp_state=ui_label(g_parallel_ui_hwnd,"",46,319,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_autopp_state);
-    g_ui_longpp_state=ui_label(g_parallel_ui_hwnd,"",46,391,665,31,FALSE);
+    g_ui_longpp_state=ui_label(g_parallel_ui_hwnd,"",46,364,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_longpp_state);
-    g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,440,665,47,FALSE);
+    g_ui_rear_state=ui_label(g_parallel_ui_hwnd,"",46,409,665,37,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_rear_state);
-    g_ui_core_state=ui_label(g_parallel_ui_hwnd,"",46,490,665,31,FALSE);
+    ui_add_to_page(UI_TAB_STATUS,ui_button(g_parallel_ui_hwnd,
+        "REAR360 DETAILS",500,451,210,36,204u,FALSE));
+    g_ui_core_state=ui_label(g_parallel_ui_hwnd,"",46,500,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_core_state);
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
-        "AutoLootPP / LongPP remain exact-byte modules, not hot-unloaded.",
-        42,548,665,35,FALSE));
-    g_ui_wsg_state=ui_label(g_parallel_ui_hwnd,"",46,585,665,34,FALSE);
+        "AutoLootPP / LongPP are loaded, not hot-unloaded.",
+        42,548,665,31,FALSE));
+    g_ui_wsg_state=ui_label(g_parallel_ui_hwnd,"",46,592,665,33,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_wsg_state);
+
+    /* The detailed counters occupy their own view: no overlapping controls,
+       no scroll subclass, no changes to Insert, ESP hook or settings parents. */
+    ui_add_to_page(UI_TAB_REAR,ui_label(g_parallel_ui_hwnd,
+        "REAR360 / DIAGNOSTICS",36,137,665,40,TRUE));
+    ui_add_to_page(UI_TAB_REAR,ui_label(g_parallel_ui_hwnd,
+        "Local counters only; server success requires an in-game test.",
+        42,188,665,34,FALSE));
+    g_ui_rear_details_state=ui_label(g_parallel_ui_hwnd,
+        "",46,247,665,207,FALSE);
+    ui_add_to_page(UI_TAB_REAR,g_ui_rear_details_state);
+    ui_add_to_page(UI_TAB_REAR,ui_button(g_parallel_ui_hwnd,
+        "BACK TO STATUS",46,506,278,45,205u,FALSE));
 
     ui_sync_esp();
     ui_sync_rogue();
@@ -859,7 +895,8 @@ static void parallel_gui_tick(void) {
     if(g_render_frame%15u==0u) {
         if(g_ui_current_tab==UI_TAB_STATUS){
             ui_sync_rogue();ui_sync_rear();ui_sync_wsg();
-        } else if(g_ui_current_tab==UI_TAB_ESP)ui_sync_wsg();
+        } else if(g_ui_current_tab==UI_TAB_REAR)ui_sync_rear();
+        else if(g_ui_current_tab==UI_TAB_ESP)ui_sync_wsg();
     }
 }
 static void parallel_gui_destroy(void) {
@@ -870,8 +907,8 @@ static void parallel_gui_destroy(void) {
         DestroyWindow(g_parallel_ui_hwnd);
     }
     g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
-    for(page=0u;page<3u;++page) {
-        g_ui_tabs[page]=NULL;
+    for(page=0u;page<4u;++page) {
+        if(page<3u)g_ui_tabs[page]=NULL;
         g_ui_page_count[page]=0u;
     }
     for(page=0u;page<4u;++page)g_ui_checks[page]=NULL;
@@ -880,7 +917,7 @@ static void parallel_gui_destroy(void) {
     g_ui_pp_check=NULL;g_ui_junkbox_check=NULL;
     g_ui_pp_control_state=NULL;g_ui_core_state=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
-    g_ui_range_state=NULL;g_ui_rear_state=NULL;
+    g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;
     g_ui_wsg_check=NULL;g_ui_wsg_state=NULL;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
