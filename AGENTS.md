@@ -211,3 +211,30 @@ Stable release:
 - `main` is moved only afterward,
 - stable artifact workflow passes,
 - `work` receives new `main` without losing unrelated experiments.
+
+## 14. Resumable AI sessions and interrupted message streams
+
+A ChatGPT message-stream failure is **not evidence** that a GitHub write, build, or package failed. Repository instructions cannot prevent client/network/service streaming failures; they must prevent ambiguous or duplicated repository operations after such failures.
+
+### Branch routing
+
+- Follow an explicitly requested existing development branch. User spelling `pararell` means the existing branch `parallel`; verify its exact name from GitHub before writing.
+- `work` remains the default only when the user did not select another development branch. Do not silently redirect a `parallel` task to `work` because generic `CURRENT.json` or `AI_INDEX.json` metadata still says `work`.
+- Stable `main` remains immutable during an unaccepted experiment. Preserve unrelated branch changes and the ancestry/verification requirements.
+
+### Short, durable transaction boundaries
+
+- Read the mandatory five entrypoint files in order, then fetch only the affected module and minimal relevant workflow data. Prefer bounded file slices and compact summaries of CI/API results; never dump an entire workflow-run collection or large source tree into the conversation without a specific need.
+- Before each write, identify target branch, current branch HEAD, affected paths, and whether the intended change is already present. One logical change uses one commit, with a descriptive message and no unrelated file edits.
+- After the GitHub write, confirm the resulting branch HEAD/commit before moving on. Then inspect the workflow for **that exact SHA** and verify the final candidate/artifact as required; distinguish `queued`, `running`, `failed`, `passed`, and `not checked`. Never declare success or offer a runnable build merely because a write was attempted.
+- Report a compact durable checkpoint after a confirmed operation when useful: branch, short commit SHA, what changed, verification/build status, and artifact link only if verified. Do not paste large logs unless diagnosing a failure.
+
+### Recovery after stream errors, timeouts or unknown tool results
+
+1. Re-read the latest HEAD of the selected branch and the recent commits for the relevant paths; compare with the previously observed SHA and intended edit.
+2. Query GitHub Actions for the exact resulting SHA, including run conclusion and uploaded artifacts if applicable. A passing run from an older SHA is not proof for the current HEAD.
+3. If a commit exists, resume from its verified state; **do not replay** the same write or build solely because ChatGPT's response vanished.
+4. If the write is absent, re-read the current file SHA/HEAD, reconcile intervening changes, then apply only the missing change. Never force-update a branch or overwrite a file using a stale SHA.
+5. If the last operation is genuinely unknowable, state that explicitly, preserve evidence, and do not claim the task completed. Restart from the smallest independently verifiable step.
+
+Keep ChatGPT transport troubleshooting separate from repository correctness. For repeated UI failures, use a new short conversation and compare browser/network conditions; these measures cannot guarantee a stream will never fail.
