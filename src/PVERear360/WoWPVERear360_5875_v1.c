@@ -1,9 +1,10 @@
-/* Parallel-only PvE rear cast transaction; WoW 1.12.1 build 5875 x86.
+/* Parallel PvE/PvP rear cast transaction; WoW 1.12.1 build 5875 x86.
    Port the work PositionalSpoof's essential ordering for NPC Backstab/Ambush:
    native cast-site intercept -> immutable cloned CMSG -> double rear heartbeat
    -> immediate cloned cast -> rear-consistent ordinary movement until restore.
    Reuse the existing MovementCore->LongPP movement chain; never replace it.
-   Other spells, player targets, channels and PvP pass through untouched.
+   Other spells, channels and nonattackable targets pass through untouched.
+   One hook owner supports both PvE and PvP; never load work PositionalSpoof on parallel.
    Work original is the reference; this is a targeted new implementation. */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error PvERear360 requires x86 WoW build 5875
@@ -88,6 +89,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define RETRY_MAX_ATTEMPTS 2u
 #define RETRY_DELAY_MS 50u
 #define REAR_SETTLE_MS 100u
+#define PVP_REAR_SETTLE_MS 50u
 #define REAR_RESULT_WAIT_MS 850u
 #define RETRY_FEEDBACK_WINDOW_MS 1200u
 #define WM_W112_REAR_TICK 0x00008119u
@@ -97,6 +99,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define TWO_PI_F 6.28318530717958647692f
 #define SETTING_ENABLED 1u
 #define SETTING_PERIOD 2u
+#define SETTING_PVP_ENABLED 3u
 #define STATUS_IDLE 0u
 #define STATUS_ACTIVE 1u
 #define STATUS_CAST_PAUSE 2u
@@ -115,6 +118,7 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
+static volatile u32 g_pvpEnabled=1u;
 static volatile u32 g_period=350u;
 static volatile u32 g_status=STATUS_IDLE;
 static volatile u32 g_count=0u;
@@ -133,6 +137,7 @@ static volatile u32 g_attempts=0u,g_serverGo=0u,g_aborted=0u;
 /* Keep only the newest NPC opener CMSG: never replay old target/world data. */
 static u8 g_savedPacket[MAX_CAST_PACKET];
 static u32 g_savedHeader[6],g_savedSpell=0u,g_savedPlayer=0u,g_savedTarget=0u;
+static u32 g_savedType=0u,g_savedGuidLo=0u,g_savedGuidHi=0u;
 static volatile u32 g_savedValid=0u,g_lastSendTick=0u,g_retryPending=0u,g_retryDue=0u,g_retryAttempt=0u;
 static volatile u32 g_positionalFailures=0u,g_adaptiveRetries=0u,g_lastFailReason=0u;
 static volatile u32 g_skipNativeGcdCurrent=0u,g_busyDrops=0u;
@@ -141,7 +146,7 @@ static float g_rearX,g_rearY,g_rearZ,g_rearO;
 static const u8 kCastOriginal[5]={0xE8u,0xB9u,0x5Du,0xECu,0xFFu};
 static const u8 kGcdOriginal[5]={0xE8u,0xE0u,0xD4u,0xFFu,0xFFu};
 static const u8 kGoOriginal[6]={0x8Bu,0x4Du,0xF0u,0x8Bu,0x55u,0xF4u};
-static W112_ControlSettingV1 g_settings[2];
+static W112_ControlSettingV1 g_settings[3];
 static volatile u32 g_descriptorsReady=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
 typedef u32 (STDCALL *WorkCoordAcquireFn)(u32);
@@ -250,6 +255,13 @@ static void restoreHeartbeat(u32 pl){
  g_needsRestore=0u;
  nativeHeartbeat(pl);
 }
+static int eligibleRearTarget(u32 type){
+ return (type==3u&&g_enabled)||(type==4u&&g_pvpEnabled);
+}
+static int savedTargetStillValid(u32 tg){
+ return tg&&tg==g_savedTarget&&read32(tg+OBJ_TYPE)==g_savedType&&
+        read32(tg+OBJ_LO)==g_savedGuidLo&&read32(tg+OBJ_HI)==g_savedGuidHi;
+}
 static int behindSpell(u32 spell){
  return spell==53u||spell==2589u||spell==2590u||spell==2591u||
   spell==8721u||spell==11279u||spell==11280u||spell==11281u||
@@ -278,7 +290,7 @@ static void STDCALL rewriteMovement(u32 store){
     changes target. Preserve every other movement packet unchanged. */
  if(g_castPlayer!=localPlayer()||
     (tg=selectedTarget())==0u||tg!=g_castTarget||
-    read32(tg+OBJ_TYPE)!=3u)return;
+    !savedTargetStillValid(tg)||!eligibleRearTarget(read32(tg+OBJ_TYPE)))return;
  tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);
  tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
  if(!finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))return;
@@ -321,10 +333,18 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  u8 copyPacket[MAX_CAST_PACKET],*src;
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
  s32 reaction;
- if(!g_enabled||!g_castInstalled||!g_moveInstalled||g_stop||
+ if((!g_enabled&&!g_pvpEnabled)||!g_castInstalled||!g_moveInstalled||g_stop||
     !behindSpell(spell)||!store)return 0u;
  pl=localPlayer();tg=selectedTarget();
- if(!pl||!tg||pl==tg||read32(tg+OBJ_TYPE)!=3u)return 0u;
+ if(!pl||!tg||pl==tg||!eligibleRearTarget(read32(tg+OBJ_TYPE)))return 0u;
+ /* Drop old world/target state instead of waiting for a previous opener to expire. */
+ if(g_castActive&&(g_castPlayer!=pl||g_castTarget!=tg||
+    (g_savedValid&&!savedTargetStillValid(tg)))){
+  g_sendPending=0u;g_resultPending=0u;g_retryPending=0u;
+  g_savedValid=0u;g_deferredGcdValid=0u;g_castActive=0u;
+  g_castPlayer=0u;g_castTarget=0u;g_castUntil=0u;
+  releaseRear();restoreHeartbeat(pl);
+ }
  ++g_attempts;
  /* Reject repeated input while an existing NPC transaction is pending. */
  if(g_savedValid&&(g_sendPending||g_resultPending||g_retryPending)&&
@@ -346,12 +366,12 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
    g_skipNativeGcdCurrent=1u;++g_busyDrops;g_status=STATUS_CAST_PAUSE;return 1u;
   }
  }
- reaction=((ReactionFn)REACTION_FN)(pl,tg);
- /* Reaction 4 is a neutral (yellow) NPC, not a friendly NPC. Previous gate
-    ignored these stationary targets completely. Check native attackability
-    for type-3 NPCs only; never use this path on players/BG targets. */
- if(reaction<1||reaction>4||
-    !((CanAttackFn)CAN_ATTACK_FN)(pl,tg))return 0u;
+ /* Use native attackability for hostile players, including mixed-faction BG. */
+ if(read32(tg+OBJ_TYPE)==3u){
+  reaction=((ReactionFn)REACTION_FN)(pl,tg);
+  if(reaction<1||reaction>4)return 0u;
+ }
+ if(!((CanAttackFn)CAN_ATTACK_FN)(pl,tg))return 0u;
  if(read32(CASTING_SPELL_ID) && read32(CASTING_SPELL_ID)!=spell)return 0u;
  sz=original[4];read=original[5];base=original[2];buf=original[1];
  if(!buf||buf<base||sz<10u||sz>MAX_CAST_PACKET||read>sz)return 0u;
@@ -384,9 +404,10 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  g_savedHeader[1]=(u32)g_savedPacket;g_savedHeader[2]=0u;
  g_savedHeader[3]=MAX_CAST_PACKET;
  g_savedPlayer=pl;g_savedTarget=tg;g_savedSpell=spell;
+ g_savedType=read32(tg+OBJ_TYPE);g_savedGuidLo=lo;g_savedGuidHi=hi;
  g_savedValid=1u;g_retryAttempt=0u;g_retryPending=0u;
  g_sendPending=1u;g_resultPending=0u;
- g_sendDue=GetTickCount()+REAR_SETTLE_MS;
+ g_sendDue=GetTickCount()+(g_savedType==4u?PVP_REAR_SETTLE_MS:REAR_SETTLE_MS);
  g_deferredGcdValid=0u;
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
@@ -435,10 +456,10 @@ __declspec(naked) static void castChainHook(void){
    schedule one of two strictly bounded NPC-only retries. */
 static void STDCALL observeServerFailure(u32 spell,u32 reason){
  u32 now=GetTickCount();
- if(!g_enabled||!g_savedValid||!g_failInstalled||
+ if(!g_savedValid||!g_failInstalled||
     !behindSpell(spell)||spell!=g_savedSpell||
-    g_savedPlayer!=localPlayer()||g_savedTarget!=selectedTarget()||
-    read32(g_savedTarget+OBJ_TYPE)!=3u||
+    g_savedPlayer!=localPlayer()||!savedTargetStillValid(selectedTarget())||
+    !eligibleRearTarget(g_savedType)||
     (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
  if(!g_resultPending)return;
  g_resultPending=0u;g_lastFailReason=reason;
@@ -471,7 +492,7 @@ __declspec(naked) static void failChainHook(void){
 static void STDCALL observeServerGo(u32 spell){
  u32 now=GetTickCount();
  if(!g_savedValid||!g_resultPending||spell!=g_savedSpell||
-    g_savedPlayer!=localPlayer()||g_savedTarget!=selectedTarget()||
+    g_savedPlayer!=localPlayer()||!savedTargetStillValid(selectedTarget())||
     (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
  ++g_serverGo;
  g_resultPending=0u;g_savedValid=0u;g_retryPending=0u;
@@ -501,8 +522,8 @@ static void tryPositionalRetry(u32 now){
  float px,py,pz,po,tx,ty,tz,to,a,x,y,z,o,dx,dy,dz;
  if(!g_retryPending||(s32)(now-g_retryDue)<0)return;
  pl=localPlayer();tg=selectedTarget();
- if(!g_enabled||!g_savedValid||g_savedPlayer!=pl||g_savedTarget!=tg||
-    !pl||!tg||read32(tg+OBJ_TYPE)!=3u||
+ if(!g_savedValid||g_savedPlayer!=pl||!savedTargetStillValid(tg)||
+    !pl||!tg||!eligibleRearTarget(g_savedType)||
     (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS||
     g_retryAttempt>=RETRY_MAX_ATTEMPTS){g_retryPending=0u;return;}
  if(read32(CASTING_SPELL_ID)&&read32(CASTING_SPELL_ID)!=g_savedSpell){
@@ -546,7 +567,7 @@ static void tryPositionalRetry(u32 now){
  g_castActive=1u;g_castUntil=now+g_period;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
  g_retryPending=0u;g_retryAttempt=idx;
- g_sendPending=1u;g_sendDue=now+REAR_SETTLE_MS;
+ g_sendPending=1u;g_sendDue=now+(g_savedType==4u?PVP_REAR_SETTLE_MS:REAR_SETTLE_MS);
  g_resultPending=0u;
  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
  *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
@@ -567,7 +588,8 @@ static void sendSettledCast(u32 now){
  if(!g_sendPending||(s32)(now-g_sendDue)<0)return;
  if(!g_enabled||!g_savedValid||!g_rearLease||!g_castActive||
     !pl||!tg||g_savedPlayer!=pl||g_savedTarget!=tg||
-    g_castPlayer!=pl||g_castTarget!=tg||read32(tg+OBJ_TYPE)!=3u||
+    g_castPlayer!=pl||g_castTarget!=tg||!savedTargetStillValid(tg)||
+    !eligibleRearTarget(g_savedType)||
     competingMovementBusy()||
     (s32)(now-(g_castStarted+CAST_MAX_LEASE_MS))>=0)goto abort_send;
  sz=g_savedHeader[4];
@@ -763,8 +785,8 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  if(g_castActive){
   /* An NPC turn is handled by movement rewriting and the next cast re-prime;
      target/world changes and disable retire the lease without stale sends. */
-  if(g_enabled&&g_castPlayer==localPlayer()&&
-     g_castTarget==selectedTarget()&&
+  if(eligibleRearTarget(g_savedType)&&g_castPlayer==localPlayer()&&
+     savedTargetStillValid(selectedTarget())&&
      (s32)(now-(g_castStarted+CAST_MAX_LEASE_MS))<0&&
      (g_sendPending||g_retryPending||g_resultPending||
       (s32)(now-g_castUntil)<0))return;
@@ -777,7 +799,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   restoreHeartbeat(pl==localPlayer()?pl:0u);
   return;
  }
- if(!g_enabled){
+ if(!g_enabled&&!g_pvpEnabled){
   g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;
   g_resultPending=0u;g_deferredGcdValid=0u;
   g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
@@ -795,23 +817,29 @@ static void prepareDescriptors(void){
  s->key="pve_rear_period_ms";s->label="PvE rear hold (ms)";s->type=W112_CTL_INT;
  s->default_value.i32=350;s->min_value.i32=250;s->max_value.i32=650;s->step.i32=50;
  s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_settings[2];s->struct_size=sizeof(*s);s->setting_id=SETTING_PVP_ENABLED;
+ s->key="pvp_rear_enabled";s->label="PvP Backstab / Ambush rear";s->type=W112_CTL_BOOL;
+ s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
+ s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  g_descriptorsReady=1u;
 }
 static int W112_CTL_STDCALL getControl(w112_u32 id,W112_ControlValueV1*out){
  if(!out)return 0;
  if(id==SETTING_ENABLED){out->u32=g_enabled;return 1;}
  if(id==SETTING_PERIOD){out->i32=(w112_i32)g_period;return 1;}
+ if(id==SETTING_PVP_ENABLED){out->u32=g_pvpEnabled;return 1;}
  return 0;
 }
 static int W112_CTL_STDCALL setControl(w112_u32 id,const W112_ControlValueV1*v){
  if(!v)return 0;
  if(id==SETTING_ENABLED){if(v->u32>1u)return 0;g_enabled=v->u32;return 1;}
  if(id==SETTING_PERIOD){if(v->i32<250||v->i32>650||v->i32%50)return 0;g_period=(u32)v->i32;return 1;}
+ if(id==SETTING_PVP_ENABLED){if(v->u32>1u)return 0;g_pvpEnabled=v->u32;return 1;}
  return 0;
 }
 static const W112_ControlModuleV1 g_control={
- W112_CONTROL_API_V1,sizeof(W112_ControlModuleV1),"pve_rear360","PvE Rear 360",
- 0x00010000u,2u,g_settings,getControl,setControl
+ W112_CONTROL_API_V1,sizeof(W112_ControlModuleV1),"pve_rear360","Rear 360 PvE / PvP",
+ 0x00010001u,3u,g_settings,getControl,setControl
 };
 W112_CTL_EXPORT const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){
  prepareDescriptors();return &g_control;
