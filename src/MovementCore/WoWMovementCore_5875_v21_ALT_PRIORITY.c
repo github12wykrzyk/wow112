@@ -552,6 +552,38 @@ static void W112_TeleReportHit(DWORD before,DWORD after)
     DebugChat(script);
 }
 static const char g_teleBadPosChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele Click]|r LMB detected, invalid hit/player XYZ') end";
+
+static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable);
+/* Type 2 is documented as an object hit; +0x360 is not guaranteed to carry a
+ * terrain XYZ in that case. Observe it only; NEVER teleport from type 2.
+ * Compare consecutive clicks on distinct patches of bare terrain to see
+ * whether our click-info path actually returns meaningful, varying XYZ. */
+static void W112_TeleReportObjectPoint(DWORD info,BYTE *player)
+{
+    float x,y,z,px,py,pz;
+    char script[256];char*q=script;
+    if(!player || !W112_TeleRangeValid(info+W112_TELE_HIT_POS_OFF,12u,0u))return;
+    x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
+    y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
+    z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
+    px=*(float*)(player+OFF_UNIT_X);
+    py=*(float*)(player+OFF_UNIT_Y);
+    pz=*(float*)(player+OFF_UNIT_Z);
+    if(!W112_Q_PosValid(x,y,z)||!W112_Q_PosValid(px,py,pz)){
+        DebugChat(g_teleBadPosChat);return;
+    }
+    q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele Click] hit2 XYZx10=");
+    q=AppS32(q,(LONG)(x*10.0f));*q++=',';
+    q=AppS32(q,(LONG)(y*10.0f));*q++=',';
+    q=AppS32(q,(LONG)(z*10.0f));
+    q=AppStr(q," delta10=");
+    q=AppS32(q,(LONG)((x-px)*10.0f));*q++=',';
+    q=AppS32(q,(LONG)((y-py)*10.0f));*q++=',';
+    q=AppS32(q,(LONG)((z-pz)*10.0f));
+    q=AppStr(q," (preview only)') end");*q=0;
+    DebugChat(script);
+}
+
 static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
 {
     W112_TELE_MBI mbi;DWORD end,protect;
@@ -600,7 +632,11 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     hitBefore=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
     ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
     hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
-    if(hitType!=1u){W112_TeleReportHit(hitBefore,hitType);return;}
+    if(hitType!=1u){
+        W112_TeleReportHit(hitBefore,hitType);
+        if(hitType==2u)W112_TeleReportObjectPoint(info,p);
+        return;
+    }
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
     y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
     z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
