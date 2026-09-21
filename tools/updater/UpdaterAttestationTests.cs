@@ -56,6 +56,51 @@ namespace WoW112Updater
             Reject(proof);
         }
 
+        private static void HeadAccept(string candidate, string current)
+        {
+            UpdaterSafety.RequireCurrentParallelHead(candidate, current);
+            ++checks;
+        }
+
+        private static void HeadReject(string candidate, string current)
+        {
+            try { UpdaterSafety.RequireCurrentParallelHead(candidate, current); }
+            catch (InvalidOperationException) { ++checks; return; }
+            throw new Exception("Updater accepted a stale, unknown or malformed parallel HEAD");
+        }
+
+        private static Dictionary<string, object> Run(string branch, string status, string conclusion)
+        {
+            return new Dictionary<string, object> {
+                {"name", "Build work candidate"}, {"head_branch", branch},
+                {"status", status}, {"conclusion", conclusion}
+            };
+        }
+
+        private static void LatestRunTests()
+        {
+            var selected = UpdaterSafety.RequireLatestSuccessfulRun(
+                new object[] { Run("work", "completed", "success"), Run("parallel", "completed", "success") },
+                "Build work candidate", "parallel");
+            if (selected["head_branch"].ToString() != "parallel")
+                throw new Exception("A successful work build was selected for parallel");
+            ++checks;
+            foreach (var invalid in new[] {
+                Run("parallel", "queued", ""),
+                Run("parallel", "completed", "failure"),
+                Run("parallel", "completed", "cancelled")
+            })
+            {
+                try {
+                    UpdaterSafety.RequireLatestSuccessfulRun(
+                        new object[] { invalid, Run("parallel", "completed", "success") },
+                        "Build work candidate", "parallel");
+                }
+                catch (InvalidOperationException) { ++checks; continue; }
+                throw new Exception("Updater fell back to an older successful parallel run");
+            }
+        }
+
         public static int Main()
         {
             try
@@ -77,6 +122,13 @@ namespace WoW112Updater
                 Bad("game_test_accepted", true);
                 Bad("game_test_accepted", "false");
                 Reject(null);
+                HeadAccept(Head, Head);
+                HeadAccept(Head.ToUpperInvariant(), Head);
+                HeadReject(Head, "0000000000000000000000000000000000000000");
+                HeadReject(Head, "");
+                HeadReject("", Head);
+                HeadReject(Head, "X" + Head.Substring(1));
+                LatestRunTests();
                 Console.WriteLine("UPDATER_ATTESTATION_TESTS: PASS (" + checks + " assertions)");
                 return 0;
             }

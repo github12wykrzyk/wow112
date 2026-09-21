@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.4-parallel.3";
+        public const string Version = "2.4-parallel.4";
     }
 
     internal static class UpdaterSafety
@@ -21,7 +21,8 @@ namespace WoW112Updater
                 {
                     var row = item as Dictionary<string, object>;
                     if (row == null) continue;
-                    if (string.Equals(GetString(row, "name"), workflowName, StringComparison.Ordinal))
+                    if (string.Equals(GetString(row, "name"), workflowName, StringComparison.Ordinal)
+                        && string.Equals(GetString(row, "head_branch"), branch, StringComparison.Ordinal))
                     {
                         chosen = row;
                         break;
@@ -50,6 +51,30 @@ namespace WoW112Updater
             }
 
             return chosen;
+        }
+
+        public static void RequireCurrentParallelHead(string candidateSha, string currentHead)
+        {
+            if (!IsCommitSha(candidateSha) || !IsCommitSha(currentHead) ||
+                !string.Equals(candidateSha, currentHead, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "HEAD parallel zmienił się lub jest nieprawidłowy (paczka: " +
+                    ShortSha(candidateSha) + ", aktualny: " + ShortSha(currentHead) +
+                    "). Instalacja starszej paczki zablokowana; sprawdź ponownie aktualizację.");
+        }
+
+        private static bool IsCommitSha(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length != 40) return false;
+            foreach (var c in value)
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                      (c >= 'A' && c <= 'F'))) return false;
+            return true;
+        }
+
+        private static string ShortSha(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? "?" : value.Substring(0, Math.Min(value.Length, 8));
         }
 
         // The attestation is produced only after FINAL_PACKAGE: PASS. An older

@@ -218,6 +218,7 @@ namespace WoW112Updater
                 lastRemote = await FindLatestPackageAsync();
                 ShowRemotePackage();
                 await InspectRemoteDllsAsync(lastRemote);
+                await EnsureCurrentParallelHeadAsync(lastRemote);
                 ShowRemoteDllSummary();
                 var installed = ReadInstalledState();
                 Log("Najnowszy build: " + ShortSha(lastRemote.HeadSha) + " / run " + lastRemote.RunId);
@@ -273,6 +274,9 @@ namespace WoW112Updater
                 var innerBytes = await GetVerifiedPackageBytesAsync(lastRemote);
                 InspectDllPackage(innerBytes, gameDir.Text.Trim());
                 ShowRemoteDllSummary();
+                // A newer push can happen during download or while comparing local DLLs.
+                // Recheck immediately before applying any changes or writing a backup.
+                await EnsureCurrentParallelHeadAsync(lastRemote);
                 var installRoot = Path.GetFullPath(gameDir.Text.Trim());
                 var installRemote = lastRemote;
                 status.Text = "Instalowanie zweryfikowanych plików...";
@@ -330,10 +334,7 @@ namespace WoW112Updater
                 var branchInfo = AsDictionary(json.DeserializeObject(
                     await GetStringAsync(client, ApiRoot + "/branches/" + branch)));
                 var currentHead = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
-                if (currentHead.Length != 40 || !string.Equals(chosenSha, currentHead, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Najnowszy udany build nie pochodzi z aktualnego commita " + branch
-                        + ". Aktualny HEAD: " + ShortSha(currentHead) + "; build: " + ShortSha(chosenSha)
-                        + ". Instalacja starszej paczki zablokowana.");
+                UpdaterSafety.RequireCurrentParallelHead(chosenSha, currentHead);
                 var artifactsRoot = AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100")));
                 var artifacts = AsArray(GetValue(artifactsRoot, "artifacts"));
                 Dictionary<string, object> artifact = null;
@@ -359,6 +360,21 @@ namespace WoW112Updater
                     DownloadUrl = GetString(artifact, "archive_download_url"),
                     InnerZipName = innerName
                 };
+            }
+        }
+
+        // Recheck the live branch after verifying the artifact; a head change
+        // between selection and installation must never silently deploy an old ZIP.
+        private async Task EnsureCurrentParallelHeadAsync(RemotePackageInfo remote)
+        {
+            if (remote == null || !string.Equals(remote.Channel, "parallel", StringComparison.Ordinal))
+                throw new InvalidOperationException("Updater obsługuje wyłącznie kanał parallel.");
+            using (var client = CreateClient())
+            {
+                var branchInfo = AsDictionary(json.DeserializeObject(
+                    await GetStringAsync(client, ApiRoot + "/branches/parallel")));
+                var head = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
+                UpdaterSafety.RequireCurrentParallelHead(remote.HeadSha, head);
             }
         }
 
