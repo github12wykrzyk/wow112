@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build PvE Rear 360 V1 and append it to the verified work candidate ZIP."""
+"""Build shared PvE/PvP Rear 360 V1 and append it to the verified work candidate ZIP."""
 
 import argparse
 import json
@@ -122,7 +122,7 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "pve_rear360",
-        "settings": ["PvE 360 rear", "PvE rear hold (ms)"],
+        "settings": ["PvE 360 rear", "PvE rear hold (ms)", "PvP Backstab / Ambush rear"],
         "timings_ms": timing,
     }
 
@@ -162,16 +162,19 @@ def main():
         "abi": "W112_CONTROL_API_V1",
         "branch": "parallel",
         "default_enabled": True,
-        "scope": "hostile NPC only; target type 3; <=8yd actual horizontal distance",
+        "scope": "attackable NPC and player rear openers, target types 3/4, <=8yd actual horizontal distance and <=2.5yd vertical delta",
+        "pvp_enabled_by_default": True,
+        "pvp_settle_ms": 50,
+        "pve_settle_ms": 100,
         "rear_hold_ms": 350,
-        "work_reference": "work/src/PositionalSpoof: clone cast after paired rear heartbeats; rewrite outgoing movement during transaction",
+        "work_reference": "work/src/PositionalSpoof: paired rear heartbeats, geometry refresh, bounded retries; no second cast/movement hook loaded",
         "cast_hook": "native 5875 SendCast 0x006E5872 (verified original callsite bytes)",
         "movement_hook": "chain existing work MovementCore/LongPP via current 0x00600ACA target",
         "dispatch_owner": "ESP game WndProc handles posted WM_W112_REAR_TICK for transaction restore",
         "diagnostic": "STATUS shows cast priming count, not server acceptance",
         "client_position_restored_after_pulse": True,
-        "other_spells_and_player_targets": "native unmodified",
-        "server_side_acceptance": "unverified; in-game PvE test required",
+        "other_spells_and_nonattackable_targets": "native unmodified",
+        "server_side_acceptance": "unverified; separate PvE/PvP in-game acceptance and queue tests required",
     }
     hub = package_meta.get("controlhub_pilot")
     if isinstance(hub, dict):
