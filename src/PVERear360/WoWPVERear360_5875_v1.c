@@ -956,9 +956,9 @@ static volatile u32 g_autoHeld=0u,g_autoVk=0u,g_autoTarget=0u;
 static volatile u32 g_autoTargetLo=0u,g_autoTargetHi=0u;
 static volatile u32 g_autoStarted=0u,g_autoLastMotion=0u,g_autoBlockedUntil=0u;
 static float g_autoStartX=0.0f,g_autoStartY=0.0f;
-static float autoFacing(float dy,float dx){float v;__asm{
- fld dy
- fld dx
+static float autoFacing(float ydelta,float xdelta){float v;__asm{
+ fld ydelta
+ fld xdelta
  fpatan
  fstp v
  }return angle(v);}
