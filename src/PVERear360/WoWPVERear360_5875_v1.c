@@ -193,6 +193,7 @@ static u32 g_rearTraceLastValues[18];
 static u32 g_rearTraceObserved=0u;
 typedef u32 (STDCALL *WorkCoordFlagsFn)(void);
 typedef u32 (STDCALL *WorkCoordAcquireFn)(u32);
+typedef u32 (STDCALL *WorkCoordAcquireBlinkFn)(u32);
 typedef void (STDCALL *WorkCoordReleaseFn)(void);
 /* This game's work MovementCore owns PP/cast/gather/SafeBreak movement hooks.
    Absent module or export means no verified arbitration: do not send rear pulses. */
@@ -201,7 +202,10 @@ static int competingMovementBusy(void){
  WorkCoordFlagsFn flags;
  if(!core)return 1;
  flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
- return !flags||(flags()&0x6Fu)!=0u; /* own rear lease ignored; E-teleport ownership respected */
+ /* Blink's exclusive rear lease pauses SafeBreak and queued ALT in core.
+    Continue to block cast/PP/gather and a new E-injection. Other rear users
+    retain their original full arbitration policy. */
+ return !flags||(flags()&(g_blinkPending?0x4Bu:0x6Fu))!=0u;
 }
 static int workMovementBusy(void){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
@@ -216,6 +220,14 @@ static int acquireRear(u32 spell){
  WorkCoordAcquireFn acquire;
  if(!core||g_rearLease)return 0;
  acquire=(WorkCoordAcquireFn)GetProcAddress(core,"MovementCore_CoordAcquireRear");
+ if(!acquire||!acquire(spell))return 0;
+ g_rearLease=1u;return 1;
+}
+static int acquirePhysicalBlink(u32 spell){
+ void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
+ WorkCoordAcquireBlinkFn acquire;
+ if(!core||g_rearLease)return 0;
+ acquire=(WorkCoordAcquireBlinkFn)GetProcAddress(core,"MovementCore_CoordAcquireBlink");
  if(!acquire||!acquire(spell))return 0;
  g_rearLease=1u;return 1;
 }
@@ -603,7 +615,9 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
     ownership clears. Never override the concurrent owner's coordinates. */
  if(!g_castActive &&
     !(g_prearmActive&&g_rearLease&&g_castPlayer==pl&&g_castTarget==tg) &&
-    (workMovementBusy()||!acquireRear(spell))){
+    ((g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&npcBlinkSpell(spell))
+      ? !acquirePhysicalBlink(spell)
+      : (workMovementBusy()||!acquireRear(spell)))){
   g_skipNativeGcdCurrent=1u;++g_busyDrops;g_status=STATUS_PP_PAUSE;
   return 1u;
  }
@@ -1149,8 +1163,12 @@ static void tickPhysicalBlink(u32 now){
  if(!finitef(px)||!finitef(py)||!finitef(pz)||
     !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))
   goto abort_blink;
- dx=px-g_blinkX;dy=py-g_blinkY;dz=pz-g_blinkZ;
- if(dx*dx+dy*dy+dz*dz>BLINK_BS_STABLE_D2)goto abort_blink;
+ /* Holding a movement key can change XYZ slightly after the blink.
+    Permit ordinary client walking, but reject a server snapback/out-of-melee
+    landing and require the current player position to remain behind the NPC. */
+ dx=px-tx;dy=py-ty;dz=pz-tz;
+ if(dx*dx+dy*dy>20.25f||dz>2.5f||dz< -2.5f||
+    dx*fcos1(to)+dy*fsin1(to)> -0.30f)goto abort_blink;
  dx=tx-g_blinkTx;dy=ty-g_blinkTy;dz=tz-g_blinkTz;
  turn=angle(to-g_blinkTo);
  if(turn>PI_F)turn=TWO_PI_F-turn;

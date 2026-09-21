@@ -29,6 +29,7 @@
 #pragma comment(linker, "/EXPORT:MovementCore_CoordFlags=_MovementCore_CoordFlags@0")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordAcquireRear=_MovementCore_CoordAcquireRear@4")
 #pragma comment(linker, "/EXPORT:MovementCore_CoordReleaseRear=_MovementCore_CoordReleaseRear@0")
+#pragma comment(linker, "/EXPORT:MovementCore_CoordAcquireBlink=_MovementCore_CoordAcquireBlink@4")
 /* PvERear360 resolves this explicit undecorated x86 Win32 ABI export. */
 #pragma comment(linker, "/EXPORT:MovementCore_GetAltPriorityInstalled=_MovementCore_GetAltPriorityInstalled@0")
 #pragma comment(linker, "/EXPORT:MovementCore_GetRearPriorityPackets=_MovementCore_GetRearPriorityPackets@0")
@@ -73,6 +74,7 @@ static volatile DWORD g_abCapBlockMovementCurrent=0u;
 #define COORD_MANUAL_PENDING 0x20u
 #define COORD_STEP_MOVE 0x40u
 static volatile DWORD g_coordRearUntil=0u;
+static void W112_CancelTeleForBlink(void); /* defined with E pending state below */
 /* A short rear lease gates only competing synthetic movement transformations. */
 static volatile DWORD g_rearPriorityMoveCurrent=0u,g_rearPriorityDirectPackets=0u;
 static DWORD CoordRearOwned(void){
@@ -102,6 +104,19 @@ __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell)
  sid=*(volatile DWORD*)ADDR_CASTING_SPELLID;
  if(sid&&sid!=spell)return 0u;
  if(!GT())return 0u;
+ g_coordRearUntil=GT()()+6000u;return 1u;
+}
+/* Dedicated physical Blink lease. SafeBreak is PAUSED by the timer while the
+ * lease is owned; queued LALT stays queued. E's pending destination is canceled.
+ * Active cast/PP/gather and an already-owned rear pose cannot be preempted.
+ * Never relax general CoordAcquireRear used by other rear experiments. */
+__declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireBlink(DWORD spell){
+ DWORD flags=MovementCore_CoordFlags(),sid;
+ if(!g_loginGuardReady||!GT()||g_stepMoveInjecting||
+    (flags&(COORD_CAST|COORD_PP|COORD_GATHER|COORD_REAR)))return 0u;
+ sid=*(volatile DWORD*)ADDR_CASTING_SPELLID;
+ if(sid&&sid!=spell)return 0u;
+ W112_CancelTeleForBlink();
  g_coordRearUntil=GT()()+6000u;return 1u;
 }
 __declspec(dllexport) void __stdcall MovementCore_CoordReleaseRear(void){
@@ -542,6 +557,9 @@ typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleKeyWasDown=0u;
 static DWORD g_teleWaitSince=0u,g_teleWaitLast=0u;
 static DWORD g_telePending=0u,g_telePendingHitType=0u;
+static void W112_CancelTeleForBlink(void){
+ g_telePending=0u;g_stepActive=0u;
+}
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static float g_teleStartX=0.0f,g_teleStartY=0.0f,g_teleStartZ=0.0f;
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: CTM ON; aim GROUND/OBJECT + press E; object XYZ experimental; F7 abort') end";
@@ -871,6 +889,13 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         }
     }
     if(g_mode==MODE_OFF||g_abCapGuardActive)return;
+    /* A physical Blink has the existing rear lease: do not inject an
+     * independent SafeBreak XYZ into the same movement transaction. Preserve
+     * the SafeBreak time budget and resume it after the Blink releases. */
+    if(CoordRearOwned()){
+        if(!g_safeBreakPauseTick)g_safeBreakPauseTick=now;
+        return;
+    }
 
     if(g_mode==MODE_LOCAL_STRONG){
         /* An already-started PP owns its current transaction. Pause only for
