@@ -18,7 +18,7 @@ def fail(message):
 
 def read_source(path):
     p = Path(path)
-    if p.is_absolute() or ".." in p.parts or not str(p).startswith("src/"):
+    if p.is_absolute() or ".." in p.parts or not p.parts or p.parts[0] != "src":
         fail("unsafe or noncanonical evidence path " + str(path))
     f = ROOT / p
     if not f.is_file():
