@@ -40,6 +40,9 @@ static volatile DWORD g_altPriorityDirectPackets=0u;
 static volatile DWORD g_altPriorityDirectRestores=0u;
 static volatile DWORD g_altPriorityQuietBypasses=0u;
 static volatile DWORD g_altPriorityForceDirect=0u;
+/* Preserve a manual LALT edge while PvERear owns its short rear lease or a
+ * cast/channel guard is active. Never steal an active pose or cast. */
+static volatile DWORD g_altPriorityPendingUntil=0u;
 /* clang-cl's inline-asm parser does not reliably bind an internal naked
  * function when referenced as `offset symbol`. Keep the V20 send-wrapper
  * address in a normal data symbol and jump through that instead. */
@@ -459,7 +462,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     now=GT()();
     p=LocalPlayer();
     W112_LoginGuardTick(p,now);
-    if(!g_loginGuardReady)return;
+    if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;return;}
     PPBlacklistTick(now);
     FlushPendingPPLog();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
@@ -470,10 +473,12 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k11=(GK()(VK_F11)&(short)0x8000)?1u:0u;
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
 
-    if(k7&&!g_key7){AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
+    if(k7&&!g_key7){g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
     if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
-    if(kAlt&&!g_keyAlt&&!g_abCapGuardActive&&!CoordRearOwned())AltPriority_Start(now);
+    /* A key edge used to be discarded while PvERear had the rear lease.
+       Queue this explicit manual request, even for a short ALT tap. */
+    if(kAlt&&!g_keyAlt&&!(k7&&!g_key7))g_altPriorityPendingUntil=now+7000u;
     if(k10&&!g_key10&&!CoordRearOwned())Start(MODE_PURSUIT,now);
     if(k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
     if(k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
@@ -505,6 +510,16 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;
         g_gatherStealthPending=0u;g_gatherSpoof=0u;
         GatherFileLog("WORLD_LOST_ABORT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
+    }
+    /* The rear lease ends in PvERear's own timer. Start only after it clears;
+       otherwise its movement hook could rewrite the SafeBreak XYZ. Keep the
+       same cast/channel guard and abort stale requests on world loss. */
+    if(g_altPriorityPendingUntil){
+        if(!p||(LONG)(now-g_altPriorityPendingUntil)>=0)g_altPriorityPendingUntil=0u;
+        else if(!g_abCapGuardActive&&!CoordRearOwned()){
+            g_altPriorityPendingUntil=0u;
+            AltPriority_Start(now);
+        }
     }
     if(g_mode==MODE_OFF||g_abCapGuardActive)return;
 
