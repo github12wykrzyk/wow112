@@ -47,6 +47,19 @@ def main():
             m = re.search(r"^\\s*([0-9a-f]{8}):", line)
             if m and 0x10001d00 <= int(m.group(1),16) < 0x10001f90:
                 print(line)
+        print("\\n=== HELPER 0x10004f80 REFERENCES ===")
+        for i, line in enumerate(lines):
+            if re.search(r"\\bcall\\s+0x10004f80\\b", line):
+                for row in lines[max(0,i-8):i+9]:
+                    print(row)
+                print("----")
+        exe = ROOT / "WoW_5875_BASE_MELEE_300YD_PP_BYPASS_STEALTH5_HARD.exe"
+        game = subprocess.run(
+            ["objdump", "-d", "-M", "intel", "--start-address=0x606980",
+             "--stop-address=0x606aa0", str(exe)],
+            text=True, capture_output=True, check=True)
+        print("\\n=== VERIFIED GAME ATTACKABLE ENTRY ===")
+        print(game.stdout[-10000:])
         print("\nINSPECTION_ONLY: no DLL changed")
 
 
