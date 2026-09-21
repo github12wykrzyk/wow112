@@ -546,7 +546,15 @@ static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r one pulse sent; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele Click]|r ground captured; requesting CTM stop') end";
 static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ABORT: native walking/position drift/CTM state; no pulse') end";
-static const char g_teleUnsupportedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ABORT: CTM action memory/state unavailable; no pulse') end";
+static const char g_teleUnsupportedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ABORT: CTM action memory NOT writable; no pulse') end";
+static void W112_TeleReportUnknownAction(DWORD action)
+{
+    char script[190];char*q=script;
+    q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele Click] ABORT: unknown CTM state=0x");
+    q=AppHex32(q,action);
+    q=AppStr(q," (expected 0,3,4); no pulse') end");*q=0;
+    DebugChat(script);
+}
 static const char g_teleFarChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ground point too far/steep (max 8 yd, 1.25 Z)') end";
 /* Every attempted left click gets one stage-specific report; never claim an
  * accepted teleport merely because the client sent a movement heartbeat. */
@@ -633,6 +641,16 @@ static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
     return protect==0x02u||protect==0x04u||protect==0x08u||
            protect==0x20u||protect==0x40u||protect==0x80u;
 }
+/* CTM STOP writes must never rely on the read-only pointer check. */
+static DWORD W112_TeleCtmWritable(void)
+{
+    W112_TELE_MBI mbi;DWORD addr=W112_TELE_CTM_ACTION,end,protect;
+    if(VirtualQuery((const void*)addr,&mbi,sizeof(mbi))!=sizeof(mbi))return 0u;
+    end=mbi.base+mbi.region_size;protect=mbi.protect&0xFFu;
+    if(end<mbi.base||addr<mbi.base||addr+4u>end||
+       mbi.state!=0x1000u||(mbi.protect&0x100u))return 0u;
+    return protect==0x04u||protect==0x08u||protect==0x40u||protect==0x80u;
+}
 static DWORD W112_TeleAvailable(BYTE *p)
 {
     if(!g_stepEnabled||!g_loginGuardReady||!Ptr(p)||
@@ -654,7 +672,7 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
         /* A second click is not allowed to replace an in-flight destination. */
         if(click){g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;}
         if(!W112_TeleAvailable(p)||
-           !W112_TeleRangeValid(W112_TELE_CTM_ACTION,4u,0u)||
+           !W112_TeleCtmWritable()||
            (DWORD)(now-g_teleWaitSince)>W112_TELE_TIMEOUT_MS){
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
         }
@@ -665,7 +683,8 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
             g_teleWaitLast=now;return;
         }
         if(action!=0u&&action!=W112_TELE_CTM_STOP){
-            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+            g_telePending=0u;g_stepActive=0u;
+            W112_TeleReportUnknownAction(action);return;
         }
         px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);
         pz=*(float*)(p+OFF_UNIT_Z);
@@ -723,12 +742,12 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
        AbsF(dz)>W112_TELE_MAX_DZ){DebugChat(g_teleFarChat);return;}
     /* STOP=3 and WALK=4 derive from the old CTM experiment; enforce a readable,
      * writable address and recognized action; fail closed otherwise. */
-    if(!W112_TeleRangeValid(W112_TELE_CTM_ACTION,4u,0u)){
+    if(!W112_TeleCtmWritable()){
         DebugChat(g_teleUnsupportedChat);return;
     }
     action=*(volatile DWORD*)W112_TELE_CTM_ACTION;
     if(action!=0u&&action!=W112_TELE_CTM_STOP&&action!=W112_TELE_CTM_WALK){
-        DebugChat(g_teleUnsupportedChat);return;
+        W112_TeleReportUnknownAction(action);return;
     }
     g_teleDestX=x;g_teleDestY=y;g_teleDestZ=z;
     g_teleStartX=px;g_teleStartY=py;g_teleStartZ=pz;
