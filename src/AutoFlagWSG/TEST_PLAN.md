@@ -11,14 +11,14 @@ This file records the functional smoke tests for the companion DLL built by
 - Do not promote an untested candidate to `main`.
 
 ## Manual acceptance in game
-1. Enter WSG and enable `WSG AutoFlag / Enabled` in ControlHub (Insert).
+1. On `work`, enable `WSG AutoFlag / Enabled` in ControlHub (Insert). On `parallel`, open Insert > ESP and confirm `WSG AUTO FLAG` is enabled; see Insert > STATUS for `WSG AutoFlag` diagnostics.
 2. Stand within 4.75 yd of a flag carrier who drops the flag; verify native
    click without changing the player's selected target or moving the player.
 3. Test enemy-flag pickup and friendly-flag return separately. Server eligibility,
    line of sight and post-drop delay remain authoritative.
 4. Confirm no flag interactions at either base or outside WSG.
 5. Verify the module stays inert during BG loading/exit transitions and after
-   disabling the GUI toggle.
+   disabling the GUI toggle. On `parallel`, verify checkbox OFF prevents new clicks.
 6. Confirm `Click attempts` increments on a drop and no crash occurs when
    multiple dropped flags or nearby GameObjects are present.
 

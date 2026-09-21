@@ -387,6 +387,7 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 #define PAR_LONGPP_DLL "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll"
 #define PAR_REAR_DLL "WoWPVERear360_5875_v1.dll"
 #define PAR_CORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
+#define PAR_WSG_DLL "WoWAutoFlagWSG_5875_v1.dll"
 
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
@@ -406,6 +407,7 @@ static HWND g_ui_longpp_state=NULL;
 static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL;
+static HWND g_ui_wsg_check=NULL,g_ui_wsg_state=NULL;
 static DWORD g_ui_shown=0u;
 /* Stdcall exports may be decorated on Win32/x86. Resolve all supported
    spellings, as the existing ControlHub adapter already does. */
@@ -468,6 +470,30 @@ static BOOL ui_work_pp_flip(const char* dll,DWORD minimum,DWORD id) {
     if(!m||!m->get_value(id,&value)||value.u32>1u)return FALSE;
     value.u32=value.u32?0u:1u;
     return m->set_value(id,&value)?TRUE:FALSE;
+}
+/* This companion retains its work source and W112_CONTROL_API_V1 ABI.
+   Never treat a missing/unready DLL as enabled. Only setting 1 is writable. */
+static void ui_sync_wsg(void) {
+    W112_ControlValueV1 enabled,attempts,entry,zone;
+    BOOL live=ui_work_pp_get(PAR_WSG_DLL,4u,1u,&enabled);
+    char buf[210],*p=buf;
+    if(g_ui_wsg_check)
+        SendMessageA(g_ui_wsg_check,UI_SETCHECK,
+                     live&&enabled.u32?1u:0u,0);
+    if(!g_ui_wsg_state)return;
+    if(!live){SetWindowTextA(g_ui_wsg_state,
+        "WSG AutoFlag: NOT READY (DLL/control unavailable)");return;}
+    p=app_str(p,"WSG AutoFlag: ");p=app_str(p,enabled.u32?"ON":"OFF");
+    if(ui_work_pp_get(PAR_WSG_DLL,4u,2u,&zone)){
+        p=app_str(p," | WSG: ");p=app_str(p,zone.u32?"YES":"NO");
+    }
+    if(ui_work_pp_get(PAR_WSG_DLL,4u,3u,&attempts)){
+        p=app_str(p," | clicks: ");p=app_u32(p,attempts.u32);
+    }
+    if(ui_work_pp_get(PAR_WSG_DLL,4u,4u,&entry)){
+        p=app_str(p," | flag entry: ");p=app_u32(p,entry.u32);
+    }
+    *p=0;SetWindowTextA(g_ui_wsg_state,buf);
 }
 static void ui_sync_esp(void) {
     DWORD state[4]={g_esp_enabled,g_parallel_show_horde,
@@ -605,8 +631,8 @@ static void ui_set_page(DWORD page) {
             if(control)ShowWindow(control,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
         }
     }
-    if(page==UI_TAB_ESP)ui_sync_esp();
-    else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();}
+    if(page==UI_TAB_ESP){ui_sync_esp();ui_sync_wsg();}
+    else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();ui_sync_wsg();}
     else ui_sync_rogue();
 }
 static void ui_add_to_page(DWORD page,HWND control) {
@@ -676,6 +702,10 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             }
             ui_sync_rogue();return 0;
         }
+        if(id==111u) {
+            ui_work_pp_flip(PAR_WSG_DLL,4u,1u);
+            ui_sync_wsg();return 0;
+        }
         if(id==109u || id==110u) {
             if(id==109u)ui_work_pp_flip(PAR_CORE_DLL,25u,2u);
             else ui_work_pp_flip(PAR_RANGE_DLL,7u,1u);
@@ -740,6 +770,9 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
         "Faction filters combine (OR). HOSTILE uses BG team on mixed BG.",
         40,475,675,34,FALSE));
+    g_ui_wsg_check=ui_button(g_parallel_ui_hwnd,
+        "WSG AUTO FLAG - dropped flags only (4.75 yd)",46,526,665,43,111u,TRUE);
+    ui_add_to_page(UI_TAB_ESP,g_ui_wsg_check);
 
     ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
         "ROGUE / STEALTH FLOOR + PP",36,137,665,39,TRUE));
@@ -792,6 +825,8 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
         "AutoLootPP / LongPP remain exact-byte modules, not hot-unloaded.",
         42,548,665,35,FALSE));
+    g_ui_wsg_state=ui_label(g_parallel_ui_hwnd,"",46,585,665,34,FALSE);
+    ui_add_to_page(UI_TAB_STATUS,g_ui_wsg_state);
 
     ui_sync_esp();
     ui_sync_rogue();
@@ -821,8 +856,10 @@ static void parallel_gui_tick(void) {
         ShowWindow(g_parallel_ui_hwnd,SW_SHOWNOACTIVATE);
         g_ui_shown=1u;
     }
-    if(g_ui_current_tab==UI_TAB_STATUS && (g_render_frame%15u)==0u){
-        ui_sync_rogue();ui_sync_rear();
+    if(g_render_frame%15u==0u) {
+        if(g_ui_current_tab==UI_TAB_STATUS){
+            ui_sync_rogue();ui_sync_rear();ui_sync_wsg();
+        } else if(g_ui_current_tab==UI_TAB_ESP)ui_sync_wsg();
     }
 }
 static void parallel_gui_destroy(void) {
@@ -844,6 +881,7 @@ static void parallel_gui_destroy(void) {
     g_ui_pp_control_state=NULL;g_ui_core_state=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;
+    g_ui_wsg_check=NULL;g_ui_wsg_state=NULL;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
     g_ui_font=NULL;g_ui_title_font=NULL;

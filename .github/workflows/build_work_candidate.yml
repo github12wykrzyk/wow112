@@ -133,8 +133,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "GroundTarget Assist candidate failed" }
           }
 
-      - name: Build and append WSG AutoFlag when present
-        if: github.ref_name != 'parallel'
+      - name: Build and append WSG AutoFlag on work and parallel
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
