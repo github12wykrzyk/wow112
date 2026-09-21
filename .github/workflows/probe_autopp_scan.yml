@@ -1,0 +1,25 @@
+name: Probe exact AutoLootPP scanner timing
+
+on:
+  push:
+    branches:
+      - parallel
+    paths:
+      - 'tools/probe_autopp_scan.py'
+      - '.github/workflows/probe_autopp_scan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify current and recoverable runtime
+        run: |
+          python3 tools/verify_current.py
+          python3 tools/verify_runtime_artifacts.py
+      - name: Identify exact v0.14 scanner timing instructions
+        run: python3 tools/probe_autopp_scan.py
