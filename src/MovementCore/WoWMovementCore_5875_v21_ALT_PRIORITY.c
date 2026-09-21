@@ -520,6 +520,8 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_STEP_Z_ADDR      0x00C4D898u
 #define W112_STEP_F6          0x75u
 #define W112_STEP_RBUTTON     0x02u
+#define W112_STEP_STOP_ACTION 3u
+#define W112_STEP_WALK_ACTION 4u
 #define W112_STEP_GAP_MS      50u
 #define W112_STEP_MAX_MS      4500u
 #define W112_STEP_MAX_D2      100.0f
@@ -532,6 +534,7 @@ static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_stepRmbWasDown=0u;
 static DWORD g_stepStart=0u,g_stepLast=0u;
 static float g_stepDestX=0.0f,g_stepDestY=0.0f,g_stepDestZ=0.0f;
 static float g_stepPrevX=0.0f,g_stepPrevY=0.0f,g_stepPrevZ=0.0f;
+/* Fail closed on native CTM still running: do not mix walking and injected XYZ. */
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[CTM Step]|r ON - F6 toggles, click ground to start, F7 aborts') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[CTM Step]|r OFF') end";
 static DWORD W112_StepCtmWritable(void)
@@ -565,7 +568,7 @@ static void W112_StepTick(BYTE *p,DWORD now)
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);
     if(!W112_Q_PosValid(px,py,pz)){g_stepActive=0u;return;}
     if(clickReleased&&!W112_Q_ChatHasFocus()&&W112_StepCtmWritable()&&
-       *(volatile DWORD*)W112_STEP_ACTION_ADDR==4u){
+       *(volatile DWORD*)W112_STEP_ACTION_ADDR==W112_STEP_WALK_ACTION){
         float x=*(volatile float*)W112_STEP_X_ADDR;
         float y=*(volatile float*)W112_STEP_Y_ADDR;
         float z=*(volatile float*)W112_STEP_Z_ADDR;
@@ -574,18 +577,34 @@ static void W112_StepTick(BYTE *p,DWORD now)
            ux*ux+uy*uy>0.25f&&AbsF(uz)<=2.0f){
             g_stepDestX=x;g_stepDestY=y;g_stepDestZ=z;
             g_stepPrevX=px;g_stepPrevY=py;g_stepPrevZ=pz;
-            g_stepStart=now;g_stepLast=0u;g_stepActive=1u;
-            /* Cancel only the ground-walk command we just captured. */
-            *(volatile DWORD*)W112_STEP_ACTION_ADDR=0u;
+            g_stepStart=now;g_stepLast=now;g_stepActive=1u;
+            /* 1.12.1 CTM enum: STOP=3, WALK_TO=4. Zeroing the action
+               did not issue STOP and left native pathing active alongside our
+               synthetic XYZ, producing run-past/turn-back oscillation. */
+            *(volatile DWORD*)W112_STEP_ACTION_ADDR=W112_STEP_STOP_ACTION;
         }
     }
     if(!g_stepActive)return;
+    if(!W112_StepCtmWritable()){g_stepActive=0u;return;}
+    /* Do not synthesize movement until the native STOP has been consumed.
+       Never override an interaction/new command with stale CTM XYZ. */
+    {DWORD action=*(volatile DWORD*)W112_STEP_ACTION_ADDR;
+     if(action==W112_STEP_WALK_ACTION){
+        *(volatile DWORD*)W112_STEP_ACTION_ADDR=W112_STEP_STOP_ACTION;
+        g_stepLast=now;return;
+     }
+     if(action!=0u&&action!=W112_STEP_STOP_ACTION){
+        g_stepActive=0u;return;
+     }
+    }
     if((DWORD)(now-g_stepStart)>W112_STEP_MAX_MS){g_stepActive=0u;return;}
     if(g_stepLast&&(DWORD)(now-g_stepLast)<W112_STEP_GAP_MS)return;
     dx=px-g_stepPrevX;dy=py-g_stepPrevY;dz=pz-g_stepPrevZ;
-    if(dx*dx+dy*dy+dz*dz>4.0f){g_stepActive=0u;return;}
+    /* A larger-than-one-step displacement means native movement, correction
+       or a different owner is moving the character: abort rather than chase. */
+    if(dx*dx+dy*dy+dz*dz>0.64f){g_stepActive=0u;return;}
     dx=g_stepDestX-px;dy=g_stepDestY-py;dz=g_stepDestZ-pz;
-    if(dx*dx+dy*dy+dz*dz<0.09f){g_stepActive=0u;return;}
+    if(dx*dx+dy*dy+dz*dz<0.25f){g_stepActive=0u;return;}
     if(dx*dx+dy*dy>W112_STEP_MAX_D2||AbsF(dz)>2.0f){
         g_stepActive=0u;return;
     }
