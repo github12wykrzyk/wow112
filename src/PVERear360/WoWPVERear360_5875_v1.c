@@ -148,7 +148,7 @@ static volatile u32 g_pvpEnabled=
 #endif
 static volatile u32 g_period=350u;
 static volatile u32 g_status=STATUS_IDLE;
-static volatile u32 g_blinkNpcEnabled=1u; /* parallel NPC Backstab/Ambush pilot */
+static volatile u32 g_blinkNpcEnabled=0u; /* temporary: disable physical Backstab/Ambush Blink; preserve ordinary rear and Tele E */
 static volatile u32 g_blinkPending=0u,g_blinkResult=0u,g_blinkStarted=0u,g_blinkNotice=0u;
 static volatile u32 g_blinkAttempts=0u,g_blinkPulses=0u,g_blinkCasts=0u,g_blinkAborts=0u;
 static volatile u32 g_blinkFailureReason=0u;
