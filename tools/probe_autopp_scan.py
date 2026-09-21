@@ -35,6 +35,18 @@ def main():
             print("\n=== CANDIDATE ===")
             for line in lines[max(0, index-5):index+7]:
                 print(line)
+        for query in ("0x606980", "0x605570", "0x10001f", "0x100018"):
+            found = [i for i, ln in enumerate(lines) if query in ln.lower()]
+            print("\\n=== FILTER REFERENCES", query, "count=", len(found), "===")
+            for index in found[:12]:
+                for line in lines[max(0,index-14):index+20]:
+                    print(line)
+                print("----")
+        print("\\n=== SELECTOR DISASSEMBLY 0x10001d00-0x10001f90 ===")
+        for line in lines:
+            m = re.search(r"^\\s*([0-9a-f]{8}):", line)
+            if m and 0x10001d00 <= int(m.group(1),16) < 0x10001f90:
+                print(line)
         print("\nINSPECTION_ONLY: no DLL changed")
 
 
