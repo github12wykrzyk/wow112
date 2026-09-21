@@ -102,6 +102,16 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
+/* Physical NPC Backstab blink: this initial implementation intercepts the
+   existing native cast CMSG; pre-CMSG local 'not behind' UI rejects remain
+   a separate, unverified interception problem. */
+#define BLINK_BS_SETTLE_MS 125u
+#define BLINK_BS_TIMEOUT_MS 500u
+#define BLINK_BS_MAX_JUMP_D2 20.25f
+#define BLINK_BS_MAX_DZ 1.25f
+#define BLINK_BS_STABLE_D2 0.1225f
+#define BLINK_BS_TARGET_D2 0.1225f
+#define BLINK_BS_TARGET_TURN 0.0873f
 #define PI_F 3.14159265358979323846f
 #define TWO_PI_F 6.28318530717958647692f
 #define SETTING_ENABLED 1u
@@ -123,6 +133,8 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define STATUS_FAIL_SITE_CONFLICT 13u
 #define STATUS_GO_SITE_CONFLICT 14u
 #define STATUS_MELEE_PREARM 15u
+#define STATUS_BLINK_PENDING 16u
+#define STATUS_BLINK_SENT 17u
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
@@ -134,6 +146,11 @@ static volatile u32 g_pvpEnabled=
 #endif
 static volatile u32 g_period=350u;
 static volatile u32 g_status=STATUS_IDLE;
+static volatile u32 g_blinkNpcEnabled=1u; /* parallel NPC Backstab pilot */
+static volatile u32 g_blinkPending=0u,g_blinkResult=0u,g_blinkStarted=0u,g_blinkNotice=0u;
+static volatile u32 g_blinkAttempts=0u,g_blinkPulses=0u,g_blinkCasts=0u,g_blinkAborts=0u;
+static float g_blinkX,g_blinkY,g_blinkZ,g_blinkO;
+static float g_blinkTx,g_blinkTy,g_blinkTz,g_blinkTo;
 static volatile u32 g_count=0u;
 static volatile u32 g_timer=0u;
 static volatile HWND32 g_timerWindow=0;
@@ -179,7 +196,7 @@ static int competingMovementBusy(void){
  WorkCoordFlagsFn flags;
  if(!core)return 1;
  flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
- return !flags||(flags()&0x2Fu)!=0u; /* ignore own rear lease; respect manual ALT */
+ return !flags||(flags()&0x6Fu)!=0u; /* own rear lease ignored; E-teleport ownership respected */
 }
 static int workMovementBusy(void){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
@@ -187,7 +204,7 @@ static int workMovementBusy(void){
  if(!core)return 1;
  flags=(WorkCoordFlagsFn)GetProcAddress(core,"MovementCore_CoordFlags");
  if(!flags)return 1;
- return (flags()&0x3Fu)!=0u;
+ return (flags()&0x7Fu)!=0u; /* include active E-teleport owner */
 }
 static int acquireRear(u32 spell){
  void* core=GetModuleHandleA(WORK_MOVEMENTCORE_DLL);
@@ -322,6 +339,10 @@ static int npcMeleeCombat(u32 pl,u32 tg){
  dx=px-tx;dy=py-ty;dz=pz-tz;
  return dx*dx+dy*dy<=REAL_MAX_RANGE_SQ&&dz<=2.5f&&dz>=-2.5f;
 }
+static int npcBackstabSpell(u32 spell){
+ return spell==53u||spell==2589u||spell==2590u||spell==2591u||
+        spell==8721u||spell==11279u||spell==11280u||spell==11281u;
+}
 static int behindSpell(u32 spell){
  return spell==53u||spell==2589u||spell==2590u||spell==2591u||
   spell==8721u||spell==11279u||spell==11280u||spell==11281u||
@@ -345,7 +366,7 @@ static void STDCALL rewriteMovement(u32 store){
  u32 *ds=(u32*)store,size,buf,base,op,off,tg;
  u8 *p;
  float tx,ty,tz,to,a,x,y,z,o;
- if((!g_castActive&&!g_prearmActive)||!g_rearLease||!store)return;
+ if(g_blinkPending||g_blinkResult||(!g_castActive&&!g_prearmActive)||!g_rearLease||!store)return;
  /* Never keep sending a stale pose after the NPC moves, turns or the user
     changes target. Preserve every other movement packet unchanged. */
  if(g_castPlayer!=localPlayer()||
@@ -395,7 +416,7 @@ __declspec(naked) static void moveChainHook(void){
 static void refreshActiveRear(u32 now){
  u32 pl,tg;
  float px,py,pz,po,tx,ty,tz,to,a,x,y,z,o;
- if(!g_castActive||!g_rearLease||!g_savedValid||g_savedType!=3u)return;
+ if(g_blinkPending||g_blinkResult||!g_castActive||!g_rearLease||!g_savedValid||g_savedType!=3u)return;
  if(!(g_sendPending||g_resultPending||g_retryPending))return;
  if(g_lastRearRefresh&&(u32)(now-g_lastRearRefresh)<REAR_REFRESH_MS)return;
  pl=localPlayer();tg=selectedTarget();
@@ -425,6 +446,8 @@ static void refreshActiveRear(u32 now){
    permanently; preserve one rear lease and refresh at most every 50 ms. */
 static void tickMeleePrearm(u32 now){
  u32 pl=localPlayer(),tg=selectedTarget(),lo,hi;
+ /* Physical Backstab must never compete with recurring NPC fake-rear pulses. */
+ if(g_blinkNpcEnabled){if(g_prearmActive)stopMeleePrearm();return;}
  float px,py,pz,po,tx,ty,tz,to,a,x,y,z,o;
  if(g_castActive||g_savedValid||g_sendPending||g_resultPending||g_retryPending||g_stop){
   if(g_prearmActive)stopMeleePrearm();
@@ -480,6 +503,9 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  float px,py,pz,po,tx,ty,tz,to,dx,dy,dz,a,x,y,z,o;
  s32 reaction;
  if(g_prearmActive&&(!behindSpell(spell)||!store))stopMeleePrearm();
+ if(g_blinkPending&&npcBackstabSpell(spell)){
+  g_skipNativeGcdCurrent=1u;return 1u; /* no duplicate input while settling */
+ }
  if((!g_enabled&&!g_pvpEnabled)||!g_castInstalled||!g_moveInstalled||g_stop||
     !behindSpell(spell)||!store)return 0u;
  pl=localPlayer();tg=selectedTarget();
@@ -495,6 +521,10 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
   releaseRear();restoreHeartbeat(pl);
  }
  ++g_attempts;
+ if(g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&
+    npcBackstabSpell(spell)&&g_castActive){
+  g_skipNativeGcdCurrent=1u;++g_busyDrops;return 1u;
+ }
  /* Reject repeated input while an existing NPC transaction is pending. */
  if(g_savedValid&&(g_sendPending||g_resultPending||g_retryPending)&&
     g_savedPlayer==pl&&g_savedTarget==tg){
@@ -538,6 +568,13 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
  angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return 0u;
+ if(g_blinkNpcEnabled&&read32(tg+OBJ_TYPE)==3u&&npcBackstabSpell(spell)){
+  float jx=x-px,jy=y-py,jz=z-pz;
+  if(jx*jx+jy*jy>BLINK_BS_MAX_JUMP_D2||
+     jz>BLINK_BS_MAX_DZ||jz< -BLINK_BS_MAX_DZ){
+   g_skipNativeGcdCurrent=1u;++g_busyDrops;return 1u;
+  }
+ }
  /* The old code silently forwarded an unprimed Backstab/Ambush whenever
     PP/gather/another owner held movement. Work's position pipeline instead
     drops that stale CMSG and its native GCD so LazyScript may retry after
@@ -565,6 +602,22 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  copyHeader[1]=(u32)copyPacket;copyHeader[2]=0u;copyHeader[3]=MAX_CAST_PACKET;
  g_castPlayer=pl;g_castTarget=tg;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
+ if(g_blinkNpcEnabled&&g_savedType==3u&&npcBackstabSpell(spell)){
+  /* Reuse the existing MovementCore rear lease and native heartbeat.
+     Keep real local XYZ at the destination; do NOT restore the old pose.
+     No new DLL, movement detour or cast hook is installed. */
+  g_blinkX=x;g_blinkY=y;g_blinkZ=z;g_blinkO=o;
+  g_blinkTx=tx;g_blinkTy=ty;g_blinkTz=tz;g_blinkTo=to;
+  g_blinkPending=1u;g_blinkResult=0u;g_blinkStarted=GetTickCount();
+  g_castActive=0u;g_sendPending=0u;g_resultPending=0u;
+  g_retryPending=0u;g_deferredGcdValid=0u;g_needsRestore=0u;
+  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
+  *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
+  nativeHeartbeat(pl);
+  g_skipNativeGcdCurrent=1u;g_status=STATUS_BLINK_PENDING;
+  g_blinkNotice=1u;++g_blinkAttempts;++g_blinkPulses;
+  return 1u; /* original unprimed Backstab CMSG is suppressed */
+ }
  if(!g_castActive)g_castStarted=GetTickCount();
  g_castActive=1u;g_castUntil=GetTickCount()+g_period;
  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
@@ -631,6 +684,11 @@ static void STDCALL observeServerFailure(u32 spell,u32 reason){
     (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
  if(!g_resultPending)return;
  g_resultPending=0u;g_lastFailReason=reason;
+ if(g_blinkResult){
+  /* No automatic second jump or synthetic rear retries after Blink. */
+  g_blinkResult=0u;g_retryPending=0u;g_savedValid=0u;
+  g_blinkNotice=4u;return;
+ }
  if(reason!=0x33u&&reason!=0x7Cu){
   g_savedValid=0u;g_castUntil=now+50u;return;
  }
@@ -663,6 +721,7 @@ static void STDCALL observeServerGo(u32 spell){
     g_savedPlayer!=localPlayer()||!savedTargetStillValid(selectedTarget())||
     (u32)(now-g_lastSendTick)>RETRY_FEEDBACK_WINDOW_MS)return;
  ++g_serverGo;
+ g_blinkResult=0u;
  g_resultPending=0u;g_savedValid=0u;g_retryPending=0u;
  g_castUntil=now+50u;
 }
@@ -807,7 +866,10 @@ __declspec(naked) static void gcdChainHook(void){
   cmp dword ptr [g_skipNativeGcdCurrent],0
   je gcd_original
   cmp dword ptr [g_sendPending],0
+  jne gcd_defer
+  cmp dword ptr [g_blinkPending],0
   je gcd_skip
+ gcd_defer:
   mov dword ptr [g_deferredGcdArg],edx
   mov dword ptr [g_deferredGcdValid],1
  gcd_skip:
@@ -1043,6 +1105,76 @@ static void autoRearTick(u32 now){
  g_autoRearState=1u;
 }
 #endif
+/* One bounded physical blink attempt, then ONE preserved Backstab CMSG.
+   A stable local XYZ after 125 ms is NOT a server acknowledgement: verify
+   server behavior in game. No spoof fallback or repeated cast is triggered. */
+static void tickPhysicalBlink(u32 now){
+ u32 pl,tg,sz,i,header[6],arg;
+ u8 packet[MAX_CAST_PACKET];
+ float px,py,pz,tx,ty,tz,to,dx,dy,dz,turn;
+ if(!g_blinkPending)return;
+ pl=localPlayer();tg=selectedTarget();
+ if(!pl||!tg||pl!=g_savedPlayer||!savedTargetStillValid(tg)||
+    g_savedType!=3u||!npcBackstabSpell(g_savedSpell)||
+    !g_rearLease||competingMovementBusy()||
+    (u32)(now-g_blinkStarted)>BLINK_BS_TIMEOUT_MS||
+    (read32(CASTING_SPELL_ID)&&read32(CASTING_SPELL_ID)!=g_savedSpell))
+  goto abort_blink;
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);
+ tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||
+    !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))
+  goto abort_blink;
+ dx=px-g_blinkX;dy=py-g_blinkY;dz=pz-g_blinkZ;
+ if(dx*dx+dy*dy+dz*dz>BLINK_BS_STABLE_D2)goto abort_blink;
+ dx=tx-g_blinkTx;dy=ty-g_blinkTy;dz=tz-g_blinkTz;
+ turn=angle(to-g_blinkTo);
+ if(turn>PI_F)turn=TWO_PI_F-turn;
+ if(dx*dx+dy*dy+dz*dz>BLINK_BS_TARGET_D2||
+    turn>BLINK_BS_TARGET_TURN)goto abort_blink;
+ if((u32)(now-g_blinkStarted)<BLINK_BS_SETTLE_MS)return;
+ sz=g_savedHeader[4];
+ if(!g_savedValid||sz<10u||sz>MAX_CAST_PACKET||
+    *(u32*)g_savedPacket!=CMSG_CAST_SPELL||
+    *(u32*)(g_savedPacket+4u)!=g_savedSpell)
+  goto abort_blink;
+ for(i=0u;i<sz;++i)packet[i]=g_savedPacket[i];
+ for(i=0u;i<6u;++i)header[i]=g_savedHeader[i];
+ header[1]=(u32)packet;header[2]=0u;header[3]=MAX_CAST_PACKET;
+ g_blinkPending=0u;g_blinkResult=1u;g_resultPending=1u;
+ g_lastSendTick=now;g_status=STATUS_BLINK_SENT;
+ sendStore((u32)header);
+ ++g_castCount;++g_blinkCasts;
+ if(g_deferredGcdValid){
+  arg=g_deferredGcdArg;g_deferredGcdValid=0u;
+  ((void (__fastcall *)(u32,u32))START_GLOBAL_COOLDOWN)(g_savedSpell,arg);
+ }
+ releaseRear();g_castPlayer=0u;g_castTarget=0u;
+ g_blinkNotice=3u;
+ return;
+abort_blink:
+ g_blinkPending=0u;g_blinkResult=0u;g_resultPending=0u;
+ g_sendPending=0u;g_savedValid=0u;g_retryPending=0u;
+ g_deferredGcdValid=0u;g_castActive=0u;g_needsRestore=0u;
+ g_castPlayer=0u;g_castTarget=0u;g_status=STATUS_IDLE;
+ releaseRear();++g_blinkAborts;g_blinkNotice=2u;
+}
+/* Chat only from the existing window tick; never from cast packet hook. */
+static void publishBlinkNotice(void){
+ static const u8 sig[]={0x56u,0x6Au,0x00u,0x8Bu,0xF1u,0x52u,0x56u,0xE8u};
+ typedef u32 (__fastcall *BlinkScriptFn)(const char*,const char*);
+ const char*lua;u32 i,n=g_blinkNotice;
+ if(!n)return;
+ for(i=0u;i<(u32)sizeof(sig);++i)
+  if(*(volatile u8*)(REAR_TRACE_SCRIPT_EXECUTE+i)!=sig[i])return;
+ if(n==1u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] pulse sent, waiting for stable landing') end";
+ else if(n==2u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] ABORT: position/target changed; Backstab not sent') end";
+ else if(n==3u)lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] Backstab sent ONCE after local position check; server outcome unverified') end";
+ else lua="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Blink BS] server rejected Backstab; no automatic retry') end";
+ g_blinkNotice=0u;
+ ((BlinkScriptFn)REAR_TRACE_SCRIPT_EXECUTE)(lua,"WoW112Blink");
+}
 static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  u32 pl;
  (void)hwnd;(void)msg;(void)timer;
@@ -1055,6 +1187,8 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   /* Preserve the installer's specific reason on failure. */
   return;
  }
+ publishBlinkNotice();
+ if(g_blinkPending)tickPhysicalBlink(now);
  if(g_retryPending)tryPositionalRetry(now);
  if(g_sendPending)sendSettledCast(now);
 #if defined(PVE_REAR_AUTOPATH)
@@ -1066,6 +1200,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  if(g_resultPending&&g_lastSendTick&&
     (u32)(now-g_lastSendTick)>REAR_RESULT_WAIT_MS){
   g_resultPending=0u;g_savedValid=0u;g_castUntil=now;
+  g_blinkResult=0u;
  }
  if(g_castActive){
   /* An NPC turn is handled by movement rewriting and the next cast re-prime;
@@ -1085,6 +1220,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   return;
  }
  if(!g_enabled&&!g_pvpEnabled){
+  g_blinkPending=0u;g_blinkResult=0u;
   g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;g_lastRearRefresh=0u;
   g_resultPending=0u;g_deferredGcdValid=0u;
   stopMeleePrearm();g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
@@ -1139,6 +1275,10 @@ __declspec(dllexport) u32 STDCALL PVERear360_GetLastFailReason(void){return g_la
 __declspec(dllexport) u32 STDCALL PVERear360_GetAttempts(void){return g_attempts;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetServerGo(void){return g_serverGo;}
 __declspec(dllexport) u32 STDCALL PVERear360_GetAborted(void){return g_aborted;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetBlinkAttempts(void){return g_blinkAttempts;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetBlinkPulses(void){return g_blinkPulses;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetBlinkCasts(void){return g_blinkCasts;}
+__declspec(dllexport) u32 STDCALL PVERear360_GetBlinkAborts(void){return g_blinkAborts;}
 /* Publish only from the already-existing game-window tick. Counter changes are
    asynchronous observations, not individually attributed server cast outcomes. */
 static char* rearTraceCat(char*p,const char*s){while(*s)*p++=*s++;return p;}
@@ -1229,7 +1369,8 @@ int STDCALL DllMain(void*m,u32 reason,void*reserved){
 #if defined(PVE_REAR_AUTOPATH)
   autoRelease(GetTickCount(),0u);
 #endif
-  g_stop=1u;stopMeleePrearm();removeHooks();releaseRear();g_castActive=0u;
+  g_stop=1u;g_blinkPending=0u;g_blinkResult=0u;
+  stopMeleePrearm();removeHooks();releaseRear();g_castActive=0u;
   g_timer=0u;g_timerWindow=0;g_status=STATUS_DISABLED;
  }
  return 1;
