@@ -239,6 +239,15 @@ A ChatGPT message-stream failure is **not evidence** that a GitHub write, build,
 
 Keep ChatGPT transport troubleshooting separate from repository correctness. For repeated UI failures, use a new short conversation and compare browser/network conditions; these measures cannot guarantee a stream will never fail.
 
+### Small-step execution for ChatGPT sessions
+
+- Treat one user request as a sequence of independently verifiable **small transactions**. Begin with the smallest useful change; avoid bundling unrelated fixes, research, CI polling, and packaging into a single opaque operation.
+- Before an edit, use one short plan: target branch, exact path(s), expected outcome. After one commit, fetch branch HEAD and report its SHA and verification status. Continue from that checkpoint; never claim unverified follow-up work completed.
+- Make tool responses compact: retain essential paths, SHA, failing step and last relevant error only. Fetch full logs or large source files only when needed for the next specific decision; do not paste them into the user-facing chat.
+- Do not continuously poll Actions in a long chat turn. Check the workflow for the exact commit once when meaningful; if still running, report that status and let a later turn resume from the same SHA. Do not claim PASS before the workflow reports it.
+- Documentation-only workflow edits need no game-test ZIP. Native/runtime changes still require all applicable verification and final package gates; never trade build integrity for shorter responses.
+- The user's default role is to describe desired behavior and test verified packages, never to manage branches, commits, or build tools. Keep active chats task-focused; do not require deletion of old conversations. Repository instructions cannot guarantee uninterrupted ChatGPT streaming.
+
 ## 15. External technical research — autonomous and permitted
 
 AI may independently search the **entire publicly accessible internet** for technical knowledge relevant to a requested implementation, bug, or binary audit. No separate user authorization is required for ordinary public-source research. This includes public GitHub repositories, upstream source and changelogs, archived client documentation, technical forums, reverse-engineering notes, PE32/x86 and Win32 references, disassembly write-ups, issue trackers, and publicly available sample implementations. Search beyond this repository when current local evidence is insufficient or external evidence can materially improve a solution; do not limit research to GitHub or to sources already indexed in this repository.

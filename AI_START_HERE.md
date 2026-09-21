@@ -26,6 +26,10 @@ Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or rec
 - Stable runtime packages use exact accepted bytes, never an unverified rebuild.
 - No direct promotion to `main` before the exact `promote/**` SHA passes `Pre-promote stable`.
 
+## Lightweight AI session
+
+For a user-selected branch (including `parallel`), use that exact branch even if generic metadata names `work` as the default. Finish the smallest independent GitHub change first, confirm its commit SHA, and provide a short factual checkpoint. Do not perform unrelated edits or repeatedly query all Actions runs in one response. After interrupted streaming, recheck HEAD and workflow for the intended SHA before doing any write. See `AGENTS.md` section 14.
+
 ## Fast TEST path
 
 ```text
