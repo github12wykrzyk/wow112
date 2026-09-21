@@ -1,77 +1,25 @@
 # Development workflow
 
-The detailed high-frequency AI loop is documented in `docs/AI_ITERATION_WORKFLOW.md`. This file defines the repository-level contract.
+The authoritative repository contract is `AGENTS.md`. For branch routing, experiments, module dependencies, and stream recovery see `docs/AI_EXPERIMENTS.md`; for candidate and stable gates see `docs/AI_ITERATION_WORKFLOW.md`.
 
-## Branches
+## Branches and experiments
 
-- `main` — last accepted stable state.
-- `work` — current development candidate.
+`main` is accepted stable state; `work` is the existing development line; `parallel` is the independent alternative. The active runtime and canonical source of **each branch** come from that branch's `CURRENT.json` and `runtime/current.json`. Respect a user-selected branch. Otherwise inspect the active experiment ledger and live GitHub commits and follow the correct experiment; create a temporary `feature/<purpose>` from a verified relevant base for independent changes. Do not create branches per DLL, move unaccepted experiments between branches, or require existing parallel to be made an ancestor/descendant of work.
 
-`work` must contain current `main` before a new iteration. GitHub Actions checks this relationship on pushes to `work` so long-lived divergence does not silently accumulate.
+The ledger `runtime/ai_experiments.json` records declared experiments and exact-commit evidence; live GitHub HEAD and runtime metadata remain authoritative. Consult branch-specific hook/ABI/dependency registries and test shared hook ownership, DLL loader order and binary/source provenance before combining modules.
 
-## Normal candidate flow
+## Candidate verification
 
-1. Synchronize `work` to current `main`.
-2. Read `AI_START_HERE.md`, `CURRENT.json` and `runtime/current.json`.
-3. Modify the smallest relevant module surface.
-4. Keep current-branch metadata internally consistent.
-5. Run `python tools/verify_current.py`.
-6. Commit the candidate to `work`.
-7. Test in the actual WoW 1.12.1 build 5875 environment.
-8. Repeat on `work` until the candidate is accepted.
+Before each write check the selected branch HEAD and target files; commit the smallest coherent iteration. Run `python tools/verify_current.py`, `python tools/verify_runtime_artifacts.py`, `python tools/verify_verified_symbols.py`, relevant module tests and the configured branch-specific x86 build workflow when binaries are affected. The `ai_experiments.yml` workflow validates metadata and routing only; it is not a replacement for native compilation or `verify_candidate_package.py --finalize`. Only a confirmed exact-SHA package with `FINAL_PACKAGE: PASS` may be offered as runnable. Game-test results must identify the tested commit and artifact.
 
-A candidate does not need a new stable baseline number for every failed/experimental attempt.
+## Curated stable promotion
 
-## Stable promotion
+Do not promote the whole work/parallel branch after one accepted feature. Curate only accepted changes and required dependencies on a fresh tree based on the current main, preserving the previous rollback baseline. Synchronize source fingerprints and stable metadata, run `verify_current.py`, `verify_runtime_artifacts.py`, `verify_verified_symbols.py`, `verify_repo.py` and exact-byte stable packaging, then require `Pre-promote stable` PASS on the exact promotion SHA. Only afterwards move main to the **same** verified SHA and require stable package verification. Synchronize resulting accepted changes into development branches selectively, without discarding their unique experiments. Infrastructure-only edits do not consume Vxx or change game runtime binaries.
 
-When a candidate is accepted:
+## Interrupted sessions
 
-1. assign the next baseline (`V69`, `V70`, ...),
-2. create the new `baseline/<version>/` metadata,
-3. create/update the SHA256 manifest for that stable version,
-4. update `CURRENT.json`, `runtime/current.json`, `CURRENT_VERSION.md` and changelog,
-5. preserve the previous baseline unchanged,
-6. run `python tools/verify_current.py`,
-7. run applicable deep recovery/baseline checks (`python tools/verify_repo.py` plus module-specific restore/audit tools when relevant),
-8. promote to `main`,
-9. synchronize `work` to the new `main`.
+Check live branch HEAD, affected files and Actions for the exact commit before attempting another write. A ChatGPT stream failure does not show whether the GitHub operation landed. Never force-push, reset unique changes, replay an uncertain commit blindly, or claim success from a different SHA.
 
-## Verification split
+## Source and binary identity
 
-### Fast/current gate
-
-`tools/verify_current.py` is version-agnostic. It follows pointers in `CURRENT.json` and `runtime/current.json` and checks:
-
-- WoW 1.12.1 / build 5875 / x86 invariants,
-- AI routing contract,
-- current baseline/runtime agreement,
-- DLL list order,
-- SHA256 manifest agreement,
-- direct canonical EXE hash/size,
-- canonical source existence and source hashes/sizes when recorded,
-- canonical source paths under `src/`,
-- referenced recovery/audit/reproducer files,
-- absence of tracked `.log`, `.dmp` and `.mdmp` files.
-
-### Deep baseline/recovery gate
-
-`tools/verify_repo.py` preserves deeper V68-era recovery checks, including MovementCore recovery archive verification. Deep checks are valuable when auditing/promoting a stable baseline, but should not be the only mechanism used for daily iteration because they can be baseline-specific.
-
-## Source rules
-
-`runtime/current.json` is authoritative for source provenance. New canonical source paths belong under `src/<Module>/`.
-
-`source/` is retained as legacy/history only. `source/V20_SOURCE_PARTS/` remains explicitly non-canonical.
-
-`.gitattributes` keeps deterministic source/metadata line endings so hashes do not depend on Windows `core.autocrlf` behavior.
-
-## Binary-change rule
-
-For a DLL/EXE change preserve:
-
-- previous stable rollback,
-- new runtime SHA256,
-- functional description,
-- source/diff or explicit reconstruction/binary-patch lineage,
-- rollback method,
-- exactness claim only at the level actually verified.
+`src/` is the normal editable source root, and a declared `source_path` in branch runtime metadata is authoritative. Historical `source/`, `archives/` and `src/history/` are for recovery, not guessed replacements. Preserve provenance of original and reconstructed code. Stable packages must use exact accepted EXE/DLL bytes and retain manifest and SHA256 identity; rebuilding from source is a test-candidate operation, not a stable rollback substitute.

@@ -10,20 +10,20 @@ Minimize wall-clock time from a user request to a verified runnable artifact whi
 
 Read `AGENTS.md -> AI_START_HERE.md -> AI_INDEX.json -> CURRENT.json -> runtime/current.json`, then only the relevant source.
 
-`main` must be an ancestor of `work` before development continues.
+`main` must be an ancestor of `work` before work-branch edits; retain existing parallel divergence without forced integration. Route independent work as described in `docs/AI_EXPERIMENTS.md`.
 
-## 2. TEST lifecycle on work
+## 2. TEST lifecycle on selected development branch
 
 1. Make one small functional change.
 2. Run `python tools/verify_current.py`.
-3. Commit the complete logical change atomically to `work`.
-4. `Build work candidate` detects/builds changed active modules.
+3. Commit the complete logical change atomically to the explicitly selected or safely routed branch.
+4. Use the configured candidate builder for that branch. `Build work candidate` handles work and only any additional branches explicitly declared in its actual triggers.
 5. Candidate companion modules are appended when their source exists.
 6. `tools/verify_candidate_package.py` performs the final package gate.
 7. Only a package with `FINAL_PACKAGE: PASS` is handed to the user.
 8. The user tests in game.
 
-Multiple failed/experimental commits may remain on `work`; they do not consume stable version numbers.
+Multiple failed/experimental commits may remain on their respective development branches; they do not consume stable version numbers.
 
 ## 3. Why stable promotion is curated
 

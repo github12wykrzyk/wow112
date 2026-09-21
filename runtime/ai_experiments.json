@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "repository": "github12wykrzyk/wow112",
+  "purpose": "Branch/module routing and test evidence ledger; live GitHub branch HEAD, CURRENT.json and runtime/current.json remain authoritative.",
+  "branches": {
+    "stable": "main",
+    "development": [
+      "work",
+      "parallel"
+    ],
+    "feature_prefix": "feature/",
+    "promotion_prefix": "promote/"
+  },
+  "experiments": [
+    {
+      "id": "work-runtime",
+      "branch": "work",
+      "modules": [
+        "MovementCore",
+        "PositionalSpoof",
+        "StealthCDGuardian",
+        "WoWControlHub",
+        "SpeedFloor"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "movement",
+        "cast"
+      ],
+      "status": "in_progress",
+      "observed_head": "817b7bb34dd061e13d21351dd16d1f59b5073579",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Existing work experiments grouped provisionally for routing; validate exact current sources and dependencies before modifications."
+    },
+    {
+      "id": "parallel-rogue",
+      "branch": "parallel",
+      "modules": [
+        "MovementCore",
+        "RogueMovementCore",
+        "RogueFacingCore",
+        "PVERear360",
+        "PositionalSpoof",
+        "LongPickPocket"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "movement",
+        "cast",
+        "synthetic_rear"
+      ],
+      "dependency_registry": "runtime/parallel_dependency_registry.json",
+      "status": "in_progress",
+      "observed_head": "ce182b853094a8de298813ca759f8e6b29304237",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Existing independent parallel work; runtime/parallel_dependency_registry.json on parallel is the module-level evidence; no acceptance inferred."
+    },
+    {
+      "id": "ai-reorganization",
+      "branch": "feature/ai-experiment-orchestration",
+      "modules": [
+        "AI-workflow",
+        "AI-docs",
+        "AI-experiments"
+      ],
+      "dependencies": [],
+      "shared_resources": [],
+      "status": "in_progress",
+      "observed_head": "4605a0048b0cfe25196a169d7f9ea61d793fb184",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Infrastructure-only experiment. Branch/CI/package status must be queried live; no game runtime change."
+    }
+  ]
+}
