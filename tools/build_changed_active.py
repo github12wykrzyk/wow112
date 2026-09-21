@@ -188,6 +188,25 @@ def main():
             if not isinstance(artifact, dict) or artifact.get("kind") != "xz":
                 raise SystemExit("exact-byte-only DLL has no XZ binary artifact: " + item["name"])
 
+    # Source remains exact-byte-only: a SHA-pinned one-byte binary patch is
+    # permitted only for this explicitly opted-in PARALLEL TEST candidate.
+    binary_patch_reports = []
+    binary_patch_entries = work_candidate.get("binary_patch_overrides", [])
+    if not isinstance(binary_patch_entries, list):
+        raise SystemExit("binary_patch_overrides must be a list")
+    if binary_patch_entries:
+        branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(ROOT), text=True
+        ).strip()
+        if branch != "parallel":
+            raise SystemExit("AutoLootPP TEST binary patch is restricted to parallel")
+    for entry in binary_patch_entries:
+        if entry != {"runtime_name": "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll", "scanner_interval_ms": 20,
+                     "patch_tool": "tools/patch_autopp_fastscan_candidate.py"}:
+            raise SystemExit("unapproved exact-byte candidate binary patch request")
+        if entry["runtime_name"] not in exact_set:
+            raise SystemExit("candidate patch must begin with exact-byte-only baseline")
+
     force_all_paths = {
         "tools/build_active_module.py",
         "tools/build_changed_active.py",
@@ -278,6 +297,26 @@ def main():
             if name in source_override_names:
                 overrides.append((name, out))
 
+        for patch in binary_patch_entries:
+            name = patch["runtime_name"]
+            output = output_dir / name
+            proof = output_dir / "autopp_fastscan_build.json"
+            run_checked([
+                sys.executable,
+                str(ROOT / patch["patch_tool"]),
+                "--output", str(output),
+                "--metadata", str(proof),
+            ])
+            report = json.loads(proof.read_text(encoding="utf-8"))
+            if report.get("result") != "PASS" or report.get("runtime_name") != name:
+                raise SystemExit("unverified AutoLootPP binary patch")
+            if sha256_file(output) != report.get("candidate_sha256"):
+                raise SystemExit("AutoLootPP binary patch output SHA mismatch")
+            if any(item_name == name for item_name, _ in overrides):
+                raise SystemExit("duplicate AutoLootPP binary patch/source override")
+            overrides.append((name, output))
+            binary_patch_reports.append(report)
+
         package_cmd = [
             sys.executable,
             str(PACKAGER),
@@ -341,7 +380,7 @@ def main():
         "exact_byte_only_modules": sorted(exact_set),
         "audit_build_count": len(built),
         "audit_builds": build_rows,
-        "candidate_override_count": len(overrides),
+        "candidate_binary_patch_reports": binary_patch_reports,\n        "candidate_override_count": len(overrides),
         "candidate_override_names": [name for name, _ in overrides],
         "active_dll_count": package_meta.get("active_dll_count") if package_meta else len(items),
         "exact_byte_cache_count": package_meta.get("exact_byte_cache_count") if package_meta else None,
