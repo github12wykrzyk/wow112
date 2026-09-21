@@ -137,6 +137,7 @@ def main():
     )
     ap.add_argument("--base", help="Previous commit SHA used to detect changed active sources.")
     ap.add_argument("--all", action="store_true", help="Audit-build every active DLL; unchanged modules are not candidate overrides.")
+    ap.add_argument("--package-unchanged", action="store_true", help="Produce a verified package even when no native source changed; required for branch-head attestation.")
     ap.add_argument("--output-dir", default="build")
     ap.add_argument("--package", default="dist/WoW112_WORK_CANDIDATE.zip")
     ap.add_argument("--package-metadata", default="dist/candidate_metadata.json")
@@ -193,7 +194,11 @@ def main():
         ".github/workflows/build_work_candidate.yml",
         "runtime/current.json",
     }
-    force_all = args.all or bool(force_all_paths.intersection(changed))
+    # Headers included by canonical sources can affect multiple active modules.
+    # Treat shared headers as build dependencies rather than only diffing .c filenames.
+    force_all = args.all or bool(force_all_paths.intersection(changed)) or any(
+        p.startswith("src/common/") for p in changed
+    )
 
     selected_for_candidate = list(source_selected)
     for item in persistent_selected:
@@ -219,7 +224,7 @@ def main():
     }
     relevant = bool(audit_selected) or bool(relevant_infra.intersection(changed)) or any(
         p.startswith("artifacts/runtime_cache/") for p in changed
-    ) or args.all
+    ) or args.all or args.package_unchanged
 
     output_dir = (ROOT / args.output_dir).resolve()
     package = (ROOT / args.package).resolve()
