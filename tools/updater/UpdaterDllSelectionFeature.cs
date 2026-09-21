@@ -71,7 +71,7 @@ namespace WoW112Updater
 
             byte[] innerBytes;
             string expectedPackageSha;
-            ExtractInnerPackage(outerBytes, remote.InnerZipName, out innerBytes, out expectedPackageSha);
+            ExtractInnerPackage(outerBytes, remote.InnerZipName, remote.HeadSha, out innerBytes, out expectedPackageSha);
             var gotPackageSha = Sha256(innerBytes);
             if (!string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("SHA256 wewnętrznej paczki nie zgadza się z candidate_metadata.json.");
