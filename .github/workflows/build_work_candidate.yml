@@ -273,6 +273,30 @@ jobs:
             --branch "${{ github.ref_name }}"
           if ($LASTEXITCODE -ne 0) { throw "candidate provenance/verification attestation failed" }
 
+      - name: Build and verify orientation-only Rogue PvE comparison
+        if: github.ref_name == 'parallel' && contains(github.event.head_commit.message, '[angle-only]')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_rogue_angle_candidate.py --sha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "angle-only Rogue x86 build failed" }
+          python tools/verify_candidate_package.py `
+            --package dist/WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip `
+            --package-metadata dist/rogue_angle_metadata.json `
+            --summary dist/rogue_angle_summary.json `
+            --report dist/rogue_angle_final_verification.json `
+            --finalize
+          if ($LASTEXITCODE -ne 0) { throw "angle-only Rogue final ZIP gate failed" }
+          python tools/verify_candidate_provenance.py `
+            --sha "${{ github.sha }}" `
+            --branch parallel `
+            --package dist/WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip `
+            --metadata dist/rogue_angle_metadata.json `
+            --summary dist/rogue_angle_summary.json `
+            --final-report dist/rogue_angle_final_verification.json `
+            --output dist/rogue_angle_attestation.json
+          if ($LASTEXITCODE -ne 0) { throw "angle-only Rogue candidate attestation failed" }
+
       - name: Write human-readable test card
         shell: pwsh
         run: >-
@@ -286,6 +310,12 @@ jobs:
           name: WoW112-WORK-CANDIDATE-${{ github.sha }}
           path: |
             dist/WoW112_WORK_CANDIDATE.zip
+            dist/WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip
+            dist/ROGUE_ANGLE_ONLY_TEST.txt
+            dist/rogue_angle_metadata.json
+            dist/rogue_angle_summary.json
+            dist/rogue_angle_final_verification.json
+            dist/rogue_angle_attestation.json
             dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
             dist/addon_metadata.json
             dist/TEST_THIS.txt

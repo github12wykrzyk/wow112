@@ -55,7 +55,7 @@ def exported_names(path):
         result.add(data[name_offset:name_end].decode("ascii"))
     return result
 
-def build(output):
+def build(output, rear_angle_only=False):
     vcvars, _ = find_vcvars32()
     env, _ = capture_vcvars_env(vcvars)
     compiler = shutil.which("clang-cl.exe", path=env.get("PATH", "")) or shutil.which("clang-cl", path=env.get("PATH", ""))
@@ -68,6 +68,8 @@ def build(output):
         cmd = [compiler, "--target=i686-pc-windows-msvc", "/nologo", "/c", "/O2",
                "/GS-", "/GR-", "/EHsc-", "/Zl", "/Brepro", "/clang:-fno-builtin",
                "/Fo" + str(obj), str(ROOT / source)]
+        if rear_angle_only and i == 1:
+            cmd.insert(-2, "/DPVE_REAR_ANGLE_ONLY=1")
         subprocess.run(cmd, cwd=ROOT, env=env, check=True)
         objs.append(obj)
     cmd = [linker, "/nologo", "/DLL", "/MACHINE:X86", "/NODEFAULTLIB",

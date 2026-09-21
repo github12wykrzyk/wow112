@@ -126,7 +126,12 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define WORK_MOVEMENTCORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 int _fltused=0;
 static volatile u32 g_enabled=1u;
-static volatile u32 g_pvpEnabled=1u;
+static volatile u32 g_pvpEnabled=
+#if defined(PVE_REAR_ANGLE_ONLY)
+0u; /* isolated PvE angle experiment */
+#else
+1u;
+#endif
 static volatile u32 g_period=350u;
 static volatile u32 g_status=STATUS_IDLE;
 static volatile u32 g_count=0u;
@@ -214,6 +219,17 @@ static float fsin1(float v){float r;__asm {
  fstp r
 }return r;}
 static float angle(float a){while(a<0.0f)a+=TWO_PI_F;while(a>=TWO_PI_F)a-=TWO_PI_F;return a;}
+/* Angle-only diagnostic. Preserve the player's real XYZ throughout a cast;
+   only the player's facing changes. This does not alter NPC server facing. */
+static void angleOnlyPose(float*x,float*y,float*z,float*o,
+                          float px,float py,float pz,float targetO){
+#if defined(PVE_REAR_ANGLE_ONLY)
+ *x=px;*y=py;*z=pz;*o=angle(targetO+PI_F);
+#else
+ (void)x;(void)y;(void)z;(void)o;
+ (void)px;(void)py;(void)pz;(void)targetO;
+#endif
+}
 static int build5875(void){
  static const u8 sig[]={0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x4D,0x0C,0x8B,0xD0,0x0B,0xD1};
  static const u8 windowSig[]={0x83,0xE9,0x00,0x74,0x15,0x49,0x74,0x0C,0x49,0x74,0x03,0x33,0xC0,0xC3};
@@ -271,7 +287,11 @@ static void restoreHeartbeat(u32 pl){
  nativeHeartbeat(pl);
 }
 static int eligibleRearTarget(u32 type){
+#if defined(PVE_REAR_ANGLE_ONLY)
+ return type==3u&&g_enabled; /* force PvE-only even if GUI requests PvP */
+#else
  return (type==3u&&g_enabled)||(type==4u&&g_pvpEnabled);
+#endif
 }
 static int savedTargetStillValid(u32 tg){
  return tg&&tg==g_savedTarget&&read32(tg+OBJ_TYPE)==g_savedType&&
@@ -345,8 +365,13 @@ static void STDCALL rewriteMovement(u32 store){
  if(moveHasGuid(op))off+=8u;
  if(moveHasExtra(op))off+=4u;
  if(size<off+24u)return;
+#if defined(PVE_REAR_ANGLE_ONLY)
+ /* Preserve packet real XYZ; rewrite orientation only. */
+ *(float*)(p+off+20u)=angle(to+PI_F);
+#else
  *(float*)(p+off+8u)=x;*(float*)(p+off+12u)=y;
  *(float*)(p+off+16u)=z;*(float*)(p+off+20u)=o;
+#endif
 }
 __declspec(naked) static void moveChainHook(void){
  __asm{
@@ -383,6 +408,7 @@ static void refreshActiveRear(u32 now){
                        g_retryAttempt==2u?PI_F/9.0f:0.0f));
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
  z=tz;o=angle(a+PI_F);
+ angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return;
  g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
  *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
@@ -429,6 +455,7 @@ static void tickMeleePrearm(u32 now){
  }
  a=angle(to+PI_F);x=tx+REAR_DISTANCE*fcos1(a);
  y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
+ angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o)){
   stopMeleePrearm();return;
  }
@@ -506,6 +533,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  if((!lo&&!hi)||lo!=read32(TARGET_LO)||hi!=read32(TARGET_HI))return 0u;
  a=angle(to+PI_F);
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);z=tz;o=angle(a+PI_F);
+ angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return 0u;
  /* The old code silently forwarded an unprimed Backstab/Ambush whenever
     PP/gather/another owner held movement. Work's position pipeline instead
@@ -687,6 +715,7 @@ static void tryPositionalRetry(u32 now){
  a=angle(to+PI_F+(idx==1u?-PI_F/9.0f:PI_F/9.0f));
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
  z=tz;o=angle(a+PI_F);
+ angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o)){
   g_retryPending=0u;return;
  }
@@ -742,6 +771,7 @@ static void sendSettledCast(u32 now){
                         g_retryAttempt==2u?PI_F/9.0f:0.0f));
  x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
  z=tz;o=angle(a+PI_F);
+ angleOnlyPose(&x,&y,&z,&o,px,py,pz,to);
  if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))goto abort_send;
  for(i=0u;i<sz;++i)packet[i]=g_savedPacket[i];
  for(i=0u;i<6u;++i)header[i]=g_savedHeader[i];
