@@ -510,7 +510,9 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
  * E only samples the cursor raycast and does not issue a ground-click command;
  * a type-1 terrain hit on E is experimental until confirmed in game.
  * Exact 5875 native ray picker: click-info pointer 0xB4B2BC, refresh 0x481F00,
- * hit type at +0x350 (1 = terrain), world XYZ at +0x360.
+ * hit type at +0x350 (1 = terrain, 2 = unit/object), world XYZ at +0x360
+ * is validated for terrain, but EXPERIMENTAL for object hits. Do not silently
+ * treat object XYZ as a verified safe ground landing point.
  * The patched project EXE has not yet been in-game validated for this path.
  * A captured 0xC CTM state from LMB is empirical data, NOT a STOP/WALK enum;
  * require the same state for E and fail closed if the key path differs.
@@ -531,6 +533,7 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_SETTLE_MS     250u
 #define W112_TELE_TIMEOUT_MS    700u
 #define W112_TELE_MAX_DRIFT_D2  0.04f
+#define W112_TELE_OBJ_STABLE_D2  0.25f /* same cursor-hit XYZ within 0.5yd */
 typedef struct W112_TELE_MBI {
     DWORD base,allocation_base,allocation_protect,region_size,state,protect,type;
 } W112_TELE_MBI;
@@ -538,13 +541,15 @@ __declspec(dllimport) DWORD __stdcall VirtualQuery(const void*,void*,DWORD);
 typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleKeyWasDown=0u;
 static DWORD g_teleWaitSince=0u,g_teleWaitLast=0u;
-static DWORD g_telePending=0u;
+static DWORD g_telePending=0u,g_telePendingHitType=0u;
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static float g_teleStartX=0.0f,g_teleStartY=0.0f,g_teleStartZ=0.0f;
-static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: CTM ON; aim GROUND + press E; no range cap; F7 abort') end";
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: CTM ON; aim GROUND/OBJECT + press E; object XYZ experimental; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
-static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r ground captured; waiting for stationary player (CTM unchanged)') end";
+static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; waiting for stationary player (CTM unchanged)') end";
+static const char g_teleObjectChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r OBJECT hit: XYZ not validated as ground; experimental pulse only after stable recheck') end";
+static const char g_teleObjectAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OBJECT hit changed/lost or XYZ invalid; no pulse') end";
 static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: native walking/position drift/CTM state; no pulse') end";
 static const char g_teleUnsupportedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: CTM state memory unreadable; no pulse') end";
 static void W112_TeleReportUnknownAction(DWORD action)
@@ -574,10 +579,10 @@ static void W112_TeleReportHit(DWORD before,DWORD after)
 static const char g_teleBadPosChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele E]|r invalid hit/player XYZ') end";
 
 static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable);
-/* Type 2 is documented as an object hit; +0x360 is not guaranteed to carry a
- * terrain XYZ in that case. Observe it only; NEVER teleport from type 2.
- * Compare consecutive clicks on distinct patches of bare terrain to see
- * whether our cursor raycast path actually returns meaningful, varying XYZ. */
+/* Type 2 identifies a unit/object, but +0x360 is only independently
+ * documented for terrain. Enable type-2 as a user-requested experiment,
+ * never claim its XYZ to be a verified ground or collision-safe position.
+ * Recheck type and XYZ after settling to reject stale/changing hits. */
 /* Diagnostic mode: absolute client player XYZ and cursor XYZ are sampled
  * in the SAME UI tick. Consecutive-click deltas tell a moving player/camera
  * apart from a changing ground/object point. Type 2 is NOT trusted as terrain.
@@ -686,6 +691,33 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
          }
         }
         if((DWORD)(now-g_teleWaitLast)<W112_TELE_SETTLE_MS)return;
+        /* Unlike a terrain hit, type-2 XYZ has unverified provenance.
+         * Refresh after the stationary interval, require the cursor to still
+         * be over an object, with a valid point near the original sample. */
+        if(g_telePendingHitType==2u){
+            if(!W112_TeleRangeValid(W112_TELE_CLICK_INFO_PTR,4u,0u)||
+               !W112_TeleRangeValid(W112_TELE_REFRESH_FN,16u,1u)){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
+            }
+            info=*(volatile DWORD*)W112_TELE_CLICK_INFO_PTR;
+            if(!Ptr((void*)info)||
+               !W112_TeleRangeValid(info,W112_TELE_HIT_POS_OFF+12u,0u)){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
+            }
+            ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
+            hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
+            if(hitType!=2u){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
+            }
+            x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
+            y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
+            z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
+            dx=x-g_teleDestX;dy=y-g_teleDestY;dz=z-g_teleDestZ;
+            if(!W112_Q_PosValid(x,y,z)||
+               dx*dx+dy*dy+dz*dz>W112_TELE_OBJ_STABLE_D2){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
+            }
+        }
         /* One pulse; never chase server corrections or touch CTM action. */
         g_telePending=0u;
         g_stepMoveInjecting=1u;
@@ -712,11 +744,14 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     hitBefore=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
     ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
     hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
-    if(hitType!=1u){
+    if(hitType!=1u&&hitType!=2u){
         W112_TeleReportHit(hitBefore,hitType);
-        if(hitType==2u)W112_TeleReportPoint(info,p,hitType);
-        else g_telePrevSampleValid=0u;
+        g_telePrevSampleValid=0u;
         return;
+    }
+    if(hitType==2u){
+        W112_TeleReportPoint(info,p,hitType);
+        DebugChat(g_teleObjectChat);
     }
     if(W112_TELE_DIAG_ONLY){W112_TeleReportPoint(info,p,hitType);return;}
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
@@ -751,6 +786,7 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     }
     g_teleDestX=x;g_teleDestY=y;g_teleDestZ=z;
     g_teleStartX=px;g_teleStartY=py;g_teleStartZ=pz;
+    g_telePendingHitType=hitType;
     g_telePending=1u;g_stepActive=1u;g_teleWaitSince=now;g_teleWaitLast=now;
     DebugChat(g_teleStopChat);
 }
