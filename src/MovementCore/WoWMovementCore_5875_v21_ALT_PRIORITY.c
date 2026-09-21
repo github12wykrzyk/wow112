@@ -651,12 +651,11 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
  * is validated for terrain, but EXPERIMENTAL for object hits. Do not silently
  * treat object XYZ as a verified safe ground landing point.
  * The patched project EXE has not yet been in-game validated for this path.
- * A captured 0xC CTM state from LMB is empirical data, NOT a STOP/WALK enum;
- * require the same state for E and fail closed if the key path differs.
- * Require the same state and a stationary player across the settle interval;
- * never pulse when the state changes or the player walks.
- * Combat and concurrent cast/movement ownership are allowed for the explicit
- * E pulse; keep cursor, world-readiness and native stationary checks.
+ * E is an explicit one-shot even during native walking, CTM transitions,
+ * player position drift, casts or competing movement ownership. The pending
+ * object hit is still refreshed for target stability before the pulse.
+ * Retain world readiness, finite XYZ and cursor memory validation; a sent
+ * heartbeat is not evidence that the server accepted the destination.
  */
 #define W112_TELE_CLICK_INFO_PTR 0x00B4B2BCu
 #define W112_TELE_REFRESH_FN     0x00481F00u
@@ -665,11 +664,8 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_KEY_E         0x45u /* E, press edge only */
 #define W112_TELE_F6            0x75u
 #define W112_TELE_MIN_D2        0.25f /* ignore same-point clicks */
-#define W112_TELE_CTM_ACTION    0x00C4D888u
-#define W112_TELE_CTM_OBSERVED  12u /* empirically seen after LMB terrain hit */
 #define W112_TELE_SETTLE_MS     250u
 #define W112_TELE_TIMEOUT_MS    700u
-#define W112_TELE_MAX_DRIFT_D2  0.04f
 #define W112_TELE_OBJ_STABLE_D2  0.25f /* same cursor-hit XYZ within 0.5yd */
 typedef struct W112_TELE_MBI {
     DWORD base,allocation_base,allocation_protect,region_size,state,protect,type;
@@ -683,23 +679,13 @@ static void W112_CancelTeleForBlink(void){
  g_telePending=0u;g_stepActive=0u;
 }
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
-static float g_teleStartX=0.0f,g_teleStartY=0.0f,g_teleStartZ=0.0f;
-static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: CTM ON; aim GROUND/OBJECT + press E; object XYZ experimental; F7 abort') end";
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim GROUND/OBJECT + press E (walking/CTM allowed); object XYZ experimental; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
-static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; waiting for stationary player (CTM unchanged)') end";
+static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; preparing one pulse (walking/CTM allowed)') end";
 static const char g_teleObjectChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r OBJECT hit: XYZ not validated as ground; experimental pulse only after stable recheck') end";
 static const char g_teleObjectAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OBJECT hit changed/lost or XYZ invalid; no pulse') end";
-static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: native walking/position drift/CTM state; no pulse') end";
-static const char g_teleUnsupportedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: CTM state memory unreadable; no pulse') end";
-static void W112_TeleReportUnknownAction(DWORD action)
-{
-    char script[190];char*q=script;
-    q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele E] ABORT: unknown CTM state=0x");
-    q=AppHex32(q,action);
-    q=AppStr(q," (CTM 0xC observed with LMB); no pulse') end");*q=0;
-    DebugChat(script);
-}
+static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: second E / world unavailable / timeout / invalid XYZ; no pulse') end";
 static const char g_teleTooCloseChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r aim at a different point (minimum 0.5 units away)') end";
 /* Every E press gets one stage-specific report; never claim an
  * accepted teleport merely because the client sent a movement heartbeat. */
@@ -798,7 +784,7 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
 {
     DWORD pressed=(GK()(W112_TELE_KEY_E)&(short)0x8000)?1u:0u;
     DWORD trigger=pressed&&!g_teleKeyWasDown;
-    DWORD info,hitType,hitBefore,action;
+    DWORD info,hitType,hitBefore;
     float px,py,pz,x,y,z,dx,dy,dz;
     g_teleKeyWasDown=pressed;
     if(!g_stepEnabled){g_telePending=0u;g_stepActive=0u;return;}
@@ -806,34 +792,20 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
         /* A second E press aborts rather than applying a stale destination. */
         if(trigger){g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;}
         if(!W112_TeleAvailable(p)||
-           !W112_TeleRangeValid(W112_TELE_CTM_ACTION,4u,0u)||
            (DWORD)(now-g_teleWaitSince)>W112_TELE_TIMEOUT_MS){
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
         }
-        action=*(volatile DWORD*)W112_TELE_CTM_ACTION;
-        /* 0xC is observed with this LMB path, but is NOT treated as a
-         * universal stop or walk enum. Any transition fails closed. */
-        if(action!=W112_TELE_CTM_OBSERVED){
-            g_telePending=0u;g_stepActive=0u;
-            W112_TeleReportUnknownAction(action);return;
-        }
+        /* Native walking, CTM state and player drift do not block a user E.
+         * Still reject invalid player coordinates before sending a pulse. */
         px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);
         pz=*(float*)(p+OFF_UNIT_Z);
-        dx=px-g_teleStartX;dy=py-g_teleStartY;dz=pz-g_teleStartZ;
-        if(!W112_Q_PosValid(px,py,pz)||dx*dx+dy*dy+dz*dz>W112_TELE_MAX_DRIFT_D2){
+        if(!W112_Q_PosValid(px,py,pz)){
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
-        }
-        /* Local movement flags are an additional safeguard against issuing
-         * a pulse while the client is walking despite a stable position. */
-        {DWORD *flags=MoveFlags(p);
-         if(!flags||(*flags&0x3Fu)!=0u){
-            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
-         }
         }
         if((DWORD)(now-g_teleWaitLast)<W112_TELE_SETTLE_MS)return;
         /* Unlike a terrain hit, type-2 XYZ has unverified provenance.
-         * Refresh after the stationary interval, require the cursor to still
-         * be over an object, with a valid point near the original sample. */
+         * Refresh after the short settle interval and require a stable object
+         * cursor point; player movement does not cancel the pending pulse. */
         if(g_telePendingHitType==2u){
             if(!W112_TeleRangeValid(W112_TELE_CLICK_INFO_PTR,4u,0u)||
                !W112_TeleRangeValid(W112_TELE_REFRESH_FN,16u,1u)){
@@ -901,31 +873,14 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     if(!W112_Q_PosValid(x,y,z)||!W112_Q_PosValid(px,py,pz)){
         DebugChat(g_teleBadPosChat);return;
     }
-    /* No artificial horizontal range or vertical offset limit: retain only
-     * finite-world-coordinate validation, type-1 terrain hit, ownership and
-     * stationary-player guards. Native collision/server acceptance NOT proven
-     * for long jumps, steep slopes, cross-continent or non-navigable terrain. */
+    /* No artificial horizontal range or vertical offset limit: retain finite
+     * world-coordinate validation and a real cursor hit. Native collision/server
+     * acceptance is NOT proven for long jumps or non-navigable terrain. */
     dx=x-px;dy=y-py;
     if(dx*dx+dy*dy<W112_TELE_MIN_D2){DebugChat(g_teleTooCloseChat);return;}
-    /* 0xC was observed with LMB terrain hits; E must independently provide
-     * the same passive CTM state and a type-1 cursor raycast.
-     * Neither 0xC nor the old 0/3/4 values prove that native CTM is stopped.
-     * Only the passive E + stable-state + stationary-player path may pulse.
-     * Never issue native STOP=3 based on an unverified enum. */
-    if(!W112_TeleRangeValid(W112_TELE_CTM_ACTION,4u,0u)){
-        DebugChat(g_teleUnsupportedChat);return;
-    }
-    action=*(volatile DWORD*)W112_TELE_CTM_ACTION;
-    if(action!=W112_TELE_CTM_OBSERVED){
-        W112_TeleReportUnknownAction(action);return;
-    }
-    {DWORD *flags=MoveFlags(p);
-     if(!flags||(*flags&0x3Fu)!=0u){
-        DebugChat(g_teleAbortChat);return;
-     }
-    }
+    /* Explicit E is independent of native CTM state and walking flags.
+     * Do not issue unverified native CTM STOP commands. */
     g_teleDestX=x;g_teleDestY=y;g_teleDestZ=z;
-    g_teleStartX=px;g_teleStartY=py;g_teleStartZ=pz;
     g_telePendingHitType=hitType;
     g_telePending=1u;g_stepActive=1u;g_teleWaitSince=now;g_teleWaitLast=now;
     DebugChat(g_teleStopChat);
