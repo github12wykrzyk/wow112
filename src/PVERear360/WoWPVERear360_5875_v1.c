@@ -92,6 +92,10 @@ typedef u8 (THISCALL *CanAttackFn)(u32,u32);
 #define PVP_REAR_SETTLE_MS 50u
 #define REAR_RESULT_WAIT_MS 850u
 #define RETRY_FEEDBACK_WINDOW_MS 1200u
+/* While an NPC Backstab/Ambush transaction is unresolved, keep refreshing
+   the same server-facing rear pose every 100 ms. This is intentionally
+   bounded by the existing lease/result timeout and MovementCore arbitration. */
+#define REAR_REFRESH_MS 100u
 #define WM_W112_REAR_TICK 0x00008119u
 #define REAR_DISTANCE 1.6f
 #define REAL_MAX_RANGE_SQ 64.0f
@@ -126,6 +130,7 @@ static volatile u32 g_timer=0u;
 static volatile HWND32 g_timerWindow=0;
 static volatile u32 g_stop=0u;
 static volatile u32 g_lastTick=0u;
+static volatile u32 g_lastRearRefresh=0u;
 static volatile u32 g_needsRestore=0u;
 static volatile u32 g_castCount=0u,g_castActive=0u,g_castUntil=0u,g_castStarted=0u;
 static volatile u32 g_castPlayer=0u,g_castTarget=0u;
@@ -324,6 +329,37 @@ __declspec(naked) static void moveChainHook(void){
   ret
  }
 }
+/* PvE-only bounded rear keepalive. The initial prime and settled-cast paths
+   already send paired heartbeats; this fills the gaps between them and while
+   the server result is pending. It never starts a transaction on its own. */
+static void refreshActiveRear(u32 now){
+ u32 pl,tg;
+ float px,py,pz,po,tx,ty,tz,to,a,x,y,z,o;
+ if(!g_castActive||!g_rearLease||!g_savedValid||g_savedType!=3u)return;
+ if(!(g_sendPending||g_resultPending||g_retryPending))return;
+ if(g_lastRearRefresh&&(u32)(now-g_lastRearRefresh)<REAR_REFRESH_MS)return;
+ pl=localPlayer();tg=selectedTarget();
+ if(!pl||!tg||g_savedPlayer!=pl||g_savedTarget!=tg||
+    g_castPlayer!=pl||g_castTarget!=tg||!savedTargetStillValid(tg))return;
+ if(competingMovementBusy())return;
+ if(read32(CASTING_SPELL_ID)&&read32(CASTING_SPELL_ID)!=g_savedSpell)return;
+ px=readf(pl+OBJ_X);py=readf(pl+OBJ_Y);pz=readf(pl+OBJ_Z);po=readf(pl+OBJ_O);
+ tx=readf(tg+OBJ_X);ty=readf(tg+OBJ_Y);tz=readf(tg+OBJ_Z);to=readf(tg+OBJ_O);
+ if(!finitef(px)||!finitef(py)||!finitef(pz)||!finitef(po)||
+    !finitef(tx)||!finitef(ty)||!finitef(tz)||!finitef(to))return;
+ a=angle(to+PI_F+(g_retryAttempt==1u?-PI_F/9.0f:
+                       g_retryAttempt==2u?PI_F/9.0f:0.0f));
+ x=tx+REAR_DISTANCE*fcos1(a);y=ty+REAR_DISTANCE*fsin1(a);
+ z=tz;o=angle(a+PI_F);
+ if(!finitef(x)||!finitef(y)||!finitef(z)||!finitef(o))return;
+ g_rearX=x;g_rearY=y;g_rearZ=z;g_rearO=o;
+ *(float*)(pl+OBJ_X)=x;*(float*)(pl+OBJ_Y)=y;
+ *(float*)(pl+OBJ_Z)=z;*(float*)(pl+OBJ_O)=o;
+ nativeHeartbeat(pl);nativeHeartbeat(pl);
+ *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
+ *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
+ g_lastRearRefresh=now;g_needsRestore=1u;++g_count;
+}
 /* Called at the exact work-verified SendCast callsite. Select only NPC
    Backstab/Ambush. Cast clone, pair of heartbeats and the cast are sent
    synchronously before the original call could send the unprimed position. */
@@ -420,6 +456,7 @@ static u32 STDCALL primeCast(u32 spell,u32 store){
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
  g_skipNativeGcdCurrent=1u;
+ g_lastRearRefresh=GetTickCount();
  g_needsRestore=1u;g_status=STATUS_ACTIVE;
  ++g_count;
  return 1u; /* defer cloned CMSG and GCD until rear pose has settled */
@@ -574,7 +611,7 @@ static void tryPositionalRetry(u32 now){
  nativeHeartbeat(pl);nativeHeartbeat(pl);
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
- g_needsRestore=1u;
+ g_lastRearRefresh=now;g_needsRestore=1u;
  ++g_adaptiveRetries;++g_count;
  g_status=STATUS_ACTIVE;
 }
@@ -616,7 +653,7 @@ static void sendSettledCast(u32 now){
  *(float*)(pl+OBJ_X)=px;*(float*)(pl+OBJ_Y)=py;
  *(float*)(pl+OBJ_Z)=pz;*(float*)(pl+OBJ_O)=po;
  g_sendPending=0u;g_resultPending=1u;
- g_lastSendTick=now;g_castUntil=now+g_period;
+ g_lastSendTick=now;g_lastRearRefresh=now;g_castUntil=now+g_period;
  sendStore((u32)header);
  ++g_castCount;
  if(g_deferredGcdValid){
@@ -778,6 +815,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
  }
  if(g_retryPending)tryPositionalRetry(now);
  if(g_sendPending)sendSettledCast(now);
+ refreshActiveRear(now);
  if(g_resultPending&&g_lastSendTick&&
     (u32)(now-g_lastSendTick)>REAR_RESULT_WAIT_MS){
   g_resultPending=0u;g_savedValid=0u;g_castUntil=now;
@@ -791,7 +829,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
      (g_sendPending||g_retryPending||g_resultPending||
       (s32)(now-g_castUntil)<0))return;
   pl=g_castPlayer;
-  g_castActive=0u;g_castPlayer=0u;g_castTarget=0u;
+  g_castActive=0u;g_castPlayer=0u;g_castTarget=0u;g_lastRearRefresh=0u;
   g_sendPending=0u;g_resultPending=0u;g_retryPending=0u;
   g_deferredGcdValid=0u;g_savedValid=0u;
   releaseRear();
@@ -800,7 +838,7 @@ static void STDCALL tick(HWND32 hwnd,u32 msg,u32 timer,u32 now){
   return;
  }
  if(!g_enabled&&!g_pvpEnabled){
-  g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;
+  g_retryPending=0u;g_savedValid=0u;g_sendPending=0u;g_lastRearRefresh=0u;
   g_resultPending=0u;g_deferredGcdValid=0u;
   g_status=STATUS_DISABLED;restoreHeartbeat(localPlayer());return;
  }

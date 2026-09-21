@@ -166,6 +166,7 @@ def main():
         "pvp_enabled_by_default": True,
         "pvp_settle_ms": 50,
         "pve_settle_ms": 100,
+        "active_rear_refresh_ms": 100,
         "rear_hold_ms": 350,
         "work_reference": "work/src/PositionalSpoof: paired rear heartbeats, geometry refresh, bounded retries; no second cast/movement hook loaded",
         "cast_hook": "native 5875 SendCast 0x006E5872 (verified original callsite bytes)",
