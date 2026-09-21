@@ -614,7 +614,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k10=(GK()(VK_F10)&(short)0x8000)?1u:0u;
     k11=(GK()(VK_F11)&(short)0x8000)?1u:0u;
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
-    {DWORD f6=(GK()(W112_STEP_F6)&(short)0x8000)?1u:0u;
+    {DWORD f6=(GK()(W112_TELE_F6)&(short)0x8000)?1u:0u;
      if(f6&&!g_stepKey6&&!W112_Q_ChatHasFocus()){
         g_stepEnabled=g_stepEnabled?0u:1u;
         g_stepActive=0u;
