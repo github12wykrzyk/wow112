@@ -2760,6 +2760,32 @@ function lazyScript.bitParsers.ifRace(bit, actions, masks)
 end
 
 
+-- A native read-only observer samples the local player's world position.
+-- Both criteria fail closed when the DLL is missing, still initializing, or
+-- its snapshot is stale. Rotation stays entirely in LazyScript.
+function lazyScript.OnNativePlayerMovement(state)
+	if (state ~= 0 and state ~= 1) then return end
+	lazyScript.nativePlayerMoving = state
+	lazyScript.nativePlayerMovingAt = GetTime()
+end
+
+function lazyScript.masks.PlayerMoving(expected)
+	return function(sayNothing)
+		local t = lazyScript.nativePlayerMovingAt
+		if (not t or lazyScript.nativePlayerMoving == nil) then return false end
+		local age = GetTime() - t
+		if (age < 0 or age > 0.35) then return false end
+		return (lazyScript.nativePlayerMoving == 1) == expected
+	end
+end
+
+function lazyScript.bitParsers.ifMoving(bit, actions, masks)
+	if (not lazyScript.rebit(bit, "^if(Not)?Moving$")) then return false end
+	local expected = not lazyScript.negate1()
+	table.insert(masks, lazyScript.masks.PlayerMoving(expected))
+	return true
+end
+
 function lazyScript.masks.IsCasting()
 	return lazyScript.spellcastInProgress
 end

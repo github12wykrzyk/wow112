@@ -43,3 +43,19 @@ The addon-only ZIP and DLL candidate are separately SHA256 attested within
 one successful branch-specific workflow artifact. Native slot liveness is
 not proof of server-side interrupt acceptance: test normal casts, channels,
 completed casts, target switching, relog, and BG transitions in game.
+
+## Native local-player movement criteria (parallel test candidate)
+
+LazyScript's player criteria now include `ifMoving` and `ifNotMoving` (examples:
+`ss-ifMoving` and `bs-ifNotMoving`). The existing read-only parallel
+CastObserver DLL also publishes fresh player-world-position movement snapshots
+through `lazyScript.OnNativePlayerMovement(0/1)`; LazyScript alone evaluates
+criteria and dispatches actions. It samples native verified 5875 world X/Y every
+~25ms, requires about 50ms stable movement or 100ms stability before changing
+state, and checks snapshot freshness (350ms). Rotation-only movement does not
+count. Missing/inert DLL, login/map transitions or stale samples fail closed for
+BOTH criteria: an unknown movement state must never be interpreted as standing.
+The DLL never starts/stops movement; existing cast/channel observer and Kick
+semantics are unchanged. Criteria are listed in LS help. Native coordinate
+behavior in combat, BG transitions and synthetic-position scenarios requires
+in-game validation before promotion to main.

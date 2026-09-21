@@ -49,6 +49,12 @@ int _fltused=0;
 static volatile u32 g_installed=0u,g_busy=0u,g_inWorld=0u,g_readyAfter=0u;
 static TIMER32 g_timer=0u;
 static u32 g_lastEmit=0u,g_lastKind=0u,g_lastLo=0u,g_lastHi=0u,g_lastSpell=0u;
+/* World X/Y from verified 5875 object layout (verified_symbols_5875.json). */
+#define PLAYER_X_OFFSET 0x09B8u
+#define PLAYER_Y_OFFSET 0x09BCu
+static u32 g_motionObject=0u,g_motionCandidate=0u,g_motionCandidateSince=0u;
+static u32 g_motionState=0u,g_motionKnown=0u,g_motionLastEmit=0u;
+static float g_previousX=0.0f,g_previousY=0.0f;
 
 static u32 read32(u32 a){return *(volatile u32*)(u32)a;}
 static void *iat(u32 a){return (void*)(u32)read32(a);}
@@ -110,6 +116,61 @@ static void publish(u32 lo,u32 hi,u32 spell,u32 kind,u32 now){
     run(lua,"WoWCastObserver");
     g_lastEmit=now;g_lastLo=lo;g_lastHi=hi;g_lastSpell=spell;g_lastKind=kind;
 }
+
+/* Native position sampler, never a movement writer. Source coordinates are
+ * the local player's actual client world X/Y, not button/keyboard state.
+ * 0.015yd / ~25ms rejects idle coordinate noise; change confirmation is
+ * 50ms for moving and 100ms for stationary to reduce frame-to-frame chatter.
+ * Absence, world transitions and teleports invalidate samples, not 'stopped'. */
+static void publish_motion(u32 now){
+    FrameScriptExecuteFn run=(FrameScriptExecuteFn)(u32)FRAME_EXECUTE;
+    const char *lua=g_motionState
+        ?"if lazyScript and lazyScript.OnNativePlayerMovement then lazyScript.OnNativePlayerMovement(1) end"
+        :"if lazyScript and lazyScript.OnNativePlayerMovement then lazyScript.OnNativePlayerMovement(0) end";
+    run(lua,"WoWCastObserverMovement");
+    g_motionLastEmit=now;
+}
+static void observe_player_motion(u32 now){
+    u32 mgr=read32(OBJMGR),lo,hi,obj;
+    float x,y,dx,dy,dist2;
+    u32 raw,hold;
+    if(!valid_ptr(mgr)){g_motionKnown=0u;g_motionObject=0u;return;}
+    lo=read32(mgr+0xC0u);hi=read32(mgr+0xC4u);
+    obj=object_by_guid(lo,hi);
+    if(!obj || read32(obj+0x14u)!=4u){
+        g_motionKnown=0u;g_motionObject=0u;return;
+    }
+    x=*(volatile float*)(u32)(obj+PLAYER_X_OFFSET);
+    y=*(volatile float*)(u32)(obj+PLAYER_Y_OFFSET);
+    if(!(x==x && y==y) || x>100000.0f || x< -100000.0f ||
+       y>100000.0f || y< -100000.0f){
+        g_motionKnown=0u;g_motionObject=0u;return;
+    }
+    if(obj!=g_motionObject){
+        g_motionObject=obj;g_motionKnown=0u;
+        g_motionCandidate=0u;g_motionCandidateSince=now;
+        g_previousX=x;g_previousY=y;return;
+    }
+    dx=x-g_previousX;dy=y-g_previousY;
+    g_previousX=x;g_previousY=y;
+    dist2=dx*dx+dy*dy;
+    if(dist2>10000.0f){ /* teleport/map correction: reestablish baseline */
+        g_motionKnown=0u;g_motionCandidate=0u;g_motionCandidateSince=now;
+        return;
+    }
+    raw=(dist2>0.000225f)?1u:0u;
+    if(raw!=g_motionCandidate){
+        g_motionCandidate=raw;g_motionCandidateSince=now;
+    }
+    hold=raw?50u:100u;
+    if((u32)(now-g_motionCandidateSince)>=hold &&
+       (!g_motionKnown || g_motionState!=raw)){
+        g_motionState=raw;g_motionKnown=1u;
+        publish_motion(now);return;
+    }
+    if(g_motionKnown && (u32)(now-g_motionLastEmit)>=125u)
+        publish_motion(now);
+}
 static void STDCALL observe_timer(HWND32 hwnd,u32 msg,TIMER32 timer,u32 tick){
     u32 now,lo=0u,hi=0u,obj=0u,typeId=0u,desc=0u;
     u32 normal=0u,channel=0u,kind=0u,spell=0u;
@@ -118,13 +179,16 @@ static void STDCALL observe_timer(HWND32 hwnd,u32 msg,TIMER32 timer,u32 tick){
     now=current_tick();
     if(!world_ready()){
         g_inWorld=0u;g_readyAfter=0u;g_lastKind=0u;
+        g_motionKnown=0u;g_motionObject=0u;
         g_busy=0u;return;
     }
     if(!g_inWorld){
         g_inWorld=1u;g_readyAfter=now+750u;g_lastKind=0u;
+        g_motionKnown=0u;g_motionObject=0u;
         g_busy=0u;return;
     }
     if((s32)(now-g_readyAfter)<0){g_busy=0u;return;}
+    observe_player_motion(now);
     lo=read32(TARGET_GUID_LO);hi=read32(TARGET_GUID_HI);
     obj=object_by_guid(lo,hi);
     if(obj){

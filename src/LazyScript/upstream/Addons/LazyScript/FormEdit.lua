@@ -384,6 +384,7 @@ function lazyScript.formHelp.SetupCriteria()
 	text = text.."<P>-if[Not]InBattleground</P>"
 	text = text.."<P>-if[Not]InRaid</P>"
 	text = text.."<P>-if[Not]Mounted</P>"
+	text = text.."<P>-ifMoving / -ifNotMoving |cffffff00(local player horizontal movement; fresh native observer required; both false if unavailable)|r</P>"
 	text = text.."<P>-if[Not]Shadowmelded</P>"
 	text = text.."<P>-if[Not]Tracking={Herbs, Minerals, Treasure}</P>"
 	text = text.."<P>-if[{&lt;,=,&gt;}]XAttackers |cffffff00("..TAB_CRITERIA_PVP_ONLY..")|r</P>"
