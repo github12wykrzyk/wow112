@@ -362,7 +362,7 @@ function lazyScript.Action:IsUsable(sayNothing)
 		local inRange = IsActionInRange(self.slot)
 		if (IsUsableAction(self.slot) == 1 and
 			GetActionCooldown(self.slot) == 0 and -- not in cooldown
-			not IsCurrentAction(self.slot) and -- not already being used
+			(not IsCurrentAction(self.slot) or self.code == "bs" or self.code == "ambush") and -- native rear owner coalesces repeated attempts
 			(inRange == 1 or inRange == nil or (self.parent and self.parent.target == "player"))) then
 			return true
 		end
