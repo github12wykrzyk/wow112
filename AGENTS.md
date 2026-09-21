@@ -34,10 +34,11 @@ If prose conflicts with machine-readable routing, machine-readable routing wins 
 ## 3. Branch model
 
 - `main` = last accepted stable state only.
-- `work` = active development candidate.
+- `work` = existing development candidate; `parallel` = independent alternative development line.
+- `feature/**` = short-lived branch for an isolated experiment.
 - `promote/**` = temporary curated stable-candidate branches used only for pre-promotion gates.
-- Normal edits go to `work`.
-- Before a new iteration, current `main` must be an ancestor of `work`.
+- Follow the explicitly selected branch (`pararell` means `parallel`). Otherwise inspect `runtime/ai_experiments.json`, live GitHub refs and module dependencies; continue a matching experiment or isolate independent work under `feature/<purpose>`. Ambiguity requires mechanism/hook review, not filename-based guessing.
+- Before editing `work`, current `main` must be its ancestor. Existing `parallel` divergence must not be forcibly merged into `work`; do not direct a normal experiment to `main`/`promote/**`.
 - Preserve useful unique work state before any branch surgery.
 - Never ask the user to merge/rebase/synchronize routine repository state manually.
 
@@ -73,12 +74,12 @@ For source-only experiments on `work`, source promotion fingerprints may intenti
 
 ## 6. Normal TEST iteration
 
-1. Verify `main` is an ancestor of `work`.
-2. Route through `runtime/current.json`.
+1. Resolve the selected branch from the user request, current GitHub HEAD and experiment registry; require main ancestry only for work.
+2. Route through the selected branch's `runtime/current.json`.
 3. Make the smallest change.
 4. Run `python tools/verify_current.py`.
-5. Commit the complete logical iteration to `work`.
-6. Let `.github/workflows/build_work_candidate.yml` build/package the candidate.
+5. Commit the complete logical iteration to the selected development or feature branch.
+6. Use the native candidate build workflow actually configured for that branch; verify its triggers and module set.
 7. The workflow must finish with `tools/verify_candidate_package.py`.
 8. Only a final package with `FINAL_PACKAGE: PASS` is eligible for user testing.
 9. The user tests in game and reports the result.
@@ -195,7 +196,7 @@ The user should mainly describe desired behavior and perform in-game tests. AI o
 ## 13. Definition of done
 
 Experimental candidate:
-- change committed atomically to `work`,
+- change committed atomically to the selected development or feature branch,
 - `verify_current.py` passes,
 - relevant x86 build passes,
 - final package gate passes,
@@ -263,3 +264,13 @@ Research discipline:
 7. If web access is unavailable or sources cannot be verified, say so and continue with repository evidence and a bounded, testable solution. Never claim that a search, source check, or exact-build validation happened unless it actually did.
 
 Internet research is an available **problem-solving tool**, not a mandatory delay for trivial, already-proven edits. It does not waive branch routing, atomic commits, verification, the final package gate, or the user's acceptance requirement for stable promotion.
+
+## 16. Experiment routing, integration and evidence ledger
+
+- Read `runtime/ai_experiments.json` only after the five mandatory entrypoints, when choosing a branch or recording a test. The ledger is a routing/evidence index, not a live Git ref, runtime manifest, binary inventory, or proof that a test passed. `tools/ai_experiments.py validate` checks its structure; `route --module <Module> [--branch parallel]` provides non-mutating advice. Query GitHub for the real branch HEAD and current files before every write.
+- New feature: determine the owner of the mechanism, not merely the matching DLL filename. Inspect active modules, source lineage, loader order, hook addresses, shared ABI and known dependency registries (notably `runtime/parallel_dependency_registry.json` on `parallel`). A related existing experiment may be continued only on its own branch. For independent or colliding work, create `feature/<short-purpose>` from the appropriate up-to-date verified development SHA; do not create permanent per-DLL branches. A set of cooperating DLLs is one experiment.
+- For each experiment record goal, branch, affected module names, dependencies and shared resources, lifecycle status, observed HEAD snapshot, exact-SHA verified/test evidence and verified package ID when known. Unverified or unreported outcomes remain null/unknown. Record user-reported game results only against the exact tested candidate SHA, with provenance; one passing module test does not accept an entire branch.
+- Safe integration means curating only related changes with all required dependencies, comparing exact source/active runtime configurations and checking hook ownership, ABI, DLL load order and current branch HEAD on both sides. Re-run relevant verification and package gates on the **resulting** SHA; never copy a whole exploratory branch into `main` or automatically mix `parallel` with `work`.
+- A test ZIP is attributable to branch, exact commit, active EXE/DLL identities and load order, source/build provenance and final package verification. If existing candidate metadata does not identify any required field, extend the appropriate packaging workflow before claiming complete traceability. Stable promotion remains governed by section 7, not by ledger status alone.
+- On an interrupted ChatGPT stream, fetch current branch HEAD, changed paths and exact-SHA Actions/artifacts before any retry; resume from confirmed GitHub state, not the last visible assistant reply. Never repeat an uncertain write blindly or claim CI success from a different SHA.
+- The AI owns branch creation, test-evidence updates, integration preparation, builds and rollback housekeeping. No user manual Git operations are required. The `ai_experiments.yml` check validates routing/evidence metadata and canonical runtime gates; it does **not** certify Windows x86 compilation, candidate ZIP integrity or gameplay. Those still require the existing dedicated gates.

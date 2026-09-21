@@ -18,9 +18,10 @@ Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or rec
 ## Hard invariants
 
 - `main` = last accepted stable state.
-- `work` = normal development branch.
+- `work` = existing development branch; `parallel` = independent alternative branch.
+- `feature/**` = short-lived branch for independent experiments.
 - `promote/**` = curated stable-candidate gate branches.
-- `work` must contain current `main`.
+- `work` must contain current `main`; preserve the independent `parallel` branch and its existing experiments.
 - `runtime/current.json` decides active runtime/source lineage.
 - `src/` is canonical editable source root.
 - Stable runtime packages use exact accepted bytes, never an unverified rebuild.
@@ -30,11 +31,15 @@ Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or rec
 
 For a user-selected branch (including `parallel`), use that exact branch even if generic metadata names `work` as the default. Finish the smallest independent GitHub change first, confirm its commit SHA, and provide a short factual checkpoint. Do not perform unrelated edits or repeatedly query all Actions runs in one response. After interrupted streaming, recheck HEAD and workflow for the intended SHA before doing any write. See `AGENTS.md` section 14.
 
+## Experiment routing
+
+After mandatory startup inspect `runtime/ai_experiments.json`, live branch heads and module/dependency ownership. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
+
 ## Fast TEST path
 
 ```text
 read routing -> edit canonical source -> verify_current ->
-one logical commit on work -> Build work candidate ->
+one logical commit on selected branch -> branch-specific candidate workflow ->
 verify_candidate_package -> artifact -> user test
 ```
 
