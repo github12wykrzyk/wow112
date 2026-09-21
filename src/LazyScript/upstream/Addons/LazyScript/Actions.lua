@@ -352,6 +352,20 @@ function lazyScript.Action:Use()
 end
 
 function lazyScript.Action:IsUsable(sayNothing)
+    -- Parallel: suppress duplicate rear requests briefly, not all skills.
+    -- Other actions stay eligible, and a genuine energy wait is not cancelled.
+    if self.code == "bs" or self.code == "ambush" then
+        local now = GetTime()
+        local pending = lazyScript.pendingRearAction
+        if pending and pending.action == self and
+           pending.target == UnitName("target") then
+            local age = now - pending.at
+            if age >= 0 and age < 0.30 then return false end
+        end
+        if lazyScript.rearRetryUntil and now < lazyScript.rearRetryUntil then
+            return false
+        end
+    end
     if self.code == "kick" and lazyScript.interrupt and
        lazyScript.interrupt.NativeKickOwner and lazyScript.interrupt.NativeKickOwner() then
         return false -- Native AutoKick is sole automatic Kick owner.

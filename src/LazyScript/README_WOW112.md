@@ -13,3 +13,11 @@ LazyRogue accepts `bs-ifEnergyTick<200ms` and custom integer values 0..2000 ms, 
 - A timely, same-target `SPELL_FAILED_NOT_BEHIND` after BS/Ambush restores its previous `everyXs` timers and removes the newest failed history entry. Other attempts remain unconfirmed until tested in-game.
 - LazyScript does not automatically invoke `TargetNearestEnemy()` for a Rogue in Stealth. Explicit targeting and existing targets remain unaffected; regular auto-target outside Stealth remains unchanged. The PP DLL remains responsible for scan targeting.
 - This iteration does not modify DLLs, EXE, accepted baseline, or main/work branches.
+
+## Parallel rear-action queue recovery candidate (experimental)
+
+- `Actions.lua` temporarily suppresses repeated identical BS/Ambush attempts for 300 ms; other usable actions remain eligible.
+- A matching Behind/Range rejection rolls back the pending rear action as before. If that action-bar slot is still current, no other cast/channel is active, and the rejection is timely, LazyScript invokes `SpellStopCasting()` and delays a retry for 120 ms. Unrelated spells are protected.
+- `WoWOpenerUIRecovery_5875_v1.dll` is included in the Parallel candidate ZIP with conservative idle-only auto-clear enabled by default (250 ms unchanged state, stable world, no pending/active/queued cast). It does not automatically cancel an active or queued spell. Its manual control API remains optional.
+- This does not guarantee recovery for every active queue lock: unconfirmed cases need diagnostics. V69/main/work are unchanged.
+- In-game test: rejected BS/Ambush should not permanently block subsequent rotation; verify energy waits, casts/channels, poisons and BG transitions are not interrupted.

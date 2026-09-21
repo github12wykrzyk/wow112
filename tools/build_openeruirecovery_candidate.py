@@ -61,7 +61,7 @@ def main():
     extras=append_extra(meta.get("candidate_extra_dlls"),mm)
     meta["zip_root_entries"]=names;meta["package_sha256"]=psha;meta["package_size"]=psz;meta["candidate_extra_dll_count"]=len(extras);meta["candidate_extra_dlls"]=extras
     meta["loader_manifest"]={"name":DLL_LIST_NAME,"generated_from_candidate_zip":True,"dll_count":len(loader),"dlls":loader,"contains_opener_ui_recovery":True}
-    meta["opener_ui_recovery_pilot"]={"module":DLL_NAME,"module_id":"opener_ui_recovery","abi":"W112_CONTROL_API_V1","default_auto_clear":False,"default_grace_ms":250,"scope":"client UI action GUID recovery only; no packets/range/facing/movement/GCD/timing changes","manual_clear":"explicit action may dispatch native opener SpellStopCasting while active; skips unrelated active spell","auto_clear":"OFF by default; requires Backstab/Ambush evidence + unchanged orphaned action/targeting state + fully idle pending/casting/handle/queued pipeline + 250 ms grace; never auto-cancels active cast"}
+    meta["opener_ui_recovery_pilot"]={"module":DLL_NAME,"module_id":"opener_ui_recovery","abi":"W112_CONTROL_API_V1","default_auto_clear":True,"default_grace_ms":250,"scope":"client UI action GUID recovery only; no packets/range/facing/movement/GCD/timing changes","manual_clear":"explicit action may dispatch native opener SpellStopCasting while active; skips unrelated active spell","auto_clear":"ON for Parallel test; requires Backstab/Ambush evidence + unchanged orphaned action/targeting state + fully idle pending/casting/handle/queued pipeline + 250 ms grace; never auto-cancels active cast"}
     if isinstance(meta.get("controlhub_pilot"),dict):
         p=list(meta["controlhub_pilot"].get("providers") or [])
         if DLL_NAME not in p:p.append(DLL_NAME)

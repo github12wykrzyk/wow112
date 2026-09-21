@@ -342,6 +342,8 @@ function lazyScript.OnEvent()
 		elseif (event == "PLAYER_ENTERING_WORLD") then
 		-- Player has entered world, reset combat flag just in case we didn't
 		-- or won't get the REGEN_ENABLED event.
+		lazyScript.pendingRearAction = nil
+		lazyScript.rearRetryUntil = nil
 		lazyScript.OnPlayerRegenEnabled()
 		
 		-- Now for everything else that is used by LazyScript
@@ -404,6 +406,7 @@ function lazyScript.OnEvent()
 		lazyScript.interrupt.OnTargetChanged()
 		-- A delayed error for an old target must not roll back a new attempt.
 		lazyScript.pendingRearAction = nil
+		lazyScript.rearRetryUntil = nil
 		lazyScript.ResetEveryTimers()
 		lazyScript.ResetNowAndEveryTimers()
 		lazyScript.targetHealthHistory:Reset()
@@ -444,6 +447,20 @@ function lazyScript.OnEvent()
 				now >= pending.at and now - pending.at <= 1.5 and
 				(rearBehindError or (lazyScript.actionHistory and
 					lazyScript.actionHistory[1] == pending.action.code)) then
+				-- Cancel only a rejected rear action that is still current.
+				-- Never cancel an unrelated active cast or channel; no ESC.
+				local sameAction = lazyScript.actionHistory and
+					lazyScript.actionHistory[1] == pending.action.code
+				local slot = pending.action.slot
+				if sameAction and slot and IsCurrentAction(slot) and
+					now - pending.at <= 0.65 and
+					not lazyScript.spellcastInProgress and
+					not lazyScript.channellingInProgress then
+					SpellStopCasting()
+					lazyScript.rearFailureClears = (lazyScript.rearFailureClears or 0) + 1
+				end
+				-- Let a valid fallback run after this confirmed rejection.
+				lazyScript.rearRetryUntil = now + 0.12
 				-- A rejected BS/Ambush must not consume its everyXs timer.
 				pending.action.everyTimer = pending.everyTimer
 				pending.action.nowAndEveryTimer = pending.nowAndEveryTimer

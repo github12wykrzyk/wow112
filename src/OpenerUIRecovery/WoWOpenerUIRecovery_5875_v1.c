@@ -8,7 +8,7 @@
  *   - never changes range, facing, movement, packets, GCD or opener timing;
  *   - manual recovery follows the native 5875 SpellStopCasting path (not ESC),
  *     restricted to opener evidence; no broad raw cast-state memory erasure;
- *   - auto-clear remains OFF by default; only orphaned opener UI state after
+ *   - auto-clear is ON in the Parallel candidate; only orphaned opener UI state after
  *     every active/queued cast has ended can be cancelled (250 ms default);
  *   - no automatic cancellation of an active/queued spell, even on timeout,
  *     protecting energy holds and preventing unintended active-cast interrupts;
@@ -80,7 +80,7 @@ typedef void (__fastcall *StopActiveCastFn)(u32,u32,u32);
 #define SETTING_LAST_OPENER    6u
 
 static volatile UINT_PTR32 g_timerId=0u;
-static volatile u32 g_cfgAutoClear=0u;
+static volatile u32 g_cfgAutoClear=1u;
 static volatile u32 g_cfgGraceMs=250u;
 static volatile u32 g_clearCount=0u;
 static volatile u32 g_activeSkips=0u;
@@ -237,7 +237,7 @@ static void init_desc(void){
  W112_ControlSettingV1*s;
  if(g_descReady)return;
  s=&g_settings[0];s->struct_size=sizeof(*s);s->setting_id=SETTING_CLEAR_NOW;s->key="clear_now";s->label="Clear stuck opener";s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
- s=&g_settings[1];s->struct_size=sizeof(*s);s->setting_id=SETTING_AUTO_CLEAR;s->key="auto_clear";s->label="Auto clear";s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+ s=&g_settings[1];s->struct_size=sizeof(*s);s->setting_id=SETTING_AUTO_CLEAR;s->key="auto_clear";s->label="Auto clear";s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[2];s->struct_size=sizeof(*s);s->setting_id=SETTING_GRACE_MS;s->key="grace_ms";s->label="Auto grace (ms)";s->type=W112_CTL_INT;s->default_value.i32=250;s->min_value.i32=150;s->max_value.i32=1000;s->step.i32=50;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[3];s->struct_size=sizeof(*s);s->setting_id=SETTING_CLEAR_COUNT;s->key="clear_count";s->label="Cancel attempts";s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY;s->enum_options=0;s->enum_option_count=0u;
  s=&g_settings[4];s->struct_size=sizeof(*s);s->setting_id=SETTING_ACTIVE_SKIPS;s->key="active_skips";s->label="Active-cast skips";s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY;s->enum_options=0;s->enum_option_count=0u;
