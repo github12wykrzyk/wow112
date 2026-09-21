@@ -531,7 +531,7 @@ __declspec(dllimport) DWORD __stdcall VirtualQuery(const void*,void*,DWORD);
 typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleLmbWasDown=0u;
 static DWORD g_teleLastAttempt=0u;
-static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r ON: CTM OFF, left-click nearby ground; F7 aborts') end";
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[TeleDiag]|r ON: CTM OFF; click 2 points while standing still (PREVIEW ONLY)') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele Click]|r pulse sent; check if position stays') end";
 static const char g_teleFarChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele Click]|r ground point too far/steep (max 8 yd, 1.25 Z)') end";
@@ -558,11 +558,18 @@ static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable);
  * terrain XYZ in that case. Observe it only; NEVER teleport from type 2.
  * Compare consecutive clicks on distinct patches of bare terrain to see
  * whether our click-info path actually returns meaningful, varying XYZ. */
-static void W112_TeleReportObjectPoint(DWORD info,BYTE *player)
+/* Diagnostic mode: absolute client player XYZ and cursor XYZ are sampled
+ * in the SAME UI tick. Consecutive-click deltas tell a moving player/camera
+ * apart from a changing ground/object point. Type 2 is NOT trusted as terrain.
+ * Preview only until cursor-field provenance is confirmed for patched EXE. */
+#define W112_TELE_DIAG_ONLY 1u
+static DWORD g_telePrevSampleValid=0u;
+static float g_telePrevHitX=0.0f,g_telePrevHitY=0.0f,g_telePrevHitZ=0.0f;
+static float g_telePrevPlayerX=0.0f,g_telePrevPlayerY=0.0f,g_telePrevPlayerZ=0.0f;
+static void W112_TeleReportPoint(DWORD info,BYTE *player,DWORD hitType)
 {
-    float x,y,z,px,py,pz;
-    char script[256];char*q=script;
-    if(!player || !W112_TeleRangeValid(info+W112_TELE_HIT_POS_OFF,12u,0u))return;
+    float x,y,z,px,py,pz;char script[260];char*q=script;
+    if(!player||!W112_TeleRangeValid(info+W112_TELE_HIT_POS_OFF,12u,0u))return;
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
     y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
     z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
@@ -570,18 +577,34 @@ static void W112_TeleReportObjectPoint(DWORD info,BYTE *player)
     py=*(float*)(player+OFF_UNIT_Y);
     pz=*(float*)(player+OFF_UNIT_Z);
     if(!W112_Q_PosValid(x,y,z)||!W112_Q_PosValid(px,py,pz)){
-        DebugChat(g_teleBadPosChat);return;
+        DebugChat(g_teleBadPosChat);g_telePrevSampleValid=0u;return;
     }
-    q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele Click] hit2 XYZx10=");
+    q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[TeleDiag] type=");
+    q=AppU32(q,hitType);
+    q=AppStr(q," click10=");
     q=AppS32(q,(LONG)(x*10.0f));*q++=',';
     q=AppS32(q,(LONG)(y*10.0f));*q++=',';
     q=AppS32(q,(LONG)(z*10.0f));
-    q=AppStr(q," delta10=");
-    q=AppS32(q,(LONG)((x-px)*10.0f));*q++=',';
-    q=AppS32(q,(LONG)((y-py)*10.0f));*q++=',';
-    q=AppS32(q,(LONG)((z-pz)*10.0f));
-    q=AppStr(q," (preview only)') end");*q=0;
-    DebugChat(script);
+    q=AppStr(q," player10=");
+    q=AppS32(q,(LONG)(px*10.0f));*q++=',';
+    q=AppS32(q,(LONG)(py*10.0f));*q++=',';
+    q=AppS32(q,(LONG)(pz*10.0f));
+    q=AppStr(q,"') end");*q=0;DebugChat(script);
+    if(g_telePrevSampleValid){
+        q=script;
+        q=AppStr(q,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[TeleDiag] since previous click dHit10=");
+        q=AppS32(q,(LONG)((x-g_telePrevHitX)*10.0f));*q++=',';
+        q=AppS32(q,(LONG)((y-g_telePrevHitY)*10.0f));*q++=',';
+        q=AppS32(q,(LONG)((z-g_telePrevHitZ)*10.0f));
+        q=AppStr(q," dPlayer10=");
+        q=AppS32(q,(LONG)((px-g_telePrevPlayerX)*10.0f));*q++=',';
+        q=AppS32(q,(LONG)((py-g_telePrevPlayerY)*10.0f));*q++=',';
+        q=AppS32(q,(LONG)((pz-g_telePrevPlayerZ)*10.0f));
+        q=AppStr(q,"') end");*q=0;DebugChat(script);
+    }
+    g_telePrevHitX=x;g_telePrevHitY=y;g_telePrevHitZ=z;
+    g_telePrevPlayerX=px;g_telePrevPlayerY=py;g_telePrevPlayerZ=pz;
+    g_telePrevSampleValid=1u;
 }
 
 static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable)
@@ -634,7 +657,14 @@ static void W112_ClickTeleTick(BYTE *p,DWORD now)
     hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
     if(hitType!=1u){
         W112_TeleReportHit(hitBefore,hitType);
-        if(hitType==2u)W112_TeleReportObjectPoint(info,p);
+        if(hitType==2u)W112_TeleReportPoint(info,p,hitType);
+        else g_telePrevSampleValid=0u;
+        return;
+    }
+    /* Even a native type-1 terrain hit needs independent validation of the
+     * point against player movement before enabling position injection. */
+    if(W112_TELE_DIAG_ONLY){
+        W112_TeleReportPoint(info,p,hitType);
         return;
     }
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
@@ -681,6 +711,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      if(f6&&!g_stepKey6&&!W112_Q_ChatHasFocus()){
         g_stepEnabled=g_stepEnabled?0u:1u;
         g_stepActive=0u;
+        g_telePrevSampleValid=0u;
         DebugChat(g_stepEnabled?g_stepOnChat:g_stepOffChat);
      }
      g_stepKey6=f6;
