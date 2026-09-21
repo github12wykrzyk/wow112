@@ -330,13 +330,14 @@ namespace WoW112Updater
                     var chosen = UpdaterSafety.RequireLatestSuccessfulRun(runs, UpdaterWorkflowName, branch);
 
                     var runId = GetLong(chosen, "id");
+                    var runSha = GetString(chosen, "head_sha");
                     var artifacts = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100"))), "artifacts"));
                     Dictionary<string, object> artifact = null;
                     foreach (var item in artifacts)
                     {
                         var row = AsDictionary(item);
                         var name = GetString(row, "name");
-                        if (!GetBool(row, "expired") && name.StartsWith(UpdaterArtifactPrefix, StringComparison.OrdinalIgnoreCase))
+                        if (!GetBool(row, "expired") && string.Equals(name, UpdaterArtifactPrefix + runSha, StringComparison.OrdinalIgnoreCase))
                         {
                             artifact = row;
                             break;
@@ -357,6 +358,7 @@ namespace WoW112Updater
                         var updaterBytes = ReadEntry(updaterEntry);
                         var bootstrapBytes = ReadEntry(bootstrapEntry);
                         var meta = AsDictionary(json.DeserializeObject(Encoding.UTF8.GetString(ReadEntry(metaEntry))));
+                        UpdaterSafety.RequireUpdaterArtifactProvenance(meta, runSha, GetString(artifact, "name"));
                         var protocol = GetLong(meta, "self_update_protocol");
                         if (protocol != 1) throw new InvalidOperationException("Nieobsługiwany self_update_protocol: " + protocol);
                         if (!string.Equals(GetString(meta, "channel"), "parallel", StringComparison.Ordinal) ||

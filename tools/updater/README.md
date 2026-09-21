@@ -175,3 +175,9 @@ The **Monitor GH** button shows current branch HEAD and recent GitHub Actions st
 ## Oczyść DLL (2.5-parallel.6)
 
 Przycisk **Oczyść DLL** wyświetla DLL z głównego katalogu gry i poprzednio wyłączone pozycje. Zaznaczenie pliku oznacza usunięcie i zablokowanie ponownej instalacji; odznaczenie wcześniej wyłączonego modułu pozwala przywrócić go przy następnej aktualizacji. Czyszczenie wymaga zamkniętej gry i potwierdzenia. Pliki nieznane updaterowi są oznaczone i nie są wybierane automatycznie. Backup obejmuje usuwane DLL, `dlls.txt` i stan instalacji; rollback odtwarza te pliki, ale lista wyłączeń pozostaje w lokalnej konfiguracji do czasu świadomej zmiany. VERIFY/REPAIR respektuje wyłączenia. Przełączniki w oknie **DLL-e** nadal sterują wyłącznie aktualizowaniem istniejących plików.
+
+## Updater 2.6-parallel.1 — routing visibility and self-update provenance
+
+- Monitor GH shows live `feature/*` and `promote/*` refs and short HEAD alongside `parallel`, `work`, `main`. Experiment and promotion refs are **read-only**; this Parallel installer never picks their game artifacts automatically. The GitHub branch listing is limited to 100 entries and explicitly warns if truncated.
+- Self-update requires an artifact named `WoW112ParallelUpdater-<workflow-head-sha>`; its `updater_build.json` must match that same exact workflow SHA, `parallel` channel, both binary names, SHA256, sizes, x86 machine and bootstrap protocol before staging. Gameplay-only commits can advance Parallel after the updater workflow: the updater binary is bound to its own workflow SHA, not to the newer gameplay HEAD.
+- The existing game installer still requires an exact current `parallel` HEAD, candidate attestation, and `FINAL_PACKAGE: PASS`. Disabled DLL cleanup, backups and rollback are unchanged. No changes to game EXE, active DLLs or `main`/`work`.

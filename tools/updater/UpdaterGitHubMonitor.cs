@@ -163,6 +163,36 @@ namespace WoW112Updater
                         if (githubMonitorText != null && !githubMonitorText.IsDisposed)
                             githubMonitorText.Text = githubMonitorReport;
                     }
+                    // Feature and promotion refs are visible for experiment routing only.
+                    // Never interpret their HEAD as an installable Parallel candidate.
+                    try
+                    {
+                        var branchRows = AsArray(json.DeserializeObject(await GetStringAsync(client,
+                            ApiRoot + "/branches?per_page=100")));
+                        var experimentRefs = new List<string>();
+                        foreach (var item in branchRows)
+                        {
+                            var row = AsDictionary(item);
+                            var name = GetString(row, "name");
+                            if (!name.StartsWith("feature/", StringComparison.OrdinalIgnoreCase) &&
+                                !name.StartsWith("promote/", StringComparison.OrdinalIgnoreCase)) continue;
+                            var commit = AsDictionary(GetValue(row, "commit"));
+                            experimentRefs.Add(name + "  HEAD " + MonitorShort(GetString(commit, "sha"), 8));
+                        }
+                        experimentRefs.Sort(StringComparer.OrdinalIgnoreCase);
+                        result.AppendLine("EKSPERYMENTY / PROMOCJE (podgląd, nie są instalowane):");
+                        if (experimentRefs.Count == 0) result.AppendLine("  Brak widocznych branchy feature/* i promote/*.");
+                        foreach (var line in experimentRefs) result.AppendLine("  " + line);
+                        if (branchRows.Length == 100) result.AppendLine("  Lista może być niepełna: GitHub zwrócił limit 100 branchy.");
+                    }
+                    catch (Exception ex)
+                    {
+                        failed = true;
+                        result.AppendLine("Eksperymenty: błąd odczytu GitHub: " + MonitorShort(ex.Message, 180));
+                    }
+                    githubMonitorReport = result.ToString();
+                    if (githubMonitorText != null && !githubMonitorText.IsDisposed)
+                        githubMonitorText.Text = githubMonitorReport;
                 }
                 githubMonitorButton.Text = failed ? "GH: błąd" : "GH: " + DateTime.Now.ToString("HH:mm");
                 detailsTip.SetToolTip(githubMonitorButton, failed ? "Część odczytów nie powiodła się. Otwórz monitor." : "Ostatnia kontrola: " + DateTime.Now.ToString("HH:mm:ss"));

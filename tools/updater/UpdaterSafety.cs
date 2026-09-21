@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.5-parallel.6";
+        public const string Version = "2.6-parallel.1";
     }
 
     internal static class UpdaterSafety
@@ -98,6 +98,27 @@ namespace WoW112Updater
                 !string.Equals(GetString(proof, "delivery_status"), "READY_FOR_GAME_TEST", StringComparison.Ordinal) ||
                 !IsExplicitFalse(proof, "game_test_accepted"))
                 throw new InvalidOperationException("Brak poprawnego attestation dokładnego commita PARALLEL: instalacja zablokowana.");
+        }
+
+        // The updater build may legitimately predate gameplay-only commits on parallel.
+        // Bind it to the selected successful updater workflow SHA, not to the live game HEAD.
+        public static void RequireUpdaterArtifactProvenance(
+            Dictionary<string, object> metadata, string expectedRunSha, string artifactName)
+        {
+            if (metadata == null || !IsCommitSha(expectedRunSha) ||
+                !string.Equals(artifactName, "WoW112ParallelUpdater-" + expectedRunSha, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetString(metadata, "git_sha"), expectedRunSha, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetString(metadata, "channel"), "parallel", StringComparison.Ordinal) ||
+                !string.Equals(GetString(metadata, "name"), "WoW112ParallelUpdater.exe", StringComparison.Ordinal) ||
+                !string.Equals(GetString(metadata, "bootstrap_name"), "WoW112UpdaterBootstrap.exe", StringComparison.Ordinal) ||
+                GetInt64(metadata, "self_update_protocol") != 1 ||
+                string.IsNullOrWhiteSpace(GetString(metadata, "updater_version")) ||
+                !IsSha256Hex(GetString(metadata, "sha256")) ||
+                !IsSha256Hex(GetString(metadata, "bootstrap_sha256")) ||
+                GetInt64(metadata, "size") <= 0 || GetInt64(metadata, "bootstrap_size") <= 0 ||
+                !string.Equals(GetString(metadata, "pe_machine"), "0x014C", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetString(metadata, "bootstrap_pe_machine"), "0x014C", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Updater: brak zgodności artefaktu, branchu, SHA commita lub metadanych x86; aktualizacja zablokowana.");
         }
 
         private static long GetInt64(Dictionary<string, object> dict, string key)

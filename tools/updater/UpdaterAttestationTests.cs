@@ -101,6 +101,38 @@ namespace WoW112Updater
             }
         }
 
+        private static void UpdaterProvenanceTests()
+        {
+            var valid = new Dictionary<string, object> {
+                {"git_sha", Head}, {"channel", "parallel"}, {"name", "WoW112ParallelUpdater.exe"},
+                {"bootstrap_name", "WoW112UpdaterBootstrap.exe"}, {"self_update_protocol", 1},
+                {"updater_version", "2.6-parallel.1"}, {"sha256", Hash}, {"bootstrap_sha256", Hash},
+                {"size", 8192L}, {"bootstrap_size", 4096L},
+                {"pe_machine", "0x014C"}, {"bootstrap_pe_machine", "0x014C"}
+            };
+            Action<Dictionary<string, object>, string, string> reject = (meta, sha, name) => {
+                try { UpdaterSafety.RequireUpdaterArtifactProvenance(meta, sha, name); }
+                catch (InvalidOperationException) { ++checks; return; }
+                throw new Exception("Updater accepted mismatched build provenance");
+            };
+            var nameOk = "WoW112ParallelUpdater-" + Head;
+            UpdaterSafety.RequireUpdaterArtifactProvenance(valid, Head, nameOk); ++checks;
+            reject(valid, "0000000000000000000000000000000000000000", nameOk);
+            reject(valid, Head, "WoW112ParallelUpdater-" + Hash.Substring(0, 40));
+            foreach (var field in new[] { "git_sha", "channel", "name", "bootstrap_name",
+                "self_update_protocol", "updater_version", "sha256", "bootstrap_sha256",
+                "size", "bootstrap_size", "pe_machine", "bootstrap_pe_machine" })
+            {
+                var invalid = new Dictionary<string, object>(valid);
+                invalid.Remove(field); reject(invalid, Head, nameOk);
+            }
+            var wrongChannel = new Dictionary<string, object>(valid);
+            wrongChannel["channel"] = "work"; reject(wrongChannel, Head, nameOk);
+            var wrongSha = new Dictionary<string, object>(valid);
+            wrongSha["git_sha"] = "0000000000000000000000000000000000000000";
+            reject(wrongSha, Head, nameOk);
+        }
+
         public static int Main()
         {
             try
@@ -129,6 +161,7 @@ namespace WoW112Updater
                 HeadReject("", Head);
                 HeadReject(Head, "X" + Head.Substring(1));
                 LatestRunTests();
+                UpdaterProvenanceTests();
                 Console.WriteLine("UPDATER_ATTESTATION_TESTS: PASS (" + checks + " assertions)");
                 return 0;
             }
