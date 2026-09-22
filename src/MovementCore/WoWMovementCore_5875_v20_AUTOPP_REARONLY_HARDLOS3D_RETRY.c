@@ -352,6 +352,8 @@ static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrim
 static volatile DWORD g_chestEnabled=0u,g_chestGroupsMask=63u,g_chestAutoLoot=1u;
 static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
 static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u,g_chestSkipUntil=0u;
+/* The GUI exposes loaded/eligible counts and current target as live diagnostics. */
+static volatile DWORD g_chestScanSeen=0u,g_chestScanEligible=0u,g_chestScanLastEntry=0u;
 static volatile DWORD g_autoOpenClickCount=0u,g_autoOpenLastClickAt=0u;
 static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
 static volatile DWORD g_lastOpenChatLo=0u,g_lastOpenChatHi=0u,g_lastOpenChatTick=0u;
@@ -1018,7 +1020,12 @@ static const char* MiningName(DWORD e)
 static DWORD ChestGroupBit(DWORD e)
 {
     switch(e){
-        case 2843u:case 2844u:return 1u<<0; /* battered / tattered */
+        /* Vanilla Battered Chest templates: 2843/2844/2846/2849/
+         * 106318/106319. The former 2-ID filter missed the common spawns.
+         * Evidence: https://vanillawow.home.blog/2021/03/26/all-treasure-chests-in-vanilla-wow/
+         * Actual private-server entry must still be confirmed by GUI debug. */
+        case 2843u:case 2844u:case 2846u:case 2849u:
+        case 106318u:case 106319u:return 1u<<0;
         case 2850u:case 2855u:case 2857u:case 4149u:return 1u<<1; /* solid variants */
         case 75293u:return 1u<<2; /* large battered */
         case 74448u:case 75298u:case 75299u:case 75300u:return 1u<<3; /* large solid */
@@ -1178,13 +1185,15 @@ static DWORD MiningPriorityOwnsPP(DWORD now)
 
 static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DWORD*okind,float*od2)
 {
-    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o,*best=0;DWORD i,visible=0,nodes=0,profmatch=0,inrange=0,posfail=0,eligible=0,entry=0,kind=0,lo=0,hi=0,src=0,match=0,inCombat=0u;float px,py,pz,d2,bestd=GATHER_SCAN_RANGE_SQ+1.0f,x=0,y=0,z=0,copperBest=1000000000.0f;DWORD*desc;
+    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o,*best=0;DWORD i,visible=0,nodes=0,profmatch=0,inrange=0,posfail=0,eligible=0,entry=0,kind=0,lo=0,hi=0,src=0,match=0,inCombat=0u,chestSeen=0u,chestEligible=0u,chestLastEntry=0u;float px,py,pz,d2,bestd=GATHER_SCAN_RANGE_SQ+1.0f,x=0,y=0,z=0,copperBest=1000000000.0f;DWORD*desc;
     g_diagEntry=0u;
+    g_chestScanSeen=0u;g_chestScanEligible=0u;g_chestScanLastEntry=0u;
     if(!Ptr(m)||!Ptr(p))return 0;inCombat=Combat(p);px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);
     for(i=0u;i<4095u&&Ptr(o);i++){
         BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);visible++;desc=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);
         if(Ptr(desc)&&(desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_GAMEOBJECT)){
             entry=desc[OBJECT_FIELD_ENTRY_INDEX];kind=IsHerbEntry(entry)?1u:(IsMiningEntry(entry)?2u:(IsAutoOpenEntry(entry)?3u:(ChestGroupBit(entry)?4u:0u)));
+            if(kind==4u){++chestSeen;chestLastEntry=entry;}
             if(kind==2u&&CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH)))kind=0u;
             if(kind){
                 nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(LONG)(g_chestSkipUntil-now)>0)))?1u:0u;if(match)profmatch++;
@@ -1192,7 +1201,7 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
                     d2=DistSq3(px,py,pz,x,y,z);
                     if(entry==1731u&&d2<copperBest){copperBest=d2;CaptureCopperDiag(o,desc,px,py,pz,x,y,z,src,d2);}
                     if(match&&d2<=((kind==3u)?AUTOOPEN_MELEE_RANGE_SQ:GATHER_SCAN_RANGE_SQ)){
-                        inrange++;eligible++;lo=*(DWORD*)(o+OFF_OBJ_GUID_LOW);hi=*(DWORD*)(o+OFF_OBJ_GUID_HIGH);
+                        inrange++;eligible++;if(kind==4u)++chestEligible;lo=*(DWORD*)(o+OFF_OBJ_GUID_LOW);hi=*(DWORD*)(o+OFF_OBJ_GUID_HIGH);
                         /* Never suppress a matching node because of previous attempts. */
                         if(d2<bestd){best=o;bestd=d2;*oe=entry;*olo=lo;*ohi=hi;*okind=kind;}
                     }
@@ -1201,6 +1210,7 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
         }
         if(!Ptr(n)||n==o)break;o=n;
     }
+    g_chestScanSeen=chestSeen;g_chestScanEligible=chestEligible;g_chestScanLastEntry=chestLastEntry;
     g_gatherScanVisible=visible;g_gatherScanNodes=nodes;g_gatherScanProfMatch=profmatch;g_gatherScanInRange=inrange;g_gatherScanPosFail=posfail;g_gatherScanEligible=eligible;if(od2)*od2=best?bestd:0.0f;(void)now;return best;
 }
 

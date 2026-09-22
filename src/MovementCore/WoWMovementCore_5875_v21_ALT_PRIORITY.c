@@ -1254,7 +1254,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[7u+14u+7u+8u];
+static W112_ControlSettingV1 g_controlSettings[7u+14u+7u+8u+4u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1366,6 +1366,17 @@ static void init_control_descriptor(void)
             s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
         }
     }
+    {
+        static const char* keys[4]={"chest_scan_seen","chest_scan_eligible","chest_scan_entry","chest_current_step"};
+        static const char* labels[4]={"Chest: loaded candidates","Chest: eligible candidates","Chest: last entry","Chest: current Z step"};
+        for(i=0u;i<4u;++i){
+            s=&g_controlSettings[36u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=37u+i;s->key=keys[i];s->label=labels[i];s->type=W112_CTL_INT;
+            s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;
+            s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
     g_controlDescriptorReady=1u;
 }
 
@@ -1390,6 +1401,10 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==29u){out->u32=g_chestEnabled?1u:0u;return 1;}
     if(id>=30u&&id<=35u){out->u32=(g_chestGroupsMask&(1u<<(id-30u)))?1u:0u;return 1;}
     if(id==36u){out->u32=g_chestAutoLoot?1u:0u;return 1;}
+    if(id==37u){out->i32=(w112_i32)g_chestScanSeen;return 1;}
+    if(id==38u){out->i32=(w112_i32)g_chestScanEligible;return 1;}
+    if(id==39u){out->i32=(w112_i32)g_chestScanLastEntry;return 1;}
+    if(id==40u){out->i32=(w112_i32)((g_gatherActive&&g_gatherKind==4u)?g_chestStep:0u);return 1;}
     return 0;
 }
 
@@ -1468,7 +1483,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,36u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,40u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

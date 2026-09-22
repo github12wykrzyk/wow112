@@ -435,6 +435,7 @@ static DWORD g_ui_gather_control_pages[40]={0u};
 static HWND g_ui_gather_checks[16]={NULL};
 static HWND g_ui_gather_extra_checks[4]={NULL};
 static HWND g_ui_gather_chest_checks[8]={NULL};
+static HWND g_ui_gather_chest_diag=NULL;
 static DWORD g_ui_gather_page=0u;
 static HWND g_ui_gather_status=NULL;
 static DWORD g_ui_gather_count=0u,g_ui_gather_open=0u;
@@ -548,6 +549,22 @@ static void ui_sync_gather(void) {
         DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,36u,29u+i,&v)&&v.u32?1u:0u;
         if(g_ui_gather_chest_checks[i])
             SendMessageA(g_ui_gather_chest_checks[i],UI_SETCHECK,checked,0);
+    }
+    if(g_ui_gather_chest_diag){
+        W112_ControlValueV1 seen,eligible,entry,step;
+        char buf[160],*p=buf;
+        BOOL ok=live&&ui_work_pp_get(PAR_CORE_DLL,40u,37u,&seen)&&
+            ui_work_pp_get(PAR_CORE_DLL,40u,38u,&eligible)&&
+            ui_work_pp_get(PAR_CORE_DLL,40u,39u,&entry)&&
+            ui_work_pp_get(PAR_CORE_DLL,40u,40u,&step);
+        if(!ok)SetWindowTextA(g_ui_gather_chest_diag,"Chest scanner: NOT READY");
+        else{
+            p=app_str(p,"Chest scan: loaded ");p=app_u32(p,seen.u32);
+            p=app_str(p," | eligible ");p=app_u32(p,eligible.u32);
+            p=app_str(p," | entry ");p=app_u32(p,entry.u32);
+            p=app_str(p," | Z step ");p=app_u32(p,step.u32);
+            *p=0;SetWindowTextA(g_ui_gather_chest_diag,buf);
+        }
     }
     if(g_ui_gather_status)SetWindowTextA(g_ui_gather_status,
         !live?"MovementCore controls unavailable: update Parallel candidate.":
@@ -1164,9 +1181,9 @@ static BOOL ui_create(HWND game) {
                 i<=3u?46:382,335+(int)((i-1u)%3u)*72,307,48,215u+i,TRUE);
             ui_add_gather_page_control(g_ui_gather_chest_checks[i],1u);
         }
-        ui_add_gather_page_control(ui_label(g_parallel_ui_hwnd,
-            "All chest types are opt-in through AutoChest master switch.",
-            46,555,665,26,FALSE),1u);
+        g_ui_gather_chest_diag=ui_label(g_parallel_ui_hwnd,
+            "Chest scanner: waiting for MovementCore",46,541,665,38,FALSE);
+        ui_add_gather_page_control(g_ui_gather_chest_diag,1u);
     }
     ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
         "< BACK TO ROGUE",46,596,275,43,207u,FALSE),3u);
@@ -1293,6 +1310,7 @@ static void parallel_gui_destroy(void) {
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;
     for(page=0u;page<8u;++page)g_ui_gather_chest_checks[page]=NULL;
+    g_ui_gather_chest_diag=NULL;
     g_ui_gather_status=NULL;g_ui_gather_count=0u;g_ui_gather_open=0u;g_ui_gather_page=0u;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
