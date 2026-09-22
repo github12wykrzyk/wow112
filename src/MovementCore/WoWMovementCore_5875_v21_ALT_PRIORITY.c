@@ -666,6 +666,8 @@ static void AltPriority_Start(DWORD now)
     }
 }
 
+/* Shared with the later teleport declaration; avoid a duplicate definition. */
+static DWORD g_telePending;
 /* Existing game timer is the sole state-machine executor. Exactly one ALT
    reset may start for each PP-correlated combat episode. */
 static void PPRecovery_Tick(BYTE*p,DWORD now)
