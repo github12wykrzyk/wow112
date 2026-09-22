@@ -72,6 +72,22 @@ def main():
     else:
         print("ERROR: unrecognized control-parent layout; cannot verify click routing")
         return 1
+    # Recovery is opt-in and must have a real root-parent button, wired
+    # handler, saved profile entry and full teardown; do not merely draw text.
+    for token in (
+        'g_ui_pp_recovery_check=ui_button(g_parallel_ui_hwnd',
+        'ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_recovery_check)',
+        'if(id==129u){',
+        'ui_work_pp_flip(PAR_CORE_DLL,65u,60u);',
+        'g_ui_profile_core_ids[]={1u,2u,3u,',
+        '49u,60u};',
+        '{PAR_CORE_DLL,65u,g_ui_profile_core_ids,33u,FALSE',
+        'g_ui_pp_check=NULL;g_ui_pp_recovery_check=NULL;g_ui_junkbox_check=NULL;',
+    ):
+        if token not in text:
+            print("ERROR: AutoPP recovery GUI/persistence/teardown missing:", token)
+            return 1
+    print("PARALLEL_GUI_AUTOPP_RECOVERY: PASS (root handler, saved toggle, teardown)")
     # Layout guard: never render rear counters inside the compact STATUS row.
     # The full metrics have their own fourth *internal* page. All interactive
     # buttons must still parent directly to the original top-level HWND.
@@ -158,7 +174,7 @@ def main():
         'g_ui_current_tab=page;',
         'if(g_ui_prev)',
         'DestroyWindow(g_parallel_ui_hwnd);',
-        'g_ui_pp_check=NULL;g_ui_junkbox_check=NULL;',
+        'g_ui_pp_check=NULL;g_ui_pp_recovery_check=NULL;g_ui_junkbox_check=NULL;',
     )):
         print("ERROR: Insert/open/close/recreate or GUI state retention guard failed")
         return 1
