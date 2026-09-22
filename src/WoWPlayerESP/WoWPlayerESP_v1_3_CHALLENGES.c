@@ -421,7 +421,7 @@ static HWND g_ui_speedfloor_check=NULL;
 static HWND g_ui_hostile_guard_check=NULL;
 static HWND g_ui_speedfloor_state=NULL;
 static HWND g_ui_speedfloor_value=NULL;
-static HWND g_ui_pp_check=NULL,g_ui_junkbox_check=NULL;
+static HWND g_ui_pp_check=NULL,g_ui_pp_recovery_check=NULL,g_ui_junkbox_check=NULL;
 static HWND g_ui_pp_control_state=NULL,g_ui_core_state=NULL;
 static HWND g_ui_autopp_state=NULL;
 static HWND g_ui_longpp_state=NULL;
@@ -673,17 +673,32 @@ static void ui_sync_rogue(void) {
         }
     }
     {
-        W112_ControlValueV1 pp,junk;
+        W112_ControlValueV1 pp,junk,recovery,phase,resets,casts;
         BOOL ppLive=ui_work_pp_get(PAR_CORE_DLL,25u,2u,&pp);
         BOOL junkLive=ui_work_pp_get(PAR_RANGE_DLL,7u,1u,&junk);
+        BOOL recoveryLive=ui_work_pp_get(PAR_CORE_DLL,65u,60u,&recovery);
         if(g_ui_pp_check)SendMessageA(g_ui_pp_check,UI_SETCHECK,
                                       ppLive&&pp.u32?1u:0u,0);
+        if(g_ui_pp_recovery_check)SendMessageA(g_ui_pp_recovery_check,UI_SETCHECK,
+            recoveryLive&&recovery.u32?1u:0u,0);
         if(g_ui_junkbox_check)SendMessageA(g_ui_junkbox_check,UI_SETCHECK,
                                            junkLive&&junk.u32?1u:0u,0);
-        if(g_ui_pp_control_state)SetWindowTextA(g_ui_pp_control_state,
-            !ppLive?"AutoPP: MovementCore control unavailable":
-            pp.u32?"AutoPP: ON (work / F11; blacklist + retry)":
-                   "AutoPP: OFF (manual PP remains available)");
+        if(g_ui_pp_control_state){
+            char info[210],*q=info;
+            if(!ppLive)q=app_str(q,"AutoPP: MovementCore unavailable");
+            else if(!recoveryLive)q=app_str(q,"AutoPP: recovery control unavailable");
+            else{
+                q=app_str(q,recovery.u32?"Auto Stealth: ON":"Auto Stealth: OFF");
+                if(ui_work_pp_get(PAR_CORE_DLL,65u,61u,&phase)&&
+                   ui_work_pp_get(PAR_CORE_DLL,65u,62u,&resets)&&
+                   ui_work_pp_get(PAR_CORE_DLL,65u,63u,&casts)){
+                    q=app_str(q," | phase ");q=app_u32(q,phase.u32);
+                    q=app_str(q," | ALT ");q=app_u32(q,resets.u32);
+                    q=app_str(q," | Stealth ");q=app_u32(q,casts.u32);
+                }
+            }
+            *q=0;SetWindowTextA(g_ui_pp_control_state,info);
+        }
         if(g_ui_core_state)SetWindowTextA(g_ui_core_state,
             !ppLive?"MovementCore: NOT READY (PP control unavailable)":
             pp.u32?"MovementCore AutoPP: ON (live control)":
@@ -779,7 +794,7 @@ __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCST
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
-static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u};
+static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
 struct UiProfileModule {
@@ -788,11 +803,11 @@ struct UiProfileModule {
     const DWORD *ids;
     DWORD count;
     BOOL restored;
-    DWORD last[32];
-    BYTE seen[32];
+    DWORD last[33];
+    BYTE seen[33];
 };
 static struct UiProfileModule g_ui_profile_modules[]={
-    {PAR_CORE_DLL,50u,g_ui_profile_core_ids,32u,FALSE,{0},{0}},
+    {PAR_CORE_DLL,65u,g_ui_profile_core_ids,33u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
@@ -1081,6 +1096,10 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             ui_work_pp_flip(PAR_WSG_DLL,4u,1u);
             ui_sync_wsg();ui_profile_sync();return 0;
         }
+        if(id==129u){
+            ui_work_pp_flip(PAR_CORE_DLL,65u,60u);
+            ui_sync_rogue();ui_profile_sync();return 0;
+        }
         if(id==109u || id==110u) {
             if(id==109u)ui_work_pp_flip(PAR_CORE_DLL,25u,2u);
             else ui_work_pp_flip(PAR_RANGE_DLL,7u,1u);
@@ -1169,19 +1188,22 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
         "+",606,338,72,47,108u,FALSE));
     g_ui_speedfloor_state=ui_label(g_parallel_ui_hwnd,
-        "",46,404,665,32,FALSE);
+        "",46,395,665,26,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_speedfloor_state);
     g_ui_pp_check=ui_button(g_parallel_ui_hwnd,
-        "AUTO PICKPOCKET - work MovementCore (F11)",46,440,665,42,109u,TRUE);
+        "AUTO PICKPOCKET (F11)",46,427,665,36,109u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_check);
+    g_ui_pp_recovery_check=ui_button(g_parallel_ui_hwnd,
+        "AUTO STEALTH + PP COMBAT RECOVERY (ALT)",46,472,665,36,129u,TRUE);
+    ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_recovery_check);
     g_ui_junkbox_check=ui_button(g_parallel_ui_hwnd,
-        "AUTO JUNKBOX - work PickPocketSelectiveRange",46,491,665,42,110u,TRUE);
+        "AUTO JUNKBOX - PickPocketSelectiveRange",46,517,665,36,110u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_junkbox_check);
     g_ui_pp_control_state=ui_label(g_parallel_ui_hwnd,
-        "",46,548,665,35,FALSE);
+        "",46,561,665,26,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
     ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
-        "GATHER: ORE / CHESTS / OPTIONS  >",46,589,665,44,206u,FALSE));
+        "GATHER: ORE / CHESTS / OPTIONS  >",46,591,665,42,206u,FALSE));
 
     /* One compact Gather subview, two internal pages. Parent every HWND to root. */
     ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
@@ -1378,7 +1400,7 @@ static void parallel_gui_destroy(void) {
     for(page=0u;page<5u;++page)g_ui_checks[page]=NULL;
     g_ui_speedfloor_check=NULL;g_ui_hostile_guard_check=NULL;
     g_ui_speedfloor_state=NULL;g_ui_speedfloor_value=NULL;
-    g_ui_pp_check=NULL;g_ui_junkbox_check=NULL;
+    g_ui_pp_check=NULL;g_ui_pp_recovery_check=NULL;g_ui_junkbox_check=NULL;
     g_ui_pp_control_state=NULL;g_ui_core_state=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;

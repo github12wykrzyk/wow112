@@ -800,10 +800,16 @@ static void PPHardRetryTick(DWORD now)
 #if defined(W112_PP_SELECTOR_BLACKLIST_BRIDGE)
 static void W112_PPSelector_ReleaseTracked(DWORD lo,DWORD hi);
 #endif
+#if defined(W112_PP_RECOVERY_HOOK)
+static void PPRecoveryOnAutoPPFailure(DWORD reason);
+#endif
 static void __cdecl PPBlacklistOnFail(DWORD reason)
 {
     DWORD lo,hi,added,now;
     if(!g_ppFailPendingAuto)return;
+#if defined(W112_PP_RECOVERY_HOOK)
+    PPRecoveryOnAutoPPFailure(reason);
+#endif
     lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;
 #if defined(W112_PP_FIXED_POINT)
     PPFixed_Queue(3u,reason,lo,hi,g_ppFailPendingVariant,0.0f,0.0f,0.0f);
@@ -1837,6 +1843,9 @@ static void PPPreemptOutgoing(DWORD now)
 #if defined(W112_PP_DETECTION_GUARD)
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now);
 #endif
+#if defined(W112_PP_RECOVERY_HOOK)
+static void PPRecoveryOnAutoPPSent(DWORD lo,DWORD hi,DWORD now);
+#endif
 static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
 {
     BYTE*raw;DWORD op,spell,now,isAutoSource,tlo=0u,thi=0u,variant=0u;
@@ -1870,6 +1879,9 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
         PPHardSelect(tlo,thi,&variant);
     }
     PPPreemptOutgoing(now);
+#if defined(W112_PP_RECOVERY_HOOK)
+    if(isAutoSource)PPRecoveryOnAutoPPSent(tlo,thi,now);
+#endif
 }
 
 static void GatherTick(BYTE*p,DWORD now)

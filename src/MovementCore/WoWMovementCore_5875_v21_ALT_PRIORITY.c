@@ -21,6 +21,7 @@
 #define W112_PP_DETECTION_GUARD 1
 #define W112_PP_ALWAYS_BEHIND 1
 #define W112_PP_SELECTOR_BLACKLIST_BRIDGE 1
+#define W112_PP_RECOVERY_HOOK 1
 #define DllMain W112_MovementCoreV20_DllMain
 #define MovementCore_GetVersion W112_MovementCoreV20_GetVersion
 #include "WoWMovementCore_5875_v20_AUTOPP_REARONLY_HARDLOS3D_RETRY.c"
@@ -271,10 +272,21 @@ static volatile DWORD g_loginGuardReady=0u,g_loginGuardSince=0u;
 static volatile DWORD g_ppGuardReady=0u,g_ppGuardReadySince=0u;
 static volatile DWORD g_ppGuardHoldLo=0u,g_ppGuardHoldHi=0u,g_ppGuardHoldUntil=0u;
 static volatile DWORD g_ppGuardCatches=0u,g_ppGuardPulseFixes=0u;
+/* PP-correlated combat is a recovery signal, not proof of a server resist. */
+#define PP_RECOVERY_WATCH_MS        2000u
+#define PP_RECOVERY_RESET_GAP_MS   18000u
+#define PP_RECOVERY_STEALTH_GAP_MS  5500u
+static volatile DWORD g_ppRecoveryEnabled=0u,g_ppRecoveryPhase=0u;
+static volatile DWORD g_ppRecoveryWatchUntil=0u,g_ppRecoveryWatchLo=0u,g_ppRecoveryWatchHi=0u;
+static volatile DWORD g_ppRecoveryLastCombat=0u,g_ppRecoveryCombatSince=0u;
+static volatile DWORD g_ppRecoveryOutOfCombatSince=0u,g_ppRecoveryResetAttempted=0u;
+static volatile DWORD g_ppRecoveryNextAllowed=0u,g_ppRecoveryLastStealthCast=0u;
+static volatile DWORD g_ppRecoveryResets=0u,g_ppRecoveryStealthCasts=0u;
+static volatile DWORD g_ppRecoveryCombatEvents=0u,g_ppRecoveryLastFailReason=0u;
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
     return g_loginGuardReady&&g_autoPPEnabled&&Ptr(p)&&
-           GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled;
+           GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled&&g_ppRecoveryPhase<2u;
 }
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 {
@@ -394,6 +406,26 @@ static void __cdecl RearPriority_DirectMovement(DataStore5875* packet)
     ++g_rearPriorityDirectPackets;
 }
 
+/* Packet and spell-failure callbacks are data-only; reset runs in the timer. */
+static void PPRecoveryOnAutoPPSent(DWORD lo,DWORD hi,DWORD now)
+{
+    if(!g_ppRecoveryEnabled||g_ppRecoveryPhase>=2u||
+       !g_ppGuardReady||!(lo|hi))return;
+    g_ppRecoveryWatchLo=lo;g_ppRecoveryWatchHi=hi;
+    g_ppRecoveryWatchUntil=now+PP_RECOVERY_WATCH_MS;
+    g_ppRecoveryLastFailReason=0u;
+    g_ppRecoveryPhase=1u;
+}
+static void PPRecoveryOnAutoPPFailure(DWORD reason)
+{
+    g_ppRecoveryLastFailReason=reason;
+    /* No-pockets and LoS are identified failures, never evidence of resist. */
+    if(g_ppRecoveryPhase==1u &&
+       (reason==SPELL_FAILED_TARGET_NO_POCKETS||
+        reason==SPELL_FAILED_LINE_OF_SIGHT)){
+        g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+    }
+}
 static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
 {
     if(!packet)return;
@@ -632,6 +664,90 @@ static void AltPriority_Start(DWORD now)
         ++g_altPriorityStarts;
         GatherFileLog("ALT_PRIORITY_START",now,0u,0u,0u,0.0f,g_altPriorityStarts,0u);
     }
+}
+
+/* Existing game timer is the sole state-machine executor. Exactly one ALT
+   reset may start for each PP-correlated combat episode. */
+static void PPRecovery_Tick(BYTE*p,DWORD now)
+{
+    DWORD fighting;
+    if(!g_ppRecoveryEnabled||!Ptr(p)){
+        g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+        g_ppRecoveryOutOfCombatSince=0u;g_ppRecoveryResetAttempted=0u;
+        g_ppRecoveryLastCombat=Ptr(p)?Combat(p):0u;
+        return;
+    }
+    fighting=Combat(p);
+    if(g_ppRecoveryPhase==1u &&
+       (LONG)(now-g_ppRecoveryWatchUntil)>=0)g_ppRecoveryPhase=0u;
+    if(fighting&&!g_ppRecoveryLastCombat&&g_ppRecoveryPhase==1u &&
+       (LONG)(now-g_ppRecoveryWatchUntil)<0){
+        g_ppRecoveryPhase=2u;g_ppRecoveryCombatSince=now;
+        g_ppRecoveryResetAttempted=0u;g_ppRecoveryOutOfCombatSince=0u;
+        ++g_ppRecoveryCombatEvents;
+        PPHardRetryCancel();
+        GatherFileLog("AUTOPP_COMBAT_RECOVERY_ARMED",now,0u,
+                      g_ppRecoveryWatchLo,g_ppRecoveryWatchHi,0.0f,
+                      g_ppRecoveryCombatEvents,g_ppRecoveryLastFailReason);
+    }
+    g_ppRecoveryLastCombat=fighting;
+    if(fighting){
+        g_ppRecoveryOutOfCombatSince=0u;
+        if(g_ppRecoveryPhase==2u&&!g_ppRecoveryResetAttempted&&
+           (DWORD)(now-g_ppRecoveryCombatSince)>=120u &&
+           (!g_ppRecoveryNextAllowed||
+            (LONG)(now-g_ppRecoveryNextAllowed)>=0)&&
+           g_mode==MODE_OFF&&!g_altPriorityPendingUntil&&!g_keyAlt&&
+           !CoordRearOwned()&&!g_abCapGuardActive&&!g_telePending&&
+           !g_stepActive&&!g_planeEnabled&&
+           !g_gatherActive&&!g_gatherLootWait&&!LongPPActive()&&
+           !LongPPInjecting()&&
+           *(DWORD*)ADDR_CASTING_SPELLID!=SPELL_PICK_POCKET){
+            g_ppRecoveryResetAttempted=1u;
+            AltPriority_Start(now);
+            if(g_mode==MODE_LOCAL_STRONG){
+                g_ppRecoveryNextAllowed=now+PP_RECOVERY_RESET_GAP_MS;
+                ++g_ppRecoveryResets;
+                GatherFileLog("AUTOPP_COMBAT_ALT_RESET",now,0u,
+                              g_ppRecoveryWatchLo,g_ppRecoveryWatchHi,
+                              0.0f,g_ppRecoveryResets,0u);
+            }
+        }
+        return;
+    }
+    if(g_ppRecoveryPhase==2u){
+        g_ppRecoveryPhase=3u;
+        g_ppRecoveryOutOfCombatSince=now;
+    }
+    if(GatherHasStealth(p)){
+        if(g_ppRecoveryPhase==3u&&g_mode==MODE_OFF){
+            g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+            GatherFileLog("AUTOPP_STEALTH_RECOVERED",now,0u,
+                          g_ppRecoveryWatchLo,g_ppRecoveryWatchHi,0.0f,
+                          g_ppRecoveryResets,0u);
+        }
+        return;
+    }
+    /* Never interrupt a cast, gather or PP, or race manual ALT/other movement. */
+    if(g_ppRecoveryPhase==1u||g_mode!=MODE_OFF||
+       g_altPriorityPendingUntil||g_keyAlt||CoordRearOwned()||
+       g_abCapGuardActive||g_telePending||g_stepActive||
+       g_planeEnabled||g_gatherActive||g_gatherLootWait||
+       LongPPActive()||LongPPInjecting()||
+       *(DWORD*)ADDR_CASTING_SPELLID||GatherLootOpen()||
+       !Ptr(*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR))||
+       !(*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR))[UNIT_FIELD_HEALTH_INDEX])
+        return;
+    if(g_ppRecoveryPhase==3u &&
+       (DWORD)(now-g_ppRecoveryOutOfCombatSince)<350u)return;
+    if(g_ppRecoveryLastStealthCast &&
+       (DWORD)(now-g_ppRecoveryLastStealthCast)<PP_RECOVERY_STEALTH_GAP_MS)
+        return;
+    g_ppRecoveryLastStealthCast=now;
+    ++g_ppRecoveryStealthCasts;
+    DebugChat("CastSpellByName('Stealth')");
+    GatherFileLog("AUTOPP_AUTO_STEALTH_CAST",now,0u,0u,0u,0.0f,
+                  g_ppRecoveryStealthCasts,g_ppRecoveryPhase);
 }
 
 /*
@@ -1324,7 +1440,9 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(!g_loginGuardReady){
         g_planeEnabled=0u;g_planeLastApplied=0u;
         g_planeRestorePending=0u;g_planeNotice=0u;
-        g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;
+        g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;
+        g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+        g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;return;
     }
     if(g_planeEnabled&&p&&Combat(p))Plane_Disable(1u);
     Plane_TimerRestore(p);
@@ -1410,6 +1528,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_gatherStealthPending=0u;g_gatherSpoof=0u;
         GatherFileLog("WORLD_LOST_ABORT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
     }
+    PPRecovery_Tick(p,now);
     /* The rear lease ends in PvERear's own timer. Start only after it clears;
        otherwise its movement hook could rewrite the SafeBreak XYZ. Keep the
        same cast/channel guard and abort stale requests on world loss. */
@@ -1540,7 +1659,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[59u];
+static W112_ControlSettingV1 g_controlSettings[65u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1756,6 +1875,25 @@ static void init_control_descriptor(void)
             s->enum_options=0;s->enum_option_count=0u;
         }
     }
+    {
+        static const char* keys[6]={"pp_auto_stealth_recovery","pp_recovery_phase",
+            "pp_recovery_alt_resets","pp_recovery_stealth_casts",
+            "pp_recovery_combat_events","pp_recovery_last_fail"};
+        static const char* labels[6]={"AutoPP: auto Stealth + combat recovery (ALT)",
+            "PP recovery: phase (0 idle,1 PP,2 combat,3 stealth)",
+            "PP recovery: ALT reset starts","PP recovery: Stealth cast attempts",
+            "PP recovery: PP-correlated combat events","PP recovery: last PP failure reason"};
+        for(i=0u;i<6u;++i){
+            s=&g_controlSettings[59u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=60u+i;s->key=keys[i];s->label=labels[i];
+            s->type=i==0u?W112_CTL_BOOL:W112_CTL_INT;
+            s->default_value.u32=0u;s->min_value.u32=0u;
+            s->max_value.i32=i==0u?1:2147483647;
+            s->step.i32=1;
+            s->flags=i==0u?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
     g_controlDescriptorReady=1u;
 }
 
@@ -1766,6 +1904,12 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==46u){out->i32=(w112_i32)g_planeDepth;return 1;}
     if(id==47u){out->i32=(w112_i32)g_planePackets;return 1;}
     if(id==48u){out->i32=(w112_i32)g_planeTxZ10;return 1;}
+    if(id==60u){out->u32=g_ppRecoveryEnabled?1u:0u;return 1;}
+    if(id==61u){out->i32=(w112_i32)g_ppRecoveryPhase;return 1;}
+    if(id==62u){out->i32=(w112_i32)g_ppRecoveryResets;return 1;}
+    if(id==63u){out->i32=(w112_i32)g_ppRecoveryStealthCasts;return 1;}
+    if(id==64u){out->i32=(w112_i32)g_ppRecoveryCombatEvents;return 1;}
+    if(id==65u){out->i32=(w112_i32)g_ppRecoveryLastFailReason;return 1;}
     if(id==1u){out->u32=g_gatherEnabled?1u:0u;return 1;}
     if(id==2u){out->u32=g_autoPPEnabled?1u:0u;return 1;}
     if(id==3u){out->u32=g_autoOpenEnabled?1u:0u;return 1;}
@@ -1881,6 +2025,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         W112_MiningBlacklistApply(p,now);
         return 1;
     }
+    if(id==60u){g_ppRecoveryEnabled=value->u32;return 1;}
     if(id==2u){g_autoPPEnabled=value->u32;return 1;}
     if(id==3u){
         g_autoOpenEnabled=value->u32;
@@ -1917,7 +2062,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,59u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,65u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
