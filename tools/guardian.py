@@ -69,14 +69,13 @@ def bounded_patch(source, old, new):
     if old == new or len(old) > 6000 or len(new) > 6000 or source.count(old) != 1:
         raise ValueError("invalid or non-unique replacement anchor")
     changed = source.replace(old, new, 1)
-    diff = [x for x in difflib.SequenceMatcher(a=source.splitlines(),
-             b=changed.splitlines()).get_opcodes() if x[0] != "equal"]
-    if sum(max(a2 - a1, b2 - b1) for _, a1, a2, b1, b2 in diff) > 40:
+    # The replacement anchor is unique. Check exactly the touched span instead
+    # of aligning the entire file: difflib can misalign repetitive large sources
+    # and incorrectly report thousands of changed lines for one-line edits.
+    if max(old.count("\n") + 1, new.count("\n") + 1) > 40:
         raise ValueError("patch exceeds 40 changed lines")
     critical = re.compile(r"0x[0-9a-fA-F]{5,}|(?:VirtualProtect|WriteProcessMemory|Detour|Trampoline)\s*\(")
-    orig, updated = source.splitlines(), changed.splitlines()
-    if any(critical.search("\n".join(orig[a1:a2] + updated[b1:b2]))
-           for _, a1, a2, b1, b2 in diff):
+    if critical.search(old + "\n" + new):
         raise ValueError("hook/address modifications are excluded")
     if len(source.encode("utf-8")) > 400000 or len(changed.encode("utf-8")) > 406000:
         raise ValueError("source size limit exceeded")
