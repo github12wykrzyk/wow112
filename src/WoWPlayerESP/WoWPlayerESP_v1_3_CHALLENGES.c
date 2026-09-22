@@ -1202,7 +1202,7 @@ static BOOL ui_create(HWND game) {
         };
         for(i=0u;i<4u;++i){
             g_ui_gather_extra_checks[i]=ui_button(g_parallel_ui_hwnd,options[i],
-                46,205+(int)i*57,665,44,210u+i,TRUE);
+                46,216+(int)i*54,665,44,210u+i,TRUE);
             ui_add_gather_page_control(g_ui_gather_extra_checks[i],2u);
         }
     }
