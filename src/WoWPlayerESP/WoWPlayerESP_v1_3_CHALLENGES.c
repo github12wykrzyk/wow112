@@ -1119,7 +1119,10 @@ static BOOL ui_create(HWND game) {
     return TRUE;
 }
 static void parallel_gui_tick(void) {
-    HWND game=g_hooked_game_hwnd,fg;
+    /* GUI must remain reachable when ESP is disabled in the persisted profile,
+     * or its click/label subclass has not been installed yet. The verified
+     * client window getter is independent of ESP overlay initialization. */
+    HWND game=((GetGameWindowFn)FN_GET_GAME_WINDOW)(0),fg;
     /* WndProc is not guaranteed to remain in the live subclass chain when
      * other runtime modules replace it. Render-loop polling restores Insert
      * without adding a hook or allowing one press to toggle twice. */
