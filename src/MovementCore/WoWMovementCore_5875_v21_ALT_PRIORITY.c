@@ -17,6 +17,7 @@
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
  */
 
+#define W112_PP_FIXED_POINT 1
 #define W112_PP_DETECTION_GUARD 1
 #define W112_PP_ALWAYS_BEHIND 1
 #define W112_PP_SELECTOR_BLACKLIST_BRIDGE 1
@@ -157,6 +158,79 @@ __declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorSkipped(void)
 __declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorReleased(void)
 {return g_ppSelectorReleased;}
 
+
+/* Minimal bounded flight recorder for a fixed rear point per PP attempt.
+   Hot hooks only enqueue records; disk writes happen on the existing timer
+   after LongPP has stopped, never inside ClientServices::Send. The updater
+   includes the bounded tail of this separate log in its GitHub report. */
+#define PP_FIXED_RING 64u
+#define PP_FIXED_MAX_BYTES 262144u
+typedef struct PPFixedRecord {
+    DWORD ev,reason,lo,hi,variant,tick,stealth,combat;
+    LONG sx,sy,sz,so,tx,ty,tz,rx,ry,rz;
+} PPFixedRecord;
+static PPFixedRecord g_ppFixedRecords[PP_FIXED_RING];
+static volatile DWORD g_ppFixedWrite=0u,g_ppFixedRead=0u,g_ppFixedDropped=0u;
+static const char g_ppFixedLogName[]="PPFixedPoint_debug.log";
+static void PPFixed_Queue(DWORD event,DWORD reason,DWORD lo,DWORD hi,DWORD variant,float rawX,float rawY,float rawZ)
+{
+    DWORD pos=g_ppFixedWrite;PPFixedRecord*q;BYTE*p=LocalPlayer();
+    if(pos-g_ppFixedRead>=PP_FIXED_RING){++g_ppFixedDropped;return;}
+    q=&g_ppFixedRecords[pos%PP_FIXED_RING];
+    q->ev=event;q->reason=reason;q->lo=lo;q->hi=hi;q->variant=variant;
+    q->tick=GT()?GT()():0u;
+    q->stealth=p?GatherHasStealth(p):0u;q->combat=p?Combat(p):0u;
+    q->sx=(LONG)(g_ppHardX*10.0f);q->sy=(LONG)(g_ppHardY*10.0f);
+    q->sz=(LONG)(g_ppHardZ*10.0f);q->so=(LONG)(g_ppHardO*100.0f);
+    q->tx=(LONG)(g_ppFixedTargetX*10.0f);
+    q->ty=(LONG)(g_ppFixedTargetY*10.0f);
+    q->tz=(LONG)(g_ppFixedTargetZ*10.0f);
+    q->rx=(LONG)(rawX*10.0f);q->ry=(LONG)(rawY*10.0f);
+    q->rz=(LONG)(rawZ*10.0f);
+    g_ppFixedWrite=pos+1u;
+}
+static void PPFixed_Flush(void)
+{
+    DWORD n=0u,wrote=0u,sz=0u;HANDLE fd;
+    CreateFileA_t cf=CF();WriteFile_t wf=WF();SetFilePointer_t sfp=SFP();
+    GetFileSize_t gfs=GFS();SetEndOfFile_t seof=SEOF();CloseHandle_t ch=CH();
+    if(!cf||!wf||!sfp||!ch||LongPPActive()||LongPPInjecting())return;
+    if(g_ppFixedRead==g_ppFixedWrite)return;
+    fd=cf(g_ppFixedLogName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,
+          0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+    if(fd==INVALID_HANDLE_VALUE||!fd)return;
+    if(gfs&&seof){
+        sz=gfs(fd,0);
+        if(sz!=0xFFFFFFFFu&&sz>PP_FIXED_MAX_BYTES){
+            sfp(fd,0,0,FILE_BEGIN);seof(fd);
+        }
+    }
+    sfp(fd,0,0,FILE_END);
+    while(g_ppFixedRead!=g_ppFixedWrite&&n++<8u){
+        const PPFixedRecord*q=&g_ppFixedRecords[g_ppFixedRead%PP_FIXED_RING];
+        char line[320],*p=line;
+        p=AppStr(p,"pp_fixed_v1 tick=");p=AppU32(p,q->tick);
+        p=AppStr(p," event=");p=AppU32(p,q->ev);
+        p=AppStr(p," reason=");p=AppU32(p,q->reason);
+        p=AppStr(p," guid=");p=AppHex32(p,q->hi);p=AppHex32(p,q->lo);
+        p=AppStr(p," variant=");p=AppU32(p,q->variant);
+        p=AppStr(p," stealth=");p=AppU32(p,q->stealth);
+        p=AppStr(p," combat=");p=AppU32(p,q->combat);
+        p=AppStr(p," fixed_xyz10=");p=AppS32(p,q->sx);*p++=',';
+        p=AppS32(p,q->sy);*p++=',';p=AppS32(p,q->sz);
+        p=AppStr(p," facing100=");p=AppS32(p,q->so);
+        p=AppStr(p," target_xyz10=");p=AppS32(p,q->tx);*p++=',';
+        p=AppS32(p,q->ty);*p++=',';p=AppS32(p,q->tz);
+        p=AppStr(p," original_xyz10=");p=AppS32(p,q->rx);*p++=',';
+        p=AppS32(p,q->ry);*p++=',';p=AppS32(p,q->rz);
+        p=AppStr(p," dropped=");p=AppU32(p,g_ppFixedDropped);
+        *p++='\r';*p++='\n';
+        if(!wf(fd,line,(DWORD)(p-line),&wrote,0)||wrote!=(DWORD)(p-line))break;
+        ++g_ppFixedRead;
+    }
+    ch(fd);
+}
+
 static volatile DWORD g_altPriorityInstalled=0u;
 static volatile DWORD g_altPriorityBlockCurrent=0u;
 static volatile DWORD g_altPriorityStarts=0u;
@@ -207,6 +281,7 @@ static void W112_PPGuard_Tick(BYTE*p,DWORD now)
             g_ppGuardHoldHi=g_ppFailPendingHi;
             g_ppGuardHoldUntil=now+W112_PP_GUARD_COOLDOWN_MS;
             W112_PPSelector_ReleaseTracked(g_ppGuardHoldLo,g_ppGuardHoldHi);
+            PPFixed_Queue(4u,0u,g_ppGuardHoldLo,g_ppGuardHoldHi,g_ppFailPendingVariant,0.0f,0.0f,0.0f);
             PPHardRetryCancel();
             ++g_ppGuardCatches;
         }
@@ -336,6 +411,11 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
        *(DWORD*)g_longPPGuidLoPtr==g_ppHardLo&&
        *(DWORD*)g_longPPGuidHiPtr==g_ppHardHi){
         PPHardApplySpoof();
+        if(!g_ppFixedFirstSeen){
+            PPFixed_Queue(2u,0u,g_ppHardLo,g_ppHardHi,g_ppFailPendingVariant,
+                          *(float*)(raw+0x0Cu),*(float*)(raw+0x10u),*(float*)(raw+0x14u));
+            g_ppFixedFirstSeen=1u;
+        }
         *(float*)(raw+0x0Cu)=g_ppHardX;
         *(float*)(raw+0x10u)=g_ppHardY;
         *(float*)(raw+0x14u)=g_ppHardZ;
@@ -954,6 +1034,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;}
     W112_PPGuard_Tick(p,now);
     PPBlacklistTick(now);
+    PPFixed_Flush();
     FlushPendingPPLog();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
     k8=(GK()(VK_F8)&(short)0x8000)?1u:0u;

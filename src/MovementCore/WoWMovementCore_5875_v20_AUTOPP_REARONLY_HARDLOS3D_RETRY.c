@@ -597,6 +597,11 @@ static float PPAtan2YX(float y,float x)
     return r;
 }
 
+#if defined(W112_PP_FIXED_POINT)
+static void PPFixed_Queue(DWORD event,DWORD reason,DWORD lo,DWORD hi,DWORD variant,float rawX,float rawY,float rawZ);
+static volatile DWORD g_ppFixedFirstSeen=0u;
+static float g_ppFixedTargetX=0.0f,g_ppFixedTargetY=0.0f,g_ppFixedTargetZ=0.0f;
+#endif
 static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
 {
     PPSweepSlot*ss;BYTE*t;DWORD idx,group,variant;
@@ -636,8 +641,12 @@ static void PPHardSelect(DWORD lo,DWORD hi,DWORD*variantOut)
     g_ppRearLastRefresh=0u;
 #endif
     g_ppHardLo=lo;g_ppHardHi=hi;g_ppHardArmed=1u;g_ppFailPendingVariant=idx;++g_ppHardLOSArms;if(variantOut)*variantOut=idx;
+#if defined(W112_PP_FIXED_POINT)
+    g_ppFixedFirstSeen=0u;g_ppFixedTargetX=x;g_ppFixedTargetY=y;g_ppFixedTargetZ=z;
+    PPFixed_Queue(1u,0u,lo,hi,idx,x,y,z);
+#endif
 }
-#if defined(W112_PP_ALWAYS_BEHIND)
+#if defined(W112_PP_ALWAYS_BEHIND) && !defined(W112_PP_FIXED_POINT)
 /* Refresh at most every 50 ms, only inside the existing active PP movement
    chain. Re-resolve by GUID (never trust a potentially stale object pointer).
    A target turn/move updates the same rear-sector offset before LongPP
@@ -669,7 +678,7 @@ static void PPHardApplySpoof(void)
     if(!g_ppHardArmed||!g_ppChainOk||!LongPPActive())return;
     if(!Ptr((void*)g_longPPSpoofXPtr)||!Ptr((void*)g_longPPSpoofYPtr)||!Ptr((void*)g_longPPSpoofZPtr)||!Ptr((void*)g_longPPSpoofOPtr)||!Ptr((void*)g_longPPGuidLoPtr)||!Ptr((void*)g_longPPGuidHiPtr))return;
     if(*(DWORD*)g_longPPGuidLoPtr!=g_ppHardLo||*(DWORD*)g_longPPGuidHiPtr!=g_ppHardHi)return;
-#if defined(W112_PP_ALWAYS_BEHIND)
+#if defined(W112_PP_ALWAYS_BEHIND) && !defined(W112_PP_FIXED_POINT)
     PPHardRefreshBehind();
 #endif
     *(float*)g_longPPSpoofXPtr=g_ppHardX;*(float*)g_longPPSpoofYPtr=g_ppHardY;*(float*)g_longPPSpoofZPtr=g_ppHardZ;*(float*)g_longPPSpoofOPtr=g_ppHardO;++g_ppHardLOSOverrides;
@@ -707,7 +716,11 @@ static void __cdecl PPBlacklistOnFail(DWORD reason)
 {
     DWORD lo,hi,added,now;
     if(!g_ppFailPendingAuto)return;
-    lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;g_ppHardArmed=0u;
+    lo=g_ppFailPendingLo;hi=g_ppFailPendingHi;
+#if defined(W112_PP_FIXED_POINT)
+    PPFixed_Queue(3u,reason,lo,hi,g_ppFailPendingVariant,0.0f,0.0f,0.0f);
+#endif
+    g_ppFailPendingAuto=0u;g_ppFailPendingSawActive=0u;g_ppHardArmed=0u;
     if(reason==SPELL_FAILED_TARGET_NO_POCKETS){
         added=PPBlackAdd(lo,hi);g_ppFailLogEvent=added?1u:2u;g_ppFailLogLo=lo;g_ppFailLogHi=hi;g_ppFailLogVariant=g_ppBlackCount;PPHardRetryCancel();
 #if defined(W112_PP_SELECTOR_BLACKLIST_BRIDGE)
