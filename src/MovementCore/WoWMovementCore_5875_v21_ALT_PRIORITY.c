@@ -936,6 +936,38 @@ static DWORD W112_TeleAvailable(BYTE *p)
        g_stepMoveInjecting)return 0u;
     return 1u;
 }
+
+/* Map open is checked at the E edge AND before dispatch of an earlier
+ * terrain raycast. A visible map never forwards E to terrain under the UI.
+ * E over the map canvas submits the SAME validated map request as left click.
+ * This Lua UI query is synchronous on the existing UI timer. */
+#define W112_MAP_GETTEXT_FN 0x00703BF0u
+typedef const char* (__fastcall *W112_MapGetTextFn)(const char*,int,DWORD);
+static const char g_teleMapVisibleScript[]=
+ "W112_MAP_TELE_E_MAP_OPEN=(WorldMapFrame and WorldMapFrame:IsShown()) and '1' or '0'";
+static const char g_teleMapECaptureScript[]=
+ "if WorldMapFrame and WorldMapFrame:IsShown() then "
+ "if WorldMapButton and WorldMapButton:IsVisible() then "
+ "local scale=WorldMapButton:GetEffectiveScale();"
+ "local w=WorldMapButton:GetWidth();local h=WorldMapButton:GetHeight();"
+ "if scale and scale>0 and w and w>0 and h and h>0 then "
+ "local x,y=GetCursorPosition();"
+ "local mx=(x/scale-WorldMapButton:GetLeft())/w;"
+ "local my=(WorldMapButton:GetTop()-y/scale)/h;"
+ "if mx>=0 and mx<=1 and my>=0 and my<=1 then "
+ "W112_MAP_TELE_SEQ=(W112_MAP_TELE_SEQ or 0)+1;"
+ "W112_MAP_TELE_REQUEST=tostring(W112_MAP_TELE_SEQ)..':'..tostring(math.floor(mx*1000000+0.5))..':'..tostring(math.floor(my*1000000+0.5));"
+ "else if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele map] E: point inside map canvas') end end "
+ "end end end";
+static DWORD W112_TeleMapShown(void)
+{
+ const char*raw;W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
+ if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 1u;/* fail closed */
+ DebugChat(g_teleMapVisibleScript);
+ raw=getText("W112_MAP_TELE_E_MAP_OPEN",-1,0u);
+ return !raw||raw[0]!='0'||raw[1]!=0;/* unknown != proof map closed */
+}
+
 static void W112_KeyTeleTick(BYTE *p,DWORD now)
 {
     DWORD pressed=(GK()(W112_TELE_KEY_E)&(short)0x8000)?1u:0u;
@@ -959,6 +991,9 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
         }
         if((DWORD)(now-g_teleWaitLast)<W112_TELE_SETTLE_MS)return;
+        if(!g_telePendingFromMap&&W112_TeleMapShown()){
+            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+        }
         /* Unlike a terrain hit, type-2 XYZ has unverified provenance.
          * Refresh after the short settle interval and require a stable object
          * cursor point; player movement does not cancel the pending pulse. */
@@ -1002,6 +1037,10 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     if(!trigger)return;
     if(W112_Q_ChatHasFocus()){DebugChat(g_teleChatFocusChat);return;}
     if(!W112_TeleAvailable(p)){DebugChat(g_teleBlockedChat);return;}
+    if(W112_TeleMapShown()){
+        DebugChat(g_teleMapECaptureScript); /* never fall through to terrain */
+        return;
+    }
     if(!W112_TeleRangeValid(W112_TELE_CLICK_INFO_PTR,4u,0u)||
        !W112_TeleRangeValid(W112_TELE_REFRESH_FN,16u,1u)){
         DebugChat(g_teleMemoryChat);return;
@@ -1064,8 +1103,6 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
 #define W112_MAP_AREA_RECORDS   0x00C0D5BCu
 #define W112_MAP_AREA_COUNT     0x00C0D5C0u
 #define W112_MAP_LOADED_ID      0x00B4E378u
-#define W112_MAP_GETTEXT_FN     0x00703BF0u
-typedef const char* (__fastcall *W112_MapGetTextFn)(const char*,int,DWORD);
 static DWORD g_mapInstallLast=0u,g_mapSeqSeen=0u;
 static const char g_mapInstallScript[]=
  "if WorldMapButton and WorldMapFrame and not W112_MAP_TELE_HOOKED then "
@@ -1073,8 +1110,10 @@ static const char g_mapInstallScript[]=
  "cb:SetWidth(24);cb:SetHeight(24);"
  "cb:SetPoint('TOPLEFT',WorldMapFrame,'TOPLEFT',38,-26);"
  "local label=WorldMapFrame:CreateFontString(nil,'OVERLAY','GameFontNormalSmall');"
- "label:SetPoint('LEFT',cb,'RIGHT',2,0);label:SetText('Tele map (F6)');"
- "W112_MAP_TELE_ON=0;W112_MAP_TELE_SEQ=0;W112_MAP_TELE_REQUEST='';"
+ "label:SetPoint('LEFT',cb,'RIGHT',2,0);label:SetText('Tele map: click / E (F6)');"
+ "if W112_MAP_TELE_ON==nil then W112_MAP_TELE_ON=0 end;" 
+ "if W112_MAP_TELE_SEQ==nil then W112_MAP_TELE_SEQ=0 end;" 
+ "if W112_MAP_TELE_REQUEST==nil then W112_MAP_TELE_REQUEST='' end;"
  "cb:SetScript('OnClick',function() "
  "W112_MAP_TELE_ON=this:GetChecked() and 1 or 0;"
  "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele map] '..(W112_MAP_TELE_ON==1 and 'ON' or 'OFF')) end end);"
