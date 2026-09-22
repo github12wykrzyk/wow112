@@ -300,75 +300,13 @@ static DWORD g_telePending;
 static DWORD g_mapFallPending;
 static DWORD g_mapBackKeyDown;
 
-/* AutoPP must not initiate or retry a theft before the player has landed.
-   Sample the real client Z (never a synthetic packet XYZ) and verify the
-   native 5875 movement flags. A short zero-dZ interval at jump apex cannot
-   unlock PP because falling/jumping flags keep the gate closed. */
-#define W112_PP_GROUND_SETTLE_MS  550u
-#define W112_PP_GROUND_Z_EPSILON 0.10f
-#define W112_PP_GROUND_AIR_MASK  (0x0000F000u|MOVEFLAG_FLYING|MOVEFLAG_SWIMMING|MOVEFLAG_ONTRANSPORT)
-static volatile DWORD g_ppGroundReady=0u,g_ppGroundSampled=0u;
-static volatile DWORD g_ppGroundStillSince=0u,g_ppGroundWaitForFall=0u;
-static volatile DWORD g_ppGroundBlocks=0u;
-static float g_ppGroundLastZ=0.0f;
-static void W112_PPGround_Reset(void)
-{
- g_ppGroundReady=0u;g_ppGroundSampled=0u;
- g_ppGroundStillSince=0u;g_ppGroundWaitForFall=0u;
-}
-static DWORD W112_PPGround_NativeReady(BYTE*p)
-{
- DWORD *flags;float z;
- if(!g_loginGuardReady||!Ptr(p)||g_stepActive||g_stepMoveInjecting||
-    g_telePending||g_planeEnabled)return 0u;
- flags=MoveFlags(p);
- if(!flags||(*flags&W112_PP_GROUND_AIR_MASK))return 0u;
- z=*(float*)(p+OFF_UNIT_Z);
- return ValidWorldPos(*(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z)&&
-        g_ppGroundSampled&&AbsF(z-g_ppGroundLastZ)<=W112_PP_GROUND_Z_EPSILON;
-}
-static DWORD W112_PPGround_SafeNow(BYTE*p)
-{
- return g_ppGroundReady&&!g_ppGroundWaitForFall&&
-        W112_PPGround_NativeReady(p);
-}
-static void W112_PPGround_Tick(BYTE*p,DWORD now)
-{
- float z,delta;DWORD*flags;
- if(!g_loginGuardReady||!Ptr(p)){W112_PPGround_Reset();return;}
- flags=MoveFlags(p);
- if(!flags){W112_PPGround_Reset();return;}
- z=*(float*)(p+OFF_UNIT_Z);
- if(!ValidWorldPos(*(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z)){
-  W112_PPGround_Reset();return;
- }
- if(!g_ppGroundSampled){
-  g_ppGroundLastZ=z;g_ppGroundSampled=1u;
-  g_ppGroundStillSince=0u;g_ppGroundReady=0u;return;
- }
- delta=z-g_ppGroundLastZ;
- g_ppGroundLastZ=z;
- /* A high map launch must produce real downward movement (or a native
-    falling flag) before even beginning the grounded settle interval. */
- if(g_ppGroundWaitForFall &&
-    (delta<-W112_PP_GROUND_Z_EPSILON||
-     (*flags&0x0000F000u)))g_ppGroundWaitForFall=0u;
- if(AbsF(delta)>W112_PP_GROUND_Z_EPSILON||
-    (*flags&W112_PP_GROUND_AIR_MASK)||g_ppGroundWaitForFall||
-    g_stepActive||g_stepMoveInjecting||g_telePending||
-    g_mapFallPending||g_mapBackKeyDown||g_planeEnabled){
-  g_ppGroundReady=0u;g_ppGroundStillSince=0u;return;
- }
- if(!g_ppGroundStillSince)g_ppGroundStillSince=now;
- if((DWORD)(now-g_ppGroundStillSince)>=W112_PP_GROUND_SETTLE_MS)
-  g_ppGroundReady=1u;
-}
+/* Flight/Z-based AutoPP restriction removed: no ground sampling, settle timer,
+   fall latch or movement-flag veto in scanner selection or cast send. */
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
     return g_loginGuardReady&&g_autoPPEnabled&&Ptr(p)&&
            GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled&&
-           !g_ppLowHpHold&&g_ppRecoveryPhase<2u&&
-           W112_PPGround_SafeNow(p);
+           !g_ppLowHpHold&&g_ppRecoveryPhase<2u;
 }
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 {
@@ -380,7 +318,6 @@ static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 static void W112_PPGuard_Tick(BYTE*p,DWORD now)
 {
     if(!W112_PPGuard_Safe(p)){
-        if(!W112_PPGround_SafeNow(p))++g_ppGroundBlocks;
         if(g_ppGuardReady&&g_ppFailPendingAuto&&
            (g_ppFailPendingLo|g_ppFailPendingHi)){
             g_ppGuardHoldLo=g_ppFailPendingLo;
@@ -1334,11 +1271,6 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
         g_stepMoveInjecting=0u;
         g_stepActive=0u;
         if(g_telePendingFromMap&&g_mapHighEnabled){
-            /* The client is teleported to a high synthetic Z before native
-               physics starts. Do not mistake that initial altitude for land. */
-            g_ppGroundReady=0u;g_ppGroundStillSince=0u;
-            g_ppGroundSampled=1u;g_ppGroundLastZ=g_teleDestZ;
-            g_ppGroundWaitForFall=1u;
             g_mapFallDestX=g_teleDestX;g_mapFallDestY=g_teleDestY;
             g_mapFallSentAt=now;g_mapFallPending=1u;
         }
@@ -1709,19 +1641,13 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
         g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;
         g_ppRecoverySource=0u;g_ppLowHpHold=0u;g_ppLowHpPercent=100u;
-        W112_PPGround_Reset();return;
+        return;
     }
     if(g_planeEnabled&&p&&Combat(p))Plane_Disable(1u);
     Plane_TimerRestore(p);
     PPRecovery_LowHpObserve(p,now);
-    W112_PPGround_Tick(p,now);
     W112_PPGuard_Tick(p,now);
     CombatVeinObserve(p,now);
-    /* PPBlacklistTick also drives the independent 56-way HARDLOS replay.
-       Cancel its pending auto retry while airborne, not just new scanner
-       packets. Let an already active LongPP transaction finish normally. */
-    if(!W112_PPGround_SafeNow(p)&&g_ppHardRetryActive)
-        PPHardRetryCancel();
     PPBlacklistTick(now);
     PPFixed_Flush();
     FlushPendingPPLog();
@@ -1776,9 +1702,6 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     W112_KeyTeleTick(p,now);
     W112_MapTeleTick(p,now);
     W112_MapFallTick(p,now);
-    /* Teleport dispatch can change Z after the earlier ground sample.
-       Re-evaluate before another module's scanner can send AutoPP. */
-    W112_PPGround_Tick(p,now);
     /* Hold competing periodic movement writers only while the E destination
      * is settling; do not cancel their casts or persistently disable them. */
     if(g_telePending&&g_mode!=MODE_OFF&&!g_safeBreakPauseTick)
