@@ -100,6 +100,17 @@ $taskCommand = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypas
 if ($LASTEXITCODE -ne 0) { throw 'Windows Task Scheduler creation failed' }
 Write-Host "Installed: $taskName. Runs hourly while Windows user is logged in."
 Write-Host "Installed from verified main revision: $sha"
+Write-Host 'First optimization test run: checking the live branches and local model now...'
+# The first run is synchronous: waiting here surfaces the real result instead of
+# treating successful task registration as proof that the AI ran.
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runner
+$testCode = $LASTEXITCODE
+if ($testCode -ne 0) {
+    Write-Warning "Initial local run failed with exit code $testCode. The hourly task remains installed."
+} else {
+    Write-Host 'Initial local run completed. Review last_run.json for audited module and result.'
+}
+
 Write-Host "Log: $(Join-Path $folder 'last_run.log')"
 Write-Host "Run now: schtasks /Run /TN $taskName"
 Write-Host 'Uninstall: schtasks /Delete /F /TN WoW112GuardianLocal'

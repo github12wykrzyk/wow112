@@ -70,11 +70,13 @@ def main():
     if any(r["head"] == "unknown" for r in rows):
         repair = {"state": "skipped", "reason": "GitHub audit incomplete"}
     else:
-        repair = guardian.repair(rows, model_call=local_completion)
+        # Review one active development source every run, even when all CI jobs pass.
+        # A patch, when defensible, is an isolated draft PR subject to the x86 gate.
+        repair = guardian.repair(rows, model_call=local_completion, optimize=True)
     result = {"timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
               "branches": [{"branch": x["branch"], "head": x["head"],
                             "findings": x["findings"]} for x in rows],
-              "repair": repair}
+              "mode": "performance_review", "repair": repair}
     # Local diagnostics without source content, API token or model prompt.
     report = ROOT / "last_run.json"
     report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
