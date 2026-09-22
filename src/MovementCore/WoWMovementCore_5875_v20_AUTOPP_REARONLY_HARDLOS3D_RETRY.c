@@ -237,7 +237,7 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define SPELL_VANISH_STEALTH_R1         11327u
 #define SPELL_VANISH_STEALTH_R2         11329u
 #define GATHER_STEALTH_BREAK_DELAY_MS      180u
-#define AUTOOPEN_PICKLOCK_SETTLE_MS          90u
+#define AUTOOPEN_PICKLOCK_SETTLE_MS         300u
 #define AUTOOPEN_CLICK_RETRY_MS             550u
 #define AUTOOPEN_CLICK_MAX_ATTEMPTS           3u
 #define AUTOOPEN_HOLD_MS                    5600u
@@ -1153,13 +1153,74 @@ static void GatherSendFake(BYTE*p,DWORD now)
     float x,y,z,o;SendMove_t sm=(SendMove_t)ADDR_SEND_MOVE;if(!Ptr(p)||LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;x=*(float*)(p+OFF_UNIT_X);y=*(float*)(p+OFF_UNIT_Y);z=*(float*)(p+OFF_UNIT_Z);o=*(float*)(p+OFF_UNIT_O);g_injecting=1;*(float*)(p+OFF_UNIT_X)=g_gatherX;*(float*)(p+OFF_UNIT_Y)=g_gatherY;*(float*)(p+OFF_UNIT_Z)=g_gatherZ;sm(p,MSG_MOVE_HEARTBEAT);sm(p,MSG_MOVE_HEARTBEAT);g_hb+=2u;*(float*)(p+OFF_UNIT_X)=x;*(float*)(p+OFF_UNIT_Y)=y;*(float*)(p+OFF_UNIT_Z)=z;*(float*)(p+OFF_UNIT_O)=o;g_injecting=0;g_gatherLastHB=now;
 }
 
+/* World-frame RMB: use the same build-5875 native projection and game
+ * window helper verified by the active PlayerESP lineage.  Do not click when
+ * the box is off screen, another app is focused, or the native ABI differs. */
+typedef struct W112OpenPoint { LONG x,y; } W112OpenPoint;
+typedef struct W112OpenRect { LONG left,top,right,bottom; } W112OpenRect;
+typedef BOOL (__thiscall *W112OpenProject)(DWORD,float*,float*);
+typedef void (__fastcall *W112OpenDdc)(float*,float*,float,float);
+typedef HWND (__fastcall *W112OpenGetWindow)(int);
+__declspec(dllimport) HWND __stdcall GetForegroundWindow(void);
+__declspec(dllimport) BOOL __stdcall GetClientRect(HWND,W112OpenRect*);
+__declspec(dllimport) BOOL __stdcall ClientToScreen(HWND,W112OpenPoint*);
+__declspec(dllimport) BOOL __stdcall GetCursorPos(W112OpenPoint*);
+__declspec(dllimport) BOOL __stdcall SetCursorPos(int,int);
+__declspec(dllimport) LONG __stdcall SendMessageA(HWND,UINT,DWORD,LONG);
+static DWORD W112AutoOpenScreenRightClick(BYTE*obj)
+{
+    static const BYTE w2s[]={0x55u,0x8Bu,0xECu,0x83u,0xECu,0x24u};
+    static const BYTE ddc[]={0x55u,0x8Bu,0xECu,0x85u,0xC9u,0x74u};
+    W112OpenPoint prior,point;
+    W112OpenRect rect;
+    HWND window;
+    DWORD i,frame,src=0u,packed;
+    DWORD*desc;
+    float xyz[3],raw[3]={0.0f,0.0f,0.0f},nx=-1.0f,ny=-1.0f;
+    if(!Ptr(obj))return 0u;
+    for(i=0u;i<sizeof(w2s);i++)if(((BYTE*)0x00483EE0u)[i]!=w2s[i])return 0u;
+    for(i=0u;i<sizeof(ddc);i++)if(((BYTE*)0x0041ADE0u)[i]!=ddc[i])return 0u;
+    window=((W112OpenGetWindow)0x00435C30u)(0);
+    if(!window||GetForegroundWindow()!=window||!GetClientRect(window,&rect)||
+       rect.right<=rect.left||rect.bottom<=rect.top)return 0u;
+    frame=*(DWORD*)0x00B4B2BCu;
+    if(!Ptr((void*)frame))return 0u;
+    desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!GetGOPos(obj,desc,&xyz[0],&xyz[1],&xyz[2],&src))return 0u;
+    xyz[2]+=0.5f;
+    if(!((W112OpenProject)0x00483EE0u)(frame,xyz,raw))return 0u;
+    ((W112OpenDdc)0x0041ADE0u)(&nx,&ny,raw[0],raw[1]);
+    if(nx<0.02f||nx>0.98f||ny<0.02f||ny>0.98f)return 0u;
+    point.x=(LONG)(nx*(float)(rect.right-rect.left));
+    point.y=(LONG)((1.0f-ny)*(float)(rect.bottom-rect.top));
+    packed=(DWORD)(WORD)point.x|((DWORD)(WORD)point.y<<16);
+    if(!GetCursorPos(&prior)||!ClientToScreen(window,&point))return 0u;
+    if(!SetCursorPos(point.x,point.y))return 0u;
+    SendMessageA(window,0x0200u,0u,(LONG)packed);
+    SendMessageA(window,0x0204u,0x0002u,(LONG)packed);
+    SendMessageA(window,0x0205u,0u,(LONG)packed);
+    SetCursorPos(prior.x,prior.y);
+    return 1u;
+}
 static void GatherClickNative(BYTE*p,BYTE*obj,DWORD now)
 {
-    if(!Ptr(p)||!Ptr(obj)||LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;((RightClickObject_t)ADDR_ONRIGHTCLICK_OBJECT)(obj,0);++g_gatherClicks;
+    DWORD sent;
+    if(!Ptr(p)||!Ptr(obj)||LongPPActive()||LongPPInjecting()||
+       (*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;
     if(g_gatherKind==3u){
+        if(!AutoOpenInMelee(p,obj,&g_gatherDistSq))return;
+        sent=W112AutoOpenScreenRightClick(obj);
         ++g_autoOpenClickCount;g_autoOpenLastClickAt=now;
-        GatherFileLog("AUTOOPEN_NATIVE_CLICK_SENT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_autoOpenClickCount,g_gatherKind);
-    }else GatherFileLog("NEAR_NATIVE_CLICK",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
+        if(sent)++g_gatherClicks;
+        GatherFileLog(sent?"AUTOOPEN_SCREEN_RMB_SENT":"AUTOOPEN_SCREEN_RMB_SKIPPED",
+                      now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,
+                      g_gatherDistSq,g_autoOpenClickCount,g_gatherKind);
+        return;
+    }
+    ((RightClickObject_t)ADDR_ONRIGHTCLICK_OBJECT)(obj,0);
+    ++g_gatherClicks;
+    GatherFileLog("NEAR_NATIVE_CLICK",now,g_gatherEntry,g_gatherTargetLo,
+                  g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
 }
 
 static float Mining3DWorldZ(DWORD group)
