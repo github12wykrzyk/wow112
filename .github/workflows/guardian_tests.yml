@@ -4,10 +4,15 @@ on:
   push:
     branches:
       - 'feature/wow112-guardian'
+      - 'feature/guardian-*'
       - 'promote/wow112-guardian'
+      - 'promote/guardian-*'
     paths:
       - 'tools/guardian.py'
       - 'tools/test_guardian.py'
+      - 'tools/guardian_local.py'
+      - 'tools/test_guardian_local.py'
+      - 'tools/install_guardian_local.ps1'
       - '.github/workflows/guardian_tests.yml'
   pull_request:
     branches:
@@ -27,6 +32,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Compile Guardian script
-        run: python3 -m py_compile tools/guardian.py tools/test_guardian.py
+        run: python3 -m py_compile tools/guardian.py tools/test_guardian.py tools/guardian_local.py tools/test_guardian_local.py
       - name: Test patch restrictions
-        run: python3 -m unittest discover -s tools -p 'test_guardian.py' -v
+        run: python3 -m unittest discover -s tools -p 'test_guardian*.py' -v
+
+  powershell-installer-syntax:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate local PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/install_guardian_local.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw 'Guardian installer has PowerShell syntax errors'
+          }

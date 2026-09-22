@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
+  actions: read
   issues: write
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   group: wow112-guardian
@@ -29,7 +29,6 @@ jobs:
       - name: Audit live branch heads and propose bounded fixes
         env:
           GH_TOKEN: ${{ github.token }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python3 tools/guardian.py
       - name: Upload audit evidence
         if: always()
