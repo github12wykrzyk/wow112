@@ -25,7 +25,7 @@ function Require-Program($name, $id, [string[]]$knownPaths) {
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
     if (-not $winget) { throw "Cannot locate $name. winget is unavailable; install $id, then rerun." }
     Write-Host "Installing missing program $id..."
-    & $winget.Source install -e --id $id --accept-source-agreements --accept-package-agreements
+    & $winget.Source install -e --id $id --accept-source-agreements --accept-package-agreements | Out-Host
     $installCode = $LASTEXITCODE
     $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
                 [Environment]::GetEnvironmentVariable('Path','User') + ';' + $env:Path
