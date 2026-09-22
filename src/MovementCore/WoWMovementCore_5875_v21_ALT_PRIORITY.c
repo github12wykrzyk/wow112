@@ -231,6 +231,14 @@ static void PPFixed_Flush(void)
     ch(fd);
 }
 
+/* W112_PLANE_TEST: only outgoing packet Z is modified, never client XYZ. */
+static volatile DWORD g_planeEnabled=0u,g_planeDepth=12u,g_planePackets=0u;
+static volatile LONG g_planeTxZ10=0;
+static volatile DWORD g_planeDirectCurrent=0u,g_planeLastApplied=0u;
+static DWORD __cdecl Plane_TryDirectMovement(DataStore5875 *packet);
+static const char g_planeOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Plane TEST]|r ON: outgoing Z lowered; server acceptance UNKNOWN') end";
+static const char g_planeOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Plane TEST]|r OFF: restoring normal movement') end";
+static const char g_planeCombatChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Plane TEST]|r OFF: combat detected') end";
 static volatile DWORD g_altPriorityInstalled=0u;
 static volatile DWORD g_altPriorityBlockCurrent=0u;
 static volatile DWORD g_altPriorityStarts=0u;
@@ -263,7 +271,7 @@ static volatile DWORD g_ppGuardCatches=0u,g_ppGuardPulseFixes=0u;
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
     return g_loginGuardReady&&g_autoPPEnabled&&Ptr(p)&&
-           GatherHasStealth(p)&&!Combat(p);
+           GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled;
 }
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 {
@@ -543,6 +551,16 @@ alt_forward_packet:
         call PPHardApplySpoof
         popad
         popfd
+        pushfd
+        pushad
+        push ecx
+        call Plane_TryDirectMovement
+        add esp,4
+        mov dword ptr [g_planeDirectCurrent],eax
+        popad
+        popfd
+        cmp dword ptr [g_planeDirectCurrent],0
+        jne alt_direct_packet
         mov  eax,dword ptr [g_nextMoveTarget]
         call eax
         ret
@@ -1037,6 +1055,54 @@ static DWORD W112_AutoOpenBusy(BYTE*p)
     return 0u;
 }
 
+/* Native 5875 outbound movement callsite. Diagnostic Z is the SENT value,
+ * not a measured or server-acknowledged position. */
+static DWORD __cdecl Plane_TryDirectMovement(DataStore5875 *packet)
+{
+    BYTE *player,*raw;
+    DWORD *moveFlags;
+    float x,y,z,localX,localY,localZ,newZ;
+    if(!g_planeEnabled||!g_loginGuardReady||!packet||
+       packet->size<0x20u||packet->size>MAX_PACKET_SIZE)return 0u;
+    if(g_injecting||g_stepMoveInjecting||g_stepActive||g_telePending||
+       g_mode!=MODE_OFF||g_gatherActive||g_gatherLootWait||g_gatherSpoof||
+       LongPPActive()||LongPPInjecting()||g_ppResetInProgress||
+       g_abCapGuardActive||CoordRearOwned()||
+       *(volatile DWORD*)ADDR_CASTING_SPELLID)return 0u;
+    player=LocalPlayer();
+    if(!Ptr(player)||Combat(player))return 0u;
+    moveFlags=MoveFlags(player);
+    if(!moveFlags||(*moveFlags&
+       (MOVEFLAG_ONTRANSPORT|MOVEFLAG_SWIMMING|MOVEFLAG_FLYING|0x0000E000u)))
+       return 0u;
+    raw=PacketRawBase(packet);
+    if(!raw)return 0u;
+    x=*(float*)(raw+0x0Cu);y=*(float*)(raw+0x10u);z=*(float*)(raw+0x14u);
+    localX=*(float*)(player+OFF_UNIT_X);
+    localY=*(float*)(player+OFF_UNIT_Y);
+    localZ=*(float*)(player+OFF_UNIT_Z);
+    if(!ValidWorldPos(x,y,z)||!ValidWorldPos(localX,localY,localZ)||
+       AbsF(x-localX)>1.5f||AbsF(y-localY)>1.5f||
+       AbsF(z-localZ)>1.5f)return 0u;
+    newZ=z-(float)g_planeDepth;
+    if(!ValidWorldPos(x,y,newZ))return 0u;
+    *(float*)(raw+0x14u)=newZ;
+    g_planeTxZ10=(LONG)(newZ*10.0f);
+    ++g_planePackets;
+    g_planeLastApplied=1u;
+    return 1u;
+}
+static void Plane_Disable(BYTE *player,DWORD combat)
+{
+    DWORD restore=g_planeLastApplied;
+    g_planeEnabled=0u;g_planeLastApplied=0u;
+    if(restore&&g_loginGuardReady&&Ptr(player)&&!LongPPActive()&&
+       !LongPPInjecting()&&!g_injecting&&!g_gatherActive&&
+       !g_gatherLootWait&&!g_stepMoveInjecting&&!g_abCapGuardActive)
+        SendReal(player);
+    DebugChat(combat?g_planeCombatChat:g_planeOffChat);
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
     DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
@@ -1045,7 +1111,11 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     now=GT()();
     p=LocalPlayer();
     W112_LoginGuardTick(p,now);
-    if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;}
+    if(!g_loginGuardReady){
+        g_planeEnabled=0u;g_planeLastApplied=0u;
+        g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;
+    }
+    if(g_planeEnabled&&p&&Combat(p))Plane_Disable(p,1u);
     W112_PPGuard_Tick(p,now);
     CombatVeinObserve(p,now);
     PPBlacklistTick(now);
@@ -1106,7 +1176,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         TrackChestTick(p,now);
-        if(!g_telePending&&!CoordRearOwned()&&
+        if(!g_planeEnabled&&!g_telePending&&!CoordRearOwned()&&
            (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)){
             DWORD autoOpenWasEnabled=g_autoOpenEnabled;
             if(autoOpenWasEnabled&&W112_AutoOpenBusy(p)){
@@ -1255,7 +1325,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[44u];
+static W112_ControlSettingV1 g_controlSettings[48u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1401,12 +1471,38 @@ static void init_control_descriptor(void)
     s->max_value.i32=TRACK_CHEST_MAX_DOTS;s->step.i32=1;
     s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
     s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[44u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=45u;s->key="plane_enabled";s->label="Teleport to Plane (TEST)";
+    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;
+    s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;
+    s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[45u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=46u;s->key="plane_depth";s->label="Plane: outgoing Z depth (yd)";
+    s->type=W112_CTL_INT;s->default_value.i32=12;s->min_value.i32=4;
+    s->max_value.i32=40;s->step.i32=1;s->flags=W112_CTL_LIVE;
+    s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[46u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=47u;s->key="plane_packets";s->label="Plane: rewritten packets";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;
+    s->max_value.i32=2147483647;s->step.i32=1;
+    s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+    s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[47u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=48u;s->key="plane_tx_z10";s->label="Plane: last SENT Z x10 (not server ACK)";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=-200000;
+    s->max_value.i32=200000;s->step.i32=1;
+    s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+    s->enum_options=0;s->enum_option_count=0u;
     g_controlDescriptorReady=1u;
 }
 
 static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1*out)
 {
     if(!out)return 0;
+    if(id==45u){out->u32=g_planeEnabled?1u:0u;return 1;}
+    if(id==46u){out->i32=(w112_i32)g_planeDepth;return 1;}
+    if(id==47u){out->i32=(w112_i32)g_planePackets;return 1;}
+    if(id==48u){out->i32=(w112_i32)g_planeTxZ10;return 1;}
     if(id==1u){out->u32=g_gatherEnabled?1u:0u;return 1;}
     if(id==2u){out->u32=g_autoPPEnabled?1u:0u;return 1;}
     if(id==3u){out->u32=g_autoOpenEnabled?1u:0u;return 1;}
@@ -1467,6 +1563,22 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         g_gatherNextScan=0u;g_trackChestNext=0u;return 1;
     }
     if(id==36u){g_chestAutoLoot=value->u32;return 1;}
+    if(id==45u){
+        if(value->u32){
+            if(!g_loginGuardReady||!Ptr(p)||Combat(p))return 0;
+            if(!g_planeEnabled){
+                if(g_gatherActive||g_gatherLootWait)
+                    GatherStop(p,now,"PLANE_TEST_GATHER_ABORT",1u,0u);
+                g_planeEnabled=1u;g_planeLastApplied=0u;
+                DebugChat(g_planeOnChat);
+            }
+        }else if(g_planeEnabled)Plane_Disable(p,0u);
+        return 1;
+    }
+    if(id==46u){
+        if(value->i32<4||value->i32>40)return 0;
+        g_planeDepth=(DWORD)value->i32;return 1;
+    }
     if(id==1u){
         g_gatherEnabled=value->u32;
         if(!g_gatherEnabled&&(g_gatherActive||g_gatherLootWait))GatherStop(p,now,"GUI_GATHER_DISABLED",1u,0u);
@@ -1519,7 +1631,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,44u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,48u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
@@ -1570,6 +1682,7 @@ BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
         W112_PPSelector_Remove();
         AltPriority_Remove();
         g_coordRearUntil=0u;g_stepActive=0u;g_stepEnabled=0u;
+        g_planeEnabled=0u;g_planeLastApplied=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);
     }
     return TRUE;
