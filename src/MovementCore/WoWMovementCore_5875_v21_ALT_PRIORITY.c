@@ -63,6 +63,7 @@ static const BYTE g_ppSelectorSignature[] = {
   0x51u,0x53u,0xB8u,0x80u,0x69u,0x60u,0x00u,
   0xFFu,0xD0u,0x59u,0x84u,0xC0u,0x0Fu,0x84u
 };
+static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now);
 static DWORD __cdecl W112_PPSelector_ShouldSkip(BYTE*unit)
 {
   DWORD lo,hi;
@@ -156,6 +157,29 @@ __declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorSkipped(void)
 __declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorReleased(void)
 {return g_ppSelectorReleased;}
 
+static volatile DWORD g_altPriorityInstalled=0u;
+static volatile DWORD g_altPriorityBlockCurrent=0u;
+static volatile DWORD g_altPriorityStarts=0u;
+static volatile DWORD g_altPriorityPPBlocks=0u;
+static volatile DWORD g_altPriorityDirectPackets=0u;
+static volatile DWORD g_altPriorityDirectRestores=0u;
+static volatile DWORD g_altPriorityQuietBypasses=0u;
+static volatile DWORD g_altPriorityForceDirect=0u;
+static volatile DWORD g_stepMoveInjecting=0u;
+static volatile DWORD g_stepActive=0u;
+
+/* Preserve a manual LALT edge while PvERear owns its short rear lease or a
+ * cast/channel guard is active. Never steal an active pose or cast. */
+static volatile DWORD g_altPriorityPendingUntil=0u;
+/* clang-cl's inline-asm parser does not reliably bind an internal naked
+ * function when referenced as `offset symbol`. Keep the V20 send-wrapper
+ * address in a normal data symbol and jump through that instead. */
+static DWORD g_altPriorityBaseSendWrapper=0u;
+/* Login/world transition guard: forward native movement, never apply synthetic
+ * XYZ or NoFall edits until the 5875 local player settles in a world. */
+#define W112_LOGIN_SETTLE_MS 3000u
+static volatile DWORD g_loginGuardReady=0u,g_loginGuardSince=0u;
+
 /* Only automatic PP is paused after stealth loss or combat entry.  The
    normal corpse-loot pipeline and manual Pick Pocket are not affected. */
 #define W112_PP_GUARD_COOLDOWN_MS 15000u
@@ -192,28 +216,7 @@ static void W112_PPGuard_Tick(BYTE*p,DWORD now)
     if((DWORD)(now-g_ppGuardReadySince)>=350u)g_ppGuardReady=1u;
 }
 
-static volatile DWORD g_altPriorityInstalled=0u;
-static volatile DWORD g_altPriorityBlockCurrent=0u;
-static volatile DWORD g_altPriorityStarts=0u;
-static volatile DWORD g_altPriorityPPBlocks=0u;
-static volatile DWORD g_altPriorityDirectPackets=0u;
-static volatile DWORD g_altPriorityDirectRestores=0u;
-static volatile DWORD g_altPriorityQuietBypasses=0u;
-static volatile DWORD g_altPriorityForceDirect=0u;
-static volatile DWORD g_stepMoveInjecting=0u;
-static volatile DWORD g_stepActive=0u;
 
-/* Preserve a manual LALT edge while PvERear owns its short rear lease or a
- * cast/channel guard is active. Never steal an active pose or cast. */
-static volatile DWORD g_altPriorityPendingUntil=0u;
-/* clang-cl's inline-asm parser does not reliably bind an internal naked
- * function when referenced as `offset symbol`. Keep the V20 send-wrapper
- * address in a normal data symbol and jump through that instead. */
-static DWORD g_altPriorityBaseSendWrapper=0u;
-/* Login/world transition guard: forward native movement, never apply synthetic
- * XYZ or NoFall edits until the 5875 local player settles in a world. */
-#define W112_LOGIN_SETTLE_MS 3000u
-static volatile DWORD g_loginGuardReady=0u,g_loginGuardSince=0u;
 static volatile DWORD g_loginGuardMgr=0u,g_loginGuardPlayer=0u;
 static volatile DWORD g_loginGuardGuidLo=0u,g_loginGuardGuidHi=0u;
 /* Universal cast/channel movement guard; legacy AB diagnostic exports remain. */
