@@ -1,0 +1,32 @@
+name: Guardian unit tests
+
+on:
+  push:
+    branches:
+      - 'feature/wow112-guardian'
+      - 'promote/wow112-guardian'
+    paths:
+      - 'tools/guardian.py'
+      - 'tools/test_guardian.py'
+      - '.github/workflows/guardian_tests.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'tools/guardian.py'
+      - 'tools/test_guardian.py'
+      - '.github/workflows/guardian_tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile Guardian script
+        run: python3 -m py_compile tools/guardian.py tools/test_guardian.py
+      - name: Test patch restrictions
+        run: python3 -m unittest discover -s tools -p 'test_guardian.py' -v
