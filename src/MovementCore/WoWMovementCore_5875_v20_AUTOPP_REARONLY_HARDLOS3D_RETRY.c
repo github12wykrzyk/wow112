@@ -1217,9 +1217,10 @@ static void TrackChestTick(BYTE*p,DWORD now)
         "local m=Minimap;local z=m:GetZoom() or 0;"
         "local rad=({150,120,90,60,40,25})[z+1] or 150;"
         "local scale=(m:GetWidth()/2)/rad;"
-        "local rot=(GetCVar('rotateMinimap')=='1');"
-        "local face=rot and (GetPlayerFacing and GetPlayerFacing() or 0) or 0;"
-        "local cs=math.cos(face);local sn=math.sin(face);local dots={");
+        /* Vanilla 5875 does not register the rotateMinimap CVar. The
+         * client throws a blocking Lua error even when comparing to '1'.
+         * Draw north-up without asking the engine for that absent CVar. */
+        "local dots={");
     o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);
     for(i=0u;i<4095u&&Ptr(o);++i){
         BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);
@@ -1248,7 +1249,7 @@ static void TrackChestTick(BYTE*p,DWORD now)
         "t:SetTexture(1,0.8,0);t:SetWidth(7);t:SetHeight(7);"
         "W112_ChestDots[i]=t end;"
         "if t then if v then local a=v[1]/10;local b=v[2]/10;"
-        "if rot then local aa=a*cs-b*sn;b=a*sn+b*cs;a=aa end;"
+        /* Minimap is north-up on this client: no rotation transform. */
         "if a*a+b*b<=rad*rad then t:ClearAllPoints();"
         "t:SetPoint('CENTER',m,'CENTER',a*scale,b*scale);t:Show()"
         "else t:Hide() end else t:Hide() end end end end");
