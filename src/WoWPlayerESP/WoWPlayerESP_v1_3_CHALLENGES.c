@@ -18,6 +18,7 @@
 
 #define WM_W112_ESP_BG_SCORE (0x8000u + 0x0113u)
 #define WM_W112_REAR_TICK (0x8000u + 0x0119u)
+
 #define VK_INSERT 0x2Du
 /* The game WndProc can be superseded by a companion DLL. Sample Insert in the
  * existing render tick as a fallback; both paths share one press latch. */
@@ -136,6 +137,9 @@ static void chal_copy(char* dst, DWORD cap, const char* src) {
     dst[i] = 0;
 }
 
+/* Quest objective snapshot and NPC marker renderer share the existing ESP threads. */
+#include "W112QuestESP.inc"
+
 /* Scoreboard is queried ONLY through the game-window WndProc, not from the
  * ESP render worker. This avoids the native UnitReaction/CanAttack BG crash
  * path and uses the actual assigned BG side, not the character's race.
@@ -248,6 +252,10 @@ static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lPa
         }
         return result;
     }
+    if (msg == WM_W112_QUEST_TICK) {
+        quest_poll_game_thread();
+        return 0;
+    }
     if (msg == WM_W112_ESP_BG_SCORE) {
         chal_bg_score_main_thread();
         return 0;
@@ -349,6 +357,10 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
         if (g_challenge_world_ready) {
             if (!chal_hook_is_current()) chal_try_install_hook();
             if (chal_hook_is_current() && chal_world_identity_ready()) {
+                if (g_quest_enabled && g_render_frame>=g_quest_next_post_frame) {
+                    if (PostMessageA(g_challenge_hwnd,WM_W112_QUEST_TICK,0u,0))
+                        g_quest_next_post_frame=g_render_frame+W112_Q_POLL_FRAMES;
+                }
                 if (g_render_frame>=g_next_bg_score_post_frame) {
                     if (PostMessageA(g_challenge_hwnd,WM_W112_ESP_BG_SCORE,0u,0))
                         g_next_bg_score_post_frame=g_render_frame+BG_SCORE_POLL_FRAMES;
@@ -404,7 +416,7 @@ static HWND g_ui_tabs[3]={NULL,NULL,NULL};
 static HWND g_ui_pages[4][UI_MAX_PAGE_CONTROLS];
 static DWORD g_ui_page_count[4]={0u,0u,0u,0u};
 static DWORD g_ui_current_tab=UI_TAB_ESP;
-static HWND g_ui_checks[4]={NULL,NULL,NULL,NULL};
+static HWND g_ui_checks[5]={NULL,NULL,NULL,NULL,NULL};
 static HWND g_ui_speedfloor_check=NULL;
 static HWND g_ui_hostile_guard_check=NULL;
 static HWND g_ui_speedfloor_state=NULL;
@@ -545,6 +557,7 @@ static void ui_sync_esp(void) {
     DWORD i;
     for(i=0u;i<4u;++i)
         if(g_ui_checks[i]) SendMessageA(g_ui_checks[i],UI_SETCHECK,state[i]?1u:0u,0);
+    if(g_ui_checks[4])SendMessageA(g_ui_checks[4],UI_SETCHECK,g_quest_enabled?1u:0u,0);
 }
 static void ui_sync_rogue(void) {
     W112_ControlValueV1 enabled,guard,floor;
@@ -702,9 +715,9 @@ static struct UiProfileModule g_ui_profile_modules[]={
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
 };
 static volatile DWORD *const g_ui_profile_esp_flags[]={
-    &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile
+    &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile,&g_quest_enabled
 };
-static DWORD g_ui_profile_esp_last[4];
+static DWORD g_ui_profile_esp_last[5];
 
 static void ui_profile_key(char key[16],DWORD id) {
     char *end=app_u32(key,id);
@@ -769,7 +782,7 @@ static void ui_profile_bootstrap(void) {
     }
     for(i=0u;i<sizeof(UI_PROFILE_NAME);++i)
         g_ui_profile_path[start+i]=UI_PROFILE_NAME[i];
-    for(i=0u;i<4u;++i) {
+    for(i=0u;i<5u;++i) {
         char key[16];
         ui_profile_key(key,i+1u);
         if(ui_profile_read("esp",key,&bits)&&bits<=1u)
@@ -786,7 +799,7 @@ static void ui_profile_sync(void) {
     DWORD i,j,bits;
     if(!g_ui_profile_initialized)ui_profile_bootstrap();
     if(!g_ui_profile_path[0])return;
-    for(i=0u;i<4u;++i) {
+    for(i=0u;i<5u;++i) {
         DWORD live=*g_ui_profile_esp_flags[i]?1u:0u;
         if(live!=g_ui_profile_esp_last[i]) {
             char key[16];
@@ -918,6 +931,11 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             ui_work_pp_flip(PAR_CORE_DLL,26u,setting);
             ui_sync_gather();ui_profile_sync();return 0;
         }
+        if(id==128u) {
+            g_quest_enabled=g_quest_enabled?0u:1u;
+            if(!g_quest_enabled)quest_hide_from(0u);
+            ui_sync_esp();ui_profile_sync();return 0;
+        }
         if(id==101u) {
             g_esp_enabled=g_esp_enabled?0u:1u;
             if(!g_esp_enabled)g_range_sweep_enabled=0u;
@@ -971,11 +989,12 @@ static BOOL ui_create(HWND game) {
     struct POINT32 pt;
     struct RECT32 rc;
     DWORD i;
-    static const char* filters[4]={
+    static const char* filters[5]={
         "ESP - display player labels",
         "HORDE - display Horde characters",
         "ALLIANCE - display Alliance characters",
-        "HOSTILE TO ME - opposing BG team"
+        "HOSTILE TO ME - opposing BG team",
+        "QUEST ESP - active quest kill targets (NPCs)"
     };
     if(!game || !IsWindow(game))return FALSE;
     pt.x=pt.y=0;
@@ -1003,14 +1022,14 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
         "Live filters refresh nearby players. Click a visible label to target.",
         42,179,665,30,FALSE));
-    for(i=0u;i<4u;++i) {
+    for(i=0u;i<5u;++i) {
         g_ui_checks[i]=ui_button(g_parallel_ui_hwnd,filters[i],
-            46,224+(int)i*59,650,44,101u+i,TRUE);
+            46,220+(int)i*51,650,43,i==4u?128u:101u+i,TRUE);
         ui_add_to_page(UI_TAB_ESP,g_ui_checks[i]);
     }
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
-        "Faction filters combine (OR). HOSTILE uses BG team on mixed BG.",
-        40,475,675,34,FALSE));
+        "Player faction filters are separate from the quest mob overlay.",
+        40,483,675,30,FALSE));
     g_ui_wsg_check=ui_button(g_parallel_ui_hwnd,
         "WSG AUTO FLAG - dropped flags only (4.75 yd)",46,526,665,43,111u,TRUE);
     ui_add_to_page(UI_TAB_ESP,g_ui_wsg_check);
@@ -1119,6 +1138,7 @@ static BOOL ui_create(HWND game) {
     return TRUE;
 }
 static void parallel_gui_tick(void) {
+    quest_draw_tick();
     /* GUI must remain reachable when ESP is disabled in the persisted profile,
      * or its click/label subclass has not been installed yet. The verified
      * client window getter is independent of ESP overlay initialization. */
@@ -1172,6 +1192,7 @@ static void parallel_gui_tick(void) {
 }
 static void parallel_gui_destroy(void) {
     DWORD page;
+    quest_destroy_windows();
     if(g_parallel_ui_hwnd && IsWindow(g_parallel_ui_hwnd)) {
         if(g_ui_prev)
             SetWindowLongA(g_parallel_ui_hwnd,GWL_WNDPROC,(LONG)(DWORD)g_ui_prev);
@@ -1182,7 +1203,7 @@ static void parallel_gui_destroy(void) {
         if(page<3u)g_ui_tabs[page]=NULL;
         g_ui_page_count[page]=0u;
     }
-    for(page=0u;page<4u;++page)g_ui_checks[page]=NULL;
+    for(page=0u;page<5u;++page)g_ui_checks[page]=NULL;
     g_ui_speedfloor_check=NULL;g_ui_hostile_guard_check=NULL;
     g_ui_speedfloor_state=NULL;g_ui_speedfloor_value=NULL;
     g_ui_pp_check=NULL;g_ui_junkbox_check=NULL;
