@@ -1196,7 +1196,7 @@ static const char g_trackChestHide[]=
 static void TrackChestTick(BYTE*p,DWORD now)
 {
     BYTE*m,*o;DWORD i,count=0u,*desc,group,src=0u;
-    float px,py,pz,x,y,z,dx,dy;char script[4096],*w=script;
+    float px,py,pz,x,y,z,dx,dy;static char script[4096];char*w=script;
     if(!g_trackChestsEnabled||!Ptr(p)){
         g_trackChestCount=0u;g_trackChestNext=0u;
         if(g_trackChestShown){DebugChat(g_trackChestHide);g_trackChestShown=0u;}
