@@ -354,6 +354,17 @@ static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrim
 static volatile DWORD g_chestEnabled=0u,g_chestGroupsMask=63u,g_chestAutoLoot=1u;
 /* Passive minimap chest tracking is independent of AutoChest's movement/loot owner. */
 static volatile DWORD g_trackChestsEnabled=0u,g_trackChestNext=0u,g_trackChestShown=0u,g_trackChestCount=0u;
+/* Native 5875 resource-tracking probe. The descriptor layout agrees with the
+ * already-used PLAYER_SKILL_INFO_BASE_INDEX=0x2CE: 128 * 3 skill dwords,
+ * two character points, creature tracking, then resource tracking = 0x451.
+ * Spell 2481 has Track Resources misc=6 => bit (6-1) = 0x20.
+ * See vmangos UpdateFields_1_12_1.h / SpellAuras.cpp and
+ * https://github.com/WowDevs/Fishbot-1.12.1 for independent 5875 layout.
+ * Client-side field override is experimental and is NOT a server aura. */
+#define TRACK_NATIVE_RESOURCES_INDEX 0x0451u
+#define TRACK_NATIVE_TREASURE_BIT 0x00000020u
+static volatile DWORD g_trackChestNativeMode=0u,g_trackNativeMask=0u,g_trackNativeOwn=0u;
+static DWORD *g_trackNativeDesc=0;
 static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
 /* Successfully looted GO is excluded until despawn, never by a timed cooldown. */
 static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u;
@@ -1193,11 +1204,42 @@ static DWORD GetChestPos(BYTE*o,DWORD*desc,float px,float py,float pz,
 #define TRACK_CHEST_SCAN_MS 400u
 static const char g_trackChestHide[]=
     "if W112_ChestDots then for i=1,16 do local t=W112_ChestDots[i];if t then t:Hide() end end end";
+/* Only touch the currently verified local player's descriptor. The native
+ * renderer remains responsible for filtering, range, zoom and native icons.
+ * Preserve herbs/minerals/any other bits; remove only our own treasure bit.
+ * Never chase an old pointer through a map/BG transition. */
+static void TrackChestNativeTick(BYTE*p)
+{
+    DWORD*desc=0u;DWORD mask;
+    if(Ptr(p))desc=*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!Ptr(desc)||(desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_PLAYER)==0u){
+        g_trackNativeDesc=0u;g_trackNativeOwn=0u;g_trackNativeMask=0u;
+        return;
+    }
+    if(desc!=g_trackNativeDesc){
+        g_trackNativeDesc=desc;g_trackNativeOwn=0u;
+    }
+    mask=desc[TRACK_NATIVE_RESOURCES_INDEX];
+    if(g_trackChestsEnabled&&g_trackChestNativeMode){
+        if(!(mask&TRACK_NATIVE_TREASURE_BIT)){
+            mask|=TRACK_NATIVE_TREASURE_BIT;
+            desc[TRACK_NATIVE_RESOURCES_INDEX]=mask;
+            g_trackNativeOwn=1u;
+        }
+    }else if(g_trackNativeOwn){
+        if(mask&TRACK_NATIVE_TREASURE_BIT){
+            mask&=~TRACK_NATIVE_TREASURE_BIT;
+            desc[TRACK_NATIVE_RESOURCES_INDEX]=mask;
+        }
+        g_trackNativeOwn=0u;
+    }
+    g_trackNativeMask=mask;
+}
 static void TrackChestTick(BYTE*p,DWORD now)
 {
     BYTE*m,*o;DWORD i,count=0u,*desc,group,src=0u;
     float px,py,pz,x,y,z,dx,dy;static char script[4096];char*w=script;
-    if(!g_trackChestsEnabled||!Ptr(p)){
+    if(!g_trackChestsEnabled||g_trackChestNativeMode||!Ptr(p)){
         g_trackChestCount=0u;g_trackChestNext=0u;
         if(g_trackChestShown){DebugChat(g_trackChestHide);g_trackChestShown=0u;}
         return;

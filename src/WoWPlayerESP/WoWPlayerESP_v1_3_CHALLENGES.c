@@ -435,7 +435,7 @@ static DWORD g_ui_gather_control_pages[40]={0u};
 static HWND g_ui_gather_checks[16]={NULL};
 static HWND g_ui_gather_extra_checks[4]={NULL};
 static HWND g_ui_gather_chest_checks[8]={NULL};
-static HWND g_ui_gather_chest_diag=NULL,g_ui_gather_chest_track=NULL;
+static HWND g_ui_gather_chest_diag=NULL,g_ui_gather_chest_track=NULL,g_ui_gather_chest_native=NULL;
 static DWORD g_ui_gather_page=0u;
 static HWND g_ui_plane_check=NULL,g_ui_plane_status=NULL;
 static HWND g_ui_gather_status=NULL;
@@ -572,6 +572,10 @@ static void ui_sync_gather(void) {
         DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,44u,43u,&v)&&v.u32?1u:0u;
         SendMessageA(g_ui_gather_chest_track,UI_SETCHECK,checked,0);
     }
+    if(g_ui_gather_chest_native) {
+        DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,50u,49u,&v)&&v.u32?1u:0u;
+        SendMessageA(g_ui_gather_chest_native,UI_SETCHECK,checked,0);
+    }
     if(g_ui_gather_chest_diag){
         static const char* reasons[10]={"NONE","READY","OFF","TYPE OFF","COMBAT","LOOTED","NO XYZ","RANGE","ACTIVE","AGGRO SKIP"};
         W112_ControlValueV1 seen,eligible,entry,step,reason,source;
@@ -590,6 +594,13 @@ static void ui_sync_gather(void) {
             p=app_str(p," | ");p=app_str(p,reason.u32<10u?reasons[reason.u32]:"UNKNOWN");
             p=app_str(p," | XYZ src ");p=app_u32(p,source.u32);
             p=app_str(p," | Z step ");p=app_u32(p,step.u32);
+            if(ui_work_pp_get(PAR_CORE_DLL,50u,49u,&v)&&v.u32) {
+                W112_ControlValueV1 mask;
+                if(ui_work_pp_get(PAR_CORE_DLL,50u,50u,&mask)){
+                    p=app_str(p," | native mask ");
+                    p=app_u32(p,mask.u32);
+                }
+            }
             *p=0;SetWindowTextA(g_ui_gather_chest_diag,buf);
         }
     }
@@ -768,7 +779,7 @@ __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCST
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
-static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u};
+static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
 struct UiProfileModule {
@@ -781,7 +792,7 @@ struct UiProfileModule {
     BYTE seen[32];
 };
 static struct UiProfileModule g_ui_profile_modules[]={
-    {PAR_CORE_DLL,48u,g_ui_profile_core_ids,31u,FALSE,{0},{0}},
+    {PAR_CORE_DLL,50u,g_ui_profile_core_ids,32u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
@@ -1014,6 +1025,10 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             }
             ui_sync_gather();ui_profile_sync();return 0;
         }
+        if(id==227u){
+            ui_work_pp_flip(PAR_CORE_DLL,50u,49u);
+            ui_sync_gather();ui_profile_sync();return 0;
+        }
         if(id==223u){
             ui_work_pp_flip(PAR_CORE_DLL,44u,43u);
             ui_sync_gather();ui_profile_sync();return 0;
@@ -1235,9 +1250,12 @@ static BOOL ui_create(HWND game) {
         g_ui_gather_chest_track=ui_button(g_parallel_ui_hwnd,
             "TRACK CHESTS (MINIMAP)",46,302,665,39,223u,TRUE);
         ui_add_gather_page_control(g_ui_gather_chest_track,1u);
+        g_ui_gather_chest_native=ui_button(g_parallel_ui_hwnd,
+            "NATIVE TRACK CHESTS (TEST: CLIENT 5875)",46,347,665,36,227u,TRUE);
+        ui_add_gather_page_control(g_ui_gather_chest_native,1u);
         for(i=1u;i<=6u;++i) {
             g_ui_gather_chest_checks[i]=ui_button(g_parallel_ui_hwnd,chest_names[i],
-                i<=3u?46:382,351+(int)((i-1u)%3u)*54,307,45,215u+i,TRUE);
+                i<=3u?46:382,389+(int)((i-1u)%3u)*45,307,39,215u+i,TRUE);
             ui_add_gather_page_control(g_ui_gather_chest_checks[i],1u);
         }
         g_ui_gather_chest_diag=ui_label(g_parallel_ui_hwnd,
@@ -1369,7 +1387,7 @@ static void parallel_gui_destroy(void) {
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;
     for(page=0u;page<8u;++page)g_ui_gather_chest_checks[page]=NULL;
-    g_ui_gather_chest_diag=NULL;g_ui_gather_chest_track=NULL;
+    g_ui_gather_chest_diag=NULL;g_ui_gather_chest_track=NULL;g_ui_gather_chest_native=NULL;
     g_ui_plane_check=NULL;g_ui_plane_status=NULL;
     g_ui_gather_status=NULL;g_ui_gather_count=0u;g_ui_gather_open=0u;g_ui_gather_page=0u;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
