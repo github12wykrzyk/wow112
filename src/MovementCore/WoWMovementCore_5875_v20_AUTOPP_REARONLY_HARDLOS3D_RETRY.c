@@ -217,8 +217,6 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define CHEST_STEP_YD                     0.5f
 #define CHEST_MAX_STEPS                     8u
 #define CHEST_RETRY_MS                    300u
-#define CHEST_SKIP_FAIL_MS               5000u
-#define CHEST_SKIP_LOOT_MS             120000u
 #define GATHER_RESCAN_DELAY_MS         60u
 #define COMBAT_VEIN_WINDOW_MS         1800u
 #define COMBAT_VEIN_MAX                128u
@@ -353,11 +351,13 @@ static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrim
 /* Gather/Herb/AutoOpen/AutoChest share the same scanner, spoof and loot owner. */
 static volatile DWORD g_chestEnabled=0u,g_chestGroupsMask=63u,g_chestAutoLoot=1u;
 static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
-static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u,g_chestSkipUntil=0u;
+/* Successfully looted GO is excluded until despawn, never by a timed cooldown. */
+static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u;
+static volatile DWORD g_lastChestChatLo=0u,g_lastChestChatHi=0u,g_lastChestChatTick=0u;
 /* The GUI exposes loaded/eligible counts and current target as live diagnostics. */
 static volatile DWORD g_chestScanSeen=0u,g_chestScanEligible=0u,g_chestScanLastEntry=0u;
 /* Scan reason: 0 none, 1 ready, 2 off, 3 type off, 4 combat,
- * 5 cooldown, 6 no position, 7 out of range, 8 transaction active. */
+ * 5 already looted, 6 no position, 7 out of range, 8 transaction active. */
 static volatile DWORD g_chestScanReason=0u,g_chestScanPosSrc=0u;
 static volatile DWORD g_autoOpenClickCount=0u,g_autoOpenLastClickAt=0u;
 static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
@@ -1084,6 +1084,23 @@ static void ChatAttempt(DWORD kind,DWORD entry,DWORD lo,DWORD hi,DWORD now)
         if(!allow)return;g_lastOpenChatLo=lo;g_lastOpenChatHi=hi;g_lastOpenChatTick=now;name=AutoOpenName(entry);
         p=AppStr(p,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[AutoOpen]|r wykryto " );
         p=AppStr(p,name);p=AppStr(p," (entry " );p=AppU32(p,entry);p=AppStr(p,") - probuje otworzyc') end");
+    }else if(kind==4u){
+        /* One discovery line per GO; a failed retry is not another find. */
+        if(lo==g_lastChestChatLo&&hi==g_lastChestChatHi&&
+           (DWORD)(now-g_lastChestChatTick)<60000u)return;
+        g_lastChestChatLo=lo;g_lastChestChatHi=hi;g_lastChestChatTick=now;
+        p=AppStr(p,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[AutoChest]|r Znaleziono ");
+        switch(ChestGroupBit(entry)){
+            case 1u:p=AppStr(p,"Battered Chest");break;
+            case 2u:p=AppStr(p,"Solid Chest");break;
+            case 4u:p=AppStr(p,"Large Battered Chest");break;
+            case 8u:p=AppStr(p,"Large Solid Chest");break;
+            case 16u:p=AppStr(p,"Iron Bound Chest");break;
+            case 32u:p=AppStr(p,"Mithril Bound Chest");break;
+            default:p=AppStr(p,"Chest");break;
+        }
+        p=AppStr(p," (entry ");p=AppU32(p,entry);
+        p=AppStr(p,") - probuje otworzyc') end");
     }else return;
     *p=0;DebugChat(b);
 }
@@ -1245,12 +1262,12 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
                 else if(inCombat)chestReason=4u;
                 else if(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&
                         g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&
-                        (LONG)(g_chestSkipUntil-now)>0)chestReason=5u;
+                        (g_chestSkipLo||g_chestSkipHi))chestReason=5u;
                 else chestReason=0u;
             }
             if(kind==2u&&CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH)))kind=0u;
             if(kind){
-                nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(LONG)(g_chestSkipUntil-now)>0)))?1u:0u;if(match)profmatch++;
+                nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(g_chestSkipLo||g_chestSkipHi))))?1u:0u;if(match)profmatch++;
                 if((kind==4u)?GetChestPos(o,desc,px,py,pz,&x,&y,&z,&src):GetGOPos(o,desc,&x,&y,&z,&src)){
                     d2=DistSq3(px,py,pz,x,y,z);
                     if(kind==4u){
@@ -1556,11 +1573,10 @@ static void GatherBeginManualLootWait(BYTE*p,DWORD now,const char*reason)
 
 static void GatherFinishManualLoot(BYTE*p,DWORD now,const char*reason)
 {
-    if(g_gatherKind==4u){
+    if(g_gatherKind==4u&&g_gatherLootSeenOpen){
+        /* Mark as completed only after a real loot window was observed.
+         * A failed click is immediately eligible again; no chest cooldown. */
         g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;
-        /* Absence of loot window is not a successful chest; retry after
-         * the short failure backoff instead of hiding it for two minutes. */
-        g_chestSkipUntil=now+(g_gatherLootSeenOpen?CHEST_SKIP_LOOT_MS:CHEST_SKIP_FAIL_MS);
     }
     g_gatherLootWait=0u;
     g_gatherLootWaitUntil=0u;
@@ -1789,8 +1805,8 @@ static void GatherTick(BYTE*p,DWORD now)
                 /* After eight near-node Z attempts, use the exact Mining 3D
                  * click/LOS retry path, still holding server XYZ near chest. */
                 if(!Mining3DQueueRetry(p,now)){
-                    g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;
-                    g_chestSkipUntil=now+CHEST_SKIP_FAIL_MS;
+                    /* Exhausting this sweep must not temporarily blacklist the GO.
+                     * The next ordinary scan may retry immediately. */
                     GatherStop(p,now,"AUTOCHEST_MINING3D_EXHAUSTED",1u,0u);return;
                 }
                 g_chestRetryAt=now+CHEST_RETRY_MS;
@@ -1875,6 +1891,11 @@ static void GatherTick(BYTE*p,DWORD now)
     }
 
     if((LONG)(g_gatherNextScan-now)>0)return;g_gatherNextScan=now+GATHER_TIMER_SCAN_MS;
+    /* A completed chest becomes selectable again only after despawn.
+     * This is an object-lifecycle guard, not a time-based cooldown. */
+    if((g_chestSkipLo||g_chestSkipHi)&&
+       !Ptr(ObjByGuid(g_chestSkipLo,g_chestSkipHi)))
+        g_chestSkipLo=g_chestSkipHi=0u;
     obj=FindBestGatherNode(p,now,&entry,&lo,&hi,&kind,&d2);
     if(g_gatherLastStatusLog==0u||(DWORD)(now-g_gatherLastStatusLog)>=GATHER_STATUS_LOG_MS){g_gatherLastStatusLog=now;GatherFileLog("SCAN_STATUS",now,0u,0u,0u,0.0f,0u,0u);}
     if(obj){if(lo==g_gatherTargetLo&&hi==g_gatherTargetHi&&entry==g_gatherEntry)g_gatherAttempts++;else g_gatherAttempts=1u;GatherBegin(p,obj,now,entry,lo,hi,kind,d2);}

@@ -551,7 +551,7 @@ static void ui_sync_gather(void) {
             SendMessageA(g_ui_gather_chest_checks[i],UI_SETCHECK,checked,0);
     }
     if(g_ui_gather_chest_diag){
-        static const char* reasons[9]={"NONE","READY","OFF","TYPE OFF","COMBAT","COOLDOWN","NO XYZ","RANGE","ACTIVE"};
+        static const char* reasons[9]={"NONE","READY","OFF","TYPE OFF","COMBAT","LOOTED","NO XYZ","RANGE","ACTIVE"};
         W112_ControlValueV1 seen,eligible,entry,step,reason,source;
         char buf[160],*p=buf;
         BOOL ok=live&&ui_work_pp_get(PAR_CORE_DLL,40u,37u,&seen)&&
