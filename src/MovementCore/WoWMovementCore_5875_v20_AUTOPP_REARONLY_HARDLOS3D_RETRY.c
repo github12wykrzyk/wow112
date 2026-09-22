@@ -210,6 +210,13 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
  * cast and loot; 4.0 yd vertical offset with zero XY is below a ~5 yd interaction
  * radius, without asserting the private server accepts the below-ground ray. */
 #define MINING_BELOW_NODE_Z_OFFSET       4.0f
+/* AutoChest: deepest point first, then 0.5 yd upward per rejected opening. */
+#define CHEST_DEPTH_YD                   30.0f
+#define CHEST_STEP_YD                     0.5f
+#define CHEST_MAX_STEPS                    60u
+#define CHEST_RETRY_MS                    400u
+#define CHEST_SKIP_FAIL_MS              30000u
+#define CHEST_SKIP_LOOT_MS             120000u
 #define GATHER_RESCAN_DELAY_MS         60u
 #define COMBAT_VEIN_WINDOW_MS         1800u
 #define COMBAT_VEIN_MAX                128u
@@ -341,6 +348,10 @@ static volatile DWORD g_preLandHeartbeats = 0;
 /* AutoGather state. */
 static volatile DWORD g_gatherEnabled=1u,g_gatherActive=0u,g_gatherKey9=0u,g_gatherReadyChat=0u;
 static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrimed=0u;
+/* Gather/Herb/AutoOpen/AutoChest share the same scanner, spoof and loot owner. */
+static volatile DWORD g_chestEnabled=0u,g_chestGroupsMask=63u,g_chestAutoLoot=1u;
+static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
+static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u,g_chestSkipUntil=0u;
 static volatile DWORD g_autoOpenClickCount=0u,g_autoOpenLastClickAt=0u;
 static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
 static volatile DWORD g_lastOpenChatLo=0u,g_lastOpenChatHi=0u,g_lastOpenChatTick=0u;
@@ -826,6 +837,7 @@ static const char g_chatOff[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:Add
 static const char g_chatOpenOn[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[AutoOpen]|r ON - F12 toggle') end";
 static const char g_chatOpenOff[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[AutoOpen]|r OFF - F12 toggle') end";
 static const char g_pickLockScript[]="CastSpellByName('Pick Lock')";
+static const char g_chestLootScript[]="if LootFrame and LootFrame:IsShown() then for i=1,GetNumLootItems() do LootSlot(i) end end";
 
 /* AutoOpen is always native and in melee. Never prime Pick Lock with a
  * temporary player-position overwrite, even if gather spoof is active. */
@@ -1001,6 +1013,21 @@ static const char* MiningName(DWORD e)
     }
 }
 
+/* Explicit 5875-world treasure IDs; never sweep generic/quest GO objects.
+ * Each entry belongs to exactly one selectable group (bits 0..5). */
+static DWORD ChestGroupBit(DWORD e)
+{
+    switch(e){
+        case 2843u:case 2844u:return 1u<<0; /* battered / tattered */
+        case 2850u:case 2855u:case 2857u:case 4149u:return 1u<<1; /* solid variants */
+        case 75293u:return 1u<<2; /* large battered */
+        case 74448u:case 75298u:case 75299u:case 75300u:return 1u<<3; /* large solid */
+        case 74447u:case 75295u:case 75296u:case 75297u:return 1u<<4; /* iron bound */
+        case 131978u:case 153469u:return 1u<<5; /* mithril bound */
+        default:return 0u;
+    }
+}
+
 static DWORD IsAutoOpenEntry(DWORD e)
 {
     /* Vanilla lockpicking-training/world footlockers only.  Deliberately not a
@@ -1157,10 +1184,10 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
     for(i=0u;i<4095u&&Ptr(o);i++){
         BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);visible++;desc=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);
         if(Ptr(desc)&&(desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_GAMEOBJECT)){
-            entry=desc[OBJECT_FIELD_ENTRY_INDEX];kind=IsHerbEntry(entry)?1u:(IsMiningEntry(entry)?2u:(IsAutoOpenEntry(entry)?3u:0u));
+            entry=desc[OBJECT_FIELD_ENTRY_INDEX];kind=IsHerbEntry(entry)?1u:(IsMiningEntry(entry)?2u:(IsAutoOpenEntry(entry)?3u:(ChestGroupBit(entry)?4u:0u)));
             if(kind==2u&&CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH)))kind=0u;
             if(kind){
-                nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled))?1u:0u;if(match)profmatch++;
+                nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(LONG)(g_chestSkipUntil-now)>0)))?1u:0u;if(match)profmatch++;
                 if(GetGOPos(o,desc,&x,&y,&z,&src)){
                     d2=DistSq3(px,py,pz,x,y,z);
                     if(entry==1731u&&d2<copperBest){copperBest=d2;CaptureCopperDiag(o,desc,px,py,pz,x,y,z,src,d2);}
@@ -1396,12 +1423,16 @@ static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,
     ChatAttempt(kind,entry,lo,hi,now);
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);dx=px-nx;dy=py-ny;
     g_gatherNodeX=nx;g_gatherNodeY=ny;g_gatherNodeZ=nz;g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz;
+    g_chestStep=0u;g_chestRetryAt=kind==4u?now+CHEST_RETRY_MS:0u;
     if(AbsF(dx)>=AbsF(dy))g_gatherX=nx+((dx>=0.0f)?GATHER_NODE_OFFSET:-GATHER_NODE_OFFSET);else g_gatherY=ny+((dy>=0.0f)?GATHER_NODE_OFFSET:-GATHER_NODE_OFFSET);
-    if(kind==2u&&g_miningBelowNodeEnabled&&d2>GATHER_NEAR_RANGE_SQ){
+    if(kind==4u){
+        g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz-CHEST_DEPTH_YD;
+        GatherFileLog("AUTOCHEST_DEEPEST_BEGIN",now,entry,lo,hi,d2,0u,30u);
+    }else if(kind==2u&&g_miningBelowNodeEnabled&&d2>GATHER_NEAR_RANGE_SQ){
         g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz-MINING_BELOW_NODE_Z_OFFSET;
         GatherFileLog("MINING_BELOW_NODE_BEGIN",now,entry,lo,hi,d2,g_gatherAttempts,40u);
     }
-    if(kind==3u||d2<=GATHER_NEAR_RANGE_SQ){
+    if(kind==3u||(kind!=4u&&d2<=GATHER_NEAR_RANGE_SQ)){
         g_gatherSpoof=0u;GatherFileLog(kind==3u?"AUTOOPEN_TARGET_BEGIN_NEAR":"TARGET_BEGIN_NEAR",now,entry,lo,hi,d2,g_gatherAttempts,kind);
         if(GatherRequestStealthBreak(p,now)){g_gatherClickPending=1u;g_gatherClickAt=now+GATHER_STEALTH_BREAK_DELAY_MS;}
         else if(kind==3u){AutoOpenPrimePickLock(p,now);g_autoOpenPickPrimed=1u;g_gatherClickPending=1u;g_gatherClickAt=now+AUTOOPEN_PICKLOCK_SETTLE_MS;}
@@ -1422,6 +1453,7 @@ static DWORD GatherCastMatches(DWORD kind,DWORD castId)
     if(kind==2u)return castId==2575u||castId==2576u||castId==3564u||castId==10248u;
     if(kind==1u)return castId==2366u||castId==2368u||castId==3570u||castId==11993u;
     if(kind==3u)return castId==SPELL_PICK_LOCK;
+    if(kind==4u)return castId==3365u; /* Vanilla Opening cast; never steal an unrelated cast. */
     return 0u;
 }
 
@@ -1443,6 +1475,7 @@ static void GatherBeginManualLootWait(BYTE*p,DWORD now,const char*reason)
     g_gatherLootWaitUntil=now+GATHER_LOOT_OPEN_GRACE_MS;
     g_gatherLootSeenOpen=GatherLootOpen();
     g_gatherLootOpenLogged=g_gatherLootSeenOpen;
+    if(g_gatherKind==4u&&g_gatherLootSeenOpen&&g_chestAutoLoot)DebugChat(g_chestLootScript);
     g_gatherLootTargetGoneLogged=0u;
     g_gatherNextScan=now;
     GatherFileLog(reason,now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,GATHER_LOOT_OPEN_GRACE_MS);
@@ -1451,6 +1484,7 @@ static void GatherBeginManualLootWait(BYTE*p,DWORD now,const char*reason)
 
 static void GatherFinishManualLoot(BYTE*p,DWORD now,const char*reason)
 {
+    if(g_gatherKind==4u){g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;g_chestSkipUntil=now+CHEST_SKIP_LOOT_MS;}
     g_gatherLootWait=0u;
     g_gatherLootWaitUntil=0u;
     g_gatherLootStart=0u;
@@ -1594,12 +1628,13 @@ static void GatherTick(BYTE*p,DWORD now)
     if((LONG)(g_ppQuietUntil-now)>0)return;
     if(!g_ppChainOk){if(g_gatherActive||g_gatherLootWait)GatherClearForPPLogged(p,now,"PPCHAIN_BLOCK_ABORT");return;}
 
-    if(!g_gatherEnabled&&!g_autoOpenEnabled){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"ALL_AUTO_DISABLED_ABORT",1u,0u);return;}
-    if(!g_gatherEnabled&&g_gatherActive&&g_gatherKind!=3u){GatherStop(p,now,"GATHER_DISABLED_ABORT",1u,0u);return;}
+    if(!g_gatherEnabled&&!g_autoOpenEnabled&&!g_chestEnabled){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"ALL_AUTO_DISABLED_ABORT",1u,0u);return;}
+    if(!g_gatherEnabled&&g_gatherActive&&g_gatherKind!=3u&&g_gatherKind!=4u){GatherStop(p,now,"GATHER_DISABLED_ABORT",1u,0u);return;}
+    if(!g_chestEnabled&&g_gatherActive&&g_gatherKind==4u){GatherStop(p,now,"AUTOCHEST_DISABLED_ABORT",1u,0u);return;}
     if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u){GatherStop(p,now,"AUTOOPEN_DISABLED_ABORT",1u,0u);return;}
     if(g_mode!=MODE_OFF){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"SAFEBREAK_ABORT",1u,0u);return;}
     if(Combat(p)&&(g_gatherActive||g_gatherLootWait)&&g_gatherKind!=2u){++g_gatherAborts;GatherStop(p,now,"COMBAT_ABORT_NONMINING",1u,0u);return;}
-    if(!g_hasMining&&!g_hasHerbalism&&!g_autoOpenEnabled){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"NO_SOURCE_ABORT",1u,0u);return;}
+    if(!g_hasMining&&!g_hasHerbalism&&!g_autoOpenEnabled&&!g_chestEnabled){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"NO_SOURCE_ABORT",1u,0u);return;}
 
     /* Manual-loot gate.  There is deliberately NO LootSlot/ConfirmLootSlot
      * execution in V50.  While a real loot window is open we never click the
@@ -1614,6 +1649,7 @@ static void GatherTick(BYTE*p,DWORD now)
         lootOpen=GatherLootOpen();
         if(lootOpen){
             g_gatherLootSeenOpen=1u;
+            if(g_gatherKind==4u&&g_chestAutoLoot)DebugChat(g_chestLootScript);
             if(!g_gatherLootOpenLogged){g_gatherLootOpenLogged=1u;GatherFileLog("MANUALLOOT_OPEN",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);}
         }
         lootAge=(DWORD)(now-g_gatherLootStart);
@@ -1636,6 +1672,7 @@ static void GatherTick(BYTE*p,DWORD now)
            to PP/corpse/another action and gathering yields immediately. */
         lootOpen=GatherLootOpen();
         if(lootOpen){
+            if(g_gatherKind==4u){GatherBeginManualLootWait(p,now,"AUTOCHEST_LOOT_OPEN");return;}
             if(g_gatherSawCast&&!castId){GatherBeginManualLootWait(p,now,"MANUALLOOT_WAIT_OPEN");return;}
             ++g_foreignLootPauses;
             GatherStop(p,now,"FOREIGN_LOOT_ABORT",1u,0u);
@@ -1668,6 +1705,21 @@ static void GatherTick(BYTE*p,DWORD now)
              * twice; every retry still passes the melee gate above. */
             g_gatherClickPending=1u;g_gatherClickAt=now;
             GatherFileLog("AUTOOPEN_CLICK_RETRY",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_autoOpenClickCount,g_gatherKind);
+        }
+        if(g_gatherKind==4u&&!g_gatherClickPending&&!castId&&!g_gatherSawCast&&g_chestRetryAt&&
+           (LONG)(now-g_chestRetryAt)>=0){
+            if(g_chestStep>=CHEST_MAX_STEPS){
+                g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;
+                g_chestSkipUntil=now+CHEST_SKIP_FAIL_MS;
+                GatherStop(p,now,"AUTOCHEST_DEPTH_EXHAUSTED",1u,0u);return;
+            }
+            ++g_chestStep;
+            g_gatherZ=g_gatherNodeZ-CHEST_DEPTH_YD+CHEST_STEP_YD*(float)g_chestStep;
+            g_chestRetryAt=now+CHEST_RETRY_MS;
+            GatherSendFake(p,now);
+            g_gatherClickPending=1u;g_gatherClickAt=now+GATHER_FAR_CLICK_DELAY_MS;
+            GatherFileLog("AUTOCHEST_RAISE_Z",now,g_gatherEntry,g_gatherTargetLo,
+                          g_gatherTargetHi,g_gatherDistSq,g_chestStep,0u);
         }
         if(g_gatherSpoof&&(!g_gatherLastHB||(DWORD)(now-g_gatherLastHB)>=GATHER_HB_GAP_MS))GatherSendFake(p,now);
         if(g_gatherKind==2u&&!g_gatherSawCast&&!g_gatherClickPending&&!GatherCastMatches(2u,castId)&&g_mining3DRetryAt&&(LONG)(now-g_mining3DRetryAt)>=0){

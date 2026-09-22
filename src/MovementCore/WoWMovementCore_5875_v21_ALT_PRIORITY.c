@@ -1253,7 +1253,8 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
  * scanner and Mining-first PP arbitration read only the effective mask. */
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
-static W112_ControlSettingV1 g_controlSettings[7u+14u+7u];
+/* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
+static W112_ControlSettingV1 g_controlSettings[7u+14u+7u+8u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1345,6 +1346,26 @@ static void init_control_descriptor(void)
     s->key="combat_vein_count";s->label="Combat vein blacklist (session count)";
     s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=COMBAT_VEIN_MAX;s->step.i32=1;
     s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+    {
+        static const char* keys[8]={
+            "auto_chest","chest_battered","chest_solid","chest_large_battered",
+            "chest_large_solid","chest_iron_bound","chest_mithril_bound",
+            "chest_auto_loot"
+        };
+        static const char* labels[8]={
+            "AutoChest (independent)","Chest: Battered/Tattered",
+            "Chest: Solid","Chest: Large Battered","Chest: Large Solid",
+            "Chest: Iron Bound","Chest: Mithril Bound","Chest: Auto loot"
+        };
+        for(i=0u;i<8u;++i){
+            s=&g_controlSettings[28u+i];
+            s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=29u+i;s->key=keys[i];s->label=labels[i];
+            s->type=W112_CTL_BOOL;s->default_value.u32=i==0u?0u:1u;
+            s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
+            s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
     g_controlDescriptorReady=1u;
 }
 
@@ -1366,6 +1387,9 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==26u){out->u32=g_miningBlacklistEnabled?1u:0u;return 1;}
     if(id==27u){out->u32=g_combatVeinEnabled?1u:0u;return 1;}
     if(id==28u){out->i32=(w112_i32)g_combatVeinCount;return 1;}
+    if(id==29u){out->u32=g_chestEnabled?1u:0u;return 1;}
+    if(id>=30u&&id<=35u){out->u32=(g_chestGroupsMask&(1u<<(id-30u)))?1u:0u;return 1;}
+    if(id==36u){out->u32=g_chestAutoLoot?1u:0u;return 1;}
     return 0;
 }
 
@@ -1377,6 +1401,21 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     now=GT()?GT()():0u;
     p=LocalPlayer();
 
+    if(id==29u){
+        g_chestEnabled=value->u32;
+        if(!g_chestEnabled&&g_gatherActive&&g_gatherKind==4u)
+            GatherStop(p,now,"GUI_AUTOCHEST_DISABLED",1u,0u);
+        g_gatherNextScan=0u;return 1;
+    }
+    if(id>=30u&&id<=35u){
+        DWORD bit=1u<<(id-30u);
+        if(value->u32)g_chestGroupsMask|=bit;
+        else g_chestGroupsMask&=~bit;
+        if(g_gatherActive&&g_gatherKind==4u&&!(g_chestGroupsMask&ChestGroupBit(g_gatherEntry)))
+            GatherStop(p,now,"GUI_AUTOCHEST_TYPE_DISABLED",1u,0u);
+        g_gatherNextScan=0u;return 1;
+    }
+    if(id==36u){g_chestAutoLoot=value->u32;return 1;}
     if(id==1u){
         g_gatherEnabled=value->u32;
         if(!g_gatherEnabled&&(g_gatherActive||g_gatherLootWait))GatherStop(p,now,"GUI_GATHER_DISABLED",1u,0u);
@@ -1429,7 +1468,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,28u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,36u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

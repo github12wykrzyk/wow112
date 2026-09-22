@@ -430,8 +430,12 @@ static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL,g_ui_rear_details_state=NULL;
 static HWND g_ui_wsg_check=NULL,g_ui_wsg_state=NULL;
 /* Gather is a subview of the existing GUI: no new game-window hook. */
-static HWND g_ui_gather_controls[20]={NULL};
+static HWND g_ui_gather_controls[40]={NULL};
+static DWORD g_ui_gather_control_pages[40]={0u};
 static HWND g_ui_gather_checks[16]={NULL};
+static HWND g_ui_gather_extra_checks[4]={NULL};
+static HWND g_ui_gather_chest_checks[8]={NULL};
+static DWORD g_ui_gather_page=0u;
 static HWND g_ui_gather_status=NULL;
 static DWORD g_ui_gather_count=0u,g_ui_gather_open=0u;
 static DWORD g_ui_shown=0u;
@@ -521,35 +525,59 @@ static void ui_sync_wsg(void) {
     }
     *p=0;SetWindowTextA(g_ui_wsg_state,buf);
 }
+/* The active Parallel GUI is PlayerESP; gather stays inside MovementCore.
+ * Page 0: vein blacklist. Page 1: AutoChest. Page 2: gather options.
+ * All HWND children retain the root parent so WM_COMMAND routing is stable. */
 static void ui_sync_gather(void) {
+    static const DWORD extra_ids[4]={3u,25u,27u,22u};
     DWORD i;
     W112_ControlValueV1 v;
-    BOOL live=ui_work_pp_module(PAR_CORE_DLL,26u)!=NULL;
+    BOOL live=ui_work_pp_module(PAR_CORE_DLL,36u)!=NULL;
     for(i=0u;i<16u;++i) {
         DWORD id=i==0u?1u:(i==1u?26u:i+6u);
-        DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,26u,id,&v)&&v.u32?1u:0u;
+        DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,36u,id,&v)&&v.u32?1u:0u;
         if(g_ui_gather_checks[i])
             SendMessageA(g_ui_gather_checks[i],UI_SETCHECK,checked,0);
     }
+    for(i=0u;i<4u;++i) {
+        DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,36u,extra_ids[i],&v)&&v.u32?1u:0u;
+        if(g_ui_gather_extra_checks[i])
+            SendMessageA(g_ui_gather_extra_checks[i],UI_SETCHECK,checked,0);
+    }
+    for(i=0u;i<8u;++i) {
+        DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,36u,29u+i,&v)&&v.u32?1u:0u;
+        if(g_ui_gather_chest_checks[i])
+            SendMessageA(g_ui_gather_chest_checks[i],UI_SETCHECK,checked,0);
+    }
     if(g_ui_gather_status)SetWindowTextA(g_ui_gather_status,
-        live?"Checked ore = skip while blacklist is ON. F9 toggles AutoGather.":
-             "MovementCore control unavailable: update the Parallel candidate.");
+        !live?"MovementCore controls unavailable: update Parallel candidate.":
+        g_ui_gather_page==0u?"Checked ore = skip while vein blacklist is ON.":
+        g_ui_gather_page==1u?"AutoChest: deepest Z -30 yd, raises 0.5 yd until open.":
+                             "Gather, AutoOpen and AutoChest share ONE MovementCore.");
 }
-static void ui_show_gather(void) {
+static void ui_show_gather_page(DWORD page) {
     DWORD i;
-    if(g_ui_current_tab!=UI_TAB_ROGUE)return;
-    g_ui_gather_open=1u;
+    if(g_ui_current_tab!=UI_TAB_ROGUE || page>2u)return;
+    g_ui_gather_open=1u;g_ui_gather_page=page;
     for(i=0u;i<g_ui_page_count[UI_TAB_ROGUE];++i)
         if(g_ui_pages[UI_TAB_ROGUE][i])
             ShowWindow(g_ui_pages[UI_TAB_ROGUE][i],SW_HIDE);
     for(i=0u;i<g_ui_gather_count;++i)
         if(g_ui_gather_controls[i])
-            ShowWindow(g_ui_gather_controls[i],SW_SHOWNOACTIVATE);
+            ShowWindow(g_ui_gather_controls[i],
+                g_ui_gather_control_pages[i]==page||g_ui_gather_control_pages[i]==3u?
+                SW_SHOWNOACTIVATE:SW_HIDE);
     ui_sync_gather();
 }
-static void ui_add_gather_control(HWND control) {
-    if(control && g_ui_gather_count<20u)
+static void ui_show_gather(void) {ui_show_gather_page(0u);}
+static void ui_add_gather_page_control(HWND control,DWORD page) {
+    if(control && g_ui_gather_count<40u) {
+        g_ui_gather_control_pages[g_ui_gather_count]=page;
         g_ui_gather_controls[g_ui_gather_count++]=control;
+    }
+}
+static void ui_add_gather_control(HWND control) {
+    ui_add_gather_page_control(control,0u);
 }
 static void ui_sync_esp(void) {
     DWORD state[4]={g_esp_enabled,g_parallel_show_horde,
@@ -696,7 +724,7 @@ __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCST
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
-static const DWORD g_ui_profile_core_ids[]={1u,2u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,26u};
+static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
 struct UiProfileModule {
@@ -705,11 +733,11 @@ struct UiProfileModule {
     const DWORD *ids;
     DWORD count;
     BOOL restored;
-    DWORD last[17];
-    BYTE seen[17];
+    DWORD last[32];
+    BYTE seen[32];
 };
 static struct UiProfileModule g_ui_profile_modules[]={
-    {PAR_CORE_DLL,26u,g_ui_profile_core_ids,17u,FALSE,{0},{0}},
+    {PAR_CORE_DLL,36u,g_ui_profile_core_ids,29u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
@@ -926,6 +954,18 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
         if(id==206u){ui_show_gather();return 0;}
         if(id==207u){ui_set_page(UI_TAB_ROGUE);return 0;}
+        if(id==208u){ui_show_gather_page(0u);return 0;}
+        if(id==209u){ui_show_gather_page(1u);return 0;}
+        if(id==214u){ui_show_gather_page(2u);return 0;}
+        if(id>=215u&&id<=222u){
+            ui_work_pp_flip(PAR_CORE_DLL,36u,29u+(id-215u));
+            ui_sync_gather();ui_profile_sync();return 0;
+        }
+        if(id>=210u&&id<=213u){
+            static const DWORD extra_ids[4]={3u,25u,27u,22u};
+            ui_work_pp_flip(PAR_CORE_DLL,36u,extra_ids[id-210u]);
+            ui_sync_gather();ui_profile_sync();return 0;
+        }
         if(id>=112u&&id<=127u) {
             DWORD setting=id==112u?1u:(id==113u?26u:id-106u);
             ui_work_pp_flip(PAR_CORE_DLL,26u,setting);
@@ -1065,13 +1105,17 @@ static BOOL ui_create(HWND game) {
         "",46,548,665,35,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
     ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
-        "AUTO GATHER / VEIN BLACKLIST  >",46,589,665,44,206u,FALSE));
+        "GATHER: ORE / CHESTS / OPTIONS  >",46,589,665,44,206u,FALSE));
 
-    /* Checked ore family means skip it when the global switch is ON. */
-    ui_add_gather_control(ui_label(g_parallel_ui_hwnd,
-        "AUTO GATHER / VEIN BLACKLIST",36,137,680,37,TRUE));
+    /* One compact Gather subview, two internal pages. Parent every HWND to root. */
+    ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
+        "VEINS",46,137,210,34,208u,FALSE),3u);
+    ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
+        "CHESTS",273,137,210,34,209u,FALSE),3u);
+    ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
+        "OPTIONS",501,137,210,34,214u,FALSE),3u);
     g_ui_gather_status=ui_label(g_parallel_ui_hwnd,"",46,178,665,32,FALSE);
-    ui_add_gather_control(g_ui_gather_status);
+    ui_add_gather_page_control(g_ui_gather_status,3u);
     g_ui_gather_checks[0]=ui_button(g_parallel_ui_hwnd,
         "AUTO GATHER (F9)",46,215,665,42,112u,TRUE);
     ui_add_gather_control(g_ui_gather_checks[0]);
@@ -1090,8 +1134,42 @@ static BOOL ui_create(HWND game) {
             ui_add_gather_control(g_ui_gather_checks[i+2u]);
         }
     }
-    ui_add_gather_control(ui_button(g_parallel_ui_hwnd,
-        "< BACK TO ROGUE",46,596,275,43,207u,FALSE));
+    {
+        static const char* options[4]={
+            "AUTO OPEN (F12)","MINING BELOW NODE (Z -4)",
+            "AUTO BLACKLIST VEINS AFTER COMBAT","MINING EARLY RESTORE (TEST)"
+        };
+        for(i=0u;i<4u;++i){
+            g_ui_gather_extra_checks[i]=ui_button(g_parallel_ui_hwnd,options[i],
+                46,220+(int)i*72,665,48,210u+i,TRUE);
+            ui_add_gather_page_control(g_ui_gather_extra_checks[i],2u);
+        }
+    }
+    /* Chest controls use their own page: no overlapping ore rows or hidden
+     * toggles at the bottom of the 750x660 Parallel control window. */
+    {
+        static const char* chest_names[8]={
+            "AUTO CHEST","BATTERED / TATTERED","SOLID",
+            "LARGE BATTERED","LARGE SOLID","IRON BOUND",
+            "MITHRIL BOUND","AUTO LOOT CHEST"
+        };
+        g_ui_gather_chest_checks[0]=ui_button(g_parallel_ui_hwnd,
+            chest_names[0],46,222,665,42,215u,TRUE);
+        ui_add_gather_page_control(g_ui_gather_chest_checks[0],1u);
+        g_ui_gather_chest_checks[7]=ui_button(g_parallel_ui_hwnd,
+            chest_names[7],46,276,665,42,222u,TRUE);
+        ui_add_gather_page_control(g_ui_gather_chest_checks[7],1u);
+        for(i=1u;i<=6u;++i) {
+            g_ui_gather_chest_checks[i]=ui_button(g_parallel_ui_hwnd,chest_names[i],
+                i<=3u?46:382,335+(int)((i-1u)%3u)*72,307,48,215u+i,TRUE);
+            ui_add_gather_page_control(g_ui_gather_chest_checks[i],1u);
+        }
+        ui_add_gather_page_control(ui_label(g_parallel_ui_hwnd,
+            "All chest types are opt-in through AutoChest master switch.",
+            46,555,665,26,FALSE),1u);
+    }
+    ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
+        "< BACK TO ROGUE",46,596,275,43,207u,FALSE),3u);
 
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
         "ACTIVE MODULES",36,137,665,40,TRUE));
@@ -1211,9 +1289,11 @@ static void parallel_gui_destroy(void) {
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;
     g_ui_wsg_check=NULL;g_ui_wsg_state=NULL;
-    for(page=0u;page<20u;++page)g_ui_gather_controls[page]=NULL;
+    for(page=0u;page<40u;++page){g_ui_gather_controls[page]=NULL;g_ui_gather_control_pages[page]=0u;}
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
-    g_ui_gather_status=NULL;g_ui_gather_count=0u;g_ui_gather_open=0u;
+    for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;
+    for(page=0u;page<8u;++page)g_ui_gather_chest_checks[page]=NULL;
+    g_ui_gather_status=NULL;g_ui_gather_count=0u;g_ui_gather_open=0u;g_ui_gather_page=0u;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
     g_ui_font=NULL;g_ui_title_font=NULL;
