@@ -234,7 +234,10 @@ static void PPFixed_Flush(void)
 /* W112_PLANE_TEST: only outgoing packet Z is modified, never client XYZ. */
 static volatile DWORD g_planeEnabled=0u,g_planeDepth=12u,g_planePackets=0u;
 static volatile LONG g_planeTxZ10=0;
+/* GUI setter runs on PlayerESP's separate window thread. It may update
+ * volatile state only; game movement and FrameScript stay on the game timer. */
 static volatile DWORD g_planeDirectCurrent=0u,g_planeLastApplied=0u;
+static volatile DWORD g_planeRestorePending=0u,g_planeNotice=0u;
 static DWORD __cdecl Plane_TryDirectMovement(DataStore5875 *packet);
 static const char g_planeOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Plane TEST]|r ON: outgoing Z lowered; server acceptance UNKNOWN') end";
 static const char g_planeOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Plane TEST]|r OFF: restoring normal movement') end";
@@ -1251,7 +1254,7 @@ static DWORD __cdecl Plane_TryDirectMovement(DataStore5875 *packet)
     BYTE *player,*raw;
     DWORD *moveFlags;
     float x,y,z,localX,localY,localZ,newZ;
-    if(!g_planeEnabled||!g_loginGuardReady||!packet||
+    if(!g_planeEnabled||g_planeRestorePending||!g_loginGuardReady||!packet||
        packet->size<0x20u||packet->size>MAX_PACKET_SIZE)return 0u;
     if(g_injecting||g_stepMoveInjecting||g_stepActive||g_telePending||
        g_mode!=MODE_OFF||g_gatherActive||g_gatherLootWait||g_gatherSpoof||
@@ -1281,15 +1284,33 @@ static DWORD __cdecl Plane_TryDirectMovement(DataStore5875 *packet)
     g_planeLastApplied=1u;
     return 1u;
 }
-static void Plane_Disable(BYTE *player,DWORD combat)
+/* Disable is safe to call from the GUI thread: no dereference, cast, packet,
+ * file or FrameScript operation here. A timer-owned normal pulse is deferred
+ * until no competing synthetic owner is active. */
+static void Plane_Disable(DWORD combat)
 {
-    DWORD restore=g_planeLastApplied;
-    g_planeEnabled=0u;g_planeLastApplied=0u;
-    if(restore&&g_loginGuardReady&&Ptr(player)&&!LongPPActive()&&
-       !LongPPInjecting()&&!g_injecting&&!g_gatherActive&&
-       !g_gatherLootWait&&!g_stepMoveInjecting&&!g_abCapGuardActive)
+    g_planeEnabled=0u;
+    if(g_planeLastApplied)g_planeRestorePending=1u;
+    g_planeLastApplied=0u;
+    g_planeNotice=combat?3u:2u;
+}
+static void Plane_TimerRestore(BYTE *player)
+{
+    DWORD notice=g_planeNotice;
+    if(g_planeRestorePending&&g_loginGuardReady&&Ptr(player)&&
+       !g_planeEnabled&&!g_injecting&&!g_gatherActive&&!g_gatherLootWait&&
+       !g_gatherSpoof&&!LongPPActive()&&!LongPPInjecting()&&
+       !g_stepMoveInjecting&&!g_stepActive&&!g_telePending&&
+       !g_abCapGuardActive&&!CoordRearOwned()&&g_mode==MODE_OFF){
+        /* Run only on MovementCore's game timer, never in PlayerESP WndProc. */
+        g_planeRestorePending=0u;
         SendReal(player);
-    DebugChat(combat?g_planeCombatChat:g_planeOffChat);
+    }
+    if(notice){
+        g_planeNotice=0u;
+        DebugChat(notice==3u?g_planeCombatChat:
+                  notice==2u?g_planeOffChat:g_planeOnChat);
+    }
 }
 
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
@@ -1302,9 +1323,11 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     W112_LoginGuardTick(p,now);
     if(!g_loginGuardReady){
         g_planeEnabled=0u;g_planeLastApplied=0u;
+        g_planeRestorePending=0u;g_planeNotice=0u;
         g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;
     }
-    if(g_planeEnabled&&p&&Combat(p))Plane_Disable(p,1u);
+    if(g_planeEnabled&&p&&Combat(p))Plane_Disable(1u);
+    Plane_TimerRestore(p);
     W112_PPGuard_Tick(p,now);
     CombatVeinObserve(p,now);
     PPBlacklistTick(now);
@@ -1368,7 +1391,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         TrackChestNativeTick(p);
         TrackChestTick(p,now);
-        if(!g_planeEnabled&&!g_telePending&&!CoordRearOwned()&&
+        if(!g_telePending&&!CoordRearOwned()&&
            (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)){
             DWORD autoOpenWasEnabled=g_autoOpenEnabled;
             if(autoOpenWasEnabled&&W112_AutoOpenBusy(p)){
@@ -1772,15 +1795,16 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     }
     if(id==36u){g_chestAutoLoot=value->u32;return 1;}
     if(id==45u){
+        /* Called from an independent PlayerESP GUI thread. No game reads,
+         * synchronous packet sends, GatherStop or FrameScript execution. */
         if(value->u32){
-            if(!g_loginGuardReady||!Ptr(p)||Combat(p))return 0;
+            if(!g_loginGuardReady||g_planeRestorePending)return 0;
             if(!g_planeEnabled){
-                if(g_gatherActive||g_gatherLootWait)
-                    GatherStop(p,now,"PLANE_TEST_GATHER_ABORT",1u,0u);
-                g_planeEnabled=1u;g_planeLastApplied=0u;
-                DebugChat(g_planeOnChat);
+                g_planeLastApplied=0u;
+                g_planeEnabled=1u;
+                g_planeNotice=1u;
             }
-        }else if(g_planeEnabled)Plane_Disable(p,0u);
+        }else if(g_planeEnabled)Plane_Disable(0u);
         return 1;
     }
     if(id==46u){
@@ -1891,6 +1915,7 @@ BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
         AltPriority_Remove();
         g_coordRearUntil=0u;g_stepActive=0u;g_stepEnabled=0u;
         g_planeEnabled=0u;g_planeLastApplied=0u;
+        g_planeRestorePending=0u;g_planeNotice=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);
     }
     return TRUE;
