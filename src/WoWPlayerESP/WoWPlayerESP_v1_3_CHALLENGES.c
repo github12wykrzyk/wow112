@@ -19,6 +19,10 @@
 #define WM_W112_ESP_BG_SCORE (0x8000u + 0x0113u)
 #define WM_W112_REAR_TICK (0x8000u + 0x0119u)
 #define VK_INSERT 0x2Du
+/* The game WndProc can be superseded by a companion DLL. Sample Insert in the
+ * existing render tick as a fallback; both paths share one press latch. */
+__declspec(dllimport) short WINAPI GetAsyncKeyState(int);
+static volatile DWORD g_gui_insert_latched=0u;
 #define BG_SCORE_POLL_FRAMES 30u /* ~1s at 33ms/render frame */
 #define CHALLENGE_WORLD_STABLE_POLLS 15u /* 15 x 100 ms = 1.5 s quarantine after world/BG rebuild */
 
@@ -224,7 +228,10 @@ static void chal_bg_score_main_thread(void) {
 
 static LONG WINAPI chal_game_wndproc(HWND hwnd, UINT msg, DWORD wParam, LONG lParam) {
     if (msg==WM_KEYDOWN && wParam==VK_INSERT) {
-        g_parallel_gui_open=g_parallel_gui_open?0u:1u;
+        if(!g_gui_insert_latched) {
+            g_gui_insert_latched=1u;
+            g_parallel_gui_open=g_parallel_gui_open?0u:1u;
+        }
         return 0;
     }
     /* v1.2 consumes F8 to toggle its range sweep. In the aggregate active stack
@@ -889,6 +896,7 @@ static void ui_filters_changed(void) {
 static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
     DWORD id;
     if(msg==UI_CLOSE || (msg==WM_KEYDOWN && wp==VK_INSERT)) {
+        if(msg==WM_KEYDOWN)g_gui_insert_latched=1u;
         g_parallel_gui_open=0u;
         ShowWindow(hwnd,SW_HIDE);
         if(g_hooked_game_hwnd && IsWindow(g_hooked_game_hwnd))
@@ -1112,6 +1120,20 @@ static BOOL ui_create(HWND game) {
 }
 static void parallel_gui_tick(void) {
     HWND game=g_hooked_game_hwnd,fg;
+    /* WndProc is not guaranteed to remain in the live subclass chain when
+     * other runtime modules replace it. Render-loop polling restores Insert
+     * without adding a hook or allowing one press to toggle twice. */
+    {
+        BOOL down=(GetAsyncKeyState(VK_INSERT)&0x8000)!=0;
+        if(!down)g_gui_insert_latched=0u;
+        else if(!g_gui_insert_latched && game && IsWindow(game)) {
+            HWND active=GetForegroundWindow();
+            if(active==game || active==g_parallel_ui_hwnd) {
+                g_gui_insert_latched=1u;
+                g_parallel_gui_open=g_parallel_gui_open?0u:1u;
+            }
+        }
+    }
     if(!g_ui_profile_initialized)ui_profile_bootstrap();
     if(g_render_frame>=g_ui_profile_next_frame) {
         g_ui_profile_next_frame=g_render_frame+UI_PROFILE_POLL_FRAMES;
