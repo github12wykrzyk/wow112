@@ -1,0 +1,39 @@
+name: WoW112 Guardian
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: wow112-guardian
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout trusted default-branch auditor
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Audit live branch heads and propose bounded fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python3 tools/guardian.py
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guardian-audit-${{ github.run_id }}
+          path: dist/guardian_report.json
+          if-no-files-found: warn
+          retention-days: 14

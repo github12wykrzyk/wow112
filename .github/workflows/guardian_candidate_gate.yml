@@ -1,0 +1,75 @@
+name: Guardian candidate gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Original development HEAD SHA
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact Guardian proposal SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - name: Validate inputs and exact candidate SHA
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          if ($env:BASE_SHA -notmatch '^[a-f0-9]{40}$' -or $env:CANDIDATE_SHA -notmatch '^[a-f0-9]{40}$') { throw 'Invalid SHA' }
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact parent and one C source change
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          if ((git rev-parse HEAD) -ne $env:CANDIDATE_SHA) { throw 'Candidate SHA mismatch' }
+          if ((git rev-parse HEAD^) -ne $env:BASE_SHA) { throw 'Parent SHA mismatch' }
+          $changed = @(git diff --name-only $env:BASE_SHA HEAD)
+          if ($changed.Count -ne 1 -or $changed[0] -notmatch '^src/.+\.c$') { throw 'Candidate must change only one C source file' }
+      - name: Verify current state and runtime artifacts
+        shell: pwsh
+        run: |
+          python tools/verify_current.py
+          if ($LASTEXITCODE -ne 0) { throw 'verify_current failed' }
+          python tools/verify_runtime_artifacts.py
+          if ($LASTEXITCODE -ne 0) { throw 'verify_runtime_artifacts failed' }
+          python tools/verify_verified_symbols.py
+          if ($LASTEXITCODE -ne 0) { throw 'verify_verified_symbols failed' }
+          python tools/ai_experiments.py validate
+          if ($LASTEXITCODE -ne 0) { throw 'experiment ledger failed' }
+      - name: Build changed Windows x86 module and finalize package
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+        run: |
+          python tools/build_changed_active.py --base $env:BASE_SHA --output-dir build --package dist/guardian_candidate.zip --package-metadata dist/guardian_metadata.json --summary dist/guardian_summary.json
+          if ($LASTEXITCODE -ne 0) { throw 'Windows x86 build failed' }
+          python tools/verify_candidate_package.py --package dist/guardian_candidate.zip --package-metadata dist/guardian_metadata.json --summary dist/guardian_summary.json --report dist/guardian_final_verification.json --finalize
+          if ($LASTEXITCODE -ne 0) { throw 'FINAL_PACKAGE failed' }
+      - name: Upload diagnostic metadata only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guardian-candidate-gate-${{ inputs.candidate_sha }}
+          path: |
+            dist/guardian_metadata.json
+            dist/guardian_summary.json
+            dist/guardian_final_verification.json
+          if-no-files-found: warn
+          retention-days: 14
