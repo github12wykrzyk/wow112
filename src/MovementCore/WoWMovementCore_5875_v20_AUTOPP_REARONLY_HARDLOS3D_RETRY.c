@@ -238,6 +238,8 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define SPELL_VANISH_STEALTH_R2         11329u
 #define GATHER_STEALTH_BREAK_DELAY_MS      180u
 #define AUTOOPEN_PICKLOCK_SETTLE_MS          90u
+#define AUTOOPEN_CLICK_RETRY_MS             550u
+#define AUTOOPEN_CLICK_MAX_ATTEMPTS           3u
 #define AUTOOPEN_HOLD_MS                    5600u
 #define AUTOOPEN_CHAT_REPEAT_MS             10000u
 #define GATHER_LOG_MAX_BYTES       4194304u
@@ -337,6 +339,7 @@ static volatile DWORD g_preLandHeartbeats = 0;
 /* AutoGather state. */
 static volatile DWORD g_gatherEnabled=1u,g_gatherActive=0u,g_gatherKey9=0u,g_gatherReadyChat=0u;
 static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrimed=0u;
+static volatile DWORD g_autoOpenClickCount=0u,g_autoOpenLastClickAt=0u;
 static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
 static volatile DWORD g_lastOpenChatLo=0u,g_lastOpenChatHi=0u,g_lastOpenChatTick=0u;
 static volatile DWORD g_hasMining=0u,g_hasHerbalism=0u,g_lastProfBits=0xFFFFFFFFu;
@@ -996,7 +999,7 @@ static const char* AutoOpenName(DWORD e)
         case 179492u:case 179494u:case 179496u:return "Dented Footlocker";
         case 179493u:case 179497u:return "Mossy Footlocker";
         case 179498u:return "Scarlet Footlocker";
-        case 123330u:case 123331u:case 123332u:case 123333u:return "Buccaneer\'s Strongbox";
+        case 123330u:case 123331u:case 123332u:case 123333u:return "Buccaneer\\'s Strongbox";
         default:return "Locked footlocker";
     }
 }
@@ -1152,7 +1155,11 @@ static void GatherSendFake(BYTE*p,DWORD now)
 
 static void GatherClickNative(BYTE*p,BYTE*obj,DWORD now)
 {
-    if(!Ptr(p)||!Ptr(obj)||LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;((RightClickObject_t)ADDR_ONRIGHTCLICK_OBJECT)(obj,0);++g_gatherClicks;GatherFileLog("NEAR_NATIVE_CLICK",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
+    if(!Ptr(p)||!Ptr(obj)||LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;((RightClickObject_t)ADDR_ONRIGHTCLICK_OBJECT)(obj,0);++g_gatherClicks;
+    if(g_gatherKind==3u){
+        ++g_autoOpenClickCount;g_autoOpenLastClickAt=now;
+        GatherFileLog("AUTOOPEN_NATIVE_CLICK_SENT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_autoOpenClickCount,g_gatherKind);
+    }else GatherFileLog("NEAR_NATIVE_CLICK",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
 }
 
 static float Mining3DWorldZ(DWORD group)
@@ -1269,7 +1276,7 @@ static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,
     if(!Ptr(p)||!Ptr(obj))return;desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);if(!GetGOPos(obj,desc,&nx,&ny,&nz,&src)){GatherFileLog("POS_FAIL_RETRY",now,entry,lo,hi,d2,g_gatherAttempts,kind);g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;return;}
     /* Recheck when starting: the player may have moved since selection. */
     if(kind==3u&&!AutoOpenInMelee(p,obj,&d2))return;
-    g_gatherActive=1u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_autoOpenPickPrimed=0u;g_gatherTargetLo=lo;g_gatherTargetHi=hi;g_gatherEntry=entry;g_gatherKind=kind;g_gatherStart=now;g_gatherLastHB=0u;g_gatherDistSq=d2;g_gatherPosSource=src;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;
+    g_gatherActive=1u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_autoOpenPickPrimed=0u;g_autoOpenClickCount=0u;g_autoOpenLastClickAt=0u;g_gatherTargetLo=lo;g_gatherTargetHi=hi;g_gatherEntry=entry;g_gatherKind=kind;g_gatherStart=now;g_gatherLastHB=0u;g_gatherDistSq=d2;g_gatherPosSource=src;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;
     ChatAttempt(kind,entry,lo,hi,now);
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);dx=px-nx;dy=py-ny;
     g_gatherNodeX=nx;g_gatherNodeY=ny;g_gatherNodeZ=nz;g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz;
@@ -1536,6 +1543,16 @@ static void GatherTick(BYTE*p,DWORD now)
             return;
         }
 
+        if(g_gatherKind==3u&&!g_gatherClickPending&&g_autoOpenPickPrimed&&
+           g_autoOpenClickCount>0u&&g_autoOpenClickCount<AUTOOPEN_CLICK_MAX_ATTEMPTS&&
+           !g_gatherSawCast&&!castId&&!lootOpen&&
+           (DWORD)(now-g_autoOpenLastClickAt)>=AUTOOPEN_CLICK_RETRY_MS){
+            /* Some clients do not dispatch the pending Pick Lock cursor on the
+             * first native GO click. Retry the same real-GO interaction at most
+             * twice; every retry still passes the melee gate above. */
+            g_gatherClickPending=1u;g_gatherClickAt=now;
+            GatherFileLog("AUTOOPEN_CLICK_RETRY",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_autoOpenClickCount,g_gatherKind);
+        }
         if(g_gatherSpoof&&(!g_gatherLastHB||(DWORD)(now-g_gatherLastHB)>=GATHER_HB_GAP_MS))GatherSendFake(p,now);
         if(g_gatherKind==2u&&!g_gatherSawCast&&!g_gatherClickPending&&!GatherCastMatches(2u,castId)&&g_mining3DRetryAt&&(LONG)(now-g_mining3DRetryAt)>=0){
             if(!Mining3DQueueRetry(p,now)){
