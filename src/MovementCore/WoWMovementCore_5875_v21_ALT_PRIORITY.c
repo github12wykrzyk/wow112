@@ -17,6 +17,7 @@
  * all V20 diagnostics are preserved unchanged outside MODE_LOCAL_STRONG.
  */
 
+#define W112_PP_DETECTION_GUARD 1
 #define W112_PP_ALWAYS_BEHIND 1
 #define W112_PP_SELECTOR_BLACKLIST_BRIDGE 1
 #define DllMain W112_MovementCoreV20_DllMain
@@ -68,7 +69,7 @@ static DWORD __cdecl W112_PPSelector_ShouldSkip(BYTE*unit)
   if(!g_ppSelectorInstalled||!Ptr(unit))return 0u;
   lo=*(DWORD*)(unit+OFF_OBJ_GUID_LOW);
   hi=*(DWORD*)(unit+OFF_OBJ_GUID_HIGH);
-  if(!PPBlackFind(lo,hi))return 0u;
+  if(W112_PPGuard_Allow(lo,hi,GT()?GT()():0u)&&!PPBlackFind(lo,hi))return 0u;
   ++g_ppSelectorSkipped;
   return 1u;
 }
@@ -154,6 +155,42 @@ __declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorSkipped(void)
 {return g_ppSelectorSkipped;}
 __declspec(dllexport) DWORD __stdcall MovementCore_PPSelectorReleased(void)
 {return g_ppSelectorReleased;}
+
+/* Only automatic PP is paused after stealth loss or combat entry.  The
+   normal corpse-loot pipeline and manual Pick Pocket are not affected. */
+#define W112_PP_GUARD_COOLDOWN_MS 15000u
+static volatile DWORD g_ppGuardReady=0u,g_ppGuardReadySince=0u;
+static volatile DWORD g_ppGuardHoldLo=0u,g_ppGuardHoldHi=0u,g_ppGuardHoldUntil=0u;
+static volatile DWORD g_ppGuardCatches=0u,g_ppGuardPulseFixes=0u;
+static DWORD W112_PPGuard_Safe(BYTE*p)
+{
+    return g_loginGuardReady&&g_autoPPEnabled&&Ptr(p)&&
+           GatherHasStealth(p)&&!Combat(p);
+}
+static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
+{
+    if(!g_ppGuardReady||!W112_PPGuard_Safe(LocalPlayer()))return 0u;
+    if((lo|hi)&&lo==g_ppGuardHoldLo&&hi==g_ppGuardHoldHi&&
+       (LONG)(now-g_ppGuardHoldUntil)<0)return 0u;
+    return 1u;
+}
+static void W112_PPGuard_Tick(BYTE*p,DWORD now)
+{
+    if(!W112_PPGuard_Safe(p)){
+        if(g_ppGuardReady&&g_ppFailPendingAuto&&
+           (g_ppFailPendingLo|g_ppFailPendingHi)){
+            g_ppGuardHoldLo=g_ppFailPendingLo;
+            g_ppGuardHoldHi=g_ppFailPendingHi;
+            g_ppGuardHoldUntil=now+W112_PP_GUARD_COOLDOWN_MS;
+            W112_PPSelector_ReleaseTracked(g_ppGuardHoldLo,g_ppGuardHoldHi);
+            PPHardRetryCancel();
+            ++g_ppGuardCatches;
+        }
+        g_ppGuardReady=0u;g_ppGuardReadySince=0u;return;
+    }
+    if(!g_ppGuardReadySince)g_ppGuardReadySince=now;
+    if((DWORD)(now-g_ppGuardReadySince)>=350u)g_ppGuardReady=1u;
+}
 
 static volatile DWORD g_altPriorityInstalled=0u;
 static volatile DWORD g_altPriorityBlockCurrent=0u;
@@ -286,6 +323,21 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
     if(g_abCapGuardActive && op==MSG_MOVE_HEARTBEAT){
         g_altPriorityBlockCurrent=1u;
         ++g_abCapGuardBlockedMove;
+        return;
+    }
+    /* LongPP may emit its first position heartbeat directly from SendMovementPulse.
+       Use the already-selected rear coordinates before that heartbeat is sent. */
+    if(op==MSG_MOVE_HEARTBEAT&&packet->size>=0x1Cu&&g_ppFailPendingAuto&&
+       g_ppHardArmed&&g_ppChainOk&&LongPPActive()&&
+       Ptr((void*)g_longPPGuidLoPtr)&&Ptr((void*)g_longPPGuidHiPtr)&&
+       *(DWORD*)g_longPPGuidLoPtr==g_ppHardLo&&
+       *(DWORD*)g_longPPGuidHiPtr==g_ppHardHi){
+        PPHardApplySpoof();
+        *(float*)(raw+0x0Cu)=g_ppHardX;
+        *(float*)(raw+0x10u)=g_ppHardY;
+        *(float*)(raw+0x14u)=g_ppHardZ;
+        *(float*)(raw+0x18u)=g_ppHardO;
+        ++g_ppGuardPulseFixes;
         return;
     }
     if(op!=0x12Eu)return;
@@ -897,6 +949,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     p=LocalPlayer();
     W112_LoginGuardTick(p,now);
     if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;}
+    W112_PPGuard_Tick(p,now);
     PPBlacklistTick(now);
     FlushPendingPPLog();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;

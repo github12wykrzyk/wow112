@@ -1377,6 +1377,9 @@ static void PPPreemptOutgoing(DWORD now)
     }
 }
 
+#if defined(W112_PP_DETECTION_GUARD)
+static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now);
+#endif
 static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
 {
     BYTE*raw;DWORD op,spell,now,isAutoSource,tlo=0u,thi=0u,variant=0u;
@@ -1388,6 +1391,11 @@ static void __cdecl PPArbiter_BeforeSend(DataStore5875* packet,DWORD returnAddr)
        reaches ClientServices::Send from its relocated module address. */
     isAutoSource=(returnAddr>=0x01000000u&&returnAddr<=0x7FFDFFFFu)?1u:0u;
     PPDecodeTargetGuid(packet,&tlo,&thi);
+#if defined(W112_PP_DETECTION_GUARD)
+    if(isAutoSource&&!W112_PPGuard_Allow(tlo,thi,now)){
+        g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;
+    }
+#endif
     if(isAutoSource&&CurrentTargetIsPlayer()){g_ppForward=0u;++g_autoPPBlocked;++g_autoPPTargetPlayerBlocks;g_ppQuietUntil=0u;return;}
     if(!g_autoPPEnabled&&isAutoSource){g_ppForward=0u;++g_autoPPBlocked;g_ppQuietUntil=0u;return;}
     /* One auto PP transaction at a time: failure callbacks have no GUID in 5875.
