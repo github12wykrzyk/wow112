@@ -22,6 +22,11 @@ on:
       - 'tools/verify_repo.py'
       - 'tools/sync_source_metadata.py'
       - '.github/workflows/build_stable_candidate.yml'
+      - '.github/workflows/guardian.yml'
+      - '.github/workflows/guardian_candidate_gate.yml'
+      - '.github/workflows/guardian_tests.yml'
+      - 'tools/guardian.py'
+      - 'tools/test_guardian.py'
   workflow_dispatch:
 
 permissions:
