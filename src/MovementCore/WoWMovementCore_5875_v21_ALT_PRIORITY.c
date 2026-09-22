@@ -1036,11 +1036,17 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_OBJ_STABLE_D2  0.25f /* same cursor-hit XYZ within 0.5yd */
 /* Map lacks destination terrain Z. High launch + one native fall refresh,
    exclusively for map clicks / map E; ordinary terrain/object E unchanged. */
-#define W112_MAP_TELE_RAISE_Z       500.0f
-#define W112_MAP_TELE_MIN_Z        1000.0f
-#define W112_MAP_TELE_YAW_RAD         0.10f
-#define W112_MAP_TELE_FALL_DELAY_MS   180u
-#define W112_MAP_TELE_FALL_TIMEOUT_MS 900u
+#define W112_MAP_TELE_RAISE_Z        250.0f
+#define W112_MAP_TELE_MIN_Z         500.0f
+#define W112_MAP_TELE_FALL_DELAY_MS  200u
+#define W112_MAP_TELE_FALL_TIMEOUT_MS 1600u
+#define W112_MAP_TELE_BACKSTEP_MS    150u
+#define W112_MAP_TELE_BACK_VK         0x53u /* S */
+#define W112_MAP_TELE_BACK_SCAN       0x1Fu
+#define W112_KEYEVENTF_KEYUP          0x0002u
+/* keybd_event is delivered as a native keyboard press/release. An outgoing
+   heartbeat with modified yaw alone never exercises the game movement keys. */
+__declspec(dllimport) void __stdcall keybd_event(BYTE,BYTE,DWORD,DWORD);
 typedef struct W112_TELE_MBI {
     DWORD base,allocation_base,allocation_protect,region_size,state,protect,type;
 } W112_TELE_MBI;
@@ -1049,7 +1055,10 @@ typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleKeyWasDown=0u;
 static DWORD g_teleWaitSince=0u,g_teleWaitLast=0u;
 static DWORD g_telePending=0u,g_telePendingHitType=0u,g_telePendingFromMap=0u;
+static volatile DWORD g_mapHighEnabled=1u; /* independent saved GUI toggle */
 static DWORD g_mapFallPending=0u,g_mapFallSentAt=0u;
+static DWORD g_mapBackKeyDown=0u,g_mapBackKeyAt=0u;
+static DWORD g_mapBackAttempts=0u,g_mapBackReleases=0u;
 static float g_mapFallDestX=0.0f,g_mapFallDestY=0.0f;
 static void W112_CancelTeleForBlink(void){
  g_telePending=0u;g_stepActive=0u;g_telePendingFromMap=0u;
@@ -1059,7 +1068,7 @@ static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim GROUND/OBJECT + press E (walking/CTM allowed); object XYZ experimental; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
-static const char g_mapSentChat[]="if WorldMapFrame and WorldMapFrame:IsShown() then HideUIPanel(WorldMapFrame) end; if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r high-Z pulse + fall refresh queued; SERVER acceptance NOT confirmed') end";
+static const char g_mapSentChat[]="if WorldMapFrame and WorldMapFrame:IsShown() then HideUIPanel(WorldMapFrame) end; if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r teleport pulse sent; optional S backstep queued; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; preparing one pulse (walking/CTM allowed)') end";
 static const char g_teleObjectChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r OBJECT hit: XYZ not validated as ground; experimental pulse only after stable recheck') end";
 static const char g_teleObjectAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OBJECT hit changed/lost or XYZ invalid; no pulse') end";
@@ -1243,23 +1252,18 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
                 g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
             }
         }
-        /* Map-only orientation nudge makes the first native movement update
-           non-identical to the previous heartbeat. Delayed pulse below does
-           not re-teleport or forge movement/fall flags. */
+        /* Map-only backstep follows on the timer once the map has closed.
+           Do not fake an in-memory yaw here: it never generated actual native
+           key-driven movement or a falling transition in the game test. */
         g_telePending=0u;
         g_stepMoveInjecting=1u;
         *(float*)(p+OFF_UNIT_X)=g_teleDestX;
         *(float*)(p+OFF_UNIT_Y)=g_teleDestY;
         *(float*)(p+OFF_UNIT_Z)=g_teleDestZ;
-        if(g_telePendingFromMap){
-            float yaw=*(float*)(p+OFF_UNIT_O);
-            if(yaw==yaw&&yaw>-100000.0f&&yaw<100000.0f)
-                *(float*)(p+OFF_UNIT_O)=yaw+W112_MAP_TELE_YAW_RAD;
-        }
-        ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
+         ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
         g_stepMoveInjecting=0u;
         g_stepActive=0u;
-        if(g_telePendingFromMap){
+        if(g_telePendingFromMap&&g_mapHighEnabled){
             g_mapFallDestX=g_teleDestX;g_mapFallDestY=g_teleDestY;
             g_mapFallSentAt=now;g_mapFallPending=1u;
         }
@@ -1325,9 +1329,9 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
  * src/Offsets.h, GPL-3.0); no third-party source is copied. All pointer
  * chains and map/continent identities are validated before attempting a
  * single existing Tele E movement pulse. This code does NOT know remote
- * terrain Z: map targets use a deliberately high launch altitude and one
- * delayed native orientation pulse. Actual landing, falling and server
- * acceptance still require an in-game test.
+ * terrain Z: optional map-high targets use a reduced elevated Z, followed
+ * by a real short S-key backstep in the focused game (not a fake yaw pulse).
+ * Actual landing, falling and server acceptance require an in-game test.
  */
 #define W112_MAP_VIEW_CONTINENT 0x0084506Cu
 #define W112_MAP_VIEW_ZONE      0x00845070u
@@ -1368,7 +1372,7 @@ static const char g_mapInstallScript[]=
  "W112_MAP_TELE_REQUEST=tostring(W112_MAP_TELE_SEQ)..':'..tostring(math.floor(mx*1000000+0.5))..':'..tostring(math.floor(my*1000000+0.5));"
  "end end);W112_MAP_TELE_HOOKED='1';"
  "end";
-static const char g_mapCapturedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele map]|r XY selected; launch Z = max(current + 500, 1000); terrain Z unknown; F7 abort') end";
+static const char g_mapCapturedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele map]|r XY captured; map high = max(current Z + 250, 500); terrain Z unknown; F7 abort') end";
 static const char g_mapBadViewChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r unsupported world/continent or map data unavailable; no pulse') end";
 static const char g_mapBadPointChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r invalid map coordinates; no pulse') end";
 static DWORD W112_MapParseUnsigned(const char**at,DWORD*out)
@@ -1457,11 +1461,14 @@ static void W112_MapTeleTick(BYTE*p,DWORD now)
  if(dx*dx+dy*dy<W112_TELE_MIN_D2){
   DebugChat(g_teleTooCloseChat);return;
  }
- /* No remote terrain Z: launch high; reject an invalid altitude instead
-    of quietly restoring the old same-height map teleport. */
+ /* The GUI toggle controls both the reduced high launch and the
+    subsequent native S backstep; OFF retains the original same-Z map pulse. */
  {
-  float launchZ=pz+W112_MAP_TELE_RAISE_Z;
-  if(launchZ<W112_MAP_TELE_MIN_Z)launchZ=W112_MAP_TELE_MIN_Z;
+  float launchZ=pz;
+  if(g_mapHighEnabled){
+   launchZ=pz+W112_MAP_TELE_RAISE_Z;
+   if(launchZ<W112_MAP_TELE_MIN_Z)launchZ=W112_MAP_TELE_MIN_Z;
+  }
   if(!W112_Q_PosValid(x,y,launchZ)){
    DebugChat(g_mapBadPointChat);return;
   }
@@ -1473,15 +1480,34 @@ static void W112_MapTeleTick(BYTE*p,DWORD now)
  DebugChat(g_mapCapturedChat);
 }
 
-/* A single delayed map-only heartbeat refreshes the native movement state
-   without overwriting current XYZ or explicitly manufacturing falling flags.
-   If the server corrected the teleport or another movement owner took over,
-   the refresh is discarded instead of fighting the new position. */
+/* A real native S-key down/up sequence, not a second synthetic heartbeat.
+   Only target the foreground game window. Always release a key we own on
+   cancellation, loss of world/focus or when the 150-ms hold expires. */
+static void W112_MapBackRelease(DWORD now)
+{
+ if(!g_mapBackKeyDown)return;
+ keybd_event((BYTE)W112_MAP_TELE_BACK_VK,(BYTE)W112_MAP_TELE_BACK_SCAN,
+             W112_KEYEVENTF_KEYUP,0u);
+ g_mapBackKeyDown=0u;
+ ++g_mapBackReleases;
+ GatherFileLog("MAP_TELE_BACKSTEP_UP",now,0u,0u,0u,0.0f,
+               g_mapBackAttempts,g_mapBackReleases);
+}
 static void W112_MapFallTick(BYTE*p,DWORD now)
 {
- float x,y,z,yaw,dx,dy;
+ float x,y,z,dx,dy;
+ HWND window;
+ if(g_mapBackKeyDown){
+  if(!g_mapFallPending||!g_mapHighEnabled||!g_loginGuardReady||
+     !Ptr(p)||!g_stepEnabled||
+     (DWORD)(now-g_mapBackKeyAt)>=W112_MAP_TELE_BACKSTEP_MS){
+   W112_MapBackRelease(now);
+   g_mapFallPending=0u;
+  }
+  return;
+ }
  if(!g_mapFallPending)return;
- if(!g_loginGuardReady||!g_stepEnabled||!Ptr(p)||
+ if(!g_mapHighEnabled||!g_loginGuardReady||!g_stepEnabled||!Ptr(p)||
     (DWORD)(now-g_mapFallSentAt)>W112_MAP_TELE_FALL_TIMEOUT_MS){
   g_mapFallPending=0u;return;
  }
@@ -1490,21 +1516,24 @@ static void W112_MapFallTick(BYTE*p,DWORD now)
     g_injecting||g_mode!=MODE_OFF||g_altPriorityPendingUntil||
     CoordRearOwned()||g_abCapGuardActive||g_planeEnabled||
     g_gatherActive||g_gatherLootWait||LongPPActive()||
-    LongPPInjecting()||*(DWORD*)ADDR_CASTING_SPELLID)return;
+    LongPPInjecting()||*(DWORD*)ADDR_CASTING_SPELLID||
+    W112_Q_ChatHasFocus())return;
  x=*(float*)(p+OFF_UNIT_X);y=*(float*)(p+OFF_UNIT_Y);
  z=*(float*)(p+OFF_UNIT_Z);
  if(!W112_Q_PosValid(x,y,z)){g_mapFallPending=0u;return;}
  dx=x-g_mapFallDestX;dy=y-g_mapFallDestY;
  if(dx*dx+dy*dy>100.0f){g_mapFallPending=0u;return;}
- yaw=*(float*)(p+OFF_UNIT_O);
- if(yaw!=yaw||yaw<-100000.0f||yaw>100000.0f){
-  g_mapFallPending=0u;return;
- }
- g_mapFallPending=0u;
- g_stepMoveInjecting=1u;
- *(float*)(p+OFF_UNIT_O)=yaw+W112_MAP_TELE_YAW_RAD;
- ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
- g_stepMoveInjecting=0u;
+ /* Do not steal a user's held S or issue movement into another window. */
+ window=((W112OpenGetWindow)0x00435C30u)(0);
+ if(!window||GetForegroundWindow()!=window||
+    (GK()((int)W112_MAP_TELE_BACK_VK)&(short)0x8000))return;
+ g_mapBackKeyDown=1u;
+ g_mapBackKeyAt=now;
+ keybd_event((BYTE)W112_MAP_TELE_BACK_VK,(BYTE)W112_MAP_TELE_BACK_SCAN,
+             0u,0u);
+ ++g_mapBackAttempts;
+ GatherFileLog("MAP_TELE_BACKSTEP_DOWN",now,0u,0u,0u,0.0f,
+               g_mapBackAttempts,0u);
 }
 
 /* AutoOpen alone yields to combat, movement and ANY cast/channel.
@@ -1600,6 +1629,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_planeRestorePending=0u;g_planeNotice=0u;
         g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;
         g_telePendingFromMap=0u;g_mapFallPending=0u;
+        W112_MapBackRelease(now);
         g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
         g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
         g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;
@@ -1633,7 +1663,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      g_stepKey6=f6;
     }
 
-    if(k7&&!g_key7){g_mapFallPending=0u;g_telePendingFromMap=0u;if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
+    if(k7&&!g_key7){g_mapFallPending=0u;W112_MapBackRelease(now);g_telePendingFromMap=0u;if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
     if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
     /* A key edge used to be discarded while PvERear had the rear lease.
@@ -1828,7 +1858,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[69u];
+static W112_ControlSettingV1 g_controlSettings[70u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -2081,6 +2111,14 @@ static void init_control_descriptor(void)
             s->enum_options=0;s->enum_option_count=0u;
         }
     }
+    /* The map mode toggle is independent from F6 and from PP/ALT controls. */
+    s=&g_controlSettings[69u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=70u;s->key="map_tele_high_backstep";
+    s->label="Map Tele: high launch + native S backstep";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;
+    s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
+    s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
     g_controlDescriptorReady=1u;
 }
 
@@ -2091,6 +2129,7 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==46u){out->i32=(w112_i32)g_planeDepth;return 1;}
     if(id==47u){out->i32=(w112_i32)g_planePackets;return 1;}
     if(id==48u){out->i32=(w112_i32)g_planeTxZ10;return 1;}
+    if(id==70u){out->u32=g_mapHighEnabled?1u:0u;return 1;}
     if(id==60u){out->u32=g_ppRecoveryEnabled?1u:0u;return 1;}
     if(id==66u){out->u32=g_ppLowHpEnabled?1u:0u;return 1;}
     if(id==67u){out->u32=g_ppLowHpHold?1u:0u;return 1;}
@@ -2216,6 +2255,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         W112_MiningBlacklistApply(p,now);
         return 1;
     }
+    if(id==70u){g_mapHighEnabled=value->u32?1u:0u;return 1;}
     if(id==60u){g_ppRecoveryEnabled=value->u32?1u:0u;return 1;}
     if(id==66u){g_ppLowHpEnabled=value->u32?1u:0u;return 1;}
     if(id==2u){g_autoPPEnabled=value->u32;return 1;}
@@ -2254,7 +2294,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,69u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,70u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

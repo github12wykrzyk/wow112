@@ -421,7 +421,7 @@ static HWND g_ui_speedfloor_check=NULL;
 static HWND g_ui_hostile_guard_check=NULL;
 static HWND g_ui_speedfloor_state=NULL;
 static HWND g_ui_speedfloor_value=NULL;
-static HWND g_ui_pp_check=NULL,g_ui_pp_recovery_check=NULL,g_ui_pp_low_hp_check=NULL,g_ui_junkbox_check=NULL;
+static HWND g_ui_pp_check=NULL,g_ui_pp_recovery_check=NULL,g_ui_pp_low_hp_check=NULL,g_ui_map_fall_check=NULL,g_ui_junkbox_check=NULL;
 static HWND g_ui_pp_control_state=NULL,g_ui_core_state=NULL;
 static HWND g_ui_autopp_state=NULL;
 static HWND g_ui_longpp_state=NULL;
@@ -677,14 +677,18 @@ static void ui_sync_rogue(void) {
         BOOL ppLive=ui_work_pp_get(PAR_CORE_DLL,25u,2u,&pp);
         BOOL junkLive=ui_work_pp_get(PAR_RANGE_DLL,7u,1u,&junk);
         W112_ControlValueV1 lowHp,hold,hpPercent;
-        BOOL recoveryLive=ui_work_pp_get(PAR_CORE_DLL,69u,60u,&recovery);
-        BOOL lowHpLive=ui_work_pp_get(PAR_CORE_DLL,69u,66u,&lowHp);
+        BOOL recoveryLive=ui_work_pp_get(PAR_CORE_DLL,70u,60u,&recovery);
+        W112_ControlValueV1 mapFall;
+        BOOL lowHpLive=ui_work_pp_get(PAR_CORE_DLL,70u,66u,&lowHp);
+        BOOL mapFallLive=ui_work_pp_get(PAR_CORE_DLL,70u,70u,&mapFall);
         if(g_ui_pp_check)SendMessageA(g_ui_pp_check,UI_SETCHECK,
                                       ppLive&&pp.u32?1u:0u,0);
         if(g_ui_pp_recovery_check)SendMessageA(g_ui_pp_recovery_check,UI_SETCHECK,
             recoveryLive&&recovery.u32?1u:0u,0);
         if(g_ui_pp_low_hp_check)SendMessageA(g_ui_pp_low_hp_check,UI_SETCHECK,
             lowHpLive&&lowHp.u32?1u:0u,0);
+        if(g_ui_map_fall_check)SendMessageA(g_ui_map_fall_check,UI_SETCHECK,
+            mapFallLive&&mapFall.u32?1u:0u,0);
         if(g_ui_junkbox_check)SendMessageA(g_ui_junkbox_check,UI_SETCHECK,
                                            junkLive&&junk.u32?1u:0u,0);
         if(g_ui_pp_control_state){
@@ -693,16 +697,16 @@ static void ui_sync_rogue(void) {
             else if(!recoveryLive)q=app_str(q,"AutoPP: recovery control unavailable");
             else{
                 q=app_str(q,recovery.u32?"Auto Stealth: ON":"Auto Stealth: OFF");
-                if(ui_work_pp_get(PAR_CORE_DLL,69u,61u,&phase)&&
-                   ui_work_pp_get(PAR_CORE_DLL,69u,62u,&resets)&&
-                   ui_work_pp_get(PAR_CORE_DLL,69u,63u,&casts)){
+                if(ui_work_pp_get(PAR_CORE_DLL,70u,61u,&phase)&&
+                   ui_work_pp_get(PAR_CORE_DLL,70u,62u,&resets)&&
+                   ui_work_pp_get(PAR_CORE_DLL,70u,63u,&casts)){
                     q=app_str(q," | phase ");q=app_u32(q,phase.u32);
                     q=app_str(q," | ALT ");q=app_u32(q,resets.u32);
                     q=app_str(q," | Stealth ");q=app_u32(q,casts.u32);
                 }
                 if(lowHpLive&&lowHp.u32&&
-                   ui_work_pp_get(PAR_CORE_DLL,69u,67u,&hold)&&
-                   ui_work_pp_get(PAR_CORE_DLL,69u,68u,&hpPercent)){
+                   ui_work_pp_get(PAR_CORE_DLL,70u,67u,&hold)&&
+                   ui_work_pp_get(PAR_CORE_DLL,70u,68u,&hpPercent)){
                     q=app_str(q," | HP ");q=app_u32(q,hpPercent.u32);
                     q=app_str(q,hold.u32?"% HOLD":"% OK");
                 }
@@ -804,7 +808,7 @@ __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCST
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
-static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u,66u};
+static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u,66u,70u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
 struct UiProfileModule {
@@ -813,11 +817,11 @@ struct UiProfileModule {
     const DWORD *ids;
     DWORD count;
     BOOL restored;
-    DWORD last[34];
-    BYTE seen[34];
+    DWORD last[35];
+    BYTE seen[35];
 };
 static struct UiProfileModule g_ui_profile_modules[]={
-    {PAR_CORE_DLL,69u,g_ui_profile_core_ids,34u,FALSE,{0},{0}},
+    {PAR_CORE_DLL,70u,g_ui_profile_core_ids,35u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
@@ -1106,8 +1110,8 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             ui_work_pp_flip(PAR_WSG_DLL,4u,1u);
             ui_sync_wsg();ui_profile_sync();return 0;
         }
-        if(id==129u||id==130u){
-            ui_work_pp_flip(PAR_CORE_DLL,69u,id==129u?60u:66u);
+        if(id==129u||id==130u||id==131u){
+            ui_work_pp_flip(PAR_CORE_DLL,70u,id==129u?60u:id==130u?66u:70u);
             ui_sync_rogue();ui_profile_sync();return 0;
         }
         if(id==109u || id==110u) {
@@ -1216,7 +1220,10 @@ static BOOL ui_create(HWND game) {
         "",46,561,665,26,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
     ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
-        "GATHER: ORE / CHESTS / OPTIONS  >",46,591,665,42,206u,FALSE));
+        "GATHER / CHESTS  >",46,591,310,42,206u,FALSE));
+    g_ui_map_fall_check=ui_button(g_parallel_ui_hwnd,
+        "MAP HIGH Z + S BACKSTEP",368,591,343,42,131u,TRUE);
+    ui_add_to_page(UI_TAB_ROGUE,g_ui_map_fall_check);
 
     /* One compact Gather subview, two internal pages. Parent every HWND to root. */
     ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
@@ -1413,7 +1420,7 @@ static void parallel_gui_destroy(void) {
     for(page=0u;page<5u;++page)g_ui_checks[page]=NULL;
     g_ui_speedfloor_check=NULL;g_ui_hostile_guard_check=NULL;
     g_ui_speedfloor_state=NULL;g_ui_speedfloor_value=NULL;
-    g_ui_pp_check=NULL;g_ui_pp_recovery_check=NULL;g_ui_pp_low_hp_check=NULL;g_ui_junkbox_check=NULL;
+    g_ui_pp_check=NULL;g_ui_pp_recovery_check=NULL;g_ui_pp_low_hp_check=NULL;g_ui_map_fall_check=NULL;g_ui_junkbox_check=NULL;
     g_ui_pp_control_state=NULL;g_ui_core_state=NULL;
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;
