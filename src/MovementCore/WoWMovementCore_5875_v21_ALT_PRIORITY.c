@@ -1105,6 +1105,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_safeBreakPauseTick=now;
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
+        TrackChestTick(p,now);
         if(!g_telePending&&!CoordRearOwned()&&
            (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)){
             DWORD autoOpenWasEnabled=g_autoOpenEnabled;
@@ -1254,7 +1255,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[7u+14u+7u+8u+4u+2u];
+static W112_ControlSettingV1 g_controlSettings[44u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1388,6 +1389,18 @@ static void init_control_descriptor(void)
             s->enum_options=0;s->enum_option_count=0u;
         }
     }
+    /* Separate from AutoChest: tracking never enables the opener. */
+    s=&g_controlSettings[42u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=43u;s->key="track_chests";s->label="Track Chests (minimap)";
+    s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;
+    s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;
+    s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[43u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=44u;s->key="track_chests_count";s->label="Track Chests: visible dots";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;
+    s->max_value.i32=TRACK_CHEST_MAX_DOTS;s->step.i32=1;
+    s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+    s->enum_options=0;s->enum_option_count=0u;
     g_controlDescriptorReady=1u;
 }
 
@@ -1409,6 +1422,8 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==26u){out->u32=g_miningBlacklistEnabled?1u:0u;return 1;}
     if(id==27u){out->u32=g_combatVeinEnabled?1u:0u;return 1;}
     if(id==28u){out->i32=(w112_i32)g_combatVeinCount;return 1;}
+    if(id==43u){out->u32=g_trackChestsEnabled?1u:0u;return 1;}
+    if(id==44u){out->i32=(w112_i32)g_trackChestCount;return 1;}
     if(id==29u){out->u32=g_chestEnabled?1u:0u;return 1;}
     if(id>=30u&&id<=35u){out->u32=(g_chestGroupsMask&(1u<<(id-30u)))?1u:0u;return 1;}
     if(id==36u){out->u32=g_chestAutoLoot?1u:0u;return 1;}
@@ -1429,6 +1444,12 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     now=GT()?GT()():0u;
     p=LocalPlayer();
 
+    if(id==43u){
+        if(value->u32>1u)return 0;
+        g_trackChestsEnabled=value->u32;
+        g_trackChestNext=0u;
+        return 1;
+    }
     if(id==29u){
         /* Explicit OFF->ON is the user-controlled reset of aggro-unsafe GOs. */
         if(value->u32&&!g_chestEnabled)g_chestAggroLo=g_chestAggroHi=0u;
@@ -1443,7 +1464,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         else g_chestGroupsMask&=~bit;
         if(g_gatherActive&&g_gatherKind==4u&&!(g_chestGroupsMask&ChestGroupBit(g_gatherEntry)))
             GatherStop(p,now,"GUI_AUTOCHEST_TYPE_DISABLED",1u,0u);
-        g_gatherNextScan=0u;return 1;
+        g_gatherNextScan=0u;g_trackChestNext=0u;return 1;
     }
     if(id==36u){g_chestAutoLoot=value->u32;return 1;}
     if(id==1u){
@@ -1498,7 +1519,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,42u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,44u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

@@ -352,6 +352,8 @@ static volatile DWORD g_gatherEnabled=1u,g_gatherActive=0u,g_gatherKey9=0u,g_gat
 static volatile DWORD g_autoOpenEnabled=1u,g_autoOpenKey12=0u,g_autoOpenPickPrimed=0u;
 /* Gather/Herb/AutoOpen/AutoChest share the same scanner, spoof and loot owner. */
 static volatile DWORD g_chestEnabled=0u,g_chestGroupsMask=63u,g_chestAutoLoot=1u;
+/* Passive minimap chest tracking is independent of AutoChest's movement/loot owner. */
+static volatile DWORD g_trackChestsEnabled=0u,g_trackChestNext=0u,g_trackChestShown=0u,g_trackChestCount=0u;
 static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
 /* Successfully looted GO is excluded until despawn, never by a timed cooldown. */
 static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u;
@@ -1177,6 +1179,82 @@ static DWORD GetChestPos(BYTE*o,DWORD*desc,float px,float py,float pz,
                           *(float*)(o+OFF_GO_LEGACY_Z),3u,
                           px,py,pz,&best,x,y,z,src);
     return found;
+}
+
+
+/* Track Chests: client-visible GO scan with the *same* entry/position filters
+ * as AutoChest. Runs on the existing game timer; it never sends movement,
+ * right clicks, spell casts or loot requests. Only the current loaded world
+ * and enabled chest groups can produce minimap dots. 5875 minimap zoom
+ * radii (yards) are 150/120/90/60/40/25; positions use a north-up map
+ * basis (world X decreases east, world Y increases north). */
+#define TRACK_CHEST_MAX_DOTS 16u
+#define TRACK_CHEST_RANGE_SQ 22500.0f
+#define TRACK_CHEST_SCAN_MS 400u
+static const char g_trackChestHide[]=
+    "if W112_ChestDots then for i=1,16 do local t=W112_ChestDots[i];if t then t:Hide() end end end";
+static void TrackChestTick(BYTE*p,DWORD now)
+{
+    BYTE*m,*o;DWORD i,count=0u,*desc,group,src=0u;
+    float px,py,pz,x,y,z,dx,dy;char script[4096],*w=script;
+    if(!g_trackChestsEnabled||!Ptr(p)){
+        g_trackChestCount=0u;g_trackChestNext=0u;
+        if(g_trackChestShown){DebugChat(g_trackChestHide);g_trackChestShown=0u;}
+        return;
+    }
+    if(g_trackChestNext&&(LONG)(now-g_trackChestNext)<0)return;
+    g_trackChestNext=now+TRACK_CHEST_SCAN_MS;
+    m=*(BYTE**)ADDR_OBJMGR_GLOBAL;
+    if(!Ptr(m)){
+        g_trackChestCount=0u;
+        if(g_trackChestShown){DebugChat(g_trackChestHide);g_trackChestShown=0u;}
+        return;
+    }
+    px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);
+    pz=*(float*)(p+OFF_UNIT_Z);
+    w=AppStr(w,
+        "if Minimap then W112_ChestDots=W112_ChestDots or {};"
+        "local m=Minimap;local z=m:GetZoom() or 0;"
+        "local rad=({150,120,90,60,40,25})[z+1] or 150;"
+        "local scale=(m:GetWidth()/2)/rad;"
+        "local rot=(GetCVar('rotateMinimap')=='1');"
+        "local face=rot and (GetPlayerFacing and GetPlayerFacing() or 0) or 0;"
+        "local cs=math.cos(face);local sn=math.sin(face);local dots={");
+    o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);
+    for(i=0u;i<4095u&&Ptr(o);++i){
+        BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);
+        desc=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);
+        if(count<TRACK_CHEST_MAX_DOTS&&Ptr(desc)&&
+           (desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_GAMEOBJECT)){
+            group=ChestGroupBit(desc[OBJECT_FIELD_ENTRY_INDEX]);
+            if(group&&(g_chestGroupsMask&group)&&
+               GetChestPos(o,desc,px,py,pz,&x,&y,&z,&src)){
+                dx=x-px;dy=y-py;
+                if(dx*dx+dy*dy<=TRACK_CHEST_RANGE_SQ){
+                    if(count)w=AppStr(w,",");
+                    w=AppStr(w,"{");w=AppS32(w,(LONG)(-dx*10.0f));
+                    w=AppStr(w,",");w=AppS32(w,(LONG)(dy*10.0f));
+                    w=AppStr(w,"}");++count;
+                }
+            }
+        }
+        if(!Ptr(n)||n==o)break;
+        o=n;
+    }
+    g_trackChestCount=count;
+    w=AppStr(w,
+        "};for i=1,16 do local v=dots[i];local t=W112_ChestDots[i];"
+        "if v and not t then t=m:CreateTexture(nil,'OVERLAY');"
+        "t:SetTexture(1,0.8,0);t:SetWidth(7);t:SetHeight(7);"
+        "W112_ChestDots[i]=t end;"
+        "if t then if v then local a=v[1]/10;local b=v[2]/10;"
+        "if rot then local aa=a*cs-b*sn;b=a*sn+b*cs;a=aa end;"
+        "if a*a+b*b<=rad*rad then t:ClearAllPoints();"
+        "t:SetPoint('CENTER',m,'CENTER',a*scale,b*scale);t:Show()"
+        "else t:Hide() end else t:Hide() end end end end");
+    *w=0;
+    DebugChat(script);
+    g_trackChestShown=1u;
 }
 
 /* Read the real player XYZ and current GO XYZ for each AutoOpen phase.
