@@ -1034,6 +1034,13 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_SETTLE_MS     250u
 #define W112_TELE_TIMEOUT_MS    700u
 #define W112_TELE_OBJ_STABLE_D2  0.25f /* same cursor-hit XYZ within 0.5yd */
+/* Map lacks destination terrain Z. High launch + one native fall refresh,
+   exclusively for map clicks / map E; ordinary terrain/object E unchanged. */
+#define W112_MAP_TELE_RAISE_Z       500.0f
+#define W112_MAP_TELE_MIN_Z        1000.0f
+#define W112_MAP_TELE_YAW_RAD         0.10f
+#define W112_MAP_TELE_FALL_DELAY_MS   180u
+#define W112_MAP_TELE_FALL_TIMEOUT_MS 900u
 typedef struct W112_TELE_MBI {
     DWORD base,allocation_base,allocation_protect,region_size,state,protect,type;
 } W112_TELE_MBI;
@@ -1042,14 +1049,17 @@ typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleKeyWasDown=0u;
 static DWORD g_teleWaitSince=0u,g_teleWaitLast=0u;
 static DWORD g_telePending=0u,g_telePendingHitType=0u,g_telePendingFromMap=0u;
+static DWORD g_mapFallPending=0u,g_mapFallSentAt=0u;
+static float g_mapFallDestX=0.0f,g_mapFallDestY=0.0f;
 static void W112_CancelTeleForBlink(void){
- g_telePending=0u;g_stepActive=0u;
+ g_telePending=0u;g_stepActive=0u;g_telePendingFromMap=0u;
+ g_mapFallPending=0u;
 }
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim GROUND/OBJECT + press E (walking/CTM allowed); object XYZ experimental; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
-static const char g_mapSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r pulse sent; destination Z not terrain-checked; SERVER acceptance NOT confirmed') end";
+static const char g_mapSentChat[]="if WorldMapFrame and WorldMapFrame:IsShown() then HideUIPanel(WorldMapFrame) end; if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r high-Z pulse + fall refresh queued; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; preparing one pulse (walking/CTM allowed)') end";
 static const char g_teleObjectChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r OBJECT hit: XYZ not validated as ground; experimental pulse only after stable recheck') end";
 static const char g_teleObjectAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OBJECT hit changed/lost or XYZ invalid; no pulse') end";
@@ -1233,15 +1243,26 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
                 g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
             }
         }
-        /* One pulse; never chase server corrections or touch CTM action. */
+        /* Map-only orientation nudge makes the first native movement update
+           non-identical to the previous heartbeat. Delayed pulse below does
+           not re-teleport or forge movement/fall flags. */
         g_telePending=0u;
         g_stepMoveInjecting=1u;
         *(float*)(p+OFF_UNIT_X)=g_teleDestX;
         *(float*)(p+OFF_UNIT_Y)=g_teleDestY;
         *(float*)(p+OFF_UNIT_Z)=g_teleDestZ;
+        if(g_telePendingFromMap){
+            float yaw=*(float*)(p+OFF_UNIT_O);
+            if(yaw==yaw&&yaw>-100000.0f&&yaw<100000.0f)
+                *(float*)(p+OFF_UNIT_O)=yaw+W112_MAP_TELE_YAW_RAD;
+        }
         ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
         g_stepMoveInjecting=0u;
         g_stepActive=0u;
+        if(g_telePendingFromMap){
+            g_mapFallDestX=g_teleDestX;g_mapFallDestY=g_teleDestY;
+            g_mapFallSentAt=now;g_mapFallPending=1u;
+        }
         DebugChat(g_telePendingFromMap?g_mapSentChat:g_teleSentChat);
         g_telePendingFromMap=0u;
         return;
@@ -1304,8 +1325,9 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
  * src/Offsets.h, GPL-3.0); no third-party source is copied. All pointer
  * chains and map/continent identities are validated before attempting a
  * single existing Tele E movement pulse. This code does NOT know remote
- * terrain Z: it explicitly keeps the player's present Z, and does not assert
- * a safe landing, world load or server acceptance.
+ * terrain Z: map targets use a deliberately high launch altitude and one
+ * delayed native orientation pulse. Actual landing, falling and server
+ * acceptance still require an in-game test.
  */
 #define W112_MAP_VIEW_CONTINENT 0x0084506Cu
 #define W112_MAP_VIEW_ZONE      0x00845070u
@@ -1346,7 +1368,7 @@ static const char g_mapInstallScript[]=
  "W112_MAP_TELE_REQUEST=tostring(W112_MAP_TELE_SEQ)..':'..tostring(math.floor(mx*1000000+0.5))..':'..tostring(math.floor(my*1000000+0.5));"
  "end end);W112_MAP_TELE_HOOKED='1';"
  "end";
-static const char g_mapCapturedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele map]|r XY selected; Z = your CURRENT height (terrain height UNKNOWN), experimental pulse queued; F7 abort') end";
+static const char g_mapCapturedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele map]|r XY selected; launch Z = max(current + 500, 1000); terrain Z unknown; F7 abort') end";
 static const char g_mapBadViewChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r unsupported world/continent or map data unavailable; no pulse') end";
 static const char g_mapBadPointChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r invalid map coordinates; no pulse') end";
 static DWORD W112_MapParseUnsigned(const char**at,DWORD*out)
@@ -1435,11 +1457,54 @@ static void W112_MapTeleTick(BYTE*p,DWORD now)
  if(dx*dx+dy*dy<W112_TELE_MIN_D2){
   DebugChat(g_teleTooCloseChat);return;
  }
- g_teleDestX=x;g_teleDestY=y;g_teleDestZ=pz;
+ /* No remote terrain Z: launch high; reject an invalid altitude instead
+    of quietly restoring the old same-height map teleport. */
+ {
+  float launchZ=pz+W112_MAP_TELE_RAISE_Z;
+  if(launchZ<W112_MAP_TELE_MIN_Z)launchZ=W112_MAP_TELE_MIN_Z;
+  if(!W112_Q_PosValid(x,y,launchZ)){
+   DebugChat(g_mapBadPointChat);return;
+  }
+  g_teleDestX=x;g_teleDestY=y;g_teleDestZ=launchZ;
+ }
  g_telePendingHitType=1u;g_telePendingFromMap=1u;
  g_telePending=1u;g_stepActive=1u;
  g_teleWaitSince=now;g_teleWaitLast=now;
  DebugChat(g_mapCapturedChat);
+}
+
+/* A single delayed map-only heartbeat refreshes the native movement state
+   without overwriting current XYZ or explicitly manufacturing falling flags.
+   If the server corrected the teleport or another movement owner took over,
+   the refresh is discarded instead of fighting the new position. */
+static void W112_MapFallTick(BYTE*p,DWORD now)
+{
+ float x,y,z,yaw,dx,dy;
+ if(!g_mapFallPending)return;
+ if(!g_loginGuardReady||!g_stepEnabled||!Ptr(p)||
+    (DWORD)(now-g_mapFallSentAt)>W112_MAP_TELE_FALL_TIMEOUT_MS){
+  g_mapFallPending=0u;return;
+ }
+ if((DWORD)(now-g_mapFallSentAt)<W112_MAP_TELE_FALL_DELAY_MS)return;
+ if(g_telePending||g_stepMoveInjecting||g_stepActive||
+    g_injecting||g_mode!=MODE_OFF||g_altPriorityPendingUntil||
+    CoordRearOwned()||g_abCapGuardActive||g_planeEnabled||
+    g_gatherActive||g_gatherLootWait||LongPPActive()||
+    LongPPInjecting()||*(DWORD*)ADDR_CASTING_SPELLID)return;
+ x=*(float*)(p+OFF_UNIT_X);y=*(float*)(p+OFF_UNIT_Y);
+ z=*(float*)(p+OFF_UNIT_Z);
+ if(!W112_Q_PosValid(x,y,z)){g_mapFallPending=0u;return;}
+ dx=x-g_mapFallDestX;dy=y-g_mapFallDestY;
+ if(dx*dx+dy*dy>100.0f){g_mapFallPending=0u;return;}
+ yaw=*(float*)(p+OFF_UNIT_O);
+ if(yaw!=yaw||yaw<-100000.0f||yaw>100000.0f){
+  g_mapFallPending=0u;return;
+ }
+ g_mapFallPending=0u;
+ g_stepMoveInjecting=1u;
+ *(float*)(p+OFF_UNIT_O)=yaw+W112_MAP_TELE_YAW_RAD;
+ ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
+ g_stepMoveInjecting=0u;
 }
 
 /* AutoOpen alone yields to combat, movement and ANY cast/channel.
@@ -1534,6 +1599,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_planeEnabled=0u;g_planeLastApplied=0u;
         g_planeRestorePending=0u;g_planeNotice=0u;
         g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;
+        g_telePendingFromMap=0u;g_mapFallPending=0u;
         g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
         g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
         g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;
@@ -1558,7 +1624,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      if(f6&&!g_stepKey6&&!W112_Q_ChatHasFocus()){
         g_stepEnabled=g_stepEnabled?0u:1u;
         g_stepActive=0u;
-        g_telePending=0u;
+        g_telePending=0u;g_telePendingFromMap=0u;g_mapFallPending=0u;
         g_telePrevSampleValid=0u;
         g_teleKeyWasDown=(GK()(W112_TELE_KEY_E)&(short)0x8000)?1u:0u;
         DebugChat(g_stepEnabled?g_stepOnChat:g_stepOffChat);
@@ -1567,7 +1633,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      g_stepKey6=f6;
     }
 
-    if(k7&&!g_key7){if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
+    if(k7&&!g_key7){g_mapFallPending=0u;g_telePendingFromMap=0u;if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
     if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
     /* A key edge used to be discarded while PvERear had the rear lease.
@@ -1597,6 +1663,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     W112_KeyTeleTick(p,now);
     W112_MapTeleTick(p,now);
+    W112_MapFallTick(p,now);
     /* Hold competing periodic movement writers only while the E destination
      * is settling; do not cancel their casts or persistently disable them. */
     if(g_telePending&&g_mode!=MODE_OFF&&!g_safeBreakPauseTick)
