@@ -437,6 +437,7 @@ static HWND g_ui_gather_extra_checks[4]={NULL};
 static HWND g_ui_gather_chest_checks[8]={NULL};
 static HWND g_ui_gather_chest_diag=NULL,g_ui_gather_chest_track=NULL;
 static DWORD g_ui_gather_page=0u;
+static HWND g_ui_plane_check=NULL,g_ui_plane_status=NULL;
 static HWND g_ui_gather_status=NULL;
 static DWORD g_ui_gather_count=0u,g_ui_gather_open=0u;
 static DWORD g_ui_shown=0u;
@@ -549,6 +550,23 @@ static void ui_sync_gather(void) {
         DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,36u,29u+i,&v)&&v.u32?1u:0u;
         if(g_ui_gather_chest_checks[i])
             SendMessageA(g_ui_gather_chest_checks[i],UI_SETCHECK,checked,0);
+    }
+    if(g_ui_plane_check){
+        DWORD on=live&&ui_work_pp_get(PAR_CORE_DLL,48u,45u,&v)&&v.u32?1u:0u;
+        SendMessageA(g_ui_plane_check,UI_SETCHECK,on,0);
+    }
+    if(g_ui_plane_status){
+        W112_ControlValueV1 depth,packets;
+        char buf[180],*q=buf;
+        BOOL ok=live&&ui_work_pp_get(PAR_CORE_DLL,48u,46u,&depth)&&
+                ui_work_pp_get(PAR_CORE_DLL,48u,47u,&packets);
+        if(!ok)SetWindowTextA(g_ui_plane_status,"Plane TEST: module not ready");
+        else{
+            q=app_str(q,"Outbound Z -");q=app_u32(q,depth.u32);
+            q=app_str(q," yd | packets: ");q=app_u32(q,packets.u32);
+            q=app_str(q," | server ACK unknown");*q=0;
+            SetWindowTextA(g_ui_plane_status,buf);
+        }
     }
     if(g_ui_gather_chest_track) {
         DWORD checked=live&&ui_work_pp_get(PAR_CORE_DLL,44u,43u,&v)&&v.u32?1u:0u;
@@ -750,7 +768,7 @@ __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCST
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
-static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u};
+static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
 struct UiProfileModule {
@@ -763,7 +781,7 @@ struct UiProfileModule {
     BYTE seen[32];
 };
 static struct UiProfileModule g_ui_profile_modules[]={
-    {PAR_CORE_DLL,44u,g_ui_profile_core_ids,30u,FALSE,{0},{0}},
+    {PAR_CORE_DLL,48u,g_ui_profile_core_ids,31u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
@@ -983,6 +1001,19 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==208u){ui_show_gather_page(0u);return 0;}
         if(id==209u){ui_show_gather_page(1u);return 0;}
         if(id==214u){ui_show_gather_page(2u);return 0;}
+        if(id==224u){
+            ui_work_pp_flip(PAR_CORE_DLL,48u,45u);
+            ui_sync_gather();ui_profile_sync();return 0;
+        }
+        if(id==225u || id==226u){
+            const W112_ControlModuleV1 *core=ui_work_pp_module(PAR_CORE_DLL,48u);
+            if(core&&core->get_value(46u,&value)){
+                if(id==225u && value.i32>4)--value.i32;
+                if(id==226u && value.i32<40)++value.i32;
+                core->set_value(46u,&value);
+            }
+            ui_sync_gather();ui_profile_sync();return 0;
+        }
         if(id==223u){
             ui_work_pp_flip(PAR_CORE_DLL,44u,43u);
             ui_sync_gather();ui_profile_sync();return 0;
@@ -1171,10 +1202,22 @@ static BOOL ui_create(HWND game) {
         };
         for(i=0u;i<4u;++i){
             g_ui_gather_extra_checks[i]=ui_button(g_parallel_ui_hwnd,options[i],
-                46,220+(int)i*72,665,48,210u+i,TRUE);
+                46,205+(int)i*57,665,44,210u+i,TRUE);
             ui_add_gather_page_control(g_ui_gather_extra_checks[i],2u);
         }
     }
+    /* The active Parallel GUI (PlayerESP) owns these widgets.
+       Plane starts OFF even if the depth setting is saved in the local INI. */
+    g_ui_plane_check=ui_button(g_parallel_ui_hwnd,
+        "TELEPORT TO PLANE (TEST) - outgoing Z only",46,432,665,42,224u,TRUE);
+    ui_add_gather_page_control(g_ui_plane_check,2u);
+    g_ui_plane_status=ui_label(g_parallel_ui_hwnd,
+        "Plane TEST: module not ready",46,486,665,32,FALSE);
+    ui_add_gather_page_control(g_ui_plane_status,2u);
+    ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
+        "DEPTH -",46,528,300,42,225u,FALSE),2u);
+    ui_add_gather_page_control(ui_button(g_parallel_ui_hwnd,
+        "DEPTH +",383,528,328,42,226u,FALSE),2u);
     /* Chest controls use their own page: no overlapping ore rows or hidden
      * toggles at the bottom of the 750x660 Parallel control window. */
     {
@@ -1327,6 +1370,7 @@ static void parallel_gui_destroy(void) {
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;
     for(page=0u;page<8u;++page)g_ui_gather_chest_checks[page]=NULL;
     g_ui_gather_chest_diag=NULL;g_ui_gather_chest_track=NULL;
+    g_ui_plane_check=NULL;g_ui_plane_status=NULL;
     g_ui_gather_status=NULL;g_ui_gather_count=0u;g_ui_gather_open=0u;g_ui_gather_page=0u;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
