@@ -230,6 +230,17 @@ jobs:
             --output build/WoWCastObserver_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel CastObserver build/package failed" }
 
+      - name: Patch Parallel TEST EXE farclip ceiling 777 to 1554
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          python tools/patch_farclip_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --report dist/farclip_patch.json
+          if ($LASTEXITCODE -ne 0) { throw "Parallel farclip EXE patch failed" }
+
       - name: Final fail-closed runnable ZIP gate
         shell: pwsh
         run: |
@@ -352,6 +363,7 @@ jobs:
             dist/candidate_metadata.json
             dist/candidate_summary.json
             dist/final_package_verification.json
+            dist/farclip_patch.json
             dist/candidate_attestation.json
             dist/dll_conflict_audit.json
             dist/parallel_gui_regression.json
