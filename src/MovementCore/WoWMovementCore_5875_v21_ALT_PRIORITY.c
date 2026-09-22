@@ -837,6 +837,7 @@ static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim GROUND/OBJECT + press E (walking/CTM allowed); object XYZ experimental; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
+static const char g_mapSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r pulse sent; destination Z not terrain-checked; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; preparing one pulse (walking/CTM allowed)') end";
 static const char g_teleObjectChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r OBJECT hit: XYZ not validated as ground; experimental pulse only after stable recheck') end";
 static const char g_teleObjectAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OBJECT hit changed/lost or XYZ invalid; no pulse') end";
@@ -1097,7 +1098,6 @@ static const char g_mapInstallScript[]=
 static const char g_mapCapturedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele map]|r XY selected; Z = your CURRENT height (terrain height UNKNOWN), experimental pulse queued; F7 abort') end";
 static const char g_mapBadViewChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r unsupported world/continent or map data unavailable; no pulse') end";
 static const char g_mapBadPointChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r invalid map coordinates; no pulse') end";
-static const char g_mapSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r pulse sent; destination Z not terrain-checked; SERVER acceptance NOT confirmed') end";
 static DWORD W112_MapParseUnsigned(const char**at,DWORD*out)
 {
  const char*p=*at;DWORD n=0u,v=0u;
