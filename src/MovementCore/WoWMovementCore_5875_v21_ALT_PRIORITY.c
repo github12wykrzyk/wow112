@@ -304,63 +304,28 @@ static DWORD g_mapBackKeyDown;
    Sample the real client Z (never a synthetic packet XYZ) and verify the
    native 5875 movement flags. A short zero-dZ interval at jump apex cannot
    unlock PP because falling/jumping flags keep the gate closed. */
-#define W112_PP_GROUND_SETTLE_MS  750u
+#define W112_PP_GROUND_SETTLE_MS  550u
 #define W112_PP_GROUND_Z_EPSILON 0.10f
-#define W112_PP_GROUND_WINDOW_EPS 0.15f
-#define W112_PP_GROUND_MIN_DESCENT 1.00f
-/* A single failed LoS location may not monopolize the scanner. */
-#define W112_PP_LOS_RETRY_BUDGET 6u
-#define W112_PP_LOS_COOLDOWN_MS  10000u
-#define W112_PP_LOS_COOLDOWN_SLOTS 8u
 #define W112_PP_GROUND_AIR_MASK  (0x0000F000u|MOVEFLAG_FLYING|MOVEFLAG_SWIMMING|MOVEFLAG_ONTRANSPORT)
 static volatile DWORD g_ppGroundReady=0u,g_ppGroundSampled=0u;
 static volatile DWORD g_ppGroundStillSince=0u,g_ppGroundWaitForFall=0u;
-/* Require a full Z settle only after a real air/teleport transition. */
-static volatile DWORD g_ppGroundNeedsSettle=0u;
 static volatile DWORD g_ppGroundBlocks=0u;
-static volatile DWORD g_ppAirCastBlocks=0u,g_ppAirLastLogAt=0u;
-static volatile DWORD g_ppLosBudgetStops=0u,g_ppLosCooldownNext=0u;
-static float g_ppGroundLastZ=0.0f,g_ppGroundAnchorZ=0.0f,g_ppGroundLaunchZ=0.0f;
-typedef struct W112_PPLOS_COOLDOWN {DWORD lo,hi,until;} W112_PPLOS_COOLDOWN;
-static W112_PPLOS_COOLDOWN g_ppLosCooldown[W112_PP_LOS_COOLDOWN_SLOTS];
-static DWORD W112_PPLOS_Held(DWORD lo,DWORD hi,DWORD now)
-{
- DWORD i;
- if(!(lo|hi)||!now)return 0u;
- for(i=0u;i<W112_PP_LOS_COOLDOWN_SLOTS;i++){
-  const W112_PPLOS_COOLDOWN*e=&g_ppLosCooldown[i];
-  if(e->lo==lo&&e->hi==hi&&(LONG)(e->until-now)>0)return 1u;
- }
- return 0u;
-}
-static void W112_PPLOS_Cooldown(DWORD lo,DWORD hi,DWORD now)
-{
- W112_PPLOS_COOLDOWN*e;
- if(!(lo|hi)||!now)return;
- e=&g_ppLosCooldown[g_ppLosCooldownNext++%W112_PP_LOS_COOLDOWN_SLOTS];
- e->lo=lo;e->hi=hi;e->until=now+W112_PP_LOS_COOLDOWN_MS;
- W112_PPSelector_ReleaseTracked(lo,hi);
- ++g_ppLosBudgetStops;
-}
+static float g_ppGroundLastZ=0.0f;
 static void W112_PPGround_Reset(void)
 {
  g_ppGroundReady=0u;g_ppGroundSampled=0u;
  g_ppGroundStillSince=0u;g_ppGroundWaitForFall=0u;
- g_ppGroundNeedsSettle=0u;
- g_ppGroundLastZ=0.0f;g_ppGroundAnchorZ=0.0f;g_ppGroundLaunchZ=0.0f;
 }
 static DWORD W112_PPGround_NativeReady(BYTE*p)
 {
  DWORD *flags;float z;
  if(!g_loginGuardReady||!Ptr(p)||g_stepActive||g_stepMoveInjecting||
-    g_telePending||g_mapFallPending||g_mapBackKeyDown||
-    g_planeEnabled)return 0u;
+    g_telePending||g_planeEnabled)return 0u;
  flags=MoveFlags(p);
  if(!flags||(*flags&W112_PP_GROUND_AIR_MASK))return 0u;
  z=*(float*)(p+OFF_UNIT_Z);
  return ValidWorldPos(*(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z)&&
-        g_ppGroundSampled&&
-        (!g_ppGroundNeedsSettle||AbsF(z-g_ppGroundLastZ)<=W112_PP_GROUND_Z_EPSILON);
+        g_ppGroundSampled&&AbsF(z-g_ppGroundLastZ)<=W112_PP_GROUND_Z_EPSILON;
 }
 static DWORD W112_PPGround_SafeNow(BYTE*p)
 {
@@ -378,54 +343,25 @@ static void W112_PPGround_Tick(BYTE*p,DWORD now)
   W112_PPGround_Reset();return;
  }
  if(!g_ppGroundSampled){
-  g_ppGroundLastZ=z;g_ppGroundAnchorZ=z;g_ppGroundSampled=1u;
+  g_ppGroundLastZ=z;g_ppGroundSampled=1u;
   g_ppGroundStillSince=0u;g_ppGroundReady=0u;return;
  }
  delta=z-g_ppGroundLastZ;
  g_ppGroundLastZ=z;
- /* A launch packet can freeze the client's Z at its high destination for
-    hundreds of milliseconds. Do not use movement flags or a single falling
-    frame as proof of landing: require at least 1 yd of actual descent. */
+ /* A high map launch must produce real downward movement (or a native
+    falling flag) before even beginning the grounded settle interval. */
  if(g_ppGroundWaitForFall &&
-    z<=g_ppGroundLaunchZ-W112_PP_GROUND_MIN_DESCENT)
-  g_ppGroundWaitForFall=0u;
- if((*flags&W112_PP_GROUND_AIR_MASK)||g_ppGroundWaitForFall||
+    (delta<-W112_PP_GROUND_Z_EPSILON||
+     (*flags&0x0000F000u)))g_ppGroundWaitForFall=0u;
+ if(AbsF(delta)>W112_PP_GROUND_Z_EPSILON||
+    (*flags&W112_PP_GROUND_AIR_MASK)||g_ppGroundWaitForFall||
     g_stepActive||g_stepMoveInjecting||g_telePending||
     g_mapFallPending||g_mapBackKeyDown||g_planeEnabled){
-  g_ppGroundReady=0u;g_ppGroundStillSince=0u;
-  g_ppGroundNeedsSettle=1u;
-  g_ppGroundAnchorZ=z;return;
+  g_ppGroundReady=0u;g_ppGroundStillSince=0u;return;
  }
- if(!g_ppGroundNeedsSettle){
-  /* Walking on a slope moves native Z every tick. It must not restart
-     the fall-settle window and permanently starve AutoPP. */
-  if(!g_ppGroundStillSince)g_ppGroundStillSince=now;
-  if(!g_ppGroundReady&&(DWORD)(now-g_ppGroundStillSince)>=350u){
-   g_ppGroundReady=1u;
-   PPFixed_Queue(6u,1u,0u,0u,g_ppAirCastBlocks,
-                 *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z);
-  }
-  return;
- }
- /* Apply strict Z-window settling only after observed flight/teleport. */
- if(AbsF(delta)>W112_PP_GROUND_Z_EPSILON){
-  g_ppGroundReady=0u;g_ppGroundStillSince=0u;
-  g_ppGroundAnchorZ=z;return;
- }
- if(!g_ppGroundStillSince){
-  g_ppGroundStillSince=now;g_ppGroundAnchorZ=z;
- }
- if(AbsF(z-g_ppGroundAnchorZ)>W112_PP_GROUND_WINDOW_EPS){
-  g_ppGroundReady=0u;g_ppGroundStillSince=now;
-  g_ppGroundAnchorZ=z;return;
- }
- if(!g_ppGroundReady &&
-    (DWORD)(now-g_ppGroundStillSince)>=W112_PP_GROUND_SETTLE_MS){
-  g_ppGroundNeedsSettle=0u;
+ if(!g_ppGroundStillSince)g_ppGroundStillSince=now;
+ if((DWORD)(now-g_ppGroundStillSince)>=W112_PP_GROUND_SETTLE_MS)
   g_ppGroundReady=1u;
-  PPFixed_Queue(6u,2u,0u,0u,g_ppAirCastBlocks,
-                *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z);
- }
 }
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
@@ -437,7 +373,6 @@ static DWORD W112_PPGuard_Safe(BYTE*p)
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 {
     if(!g_ppGuardReady||!W112_PPGuard_Safe(LocalPlayer()))return 0u;
-    if(W112_PPLOS_Held(lo,hi,now))return 0u;
     if((lo|hi)&&lo==g_ppGuardHoldLo&&hi==g_ppGuardHoldHi&&
        (LONG)(now-g_ppGuardHoldUntil)<0)return 0u;
     return 1u;
@@ -607,7 +542,7 @@ static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
     ++g_altPriorityDirectPackets;
 }
 
-static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet,DWORD returnAddr)
+static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
 {
     BYTE*raw;DWORD op,spell;
     g_altPriorityBlockCurrent=0u;
@@ -642,34 +577,6 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet,DWORD retu
     }
     if(op!=0x12Eu)return;
     spell=*(DWORD*)(raw+4u);if(spell!=SPELL_PICK_POCKET)return;
-    /* Last shared send entry, BEFORE LongPP starts spoofing. The scanner can
-       arrive between MovementCore timer ticks and may originate from a game
-       executable Lua action rather than AutoLootPP's DLL return address.
-       Block all new PP casts while airborne; do not abort an active loot. */
-    if(!W112_PPGround_SafeNow(LocalPlayer())){
-        DWORD now=GT()?GT()():0u,lo=0u,hi=0u;
-        BYTE*p=LocalPlayer();DWORD source=0u;
-        g_altPriorityBlockCurrent=1u;
-        ++g_ppAirCastBlocks;++g_altPriorityPPBlocks;
-        PPDecodeTargetGuid(packet,&lo,&hi);
-        if(returnAddr>=0x01000000u&&returnAddr<=0x7FFDFFFFu)source|=1u;
-        if(g_ppHardRetryInjecting)source|=2u;
-        if(g_ppGroundWaitForFall)source|=4u;
-        if(g_ppGroundReady)source|=8u;
-        W112_PPSelector_ReleaseTracked(lo,hi);
-        /* Ring-buffer only: no file I/O, movement write or FrameScript while
-           ClientServices::Send is on the stack. The updater collects this
-           existing PPFixedPoint_debug.log, unlike the gather-only log. */
-        if(!g_ppAirLastLogAt||
-           (DWORD)(now-g_ppAirLastLogAt)>=500u){
-            g_ppAirLastLogAt=now;
-            PPFixed_Queue(5u,source,lo,hi,g_ppAirCastBlocks,
-                Ptr(p)?*(float*)(p+OFF_UNIT_X):0.0f,
-                Ptr(p)?*(float*)(p+OFF_UNIT_Y):0.0f,
-                Ptr(p)?*(float*)(p+OFF_UNIT_Z):0.0f);
-        }
-        return;
-    }
     if(!g_loginGuardReady){g_altPriorityBlockCurrent=1u;return;}
     if(CoordRearOwned()){
         g_altPriorityBlockCurrent=1u;
@@ -696,10 +603,9 @@ __declspec(naked) static void AltPriority_SendWrapper(void)
     __asm {
         pushfd
         pushad
-        push dword ptr [esp+36]
         push ecx
         call AltPriority_CheckPickPocket
-        add  esp,8
+        add  esp,4
         popad
         popfd
         cmp  dword ptr [g_altPriorityBlockCurrent],0
@@ -1427,15 +1333,11 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
          ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
         g_stepMoveInjecting=0u;
         g_stepActive=0u;
-        /* Every teleport invalidates the old ground sample, even when the
-           map-high toggle is OFF or E was used on terrain/object instead. */
-        g_ppGroundReady=0u;g_ppGroundStillSince=0u;
-        g_ppGroundNeedsSettle=1u;
-        g_ppGroundSampled=1u;g_ppGroundLastZ=g_teleDestZ;
-        g_ppGroundAnchorZ=g_teleDestZ;
-        g_ppGroundWaitForFall=0u;
         if(g_telePendingFromMap&&g_mapHighEnabled){
-            g_ppGroundLaunchZ=g_teleDestZ;
+            /* The client is teleported to a high synthetic Z before native
+               physics starts. Do not mistake that initial altitude for land. */
+            g_ppGroundReady=0u;g_ppGroundStillSince=0u;
+            g_ppGroundSampled=1u;g_ppGroundLastZ=g_teleDestZ;
             g_ppGroundWaitForFall=1u;
             g_mapFallDestX=g_teleDestX;g_mapFallDestY=g_teleDestY;
             g_mapFallSentAt=now;g_mapFallPending=1u;
@@ -1820,17 +1722,6 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
        packets. Let an already active LongPP transaction finish normally. */
     if(!W112_PPGround_SafeNow(p)&&g_ppHardRetryActive)
         PPHardRetryCancel();
-    /* The 56-point HARDLOS sweep can hold one unlootable NPC for seconds.
-       Six failed placements are a bounded attempt; park only that GUID
-       for ten seconds and immediately free AutoLootPP's tracked target. */
-    if(g_ppHardRetryActive&&g_ppHardRetryScheduled&&
-       g_ppHardRetryAttempts>=W112_PP_LOS_RETRY_BUDGET){
-        DWORD lo=g_ppHardRetryLo,hi=g_ppHardRetryHi,tries=g_ppHardRetryAttempts;
-        W112_PPLOS_Cooldown(lo,hi,now);
-        PPHardRetryCancel();
-        GatherFileLog("AUTOPP_LOS_BUDGET_SKIP",now,0u,lo,hi,0.0f,
-                      tries,g_ppLosBudgetStops);
-    }
     PPBlacklistTick(now);
     PPFixed_Flush();
     FlushPendingPPLog();
