@@ -315,6 +315,8 @@ static DWORD g_mapBackKeyDown;
 #define W112_PP_GROUND_AIR_MASK  (0x0000F000u|MOVEFLAG_FLYING|MOVEFLAG_SWIMMING|MOVEFLAG_ONTRANSPORT)
 static volatile DWORD g_ppGroundReady=0u,g_ppGroundSampled=0u;
 static volatile DWORD g_ppGroundStillSince=0u,g_ppGroundWaitForFall=0u;
+/* Require a full Z settle only after a real air/teleport transition. */
+static volatile DWORD g_ppGroundNeedsSettle=0u;
 static volatile DWORD g_ppGroundBlocks=0u;
 static volatile DWORD g_ppAirCastBlocks=0u,g_ppAirLastLogAt=0u;
 static volatile DWORD g_ppLosBudgetStops=0u,g_ppLosCooldownNext=0u;
@@ -344,6 +346,7 @@ static void W112_PPGround_Reset(void)
 {
  g_ppGroundReady=0u;g_ppGroundSampled=0u;
  g_ppGroundStillSince=0u;g_ppGroundWaitForFall=0u;
+ g_ppGroundNeedsSettle=0u;
  g_ppGroundLastZ=0.0f;g_ppGroundAnchorZ=0.0f;g_ppGroundLaunchZ=0.0f;
 }
 static DWORD W112_PPGround_NativeReady(BYTE*p)
@@ -356,7 +359,8 @@ static DWORD W112_PPGround_NativeReady(BYTE*p)
  if(!flags||(*flags&W112_PP_GROUND_AIR_MASK))return 0u;
  z=*(float*)(p+OFF_UNIT_Z);
  return ValidWorldPos(*(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z)&&
-        g_ppGroundSampled&&AbsF(z-g_ppGroundLastZ)<=W112_PP_GROUND_Z_EPSILON;
+        g_ppGroundSampled&&
+        (!g_ppGroundNeedsSettle||AbsF(z-g_ppGroundLastZ)<=W112_PP_GROUND_Z_EPSILON);
 }
 static DWORD W112_PPGround_SafeNow(BYTE*p)
 {
@@ -385,15 +389,29 @@ static void W112_PPGround_Tick(BYTE*p,DWORD now)
  if(g_ppGroundWaitForFall &&
     z<=g_ppGroundLaunchZ-W112_PP_GROUND_MIN_DESCENT)
   g_ppGroundWaitForFall=0u;
- if(AbsF(delta)>W112_PP_GROUND_Z_EPSILON||
-    (*flags&W112_PP_GROUND_AIR_MASK)||g_ppGroundWaitForFall||
+ if((*flags&W112_PP_GROUND_AIR_MASK)||g_ppGroundWaitForFall||
     g_stepActive||g_stepMoveInjecting||g_telePending||
     g_mapFallPending||g_mapBackKeyDown||g_planeEnabled){
   g_ppGroundReady=0u;g_ppGroundStillSince=0u;
+  g_ppGroundNeedsSettle=1u;
   g_ppGroundAnchorZ=z;return;
  }
- /* A falling Z may advance <0.1 yd in an individual timer tick. Demand
-    stability across the ENTIRE settle window rather than between two ticks. */
+ if(!g_ppGroundNeedsSettle){
+  /* Walking on a slope moves native Z every tick. It must not restart
+     the fall-settle window and permanently starve AutoPP. */
+  if(!g_ppGroundStillSince)g_ppGroundStillSince=now;
+  if(!g_ppGroundReady&&(DWORD)(now-g_ppGroundStillSince)>=350u){
+   g_ppGroundReady=1u;
+   PPFixed_Queue(6u,1u,0u,0u,g_ppAirCastBlocks,
+                 *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z);
+  }
+  return;
+ }
+ /* Apply strict Z-window settling only after observed flight/teleport. */
+ if(AbsF(delta)>W112_PP_GROUND_Z_EPSILON){
+  g_ppGroundReady=0u;g_ppGroundStillSince=0u;
+  g_ppGroundAnchorZ=z;return;
+ }
  if(!g_ppGroundStillSince){
   g_ppGroundStillSince=now;g_ppGroundAnchorZ=z;
  }
@@ -403,8 +421,9 @@ static void W112_PPGround_Tick(BYTE*p,DWORD now)
  }
  if(!g_ppGroundReady &&
     (DWORD)(now-g_ppGroundStillSince)>=W112_PP_GROUND_SETTLE_MS){
+  g_ppGroundNeedsSettle=0u;
   g_ppGroundReady=1u;
-  PPFixed_Queue(6u,0u,0u,0u,g_ppAirCastBlocks,
+  PPFixed_Queue(6u,2u,0u,0u,g_ppAirCastBlocks,
                 *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),z);
  }
 }
@@ -1411,6 +1430,7 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
         /* Every teleport invalidates the old ground sample, even when the
            map-high toggle is OFF or E was used on terrain/object instead. */
         g_ppGroundReady=0u;g_ppGroundStillSince=0u;
+        g_ppGroundNeedsSettle=1u;
         g_ppGroundSampled=1u;g_ppGroundLastZ=g_teleDestZ;
         g_ppGroundAnchorZ=g_teleDestZ;
         g_ppGroundWaitForFall=0u;
