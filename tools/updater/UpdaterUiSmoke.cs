@@ -19,6 +19,7 @@ namespace WoW112Updater
             MaximumSize = new Size(4096, 4096);
             Show();
             System.Windows.Forms.Application.DoEvents();
+            AssertGitHubBadgeSmoke();
             ClientSize = new Size(1040, 680);
             AssertExeInspection(folder);
             AccountSmoke(folder);
@@ -85,6 +86,34 @@ namespace WoW112Updater
             File.WriteAllText(Path.Combine(folder, "result.txt"), "PASS: Windows WinForms rendering; EXE SHA256 missing/current/changed; states, compact layout, busy-state restoration, 125/150% layout simulations. Native monitor DPI switching requires interactive validation.");
             Close();
         }
+        private void AssertGitHubBadgeSmoke()
+        {
+            if (githubMonitorBadges.Count != 3 || githubMonitorBadges.Values.Any(b => b.Parent == null || !b.Visible))
+                throw new Exception("GH badges not visible in main window");
+            const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var branch = "{\"commit\":{\"sha\":\"" + sha + "\"}}";
+            Func<string, string, string> run = (status, conclusion) =>
+                "{\"workflow_runs\":[{\"name\":\"Build work candidate\",\"head_sha\":\"" + sha +
+                "\",\"status\":\"" + status + "\",\"conclusion\":\"" + conclusion + "\",\"id\":10}]}";
+            if (MonitorBranchBadge("work", branch, run("completed", "success")).Status != "SUCCESS")
+                throw new Exception("Green GH badge failed");
+            if (MonitorBranchBadge("work", branch, run("in_progress", "")).Status != "RUNNING")
+                throw new Exception("Yellow GH badge failed");
+            if (MonitorBranchBadge("work", branch, run("queued", "")).Status != "PENDING")
+                throw new Exception("Pending GH badge failed");
+            if (MonitorBranchBadge("work", branch, run("completed", "failure")).Status != "FAIL" ||
+                MonitorBranchBadge("work", branch, run("completed", "cancelled")).Status != "FAIL")
+                throw new Exception("Red GH badge failed");
+            if (MonitorBranchBadge("work", branch, run("completed", "success").Replace(sha, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).Status != "UNKNOWN")
+                throw new Exception("Stale SHA was green");
+            SetGitHubMonitorBadge("work", "SUCCESS", sha, "Offline mock");
+            SetGitHubMonitorBadge("parallel", "RUNNING", sha, "Offline mock");
+            SetGitHubMonitorBadge("main", "FAIL", sha, "Offline mock");
+            if (githubMonitorBadges["work"].BackColor == githubMonitorBadges["parallel"].BackColor ||
+                githubMonitorBadges["work"].BackColor == githubMonitorBadges["main"].BackColor)
+                throw new Exception("GH colors are not distinct");
+        }
+
         private void AssertExeInspection(string folder)
         {
             // No GitHub token or actual game required: exercise the same EXE SHA256

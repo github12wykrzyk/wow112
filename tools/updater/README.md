@@ -163,3 +163,7 @@ An older successful run is explicitly marked as older than branch HEAD. A manual
 The monitor reuses the existing read-only GitHub token (Contents + Actions), stores no new credentials,
 does not alter game files, and is disabled during the offline UI smoke test. GitHub inactivity
 cannot establish whether an AI conversation is still generating text outside GitHub.
+
+## GitHub status in main dashboard (Updater 2.6 / TEST work)
+
+The main window shows three color-coded statuses for the active delivery branches work, parallel and main, without opening the optional Monitor GH dialog. Green = SUCCESS, yellow = PENDING/RUNNING, red = FAIL (including cancelled/timed_out), gray = UNKNOWN/offline. Each badge shows branch, current HEAD and time of last read; tooltip provides workflow/run details. An initial refresh starts when the dashboard appears and repeats every 10 seconds without overlapping requests. Runs on older SHAs never make the latest commit green. Status colors report CI observations only; installation still requires the existing successful candidate run, package hash check and FINAL_PACKAGE: PASS. Historical, promote and feature branches are not active delivery channels and are not included in this compact status strip.

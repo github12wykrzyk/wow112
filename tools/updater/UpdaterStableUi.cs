@@ -40,7 +40,7 @@ namespace WoW112Updater
             DoubleBuffered = true;
             var root = Grid(1, 5);
             root.Padding = new Padding(16);
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 136));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 192));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
@@ -50,20 +50,17 @@ namespace WoW112Updater
             var header = Grid(2, 1);
             header.ColumnStyles.Clear();
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 294));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 450));
             root.Controls.Add(header, 0, 0);
-            var heading = Grid(1, 2);
-            heading.RowStyles.Add(new RowStyle(SizeType.Percent, 64));
-            heading.RowStyles.Add(new RowStyle(SizeType.Percent, 36));
+            var heading = Grid(1, 3);
+            heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            heading.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             heading.Controls.Add(TextLabel("WoW112", 21, Gold, true), 0, 0);
-            heading.Controls.Add(TextLabel("Updater  •  World of Warcraft 1.12.1 / 5875", 9, Muted), 0, 1);
+            heading.Controls.Add(TextLabel("Updater " + UpdaterVersion + "  •  World of Warcraft 1.12.1 / 5875", 9, Muted), 0, 1);
+            PrepareLabel(connectionInfo); heading.Controls.Add(connectionInfo, 0, 2);
             header.Controls.Add(heading, 0, 0);
-            var identity = Grid(1, 2);
-            identity.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            identity.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            identity.Controls.Add(TextLabel("UPDATER  " + UpdaterVersion, 9, Muted), 0, 0);
-            PrepareLabel(connectionInfo); identity.Controls.Add(connectionInfo, 0, 1);
-            header.Controls.Add(identity, 1, 0);
+            header.Controls.Add(BuildGitHubMonitorHeader(), 1, 0);
 
             var config = Card("KONFIGURACJA", 3);
             root.Controls.Add(config, 0, 1);
