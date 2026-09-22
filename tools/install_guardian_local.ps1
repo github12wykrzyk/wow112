@@ -4,47 +4,79 @@ $repo = 'github12wykrzyk/wow112'
 $folder = Join-Path $env:LOCALAPPDATA 'WoW112Guardian'
 New-Item -ItemType Directory -Path $folder -Force | Out-Null
 
-function Require-Program($name, $id) {
-    if (Get-Command $name -ErrorAction SilentlyContinue) { return }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "Missing $name. Install $id through winget and rerun."
+function Find-Executable($name, [string[]]$knownPaths) {
+    $found = Get-Command $name -ErrorAction SilentlyContinue
+    if ($found -and $found.Source -and (Test-Path -LiteralPath $found.Source -PathType Leaf)) {
+        return [string]$found.Source
     }
-    Write-Host "Installing $id..."
-    & winget install -e --id $id --accept-source-agreements --accept-package-agreements
-    if ($LASTEXITCODE -ne 0) { throw "winget failed: $id" }
+    foreach ($path in $knownPaths) {
+        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            return [string](Resolve-Path -LiteralPath $path).Path
+        }
+    }
+    return $null
+}
+function Require-Program($name, $id, [string[]]$knownPaths) {
+    $exe = Find-Executable $name $knownPaths
+    if ($exe) {
+        Write-Host "Found $name at $exe"
+        return $exe
+    }
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $winget) { throw "Cannot locate $name. winget is unavailable; install $id, then rerun." }
+    Write-Host "Installing missing program $id..."
+    & $winget.Source install -e --id $id --accept-source-agreements --accept-package-agreements
+    $installCode = $LASTEXITCODE
     $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
                 [Environment]::GetEnvironmentVariable('Path','User') + ';' + $env:Path
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-        throw "Restart PowerShell after installing $id and rerun this installer."
-    }
+    $exe = Find-Executable $name $knownPaths
+    if ($exe) { return $exe }
+    throw "Cannot locate $name after attempting $id (winget exit code: $installCode). Restart PowerShell or install the program, then rerun."
 }
-Require-Program 'gh.exe' 'GitHub.cli'
-Require-Program 'ollama.exe' 'Ollama.Ollama'
-Require-Program 'py.exe' 'Python.Python.3.12'
 
-& gh auth status --hostname github.com *> $null
+$ghExe = Require-Program 'gh.exe' 'GitHub.cli' @(
+    (Join-Path $env:ProgramFiles 'GitHub CLI\gh.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\GitHub CLI\gh.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\gh.exe')
+)
+$ollamaExe = Require-Program 'ollama.exe' 'Ollama.Ollama' @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'),
+    (Join-Path $env:ProgramFiles 'Ollama\ollama.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\ollama.exe')
+)
+$pyExe = Require-Program 'py.exe' 'Python.Python.3.12' @(
+    (Join-Path $env:WINDIR 'py.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Python\Launcher\py.exe'),
+    (Join-Path $env:ProgramFiles 'Python Launcher\py.exe')
+)
+# Resolve the programs to their actual locations for this session and for the scheduled task.
+$runtimeDirs = @((Split-Path -Parent $ghExe), (Split-Path -Parent $ollamaExe), (Split-Path -Parent $pyExe))
+$runtimePrefix = ($runtimeDirs | Select-Object -Unique) -join ';'
+$env:Path = $runtimePrefix + ';' + $env:Path
+
+& $ghExe auth status --hostname github.com *> $null
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Sign in to GitHub using your own browser.'
-    & gh auth login --hostname github.com --web --scopes repo,workflow
+    & $ghExe auth login --hostname github.com --web --scopes repo,workflow
     if ($LASTEXITCODE -ne 0) { throw 'GitHub login failed' }
 }
 # GitHub CLI may be authenticated without Git for Windows. Do not refresh credentials:
 # gh auth refresh can fail while trying to configure a missing git executable.
 # The following read-only GitHub API request validates repository access directly.
 
-$ref = (& gh api ("repos/" + $repo + "/git/ref/heads/main") | Out-String | ConvertFrom-Json)
+$ref = (& $ghExe api ("repos/" + $repo + "/git/ref/heads/main") | Out-String | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch main HEAD' }
 $sha = [string]$ref.object.sha
 if ($sha -notmatch '^[a-f0-9]{40}$') { throw 'Invalid main SHA' }
 foreach ($name in @('guardian.py','guardian_local.py')) {
     $endpoint = "repos/" + $repo + "/contents/tools/" + $name + "?ref=" + $sha
-    $record = (& gh api $endpoint | Out-String | ConvertFrom-Json)
+    $record = (& $ghExe api $endpoint | Out-String | ConvertFrom-Json)
     if ($LASTEXITCODE -ne 0 -or $record.encoding -ne 'base64') { throw "Cannot fetch $name" }
     [IO.File]::WriteAllBytes((Join-Path $folder $name), [Convert]::FromBase64String(($record.content -replace '\s','')))
 }
 
 Write-Host 'Downloading local programming model (approximately 5 GB)...'
-& ollama pull qwen2.5-coder:7b
+& $ollamaExe pull qwen2.5-coder:7b
 if ($LASTEXITCODE -ne 0) { throw 'Ollama model download failed' }
 
 $runner = Join-Path $folder 'run_guardian.ps1'
@@ -57,6 +89,10 @@ $log = Join-Path $root 'last_run.log'
 & py -3 (Join-Path $root 'guardian_local.py') 2>&1 | Out-File -FilePath $log -Append -Encoding utf8
 exit $LASTEXITCODE
 '@
+# Persist explicit executable locations in the task's process environment; PATH may be stale in a new session.
+$pathLine = '$env:Path = ' + [char]39 + $runtimePrefix.Replace([string][char]39, ([string][char]39 + [string][char]39)) +
+            [char]39 + ' + ";" + $env:Path'
+$command = $pathLine + [Environment]::NewLine + $command
 [IO.File]::WriteAllText($runner, $command, [Text.UTF8Encoding]::new($false))
 $taskName = 'WoW112GuardianLocal'
 $taskCommand = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runner + '"'
