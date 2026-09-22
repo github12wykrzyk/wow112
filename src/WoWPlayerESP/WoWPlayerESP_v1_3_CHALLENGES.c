@@ -551,17 +551,22 @@ static void ui_sync_gather(void) {
             SendMessageA(g_ui_gather_chest_checks[i],UI_SETCHECK,checked,0);
     }
     if(g_ui_gather_chest_diag){
-        W112_ControlValueV1 seen,eligible,entry,step;
+        static const char* reasons[9]={"NONE","READY","OFF","TYPE OFF","COMBAT","COOLDOWN","NO XYZ","RANGE","ACTIVE"};
+        W112_ControlValueV1 seen,eligible,entry,step,reason,source;
         char buf[160],*p=buf;
         BOOL ok=live&&ui_work_pp_get(PAR_CORE_DLL,40u,37u,&seen)&&
             ui_work_pp_get(PAR_CORE_DLL,40u,38u,&eligible)&&
             ui_work_pp_get(PAR_CORE_DLL,40u,39u,&entry)&&
-            ui_work_pp_get(PAR_CORE_DLL,40u,40u,&step);
+            ui_work_pp_get(PAR_CORE_DLL,42u,40u,&step)&&
+            ui_work_pp_get(PAR_CORE_DLL,42u,41u,&reason)&&
+            ui_work_pp_get(PAR_CORE_DLL,42u,42u,&source);
         if(!ok)SetWindowTextA(g_ui_gather_chest_diag,"Chest scanner: NOT READY");
         else{
-            p=app_str(p,"Chest scan: loaded ");p=app_u32(p,seen.u32);
-            p=app_str(p," | eligible ");p=app_u32(p,eligible.u32);
+            p=app_str(p,"Chest ");p=app_u32(p,seen.u32);
+            p=app_str(p,"/");p=app_u32(p,eligible.u32);
             p=app_str(p," | entry ");p=app_u32(p,entry.u32);
+            p=app_str(p," | ");p=app_str(p,reason.u32<9u?reasons[reason.u32]:"UNKNOWN");
+            p=app_str(p," | XYZ src ");p=app_u32(p,source.u32);
             p=app_str(p," | Z step ");p=app_u32(p,step.u32);
             *p=0;SetWindowTextA(g_ui_gather_chest_diag,buf);
         }

@@ -1254,7 +1254,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[7u+14u+7u+8u+4u];
+static W112_ControlSettingV1 g_controlSettings[7u+14u+7u+8u+4u+2u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1377,6 +1377,17 @@ static void init_control_descriptor(void)
             s->enum_options=0;s->enum_option_count=0u;
         }
     }
+    {
+        static const char* keys[2]={"chest_scan_reason","chest_pos_source"};
+        static const char* labels[2]={"Chest: scan reason","Chest: position source"};
+        for(i=0u;i<2u;++i){
+            s=&g_controlSettings[40u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=41u+i;s->key=keys[i];s->label=labels[i];s->type=W112_CTL_INT;
+            s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;
+            s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
     g_controlDescriptorReady=1u;
 }
 
@@ -1405,6 +1416,8 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==38u){out->i32=(w112_i32)g_chestScanEligible;return 1;}
     if(id==39u){out->i32=(w112_i32)g_chestScanLastEntry;return 1;}
     if(id==40u){out->i32=(w112_i32)((g_gatherActive&&g_gatherKind==4u)?g_chestStep:0u);return 1;}
+    if(id==41u){out->i32=(w112_i32)((g_gatherActive&&g_gatherKind==4u)?8u:g_chestScanReason);return 1;}
+    if(id==42u){out->i32=(w112_i32)g_chestScanPosSrc;return 1;}
     return 0;
 }
 
@@ -1483,7 +1496,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,40u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,42u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 

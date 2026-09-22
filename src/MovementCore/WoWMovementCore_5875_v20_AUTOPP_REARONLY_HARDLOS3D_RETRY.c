@@ -354,6 +354,9 @@ static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
 static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u,g_chestSkipUntil=0u;
 /* The GUI exposes loaded/eligible counts and current target as live diagnostics. */
 static volatile DWORD g_chestScanSeen=0u,g_chestScanEligible=0u,g_chestScanLastEntry=0u;
+/* Scan reason: 0 none, 1 ready, 2 off, 3 type off, 4 combat,
+ * 5 cooldown, 6 no position, 7 out of range, 8 transaction active. */
+static volatile DWORD g_chestScanReason=0u,g_chestScanPosSrc=0u;
 static volatile DWORD g_autoOpenClickCount=0u,g_autoOpenLastClickAt=0u;
 static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
 static volatile DWORD g_lastOpenChatLo=0u,g_lastOpenChatHi=0u,g_lastOpenChatTick=0u;
@@ -1112,6 +1115,45 @@ static DWORD GetGOPos(BYTE*o,DWORD*desc,float*x,float*y,float*z,DWORD*src)
     return 0u;
 }
 
+/* Chest-only position resolution: a zeroed descriptor XYZ is a valid finite
+ * float triplet, but NOT a loaded chest's world location. Probe descriptor,
+ * ObjectMovementData and legacy position, selecting the closest credible
+ * source to the player. Mining/Herb/AutoOpen keep their current provenance.
+ * src 1=descriptor, 2=movement, 3=legacy. */
+static DWORD ChestChoosePos(float a,float b,float c,DWORD source,
+                           float px,float py,float pz,float*best,
+                           float*x,float*y,float*z,DWORD*src)
+{
+    float d2;
+    if(!ValidWorldPos(a,b,c)||(a==0.0f&&b==0.0f&&c==0.0f))return 0u;
+    d2=DistSq3(px,py,pz,a,b,c);
+    if(d2>=*best)return 0u;
+    *best=d2;*x=a;*y=b;*z=c;if(src)*src=source;return 1u;
+}
+static DWORD GetChestPos(BYTE*o,DWORD*desc,float px,float py,float pz,
+                         float*x,float*y,float*z,DWORD*src)
+{
+    BYTE*mv;float best=1.0e30f;DWORD found=0u;
+    if(src)*src=0u;
+    if(!Ptr(o))return 0u;
+    if(Ptr(desc))
+        found|=ChestChoosePos(*(float*)&desc[GAMEOBJECT_POS_X_INDEX],
+                              *(float*)&desc[GAMEOBJECT_POS_Y_INDEX],
+                              *(float*)&desc[GAMEOBJECT_POS_Z_INDEX],1u,
+                              px,py,pz,&best,x,y,z,src);
+    mv=*(BYTE**)(o+OFF_OBJ_MOVEMENT_DATA);
+    if(Ptr(mv))
+        found|=ChestChoosePos(*(float*)(mv+OFF_OBJMOVE_POS_X),
+                              *(float*)(mv+OFF_OBJMOVE_POS_Y),
+                              *(float*)(mv+OFF_OBJMOVE_POS_Z),2u,
+                              px,py,pz,&best,x,y,z,src);
+    found|=ChestChoosePos(*(float*)(o+OFF_GO_LEGACY_X),
+                          *(float*)(o+OFF_GO_LEGACY_Y),
+                          *(float*)(o+OFF_GO_LEGACY_Z),3u,
+                          px,py,pz,&best,x,y,z,src);
+    return found;
+}
+
 /* Read the real player XYZ and current GO XYZ for each AutoOpen phase.
  * Reject invalid/missing positions and any target farther than melee range.
  * This check is private to AutoOpen: mining/herbalism retain their own ranges. */
@@ -1185,32 +1227,47 @@ static DWORD MiningPriorityOwnsPP(DWORD now)
 
 static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DWORD*okind,float*od2)
 {
-    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o,*best=0;DWORD i,visible=0,nodes=0,profmatch=0,inrange=0,posfail=0,eligible=0,entry=0,kind=0,lo=0,hi=0,src=0,match=0,inCombat=0u,chestSeen=0u,chestEligible=0u,chestLastEntry=0u;float px,py,pz,d2,bestd=GATHER_SCAN_RANGE_SQ+1.0f,x=0,y=0,z=0,copperBest=1000000000.0f;DWORD*desc;
+    BYTE*m=*(BYTE**)ADDR_OBJMGR_GLOBAL,*o,*best=0;DWORD i,visible=0,nodes=0,profmatch=0,inrange=0,posfail=0,eligible=0,entry=0,kind=0,lo=0,hi=0,src=0,match=0,inCombat=0u,chestSeen=0u,chestEligible=0u,chestLastEntry=0u,chestReason=0u,chestPosSrc=0u;float px,py,pz,d2,bestd=GATHER_SCAN_RANGE_SQ+1.0f,x=0,y=0,z=0,copperBest=1000000000.0f;DWORD*desc;
     g_diagEntry=0u;
     g_chestScanSeen=0u;g_chestScanEligible=0u;g_chestScanLastEntry=0u;
+    g_chestScanReason=0u;g_chestScanPosSrc=0u;
     if(!Ptr(m)||!Ptr(p))return 0;inCombat=Combat(p);px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);o=*(BYTE**)(m+OFF_OM_FIRST_OBJECT);
     for(i=0u;i<4095u&&Ptr(o);i++){
         BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);visible++;desc=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);
         if(Ptr(desc)&&(desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_GAMEOBJECT)){
             entry=desc[OBJECT_FIELD_ENTRY_INDEX];kind=IsHerbEntry(entry)?1u:(IsMiningEntry(entry)?2u:(IsAutoOpenEntry(entry)?3u:(ChestGroupBit(entry)?4u:0u)));
-            if(kind==4u){++chestSeen;chestLastEntry=entry;}
+            if(kind==4u){
+                ++chestSeen;chestLastEntry=entry;
+                if(!g_chestEnabled)chestReason=2u;
+                else if(!(g_chestGroupsMask&ChestGroupBit(entry)))chestReason=3u;
+                else if(inCombat)chestReason=4u;
+                else if(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&
+                        g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&
+                        (LONG)(g_chestSkipUntil-now)>0)chestReason=5u;
+                else chestReason=0u;
+            }
             if(kind==2u&&CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH)))kind=0u;
             if(kind){
                 nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(LONG)(g_chestSkipUntil-now)>0)))?1u:0u;if(match)profmatch++;
-                if(GetGOPos(o,desc,&x,&y,&z,&src)){
+                if((kind==4u)?GetChestPos(o,desc,px,py,pz,&x,&y,&z,&src):GetGOPos(o,desc,&x,&y,&z,&src)){
                     d2=DistSq3(px,py,pz,x,y,z);
+                    if(kind==4u){
+                        chestPosSrc=src;
+                        if(match)chestReason=d2<=GATHER_SCAN_RANGE_SQ?1u:7u;
+                    }
                     if(entry==1731u&&d2<copperBest){copperBest=d2;CaptureCopperDiag(o,desc,px,py,pz,x,y,z,src,d2);}
                     if(match&&d2<=((kind==3u)?AUTOOPEN_MELEE_RANGE_SQ:GATHER_SCAN_RANGE_SQ)){
                         inrange++;eligible++;if(kind==4u)++chestEligible;lo=*(DWORD*)(o+OFF_OBJ_GUID_LOW);hi=*(DWORD*)(o+OFF_OBJ_GUID_HIGH);
                         /* Never suppress a matching node because of previous attempts. */
                         if(d2<bestd){best=o;bestd=d2;*oe=entry;*olo=lo;*ohi=hi;*okind=kind;}
                     }
-                }else if(match)posfail++;
+                }else if(match){posfail++;if(kind==4u)chestReason=6u;}
             }
         }
         if(!Ptr(n)||n==o)break;o=n;
     }
     g_chestScanSeen=chestSeen;g_chestScanEligible=chestEligible;g_chestScanLastEntry=chestLastEntry;
+    g_chestScanReason=chestReason;g_chestScanPosSrc=chestPosSrc;
     g_gatherScanVisible=visible;g_gatherScanNodes=nodes;g_gatherScanProfMatch=profmatch;g_gatherScanInRange=inrange;g_gatherScanPosFail=posfail;g_gatherScanEligible=eligible;if(od2)*od2=best?bestd:0.0f;(void)now;return best;
 }
 
@@ -1420,8 +1477,11 @@ static void CombatVeinObserve(BYTE*p,DWORD now)
 
 static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,DWORD kind,float d2)
 {
-    DWORD*desc,src=0;float nx=0,ny=0,nz=0,px,py,dx,dy;
-    if(!Ptr(p)||!Ptr(obj))return;desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);if(!GetGOPos(obj,desc,&nx,&ny,&nz,&src)){GatherFileLog("POS_FAIL_RETRY",now,entry,lo,hi,d2,g_gatherAttempts,kind);g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;return;}
+    DWORD*desc,src=0;float nx=0,ny=0,nz=0,px,py,pz,dx,dy;
+    if(!Ptr(p)||!Ptr(obj))return;
+    px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);
+    desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!(kind==4u?GetChestPos(obj,desc,px,py,pz,&nx,&ny,&nz,&src):GetGOPos(obj,desc,&nx,&ny,&nz,&src))){GatherFileLog("POS_FAIL_RETRY",now,entry,lo,hi,d2,g_gatherAttempts,kind);g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;return;}
     /* Recheck when starting: the player may have moved since selection. */
     if(kind==3u&&!AutoOpenInMelee(p,obj,&d2))return;
     g_combatWatch=0u;
@@ -1494,7 +1554,12 @@ static void GatherBeginManualLootWait(BYTE*p,DWORD now,const char*reason)
 
 static void GatherFinishManualLoot(BYTE*p,DWORD now,const char*reason)
 {
-    if(g_gatherKind==4u){g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;g_chestSkipUntil=now+CHEST_SKIP_LOOT_MS;}
+    if(g_gatherKind==4u){
+        g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;
+        /* Absence of loot window is not a successful chest; retry after
+         * the short failure backoff instead of hiding it for two minutes. */
+        g_chestSkipUntil=now+(g_gatherLootSeenOpen?CHEST_SKIP_LOOT_MS:CHEST_SKIP_FAIL_MS);
+    }
     g_gatherLootWait=0u;
     g_gatherLootWaitUntil=0u;
     g_gatherLootStart=0u;
