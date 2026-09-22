@@ -330,7 +330,8 @@ static uptr unit_aux(uptr o){uptr p=read_u32(o+OBJ_UNIT_AUX_OFF);return sane_ptr
 
 static Guid64 player_guid(void)
 {
-    uptr om=object_manager();Guid64 z={0,0};if(!sane_ptr(om))return z;
+    uptr om = object_manager();
+    if (!sane_ptr(om)) return (Guid64){0, 0};
     z.lo=read_u32(om+OM_PLAYER_GUID_LO_OFF);z.hi=read_u32(om+OM_PLAYER_GUID_HI_OFF);return z;
 }
 
