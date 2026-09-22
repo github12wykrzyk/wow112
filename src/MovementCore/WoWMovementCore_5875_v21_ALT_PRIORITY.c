@@ -274,12 +274,13 @@ static volatile DWORD g_ppGuardHoldLo=0u,g_ppGuardHoldHi=0u,g_ppGuardHoldUntil=0
 static volatile DWORD g_ppGuardCatches=0u,g_ppGuardPulseFixes=0u;
 /* PP-correlated combat is a recovery signal, not proof of a server resist. */
 #define PP_RECOVERY_WATCH_MS        2000u
-#define PP_RECOVERY_RESET_GAP_MS   18000u
+#define PP_RECOVERY_RESET_GAP_MS    2000u
 #define PP_RECOVERY_STEALTH_GAP_MS  5500u
 static volatile DWORD g_ppRecoveryEnabled=0u,g_ppRecoveryPhase=0u;
 static volatile DWORD g_ppRecoveryWatchUntil=0u,g_ppRecoveryWatchLo=0u,g_ppRecoveryWatchHi=0u;
 static volatile DWORD g_ppRecoveryLastCombat=0u,g_ppRecoveryCombatSince=0u;
-static volatile DWORD g_ppRecoveryOutOfCombatSince=0u,g_ppRecoveryResetAttempted=0u;
+static volatile DWORD g_ppRecoveryOutOfCombatSince=0u,g_ppRecoveryOwnsAlt=0u;
+static volatile DWORD g_ppRecoveryUserAbort=0u;
 static volatile DWORD g_ppRecoveryNextAllowed=0u,g_ppRecoveryLastStealthCast=0u;
 static volatile DWORD g_ppRecoveryResets=0u,g_ppRecoveryStealthCasts=0u;
 static volatile DWORD g_ppRecoveryCombatEvents=0u,g_ppRecoveryLastFailReason=0u;
@@ -668,14 +669,21 @@ static void AltPriority_Start(DWORD now)
 
 /* Shared with the later teleport declaration; avoid a duplicate definition. */
 static DWORD g_telePending;
-/* Existing game timer is the sole state-machine executor. Exactly one ALT
-   reset may start for each PP-correlated combat episode. */
+/* Existing game timer is the sole state-machine executor. During a PP-
+   correlated combat episode the active ALT reset is refreshed every 2 s.
+   Do not restore the real XYZ between refreshes; ordinary AltPriority_Stop
+   owns the one real-position restore when combat ends or mode is disabled. */
 static void PPRecovery_Tick(BYTE*p,DWORD now)
 {
     DWORD fighting;
     if(!g_ppRecoveryEnabled||!Ptr(p)){
+        /* Toggle OFF explicitly releases only a reset started by recovery.
+           Never terminate an ALT started manually by the player. */
+        if(g_ppRecoveryOwnsAlt&&g_mode==MODE_LOCAL_STRONG)
+            AltPriority_Stop(Ptr(p)?TRUE:FALSE);
+        g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
         g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
-        g_ppRecoveryOutOfCombatSince=0u;g_ppRecoveryResetAttempted=0u;
+        g_ppRecoveryOutOfCombatSince=0u;
         g_ppRecoveryLastCombat=Ptr(p)?Combat(p):0u;
         return;
     }
@@ -685,7 +693,8 @@ static void PPRecovery_Tick(BYTE*p,DWORD now)
     if(fighting&&!g_ppRecoveryLastCombat&&g_ppRecoveryPhase==1u &&
        (LONG)(now-g_ppRecoveryWatchUntil)<0){
         g_ppRecoveryPhase=2u;g_ppRecoveryCombatSince=now;
-        g_ppRecoveryResetAttempted=0u;g_ppRecoveryOutOfCombatSince=0u;
+        g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
+        g_ppRecoveryOutOfCombatSince=0u;
         ++g_ppRecoveryCombatEvents;
         PPHardRetryCancel();
         GatherFileLog("AUTOPP_COMBAT_RECOVERY_ARMED",now,0u,
@@ -695,22 +704,30 @@ static void PPRecovery_Tick(BYTE*p,DWORD now)
     g_ppRecoveryLastCombat=fighting;
     if(fighting){
         g_ppRecoveryOutOfCombatSince=0u;
-        if(g_ppRecoveryPhase==2u&&!g_ppRecoveryResetAttempted&&
+        /* Refresh only the ALT transaction we own. Another SafeBreak mode,
+           a physical ALT request and PvERear retain priority. No duplicate
+           hooks, synthetic key presses, Stop/Start packet gap or file-I/O
+           inside a native send/failure callback. */
+        if(g_ppRecoveryPhase==2u&&!g_ppRecoveryUserAbort&&
            (DWORD)(now-g_ppRecoveryCombatSince)>=120u &&
            (!g_ppRecoveryNextAllowed||
             (LONG)(now-g_ppRecoveryNextAllowed)>=0)&&
-           g_mode==MODE_OFF&&!g_altPriorityPendingUntil&&!g_keyAlt&&
+           (g_mode==MODE_OFF||
+            (g_mode==MODE_LOCAL_STRONG&&g_ppRecoveryOwnsAlt))&&
+           !g_altPriorityPendingUntil&&!g_keyAlt&&
            !CoordRearOwned()&&!g_abCapGuardActive&&!g_telePending&&
-           !g_stepActive&&!g_planeEnabled&&
+           !g_stepActive&&!g_stepMoveInjecting&&!g_planeEnabled&&
            !g_gatherActive&&!g_gatherLootWait&&!LongPPActive()&&
            !LongPPInjecting()&&
-           *(DWORD*)ADDR_CASTING_SPELLID!=SPELL_PICK_POCKET){
-            g_ppRecoveryResetAttempted=1u;
+           *(DWORD*)ADDR_CASTING_SPELLID==0u){
+            DWORD refresh=(g_mode==MODE_LOCAL_STRONG)?1u:0u;
             AltPriority_Start(now);
             if(g_mode==MODE_LOCAL_STRONG){
+                g_ppRecoveryOwnsAlt=1u;
                 g_ppRecoveryNextAllowed=now+PP_RECOVERY_RESET_GAP_MS;
                 ++g_ppRecoveryResets;
-                GatherFileLog("AUTOPP_COMBAT_ALT_RESET",now,0u,
+                GatherFileLog(refresh?"AUTOPP_COMBAT_ALT_REFRESH":
+                              "AUTOPP_COMBAT_ALT_START",now,0u,
                               g_ppRecoveryWatchLo,g_ppRecoveryWatchHi,
                               0.0f,g_ppRecoveryResets,0u);
             }
@@ -719,7 +736,10 @@ static void PPRecovery_Tick(BYTE*p,DWORD now)
     }
     if(g_ppRecoveryPhase==2u){
         g_ppRecoveryPhase=3u;
+        g_ppRecoveryUserAbort=0u;
         g_ppRecoveryOutOfCombatSince=now;
+        /* The existing ALT timer still owns its 300-ms clear-combat settle
+           and real-position restore. Stealth runs only after that restore. */
     }
     if(GatherHasStealth(p)){
         if(g_ppRecoveryPhase==3u&&g_mode==MODE_OFF){
@@ -1444,6 +1464,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_planeRestorePending=0u;g_planeNotice=0u;
         g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;
         g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+        g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
         g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;return;
     }
     if(g_planeEnabled&&p&&Combat(p))Plane_Disable(1u);
@@ -1473,12 +1494,12 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      g_stepKey6=f6;
     }
 
-    if(k7&&!g_key7){g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
+    if(k7&&!g_key7){if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
     if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
     /* A key edge used to be discarded while PvERear had the rear lease.
        Queue this explicit manual request, even for a short ALT tap. */
-    if(kAlt&&!g_keyAlt&&!(k7&&!g_key7))g_altPriorityPendingUntil=now+7000u;
+    if(kAlt&&!g_keyAlt&&!(k7&&!g_key7)){g_ppRecoveryOwnsAlt=0u;g_altPriorityPendingUntil=now+7000u;}
     if(k10&&!g_key10&&!CoordRearOwned())Start(MODE_PURSUIT,now);
     if(k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
     if(k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
