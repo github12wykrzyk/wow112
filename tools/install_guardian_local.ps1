@@ -28,8 +28,9 @@ if ($LASTEXITCODE -ne 0) {
     & gh auth login --hostname github.com --web --scopes repo,workflow
     if ($LASTEXITCODE -ne 0) { throw 'GitHub login failed' }
 }
-& gh auth refresh --hostname github.com --scopes repo,workflow
-if ($LASTEXITCODE -ne 0) { throw 'GitHub repo/workflow authorization not granted' }
+# GitHub CLI may be authenticated without Git for Windows. Do not refresh credentials:
+# gh auth refresh can fail while trying to configure a missing git executable.
+# The following read-only GitHub API request validates repository access directly.
 
 $ref = (& gh api ("repos/" + $repo + "/git/ref/heads/main") | Out-String | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch main HEAD' }
