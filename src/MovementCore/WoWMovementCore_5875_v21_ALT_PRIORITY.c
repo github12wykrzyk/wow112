@@ -276,6 +276,11 @@ static volatile DWORD g_ppGuardCatches=0u,g_ppGuardPulseFixes=0u;
 #define PP_RECOVERY_WATCH_MS        2000u
 #define PP_RECOVERY_RESET_GAP_MS    2000u
 #define PP_RECOVERY_STEALTH_GAP_MS  5500u
+/* Verified 5875 unit update fields: HEALTH=0x16, MAXHEALTH=0x1c. */
+#define PP_LOW_HP_MAXHEALTH_INDEX    0x001Cu
+#define PP_LOW_HP_TRIGGER_PCT      30u
+#define PP_LOW_HP_RELEASE_PCT      45u
+#define PP_LOW_HP_SANITY_MAX       10000000u
 static volatile DWORD g_ppRecoveryEnabled=0u,g_ppRecoveryPhase=0u;
 static volatile DWORD g_ppRecoveryWatchUntil=0u,g_ppRecoveryWatchLo=0u,g_ppRecoveryWatchHi=0u;
 static volatile DWORD g_ppRecoveryLastCombat=0u,g_ppRecoveryCombatSince=0u;
@@ -284,10 +289,16 @@ static volatile DWORD g_ppRecoveryUserAbort=0u;
 static volatile DWORD g_ppRecoveryNextAllowed=0u,g_ppRecoveryLastStealthCast=0u;
 static volatile DWORD g_ppRecoveryResets=0u,g_ppRecoveryStealthCasts=0u;
 static volatile DWORD g_ppRecoveryCombatEvents=0u,g_ppRecoveryLastFailReason=0u;
+/* Independent opt-in semi-AFK low-health safeguard; 30/45% hysteresis
+   prevents repeated aggro/recovery cycles while the player regenerates. */
+static volatile DWORD g_ppLowHpEnabled=0u,g_ppLowHpHold=0u;
+static volatile DWORD g_ppLowHpPercent=100u,g_ppLowHpEvents=0u;
+static volatile DWORD g_ppRecoverySource=0u; /* 1 AutoPP, 2 low HP */
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
     return g_loginGuardReady&&g_autoPPEnabled&&Ptr(p)&&
-           GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled&&g_ppRecoveryPhase<2u;
+           GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled&&
+           !g_ppLowHpHold&&g_ppRecoveryPhase<2u;
 }
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 {
@@ -425,6 +436,32 @@ static void PPRecoveryOnAutoPPFailure(DWORD reason)
        (reason==SPELL_FAILED_TARGET_NO_POCKETS||
         reason==SPELL_FAILED_LINE_OF_SIGHT)){
         g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+    }
+}
+/* Observe on the existing game timer only. No offsets from other builds,
+   asynchronous threads or extra movement/cast detours. Invalid/dead player
+   data never arms the safeguard. */
+static void PPRecovery_LowHpObserve(BYTE*p,DWORD now)
+{
+    DWORD *d,hp,maxHp,percent;
+    if(!g_ppLowHpEnabled||!Ptr(p)){
+        g_ppLowHpHold=0u;g_ppLowHpPercent=100u;return;
+    }
+    d=*(DWORD**)(p+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!Ptr(d))return;
+    hp=d[UNIT_FIELD_HEALTH_INDEX];maxHp=d[PP_LOW_HP_MAXHEALTH_INDEX];
+    if(!hp){g_ppLowHpHold=0u;g_ppLowHpPercent=0u;return;}
+    if(!maxHp||maxHp>PP_LOW_HP_SANITY_MAX||hp>maxHp)return;
+    percent=(hp*100u)/maxHp;g_ppLowHpPercent=percent;
+    if(!g_ppLowHpHold&&hp*100u<maxHp*PP_LOW_HP_TRIGGER_PCT){
+        g_ppLowHpHold=1u;++g_ppLowHpEvents;
+        PPHardRetryCancel();
+        GatherFileLog("AUTOPP_LOW_HP_HOLD",now,0u,0u,0u,
+                      (float)percent,g_ppLowHpEvents,0u);
+    }else if(g_ppLowHpHold&&hp*100u>=maxHp*PP_LOW_HP_RELEASE_PCT){
+        g_ppLowHpHold=0u;
+        GatherFileLog("AUTOPP_LOW_HP_RELEASE",now,0u,0u,0u,
+                      (float)percent,g_ppLowHpEvents,0u);
     }
 }
 static void __cdecl AltPriority_DirectPacket(DataStore5875* packet)
@@ -676,23 +713,40 @@ static DWORD g_telePending;
 static void PPRecovery_Tick(BYTE*p,DWORD now)
 {
     DWORD fighting;
-    if(!g_ppRecoveryEnabled||!Ptr(p)){
-        /* Toggle OFF explicitly releases only a reset started by recovery.
-           Never terminate an ALT started manually by the player. */
+    if((!g_ppRecoveryEnabled&&!g_ppLowHpEnabled)||!Ptr(p)){
+        /* Toggle OFF releases only an ALT started by recovery. */
         if(g_ppRecoveryOwnsAlt&&g_mode==MODE_LOCAL_STRONG)
             AltPriority_Stop(Ptr(p)?TRUE:FALSE);
         g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
-        g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
-        g_ppRecoveryOutOfCombatSince=0u;
+        g_ppRecoveryPhase=0u;g_ppRecoverySource=0u;
+        g_ppRecoveryWatchUntil=0u;g_ppRecoveryOutOfCombatSince=0u;
         g_ppRecoveryLastCombat=Ptr(p)?Combat(p):0u;
         return;
     }
+    /* Disabling just one opt-in control must not retain its previous episode
+       through the other toggle. A manually owned ALT is never stopped. */
+    if(g_ppRecoveryPhase>=2u&&
+       ((g_ppRecoverySource==1u&&!g_ppRecoveryEnabled)||
+        (g_ppRecoverySource==2u&&!g_ppLowHpEnabled))){
+        if(g_ppRecoveryOwnsAlt&&g_mode==MODE_LOCAL_STRONG)
+            AltPriority_Stop(TRUE);
+        g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
+        g_ppRecoveryPhase=0u;g_ppRecoverySource=0u;
+        g_ppRecoveryWatchUntil=0u;
+    }
     fighting=Combat(p);
+    if(!g_ppLowHpPercent){
+        if(g_ppRecoveryOwnsAlt&&g_mode==MODE_LOCAL_STRONG)
+            AltPriority_Stop(FALSE);
+        g_ppRecoveryOwnsAlt=0u;g_ppRecoveryPhase=0u;
+        g_ppRecoverySource=0u;g_ppRecoveryLastCombat=fighting;return;
+    }
     if(g_ppRecoveryPhase==1u &&
        (LONG)(now-g_ppRecoveryWatchUntil)>=0)g_ppRecoveryPhase=0u;
     if(fighting&&!g_ppRecoveryLastCombat&&g_ppRecoveryPhase==1u &&
        (LONG)(now-g_ppRecoveryWatchUntil)<0){
-        g_ppRecoveryPhase=2u;g_ppRecoveryCombatSince=now;
+        g_ppRecoveryPhase=2u;g_ppRecoverySource=1u;
+        g_ppRecoveryCombatSince=now;
         g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
         g_ppRecoveryOutOfCombatSince=0u;
         ++g_ppRecoveryCombatEvents;
@@ -700,6 +754,18 @@ static void PPRecovery_Tick(BYTE*p,DWORD now)
         GatherFileLog("AUTOPP_COMBAT_RECOVERY_ARMED",now,0u,
                       g_ppRecoveryWatchLo,g_ppRecoveryWatchHi,0.0f,
                       g_ppRecoveryCombatEvents,g_ppRecoveryLastFailReason);
+    }
+    /* HP emergency also starts during an already ongoing combat; unlike
+       PP recovery it does not require a new combat edge or an AutoPP event. */
+    if(fighting&&g_ppLowHpEnabled&&g_ppLowHpHold&&
+       g_ppRecoveryPhase<2u){
+        g_ppRecoveryPhase=2u;g_ppRecoverySource=2u;
+        g_ppRecoveryCombatSince=now;
+        g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
+        g_ppRecoveryOutOfCombatSince=0u;
+        PPHardRetryCancel();
+        GatherFileLog("AUTOPP_LOW_HP_COMBAT_ARMED",now,0u,0u,0u,
+                      (float)g_ppLowHpPercent,g_ppLowHpEvents,0u);
     }
     g_ppRecoveryLastCombat=fighting;
     if(fighting){
@@ -743,13 +809,18 @@ static void PPRecovery_Tick(BYTE*p,DWORD now)
     }
     if(GatherHasStealth(p)){
         if(g_ppRecoveryPhase==3u&&g_mode==MODE_OFF){
-            g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
+            g_ppRecoveryPhase=0u;g_ppRecoverySource=0u;
+            g_ppRecoveryOwnsAlt=0u;g_ppRecoveryWatchUntil=0u;
             GatherFileLog("AUTOPP_STEALTH_RECOVERED",now,0u,
                           g_ppRecoveryWatchLo,g_ppRecoveryWatchHi,0.0f,
                           g_ppRecoveryResets,0u);
         }
         return;
     }
+    /* Low-HP-only mode stays idle when healthy; PP recovery keeps its
+       existing optional auto-Stealth behavior outside combat. */
+    if(!g_ppRecoveryEnabled&&!g_ppLowHpHold&&g_ppRecoveryPhase!=3u)
+        return;
     /* Never interrupt a cast, gather or PP, or race manual ALT/other movement. */
     if(g_ppRecoveryPhase==1u||g_mode!=MODE_OFF||
        g_altPriorityPendingUntil||g_keyAlt||CoordRearOwned()||
@@ -1465,10 +1536,12 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;
         g_ppRecoveryPhase=0u;g_ppRecoveryWatchUntil=0u;
         g_ppRecoveryOwnsAlt=0u;g_ppRecoveryUserAbort=0u;
-        g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;return;
+        g_ppRecoveryLastCombat=0u;g_ppRecoveryOutOfCombatSince=0u;
+        g_ppRecoverySource=0u;g_ppLowHpHold=0u;g_ppLowHpPercent=100u;return;
     }
     if(g_planeEnabled&&p&&Combat(p))Plane_Disable(1u);
     Plane_TimerRestore(p);
+    PPRecovery_LowHpObserve(p,now);
     W112_PPGuard_Tick(p,now);
     CombatVeinObserve(p,now);
     PPBlacklistTick(now);
@@ -1532,7 +1605,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         TrackChestNativeTick(p);
         TrackChestTick(p,now);
-        if(!g_telePending&&!CoordRearOwned()&&
+        if(!g_ppLowHpHold&&!g_telePending&&!CoordRearOwned()&&
            (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)){
             DWORD autoOpenWasEnabled=g_autoOpenEnabled;
             if(autoOpenWasEnabled&&W112_AutoOpenBusy(p)){
@@ -1551,6 +1624,12 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_gatherStealthPending=0u;g_gatherSpoof=0u;
         GatherFileLog("WORLD_LOST_ABORT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,0u);
     }
+    /* Low-HP hold suspends new gather/chest scans; cancel an older gather
+       only after its cast/loot interaction has finished. */
+    if(p&&g_ppLowHpHold&&(g_gatherActive||g_gatherLootWait)&&
+       !g_abCapGuardActive&&!*(DWORD*)ADDR_CASTING_SPELLID&&
+       !GatherLootOpen()&&!LongPPActive()&&!LongPPInjecting())
+        GatherStop(p,now,"LOW_HP_GATHER_ABORT",1u,0u);
     PPRecovery_Tick(p,now);
     /* The rear lease ends in PvERear's own timer. Start only after it clears;
        otherwise its movement hook could rewrite the SafeBreak XYZ. Keep the
@@ -1682,7 +1761,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[65u];
+static W112_ControlSettingV1 g_controlSettings[69u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1917,6 +1996,24 @@ static void init_control_descriptor(void)
             s->enum_options=0;s->enum_option_count=0u;
         }
     }
+    {
+        static const char* keys[4]={"pp_low_hp_safeguard","pp_low_hp_hold",
+            "pp_low_hp_percent","pp_low_hp_events"};
+        static const char* labels[4]={"Semi-AFK: ALT escape if player HP <30%",
+            "Semi-AFK: pause AutoPP/Gather until HP >=45%",
+            "Semi-AFK: player HP percent","Semi-AFK: HP emergency episodes"};
+        for(i=0u;i<4u;++i){
+            s=&g_controlSettings[65u+i];
+            s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=66u+i;s->key=keys[i];s->label=labels[i];
+            s->type=i==0u?W112_CTL_BOOL:W112_CTL_INT;
+            s->default_value.u32=0u;s->min_value.u32=0u;
+            s->max_value.i32=i==0u?1:2147483647;
+            s->step.i32=1;
+            s->flags=i==0u?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
     g_controlDescriptorReady=1u;
 }
 
@@ -1928,6 +2025,10 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==47u){out->i32=(w112_i32)g_planePackets;return 1;}
     if(id==48u){out->i32=(w112_i32)g_planeTxZ10;return 1;}
     if(id==60u){out->u32=g_ppRecoveryEnabled?1u:0u;return 1;}
+    if(id==66u){out->u32=g_ppLowHpEnabled?1u:0u;return 1;}
+    if(id==67u){out->u32=g_ppLowHpHold?1u:0u;return 1;}
+    if(id==68u){out->i32=(w112_i32)g_ppLowHpPercent;return 1;}
+    if(id==69u){out->i32=(w112_i32)g_ppLowHpEvents;return 1;}
     if(id==61u){out->i32=(w112_i32)g_ppRecoveryPhase;return 1;}
     if(id==62u){out->i32=(w112_i32)g_ppRecoveryResets;return 1;}
     if(id==63u){out->i32=(w112_i32)g_ppRecoveryStealthCasts;return 1;}
@@ -2048,7 +2149,8 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         W112_MiningBlacklistApply(p,now);
         return 1;
     }
-    if(id==60u){g_ppRecoveryEnabled=value->u32;return 1;}
+    if(id==60u){g_ppRecoveryEnabled=value->u32?1u:0u;return 1;}
+    if(id==66u){g_ppLowHpEnabled=value->u32?1u:0u;return 1;}
     if(id==2u){g_autoPPEnabled=value->u32;return 1;}
     if(id==3u){
         g_autoOpenEnabled=value->u32;
@@ -2085,7 +2187,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,65u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,69u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
