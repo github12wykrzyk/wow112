@@ -1023,6 +1023,20 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     DebugChat(g_teleStopChat);
 }
 
+/* AutoOpen alone yields to combat, movement and ANY cast/channel.
+   Movement flags belong to the existing verified 5875 player moveinfo;
+   the first six bits cover directional movement/turning and 0xE000
+   covers the jump/fall family. Missing moveinfo fails closed. */
+static DWORD W112_AutoOpenBusy(BYTE*p)
+{
+    DWORD*flags;
+    if(!Ptr(p)||Combat(p))return 1u;
+    flags=MoveFlags(p);
+    if(!flags||(*flags&0x0000E03Fu))return 1u;
+    if(g_abCapGuardActive||(*(volatile DWORD*)ADDR_CASTING_SPELLID))return 1u;
+    return 0u;
+}
+
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
     DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
@@ -1091,8 +1105,18 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(p){
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         if(!g_telePending&&!CoordRearOwned()&&
-           (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait))
-            GatherTick(p,now);
+           (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)){
+            DWORD autoOpenWasEnabled=g_autoOpenEnabled;
+            if(autoOpenWasEnabled&&W112_AutoOpenBusy(p)){
+                /* Cancel a pending AutoOpen click/retry, then exclude AutoOpen
+                   from this scan; Mining/Herbalism continue unchanged. */
+                if((g_gatherActive||g_gatherLootWait)&&g_gatherKind==3u)
+                    GatherStop(p,now,"AUTOOPEN_BUSY_ABORT",0u,0u);
+                g_autoOpenEnabled=0u;
+                GatherTick(p,now);
+                g_autoOpenEnabled=autoOpenWasEnabled;
+            }else GatherTick(p,now);
+        }
     }else if(g_gatherActive||g_gatherLootWait){
         g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootStart=0u;
         g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;
