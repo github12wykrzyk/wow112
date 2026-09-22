@@ -1047,6 +1047,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     W112_LoginGuardTick(p,now);
     if(!g_loginGuardReady){g_altPriorityPendingUntil=0u;g_stepActive=0u;g_telePending=0u;return;}
     W112_PPGuard_Tick(p,now);
+    CombatVeinObserve(p,now);
     PPBlacklistTick(now);
     PPFixed_Flush();
     FlushPendingPPLog();
@@ -1252,7 +1253,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
  * scanner and Mining-first PP arbitration read only the effective mask. */
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
-static W112_ControlSettingV1 g_controlSettings[7u+14u+5u];
+static W112_ControlSettingV1 g_controlSettings[7u+14u+7u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1334,6 +1335,16 @@ static void init_control_descriptor(void)
     s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
     s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
+    s=&g_controlSettings[26u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=27u;
+    s->key="combat_vein_blacklist";s->label="Auto blacklist veins after combat onset";
+    s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;
+    s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+    s=&g_controlSettings[27u];
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=28u;
+    s->key="combat_vein_count";s->label="Combat vein blacklist (session count)";
+    s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=COMBAT_VEIN_MAX;s->step.i32=1;
+    s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
     g_controlDescriptorReady=1u;
 }
 
@@ -1353,6 +1364,8 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==24u){out->i32=(w112_i32)g_miningEarlyCancelCount;return 1;}
     if(id==25u){out->u32=g_miningBelowNodeEnabled?1u:0u;return 1;}
     if(id==26u){out->u32=g_miningBlacklistEnabled?1u:0u;return 1;}
+    if(id==27u){out->u32=g_combatVeinEnabled?1u:0u;return 1;}
+    if(id==28u){out->i32=(w112_i32)g_combatVeinCount;return 1;}
     return 0;
 }
 
@@ -1367,6 +1380,12 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     if(id==1u){
         g_gatherEnabled=value->u32;
         if(!g_gatherEnabled&&(g_gatherActive||g_gatherLootWait))GatherStop(p,now,"GUI_GATHER_DISABLED",1u,0u);
+        return 1;
+    }
+    if(id==27u){
+        g_combatVeinEnabled=value->u32;
+        if(!g_combatVeinEnabled)g_combatWatch=0u;
+        g_miningPriorityValidUntil=0u;g_miningPriorityNextScan=0u;g_gatherNextScan=0u;
         return 1;
     }
     if(id==26u){

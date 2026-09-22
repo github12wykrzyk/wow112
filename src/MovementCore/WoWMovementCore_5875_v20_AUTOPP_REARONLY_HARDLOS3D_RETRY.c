@@ -211,6 +211,8 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
  * radius, without asserting the private server accepts the below-ground ray. */
 #define MINING_BELOW_NODE_Z_OFFSET       4.0f
 #define GATHER_RESCAN_DELAY_MS         60u
+#define COMBAT_VEIN_WINDOW_MS         1800u
+#define COMBAT_VEIN_MAX                128u
 #define GATHER_LOOT_OPEN_GRACE_MS      1200u
 #define GATHER_LOOT_MIN_OPEN_MS         120u
 #define PP_POST_CAST_QUIET_MS          1200u
@@ -924,6 +926,32 @@ static DWORD IsHerbEntry(DWORD e)
  * A family disabled in the GUI must also disappear from the Mining-first PP
  * arbitration scan; never blacklist individual GUIDs or retry attempts. */
 static volatile DWORD g_miningBlacklistMask=0u;
+/* Separate session-local GUID blacklist: a combat onset shortly after a
+ * mining interaction can be associated with the node without blocking its ore family. */
+typedef struct { DWORD entry,lo,hi; } CombatVein;
+static CombatVein g_combatVeins[COMBAT_VEIN_MAX];
+static volatile DWORD g_combatVeinCount=0u,g_combatVeinEnabled=1u;
+static volatile DWORD g_combatWatch=0u,g_combatWatchStart=0u,g_combatWatchClicks=0u;
+static volatile DWORD g_combatWatchEntry=0u,g_combatWatchLo=0u,g_combatWatchHi=0u;
+static volatile DWORD g_combatVeinLastCombat=0u;
+static DWORD CombatVeinContains(DWORD entry,DWORD lo,DWORD hi)
+{
+    DWORD i;
+    if(!g_combatVeinEnabled)return 0u;
+    for(i=0;i<g_combatVeinCount;i++)
+        if(g_combatVeins[i].entry==entry&&g_combatVeins[i].lo==lo&&g_combatVeins[i].hi==hi)return 1u;
+    return 0u;
+}
+static DWORD CombatVeinAdd(DWORD entry,DWORD lo,DWORD hi)
+{
+    DWORD i;
+    if(!g_combatVeinEnabled||!entry||(!lo&&!hi)||CombatVeinContains(entry,lo,hi))return 0u;
+    i=g_combatVeinCount;
+    if(i>=COMBAT_VEIN_MAX)return 0u;
+    g_combatVeins[i].entry=entry;g_combatVeins[i].lo=lo;g_combatVeins[i].hi=hi;
+    g_combatVeinCount=i+1u;return 1u;
+}
+
 
 static DWORD MiningBlacklistBit(DWORD e)
 {
@@ -1090,7 +1118,7 @@ static BYTE* FindBestPriorityMiningNode(BYTE*p,DWORD*oe,DWORD*olo,DWORD*ohi,floa
         BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);desc=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);
         if(Ptr(desc)&&(desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_GAMEOBJECT)){
             entry=desc[OBJECT_FIELD_ENTRY_INDEX];
-            if(IsMiningEntry(entry)&&GetGOPos(o,desc,&x,&y,&z,&src)){
+            if(IsMiningEntry(entry)&&!CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH))&&GetGOPos(o,desc,&x,&y,&z,&src)){
                 d2=DistSq3(px,py,pz,x,y,z);
                 if(d2<=GATHER_SCAN_RANGE_SQ&&d2<bestd){best=o;bestd=d2;lo=*(DWORD*)(o+OFF_OBJ_GUID_LOW);hi=*(DWORD*)(o+OFF_OBJ_GUID_HIGH);if(oe)*oe=entry;if(olo)*olo=lo;if(ohi)*ohi=hi;}
             }
@@ -1130,6 +1158,7 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
         BYTE*n=*(BYTE**)(o+OFF_OBJ_NEXT);visible++;desc=*(DWORD**)(o+OFF_OBJ_DESCRIPTOR_PTR);
         if(Ptr(desc)&&(desc[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_GAMEOBJECT)){
             entry=desc[OBJECT_FIELD_ENTRY_INDEX];kind=IsHerbEntry(entry)?1u:(IsMiningEntry(entry)?2u:(IsAutoOpenEntry(entry)?3u:0u));
+            if(kind==2u&&CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH)))kind=0u;
             if(kind){
                 nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled))?1u:0u;if(match)profmatch++;
                 if(GetGOPos(o,desc,&x,&y,&z,&src)){
@@ -1331,12 +1360,38 @@ static void GatherStop(BYTE*p,DWORD now,const char*reason,DWORD sendReal,DWORD b
     DWORD lo=g_gatherTargetLo,hi=g_gatherTargetHi,entry=g_gatherEntry,attempts=g_gatherAttempts;float d2=g_gatherDistSq;(void)blacklist;g_gatherActive=0u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_gatherStealthPending=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_gatherNodeX=g_gatherNodeY=g_gatherNodeZ=0.0f;g_autoOpenPickPrimed=0u;g_gatherStart=0u;g_gatherLastHB=0u;g_gatherSpoof=0u;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;g_gatherClickPending=0u;g_gatherClickAt=0u;g_gatherPosSource=0u;g_gatherTargetLo=g_gatherTargetHi=g_gatherEntry=g_gatherKind=0u;g_gatherX=g_gatherY=g_gatherZ=g_gatherDistSq=0.0f;g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;if(sendReal&&Ptr(p))SendReal(p);GatherFileLog(reason,now,entry,lo,hi,d2,attempts,blacklist);
 }
 
+static void CombatVeinObserve(BYTE*p,DWORD now)
+{
+    DWORD combat,entry,lo,hi;
+    if(!Ptr(p)){g_combatWatch=0u;g_combatVeinLastCombat=0u;return;}
+    combat=Combat(p);
+    if(g_combatWatch&&(DWORD)(now-g_combatWatchStart)<=COMBAT_VEIN_WINDOW_MS&&
+       combat&&!g_combatVeinLastCombat&&g_gatherClicks>g_combatWatchClicks){
+        entry=g_combatWatchEntry;lo=g_combatWatchLo;hi=g_combatWatchHi;
+        if(CombatVeinAdd(entry,lo,hi))
+            GatherFileLog("COMBAT_VEIN_BLACKLIST_ADD",now,entry,lo,hi,g_gatherDistSq,g_gatherAttempts,g_combatVeinCount);
+        g_combatWatch=0u;
+        g_miningPriorityValidUntil=0u;g_miningPriorityEntry=g_miningPriorityLo=g_miningPriorityHi=0u;
+        g_miningPriorityNextScan=0u;g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;
+        if((g_gatherActive||g_gatherLootWait)&&g_gatherKind==2u&&
+           g_gatherEntry==entry&&g_gatherTargetLo==lo&&g_gatherTargetHi==hi)
+            GatherStop(p,now,"COMBAT_VEIN_ABORT",1u,0u);
+    }
+    if(g_combatWatch&&(DWORD)(now-g_combatWatchStart)>COMBAT_VEIN_WINDOW_MS)g_combatWatch=0u;
+    g_combatVeinLastCombat=combat;
+}
+
 static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,DWORD kind,float d2)
 {
     DWORD*desc,src=0;float nx=0,ny=0,nz=0,px,py,dx,dy;
     if(!Ptr(p)||!Ptr(obj))return;desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);if(!GetGOPos(obj,desc,&nx,&ny,&nz,&src)){GatherFileLog("POS_FAIL_RETRY",now,entry,lo,hi,d2,g_gatherAttempts,kind);g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;return;}
     /* Recheck when starting: the player may have moved since selection. */
     if(kind==3u&&!AutoOpenInMelee(p,obj,&d2))return;
+    g_combatWatch=0u;
+    if(kind==2u&&g_combatVeinEnabled&&!Combat(p)){
+        g_combatWatchEntry=entry;g_combatWatchLo=lo;g_combatWatchHi=hi;
+        g_combatWatchStart=now;g_combatWatchClicks=g_gatherClicks;g_combatWatch=1u;
+    }
     g_gatherActive=1u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_autoOpenPickPrimed=0u;g_autoOpenClickCount=0u;g_autoOpenLastClickAt=0u;g_gatherTargetLo=lo;g_gatherTargetHi=hi;g_gatherEntry=entry;g_gatherKind=kind;g_gatherStart=now;g_gatherLastHB=0u;g_gatherDistSq=d2;g_gatherPosSource=src;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;
     ChatAttempt(kind,entry,lo,hi,now);
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);dx=px-nx;dy=py-ny;
