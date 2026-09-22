@@ -79,7 +79,7 @@ static void quest_poll_game_thread(void) {
       "local seen=nil;for j=1,table.getn(names) do "
       "if names[j]==name then seen=1;break end end;"
       "if not seen and table.getn(names)<32 then "
-      "table.insert(names,name) end end end end end end end end;"
+      "table.insert(names,name) end end end end end end end;"
       "W112_QUEST_NPC_RESULT=table.concat(names,';') end";
     FrameScriptExecuteFn exec=(FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
     FrameScriptGetTextFn getText=(FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
