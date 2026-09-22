@@ -305,7 +305,7 @@ static void log_line(const char *event,const char *source,Guid64 g,u32 a,u32 b)
     char buf[320]; char *p=buf; u32 wr=0;
     if(!g_CreateFileA||!g_WriteFile||!g_CloseHandle) return;
     if(!g_log || g_log==INVALID_HANDLE32)
-        g_log=g_CreateFileA(kLogName,GENERIC_WRITE32,FILE_SHARE_RW32,0,OPEN_ALWAYS32,FILE_ATTRIBUTE_NORMAL32,0);
+        if (!g_log || g_log == INVALID_HANDLE32) g_log = g_CreateFileA(kLogName, GENERIC_WRITE32, FILE_SHARE_RW32, 0, OPEN_ALWAYS32, FILE_ATTRIBUTE_NORMAL32, 0);
     if(!g_log || g_log==INVALID_HANDLE32) return;
     p=append_str(p,event);
     if(source){p=append_str(p," source=");p=append_str(p,source);}
