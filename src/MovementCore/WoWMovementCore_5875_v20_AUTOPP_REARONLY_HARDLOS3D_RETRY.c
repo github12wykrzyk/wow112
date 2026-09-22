@@ -191,6 +191,7 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define GATHER_SCAN_RANGE_SQ        90000.0f
 #define GATHER_NODE_OFFSET             1.5f
 #define GATHER_NEAR_RANGE_SQ          16.0f  /* <=4 yd native; 4+ yd uses spoof (server interaction baseline is ~5 yd) */
+#define AUTOOPEN_MELEE_RANGE_SQ         16.0f  /* AutoOpen ONLY: real 3D distance <=4 yd; never spoof. */
 #define GATHER_FAR_CLICK_DELAY_MS      160u
 #define GATHER_TIMER_SCAN_MS          250u
 #define GATHER_STATUS_LOG_MS         2000u
@@ -821,27 +822,17 @@ static const char g_chatOpenOn[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:
 static const char g_chatOpenOff[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[AutoOpen]|r OFF - F12 toggle') end";
 static const char g_pickLockScript[]="CastSpellByName('Pick Lock')";
 
-/* For a far AutoOpen target, prime Pick Lock while the local movement XYZ is
- * temporarily placed beside the footlocker.  V54 sent the spoof heartbeat
- * first but restored XYZ before CastSpellByName(), allowing the client-side
- * ~5 yd targeting/range gate to see the real position.  V55 keeps the spoof
- * only for the synchronous FrameScriptExecute call, then restores immediately. */
+/* AutoOpen is always native and in melee. Never prime Pick Lock with a
+ * temporary player-position overwrite, even if gather spoof is active. */
+static DWORD AutoOpenInMelee(BYTE*p,BYTE*obj,float*outDistSq);
 static void AutoOpenPrimePickLock(BYTE*p,DWORD now)
 {
-    float x,y,z,o;
+    BYTE*obj;
     if(!Ptr(p))return;
-    if(!g_gatherSpoof){
-        DebugChat(g_pickLockScript);
-        GatherFileLog("AUTOOPEN_PICKLOCK_PRIME_NATIVE",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
-        return;
-    }
-    x=*(float*)(p+OFF_UNIT_X);y=*(float*)(p+OFF_UNIT_Y);z=*(float*)(p+OFF_UNIT_Z);o=*(float*)(p+OFF_UNIT_O);
-    g_injecting=1u;
-    *(float*)(p+OFF_UNIT_X)=g_gatherX;*(float*)(p+OFF_UNIT_Y)=g_gatherY;*(float*)(p+OFF_UNIT_Z)=g_gatherZ;
+    obj=ObjByGuid(g_gatherTargetLo,g_gatherTargetHi);
+    if(!Ptr(obj)||!AutoOpenInMelee(p,obj,0))return;
     DebugChat(g_pickLockScript);
-    *(float*)(p+OFF_UNIT_X)=x;*(float*)(p+OFF_UNIT_Y)=y;*(float*)(p+OFF_UNIT_Z)=z;*(float*)(p+OFF_UNIT_O)=o;
-    g_injecting=0u;
-    GatherFileLog("AUTOOPEN_PICKLOCK_PRIME_SPOOFXYZ",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
+    GatherFileLog("AUTOOPEN_PICKLOCK_PRIME_NATIVE",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
 }
 
 static DWORD IsStealthSpell(DWORD spell)
@@ -990,6 +981,7 @@ static DWORD IsAutoOpenEntry(DWORD e)
         case 179492u:case 179494u:case 179496u:           /* Dented Footlocker */
         case 179493u:case 179497u:                        /* Mossy Footlocker */
         case 179498u:                                     /* Scarlet Footlocker */
+        case 123330u:case 123331u:case 123332u:case 123333u: /* Buccaneer's Strongbox: vanilla GO entries */
             return 1u;
         default:return 0u;
     }
@@ -1004,6 +996,7 @@ static const char* AutoOpenName(DWORD e)
         case 179492u:case 179494u:case 179496u:return "Dented Footlocker";
         case 179493u:case 179497u:return "Mossy Footlocker";
         case 179498u:return "Scarlet Footlocker";
+        case 123330u:case 123331u:case 123332u:case 123333u:return "Buccaneer\'s Strongbox";
         default:return "Locked footlocker";
     }
 }
@@ -1052,6 +1045,22 @@ static DWORD GetGOPos(BYTE*o,DWORD*desc,float*x,float*y,float*z,DWORD*src)
     a=*(float*)(o+OFF_GO_LEGACY_X);b=*(float*)(o+OFF_GO_LEGACY_Y);c=*(float*)(o+OFF_GO_LEGACY_Z);
     if(ValidWorldPos(a,b,c)){*x=a;*y=b;*z=c;if(src)*src=3u;return 1u;}
     return 0u;
+}
+
+/* Read the real player XYZ and current GO XYZ for each AutoOpen phase.
+ * Reject invalid/missing positions and any target farther than melee range.
+ * This check is private to AutoOpen: mining/herbalism retain their own ranges. */
+static DWORD AutoOpenInMelee(BYTE*p,BYTE*obj,float*outDistSq)
+{
+    DWORD*desc,src=0u;
+    float x,y,z,d2;
+    if(outDistSq)*outDistSq=0.0f;
+    if(!Ptr(p)||!Ptr(obj))return 0u;
+    desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!GetGOPos(obj,desc,&x,&y,&z,&src))return 0u;
+    d2=DistSq3(*(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),*(float*)(p+OFF_UNIT_Z),x,y,z);
+    if(outDistSq)*outDistSq=d2;
+    return d2<=AUTOOPEN_MELEE_RANGE_SQ?1u:0u;
 }
 
 static void CaptureCopperDiag(BYTE*o,DWORD*desc,float px,float py,float pz,float x,float y,float z,DWORD src,float d2)
@@ -1123,7 +1132,7 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
                 if(GetGOPos(o,desc,&x,&y,&z,&src)){
                     d2=DistSq3(px,py,pz,x,y,z);
                     if(entry==1731u&&d2<copperBest){copperBest=d2;CaptureCopperDiag(o,desc,px,py,pz,x,y,z,src,d2);}
-                    if(match&&d2<=GATHER_SCAN_RANGE_SQ){
+                    if(match&&d2<=((kind==3u)?AUTOOPEN_MELEE_RANGE_SQ:GATHER_SCAN_RANGE_SQ)){
                         inrange++;eligible++;lo=*(DWORD*)(o+OFF_OBJ_GUID_LOW);hi=*(DWORD*)(o+OFF_OBJ_GUID_HIGH);
                         /* Never suppress a matching node because of previous attempts. */
                         if(d2<bestd){best=o;bestd=d2;*oe=entry;*olo=lo;*ohi=hi;*okind=kind;}
@@ -1258,6 +1267,8 @@ static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,
 {
     DWORD*desc,src=0;float nx=0,ny=0,nz=0,px,py,dx,dy;
     if(!Ptr(p)||!Ptr(obj))return;desc=*(DWORD**)(obj+OFF_OBJ_DESCRIPTOR_PTR);if(!GetGOPos(obj,desc,&nx,&ny,&nz,&src)){GatherFileLog("POS_FAIL_RETRY",now,entry,lo,hi,d2,g_gatherAttempts,kind);g_gatherNextScan=now+GATHER_RESCAN_DELAY_MS;return;}
+    /* Recheck when starting: the player may have moved since selection. */
+    if(kind==3u&&!AutoOpenInMelee(p,obj,&d2))return;
     g_gatherActive=1u;g_gatherLootWait=0u;g_gatherLootWaitUntil=0u;g_gatherLootTargetGoneLogged=0u;g_gatherLootStart=0u;g_gatherLootSeenOpen=0u;g_gatherLootOpenLogged=0u;g_gatherSawCast=0u;g_gatherCastSeenLogged=0u;g_mining3DRetryIndex=0u;g_mining3DRetryAt=0u;g_mining3DRetryActive=0u;g_mining3DDx=g_mining3DDy=g_mining3DDz=0.0f;g_miningServerDx=g_miningServerDy=g_miningServerDz=0.0f;g_autoOpenPickPrimed=0u;g_gatherTargetLo=lo;g_gatherTargetHi=hi;g_gatherEntry=entry;g_gatherKind=kind;g_gatherStart=now;g_gatherLastHB=0u;g_gatherDistSq=d2;g_gatherPosSource=src;g_miningEarlyRestored=0u;g_miningEarlyRestoreUsed=0u;g_miningEarlyRestoreAt=0u;
     ChatAttempt(kind,entry,lo,hi,now);
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);dx=px-nx;dy=py-ny;
@@ -1267,7 +1278,7 @@ static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,
         g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz-MINING_BELOW_NODE_Z_OFFSET;
         GatherFileLog("MINING_BELOW_NODE_BEGIN",now,entry,lo,hi,d2,g_gatherAttempts,40u);
     }
-    if(d2<=GATHER_NEAR_RANGE_SQ){
+    if(kind==3u||d2<=GATHER_NEAR_RANGE_SQ){
         g_gatherSpoof=0u;GatherFileLog(kind==3u?"AUTOOPEN_TARGET_BEGIN_NEAR":"TARGET_BEGIN_NEAR",now,entry,lo,hi,d2,g_gatherAttempts,kind);
         if(GatherRequestStealthBreak(p,now)){g_gatherClickPending=1u;g_gatherClickAt=now+GATHER_STEALTH_BREAK_DELAY_MS;}
         else if(kind==3u){AutoOpenPrimePickLock(p,now);g_autoOpenPickPrimed=1u;g_gatherClickPending=1u;g_gatherClickAt=now+AUTOOPEN_PICKLOCK_SETTLE_MS;}
@@ -1472,6 +1483,9 @@ static void GatherTick(BYTE*p,DWORD now)
      * node again, avoiding "Item is already in use". */
     if(g_gatherLootWait){
         obj=ObjByGuid(g_gatherTargetLo,g_gatherTargetHi);
+        if(g_gatherKind==3u&&Ptr(obj)&&!AutoOpenInMelee(p,obj,&d2)){
+            GatherStop(p,now,"AUTOOPEN_OUT_OF_MELEE_LOOTWAIT",0u,0u);return;
+        }
         if(!Ptr(obj)&&!g_gatherLootTargetGoneLogged){g_gatherLootTargetGoneLogged=1u;GatherFileLog("MANUALLOOT_TARGET_GONE",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);}
         if(g_gatherSpoof&&(!g_gatherLastHB||(DWORD)(now-g_gatherLastHB)>=GATHER_HB_GAP_MS))GatherSendFake(p,now);
         lootOpen=GatherLootOpen();
@@ -1506,6 +1520,12 @@ static void GatherTick(BYTE*p,DWORD now)
         }
         obj=ObjByGuid(g_gatherTargetLo,g_gatherTargetHi);
         if(!Ptr(obj)){GatherStop(p,now,"TARGET_GONE",1u,0u);return;}
+        if(g_gatherKind==3u){
+            if(!AutoOpenInMelee(p,obj,&d2)){
+                GatherStop(p,now,"AUTOOPEN_OUT_OF_MELEE",0u,0u);return;
+            }
+            g_gatherDistSq=d2;
+        }
 
         /* Never classify arbitrary player spells as gather casts.  If another
          * spell starts while gathering, yield immediately; PP gets its own
@@ -1527,6 +1547,9 @@ static void GatherTick(BYTE*p,DWORD now)
             if(GatherHasStealth(p)){
                 ++g_gatherStealthWaits;GatherRequestStealthBreak(p,now);g_gatherClickAt=now+GATHER_STEALTH_BREAK_DELAY_MS;
             }else{
+                if(g_gatherKind==3u&&!AutoOpenInMelee(p,obj,&d2)){
+                    GatherStop(p,now,"AUTOOPEN_OUT_OF_MELEE_BEFORE_CLICK",0u,0u);return;
+                }
                 if(g_gatherKind==3u&&!g_autoOpenPickPrimed){AutoOpenPrimePickLock(p,now);g_autoOpenPickPrimed=1u;g_gatherClickAt=now+AUTOOPEN_PICKLOCK_SETTLE_MS;}
                 else{
                     g_gatherClickPending=0u;g_gatherStealthPending=0u;
