@@ -4,10 +4,15 @@ on:
   push:
     branches:
       - 'feature/wow112-guardian'
+      - 'feature/guardian-*'
       - 'promote/wow112-guardian'
+      - 'promote/guardian-*'
     paths:
       - 'tools/guardian.py'
       - 'tools/test_guardian.py'
+      - 'tools/guardian_local.py'
+      - 'tools/test_guardian_local.py'
+      - 'tools/install_guardian_local.ps1'
       - '.github/workflows/guardian_tests.yml'
   pull_request:
     branches:
@@ -27,6 +32,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Compile Guardian script
-        run: python3 -m py_compile tools/guardian.py tools/test_guardian.py
+        run: python3 -m py_compile tools/guardian.py tools/test_guardian.py tools/guardian_local.py tools/test_guardian_local.py
       - name: Test patch restrictions
-        run: python3 -m unittest discover -s tools -p 'test_guardian.py' -v
+        run: python3 -m unittest discover -s tools -p 'test_guardian*.py' -v

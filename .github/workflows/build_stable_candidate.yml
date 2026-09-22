@@ -27,6 +27,9 @@ on:
       - '.github/workflows/guardian_tests.yml'
       - 'tools/guardian.py'
       - 'tools/test_guardian.py'
+      - 'tools/guardian_local.py'
+      - 'tools/test_guardian_local.py'
+      - 'tools/install_guardian_local.ps1'
   workflow_dispatch:
 
 permissions:

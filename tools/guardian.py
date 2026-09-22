@@ -83,9 +83,9 @@ def bounded_patch(source, old, new):
     return changed
 
 
-def repair(rows):
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
+def repair(rows, model_call=None):
+    key = os.environ.get("OPENAI_API_KEY") if model_call is None else None
+    if not key and model_call is None:
         return {"state": "audit_only", "reason": "OPENAI_API_KEY not configured"}
     for row in rows:
         branch, head = row["branch"], row["head"]
@@ -121,17 +121,20 @@ def repair(rows):
                        {"role": "user", "content": json.dumps(
                            {"source_path": path, "source": original, "ci_name": failing["name"],
                             "failed_jobs": evidence}, ensure_ascii=False)}]}
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=json.dumps(request).encode(),
-            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            method="POST")
-        with urllib.request.urlopen(req, timeout=90) as response:
-            completion = json.load(response)
-        choice = completion["choices"][0]
-        if choice.get("finish_reason") != "stop":
-            return {"state": "skipped", "reason": "Incomplete AI response"}
-        proposal = json.loads(choice["message"]["content"])
+        if model_call is not None:
+            proposal = model_call(request)
+        else:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=json.dumps(request).encode(),
+                headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=90) as response:
+                completion = json.load(response)
+            choice = completion["choices"][0]
+            if choice.get("finish_reason") != "stop":
+                return {"state": "skipped", "reason": "Incomplete AI response"}
+            proposal = json.loads(choice["message"]["content"])
         try:
             updated = bounded_patch(original, proposal.get("old"), proposal.get("new"))
         except ValueError as exc:
