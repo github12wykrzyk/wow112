@@ -11,12 +11,107 @@ namespace WoW112Updater
     // Observer-only GitHub monitor. Never blocks game launch or changes installed files.
     internal sealed partial class MainForm
     {
-        private readonly Timer githubMonitorTimer = new Timer { Interval = 60000 };
+        private readonly Timer githubMonitorTimer = new Timer { Interval = 10000 };
         private readonly Button githubMonitorButton = new Button();
         private Form githubMonitorWindow;
         private RichTextBox githubMonitorText;
         private bool githubMonitorInFlight;
         private string githubMonitorReport = "Monitor GitHub: jeszcze nie sprawdzono.";
+        private static readonly string[] MonitoredBranches = { "work", "parallel", "main" };
+        private readonly Dictionary<string, Label> githubMonitorBadges = new Dictionary<string, Label>
+        {
+            { "work", new Label() }, { "parallel", new Label() }, { "main", new Label() }
+        };
+
+        private TableLayoutPanel BuildGitHubMonitorHeader()
+        {
+            var grid = Grid(1, MonitoredBranches.Length);
+            grid.RowStyles.Clear();
+            for (int i = 0; i < MonitoredBranches.Length; i++)
+            {
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / MonitoredBranches.Length));
+                var branch = MonitoredBranches[i];
+                var badge = githubMonitorBadges[branch];
+                PrepareLabel(badge);
+                badge.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+                badge.Margin = new Padding(3, 1, 3, 1);
+                badge.Padding = new Padding(6, 0, 3, 0);
+                SetGitHubMonitorBadge(branch, "UNKNOWN", "", "Oczekiwanie na pierwszy odczyt GitHub.");
+                grid.Controls.Add(badge, 0, i);
+            }
+            return grid;
+        }
+
+        private sealed class MonitorBadgeState
+        {
+            public string Status;
+            public string Head;
+            public string Detail;
+        }
+
+        // Only runs on the exact branch HEAD may result in a green badge.
+        private static MonitorBadgeState MonitorBranchBadge(string branch, string branchJson, string runsJson)
+        {
+            var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+            var root = AsDictionary(serializer.DeserializeObject(branchJson));
+            var head = GetString(AsDictionary(GetValue(root, "commit")), "sha");
+            if (string.IsNullOrWhiteSpace(head)) throw new InvalidOperationException("Brak HEAD: " + branch);
+            var runs = AsDictionary(serializer.DeserializeObject(runsJson));
+            Dictionary<string, object> active = null, failed = null, passed = null;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in AsArray(GetValue(runs, "workflow_runs")))
+            {
+                var run = item as Dictionary<string, object>;
+                if (run == null || !string.Equals(GetString(run, "head_sha"), head, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!seen.Add(GetString(run, "name"))) continue; // latest attempt per workflow
+                var status = GetString(run, "status");
+                var conclusion = GetString(run, "conclusion");
+                if (!string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (active == null) active = run;
+                }
+                else if (string.Equals(conclusion, "failure", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(conclusion, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(conclusion, "timed_out", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(conclusion, "action_required", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (failed == null) failed = run;
+                }
+                else if (string.Equals(conclusion, "success", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (passed == null) passed = run;
+                }
+            }
+            var selected = active ?? failed ?? passed;
+            if (selected == null)
+                return new MonitorBadgeState { Status = "UNKNOWN", Head = head,
+                    Detail = branch + " / HEAD " + head + ": brak wyników Actions na aktualnym SHA. Starsze sukcesy nie są uwzględniane." };
+            var state = active != null
+                ? (string.Equals(GetString(selected, "status"), "in_progress", StringComparison.OrdinalIgnoreCase) ? "RUNNING" : "PENDING")
+                : failed != null ? "FAIL" : "SUCCESS";
+            return new MonitorBadgeState { Status = state, Head = head,
+                Detail = branch + " / HEAD " + head + "\nWorkflow: " + GetString(selected, "name") +
+                "\nRun: " + GetLong(selected, "id") + "\nStatus: " + GetString(selected, "status") +
+                " / " + GetString(selected, "conclusion") +
+                "\nTo status CI, nie potwierdzenie kompletnej paczki." };
+        }
+
+        private void SetGitHubMonitorBadge(string branch, string state, string head, string detail)
+        {
+            Label badge;
+            if (!githubMonitorBadges.TryGetValue(branch, out badge) || badge.IsDisposed) return;
+            bool green = state == "SUCCESS", yellow = state == "PENDING" || state == "RUNNING", red = state == "FAIL";
+            badge.BackColor = green ? Color.FromArgb(32, 77, 50)
+                : yellow ? Color.FromArgb(96, 74, 31)
+                : red ? Color.FromArgb(96, 39, 43) : Color.FromArgb(45, 49, 58);
+            badge.ForeColor = green ? Color.FromArgb(164, 245, 181)
+                : yellow ? Color.FromArgb(255, 217, 128)
+                : red ? Color.FromArgb(255, 166, 166) : Muted;
+            badge.Text = branch.ToUpperInvariant() + "   " + state + "   " +
+                (string.IsNullOrEmpty(head) ? "HEAD ?" : MonitorShort(head, 8)) +
+                "   " + (string.IsNullOrEmpty(head) ? "—" : DateTime.Now.ToString("HH:mm:ss"));
+            detailsTip.SetToolTip(badge, detail + "\nOdczyt: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        }
 
         private void StartGitHubMonitor()
         {
@@ -42,7 +137,7 @@ namespace WoW112Updater
             }
             var window = new Form
             {
-                Text = "Monitor GitHub — wow112 (co 60 sekund)",
+                Text = "Monitor GitHub — wow112 (co 10 sekund)",
                 StartPosition = FormStartPosition.CenterParent,
                 ClientSize = new Size(730, 470),
                 MinimumSize = new Size(560, 360),
@@ -133,29 +228,33 @@ namespace WoW112Updater
                 if (string.IsNullOrWhiteSpace(token.Text))
                 {
                     githubMonitorReport = "Monitor wymaga zapisanego tokenu GitHub (Contents: Read, Actions: Read).";
+                    foreach (var monitored in MonitoredBranches) SetGitHubMonitorBadge(monitored, "UNKNOWN", "", "Brak tokenu GitHub.");
                     githubMonitorButton.Text = "GH: brak tokenu";
                     return;
                 }
                 githubMonitorButton.Text = "GH: sprawdzam";
                 var result = new StringBuilder();
                 result.AppendLine("WOW112 / GITHUB — " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " (czas lokalny)");
-                result.AppendLine("Kontrola co 60 s przy uruchomionym updaterze. Brak aktywności GH nie wyklucza pracy AI poza repo.");
+                result.AppendLine("Kontrola co 10 s przy uruchomionym updaterze. Brak aktywności GH nie wyklucza pracy AI poza repo.");
                 result.AppendLine();
                 bool failed = false;
                 using (var client = CreateClient())
                 {
                     client.Timeout = TimeSpan.FromSeconds(18);
-                    foreach (string branch in new[] { "work", "parallel", "main" })
+                    foreach (string branch in MonitoredBranches)
                     {
                         try
                         {
                             var branchData = await GetStringAsync(client, ApiRoot + "/branches/" + branch);
                             var runData = await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&per_page=30");
+                            var badge = MonitorBranchBadge(branch, branchData, runData);
+                            SetGitHubMonitorBadge(branch, badge.Status, badge.Head, badge.Detail);
                             result.AppendLine(MonitorBranchLine(branch, branchData, runData));
                         }
                         catch (Exception ex)
                         {
                             failed = true;
+                            SetGitHubMonitorBadge(branch, "UNKNOWN", "", "Błąd odczytu: " + MonitorShort(ex.Message, 180));
                             result.AppendLine(branch.ToUpperInvariant() + ": BŁĄD odczytu GitHub: " + MonitorShort(ex.Message, 180));
                             result.AppendLine();
                         }
@@ -200,6 +299,7 @@ namespace WoW112Updater
             catch (Exception ex)
             {
                 githubMonitorReport = "Monitor: błąd połączenia z GitHub: " + MonitorShort(ex.Message, 180);
+                foreach (var monitored in MonitoredBranches) SetGitHubMonitorBadge(monitored, "UNKNOWN", "", githubMonitorReport);
                 githubMonitorButton.Text = "GH: błąd";
                 if (githubMonitorText != null && !githubMonitorText.IsDisposed)
                     githubMonitorText.Text = githubMonitorReport;
