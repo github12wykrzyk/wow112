@@ -829,7 +829,7 @@ __declspec(dllimport) DWORD __stdcall VirtualQuery(const void*,void*,DWORD);
 typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleKeyWasDown=0u;
 static DWORD g_teleWaitSince=0u,g_teleWaitLast=0u;
-static DWORD g_telePending=0u,g_telePendingHitType=0u;
+static DWORD g_telePending=0u,g_telePendingHitType=0u,g_telePendingFromMap=0u;
 static void W112_CancelTeleForBlink(void){
  g_telePending=0u;g_stepActive=0u;
 }
@@ -994,7 +994,8 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
         ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
         g_stepMoveInjecting=0u;
         g_stepActive=0u;
-        DebugChat(g_teleSentChat);
+        DebugChat(g_telePendingFromMap?g_mapSentChat:g_teleSentChat);
+        g_telePendingFromMap=0u;
         return;
     }
     if(!trigger)return;
@@ -1039,6 +1040,155 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     g_telePendingHitType=hitType;
     g_telePending=1u;g_stepActive=1u;g_teleWaitSince=now;g_teleWaitLast=now;
     DebugChat(g_teleStopChat);
+}
+
+
+/*
+ * Parallel TEST / map-to-world Tele Click bridge for WoW 5875 x86.
+ * WorldMapButton Lua captures normalized map coordinates into one string;
+ * the existing FrameScript_GetText bridge reads that string on the UI timer.
+ * WorldMapArea.dbc record and view addresses are candidates documented for
+ * build 5875 by ClassicAPI (brues-code/ClassicAPI src/map/Area.cpp,
+ * src/Offsets.h, GPL-3.0); no third-party source is copied. All pointer
+ * chains and map/continent identities are validated before attempting a
+ * single existing Tele E movement pulse. This code does NOT know remote
+ * terrain Z: it explicitly keeps the player's present Z, and does not assert
+ * a safe landing, world load or server acceptance.
+ */
+#define W112_MAP_VIEW_CONTINENT 0x0084506Cu
+#define W112_MAP_VIEW_ZONE      0x00845070u
+#define W112_MAP_DEFAULT_ROW    0x00845074u
+#define W112_MAP_VIEW_DATA      0x00B6E668u
+#define W112_MAP_VIEW_STRIDE    0x10024u
+#define W112_MAP_AREA_RECORDS   0x00C0D5BCu
+#define W112_MAP_AREA_COUNT     0x00C0D5C0u
+#define W112_MAP_LOADED_ID      0x00B4E378u
+#define W112_MAP_GETTEXT_FN     0x00703BF0u
+typedef const char* (__fastcall *W112_MapGetTextFn)(const char*,int,DWORD);
+static DWORD g_mapInstallLast=0u,g_mapSeqSeen=0u;
+static const char g_mapInstallScript[]=
+ "if WorldMapButton and WorldMapFrame and not W112_MAP_TELE_HOOKED then "
+ "local cb=CreateFrame('CheckButton','W112MapTeleToggle',WorldMapFrame,'UICheckButtonTemplate');"
+ "cb:SetWidth(24);cb:SetHeight(24);"
+ "cb:SetPoint('TOPLEFT',WorldMapFrame,'TOPLEFT',38,-26);"
+ "local label=WorldMapFrame:CreateFontString(nil,'OVERLAY','GameFontNormalSmall');"
+ "label:SetPoint('LEFT',cb,'RIGHT',2,0);label:SetText('Tele map (F6)');"
+ "W112_MAP_TELE_ON=0;W112_MAP_TELE_SEQ=0;W112_MAP_TELE_REQUEST='';"
+ "cb:SetScript('OnClick',function() "
+ "W112_MAP_TELE_ON=this:GetChecked() and 1 or 0;"
+ "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele map] '..(W112_MAP_TELE_ON==1 and 'ON' or 'OFF')) end end);"
+ "local old=WorldMapButton:GetScript('OnClick');"
+ "WorldMapButton:SetScript('OnClick',function() "
+ "if W112_MAP_TELE_ON~=1 or arg1~='LeftButton' then if old then old() end return end;"
+ "if W112_MAP_TELE_BRIDGE_ON~=1 then "
+ "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('[Tele map] enable F6 first') end return end;"
+ "local scale=WorldMapButton:GetEffectiveScale();"
+ "if not scale or scale<=0 then return end;"
+ "local w=WorldMapButton:GetWidth();local h=WorldMapButton:GetHeight();"
+ "if not w or not h or w<=0 or h<=0 then return end;"
+ "local x,y=GetCursorPosition();"
+ "local mx=(x/scale-WorldMapButton:GetLeft())/w;"
+ "local my=(WorldMapButton:GetTop()-y/scale)/h;"
+ "if mx>=0 and mx<=1 and my>=0 and my<=1 then "
+ "W112_MAP_TELE_SEQ=W112_MAP_TELE_SEQ+1;"
+ "W112_MAP_TELE_REQUEST=tostring(W112_MAP_TELE_SEQ)..':'..tostring(math.floor(mx*1000000+0.5))..':'..tostring(math.floor(my*1000000+0.5));"
+ "end end);W112_MAP_TELE_HOOKED='1';"
+ "end";
+static const char g_mapCapturedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele map]|r XY selected; Z = your CURRENT height (terrain height UNKNOWN), experimental pulse queued; F7 abort') end";
+static const char g_mapBadViewChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r unsupported world/continent or map data unavailable; no pulse') end";
+static const char g_mapBadPointChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele map]|r invalid map coordinates; no pulse') end";
+static const char g_mapSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r pulse sent; destination Z not terrain-checked; SERVER acceptance NOT confirmed') end";
+static DWORD W112_MapParseUnsigned(const char**at,DWORD*out)
+{
+ const char*p=*at;DWORD n=0u,v=0u;
+ while(*p>='0'&&*p<='9'){
+  DWORD digit=(DWORD)(*p-'0');
+  if(++n>10u||v>429496729u||(v==429496729u&&digit>5u))return 0u;
+  v=v*10u+digit;++p;
+ }
+ if(!n)return 0u;
+ *out=v;*at=p;return 1u;
+}
+static DWORD W112_MapReadRequest(const char*raw,DWORD*seq,DWORD*mx,DWORD*my)
+{
+ const char*p=raw;
+ if(!p||!W112_MapParseUnsigned(&p,seq)||*p++!=':'||
+    !W112_MapParseUnsigned(&p,mx)||*p++!=':'||
+    !W112_MapParseUnsigned(&p,my)||*p||!*seq||
+    *mx>1000000u||*my>1000000u)return 0u;
+ return 1u;
+}
+static DWORD W112_MapWorldXY(DWORD mx,DWORD my,float*wx,float*wy)
+{
+ DWORD cont,zone,data,entry,zoneRows,row,base,records,rec,mapId,count;
+ float left,right,top,bottom,x,y;
+ if(!W112_TeleRangeValid(W112_MAP_VIEW_CONTINENT,12u,0u)||
+    !W112_TeleRangeValid(W112_MAP_VIEW_DATA,4u,0u)||
+    !W112_TeleRangeValid(W112_MAP_AREA_RECORDS,8u,0u)||
+    !W112_TeleRangeValid(W112_MAP_LOADED_ID,4u,0u))return 0u;
+ cont=*(volatile DWORD*)W112_MAP_VIEW_CONTINENT;
+ zone=*(volatile DWORD*)W112_MAP_VIEW_ZONE;
+ if(cont==0xFFFFFFFFu||cont>8u)return 0u; /* world map is ambiguous */
+ data=*(volatile DWORD*)W112_MAP_VIEW_DATA;
+ if(!data||cont> (0xFFFFFFFFu-W112_MAP_VIEW_STRIDE)/W112_MAP_VIEW_STRIDE)return 0u;
+ entry=data+cont*W112_MAP_VIEW_STRIDE;
+ if(entry<data||!W112_TeleRangeValid(entry+4u,0x10u,0u))return 0u;
+ if(zone==0xFFFFFFFFu)row=*(volatile DWORD*)(entry+4u);
+ else {
+  if(zone>255u)return 0u;
+  zoneRows=*(volatile DWORD*)(entry+0x10u);
+  if(!zoneRows||!W112_TeleRangeValid(zoneRows+zone*4u,4u,0u))return 0u;
+  row=*(volatile DWORD*)(zoneRows+zone*4u);
+ }
+ count=*(volatile DWORD*)W112_MAP_AREA_COUNT;
+ records=*(volatile DWORD*)W112_MAP_AREA_RECORDS;
+ if(!row||row>count||count>2048u||!records||
+    !W112_TeleRangeValid(records+row*4u,4u,0u))return 0u;
+ rec=*(volatile DWORD*)(records+row*4u);
+ if(!rec||!W112_TeleRangeValid(rec,0x20u,0u))return 0u;
+ mapId=*(volatile DWORD*)(rec+4u);
+ if(mapId!=*(volatile DWORD*)W112_MAP_LOADED_ID)return 0u;
+ left=*(volatile float*)(rec+0x10u);right=*(volatile float*)(rec+0x14u);
+ top=*(volatile float*)(rec+0x18u);bottom=*(volatile float*)(rec+0x1Cu);
+ if(!W112_Q_PosValid(top,left,0.0f)||!W112_Q_PosValid(bottom,right,0.0f)||
+    !(left>right)||!(top>bottom))return 0u;
+ x=top-((float)my/1000000.0f)*(top-bottom);
+ y=left-((float)mx/1000000.0f)*(left-right);
+ if(!W112_Q_PosValid(x,y,0.0f))return 0u;
+ *wx=x;*wy=y;return 1u;
+}
+static void W112_MapTeleTick(BYTE*p,DWORD now)
+{
+ const char*raw;DWORD seq,mx,my;float x,y,px,py,pz,dx,dy;
+ W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
+ if(!g_stepEnabled||!g_loginGuardReady||!Ptr(p))return;
+ if((DWORD)(now-g_mapInstallLast)>=1000u){
+  g_mapInstallLast=now;
+  if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return;
+  raw=getText("W112_MAP_TELE_HOOKED",-1,0u);
+  if(!raw||raw[0]!='1'||raw[1]!=0)DebugChat(g_mapInstallScript);
+ }
+ if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return;
+ raw=getText("W112_MAP_TELE_REQUEST",-1,0u);
+ if(!W112_MapReadRequest(raw,&seq,&mx,&my)||seq==g_mapSeqSeen)return;
+ g_mapSeqSeen=seq; /* consume before testing to avoid repeated pulses */
+ if(g_telePending||g_stepMoveInjecting)return;
+ if(!W112_TeleAvailable(p))return;
+ if(!W112_MapWorldXY(mx,my,&x,&y)){DebugChat(g_mapBadViewChat);return;}
+ px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);
+ pz=*(float*)(p+OFF_UNIT_Z);
+ if(!W112_Q_PosValid(px,py,pz)||!W112_Q_PosValid(x,y,pz)){
+  DebugChat(g_mapBadPointChat);return;
+ }
+ dx=x-px;dy=y-py;
+ if(dx*dx+dy*dy<W112_TELE_MIN_D2){
+  DebugChat(g_teleTooCloseChat);return;
+ }
+ g_teleDestX=x;g_teleDestY=y;g_teleDestZ=pz;
+ g_telePendingHitType=1u;g_telePendingFromMap=1u;
+ g_telePending=1u;g_stepActive=1u;
+ g_teleWaitSince=now;g_teleWaitLast=now;
+ DebugChat(g_mapCapturedChat);
 }
 
 /* AutoOpen alone yields to combat, movement and ANY cast/channel.
@@ -1136,6 +1286,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         g_telePrevSampleValid=0u;
         g_teleKeyWasDown=(GK()(W112_TELE_KEY_E)&(short)0x8000)?1u:0u;
         DebugChat(g_stepEnabled?g_stepOnChat:g_stepOffChat);
+        DebugChat(g_stepEnabled?"W112_MAP_TELE_BRIDGE_ON=1":"W112_MAP_TELE_BRIDGE_ON=0");
      }
      g_stepKey6=f6;
     }
@@ -1169,6 +1320,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     }
     W112_Q_Tick(p,now,(GK()(W112_Q_KEY)&(short)0x8000)?1u:0u);
     W112_KeyTeleTick(p,now);
+    W112_MapTeleTick(p,now);
     /* Hold competing periodic movement writers only while the E destination
      * is settling; do not cancel their casts or persistently disable them. */
     if(g_telePending&&g_mode!=MODE_OFF&&!g_safeBreakPauseTick)
