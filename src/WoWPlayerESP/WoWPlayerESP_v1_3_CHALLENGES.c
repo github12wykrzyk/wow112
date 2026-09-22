@@ -574,7 +574,7 @@ static void ui_sync_gather(void) {
     if(g_ui_gather_status)SetWindowTextA(g_ui_gather_status,
         !live?"MovementCore controls unavailable: update Parallel candidate.":
         g_ui_gather_page==0u?"Checked ore = skip while vein blacklist is ON.":
-        g_ui_gather_page==1u?"AutoChest: deepest Z -30 yd, raises 0.5 yd until open.":
+        g_ui_gather_page==1u?"AutoChest: Mining spoof from Z -4, then 3D LOS retries.":
                              "Gather, AutoOpen and AutoChest share ONE MovementCore.");
 }
 static void ui_show_gather_page(DWORD page) {

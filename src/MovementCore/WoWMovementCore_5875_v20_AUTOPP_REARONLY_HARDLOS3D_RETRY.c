@@ -210,12 +210,14 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
  * cast and loot; 4.0 yd vertical offset with zero XY is below a ~5 yd interaction
  * radius, without asserting the private server accepts the below-ground ray. */
 #define MINING_BELOW_NODE_Z_OFFSET       4.0f
-/* AutoChest: deepest point first, then 0.5 yd upward per rejected opening. */
-#define CHEST_DEPTH_YD                   30.0f
+/* Chest uses Mining's near-node spoof / local hard-LOS sweep.
+ * Deepest attempted server position starts 4 yd below (not 30 yd beyond
+ * interaction range); raise in 0.5 yd increments before the 3D sweep. */
+#define CHEST_DEPTH_YD                    4.0f
 #define CHEST_STEP_YD                     0.5f
-#define CHEST_MAX_STEPS                    60u
-#define CHEST_RETRY_MS                    400u
-#define CHEST_SKIP_FAIL_MS              30000u
+#define CHEST_MAX_STEPS                     8u
+#define CHEST_RETRY_MS                    300u
+#define CHEST_SKIP_FAIL_MS               5000u
 #define CHEST_SKIP_LOOT_MS             120000u
 #define GATHER_RESCAN_DELAY_MS         60u
 #define COMBAT_VEIN_WINDOW_MS         1800u
@@ -1418,26 +1420,26 @@ static void GatherClickMining3D(BYTE*p,BYTE*obj,DWORD now)
     if(hm){*(float*)(mv+OFF_OBJMOVE_POS_X)=m0x;*(float*)(mv+OFF_OBJMOVE_POS_Y)=m0y;*(float*)(mv+OFF_OBJMOVE_POS_Z)=m0z;}
     if(hl){*(float*)(obj+OFF_GO_LEGACY_X)=l0x;*(float*)(obj+OFF_GO_LEGACY_Y)=l0y;*(float*)(obj+OFF_GO_LEGACY_Z)=l0z;}
     ++g_gatherClicks;++g_mining3DRetries;
-    GatherFileLog("MINING_HARDLOS_CLICK",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_mining3DRetryIndex);
+    GatherFileLog(g_gatherKind==4u?"AUTOCHEST_MINING3D_CLICK":"MINING_HARDLOS_CLICK",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_mining3DRetryIndex);
 }
 
 static void GatherClickSpoof(BYTE*p,BYTE*obj,DWORD now)
 {
     float x,y,z,o;if(!Ptr(p)||!Ptr(obj)||LongPPActive()||LongPPInjecting()||(*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return;
-    if(g_gatherKind==2u&&g_mining3DRetryActive){GatherClickMining3D(p,obj,now);g_mining3DRetryActive=0u;return;}
+    if((g_gatherKind==2u||g_gatherKind==4u)&&g_mining3DRetryActive){GatherClickMining3D(p,obj,now);g_mining3DRetryActive=0u;return;}
     x=*(float*)(p+OFF_UNIT_X);y=*(float*)(p+OFF_UNIT_Y);z=*(float*)(p+OFF_UNIT_Z);o=*(float*)(p+OFF_UNIT_O);*(float*)(p+OFF_UNIT_X)=g_gatherX;*(float*)(p+OFF_UNIT_Y)=g_gatherY;*(float*)(p+OFF_UNIT_Z)=g_gatherZ;((RightClickObject_t)ADDR_ONRIGHTCLICK_OBJECT)(obj,0);*(float*)(p+OFF_UNIT_X)=x;*(float*)(p+OFF_UNIT_Y)=y;*(float*)(p+OFF_UNIT_Z)=z;*(float*)(p+OFF_UNIT_O)=o;++g_gatherClicks;GatherFileLog("FAR_SPOOF_CLICK",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_gatherKind);
 }
 
 static DWORD Mining3DQueueRetry(BYTE*p,DWORD now)
 {
-    if(g_gatherKind!=2u||g_gatherSawCast||g_mining3DRetryIndex>=MINING_3D_RETRY_COUNT)return 0u;
+    if((g_gatherKind!=2u&&g_gatherKind!=4u)||g_gatherSawCast||g_mining3DRetryIndex>=MINING_3D_RETRY_COUNT)return 0u;
     Mining3DSelectOffset(g_mining3DRetryIndex);
     /* TEST: keep server XYZ consistently below ore during HARDLOS retry.
      * Shift only local LOS geometry as before; do not shift the server point
      * back up to the ore on retry. */
-    if(g_miningBelowNodeEnabled){
+    if((g_gatherKind==2u&&g_miningBelowNodeEnabled)||g_gatherKind==4u){
         g_miningServerDx=0.0f;g_miningServerDy=0.0f;
-        g_miningServerDz=-MINING_BELOW_NODE_Z_OFFSET;
+        g_miningServerDz=g_gatherKind==4u?-CHEST_DEPTH_YD:-MINING_BELOW_NODE_Z_OFFSET;
     }
     /* V62: server sees a different near-node endpoint on every retry too. */
     g_gatherX=g_gatherNodeX+g_miningServerDx;
@@ -1445,7 +1447,7 @@ static DWORD Mining3DQueueRetry(BYTE*p,DWORD now)
     g_gatherZ=g_gatherNodeZ+g_miningServerDz;
     ++g_mining3DRetryIndex;g_mining3DRetryActive=1u;g_mining3DRetryAt=0u;
     g_gatherSpoof=1u;GatherSendFake(p,now);g_gatherClickPending=1u;g_gatherClickAt=now+MINING_3D_RETRY_SETTLE_MS;
-    GatherFileLog("MINING_HARDLOS_POINT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_mining3DRetryIndex);
+    GatherFileLog(g_gatherKind==4u?"AUTOCHEST_MINING3D_POINT":"MINING_HARDLOS_POINT",now,g_gatherEntry,g_gatherTargetLo,g_gatherTargetHi,g_gatherDistSq,g_gatherAttempts,g_mining3DRetryIndex);
     return 1u;
 }
 
@@ -1497,7 +1499,7 @@ static void GatherBegin(BYTE*p,BYTE*obj,DWORD now,DWORD entry,DWORD lo,DWORD hi,
     if(AbsF(dx)>=AbsF(dy))g_gatherX=nx+((dx>=0.0f)?GATHER_NODE_OFFSET:-GATHER_NODE_OFFSET);else g_gatherY=ny+((dy>=0.0f)?GATHER_NODE_OFFSET:-GATHER_NODE_OFFSET);
     if(kind==4u){
         g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz-CHEST_DEPTH_YD;
-        GatherFileLog("AUTOCHEST_DEEPEST_BEGIN",now,entry,lo,hi,d2,0u,30u);
+        GatherFileLog("AUTOCHEST_MINING_NEAR_BEGIN",now,entry,lo,hi,d2,0u,4u);
     }else if(kind==2u&&g_miningBelowNodeEnabled&&d2>GATHER_NEAR_RANGE_SQ){
         g_gatherX=nx;g_gatherY=ny;g_gatherZ=nz-MINING_BELOW_NODE_Z_OFFSET;
         GatherFileLog("MINING_BELOW_NODE_BEGIN",now,entry,lo,hi,d2,g_gatherAttempts,40u);
@@ -1784,17 +1786,24 @@ static void GatherTick(BYTE*p,DWORD now)
         if(g_gatherKind==4u&&!g_gatherClickPending&&!castId&&!g_gatherSawCast&&g_chestRetryAt&&
            (LONG)(now-g_chestRetryAt)>=0){
             if(g_chestStep>=CHEST_MAX_STEPS){
-                g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;
-                g_chestSkipUntil=now+CHEST_SKIP_FAIL_MS;
-                GatherStop(p,now,"AUTOCHEST_DEPTH_EXHAUSTED",1u,0u);return;
+                /* After eight near-node Z attempts, use the exact Mining 3D
+                 * click/LOS retry path, still holding server XYZ near chest. */
+                if(!Mining3DQueueRetry(p,now)){
+                    g_chestSkipLo=g_gatherTargetLo;g_chestSkipHi=g_gatherTargetHi;
+                    g_chestSkipUntil=now+CHEST_SKIP_FAIL_MS;
+                    GatherStop(p,now,"AUTOCHEST_MINING3D_EXHAUSTED",1u,0u);return;
+                }
+                g_chestRetryAt=now+CHEST_RETRY_MS;
+            }else{
+                ++g_chestStep;
+                g_gatherX=g_gatherNodeX;g_gatherY=g_gatherNodeY;
+                g_gatherZ=g_gatherNodeZ-CHEST_DEPTH_YD+CHEST_STEP_YD*(float)g_chestStep;
+                g_chestRetryAt=now+CHEST_RETRY_MS;
+                GatherSendFake(p,now);
+                g_gatherClickPending=1u;g_gatherClickAt=now+MINING_3D_RETRY_SETTLE_MS;
+                GatherFileLog("AUTOCHEST_MINING_RAISE_Z",now,g_gatherEntry,g_gatherTargetLo,
+                              g_gatherTargetHi,g_gatherDistSq,g_chestStep,0u);
             }
-            ++g_chestStep;
-            g_gatherZ=g_gatherNodeZ-CHEST_DEPTH_YD+CHEST_STEP_YD*(float)g_chestStep;
-            g_chestRetryAt=now+CHEST_RETRY_MS;
-            GatherSendFake(p,now);
-            g_gatherClickPending=1u;g_gatherClickAt=now+GATHER_FAR_CLICK_DELAY_MS;
-            GatherFileLog("AUTOCHEST_RAISE_Z",now,g_gatherEntry,g_gatherTargetLo,
-                          g_gatherTargetHi,g_gatherDistSq,g_chestStep,0u);
         }
         if(g_gatherSpoof&&(!g_gatherLastHB||(DWORD)(now-g_gatherLastHB)>=GATHER_HB_GAP_MS))GatherSendFake(p,now);
         if(g_gatherKind==2u&&!g_gatherSawCast&&!g_gatherClickPending&&!GatherCastMatches(2u,castId)&&g_mining3DRetryAt&&(LONG)(now-g_mining3DRetryAt)>=0){
