@@ -1540,7 +1540,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[50u];
+static W112_ControlSettingV1 g_controlSettings[59u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -1721,6 +1721,41 @@ static void init_control_descriptor(void)
     s->max_value.i32=2147483647;s->step.i32=1;
     s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
     s->enum_options=0;s->enum_option_count=0u;
+    /* New settings append after the stable 1..50 API. */
+    {
+        static const char* keys[4]={"chest_los_check","chest_los_recovery",
+            "chest_lowest_z","chest_los_blacklist"};
+        static const char* labels[4]={"Chest: diagnose no cast/loot (LoS suspected)",
+            "Chest: automatic position recovery","Chest: prefer deepest Z",
+            "Chest: temporary no-response blacklist (30s)"};
+        for(i=0u;i<4u;i++){
+            s=&g_controlSettings[50u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=51u+i;s->key=keys[i];s->label=labels[i];
+            s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;
+            s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
+    s=&g_controlSettings[54u];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+    s->setting_id=55u;s->key="chest_max_attempts";s->label="Chest: max interaction attempts";
+    s->type=W112_CTL_INT;s->default_value.i32=4;s->min_value.i32=1;s->max_value.i32=10;
+    s->step.i32=1;s->flags=W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
+    {
+        static const char* keys[4]={"chest_attempts","chest_suspected_los",
+            "chest_last_reason","chest_blacklist_count"};
+        static const char* labels[4]={"Chest: attempts on current GO",
+            "Chest: no-response events (LoS unconfirmed)",
+            "Chest: last result (1 begin,2 no reply,3 defer,4 combat,5 retry,6 loot)",
+            "Chest: temporarily deferred GO count"};
+        for(i=0u;i<4u;i++){
+            s=&g_controlSettings[55u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=56u+i;s->key=keys[i];s->label=labels[i];
+            s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;
+            s->max_value.i32=2147483647;s->step.i32=1;
+            s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+    }
     g_controlDescriptorReady=1u;
 }
 
@@ -1759,6 +1794,15 @@ static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1
     if(id==40u){out->i32=(w112_i32)((g_gatherActive&&g_gatherKind==4u)?g_chestStep:0u);return 1;}
     if(id==41u){out->i32=(w112_i32)((g_gatherActive&&g_gatherKind==4u)?8u:g_chestScanReason);return 1;}
     if(id==42u){out->i32=(w112_i32)g_chestScanPosSrc;return 1;}
+    if(id==51u){out->u32=g_chestLoSCheck;return 1;}
+    if(id==52u){out->u32=g_chestLoSRecovery;return 1;}
+    if(id==53u){out->u32=g_chestLowestZ;return 1;}
+    if(id==54u){out->u32=g_chestLoSBlacklist;return 1;}
+    if(id==55u){out->i32=(w112_i32)g_chestMaxAttempts;return 1;}
+    if(id==56u){out->i32=(w112_i32)g_chestAttemptCount;return 1;}
+    if(id==57u){out->i32=(w112_i32)g_chestSuspectedLoS;return 1;}
+    if(id==58u){out->i32=(w112_i32)g_chestLastReason;return 1;}
+    if(id==59u){out->i32=(w112_i32)g_chestBlacklistCount;return 1;}
     return 0;
 }
 
@@ -1766,7 +1810,10 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 {
     DWORD now;
     BYTE*p;
-    if(!value||value->u32>1u)return 0;
+    if(!value)return 0;
+    if(id==55u){if(value->i32<1||value->i32>10)return 0;
+        g_chestMaxAttempts=(DWORD)value->i32;return 1;}
+    if(id!=46u&&value->u32>1u)return 0;
     now=GT()?GT()():0u;
     p=LocalPlayer();
 
@@ -1777,9 +1824,16 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
         g_trackChestNext=0u;
         return 1;
     }
+    if(id>=51u&&id<=54u){
+        if(id==51u)g_chestLoSCheck=value->u32;
+        if(id==52u)g_chestLoSRecovery=value->u32;
+        if(id==53u)g_chestLowestZ=value->u32;
+        if(id==54u){g_chestLoSBlacklist=value->u32;if(!value->u32)ChestLoSClear();}
+        return 1;
+    }
     if(id==29u){
         /* Explicit OFF->ON is the user-controlled reset of aggro-unsafe GOs. */
-        if(value->u32&&!g_chestEnabled)g_chestAggroLo=g_chestAggroHi=0u;
+        if(value->u32&&!g_chestEnabled){g_chestAggroLo=g_chestAggroHi=0u;ChestLoSClear();}
         g_chestEnabled=value->u32;
         if(!g_chestEnabled&&g_gatherActive&&g_gatherKind==4u)
             GatherStop(p,now,"GUI_AUTOCHEST_DISABLED",1u,0u);
@@ -1863,7 +1917,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,50u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,59u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
