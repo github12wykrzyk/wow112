@@ -1039,7 +1039,7 @@ static DWORD ChestGroupBit(DWORD e)
          * Actual private-server entry must still be confirmed by GUI debug. */
         case 2843u:case 2844u:case 2846u:case 2849u:
         case 106318u:case 106319u:return 1u<<0;
-        case 2850u:case 2855u:case 2857u:case 4149u:return 1u<<1; /* solid variants */
+        case 2850u:case 2852u:case 2855u:case 2857u:case 4149u:return 1u<<1; /* solid variants: 2852 also spawns in Duskwood */
         case 75293u:return 1u<<2; /* large battered */
         case 74448u:case 75298u:case 75299u:case 75300u:return 1u<<3; /* large solid */
         case 74447u:case 75295u:case 75296u:case 75297u:return 1u<<4; /* iron bound */
