@@ -1430,6 +1430,8 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     p=LocalPlayer();
 
     if(id==29u){
+        /* Explicit OFF->ON is the user-controlled reset of aggro-unsafe GOs. */
+        if(value->u32&&!g_chestEnabled)g_chestAggroLo=g_chestAggroHi=0u;
         g_chestEnabled=value->u32;
         if(!g_chestEnabled&&g_gatherActive&&g_gatherKind==4u)
             GatherStop(p,now,"GUI_AUTOCHEST_DISABLED",1u,0u);

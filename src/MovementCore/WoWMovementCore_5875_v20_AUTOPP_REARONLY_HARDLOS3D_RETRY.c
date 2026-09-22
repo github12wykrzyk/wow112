@@ -216,6 +216,8 @@ void* __cdecl memcpy(void*d,const void*s,unsigned int n)
 #define CHEST_DEPTH_YD                    4.0f
 #define CHEST_STEP_YD                     0.5f
 #define CHEST_MAX_STEPS                     8u
+/* Chest LOS fallback stays near the GO: group zero has no translated world. */
+#define CHEST_3D_RETRY_COUNT                8u
 #define CHEST_RETRY_MS                    300u
 #define GATHER_RESCAN_DELAY_MS         60u
 #define COMBAT_VEIN_WINDOW_MS         1800u
@@ -353,11 +355,15 @@ static volatile DWORD g_chestEnabled=0u,g_chestGroupsMask=63u,g_chestAutoLoot=1u
 static volatile DWORD g_chestStep=0u,g_chestRetryAt=0u;
 /* Successfully looted GO is excluded until despawn, never by a timed cooldown. */
 static volatile DWORD g_chestSkipLo=0u,g_chestSkipHi=0u;
+/* A chest which actually triggered combat is not revisited until it despawns
+ * or AutoChest is re-enabled. This is a safety blacklist, NOT a time cooldown. */
+static volatile DWORD g_chestAggroLo=0u,g_chestAggroHi=0u;
 static volatile DWORD g_lastChestChatLo=0u,g_lastChestChatHi=0u,g_lastChestChatTick=0u;
 /* The GUI exposes loaded/eligible counts and current target as live diagnostics. */
 static volatile DWORD g_chestScanSeen=0u,g_chestScanEligible=0u,g_chestScanLastEntry=0u;
 /* Scan reason: 0 none, 1 ready, 2 off, 3 type off, 4 combat,
- * 5 already looted, 6 no position, 7 out of range, 8 transaction active. */
+ * 5 already looted, 6 no position, 7 out of range, 8 transaction active,
+ * 9 aggro blacklist (until GO despawn / manual AutoChest restart). */
 static volatile DWORD g_chestScanReason=0u,g_chestScanPosSrc=0u;
 static volatile DWORD g_autoOpenClickCount=0u,g_autoOpenLastClickAt=0u;
 static volatile DWORD g_lastMiningChatLo=0u,g_lastMiningChatHi=0u,g_lastMiningChatTick=0u;
@@ -1260,6 +1266,9 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
                 if(!g_chestEnabled)chestReason=2u;
                 else if(!(g_chestGroupsMask&ChestGroupBit(entry)))chestReason=3u;
                 else if(inCombat)chestReason=4u;
+                else if((g_chestAggroLo||g_chestAggroHi)&&
+                        g_chestAggroLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&
+                        g_chestAggroHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH))chestReason=9u;
                 else if(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&
                         g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&
                         (g_chestSkipLo||g_chestSkipHi))chestReason=5u;
@@ -1267,7 +1276,7 @@ static BYTE* FindBestGatherNode(BYTE*p,DWORD now,DWORD*oe,DWORD*olo,DWORD*ohi,DW
             }
             if(kind==2u&&CombatVeinContains(entry,*(DWORD*)(o+OFF_OBJ_GUID_LOW),*(DWORD*)(o+OFF_OBJ_GUID_HIGH)))kind=0u;
             if(kind){
-                nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(g_chestSkipLo||g_chestSkipHi))))?1u:0u;if(match)profmatch++;
+                nodes++;match=((kind==1u&&!inCombat&&g_gatherEnabled&&g_hasHerbalism)||(kind==2u&&g_gatherEnabled&&g_hasMining)||(kind==3u&&!inCombat&&g_autoOpenEnabled)||(kind==4u&&!inCombat&&g_chestEnabled&&(g_chestGroupsMask&ChestGroupBit(entry))&&!(g_chestAggroLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestAggroHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(g_chestAggroLo||g_chestAggroHi))&&!(g_chestSkipLo==*(DWORD*)(o+OFF_OBJ_GUID_LOW)&&g_chestSkipHi==*(DWORD*)(o+OFF_OBJ_GUID_HIGH)&&(g_chestSkipLo||g_chestSkipHi))))?1u:0u;if(match)profmatch++;
                 if((kind==4u)?GetChestPos(o,desc,px,py,pz,&x,&y,&z,&src):GetGOPos(o,desc,&x,&y,&z,&src)){
                     d2=DistSq3(px,py,pz,x,y,z);
                     if(kind==4u){
@@ -1449,15 +1458,17 @@ static void GatherClickSpoof(BYTE*p,BYTE*obj,DWORD now)
 
 static DWORD Mining3DQueueRetry(BYTE*p,DWORD now)
 {
-    if((g_gatherKind!=2u&&g_gatherKind!=4u)||g_gatherSawCast||g_mining3DRetryIndex>=MINING_3D_RETRY_COUNT)return 0u;
+    if((g_gatherKind!=2u&&g_gatherKind!=4u)||g_gatherSawCast||g_mining3DRetryIndex>=(g_gatherKind==4u?CHEST_3D_RETRY_COUNT:MINING_3D_RETRY_COUNT))return 0u;
     Mining3DSelectOffset(g_mining3DRetryIndex);
     /* TEST: keep server XYZ consistently below ore during HARDLOS retry.
      * Shift only local LOS geometry as before; do not shift the server point
      * back up to the ore on retry. */
-    if((g_gatherKind==2u&&g_miningBelowNodeEnabled)||g_gatherKind==4u){
+    if(g_gatherKind==2u&&g_miningBelowNodeEnabled){
         g_miningServerDx=0.0f;g_miningServerDy=0.0f;
-        g_miningServerDz=g_gatherKind==4u?-CHEST_DEPTH_YD:-MINING_BELOW_NODE_Z_OFFSET;
+        g_miningServerDz=-MINING_BELOW_NODE_Z_OFFSET;
     }
+    /* Chest: after trying the deepest Z first, use near-node LOS vectors,
+     * never reset the server back underground to -4 yd on every retry. */
     /* V62: server sees a different near-node endpoint on every retry too. */
     g_gatherX=g_gatherNodeX+g_miningServerDx;
     g_gatherY=g_gatherNodeY+g_miningServerDy;
@@ -1726,7 +1737,14 @@ static void GatherTick(BYTE*p,DWORD now)
     if(!g_chestEnabled&&g_gatherActive&&g_gatherKind==4u){GatherStop(p,now,"AUTOCHEST_DISABLED_ABORT",1u,0u);return;}
     if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u){GatherStop(p,now,"AUTOOPEN_DISABLED_ABORT",1u,0u);return;}
     if(g_mode!=MODE_OFF){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"SAFEBREAK_ABORT",1u,0u);return;}
-    if(Combat(p)&&(g_gatherActive||g_gatherLootWait)&&g_gatherKind!=2u){++g_gatherAborts;GatherStop(p,now,"COMBAT_ABORT_NONMINING",1u,0u);return;}
+    if(Combat(p)&&(g_gatherActive||g_gatherLootWait)&&g_gatherKind!=2u){
+        ++g_gatherAborts;
+        if(g_gatherKind==4u){
+            g_chestAggroLo=g_gatherTargetLo;g_chestAggroHi=g_gatherTargetHi;
+            GatherStop(p,now,"AUTOCHEST_AGGRO_BLACKLIST_ABORT",1u,0u);
+        }else GatherStop(p,now,"COMBAT_ABORT_NONMINING",1u,0u);
+        return;
+    }
     if(!g_hasMining&&!g_hasHerbalism&&!g_autoOpenEnabled&&!g_chestEnabled){if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"NO_SOURCE_ABORT",1u,0u);return;}
 
     /* Manual-loot gate.  There is deliberately NO LootSlot/ConfirmLootSlot
@@ -1802,8 +1820,8 @@ static void GatherTick(BYTE*p,DWORD now)
         if(g_gatherKind==4u&&!g_gatherClickPending&&!castId&&!g_gatherSawCast&&g_chestRetryAt&&
            (LONG)(now-g_chestRetryAt)>=0){
             if(g_chestStep>=CHEST_MAX_STEPS){
-                /* After eight near-node Z attempts, use the exact Mining 3D
-                 * click/LOS retry path, still holding server XYZ near chest. */
+                /* After eight near-node Z attempts, retry around exact chest XYZ
+                 * (eight LOS vectors, no distant world translations). */
                 if(!Mining3DQueueRetry(p,now)){
                     /* Exhausting this sweep must not temporarily blacklist the GO.
                      * The next ordinary scan may retry immediately. */
@@ -1896,6 +1914,9 @@ static void GatherTick(BYTE*p,DWORD now)
     if((g_chestSkipLo||g_chestSkipHi)&&
        !Ptr(ObjByGuid(g_chestSkipLo,g_chestSkipHi)))
         g_chestSkipLo=g_chestSkipHi=0u;
+    if((g_chestAggroLo||g_chestAggroHi)&&
+       !Ptr(ObjByGuid(g_chestAggroLo,g_chestAggroHi)))
+        g_chestAggroLo=g_chestAggroHi=0u;
     obj=FindBestGatherNode(p,now,&entry,&lo,&hi,&kind,&d2);
     if(g_gatherLastStatusLog==0u||(DWORD)(now-g_gatherLastStatusLog)>=GATHER_STATUS_LOG_MS){g_gatherLastStatusLog=now;GatherFileLog("SCAN_STATUS",now,0u,0u,0u,0.0f,0u,0u);}
     if(obj){if(lo==g_gatherTargetLo&&hi==g_gatherTargetHi&&entry==g_gatherEntry)g_gatherAttempts++;else g_gatherAttempts=1u;GatherBegin(p,obj,now,entry,lo,hi,kind,d2);}

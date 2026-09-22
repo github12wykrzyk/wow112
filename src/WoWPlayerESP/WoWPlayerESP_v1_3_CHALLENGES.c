@@ -551,7 +551,7 @@ static void ui_sync_gather(void) {
             SendMessageA(g_ui_gather_chest_checks[i],UI_SETCHECK,checked,0);
     }
     if(g_ui_gather_chest_diag){
-        static const char* reasons[9]={"NONE","READY","OFF","TYPE OFF","COMBAT","LOOTED","NO XYZ","RANGE","ACTIVE"};
+        static const char* reasons[10]={"NONE","READY","OFF","TYPE OFF","COMBAT","LOOTED","NO XYZ","RANGE","ACTIVE","AGGRO SKIP"};
         W112_ControlValueV1 seen,eligible,entry,step,reason,source;
         char buf[160],*p=buf;
         BOOL ok=live&&ui_work_pp_get(PAR_CORE_DLL,40u,37u,&seen)&&
@@ -565,7 +565,7 @@ static void ui_sync_gather(void) {
             p=app_str(p,"Chest ");p=app_u32(p,seen.u32);
             p=app_str(p,"/");p=app_u32(p,eligible.u32);
             p=app_str(p," | entry ");p=app_u32(p,entry.u32);
-            p=app_str(p," | ");p=app_str(p,reason.u32<9u?reasons[reason.u32]:"UNKNOWN");
+            p=app_str(p," | ");p=app_str(p,reason.u32<10u?reasons[reason.u32]:"UNKNOWN");
             p=app_str(p," | XYZ src ");p=app_u32(p,source.u32);
             p=app_str(p," | Z step ");p=app_u32(p,step.u32);
             *p=0;SetWindowTextA(g_ui_gather_chest_diag,buf);
