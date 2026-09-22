@@ -1429,7 +1429,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00120000u,26u,g_controlSettings,
+    "movementcore","MovementCore",0x00120000u,28u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
