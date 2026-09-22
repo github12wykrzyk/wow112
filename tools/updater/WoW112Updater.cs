@@ -246,23 +246,33 @@ namespace WoW112Updater
                 var enabledDllChanges = LastEnabledDllChangeCount;
                 var skippedDllChanges = dllChanges - enabledDllChanges;
                 var exeChanged = lastExeInspection == null || lastExeInspection.HasChange;
-                if (exeChanged || dllChanges > 0)
+                // The addon archive is separately attested; compare its actual installed files,
+                // not only the candidate run ID or the EXE/DLL state.
+                var addonChanges = cachedVerifiedAddons.Count(addon =>
+                {
+                    var path = SafeDestination(gameDir.Text.Trim(), addon.Name);
+                    return !File.Exists(path) ||
+                        !string.Equals(Sha256File(path), Sha256(addon.Bytes), StringComparison.OrdinalIgnoreCase);
+                });
+                if (exeChanged || dllChanges > 0 || addonChanges > 0)
                 {
                     status.Text = "EXE: " + (lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State)
                         + " • DLL: " + enabledDllChanges + " do aktualizacji"
-                        + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty);
+                        + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty)
+                        + " • LS/LazyRogue: " + addonChanges + " plików do aktualizacji";
                     Log("EXE " + (exeChanged ? "wymaga aktualizacji" : "jest aktualny")
-                        + "; DLL: " + dllChanges + " zmian, aktywne: " + enabledDllChanges + ".");
+                        + "; DLL: " + dllChanges + " zmian, aktywne: " + enabledDllChanges
+                        + "; dodatki LS/LazyRogue: " + addonChanges + " plików do aktualizacji.");
                 }
                 else if (installed != null && GetLong(installed, "run_id") == lastRemote.RunId && GetString(installed, "channel") == lastRemote.Channel)
                 {
-                    status.Text = "Masz najnowszą wersję " + lastRemote.Channel.ToUpperInvariant() + " • EXE i DLL aktualne.";
-                    Log("EXE i każda DLL odpowiadają najnowszemu artefaktowi.");
+                    status.Text = "Masz najnowszą wersję " + lastRemote.Channel.ToUpperInvariant() + " • EXE, DLL i dodatki aktualne.";
+                    Log("EXE, wszystkie DLL i pliki LS/LazyRogue odpowiadają najnowszemu artefaktowi.");
                 }
                 else
                 {
-                    status.Text = "Nowy build dostępny • EXE i DLL bez zmian.";
-                    Log("Nowy artefakt jest dostępny, ale SHA256 EXE i wszystkich DLL już są zgodne.");
+                    status.Text = "Nowy build dostępny • EXE, DLL i dodatki bez zmian.";
+                    Log("Nowy artefakt jest dostępny, ale SHA256 EXE, DLL i dodatków już są zgodne.");
                 }
             }
             catch (Exception ex)

@@ -46,7 +46,7 @@ function lazyScript.OnRearNativeTelemetry(status,attempts,sends,busy,positional,
   spellGo=spellGo,aborted=aborted,sendPending=sendPending,
   resultPending=resultPending,castHook=castHook,moveHook=moveHook,
   prearm=prearm,prearmPulses=prearmPulses,prearmStarts=prearmStarts,
-  autoRearMode=autoRearMode or 0,autoRearState=autoRearState or 0
+  autoRearMode=autoRearMode or 0,autoRearState=autoRearState or 0}
  local old=d.native
  d.native=snap;d.nativeAt=now
  saveRearTrace()
