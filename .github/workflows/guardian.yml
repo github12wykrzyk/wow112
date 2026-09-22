@@ -24,6 +24,8 @@ jobs:
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Unit test Guardian safety guards
+        run: python3 -m unittest discover -s tools -p 'test_guardian.py' -v
       - name: Audit live branch heads and propose bounded fixes
         env:
           GH_TOKEN: ${{ github.token }}
