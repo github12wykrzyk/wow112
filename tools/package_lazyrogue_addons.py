@@ -21,7 +21,7 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w") as z:
         for folder, p in files:
-            arc = "Interface/AddOns/" + folder + "/" + p.relative_to(BASE/folder).as_posix()
+            arc = "Interface/AddOns/" + folder + "/" + p.relative_to(ADDON_SOURCES[folder]).as_posix()
             info = ZipInfo(arc, (2026, 9, 20, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             z.writestr(info, p.read_bytes())

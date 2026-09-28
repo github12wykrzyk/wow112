@@ -35,7 +35,7 @@ namespace WoW112Updater
                 if (zipEntries.Length == 0 && metaEntries.Length == 0 && !requireAddon)
                     return new List<UpdaterAddonAsset>();
                 if (zipEntries.Length != 1 || metaEntries.Length != 1)
-                    throw new InvalidOperationException("Artifact nie zawiera kompletnej, jednoznacznej paczki LS + LazyRogue + LazyWarlock i addon_metadata.json.");
+                    throw new InvalidOperationException("Artifact nie zawiera kompletnej, jednoznacznej paczki LS + LazyRogue + LazyWarlock + SummonScout i addon_metadata.json.");
 
                 var serializer = new JavaScriptSerializer();
                 var metaBytes = ReadBounded(metaEntries[0], 4096);
@@ -78,10 +78,10 @@ namespace WoW112Updater
                     }
                 }
                 var count = meta.TryGetValue("file_count", out value) ? Convert.ToInt32(value) : 0;
-                if (count != files.Count || files.Count < 20 ||
+                if (count != files.Count || files.Count < 22 ||
                     !names.Contains("Interface/AddOns/LazyScript/LazyScript.toc") ||
                     !names.Contains("Interface/AddOns/LazyRogue/LazyRogue.toc") ||
-                    !names.Contains("Interface/AddOns/LazyWarlock/LazyWarlock.toc"))
+                    !names.Contains("Interface/AddOns/LazyWarlock/LazyWarlock.toc") ||\n                    !names.Contains("Interface/AddOns/SummonScout/SummonScout.toc"))
                     throw new InvalidOperationException("Niekompletna lub niespójna paczka LS/LazyRogue/LazyWarlock.");
                 return files;
             }
@@ -122,7 +122,7 @@ namespace WoW112Updater
             return segments.Length <= 2 ||
                 string.Equals(segments[2], "LazyScript", StringComparison.Ordinal) ||
                 string.Equals(segments[2], "LazyRogue", StringComparison.Ordinal) ||
-                string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal);
+                string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||\n                string.Equals(segments[2], "SummonScout", StringComparison.Ordinal);
         }
 
         private static void ValidateAddonName(string name)
@@ -136,7 +136,7 @@ namespace WoW112Updater
                 !string.Equals(segments[1], "AddOns", StringComparison.Ordinal) ||
                 !(string.Equals(segments[2], "LazyScript", StringComparison.Ordinal) ||
                   string.Equals(segments[2], "LazyRogue", StringComparison.Ordinal) ||
-                  string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal)))
+                  string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||\n                  string.Equals(segments[2], "SummonScout", StringComparison.Ordinal)))
                 throw new InvalidOperationException("Addon poza dozwolonymi folderami: " + name);
             foreach (var segment in segments)
             {
