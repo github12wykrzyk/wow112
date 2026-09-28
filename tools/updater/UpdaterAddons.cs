@@ -81,7 +81,8 @@ namespace WoW112Updater
                 if (count != files.Count || files.Count < 22 ||
                     !names.Contains("Interface/AddOns/LazyScript/LazyScript.toc") ||
                     !names.Contains("Interface/AddOns/LazyRogue/LazyRogue.toc") ||
-                    !names.Contains("Interface/AddOns/LazyWarlock/LazyWarlock.toc") ||\n                    !names.Contains("Interface/AddOns/SummonScout/SummonScout.toc"))
+                    !names.Contains("Interface/AddOns/LazyWarlock/LazyWarlock.toc") ||
+                    !names.Contains("Interface/AddOns/SummonScout/SummonScout.toc"))
                     throw new InvalidOperationException("Niekompletna lub niespójna paczka LS/LazyRogue/LazyWarlock/SummonScout.");
                 return files;
             }
@@ -122,7 +123,8 @@ namespace WoW112Updater
             return segments.Length <= 2 ||
                 string.Equals(segments[2], "LazyScript", StringComparison.Ordinal) ||
                 string.Equals(segments[2], "LazyRogue", StringComparison.Ordinal) ||
-                string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||\n                string.Equals(segments[2], "SummonScout", StringComparison.Ordinal);
+                string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||
+                string.Equals(segments[2], "SummonScout", StringComparison.Ordinal);
         }
 
         private static void ValidateAddonName(string name)
@@ -136,7 +138,8 @@ namespace WoW112Updater
                 !string.Equals(segments[1], "AddOns", StringComparison.Ordinal) ||
                 !(string.Equals(segments[2], "LazyScript", StringComparison.Ordinal) ||
                   string.Equals(segments[2], "LazyRogue", StringComparison.Ordinal) ||
-                  string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||\n                  string.Equals(segments[2], "SummonScout", StringComparison.Ordinal)))
+                  string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||
+                  string.Equals(segments[2], "SummonScout", StringComparison.Ordinal)))
                 throw new InvalidOperationException("Addon poza dozwolonymi folderami: " + name);
             foreach (var segment in segments)
             {
