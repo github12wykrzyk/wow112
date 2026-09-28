@@ -77,6 +77,23 @@
       "tests": [],
       "package": null,
       "notes": "Infrastructure-only experiment. Branch/CI/package status must be queried live; no game runtime change."
+    },
+    {
+      "id": "autosummon-assist",
+      "branch": "work",
+      "modules": [
+        "AutoSummonAssist"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "GameObject native right-click 0x005F8660"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "868505ac4ddca2953bbcfa4f228ebc55302776c9",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Integrated into TEST(work) updater candidate from isolated feature/autosummon-assist. Exact Vanilla scope: Ritual of Summoning spell 698 -> Summoning Portal GameObject 36727; 4.75 yd physical gate; grouped/alive/out-of-combat/no-active-cast eligibility; one click per portal GUID; no movement/position spoof. Requires exact work SHA candidate verification before gameplay test."
     }
   ]
 }

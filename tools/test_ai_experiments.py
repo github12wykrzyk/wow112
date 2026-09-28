@@ -16,7 +16,10 @@ class ExperimentRoutingTests(unittest.TestCase):
         self.entries = validate(self.data)
 
     def test_real_entries_validate(self):
-        self.assertEqual(len(self.entries), 3)
+        expected_ids = {row["id"] for row in self.data["experiments"]}
+        actual_ids = {row["id"] for row in self.entries}
+        self.assertEqual(actual_ids, expected_ids)
+        self.assertEqual(len(self.entries), len(self.data["experiments"]))
 
     def test_explicit_parallel_does_not_switch_to_work(self):
         self.assertEqual(route(self.entries, "MovementCore", "parallel")["branch"], "parallel")
@@ -38,7 +41,26 @@ class ExperimentRoutingTests(unittest.TestCase):
                 route(self.entries, "MovementCore", branch)
 
     def test_no_invented_game_test_or_package(self):
-        self.assertTrue(all(not e["tests"] and e["package"] is None for e in self.entries))
+        game_tests = [
+            event
+            for entry in self.entries
+            for event in entry["tests"]
+            if event["kind"] == "game"
+        ]
+        self.assertEqual(game_tests, [])
+
+        for entry in self.entries:
+            package = entry["package"]
+            if package is None:
+                continue
+            self.assertTrue(package["verified"])
+            self.assertEqual(package["commit"], entry["verified_commit"])
+            self.assertTrue(any(
+                event["kind"] == "package"
+                and event["result"] == "passed"
+                and event["commit"] == package["commit"]
+                for event in entry["tests"]
+            ))
 
     def test_unknown_dependency_fails(self):
         obj = copy.deepcopy(self.data)
