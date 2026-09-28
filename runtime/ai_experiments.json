@@ -86,11 +86,32 @@
       "shared_resources": [
         "GameObject native right-click 0x005F8660"
       ],
-      "status": "in_progress",
-      "observed_head": "c1f9291894d6f0dd126f83fb93a838fe4ba537e3",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
+      "status": "awaiting_game_test",
+      "observed_head": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
+      "verified_commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
+          "date": "2026-09-28",
+          "evidence": "Build work candidate run 36473057621 passed on the exact SHA; AutoSummon Assist x86 build step, verify_current, verify_runtime_artifacts, verify_verified_symbols and final package gate all passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
+          "date": "2026-09-28",
+          "evidence": "Artifact 10991873746 produced FINAL_PACKAGE PASS; package SHA256 6b1f80a8132fc60b772cb5faf78b8dce0b9551ca114c703a38ac5d3114f50579, loader manifest exact, all binary entries PE32 x86."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
+        "artifact_id": 10991873746,
+        "package_sha256": "6b1f80a8132fc60b772cb5faf78b8dce0b9551ca114c703a38ac5d3114f50579",
+        "package_name": "WoW112_WORK_CANDIDATE.zip"
+      },
       "notes": "Isolated TEST companion based on work. Exact Vanilla scope: Ritual of Summoning spell 698 -> Summoning Portal GameObject 36727; 4.75 yd physical gate; grouped/alive/out-of-combat/no-active-cast eligibility; one click per portal GUID; no movement/position spoof."
     }
   ]
