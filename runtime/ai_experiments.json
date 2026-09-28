@@ -75,6 +75,23 @@
       "tests": [],
       "package": null,
       "notes": "Infrastructure-only experiment. Branch/CI/package status must be queried live; no game runtime change."
+    },
+    {
+      "id": "autosummon-assist",
+      "branch": "feature/autosummon-assist",
+      "modules": [
+        "AutoSummonAssist"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "GameObject native right-click 0x005F8660"
+      ],
+      "status": "in_progress",
+      "observed_head": "c1f9291894d6f0dd126f83fb93a838fe4ba537e3",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Isolated TEST companion based on work. Exact Vanilla scope: Ritual of Summoning spell 698 -> Summoning Portal GameObject 36727; 4.75 yd physical gate; grouped/alive/out-of-combat/no-active-cast eligibility; one click per portal GUID; no movement/position spoof."
     }
   ]
 }

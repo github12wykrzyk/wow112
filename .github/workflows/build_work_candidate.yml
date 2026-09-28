@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work
+      - feature/autosummon-assist
     paths:
       - '*.exe'
       - 'src/**'
@@ -23,6 +24,7 @@ on:
       - 'tools/build_taxiflight_probe_candidate.py'
       - 'tools/build_groundtargetassist_candidate.py'
       - 'tools/build_autoflagwsg_candidate.py'
+      - 'tools/build_autosummonassist_candidate.py'
       - 'tools/build_openeruirecovery_candidate.py'
       - 'tools/package_current.py'
       - 'tools/verify_current.py'
@@ -152,6 +154,20 @@ jobs:
               --build-metadata dist/autoflagwsg_build.json `
               --output build/WoWAutoFlagWSG_5875_v1.dll
             if ($LASTEXITCODE -ne 0) { throw "WSG AutoFlag candidate failed" }
+          }
+
+      - name: Build and append AutoSummon Assist when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c') {
+            python tools/build_autosummonassist_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/autosummonassist_build.json `
+              --output build/WoWAutoSummonAssist_5875_v1.dll
+            if ($LASTEXITCODE -ne 0) { throw "AutoSummon Assist candidate failed" }
           }
 
       - name: Build and append Opener UI Recovery when present
