@@ -1,19 +1,41 @@
-# SummonScout
+# SummonScout 1.1
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
-Behavior:
-- listens only to the configured custom channel (default: `World`);
-- detects summon requests such as `need summon`, `lf summ`, `wtb summon`, `summ pls`, terse `sum`/ `summ`;
-- rejects obvious summon-sale/service advertisements;
-- automatically queues `InviteByName()` calls;
-- deduplicates the same player for 120 seconds;
-- never depends on LazyScript.
+## Flow
 
-Commands:
+World chat -> summon-request detection -> destination recognition -> service-place filter -> queued `InviteByName()`.
+
+The addon remains independent from LazyScript.
+
+## Destination filter
+
+Default after upgrade is `ALL` to preserve existing behavior. Set the place currently being served:
+
+- `/ssi serve brd`
+- `/ssi serve sm`
+- `/ssi serve dme`
+- `/ssi serve org`
+- `/ssi serve all` restores the old unrestricted invite behavior.
+- `/ssi places` prints the supported groups.
+
+When a specific place is selected, summon requests with another or unknown destination are ignored. Debug mode explains why.
+
+Plain `DM` is deliberately treated as ambiguous (Deadmines vs Dire Maul) and is not auto-invited. Explicit `VC`, `Deadmines`, `DME`, `DMN`, `DMW`, or `Dire Maul` are recognized.
+
+## Commands
+
 - `/ssi on`, `/ssi off`, `/ssi status`
+- `/ssi serve <place|all>`
+- `/ssi places`
 - `/ssi channel World`
 - `/ssi debug on|off`
 - `/ssi test <chat text>`
 
-The first gameplay test should verify the real private-server World channel name exposed as CHAT_MSG_CHANNEL arg9 and whether automated InviteByName is accepted by that server/client combination.
+Examples with `/ssi serve brd`:
+
+- `need summon brd` -> INVITE
+- `summ to blackrock depths pls` -> INVITE
+- `summ sm` -> IGNORE
+- `need summon` -> IGNORE (unknown destination)
+- `summ dm` -> IGNORE (ambiguous destination)
