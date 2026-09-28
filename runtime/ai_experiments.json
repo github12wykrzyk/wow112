@@ -20,19 +20,21 @@
         "PositionalSpoof",
         "StealthCDGuardian",
         "WoWControlHub",
-        "SpeedFloor"
+        "SpeedFloor",
+        "AutoLootPP"
       ],
       "dependencies": [],
       "shared_resources": [
         "movement",
-        "cast"
+        "cast",
+        "loot"
       ],
       "status": "in_progress",
-      "observed_head": "817b7bb34dd061e13d21351dd16d1f59b5073579",
+      "observed_head": "c1f9291894d6f0dd126f83fb93a838fe4ba537e3",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Existing work experiments grouped provisionally for routing; validate exact current sources and dependencies before modifications."
+      "notes": "Work runtime experiment now also carries a TEST-only exact-binary AutoLootPP cast/channel guard. The guard is fail-closed against active v0.14 SHA/bytes and does not promote or replace stable runtime metadata."
     },
     {
       "id": "parallel-rogue",

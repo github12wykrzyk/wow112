@@ -16,6 +16,7 @@ on:
       - 'AI_INDEX.json'
       - 'tools/build_active_module.py'
       - 'tools/build_changed_active.py'
+      - 'tools/build_autoloot_castguard_candidate.py'
       - 'tools/build_controlhub_candidate.py'
       - 'tools/build_autopoisons_candidate.py'
       - 'tools/build_autokick_candidate.py'
@@ -83,6 +84,18 @@ jobs:
             --package-metadata dist/candidate_metadata.json `
             --summary dist/candidate_summary.json
           if ($LASTEXITCODE -ne 0) { throw "full active-stack audit failed" }
+
+      - name: Apply AutoLoot cast/channel guard
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_autoloot_castguard_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --build-metadata dist/autoloot_castguard_build.json `
+            --output build/WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll
+          if ($LASTEXITCODE -ne 0) { throw "AutoLoot cast/channel guard candidate failed" }
 
       - name: Build and append WoWControlHub when present
         shell: pwsh
