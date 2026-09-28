@@ -1206,14 +1206,32 @@ static DWORD W112_TeleMapShown(void)
  return !raw||raw[0]!='0'||raw[1]!=0;/* unknown != proof map closed */
 }
 
+static DWORD W112_TeleGameForeground(void)
+{
+    HWND window=((W112OpenGetWindow)0x00435C30u)(0);
+    return window&&GetForegroundWindow()==window;
+}
+
 static void W112_KeyTeleTick(BYTE *p,DWORD now)
 {
     DWORD pressed=(GK()(W112_TELE_KEY_E)&(short)0x8000)?1u:0u;
-    DWORD trigger=pressed&&!g_teleKeyWasDown;
+    DWORD trigger;
     DWORD info,hitType,hitBefore;
     float px,py,pz,x,y,z,dx,dy,dz;
+    if(!g_stepEnabled){
+        g_teleKeyWasDown=pressed;
+        g_telePending=0u;g_stepActive=0u;g_telePendingFromMap=0u;
+        return;
+    }
+    /* GetAsyncKeyState is system-wide. Track E while WoW is unfocused so
+       typing in another application cannot create a Tele E press edge here. */
+    if(!W112_TeleGameForeground()){
+        g_teleKeyWasDown=pressed;
+        g_telePending=0u;g_stepActive=0u;g_telePendingFromMap=0u;
+        return;
+    }
+    trigger=pressed&&!g_teleKeyWasDown;
     g_teleKeyWasDown=pressed;
-    if(!g_stepEnabled){g_telePending=0u;g_stepActive=0u;return;}
     if(g_telePending){
         /* A second E press aborts rather than applying a stale destination. */
         if(trigger){g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;}
