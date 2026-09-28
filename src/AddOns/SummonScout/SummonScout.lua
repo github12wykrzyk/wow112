@@ -1,6 +1,6 @@
 -- SummonScout for World of Warcraft 1.12.1 (build 5875)
--- Watches World chat for summon requests, recognizes destinations and can
--- auto-invite only requests for the place currently served by the warlock.
+-- World summon request observer + destination classifier + optional auto-invite.
+-- Persistent request statistics live in SummonScoutDB SavedVariables.
 
 SummonScoutDB = SummonScoutDB or {}
 
@@ -8,10 +8,11 @@ local SS = {}
 SS.queue = {}
 SS.queued = {}
 SS.recent = {}
+SS.loggedRecent = {}
 SS.nextInviteAt = 0
 
 local LOCATIONS = {
-    -- Instances / raids. Put more specific or potentially colliding aliases first.
+    -- Instances / raids. More specific / colliding aliases first.
     { id="deadmines", label="Deadmines", aliases={"deadmines", "the deadmines", "vc"} },
     { id="dme", label="Dire Maul East", aliases={"dire maul east", "dm east", "dme"} },
     { id="dmn", label="Dire Maul North", aliases={"dire maul north", "dm north", "dmn"} },
@@ -105,6 +106,11 @@ local function now()
     return 0
 end
 
+local function wallTime()
+    if time then return time() end
+    return 0
+end
+
 local function trim(s)
     s = s or ""
     s = string.gsub(s, "^%s+", "")
@@ -181,10 +187,6 @@ end
 local function findLocation(message)
     local s = normalizeMessage(message)
     local j, k
-
-    -- Plain "DM" is historically ambiguous: Deadmines vs Dire Maul.
-    -- Specific spellings (VC, DME/DMN/DMW, "dire maul", "deadmines") are
-    -- resolved by the normal table below.
     local plainDm = phraseHas(s, "dm")
 
     for j = 1, table.getn(LOCATIONS) do
@@ -225,16 +227,10 @@ end
 local function locationAllowed(loc, ambiguous)
     local service = SummonScoutDB.service or "all"
     if service == "all" then
-        -- Preserve old behavior in ALL mode, but do not guess plain DM.
         return ambiguous == nil
     end
-
     if ambiguous or not loc then return false end
-    if loc.id == service then return true end
-
-    -- Generic Blackrock Spire and Scarlet Monastery aliases intentionally share
-    -- one canonical destination because their common summon point serves wings.
-    return false
+    return loc.id == service
 end
 
 local function channelMatches(channelName)
@@ -267,6 +263,70 @@ local function recentlyHandled(name)
     return (now() - t) < (SummonScoutDB.duplicateSeconds or 120)
 end
 
+local function logKey(sender, message)
+    return lower(sender or "") .. "|" .. normalizeMessage(message)
+end
+
+local function shouldLogRequest(sender, message)
+    local key = logKey(sender, message)
+    local last = SS.loggedRecent[key]
+    local t = now()
+    if last and (t - last) < (SummonScoutDB.logDedupeSeconds or 60) then
+        return false
+    end
+    SS.loggedRecent[key] = t
+    return true
+end
+
+local function ensureStats()
+    if type(SummonScoutDB.stats) ~= "table" then SummonScoutDB.stats = {} end
+    if type(SummonScoutDB.stats.byLocation) ~= "table" then SummonScoutDB.stats.byLocation = {} end
+    if type(SummonScoutDB.requestLog) ~= "table" then SummonScoutDB.requestLog = {} end
+    if SummonScoutDB.stats.total == nil then SummonScoutDB.stats.total = 0 end
+    if SummonScoutDB.stats.unknown == nil then SummonScoutDB.stats.unknown = 0 end
+    if SummonScoutDB.stats.ambiguous == nil then SummonScoutDB.stats.ambiguous = 0 end
+end
+
+local function logRequest(sender, message, loc, ambiguous)
+    if not SummonScoutDB.loggingEnabled then return end
+    if not shouldLogRequest(sender, message) then return end
+    ensureStats()
+
+    local id
+    local label
+    if ambiguous then
+        id = "ambiguous_dm"
+        label = "AMBIGUOUS DM"
+        SummonScoutDB.stats.ambiguous = SummonScoutDB.stats.ambiguous + 1
+    elseif loc then
+        id = loc.id
+        label = loc.label
+        SummonScoutDB.stats.byLocation[id] = (SummonScoutDB.stats.byLocation[id] or 0) + 1
+    else
+        id = "unknown"
+        label = "UNKNOWN"
+        SummonScoutDB.stats.unknown = SummonScoutDB.stats.unknown + 1
+    end
+
+    SummonScoutDB.stats.total = SummonScoutDB.stats.total + 1
+    SummonScoutDB.requestLog[table.getn(SummonScoutDB.requestLog) + 1] = {
+        ts = wallTime(),
+        sender = trim(sender),
+        message = message or "",
+        locationId = id,
+        locationLabel = label
+    }
+
+    local maxEntries = SummonScoutDB.maxLogEntries or 200
+    while table.getn(SummonScoutDB.requestLog) > maxEntries do
+        table.remove(SummonScoutDB.requestLog, 1)
+    end
+
+    if SummonScoutDB.debug then
+        chat("logged: " .. trim(sender) .. " [" .. label .. "] -> " .. (message or ""))
+    end
+end
+
 local function queueInvite(name, message, loc)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) then return end
@@ -294,7 +354,7 @@ local function popInvite()
 end
 
 local function processQueue()
-    if not SummonScoutDB.enabled then return end
+    if not SummonScoutDB.enabled or not SummonScoutDB.autoInvite then return end
     if now() < SS.nextInviteAt then return end
 
     local item = popInvite()
@@ -309,18 +369,26 @@ end
 
 local function setDefaults()
     if SummonScoutDB.enabled == nil then SummonScoutDB.enabled = true end
+    if SummonScoutDB.autoInvite == nil then SummonScoutDB.autoInvite = true end
+    if SummonScoutDB.loggingEnabled == nil then SummonScoutDB.loggingEnabled = true end
     if SummonScoutDB.channel == nil then SummonScoutDB.channel = "world" end
     if SummonScoutDB.duplicateSeconds == nil then SummonScoutDB.duplicateSeconds = 120 end
     if SummonScoutDB.inviteDelay == nil then SummonScoutDB.inviteDelay = 0.8 end
+    if SummonScoutDB.logDedupeSeconds == nil then SummonScoutDB.logDedupeSeconds = 60 end
+    if SummonScoutDB.maxLogEntries == nil then SummonScoutDB.maxLogEntries = 200 end
     if SummonScoutDB.debug == nil then SummonScoutDB.debug = false end
     if SummonScoutDB.service == nil then SummonScoutDB.service = "all" end
+    ensureStats()
 end
 
 local function status()
+    ensureStats()
     chat("enabled=" .. (SummonScoutDB.enabled and "ON" or "OFF")
+        .. ", invite=" .. (SummonScoutDB.autoInvite and "ON" or "OFF")
+        .. ", log=" .. (SummonScoutDB.loggingEnabled and "ON" or "OFF")
         .. ", channel=" .. (SummonScoutDB.channel or "world")
         .. ", serving=" .. servedLocationLabel()
-        .. ", duplicate=" .. tostring(SummonScoutDB.duplicateSeconds or 120) .. "s"
+        .. ", requests=" .. tostring(SummonScoutDB.stats.total or 0)
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
 
@@ -329,6 +397,59 @@ local function showPlaces()
     chat("endgame: dme dmn dmw dire-maul mc ony bwl zg aq20 aq40 naxx")
     chat("cities/hubs: org uc tb sw darn kargath gadgetzan ratchet lhc everlook cenarion crossroads")
     chat("zones: stv epl wpl searing burning badlands blasted hinterlands silithus tanaris ungoro winterspring felwood feralas")
+end
+
+local function showStats()
+    ensureStats()
+    local rows = {}
+    local id, count
+    for id, count in pairs(SummonScoutDB.stats.byLocation) do
+        rows[table.getn(rows) + 1] = { id=id, count=count }
+    end
+    table.sort(rows, function(a, b)
+        if a.count == b.count then return a.id < b.id end
+        return a.count > b.count
+    end)
+
+    chat("requests total=" .. tostring(SummonScoutDB.stats.total or 0)
+        .. ", unknown=" .. tostring(SummonScoutDB.stats.unknown or 0)
+        .. ", ambiguousDM=" .. tostring(SummonScoutDB.stats.ambiguous or 0))
+
+    local limit = math.min(table.getn(rows), 10)
+    local j
+    for j = 1, limit do
+        local loc = LOCATION_BY_ID[rows[j].id]
+        chat("#" .. tostring(j) .. " " .. (loc and loc.label or rows[j].id) .. " = " .. tostring(rows[j].count))
+    end
+    if limit == 0 then chat("no recognized destinations logged yet") end
+end
+
+local function showRecent(filterUnknown, limit)
+    ensureStats()
+    limit = tonumber(limit) or 10
+    if limit < 1 then limit = 1 end
+    if limit > 30 then limit = 30 end
+
+    local shown = 0
+    local j
+    for j = table.getn(SummonScoutDB.requestLog), 1, -1 do
+        local item = SummonScoutDB.requestLog[j]
+        if not filterUnknown or item.locationId == "unknown" then
+            chat((item.locationLabel or "?") .. " | " .. (item.sender or "?") .. ": " .. (item.message or ""))
+            shown = shown + 1
+            if shown >= limit then break end
+        end
+    end
+    if shown == 0 then
+        chat(filterUnknown and "no UNKNOWN requests logged" or "request log is empty")
+    end
+end
+
+local function clearStats()
+    SummonScoutDB.stats = { total=0, unknown=0, ambiguous=0, byLocation={} }
+    SummonScoutDB.requestLog = {}
+    SS.loggedRecent = {}
+    chat("request statistics and recent log cleared")
 end
 
 local function describeTest(message)
@@ -362,6 +483,20 @@ local function slash(msg)
         SS.queue = {}
         SS.queued = {}
         status()
+    elseif cmd == "invite" then
+        rest = lower(trim(rest))
+        if rest == "on" then SummonScoutDB.autoInvite = true end
+        if rest == "off" then
+            SummonScoutDB.autoInvite = false
+            SS.queue = {}
+            SS.queued = {}
+        end
+        status()
+    elseif cmd == "log" then
+        rest = lower(trim(rest))
+        if rest == "on" then SummonScoutDB.loggingEnabled = true end
+        if rest == "off" then SummonScoutDB.loggingEnabled = false end
+        status()
     elseif cmd == "debug" then
         rest = lower(trim(rest))
         SummonScoutDB.debug = (rest == "on" or rest == "1" or rest == "true")
@@ -379,12 +514,25 @@ local function slash(msg)
         end
     elseif cmd == "places" then
         showPlaces()
+    elseif cmd == "stats" then
+        showStats()
+    elseif cmd == "recent" then
+        showRecent(false, trim(rest))
+    elseif cmd == "unknown" then
+        showRecent(true, trim(rest))
+    elseif cmd == "clearstats" then
+        if lower(trim(rest)) == "confirm" then
+            clearStats()
+        else
+            chat("use /ssi clearstats confirm")
+        end
     elseif cmd == "test" and trim(rest) ~= "" then
         describeTest(rest)
     elseif cmd == "status" or cmd == "" then
         status()
     else
-        chat("/ssi on|off|status | serve <place|all> | places | channel <name> | debug on/off | test <message>")
+        chat("/ssi on|off|status | invite on/off | log on/off | stats | recent [n] | unknown [n]")
+        chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
 
@@ -394,7 +542,9 @@ frame:RegisterEvent("CHAT_MSG_CHANNEL")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
-        chat("loaded; watching #" .. (SummonScoutDB.channel or "world") .. "; serving=" .. servedLocationLabel())
+        chat("loaded; watching #" .. (SummonScoutDB.channel or "world")
+            .. "; serving=" .. servedLocationLabel()
+            .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
         return
     end
 
@@ -410,10 +560,17 @@ frame:SetScript("OnEvent", function()
         end
 
         local loc, ambiguous = findLocation(message)
-        if locationAllowed(loc, ambiguous) then
+
+        -- Logging happens before the service filter, so demand outside the
+        -- currently served location is still measured.
+        logRequest(sender, message, loc, ambiguous)
+
+        if SummonScoutDB.autoInvite and locationAllowed(loc, ambiguous) then
             queueInvite(sender, message, loc)
         elseif SummonScoutDB.debug then
-            if ambiguous then
+            if not SummonScoutDB.autoInvite then
+                chat("observe only: " .. sender .. " -> " .. message)
+            elseif ambiguous then
                 chat("ignore: " .. sender .. " [ambiguous DM] -> " .. message)
             elseif loc then
                 chat("ignore: " .. sender .. " [" .. loc.label .. "], serving=" .. servedLocationLabel())
