@@ -108,7 +108,7 @@ static BOOL W112_PPSelector_Install(void)
   site=base+PPSEL_CALL_RVA;
   for(i=0u;i<sizeof(g_ppSelectorSignature);i++)
     if(site[i]!=g_ppSelectorSignature[i])return FALSE;
-  /* Exact original v0.14 with the verified 100 -> 20ms PP-only patch. */
+  /* Require the verified 100 -> 20ms PP scanner signature. Other bounded\n     AutoLootPP TEST patches are validated by the candidate packager. */
   if(base[0x201Bu]!=0x83u||base[0x201Cu]!=0xF8u||
      base[0x201Du]!=0x14u||base[0x201Eu]!=0x72u)return FALSE;
   /* The tracked-active flag and GUID accessors must match relocated slots. */

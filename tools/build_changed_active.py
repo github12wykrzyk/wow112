@@ -202,6 +202,7 @@ def main():
             raise SystemExit("AutoLootPP TEST binary patch is restricted to parallel")
     for entry in binary_patch_entries:
         if entry != {"runtime_name": "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll", "scanner_interval_ms": 20,
+                     "block_loot_during_cast_channel": True,
                      "patch_tool": "tools/patch_autopp_fastscan_candidate.py"}:
             raise SystemExit("unapproved exact-byte candidate binary patch request")
         if entry["runtime_name"] not in exact_set:

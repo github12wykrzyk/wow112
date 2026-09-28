@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Hash-pinned, one-byte TEST-only PP scanner patch for WoW 5875 x86.
+"""Hash-pinned TEST-only AutoLootPP patch for WoW 5875 x86.
 
-Only the idle PP target-rescan comparison at RVA 0x201B changes: 100 -> 20 ms.
-The separate world/life scan, loot state machine and PP retry remain byte-identical.
-Never use the reconstructed AutoLootPP source to replace the historical DLL.
+Two bounded behaviors are changed from the exact active v0.14 binary:
+1) idle PP target-rescan comparison: 100 -> 20 ms;
+2) corpse AutoLoot initiation is skipped while the local player is casting or
+   channeling, using the verified 5875 player cast/channel fields.
+
+World/life scan and PP retry remain byte-identical. Never compile the
+reconstructed AutoLootPP source to replace the historical DLL.
 """
 import argparse
 import hashlib
@@ -23,6 +27,21 @@ WORLD_RVA = 0x10CB
 WORLD = bytes.fromhex("89e82b053860001083f8640f83")
 RETRY_RVA = 0x1AA6
 RETRY = bytes.fromhex("3d5e010000")
+
+# Fail-closed cast/channel guard in the exact v0.14 corpse scanner.
+# The callsite has already cleared its candidate-valid flag. ECX is the local
+# player object. The 5875 fields match CastObserver:
+#   normal cast = player + 0xC8C
+#   channel     = player->descriptor + 0x240 (UNIT_CHANNEL_SPELL index 0x90)
+GUARD_PATCHES = (
+    (0x4215, bytes.fromhex("a11414b400"), bytes.fromhex("e8130d0000")),
+    (0x421A, bytes.fromhex("85c0"), bytes.fromhex("9090")),
+    (0x421D, bytes.fromhex("84"), bytes.fromhex("85")),
+    (0x4F2D, bytes.fromhex("90" * 18),
+             bytes.fromhex("8b51088b92400200000b918c0c0000743ac3")),
+    (0x4F78, bytes.fromhex("cc" * 8),
+             bytes.fromhex("a11414b400c3cccc")),
+)
 
 
 def digest(b):
@@ -66,9 +85,22 @@ def main():
         raise SystemExit("FAIL: PP scanner instruction sequence is not unique")
     candidate = bytearray(original)
     candidate[offset:offset+len(OLD)] = NEW
+    expected_delta = {offset+10}
+
+    for rva, old_guard, new_guard in GUARD_PATCHES:
+        if len(old_guard) != len(new_guard):
+            raise SystemExit("FAIL: internal cast/channel guard patch size mismatch")
+        guard = raw_offset(original, rva)
+        if original[guard:guard+len(old_guard)] != old_guard:
+            raise SystemExit("FAIL: cast/channel guard preimage differs at RVA 0x%X" % rva)
+        candidate[guard:guard+len(new_guard)] = new_guard
+        expected_delta.update(
+            guard+i for i, (a,b) in enumerate(zip(old_guard, new_guard)) if a != b
+        )
+
     delta = [i for i, (a,b) in enumerate(zip(original, candidate)) if a != b]
-    if len(candidate) != len(original) or delta != [offset+10]:
-        raise SystemExit("FAIL: patch changed more than the PP scan immediate")
+    if len(candidate) != len(original) or delta != sorted(expected_delta):
+        raise SystemExit("FAIL: patch changed bytes outside the verified PP scan + cast/channel guard")
     if bytes(candidate[world:world+len(WORLD)]) != WORLD or bytes(candidate[retry:retry+len(RETRY)]) != RETRY:
         raise SystemExit("FAIL: world scan or PP retry changed")
     output = Path(args.output)
@@ -77,7 +109,7 @@ def main():
     metadata.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(candidate)
     report = {
-        "kind": "exact_binary_one_byte_candidate_patch",
+        "kind": "exact_binary_bounded_candidate_patch",
         "runtime_name": MODULE,
         "stable_sha256": BASE_SHA,
         "candidate_sha256": digest(candidate),
@@ -89,8 +121,12 @@ def main():
         "candidate_scan_ms": 20,
         "world_scan_ms_unchanged": 100,
         "pp_retry_ms_unchanged": 350,
+        "block_loot_during_cast_channel": True,
+        "normal_cast_field": "player+0xC8C",
+        "channel_field": "player->descriptor+0x240",
+        "guard_rvas": ["0x4215", "0x421A", "0x421D", "0x4F2D", "0x4F78"],
         "changed_byte_count": len(delta),
-        "source_status": "original binary patch; reconstructed source NOT compiled",
+        "source_status": "exact active binary patch; reconstructed source NOT compiled",
         "result": "PASS",
     }
     metadata.write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
