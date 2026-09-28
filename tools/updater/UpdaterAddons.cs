@@ -17,13 +17,36 @@ namespace WoW112Updater
     }
 
     // Addons are a separately SHA-verified archive inside the SAME successful
-    // work candidate artifact; the strict root-only EXE/DLL ZIP is unchanged.
+    // candidate artifact. The archive is commit-bound by addon_metadata.json.
+    //
+    // Important: addon folder names are intentionally NOT hard-coded here.
+    // Any safely named Interface/AddOns/<Addon>/ tree is accepted if that addon
+    // owns a root-level .toc file. This keeps future repo-managed addons from
+    // requiring an updater release just to extend a name whitelist.
     internal static class UpdaterAddons
     {
         private const string ZipName = "WoW112_LAZYROGUE_HYBRID_ADDONS.zip";
         private const string MetadataName = "addon_metadata.json";
-        private const int MaxAddonBytes = 2 * 1024 * 1024;
-        private const int MaxAddonZipBytes = 8 * 1024 * 1024;
+        private const int MaxAddonBytes = 8 * 1024 * 1024;
+        private const int MaxAddonZipBytes = 64 * 1024 * 1024;
+        private const int MaxAddonFiles = 2000;
+
+        private static readonly string[] RequiredCoreAddons =
+        {
+            "LazyScript",
+            "LazyRogue",
+            "LazyWarlock",
+        };
+
+        private static readonly HashSet<string> AllowedExtensions =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".lua", ".toc", ".xml",
+                ".tga", ".blp", ".ttf",
+                ".txt", ".md",
+                ".wav", ".mp3", ".ogg",
+                ".jpg", ".jpeg", ".png",
+            };
 
         public static List<UpdaterAddonAsset> ReadFromArtifact(byte[] outerBytes, bool requireAddon, string expectedHeadSha)
         {
@@ -35,12 +58,13 @@ namespace WoW112Updater
                 if (zipEntries.Length == 0 && metaEntries.Length == 0 && !requireAddon)
                     return new List<UpdaterAddonAsset>();
                 if (zipEntries.Length != 1 || metaEntries.Length != 1)
-                    throw new InvalidOperationException("Artifact nie zawiera kompletnej, jednoznacznej paczki LS + LazyRogue + LazyWarlock + SummonScout i addon_metadata.json.");
+                    throw new InvalidOperationException("Artifact nie zawiera kompletnej, jednoznacznej paczki addonow i addon_metadata.json.");
 
                 var serializer = new JavaScriptSerializer();
-                var metaBytes = ReadBounded(metaEntries[0], 4096);
+                var metaBytes = ReadBounded(metaEntries[0], 16 * 1024);
                 var meta = serializer.DeserializeObject(Encoding.UTF8.GetString(metaBytes)) as Dictionary<string, object>;
-                if (meta == null) throw new InvalidOperationException("Nieprawidłowy addon_metadata.json.");
+                if (meta == null) throw new InvalidOperationException("Nieprawidlowy addon_metadata.json.");
+
                 object value;
                 var sha = meta.TryGetValue("addon_sha256", out value) ? Convert.ToString(value) : string.Empty;
                 var gitSha = meta.TryGetValue("git_sha", out value) ? Convert.ToString(value) : string.Empty;
@@ -48,14 +72,16 @@ namespace WoW112Updater
                 if (!UpdaterSafety.IsSha256Hex(sha) ||
                     !string.Equals(name, ZipName, StringComparison.Ordinal) ||
                     !string.Equals(gitSha, expectedHeadSha, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Niezgodny SHA/commit/format manifestu dodatków.");
+                    throw new InvalidOperationException("Niezgodny SHA/commit/format manifestu dodatkow.");
 
                 var addonZip = ReadBounded(zipEntries[0], MaxAddonZipBytes);
                 if (!string.Equals(Sha256(addonZip), sha, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("SHA256 ZIP-a dodatków nie zgadza się z addon_metadata.json.");
+                    throw new InvalidOperationException("SHA256 ZIP-a dodatkow nie zgadza sie z addon_metadata.json.");
 
                 var files = new List<UpdaterAddonAsset>();
                 var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var addonRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 using (var inner = new MemoryStream(addonZip, false))
                 using (var addons = new ZipArchive(inner, ZipArchiveMode.Read, false))
                 {
@@ -63,27 +89,37 @@ namespace WoW112Updater
                     {
                         if (string.IsNullOrEmpty(entry.Name))
                         {
-                            // Only canonical folder entries, never a payload in a non-whitelisted directory.
-                            if (!entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
-                                !IsWhitelistedDirectory(entry.FullName.TrimEnd('/')))
-                                throw new InvalidOperationException("Niebezpieczny katalog w paczce dodatków: " + entry.FullName);
+                            ValidateAddonDirectory(entry.FullName);
                             continue;
                         }
-                        ValidateAddonName(entry.FullName);
+
+                        var root = ValidateAddonName(entry.FullName);
+                        addonRoots.Add(root);
                         if (!names.Add(entry.FullName))
                             throw new InvalidOperationException("Duplikat pliku dodatku: " + entry.FullName);
+
                         files.Add(new UpdaterAddonAsset(entry.FullName, ReadBounded(entry, MaxAddonBytes)));
-                        if (files.Count > 120)
-                            throw new InvalidOperationException("Nadmierna liczba plików w paczce dodatków.");
+                        if (files.Count > MaxAddonFiles)
+                            throw new InvalidOperationException("Nadmierna liczba plikow w paczce dodatkow.");
                     }
                 }
-                var count = meta.TryGetValue("file_count", out value) ? Convert.ToInt32(value) : 0;
-                if (count != files.Count || files.Count < 22 ||
-                    !names.Contains("Interface/AddOns/LazyScript/LazyScript.toc") ||
-                    !names.Contains("Interface/AddOns/LazyRogue/LazyRogue.toc") ||
-                    !names.Contains("Interface/AddOns/LazyWarlock/LazyWarlock.toc") ||
-                    !names.Contains("Interface/AddOns/SummonScout/SummonScout.toc"))
-                    throw new InvalidOperationException("Niekompletna lub niespójna paczka LS/LazyRogue/LazyWarlock/SummonScout.");
+
+                var count = meta.TryGetValue("file_count", out value) ? Convert.ToInt32(value) : -1;
+                if (count != files.Count || files.Count == 0 || addonRoots.Count == 0)
+                    throw new InvalidOperationException("Niekompletna lub niespojna paczka addonow.");
+
+                foreach (var root in addonRoots)
+                {
+                    if (!HasRootToc(names, root))
+                        throw new InvalidOperationException("Addon bez glownego pliku .toc: " + root);
+                }
+
+                foreach (var required in RequiredCoreAddons)
+                {
+                    if (!addonRoots.Contains(required) || !HasRootToc(names, required))
+                        throw new InvalidOperationException("Brak wymaganego bazowego addonu: " + required);
+                }
+
                 return files;
             }
         }
@@ -102,61 +138,83 @@ namespace WoW112Updater
             {
                 path = Path.Combine(path, part);
                 if (Directory.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-                    throw new InvalidOperationException("Katalog dodatku jest łączem/reparse point: " + name);
+                    throw new InvalidOperationException("Katalog dodatku jest laczem/reparse point: " + name);
             }
+
             var dest = Path.GetFullPath(path);
             if (!dest.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Plik dodatku poza katalogiem gry: " + name);
             return dest;
         }
 
-        private static bool IsWhitelistedDirectory(string name)
+        private static void ValidateAddonDirectory(string name)
         {
-            var segments = name.Split('/');
-            if (segments.Length < 1 || segments.Length > 4) return false;
-            var prefix = new[] { "Interface", "AddOns" };
-            for (var i = 0; i < segments.Length; i++)
-            {
-                if (string.IsNullOrEmpty(segments[i]) || segments[i] == "." || segments[i] == "..") return false;
-                if (i < 2 && !string.Equals(segments[i], prefix[i], StringComparison.Ordinal)) return false;
-            }
-            return segments.Length <= 2 ||
-                string.Equals(segments[2], "LazyScript", StringComparison.Ordinal) ||
-                string.Equals(segments[2], "LazyRogue", StringComparison.Ordinal) ||
-                string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||
-                string.Equals(segments[2], "SummonScout", StringComparison.Ordinal);
+            if (string.IsNullOrWhiteSpace(name) || !name.EndsWith("/", StringComparison.Ordinal) ||
+                name.IndexOf('\\') >= 0 || name.IndexOf(':') >= 0 || name.IndexOf('\0') >= 0)
+                throw new InvalidOperationException("Nieprawidlowy katalog dodatku: " + name);
+
+            var trimmed = name.TrimEnd('/');
+            var segments = trimmed.Split('/');
+            if (segments.Length < 1 || segments.Length > 8 ||
+                !string.Equals(segments[0], "Interface", StringComparison.Ordinal) ||
+                (segments.Length >= 2 && !string.Equals(segments[1], "AddOns", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Katalog poza Interface/AddOns: " + name);
+
+            for (var i = 2; i < segments.Length; i++)
+                ValidateSafeSegment(segments[i], name);
         }
 
-        private static void ValidateAddonName(string name)
+        private static string ValidateAddonName(string name)
         {
-            if (string.IsNullOrWhiteSpace(name) || name.Length > 220 || name.IndexOf('\\') >= 0 ||
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 260 || name.IndexOf('\\') >= 0 ||
                 name.IndexOf(':') >= 0 || name.IndexOf('\0') >= 0)
-                throw new InvalidOperationException("Nieprawidłowa ścieżka dodatku: " + name);
+                throw new InvalidOperationException("Nieprawidlowa sciezka dodatku: " + name);
+
             var segments = name.Split('/');
             if (segments.Length < 4 || segments.Length > 8 ||
                 !string.Equals(segments[0], "Interface", StringComparison.Ordinal) ||
-                !string.Equals(segments[1], "AddOns", StringComparison.Ordinal) ||
-                !(string.Equals(segments[2], "LazyScript", StringComparison.Ordinal) ||
-                  string.Equals(segments[2], "LazyRogue", StringComparison.Ordinal) ||
-                  string.Equals(segments[2], "LazyWarlock", StringComparison.Ordinal) ||
-                  string.Equals(segments[2], "SummonScout", StringComparison.Ordinal)))
-                throw new InvalidOperationException("Addon poza dozwolonymi folderami: " + name);
-            foreach (var segment in segments)
+                !string.Equals(segments[1], "AddOns", StringComparison.Ordinal))
+                throw new InvalidOperationException("Addon poza Interface/AddOns: " + name);
+
+            for (var i = 2; i < segments.Length; i++)
+                ValidateSafeSegment(segments[i], name);
+
+            var extension = Path.GetExtension(name);
+            if (!AllowedExtensions.Contains(extension))
+                throw new InvalidOperationException("Nieobslugiwany typ pliku dodatku: " + name);
+
+            return segments[2];
+        }
+
+        private static void ValidateSafeSegment(string segment, string fullName)
+        {
+            if (string.IsNullOrWhiteSpace(segment) || segment == "." || segment == ".." ||
+                segment.Length > 100 ||
+                segment.EndsWith(".", StringComparison.Ordinal) || segment.EndsWith(" ", StringComparison.Ordinal) ||
+                segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                segment.IndexOfAny(new[] { '<', '>', '"', '|', '?', '*' }) >= 0)
+                throw new InvalidOperationException("Niebezpieczna nazwa w sciezce dodatku: " + fullName);
+        }
+
+        private static bool HasRootToc(HashSet<string> names, string root)
+        {
+            var prefix = "Interface/AddOns/" + root + "/";
+            foreach (var name in names)
             {
-                if (string.IsNullOrWhiteSpace(segment) || segment == "." || segment == ".." ||
-                    segment.EndsWith(".", StringComparison.Ordinal) || segment.EndsWith(" ", StringComparison.Ordinal) ||
-                    segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-                    segment.IndexOfAny(new[] { '<', '>', '"', '|', '?', '*' }) >= 0)
-                    throw new InvalidOperationException("Niebezpieczna nazwa pliku dodatku: " + name);
+                if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var rest = name.Substring(prefix.Length);
+                if (rest.IndexOf('/') < 0 && string.Equals(Path.GetExtension(rest), ".toc", StringComparison.OrdinalIgnoreCase))
+                    return true;
             }
-            var extension = Path.GetExtension(name).ToLowerInvariant();
-            if (!new[] { ".lua", ".toc", ".xml", ".md", ".tga" }.Contains(extension))
-                throw new InvalidOperationException("Nieobsługiwany typ pliku dodatku: " + name);
+            return false;
         }
 
         private static byte[] ReadBounded(ZipArchiveEntry entry, int maxBytes)
         {
-            if (entry.Length > maxBytes) throw new InvalidOperationException("Plik dodatku przekracza limit: " + entry.FullName);
+            if (entry.Length > maxBytes)
+                throw new InvalidOperationException("Plik dodatku przekracza limit: " + entry.FullName);
+
             using (var input = entry.Open())
             using (var output = new MemoryStream())
             {

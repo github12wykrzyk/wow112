@@ -92,6 +92,23 @@ jobs:
           & ./dist/UpdaterAttestationTests.exe
           if ($LASTEXITCODE -ne 0) { throw "updater attestation test failed" }
 
+          # Future-proof addon gate: arbitrary safe addon folder names are valid,
+          # while traversal and malformed addon roots remain fail-closed.
+          & $csc /nologo /target:exe /platform:x86 /optimize+ /langversion:latest `
+            /out:dist\UpdaterAddonsTests.exe `
+            /reference:"$ref\mscorlib.dll" `
+            /reference:"$ref\System.dll" `
+            /reference:"$ref\System.Core.dll" `
+            /reference:"$ref\System.IO.Compression.dll" `
+            /reference:"$ref\System.IO.Compression.FileSystem.dll" `
+            /reference:"$ref\System.Web.Extensions.dll" `
+            tools\updater\UpdaterSafety.cs `
+            tools\updater\UpdaterAddons.cs `
+            tools\updater\UpdaterAddonsTests.cs
+          if ($LASTEXITCODE -ne 0) { throw "updater addon test compile failed" }
+          & ./dist/UpdaterAddonsTests.exe
+          if ($LASTEXITCODE -ne 0) { throw "updater addon tests failed" }
+
       - name: Render and verify Windows dashboard
         shell: pwsh
         run: |

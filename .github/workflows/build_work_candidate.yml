@@ -276,13 +276,13 @@ jobs:
             --output dist/rogue_auto_rear_attestation.json
           if ($LASTEXITCODE -ne 0) { throw "AutoRear commit, branch or package attestation failed" }
 
-      - name: Package and attest Parallel LazyScript + LazyRogue addons
+      - name: Package and attest Parallel repo-managed addons
         if: github.ref_name == 'parallel'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           python tools/package_lazyrogue_addons.py --output dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip
-          if ($LASTEXITCODE -ne 0) { throw "Parallel LazyRogue addon packaging failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Parallel addon packaging failed" }
           @'
           import hashlib, json
           from pathlib import Path
