@@ -7,7 +7,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "src/LazyScript/upstream/Addons"
-ADDONS = ("LazyScript", "LazyRogue")
+ADDONS = ("LazyScript", "LazyRogue", "LazyWarlock")
 
 def main():
     ap = argparse.ArgumentParser()
