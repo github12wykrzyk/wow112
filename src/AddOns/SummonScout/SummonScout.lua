@@ -177,7 +177,7 @@ end
 
 local function slash(msg)
     msg = trim(msg)
-    local cmd, rest = string.match(msg, "^(%S+)%s*(.-)$")
+    local _, _, cmd, rest = string.find(msg, "^(%S+)%s*(.-)$")
     cmd = lower(cmd or "")
 
     if cmd == "on" then

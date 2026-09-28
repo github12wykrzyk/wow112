@@ -82,7 +82,7 @@ namespace WoW112Updater
                     !names.Contains("Interface/AddOns/LazyScript/LazyScript.toc") ||
                     !names.Contains("Interface/AddOns/LazyRogue/LazyRogue.toc") ||
                     !names.Contains("Interface/AddOns/LazyWarlock/LazyWarlock.toc") ||\n                    !names.Contains("Interface/AddOns/SummonScout/SummonScout.toc"))
-                    throw new InvalidOperationException("Niekompletna lub niespójna paczka LS/LazyRogue/LazyWarlock.");
+                    throw new InvalidOperationException("Niekompletna lub niespójna paczka LS/LazyRogue/LazyWarlock/SummonScout.");
                 return files;
             }
         }
