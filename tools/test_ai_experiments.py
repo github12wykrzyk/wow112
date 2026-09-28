@@ -16,7 +16,10 @@ class ExperimentRoutingTests(unittest.TestCase):
         self.entries = validate(self.data)
 
     def test_real_entries_validate(self):
-        self.assertEqual(len(self.entries), 3)
+        expected_ids = {row["id"] for row in self.data["experiments"]}
+        actual_ids = {row["id"] for row in self.entries}
+        self.assertEqual(actual_ids, expected_ids)
+        self.assertEqual(len(self.entries), len(self.data["experiments"]))
 
     def test_explicit_parallel_does_not_switch_to_work(self):
         self.assertEqual(route(self.entries, "MovementCore", "parallel")["branch"], "parallel")

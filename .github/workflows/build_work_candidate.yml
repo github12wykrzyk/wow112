@@ -29,6 +29,7 @@ on:
       - 'tools/package_current.py'
       - 'tools/verify_current.py'
       - 'tools/verify_candidate_source_scope.py'
+      - 'tools/test_ai_experiments.py'
       - 'tools/verify_runtime_artifacts.py'
       - 'tools/verify_verified_symbols.py'
       - 'tools/verify_candidate_package.py'
