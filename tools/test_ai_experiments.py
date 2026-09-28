@@ -41,7 +41,26 @@ class ExperimentRoutingTests(unittest.TestCase):
                 route(self.entries, "MovementCore", branch)
 
     def test_no_invented_game_test_or_package(self):
-        self.assertTrue(all(not e["tests"] and e["package"] is None for e in self.entries))
+        game_tests = [
+            event
+            for entry in self.entries
+            for event in entry["tests"]
+            if event["kind"] == "game"
+        ]
+        self.assertEqual(game_tests, [])
+
+        for entry in self.entries:
+            package = entry["package"]
+            if package is None:
+                continue
+            self.assertTrue(package["verified"])
+            self.assertEqual(package["commit"], entry["verified_commit"])
+            self.assertTrue(any(
+                event["kind"] == "package"
+                and event["result"] == "passed"
+                and event["commit"] == package["commit"]
+                for event in entry["tests"]
+            ))
 
     def test_unknown_dependency_fails(self):
         obj = copy.deepcopy(self.data)
