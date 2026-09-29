@@ -205,7 +205,8 @@ local WHISPER_PRICE_CUES = {
 }
 
 local WHISPER_EXACT_CODES = {
-    ["123"] = true
+    ["123"] = true,
+    ["+"] = true
 }
 
 -- Strong buyer intent only. Generic words such as "me", "inv" and "port"
