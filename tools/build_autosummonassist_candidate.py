@@ -188,7 +188,9 @@ def main():
             "defer_during_cast_or_channel": True,
             "implementation": "FrameScript Jump() on the existing in-process UI timer",
             "slash_command": "/antiafk on | off | toggle | status",
-            "slash_registration": "FrameScript_RegisterFunction 0x00704120; self-heals every 30s for /reload",
+            "slash_registration": "pure Lua SlashCmdList bridge installed via FrameScript_Execute 0x00704CD0; direct hash insertion/import when available; self-heals every 3s for /reload",
+            "slash_bridge_read": "FrameScript_GetText 0x00703BF0 reads W112_ANTIAFK_CMD on the game/UI timer",
+            "framescript_execute_abi": "__fastcall(const char*, const char*)",
             "shared_state_with_gui": True
         },
         "timer_period_ms": 25,

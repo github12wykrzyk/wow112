@@ -89,11 +89,11 @@
         "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "ce31ba687bdc962cc9aeef89d9f63404f298f41c",
+      "observed_head": "2c098bd1731c1444985d9b9a05a9cdae0e76023e",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v6 adds native /antiafk on|off|toggle|status commands sharing the exact same g_antiAfkEnabled state as the SUMMON GUI toggle. Four no-argument WoW Lua C functions are registered through exact-build FrameScript_RegisterFunction 0x00704120 after world readiness; the slash dispatcher is reinstalled every 30s so /reload can self-heal. Slash feedback is deferred to the next UI timer tick to avoid nested FrameScript execution. Also fixes v5 ordering so Anti-AFK remains active when AutoSummon itself is disabled. Anti-AFK remains per-process/background-safe, random 120-360s, and due jumps defer during cast/channel."
+      "notes": "v7 fixes live report that /antiafk was not recognized. v6 declared exact-build FrameScript_Execute 0x00704CD0 as __stdcall although the 5875 ABI is __fastcall; current MovementCore already proves the ECX/EDX call shape, and public ClassicAPI reverse engineering agrees. v7 removes native Lua C-function callbacks entirely. FrameScript_Execute installs a pure-Lua SlashCmdList bridge that writes W112_ANTIAFK_CMD, directly seeds hash_SlashCmdList and calls ChatFrame_ImportAllListsToHash when available. The existing UI timer reads commands through proven FrameScript_GetText 0x00703BF0, updates the same Anti-AFK state as GUI, clears the bridge and prints feedback. Registration self-heals every 3s after /reload."
     }
   ]
 }
