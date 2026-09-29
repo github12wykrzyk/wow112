@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.20"
+local ADDON_VERSION = "1.21"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -706,35 +706,12 @@ local function countSoulShards()
     return total
 end
 
-local function castRitualOnUnit(unit)
-    local slot, book = findSpellBookSlot("Ritual of Summoning")
-    local summonTarget = trim(UnitName(unit) or "")
-
-    SS.lastSummonRequestAt = now()
-    SS.lastSummonRequestName = summonTarget
-    SS.lastSummonError = ""
-
-    -- Keep this intentionally equivalent to a vanilla two-line macro:
-    -- /target <player>
-    -- /cast Ritual of Summoning
-    --
-    -- Do NOT restore the old target here. The 1.19 restore could race the client
-    -- before the cast was committed, producing target changes with no START.
-    if summonTarget ~= "" and TargetByName then
-        TargetByName(summonTarget, true)
-    elseif TargetUnit then
-        TargetUnit(unit)
-    end
-
-    if slot and CastSpell then
-        CastSpell(slot, book)
-        return true, slot, "target+spellbook"
-    elseif CastSpellByName then
-        CastSpellByName("Ritual of Summoning")
-        return true, slot, "target+by-name"
-    end
-
-    return false, slot, "none"
+local function nativeSummonBridgeRequest(name)
+    name = trim(name)
+    if name == "" then return false end
+    W112_AUTOSUMMON_ACK = ""
+    W112_AUTOSUMMON_REQUEST = name
+    return true
 end
 
 local function summonDestinationLabel()
@@ -776,6 +753,7 @@ local function clearActiveSummon()
     SS.summonActiveName = nil
     SS.summonActiveExpires = 0
     SS.summonActiveStarted = false
+    W112_AUTOSUMMON_REQUEST = ""
 end
 
 local function finishActiveSummon(name)
@@ -843,6 +821,8 @@ local function processPartySummon()
                 .. " | unit=" .. tostring(groupUnitByName(item.name) or "-")
                 .. " spellbook=" .. tostring(slot or "NONE")
                 .. " shards=" .. tostring(countSoulShards())
+                .. " nativeAck=" .. tostring(W112_AUTOSUMMON_ACK or "-")
+                .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0)
                 .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
             finishActiveSummon(item.name)
             return
@@ -850,20 +830,17 @@ local function processPartySummon()
 
         SS.summonActiveName = item.name
         SS.summonActiveStarted = false
-        SS.summonActiveExpires = now() + 1.25
+        SS.summonActiveExpires = now() + 1.75
 
-        local requested, slot, method = castRitualOnUnit(unit)
-        if requested then
-            item.phase = SS.summonActiveStarted and "casting" or "wait"
-            item.nextAt = now() + 1.25
+        if nativeSummonBridgeRequest(item.name) then
+            item.phase = "wait"
+            item.nextAt = now() + 1.75
             if SummonScoutDB.debug then
-                chat("summon cast requested -> " .. item.name
-                    .. " attempt " .. tostring(item.attempts)
-                    .. " method=" .. tostring(method)
-                    .. (slot and (" spellbook=" .. tostring(slot)) or ""))
+                chat("native summon request -> " .. item.name
+                    .. " attempt " .. tostring(item.attempts))
             end
         else
-            chat("cannot cast Ritual of Summoning: spell API unavailable")
+            chat("cannot queue native Ritual request")
             finishActiveSummon(item.name)
         end
         return
@@ -1247,6 +1224,9 @@ local function showSummonCheck()
         .. " target=" .. (target ~= "" and target or "-")
         .. " combat=" .. ((UnitAffectingCombat and UnitAffectingCombat("player")) and "YES" or "NO")
         .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
+    chat("summoncheck bridge request=" .. tostring(W112_AUTOSUMMON_REQUEST or "-")
+        .. " ack=" .. tostring(W112_AUTOSUMMON_ACK or "-")
+        .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0))
 end
 
 local function describeTest(message)
@@ -1845,6 +1825,9 @@ frame:RegisterEvent("CHAT_MSG_SPELL_FAILED_LOCALPLAYER")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
+        W112_AUTOSUMMON_REQUEST = ""
+        W112_AUTOSUMMON_ACK = ""
+        W112_AUTOSUMMON_NATIVE_COUNT = W112_AUTOSUMMON_NATIVE_COUNT or 0
         syncPartyRoster(true)
         chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
