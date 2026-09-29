@@ -1143,13 +1143,12 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
  * E only samples the cursor raycast and does not issue a ground-click command;
  * a type-1 terrain hit on E is experimental until confirmed in game.
  * Exact 5875 native ray picker: click-info pointer 0xB4B2BC, refresh 0x481F00,
- * hit type at +0x350 (1 = terrain, 2 = unit/object), world XYZ at +0x360
- * is validated for terrain, but EXPERIMENTAL for object hits. Do not silently
- * treat object XYZ as a verified safe ground landing point.
+ * hit type at +0x350 (1 = terrain, 2 = unit/object), world XYZ at +0x360.
+ * Tele E intentionally accepts terrain hits only; unit/object/NPC hits are
+ * rejected before any destination is captured or movement pulse is queued.
  * The patched project EXE has not yet been in-game validated for this path.
  * E is an explicit one-shot even during native walking, CTM transitions,
- * player position drift, casts or competing movement ownership. The pending
- * object hit is still refreshed for target stability before the pulse.
+ * player position drift, casts or competing movement ownership.
  * Retain world readiness, finite XYZ and cursor memory validation; a sent
  * heartbeat is not evidence that the server accepted the destination.
  */
@@ -1162,9 +1161,8 @@ static void W112_LoginGuardTick(BYTE*p,DWORD now)
 #define W112_TELE_MIN_D2        0.25f /* ignore same-point clicks */
 #define W112_TELE_SETTLE_MS     250u
 #define W112_TELE_TIMEOUT_MS    700u
-#define W112_TELE_OBJ_STABLE_D2  0.25f /* same cursor-hit XYZ within 0.5yd */
 /* Map lacks destination terrain Z. High launch + one native fall refresh,
-   exclusively for map clicks / map E; ordinary terrain/object E unchanged. */
+   exclusively for map clicks / map E; ordinary terrain E unchanged. */
 #define W112_MAP_TELE_RAISE_Z        250.0f
 #define W112_MAP_TELE_MIN_Z         500.0f
 #define W112_MAP_TELE_FALL_DELAY_MS  200u
@@ -1183,7 +1181,7 @@ __declspec(dllimport) DWORD __stdcall VirtualQuery(const void*,void*,DWORD);
 typedef void (__fastcall *W112_TeleRefreshFn)(void*);
 static volatile DWORD g_stepEnabled=0u,g_stepKey6=0u,g_teleKeyWasDown=0u;
 static DWORD g_teleWaitSince=0u,g_teleWaitLast=0u;
-static DWORD g_telePending=0u,g_telePendingHitType=0u,g_telePendingFromMap=0u;
+static DWORD g_telePending=0u,g_telePendingFromMap=0u;
 static volatile DWORD g_mapHighEnabled=1u; /* independent saved GUI toggle */
 static DWORD g_mapFallPending=0u,g_mapFallSentAt=0u;
 static DWORD g_mapBackKeyDown=0u,g_mapBackKeyAt=0u;
@@ -1194,13 +1192,11 @@ static void W112_CancelTeleForBlink(void){
  g_mapFallPending=0u;
 }
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
-static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim GROUND/OBJECT + press E (walking/CTM allowed); object XYZ experimental; F7 abort') end";
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim TERRAIN + press E (walking/CTM allowed); unit/object/NPC hits are ignored; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
 static const char g_mapSentChat[]="if WorldMapFrame and WorldMapFrame:IsShown() then HideUIPanel(WorldMapFrame) end; if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r teleport pulse sent; optional S backstep queued; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; preparing one pulse (walking/CTM allowed)') end";
-static const char g_teleObjectChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r OBJECT hit: XYZ not validated as ground; experimental pulse only after stable recheck') end";
-static const char g_teleObjectAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OBJECT hit changed/lost or XYZ invalid; no pulse') end";
 static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: second E / world unavailable / timeout / invalid XYZ; no pulse') end";
 static const char g_teleTooCloseChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r aim at a different point (minimum 0.5 units away)') end";
 /* Every E press gets one stage-specific report; never claim an
@@ -1208,8 +1204,8 @@ static const char g_teleTooCloseChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_
 static const char g_teleBlockedChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r unavailable: teleport disabled or world not ready') end";
 static const char g_teleChatFocusChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r blocked: chat edit box') end";
 static const char g_teleMemoryChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele E]|r cursor raycast memory unavailable') end";
-/* A non-terrain hit may mean no intersection (0), world hit (1) or object (2);
- * report raw pre/post values before changing offsets or treating it as ground. */
+/* A non-terrain hit may mean no intersection (0) or unit/object/NPC (2).
+ * Report raw pre/post values, but never use it as a teleport destination. */
 static void W112_TeleReportHit(DWORD before,DWORD after)
 {
     char script[220];char*q=script;
@@ -1221,10 +1217,6 @@ static void W112_TeleReportHit(DWORD before,DWORD after)
 static const char g_teleBadPosChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff5555[Tele E]|r invalid hit/player XYZ') end";
 
 static DWORD W112_TeleRangeValid(DWORD addr,DWORD size,DWORD executable);
-/* Type 2 identifies a unit/object, but +0x360 is only independently
- * documented for terrain. Enable type-2 as a user-requested experiment,
- * never claim its XYZ to be a verified ground or collision-safe position.
- * Recheck type and XYZ after settling to reject stale/changing hits. */
 /* Diagnostic mode: absolute client player XYZ and cursor XYZ are sampled
  * in the SAME UI tick. Consecutive-click deltas tell a moving player/camera
  * apart from a changing ground/object point. Type 2 is NOT trusted as terrain.
@@ -1378,33 +1370,6 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
         if(!g_telePendingFromMap&&W112_TeleMapShown()){
             g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
         }
-        /* Unlike a terrain hit, type-2 XYZ has unverified provenance.
-         * Refresh after the short settle interval and require a stable object
-         * cursor point; player movement does not cancel the pending pulse. */
-        if(g_telePendingHitType==2u){
-            if(!W112_TeleRangeValid(W112_TELE_CLICK_INFO_PTR,4u,0u)||
-               !W112_TeleRangeValid(W112_TELE_REFRESH_FN,16u,1u)){
-                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
-            }
-            info=*(volatile DWORD*)W112_TELE_CLICK_INFO_PTR;
-            if(!Ptr((void*)info)||
-               !W112_TeleRangeValid(info,W112_TELE_HIT_POS_OFF+12u,0u)){
-                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
-            }
-            ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
-            hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
-            if(hitType!=2u){
-                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
-            }
-            x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
-            y=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+4u);
-            z=*(volatile float*)(info+W112_TELE_HIT_POS_OFF+8u);
-            dx=x-g_teleDestX;dy=y-g_teleDestY;dz=z-g_teleDestZ;
-            if(!W112_Q_PosValid(x,y,z)||
-               dx*dx+dy*dy+dz*dz>W112_TELE_OBJ_STABLE_D2){
-                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleObjectAbortChat);return;
-            }
-        }
         /* Map-only backstep follows on the timer once the map has closed.
            Do not fake an in-memory yaw here: it never generated actual native
            key-driven movement or a falling transition in the game test. */
@@ -1442,14 +1407,10 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     hitBefore=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
     ((W112_TeleRefreshFn)W112_TELE_REFRESH_FN)((void*)info);
     hitType=*(volatile DWORD*)(info+W112_TELE_HIT_TYPE_OFF);
-    if(hitType!=1u&&hitType!=2u){
+    if(hitType!=1u){
         W112_TeleReportHit(hitBefore,hitType);
         g_telePrevSampleValid=0u;
         return;
-    }
-    if(hitType==2u){
-        W112_TeleReportPoint(info,p,hitType);
-        DebugChat(g_teleObjectChat);
     }
     if(W112_TELE_DIAG_ONLY){W112_TeleReportPoint(info,p,hitType);return;}
     x=*(volatile float*)(info+W112_TELE_HIT_POS_OFF);
@@ -1467,7 +1428,6 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     /* Explicit E is independent of native CTM state and walking flags.
      * Do not issue unverified native CTM STOP commands. */
     g_teleDestX=x;g_teleDestY=y;g_teleDestZ=z;
-    g_telePendingHitType=hitType;
     g_telePending=1u;g_stepActive=1u;g_teleWaitSince=now;g_teleWaitLast=now;
     DebugChat(g_teleStopChat);
 }
@@ -1627,7 +1587,7 @@ static void W112_MapTeleTick(BYTE*p,DWORD now)
   }
   g_teleDestX=x;g_teleDestY=y;g_teleDestZ=launchZ;
  }
- g_telePendingHitType=1u;g_telePendingFromMap=1u;
+ g_telePendingFromMap=1u;
  g_telePending=1u;g_stepActive=1u;
  g_teleWaitSince=now;g_teleWaitLast=now;
  DebugChat(g_mapCapturedChat);
