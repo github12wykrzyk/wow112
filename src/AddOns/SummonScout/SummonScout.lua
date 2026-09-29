@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.36"
+local ADDON_VERSION = "1.37"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -1164,6 +1164,7 @@ local function tryImmediateInvite(name, loc)
     SS.recent[lower(name)] = t
     SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
     InviteByName(name)
+    notePendingManualInvite(name)
     recordInvite(name, loc)
     chat("invite -> " .. name .. " [" .. (loc and loc.label or "?") .. "]")
     return true
@@ -1190,6 +1191,7 @@ local function tryWhisperInvite(name, loc)
     SS.recent[key] = t
     SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
     InviteByName(name)
+    notePendingManualInvite(name)
     recordInvite(name, loc)
     chat("whisper invite -> " .. name .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
     return true, "invited"
@@ -1376,6 +1378,7 @@ local function processQueue()
     SS.recent[lower(item.name)] = now()
     SS.nextInviteAt = now() + (SummonScoutDB.inviteDelay or 0.8)
     InviteByName(item.name)
+    notePendingManualInvite(item.name)
     recordInvite(item.name, item.locationId and LOCATION_BY_ID[item.locationId] or nil)
     chat("invite -> " .. item.name .. " [" .. (item.locationLabel or "?") .. "]")
 end
