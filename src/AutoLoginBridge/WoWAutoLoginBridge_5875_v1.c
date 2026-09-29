@@ -53,6 +53,16 @@ static void wipe(void *p,DWORD n)
     while(b && n--) *b++=0;
 }
 
+/* CRT-less build: clang may lower small structure/array copies to memcpy. */
+void *memcpy(void *dst,const void *src,size_t n)
+{
+    BYTE *d=(BYTE*)dst;
+    const BYTE *s=(const BYTE*)src;
+    size_t i;
+    for(i=0;i<n;++i) d[i]=s[i];
+    return dst;
+}
+
 static int guard_ok(void)
 {
     static const BYTE sig[]={
