@@ -412,7 +412,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_HEIGHT 660
 #define UI_CONTENT_X 170
 #define UI_SIDEBAR_W 180
-#define UI_MAX_PAGE_CONTROLS 14u
+#define UI_MAX_PAGE_CONTROLS 20u
 
 /* COLORREF = 0x00BBGGRR. The Parallel panel intentionally stays GDI-only:
    no external UI runtime, no new game hook, and negligible idle cost. */
@@ -428,6 +428,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_TAB_STATUS 2u
 #define UI_TAB_REAR 3u /* internal details page, same root HWND */
 #define UI_TAB_SUMMON 4u
+#define UI_TAB_PATROL 5u
 
 typedef void* HFONT;
 typedef void* HBRUSH;
@@ -466,9 +467,9 @@ static HBRUSH g_ui_sidebar_brush=NULL,g_ui_content_brush=NULL;
 static HBRUSH g_ui_button_brush=NULL,g_ui_press_brush=NULL,g_ui_accent_brush=NULL;
 static HWND g_ui_brand=NULL,g_ui_build=NULL,g_ui_hotkey=NULL;
 static HWND g_ui_sidebar_gather=NULL,g_ui_sidebar_chests=NULL;
-static HWND g_ui_tabs[4]={NULL,NULL,NULL,NULL};
-static HWND g_ui_pages[5][UI_MAX_PAGE_CONTROLS];
-static DWORD g_ui_page_count[5]={0u,0u,0u,0u,0u};
+static HWND g_ui_tabs[5]={NULL,NULL,NULL,NULL,NULL};
+static HWND g_ui_pages[6][UI_MAX_PAGE_CONTROLS];
+static DWORD g_ui_page_count[6]={0u,0u,0u,0u,0u,0u};
 static DWORD g_ui_current_tab=UI_TAB_ESP;
 static HWND g_ui_checks[5]={NULL,NULL,NULL,NULL,NULL};
 static HWND g_ui_speedfloor_check=NULL;
@@ -487,6 +488,8 @@ static HWND g_ui_summon_check=NULL,g_ui_summon_antiafk_check=NULL;
 static HWND g_ui_summon_loaded=NULL,g_ui_summon_candidate=NULL;
 static HWND g_ui_summon_guid=NULL,g_ui_summon_scan=NULL,g_ui_summon_nearest=NULL;
 static HWND g_ui_summon_antiafk_state=NULL;
+static HWND g_ui_patrol_check=NULL,g_ui_patrol_record_check=NULL;
+static HWND g_ui_patrol_route=NULL,g_ui_patrol_config=NULL,g_ui_patrol_stats=NULL,g_ui_patrol_state=NULL;
 /* Gather is a subview of the existing GUI: no new game-window hook. */
 static HWND g_ui_gather_controls[40]={NULL};
 static DWORD g_ui_gather_control_pages[40]={0u};
@@ -696,6 +699,77 @@ static void ui_sync_summon(void) {
         p=app_str(p," | say calls ");p=app_u32(p,sayCalls.u32);
         p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
         *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
+    }
+}
+
+
+static BOOL ui_core_set_u32(DWORD id,DWORD bits) {
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_CORE_DLL,89u);
+    W112_ControlValueV1 v;
+    if(!m)return FALSE;v.u32=bits;return m->set_value(id,&v)?TRUE:FALSE;
+}
+static void ui_sync_patrol(void) {
+    static const char* states[11]={
+        "OFF","NO ROUTE","RECORDING","WALKING","PAUSED: PICK POCKET",
+        "PAUSED: COMBAT","PAUSED: OTHER MOVEMENT","WRONG AREA",
+        "STOPPED: STUCK","READY","SAVED"
+    };
+    W112_ControlValueV1 enabled,recording,slot,width,spacing,timeout,pauseCombat,resumePP;
+    W112_ControlValueV1 points,current,laps,ppPauses,stucks,state,ctm,loaded,saveOk;
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_CORE_DLL,89u);
+    char buf[260],*p;
+    if(!m){
+        if(g_ui_patrol_check)SendMessageA(g_ui_patrol_check,UI_SETCHECK,0u,0);
+        if(g_ui_patrol_record_check)SendMessageA(g_ui_patrol_record_check,UI_SETCHECK,0u,0);
+        if(g_ui_patrol_state)SetWindowTextA(g_ui_patrol_state,"PATROL: MovementCore control API not ready");
+        return;
+    }
+    if(!m->get_value(71u,&enabled))enabled.u32=0u;
+    if(!m->get_value(72u,&recording))recording.u32=0u;
+    if(!m->get_value(75u,&slot))slot.u32=1u;
+    if(!m->get_value(76u,&width))width.u32=100u;
+    if(!m->get_value(77u,&spacing))spacing.u32=400u;
+    if(!m->get_value(78u,&timeout))timeout.u32=2500u;
+    if(!m->get_value(79u,&pauseCombat))pauseCombat.u32=1u;
+    if(!m->get_value(80u,&resumePP))resumePP.u32=1u;
+    if(!m->get_value(81u,&points))points.u32=0u;
+    if(!m->get_value(82u,&current))current.u32=0u;
+    if(!m->get_value(83u,&laps))laps.u32=0u;
+    if(!m->get_value(84u,&ppPauses))ppPauses.u32=0u;
+    if(!m->get_value(85u,&stucks))stucks.u32=0u;
+    if(!m->get_value(86u,&state))state.u32=0u;
+    if(!m->get_value(87u,&ctm))ctm.u32=0u;
+    if(!m->get_value(88u,&loaded))loaded.u32=0u;
+    if(!m->get_value(89u,&saveOk))saveOk.u32=0u;
+    if(g_ui_patrol_check)SendMessageA(g_ui_patrol_check,UI_SETCHECK,enabled.u32?1u:0u,0);
+    if(g_ui_patrol_record_check)SendMessageA(g_ui_patrol_record_check,UI_SETCHECK,recording.u32?1u:0u,0);
+    if(g_ui_patrol_state){
+        p=buf;p=app_str(p,"PATROL: ");
+        p=app_str(p,state.u32<11u?states[state.u32]:"UNKNOWN");
+        p=app_str(p," | loaded ");p=app_str(p,loaded.u32?"YES":"NO");
+        p=app_str(p," | save ");p=app_str(p,saveOk.u32?"OK":"-");*p=0;
+        SetWindowTextA(g_ui_patrol_state,buf);
+    }
+    if(g_ui_patrol_route){
+        p=buf;p=app_str(p,"Route slot ");p=app_u32(p,slot.u32);
+        p=app_str(p," | waypoint ");p=app_u32(p,current.u32);
+        p=app_str(p," / ");p=app_u32(p,points.u32);*p=0;
+        SetWindowTextA(g_ui_patrol_route,buf);
+    }
+    if(g_ui_patrol_config){
+        p=buf;p=app_str(p,"Random +/-");p=ui_app_centi(p,width.u32);
+        p=app_str(p," yd | spacing ");p=ui_app_centi(p,spacing.u32);
+        p=app_str(p," yd | stuck ");p=app_u32(p,timeout.u32);p=app_str(p," ms");
+        p=app_str(p," | combat ");p=app_str(p,pauseCombat.u32?"PAUSE":"IGNORE");
+        p=app_str(p," | PP ");p=app_str(p,resumePP.u32?"AUTO RESUME":"HOLD");*p=0;
+        SetWindowTextA(g_ui_patrol_config,buf);
+    }
+    if(g_ui_patrol_stats){
+        p=buf;p=app_str(p,"Laps ");p=app_u32(p,laps.u32);
+        p=app_str(p," | PP pauses ");p=app_u32(p,ppPauses.u32);
+        p=app_str(p," | stuck ");p=app_u32(p,stucks.u32);
+        p=app_str(p," | CTM calls ");p=app_u32(p,ctm.u32);*p=0;
+        SetWindowTextA(g_ui_patrol_stats,buf);
     }
 }
 
@@ -983,7 +1057,7 @@ __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCST
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
-static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u,66u,70u};
+static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u,66u,70u,75u,76u,77u,78u,79u,80u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
 struct UiProfileModule {
@@ -992,11 +1066,11 @@ struct UiProfileModule {
     const DWORD *ids;
     DWORD count;
     BOOL restored;
-    DWORD last[35];
-    BYTE seen[35];
+    DWORD last[48];
+    BYTE seen[48];
 };
 static struct UiProfileModule g_ui_profile_modules[]={
-    {PAR_CORE_DLL,70u,g_ui_profile_core_ids,35u,FALSE,{0},{0}},
+    {PAR_CORE_DLL,89u,g_ui_profile_core_ids,41u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
@@ -1142,22 +1216,24 @@ static void ui_profile_sync(void) {
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
    requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
-    static const char *tab_names[4][4]={
-        {"ESP","ROGUE","STATUS","SUMMON"},
-        {"ESP","ROGUE","STATUS","SUMMON"},
-        {"ESP","ROGUE","STATUS","SUMMON"},
-        {"ESP","ROGUE","STATUS","SUMMON"}
+    static const char *tab_names[5][5]={
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL"}
     };
     DWORD t,i;
-    DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:(page==UI_TAB_SUMMON?3u:page);
-    if(page>UI_TAB_SUMMON)return;
+    DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:
+        (page==UI_TAB_SUMMON?3u:(page==UI_TAB_PATROL?4u:page));
+    if(page>UI_TAB_PATROL)return;
     g_ui_current_tab=page;
     g_ui_gather_open=0u;
     for(i=0u;i<g_ui_gather_count;++i)
         if(g_ui_gather_controls[i])ShowWindow(g_ui_gather_controls[i],SW_HIDE);
-    for(t=0u;t<4u;++t)
-        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
     for(t=0u;t<5u;++t)
+        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
+    for(t=0u;t<6u;++t)
         for(i=0u;i<g_ui_page_count[t];++i) {
             HWND control=g_ui_pages[t][i];
             if(control)ShowWindow(control,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
@@ -1166,24 +1242,26 @@ static void ui_set_page(DWORD page) {
     else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();ui_sync_wsg();}
     else if(page==UI_TAB_REAR)ui_sync_rear();
     else if(page==UI_TAB_SUMMON)ui_sync_summon();
+    else if(page==UI_TAB_PATROL)ui_sync_patrol();
     else ui_sync_rogue();
-    for(t=0u;t<4u;++t)if(g_ui_tabs[t])InvalidateRect(g_ui_tabs[t],NULL,TRUE);
+    for(t=0u;t<5u;++t)if(g_ui_tabs[t])InvalidateRect(g_ui_tabs[t],NULL,TRUE);
     if(g_ui_sidebar_gather)InvalidateRect(g_ui_sidebar_gather,NULL,TRUE);
     if(g_ui_sidebar_chests)InvalidateRect(g_ui_sidebar_chests,NULL,TRUE);
 }
 static void ui_add_to_page(DWORD page,HWND control) {
-    if(page>UI_TAB_SUMMON || !control)return;
+    if(page>UI_TAB_PATROL || !control)return;
     if(g_ui_page_count[page]<UI_MAX_PAGE_CONTROLS)
         g_ui_pages[page][g_ui_page_count[page]++]=control;
 }
 static BOOL ui_is_sidebar_id(DWORD id) {
-    return id==201u||id==202u||id==203u||id==228u||id==240u||id==241u;
+    return id==201u||id==202u||id==203u||id==228u||id==231u||id==240u||id==241u;
 }
 static BOOL ui_sidebar_id_active(DWORD id) {
     if(id==201u)return g_ui_current_tab==UI_TAB_ESP && !g_ui_gather_open;
     if(id==202u)return g_ui_current_tab==UI_TAB_ROGUE && !g_ui_gather_open;
     if(id==203u)return g_ui_current_tab==UI_TAB_STATUS || g_ui_current_tab==UI_TAB_REAR;
     if(id==228u)return g_ui_current_tab==UI_TAB_SUMMON;
+    if(id==231u)return g_ui_current_tab==UI_TAB_PATROL;
     if(id==240u)return g_ui_current_tab==UI_TAB_ROGUE && g_ui_gather_open && g_ui_gather_page!=1u;
     if(id==241u)return g_ui_current_tab==UI_TAB_ROGUE && g_ui_gather_open && g_ui_gather_page==1u;
     return FALSE;
@@ -1308,6 +1386,37 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         }
         if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
         if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}
+        if(id==231u){ui_set_page(UI_TAB_PATROL);return 0;}
+        if(id==242u){ui_work_pp_flip(PAR_CORE_DLL,89u,71u);ui_sync_patrol();return 0;}
+        if(id==243u){ui_work_pp_flip(PAR_CORE_DLL,89u,72u);ui_sync_patrol();return 0;}
+        if(id==244u){ui_core_set_u32(73u,1u);ui_sync_patrol();return 0;}
+        if(id==245u){ui_core_set_u32(74u,1u);ui_sync_patrol();return 0;}
+        if(id==246u){
+            if(ui_work_pp_get(PAR_CORE_DLL,89u,75u,&value)){
+                value.u32=value.u32>=3u?1u:value.u32+1u;ui_core_set_u32(75u,value.u32);
+            }
+            ui_sync_patrol();ui_profile_sync();return 0;
+        }
+        if(id==247u||id==248u){
+            if(ui_work_pp_get(PAR_CORE_DLL,89u,76u,&value)){
+                int v=value.i32+(id==247u?-25:25);if(v<0)v=0;if(v>150)v=150;ui_core_set_u32(76u,(DWORD)v);
+            }
+            ui_sync_patrol();ui_profile_sync();return 0;
+        }
+        if(id==249u||id==250u){
+            if(ui_work_pp_get(PAR_CORE_DLL,89u,77u,&value)){
+                int v=value.i32+(id==249u?-50:50);if(v<200)v=200;if(v>1000)v=1000;ui_core_set_u32(77u,(DWORD)v);
+            }
+            ui_sync_patrol();ui_profile_sync();return 0;
+        }
+        if(id==251u||id==252u){
+            if(ui_work_pp_get(PAR_CORE_DLL,89u,78u,&value)){
+                int v=value.i32+(id==251u?-250:250);if(v<1000)v=1000;if(v>8000)v=8000;ui_core_set_u32(78u,(DWORD)v);
+            }
+            ui_sync_patrol();ui_profile_sync();return 0;
+        }
+        if(id==253u){ui_work_pp_flip(PAR_CORE_DLL,89u,79u);ui_sync_patrol();ui_profile_sync();return 0;}
+        if(id==254u){ui_work_pp_flip(PAR_CORE_DLL,89u,80u);ui_sync_patrol();ui_profile_sync();return 0;}
         if(id==240u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(0u);return 0;}
         if(id==241u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(1u);return 0;}
         if(id==229u){
@@ -1459,7 +1568,8 @@ static BOOL ui_create(HWND game) {
     g_ui_sidebar_gather=ui_button(g_parallel_ui_hwnd,"GATHER",18,204,144,40,240u,FALSE);
     g_ui_sidebar_chests=ui_button(g_parallel_ui_hwnd,"CHESTS",18,250,144,40,241u,FALSE);
     g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON",18,296,144,40,228u,FALSE);
-    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",18,342,144,40,203u,FALSE);
+    g_ui_tabs[4]=ui_button(g_parallel_ui_hwnd,"PATROL",18,342,144,40,231u,FALSE);
+    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",18,388,144,40,203u,FALSE);
 
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
         "ESP / PLAYERS",36,137,670,37,TRUE));
@@ -1651,6 +1761,52 @@ static BOOL ui_create(HWND game) {
     g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,600,665,32,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_state);
 
+
+    ui_add_to_page(UI_TAB_PATROL,ui_label(g_parallel_ui_hwnd,
+        "PATROL / ROUTE RECORDER",36,137,665,40,TRUE));
+    ui_add_to_page(UI_TAB_PATROL,ui_label(g_parallel_ui_hwnd,
+        "Record one manual loop, save it, then CTM patrol yields automatically to AutoPP and other movement.",
+        42,181,665,36,FALSE));
+    g_ui_patrol_check=ui_button(g_parallel_ui_hwnd,
+        "PATROL ON / OFF",46,226,321,40,242u,TRUE);
+    ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_check);
+    g_ui_patrol_record_check=ui_button(g_parallel_ui_hwnd,
+        "RECORD ROUTE",389,226,322,40,243u,TRUE);
+    ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_record_check);
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "FINISH + SAVE",46,278,205,40,244u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "CLEAR ROUTE",269,278,205,40,245u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "ROUTE SLOT 1 -> 2 -> 3",492,278,219,40,246u,FALSE));
+    g_ui_patrol_state=ui_label(g_parallel_ui_hwnd,"",46,332,665,31,FALSE);
+    ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_state);
+    g_ui_patrol_route=ui_label(g_parallel_ui_hwnd,"",46,370,665,31,FALSE);
+    ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_route);
+    g_ui_patrol_config=ui_label(g_parallel_ui_hwnd,"",46,408,665,31,FALSE);
+    ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_config);
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "RANDOM -",46,450,150,38,247u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "RANDOM +",210,450,150,38,248u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "SPACING -",374,450,150,38,249u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "SPACING +",538,450,173,38,250u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "STUCK -",46,500,150,38,251u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "STUCK +",210,500,150,38,252u,FALSE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "PAUSE IN COMBAT",374,500,160,38,253u,TRUE));
+    ui_add_to_page(UI_TAB_PATROL,ui_button(g_parallel_ui_hwnd,
+        "AUTO RESUME PP",548,500,163,38,254u,TRUE));
+    g_ui_patrol_stats=ui_label(g_parallel_ui_hwnd,"",46,553,665,31,FALSE);
+    ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_stats);
+    ui_add_to_page(UI_TAB_PATROL,ui_label(g_parallel_ui_hwnd,
+        "Route files: PatrolRoute_1/2/3.w112 in the game folder. Patrol starts OFF after launch.",
+        46,593,665,32,FALSE));
+
     /* The detailed counters occupy their own view: no overlapping controls,
        no scroll subclass, no changes to Insert, ESP hook or settings parents. */
     ui_add_to_page(UI_TAB_REAR,ui_label(g_parallel_ui_hwnd,
@@ -1717,6 +1873,7 @@ static void parallel_gui_tick(void) {
             ui_sync_rogue();ui_sync_rear();ui_sync_wsg();
         } else if(g_ui_current_tab==UI_TAB_REAR)ui_sync_rear();
         else if(g_ui_current_tab==UI_TAB_SUMMON)ui_sync_summon();
+        else if(g_ui_current_tab==UI_TAB_PATROL)ui_sync_patrol();
         else if(g_ui_current_tab==UI_TAB_ESP)ui_sync_wsg();
         if(g_ui_gather_open)ui_sync_gather();
     }
@@ -1730,8 +1887,8 @@ static void parallel_gui_destroy(void) {
         DestroyWindow(g_parallel_ui_hwnd);
     }
     g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
-    for(page=0u;page<5u;++page) {
-        if(page<4u)g_ui_tabs[page]=NULL;
+    for(page=0u;page<6u;++page) {
+        if(page<5u)g_ui_tabs[page]=NULL;
         g_ui_page_count[page]=0u;
     }
     for(page=0u;page<5u;++page)g_ui_checks[page]=NULL;
@@ -1746,6 +1903,8 @@ static void parallel_gui_destroy(void) {
     g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;
     g_ui_summon_guid=NULL;g_ui_summon_scan=NULL;g_ui_summon_nearest=NULL;
     g_ui_summon_antiafk_state=NULL;
+    g_ui_patrol_check=NULL;g_ui_patrol_record_check=NULL;
+    g_ui_patrol_route=NULL;g_ui_patrol_config=NULL;g_ui_patrol_stats=NULL;g_ui_patrol_state=NULL;
     for(page=0u;page<40u;++page){g_ui_gather_controls[page]=NULL;g_ui_gather_control_pages[page]=0u;}
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;

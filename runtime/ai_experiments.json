@@ -136,6 +136,28 @@
       "tests": [],
       "package": null,
       "notes": "Per-launch AUTO POSTAĆ 1 toggle in MULTIBOX. Updater passes WOW112_AUTOCHAR_FIRST=1 only to selected child processes. AutoLoginBridge waits for successful native login, then on the WoW window thread executes guarded GlueXML: CharacterSelect_SelectCharacter(1,1) followed by CharacterSelect_EnterWorld(). No SendInput/focus. 60s fail-safe window; one-shot Lua flag prevents repeated EnterWorld. Exact project evidence: current PARALLEL uses FrameScript_Execute 0x00704CD0 and object-manager 0x00B41414; external Vanilla GlueXML confirms first list slot is index 1. LOW reliability follow-up: readiness now keys off CharacterSelectUI (the actual GlueXML screen), not the CharacterSelect model frame. Selection and EnterWorld are split into two UI-thread polls; EnterWorld waits until CharacterSelect.selectedIndex==1 after UPDATE_SELECTED_CHARACTER. Poll window increased from 60s to 120s for slow LOW launches."
+    },
+    {
+      "id": "patrol-route-5875",
+      "branch": "feature/patrol-route",
+      "modules": [
+        "MovementCore",
+        "WoWPlayerESP"
+      ],
+      "dependencies": [
+        "parallel-rogue"
+      ],
+      "shared_resources": [
+        "wow5875 native CGPlayer_C__ClickToMove 0x00611130",
+        "MovementCore coordination flags / game timer",
+        "Parallel PlayerESP W112_CONTROL_API_V1 GUI"
+      ],
+      "status": "in_progress",
+      "observed_head": "ee789fb802d8d30eae013f130c72486a9b2b84dd",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Native 5875 CTM waypoint patrol with three persistent route slots, GUI recording/save/clear, correlated lateral randomization, stuck recovery, combat/cast/PP arbitration, and AutoPP pause while recording. Feature branch is based on current parallel; in-game CTM/server behavior remains unverified until candidate test."
     }
   ]
 }
