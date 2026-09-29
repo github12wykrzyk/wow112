@@ -1,4 +1,4 @@
-# SummonScout 1.17
+# SummonScout 1.18
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -246,3 +246,17 @@ The 10 second cooldown is applied to **outgoing summon-status whispers**, not to
 - `UI_ERROR_MESSAGE` and `CHAT_MSG_SPELL_FAILED_LOCALPLAYER` are captured immediately after auto-summon attempts and printed as `summon rejected -> ...`.
 - `/ssi summoncheck` reports spellbook presence, cast API availability, Soul Shards, queued target, resolved party/raid unit, current target, combat state and last summon error.
 - Updater `Aktualizuj i uruchom` no longer silently skips file updates when WoW is already open; the normal close-game/update flow is used instead.
+
+
+## 1.18 use the proven LazyScript cast path
+
+The previous build proved roster detection and targeting, but `CastSpellByName` could silently return without generating `SPELLCAST_START` on this 5875 client. SummonScout now mirrors the casting primitive already used successfully by the repository's LazyScript implementation:
+
+`GetSpellName(index, "spell")` -> resolve Ritual of Summoning -> `CastSpell(index, "spell")`.
+
+`CastSpellByName` is now fallback only when the spellbook path is unavailable.
+
+Diagnostics were also corrected for Vanilla:
+- Soul Shards are counted by scanning bags for item 6265 instead of using unavailable `GetItemCount`.
+- `/ssi summoncheck` resolves `groupUnit` from the current target when the summon queue has already been exhausted.
+- final retry failure includes group unit, spellbook slot, shard count and last client error.

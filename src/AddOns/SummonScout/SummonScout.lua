@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.17"
+local ADDON_VERSION = "1.18"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -697,14 +697,16 @@ local function castRitualOnUnit(unit)
     SS.lastSummonRequestName = trim(UnitName(unit) or UnitName("target") or "")
     SS.lastSummonError = ""
 
-    if CastSpellByName then
-        CastSpellByName("Ritual of Summoning")
-        requested = true
-        method = "by-name"
-    elseif slot and CastSpell then
+    -- This mirrors the proven LazyScript 1.12 casting path in this repo:
+    -- resolve the spellbook index and call CastSpell(index, "spell").
+    if slot and CastSpell then
         CastSpell(slot, book)
         requested = true
         method = "spellbook"
+    elseif CastSpellByName then
+        CastSpellByName("Ritual of Summoning")
+        requested = true
+        method = "by-name-fallback"
     end
 
     if requested and SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
@@ -831,7 +833,12 @@ local function processPartySummon()
 
         item.attempts = (item.attempts or 0) + 1
         if item.attempts > 3 then
-            chat("summon failed after retries: " .. item.name)
+            local slot = findSpellBookSlot("Ritual of Summoning")
+            chat("summon failed after retries: " .. item.name
+                .. " | unit=" .. tostring(groupUnitByName(item.name) or "-")
+                .. " spellbook=" .. tostring(slot or "NONE")
+                .. " shards=" .. tostring(countSoulShards())
+                .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
             finishActiveSummon(item.name)
             return
         end
@@ -1218,12 +1225,30 @@ local function clearStats()
     chat("request statistics and recent log cleared")
 end
 
+local function countSoulShards()
+    local total = 0
+    if not GetContainerNumSlots or not GetContainerItemLink then return -1 end
+    local bag, slot
+    for bag = 0, 4 do
+        local size = GetContainerNumSlots(bag) or 0
+        for slot = 1, size do
+            local link = GetContainerItemLink(bag, slot)
+            if link and string.find(link, "|Hitem:6265:", 1, true) then
+                local _, count = GetContainerItemInfo(bag, slot)
+                total = total + (tonumber(count) or 1)
+            end
+        end
+    end
+    return total
+end
+
 local function showSummonCheck()
     local slot = findSpellBookSlot("Ritual of Summoning")
     local queued = table.getn(SS.summonQueue) > 0 and SS.summonQueue[1].name or "-"
     local target = trim(UnitName("target") or "")
-    local targetUnit = queued ~= "-" and groupUnitByName(queued) or nil
-    local shards = GetItemCount and GetItemCount(6265) or -1
+    local probeName = queued ~= "-" and queued or target
+    local targetUnit = probeName ~= "" and groupUnitByName(probeName) or nil
+    local shards = countSoulShards()
     chat("summoncheck v" .. ADDON_VERSION
         .. " spellbook=" .. tostring(slot or "NONE")
         .. " byName=" .. (CastSpellByName and "YES" or "NO")

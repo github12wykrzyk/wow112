@@ -2,7 +2,7 @@
 ## Title: SummonScout
 ## Notes: Watches World chat for players asking for a summon and automatically invites them.
 ## Author: wow112
-## Version: 1.17
+## Version: 1.18
 ## SavedVariables: SummonScoutDB
 
 SummonScout.lua
