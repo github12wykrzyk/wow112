@@ -179,9 +179,9 @@ static void apply_low_spec(void)
         "W112_LOW_SPEC_APPLIED=1;"
         "W112_LOW_SPEC_KEYS={'farclip','groundEffectDensity','groundEffectDist','detailDoodadAlpha','smallcull','skycloudlod','particleDensity','extShadowQuality','weatherDensity','specular','anisotropic','gxMultisample'};"
         "W112_LOW_SPEC_OLD={};local v={'177','16','1','1','2','0','0.3','0','0','0','1','1'};"
-        "for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];W112_LOW_SPEC_OLD[i]=GetCVar(k);SetCVar(k,v[i]) end;"
+        "for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];local ok,x=pcall(GetCVar,k);if ok and x then local sok=pcall(SetCVar,k,v[i]);if sok then W112_LOW_SPEC_OLD[i]=x end end end;"
         "W112_LOW_SPEC_FRAME=CreateFrame('Frame');W112_LOW_SPEC_FRAME:RegisterEvent('PLAYER_LOGOUT');"
-        "W112_LOW_SPEC_FRAME:SetScript('OnEvent',function() if W112_LOW_SPEC_OLD then for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];local x=W112_LOW_SPEC_OLD[i];if x then SetCVar(k,x) end end end end);"
+        "W112_LOW_SPEC_FRAME:SetScript('OnEvent',function() if W112_LOW_SPEC_OLD then for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];local x=W112_LOW_SPEC_OLD[i];if x then pcall(SetCVar,k,x) end end end end);"
         "end";
     ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(script,script);
 }
