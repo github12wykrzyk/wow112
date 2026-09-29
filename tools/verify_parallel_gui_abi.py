@@ -85,8 +85,8 @@ def main():
         'ui_work_pp_get(PAR_CORE_DLL,70u,70u,&mapFall);',
         'ui_work_pp_flip(PAR_CORE_DLL,70u,id==129u?60u:id==130u?66u:70u);',
         'g_ui_profile_core_ids[]={1u,2u,3u,',
-        '49u,60u,66u,70u};',
-        '{PAR_CORE_DLL,70u,g_ui_profile_core_ids,35u,FALSE',
+        '49u,60u,66u,70u,75u,76u,77u,78u,79u,80u};',
+        '{PAR_CORE_DLL,89u,g_ui_profile_core_ids,41u,FALSE',
         'g_ui_pp_check=NULL;g_ui_pp_recovery_check=NULL;g_ui_pp_low_hp_check=NULL;g_ui_map_fall_check=NULL;g_ui_junkbox_check=NULL;',
     ):
         if token not in text:
@@ -100,7 +100,7 @@ def main():
         '#define UI_SS_WHITERECT 0x00000006u',
         'WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT',
         '#define UI_TAB_REAR 3u',
-        'g_ui_pages[5][UI_MAX_PAGE_CONTROLS]',
+        'g_ui_pages[6][UI_MAX_PAGE_CONTROLS]',
         'if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}',
         'if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}',
         'ui_button(g_parallel_ui_hwnd,',
@@ -209,7 +209,7 @@ def main():
         'if(id==230u){',
         'Nearest GO <=12yd: entry ',
         'TYPE 18 = ritual fallback.',
-        'page==UI_TAB_SUMMON?3u:page',
+        'page==UI_TAB_SUMMON?3u:(page==UI_TAB_PATROL?4u:page)',
         'background-safe, no mouse/focus',
         'Native POST returns',
         'Gate reason',
@@ -224,11 +224,28 @@ def main():
             print("ERROR: AutoSummon dedicated debug tab regression:", token)
             return 1
     print("PARALLEL_GUI_AUTOSUMMON_DEBUG: PASS (dedicated tab + live provider diagnostics)")
+    for token in (
+        '#define UI_TAB_PATROL 5u',
+        'g_ui_tabs[4]=ui_button(g_parallel_ui_hwnd,"PATROL"',
+        'if(id==231u){ui_set_page(UI_TAB_PATROL);return 0;}',
+        'ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_check)',
+        'ui_add_to_page(UI_TAB_PATROL,g_ui_patrol_record_check)',
+        'FINISH + SAVE',
+        'CLEAR ROUTE',
+        'ui_work_pp_module(PAR_CORE_DLL,89u)',
+        'ui_sync_patrol();',
+        'else if(g_ui_current_tab==UI_TAB_PATROL)ui_sync_patrol();',
+        'g_ui_patrol_check=NULL;g_ui_patrol_record_check=NULL;',
+    ):
+        if token not in text:
+            print("ERROR: Patrol GUI/control contract regression:", token)
+            return 1
+    print("PARALLEL_GUI_PATROL: PASS (dedicated tab + recorder + live diagnostics)")
     Path("dist").mkdir(exist_ok=True)
     Path("dist/parallel_gui_regression.json").write_text(
         json.dumps({"result": "PASS", "scope": "source/Win32 ABI and render-loop wiring",
                     "game_runtime_tested": False, "insert": True,
-                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203, 228],
+                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203, 228, 231],
                     "wndproc_chain": True, "render_tick_and_destroy": True},
                    indent=2) + "\n", encoding="utf-8")
     print("PARALLEL_GUI_REGRESSION: PASS (source guards only; in-game test required)")
