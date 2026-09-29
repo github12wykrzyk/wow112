@@ -10,6 +10,9 @@
    instead of race to classify cross-faction BG teams and purges former enemy
    labels when a player is friendly. Keep this wrapper marked as the active
    build input for build_changed_active. */
+/* Multibox: the included base uses a PID-qualified diagnostic log so every
+ * WoW process can start its ESP worker independently. */
+#define W112_PLAYERESP_MULTIBOX_LOG_PID 1
 #define DllMain W112_PlayerESP_Base_DllMain
 #include "WoWPlayerESP_v1_2_range_sweep.c"
 #undef DllMain

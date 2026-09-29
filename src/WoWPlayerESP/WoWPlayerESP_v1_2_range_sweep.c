@@ -348,6 +348,7 @@ __declspec(dllimport) BOOL   WINAPI CloseHandle(HANDLE);
 __declspec(dllimport) DWORD  WINAPI SetFilePointer(HANDLE, int, int*, DWORD);
 __declspec(dllimport) SIZE_T WINAPI VirtualQuery(const void*, struct MEMORY_BASIC_INFORMATION32*, SIZE_T);
 __declspec(dllimport) DWORD  WINAPI GetModuleFileNameA(HMODULE, LPSTR, DWORD);
+__declspec(dllimport) DWORD  WINAPI GetCurrentProcessId(void);
 __declspec(dllimport) BOOL   WINAPI DisableThreadLibraryCalls(HMODULE);
 __declspec(dllimport) BOOL   WINAPI GetClientRect(HWND, struct RECT32*);
 __declspec(dllimport) BOOL   WINAPI ClientToScreen(HWND, struct POINT32*);
@@ -1084,7 +1085,15 @@ static void log_line(const char* s) {
 
 static void build_log_path(char out[260]) {
     DWORD n, i, last_sep = 0u;
-    const char* name = "WoWPlayerESP_v1_2_range_sweep.log";
+    char name[80], *p = name;
+    const char* prefix = "WoWPlayerESP_v1_2_range_sweep_";
+    const char* suffix = ".log";
+
+    while (*prefix && p < name + sizeof(name) - 1u) *p++ = *prefix++;
+    p = app_u32(p, GetCurrentProcessId());
+    while (*suffix && p < name + sizeof(name) - 1u) *p++ = *suffix++;
+    *p = 0;
+
     n = GetModuleFileNameA(g_self, out, 259u);
     if (n == 0u || n >= 259u) {
         i = 0u;

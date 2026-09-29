@@ -358,7 +358,7 @@ namespace WoW112Updater
                     Text = "Nowy profil: wpisz hasło i kliknij Zapisz profil." };
                 var newButton = new Button { Text = "Nowe", Location = new Point(14, 360), Size = new Size(96, 32) };
                 var deleteButton = new Button { Text = "Usuń", Location = new Point(120, 360), Size = new Size(96, 32) };
-                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (640x480, osobny WTF, bez dźwięku)", Location = new Point(237, 250), Size = new Size(432, 26) };
+                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (800x600, osobny WTF, bez dźwięku)", Location = new Point(237, 250), Size = new Size(432, 26) };
                 var saveButton = new Button { Text = "Zapisz profil", Location = new Point(237, 287), Size = new Size(142, 32) };
                 var defaultButton = new Button { Text = "Ustaw domyślne", Location = new Point(386, 287), Size = new Size(138, 32) };
                 var launchProfile = new Button { Text = "Uruchom grę z profilem", Location = new Point(237, 340), Size = new Size(209, 36) };
@@ -551,6 +551,7 @@ namespace WoW112Updater
             var lowName = PrepareLowSpecConfig(lowRoot, loaded.Data.Accounts[0]);
             var lowText = File.ReadAllText(Path.Combine(lowRoot, "WTF", lowName), Encoding.UTF8);
             if (lowName.Length != 10 || !lowText.Contains("SET farclip \"177\"") ||
+                !lowText.Contains("SET gxResolution \"800x600\"") ||
                 !lowText.Contains("SET smallCull \"0.001\"") || !lowText.Contains("SET M2UseShaders \"1\"") ||
                 !lowText.Contains("SET M2UsePixelShaders \"0\""))
                 throw new Exception("Account smoke: per-profile LOW config generation failed");

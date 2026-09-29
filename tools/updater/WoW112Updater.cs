@@ -1049,6 +1049,7 @@ namespace WoW112Updater
             {
                 new[] { "gxWindow", "1" },
                 new[] { "gxMaximize", "0" },
+                new[] { "gxResolution", "800x600" },
                 new[] { "gxVSync", "0" },
                 new[] { "gxTripleBuffer", "0" },
                 new[] { "gxFixLag", "0" },
@@ -1120,7 +1121,7 @@ namespace WoW112Updater
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
                 lowConfig = PrepareLowSpecConfig(root, autoLoginAccount);
-                startInfo.Arguments = "-windowed -640x480 -nosound";
+                startInfo.Arguments = "-windowed -800x600 -nosound";
             }
             var game = lowConfig == null ? Process.Start(startInfo) : Process.Start(startInfo, lowConfig);
             if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
@@ -1131,7 +1132,7 @@ namespace WoW112Updater
             }
             Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ")" +
                 (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin" +
-                    (autoLoginAccount.LowSpec ? " • LOW CFG " + lowConfig + " • 640x480/WINDOWED." : ".")));
+                    (autoLoginAccount.LowSpec ? " • LOW CFG " + lowConfig + " • 800x600/WINDOWED." : ".")));
             return game;
         }
 
