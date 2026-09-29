@@ -699,7 +699,7 @@ static void ui_sync_summon(void) {
         p=app_str(p," | next ~");p=app_u32(p,nextSec.u32);p=app_str(p,"s");
         p=app_str(p," | actions ");p=app_u32(p,actions.u32);
         p=app_str(p," | last ");p=app_str(p,lastAction.u32==1u?"ARMOR":(lastAction.u32==2u?"SAY":"NONE"));
-        p=app_str(p," | defers ");p=app_u32(p,channelDefers.u32);
+        p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
         *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
     }
 }
