@@ -372,10 +372,15 @@ static void Patrol_Tick(BYTE *p,DWORD now);
 #define W112_FOLLOW_HEARTBEAT_MAX_MS  650u
 #define W112_FOLLOW_OWNER_STALE_MS    2000u
 #define W112_FOLLOW_MASTER_LUA_MS      80u
-#define W112_FOLLOW_ZONE_LUA_MS       500u
-#define W112_FOLLOW_CTM_REFRESH_MS    350u
+#define W112_FOLLOW_ZONE_LUA_MS      1500u
+#define W112_FOLLOW_CTM_REFRESH_MS   1200u
+#define W112_FOLLOW_CTM_RETARGET_D2     4.0f
+#define W112_FOLLOW_CTM_START_D2        6.25f
+#define W112_FOLLOW_CTM_STOP_D2         1.00f
+#define W112_FOLLOW_CTM_NONE            0x0Du
 #define W112_FOLLOW_LAZY_PULSE_MS      80u
-#define W112_FOLLOW_TELE_COOLDOWN_MS  450u
+#define W112_FOLLOW_TELE_COOLDOWN_MS 2500u
+#define W112_FOLLOW_TELE_SETTLE_MS    700u
 #define W112_FOLLOW_MASTER_JUMP_D2     64.0f
 #define W112_FOLLOW_TARGET_GUID_FN 0x00489A40u
 
@@ -404,6 +409,8 @@ static HANDLE g_followMapHandle=0;
 static W112_FollowShared *g_followShared=0;
 static volatile DWORD g_followMoving=0u,g_followHadAssist=0u;
 static DWORD g_followLastCtm=0u,g_followLastTele=0u,g_followLastLazy=0u,g_followLastMasterLua=0u,g_followLastZoneLua=0u;
+static DWORD g_followTeleSettleUntil=0u,g_followCtmTargetValid=0u;
+static float g_followCtmTargetX=0.0f,g_followCtmTargetY=0.0f,g_followCtmTargetZ=0.0f;
 static DWORD g_followLocalZoneHash=0u,g_followMasterZoneHash=0u;
 static DWORD g_followTagLo=0u,g_followTagHi=0u,g_followTagCached=0u;
 static DWORD g_followLastAssistLo=0u,g_followLastAssistHi=0u;
@@ -2347,22 +2354,20 @@ static DWORD Follow_OpenMap(void)
     if(!g_followShared){if(CH())CH()(g_followMapHandle);g_followMapHandle=0;return 0u;}
     return 1u;
 }
-static DWORD Follow_QueryMasterLua(DWORD *tagged,DWORD *zone)
+static DWORD Follow_QueryMasterTag(DWORD *tagged)
 {
     static const char script[]=
-      "W112_FOLLOW_SYNC=((UnitExists('target') and not UnitIsDead('target') and "
-      "UnitIsTappedByPlayer('target')) and '1' or '0')..'|'.."
-      "((GetRealZoneText and GetRealZoneText()) or '')";
+      "W112_FOLLOW_TAG=(UnitExists('target') and not UnitIsDead('target') and "
+      "UnitIsTappedByPlayer('target')) and '1' or '0'";
     W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
     const char *raw;
-    if(tagged)*tagged=0u;if(zone)*zone=0u;
+    if(tagged)*tagged=0u;
     if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 0u;
     DebugChat(script);
-    raw=getText("W112_FOLLOW_SYNC",-1,0u);
-    if(!raw||!raw[0]||raw[1]!='|')return 0u;
+    raw=getText("W112_FOLLOW_TAG",-1,0u);
+    if(!raw||!raw[0])return 0u;
     if(tagged)*tagged=raw[0]=='1'?1u:0u;
-    if(zone)*zone=Follow_HashText(raw+2);
-    return zone&&*zone?1u:0u;
+    return 1u;
 }
 static DWORD Follow_QueryLocalZone(DWORD *zone)
 {
@@ -2442,25 +2447,26 @@ static DWORD Follow_Ctm(BYTE *p,DWORD action,float x,float y,float z)
 static void Follow_StopMovement(BYTE *p)
 {
     if(g_followMoving&&Ptr(p))
-        Follow_Ctm(p,W112_PATROL_CTM_STOP,
+        Follow_Ctm(p,W112_FOLLOW_CTM_NONE,
             *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),*(float*)(p+OFF_UNIT_Z));
-    g_followMoving=0u;g_followLastCtm=0u;
+    g_followMoving=0u;g_followLastCtm=0u;g_followCtmTargetValid=0u;
 }
 static DWORD Follow_TeleportPulse(BYTE *p,float x,float y,float z,float o,DWORD now)
 {
-    float ox,oy,oz,oo;SendMove_t sm=(SendMove_t)ADDR_SEND_MOVE;
+    SendMove_t sm=(SendMove_t)ADDR_SEND_MOVE;
     if(!Ptr(p)||!ValidWorldPos(x,y,z)||LongPPActive()||LongPPInjecting()||
        (*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return 0u;
-    ox=*(float*)(p+OFF_UNIT_X);oy=*(float*)(p+OFF_UNIT_Y);
-    oz=*(float*)(p+OFF_UNIT_Z);oo=*(float*)(p+OFF_UNIT_O);
-    g_injecting=1u;
+    /* Same one-shot model as the tested Tele E path: move local client state,
+       send ONE heartbeat and leave the local position there. Restoring the old
+       XYZ immediately was the source of visible ping-pong/rubberband spam. */
+    g_stepMoveInjecting=1u;
     *(float*)(p+OFF_UNIT_X)=x;*(float*)(p+OFF_UNIT_Y)=y;
     *(float*)(p+OFF_UNIT_Z)=z;*(float*)(p+OFF_UNIT_O)=o;
-    sm(p,MSG_MOVE_HEARTBEAT);sm(p,MSG_MOVE_HEARTBEAT);g_hb+=2u;
-    *(float*)(p+OFF_UNIT_X)=ox;*(float*)(p+OFF_UNIT_Y)=oy;
-    *(float*)(p+OFF_UNIT_Z)=oz;*(float*)(p+OFF_UNIT_O)=oo;
-    g_injecting=0u;
-    g_followLastTele=now;++g_followTeleports;
+    sm(p,MSG_MOVE_HEARTBEAT);++g_hb;
+    g_stepMoveInjecting=0u;
+    g_followMoving=0u;g_followCtmTargetValid=0u;g_followLastCtm=0u;
+    g_followLastTele=now;g_followTeleSettleUntil=now+W112_FOLLOW_TELE_SETTLE_MS;
+    ++g_followTeleports;
     return 1u;
 }
 static DWORD Follow_MasterClaim(W112_FollowShared *s,DWORD now)
@@ -2526,6 +2532,7 @@ static void Follow_SetRole(DWORD role,BYTE *p,DWORD now)
     g_followHeartbeatAge=0u;g_followDistanceLive100=0u;
     g_followMasterTagged=0u;g_followZoneMatch=0u;g_followLazyReady=0u;
     g_followLastMasterTick=0u;g_followLastMasterPid=0u;
+    g_followTeleSettleUntil=0u;g_followCtmTargetValid=0u;
     g_followTagLo=g_followTagHi=g_followTagCached=0u;
     if(role!=W112_FOLLOW_ROLE_OFF){
         g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
@@ -2555,10 +2562,13 @@ static void Follow_MasterPublish(BYTE *p,DWORD now)
     }
     if(!g_followLastMasterLua||(DWORD)(now-g_followLastMasterLua)>=W112_FOLLOW_MASTER_LUA_MS){
         g_followLastMasterLua=now;sampled=1u;
-        if(Follow_QueryMasterLua(&tap,&zone))g_followMasterZoneHash=zone;
-        else tap=0u;
+        if(!Follow_QueryMasterTag(&tap))tap=0u;
         g_followTagLo=lo;g_followTagHi=hi;
         g_followTagCached=((lo|hi)&&Follow_TargetValid(t)&&tap)?1u:0u;
+    }
+    if(!g_followLastZoneLua||(DWORD)(now-g_followLastZoneLua)>=W112_FOLLOW_ZONE_LUA_MS){
+        g_followLastZoneLua=now;
+        if(Follow_QueryLocalZone(&zone))g_followMasterZoneHash=zone;
     }
     if(!sampled)
         tap=(lo==g_followTagLo&&hi==g_followTagHi)?g_followTagCached:0u;
@@ -2628,6 +2638,7 @@ static void Follow_FollowerTick(BYTE *p,DWORD now)
     if(flags){
         Follow_StopMovement(p);g_followState=6u;
     }else{
+        float td2,cmdD2=0.0f;
         back=(float)g_followDistance100/100.0f;
         side=(float)g_followSideOffset100/100.0f;
         SinCosF(s.o,&sn,&cs);
@@ -2638,17 +2649,42 @@ static void Follow_FollowerTick(BYTE *p,DWORD now)
            (jumped||d2>((float)g_followTeleportDistance100/100.0f)*((float)g_followTeleportDistance100/100.0f))){
             Follow_StopMovement(p);
             if(Follow_TeleportPulse(p,tx,ty,tz,s.o,now))g_followState=5u;
+        }else if(g_followTeleSettleUntil&&(LONG)(now-g_followTeleSettleUntil)<0){
+            /* Let one-shot catch-up settle. Do not immediately overwrite it
+               with CTM or another synthetic movement packet. */
+            g_followState=5u;
         }else{
-            float td2=Patrol_D2(px,py,pz,tx,ty,tz);
-            if(td2>1.44f){
-                if(!g_followLastCtm||(DWORD)(now-g_followLastCtm)>=W112_FOLLOW_CTM_REFRESH_MS){
-                    if(Follow_Ctm(p,W112_PATROL_CTM_WALK,tx,ty,tz)){
-                        g_followMoving=1u;g_followLastCtm=now;
+            g_followTeleSettleUntil=0u;
+            td2=Patrol_D2(px,py,pz,tx,ty,tz);
+            if(g_followCtmTargetValid)
+                cmdD2=Patrol_D2(tx,ty,tz,g_followCtmTargetX,g_followCtmTargetY,g_followCtmTargetZ);
+            if(g_followMoving){
+                if(td2<=W112_FOLLOW_CTM_STOP_D2){
+                    /* One stop at the inner radius; do not chatter STOP/WALK
+                       around one boundary every timer tick. */
+                    Follow_StopMovement(p);g_followState=4u;
+                }else{
+                    if(!g_followCtmTargetValid||
+                       cmdD2>=W112_FOLLOW_CTM_RETARGET_D2||
+                       !g_followLastCtm||
+                       (DWORD)(now-g_followLastCtm)>=W112_FOLLOW_CTM_REFRESH_MS){
+                        if(Follow_Ctm(p,W112_PATROL_CTM_WALK,tx,ty,tz)){
+                            g_followCtmTargetX=tx;g_followCtmTargetY=ty;g_followCtmTargetZ=tz;
+                            g_followCtmTargetValid=1u;g_followLastCtm=now;
+                        }
                     }
+                    g_followState=3u;
                 }
-                g_followState=3u;
+            }else if(td2>=W112_FOLLOW_CTM_START_D2){
+                if(Follow_Ctm(p,W112_PATROL_CTM_WALK,tx,ty,tz)){
+                    g_followMoving=1u;g_followLastCtm=now;
+                    g_followCtmTargetX=tx;g_followCtmTargetY=ty;g_followCtmTargetZ=tz;
+                    g_followCtmTargetValid=1u;g_followState=3u;
+                }
             }else{
-                Follow_StopMovement(p);g_followState=4u;
+                /* Dead-band between stop and start radii keeps stationary
+                   followers stationary while Master makes tiny adjustments. */
+                g_followState=4u;
             }
         }
     }
