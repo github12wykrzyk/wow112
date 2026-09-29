@@ -32,6 +32,8 @@
    foreground WoW instance in multibox setups. */
 __declspec(dllimport) DWORD __stdcall GetCurrentProcessId(void);
 __declspec(dllimport) DWORD __stdcall GetWindowThreadProcessId(HWND,DWORD*);
+/* windows.h is intentionally not included in this CRT-light source. */
+#define W112_VK_LCONTROL 0xA2u
 
 #include "../common/W112ControlAPI.h"
 #if defined(_MSC_VER)
@@ -1684,7 +1686,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
     k8=(GK()(VK_F8)&(short)0x8000)?1u:0u;
     k9=(GK()(VK_F9)&(short)0x8000)?1u:0u;
-    kAlt=(GK()(VK_LCONTROL)&(short)0x8000)?1u:0u;
+    kAlt=(GK()(W112_VK_LCONTROL)&(short)0x8000)?1u:0u;
     k10=(GK()(VK_F10)&(short)0x8000)?1u:0u;
     k11=(GK()(VK_F11)&(short)0x8000)?1u:0u;
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
@@ -1705,7 +1707,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     if(hotkeyFocus&&k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
     if(hotkeyFocus&&k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
     /* A key edge used to be discarded while PvERear had the rear lease.
-       Queue this explicit manual request, even for a short ALT tap. */
+       Queue this explicit manual request, even for a short CTRL tap. */
     if(hotkeyFocus&&kAlt&&!g_keyAlt&&!(k7&&!g_key7)){g_ppRecoveryOwnsAlt=0u;g_altPriorityPendingUntil=now+7000u;}
     if(hotkeyFocus&&k10&&!g_key10&&!CoordRearOwned())Start(MODE_PURSUIT,now);
     if(hotkeyFocus&&k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
