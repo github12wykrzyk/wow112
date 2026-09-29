@@ -53,7 +53,7 @@
       ],
       "dependency_registry": "runtime/parallel_dependency_registry.json",
       "status": "in_progress",
-      "observed_head": "ce182b853094a8de298813ca759f8e6b29304237",
+      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
       "verified_commit": null,
       "tests": [],
       "package": null,
@@ -81,19 +81,41 @@
       "branch": "parallel",
       "modules": [
         "AutoSummonAssist",
-        "WoWPlayerESP"
+        "WoWPlayerESP",
+        "SummonScout"
       ],
       "dependencies": [],
       "shared_resources": [
         "GameObject native right-click 0x005F8660",
-        "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
+        "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1",
+        "SummonScout whisper/invite/summon transaction state",
+        "per-client Anti-AFK SPACE pulse"
       ],
-      "status": "in_progress",
-      "observed_head": "ff5da2bb0ed98783cae762d6557ba386bcd4ec88",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "v14 feature experiment: remove AFK detection, STAND, Demon Armor and SAY recovery. Every randomized 100-120s, defer during cast/channel then PostMessageA WM_KEYDOWN+WM_KEYUP for VK_SPACE to this process's WoW HWND from exact-build GetGameWindow 0x00435C30. No foreground switch and no global SendInput; multibox instances target only their own client. Setting 23 counts successful SPACE pulses; 30/31 count queued keydown/keyup messages. Feature implementation is being fast-forward integrated into parallel after isolation from concurrent FOLLOW/SummonScout work."
+      "status": "awaiting_game_test",
+      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
+      "verified_commit": "b24369b4c467ce514687e56ba0500f002dc30741",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "b24369b4c467ce514687e56ba0500f002dc30741",
+          "date": "2026-09-29",
+          "evidence": "Build work candidate run 36607873471 completed success on exact SHA; FINAL_PACKAGE and candidate attestation passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "b24369b4c467ce514687e56ba0500f002dc30741",
+          "date": "2026-09-29",
+          "evidence": "GitHub Actions artifact 11050929711 (WoW112-WORK-CANDIDATE-b24369b4c467ce514687e56ba0500f002dc30741) was uploaded from the successful exact-SHA run."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "b24369b4c467ce514687e56ba0500f002dc30741",
+        "artifact_id": 11050929711
+      },
+      "notes": "Integrated parallel summon stack: SummonScout + AutoSummonAssist + PlayerESP GUI. Current code includes repeated summon queue recovery, manual-invite handling, natural whisper parsing, payer-authoritative accounting, master/slave persistent profiles, native summon bridge and per-client Anti-AFK. CI/package evidence is exact-SHA; latest gameplay result after b24369b4 remains pending."
     },
     {
       "id": "multibox-background-sound-parallel",
@@ -108,7 +130,7 @@
         "per-profile LOW Config.wtf"
       ],
       "status": "in_progress",
-      "observed_head": "3463257f616b5afdfab7b2c6cf343d21f5964518",
+      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
       "verified_commit": null,
       "tests": [],
       "package": null,
@@ -131,7 +153,7 @@
         "child-process AutoLogin environment contract"
       ],
       "status": "in_progress",
-      "observed_head": "3463257f616b5afdfab7b2c6cf343d21f5964518",
+      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
       "verified_commit": null,
       "tests": [],
       "package": null,
@@ -183,6 +205,28 @@
       "tests": [],
       "package": null,
       "notes": "MASTER publishes position/facing/zone/selected GUID and master-owned tap state. FOLLOWER uses CTM, jump/distance catch-up teleport, exact GUID targeting and a dedicated LazyScript W112AssistPulse with autoTarget suppressed. Follower suspends AutoPP/Gather. Role is transient and PATROL/FOLLOW are mutually exclusive. In-game shared-memory, tag and server teleport behavior require candidate test."
+    },
+    {
+      "id": "parallel-workflow-hardening",
+      "branch": "feature/parallel-workflow-hardening",
+      "modules": [
+        "AI-workflow",
+        "AI-experiments",
+        "CandidatePackaging"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "parallel candidate workflow",
+        "feature branch preflight",
+        "candidate inventory manifest",
+        "GUI ABI/behavioral gates"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "81fae93129112f3adac9dd9563f686ff51c52e2b",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Infrastructure-only hardening based on parallel b24369b4: feature/** preflight, declarative parallel candidate inventory, modular companion compile path, and split GUI ABI/behavioral verification. No runtime behavior change."
     }
   ]
 }
