@@ -254,6 +254,6 @@ def main():
                     "wndproc_chain": True, "render_tick_and_destroy": True},
                    indent=2) + "\n", encoding="utf-8")
     print("PARALLEL_GUI_REGRESSION: PASS (source guards only; in-game test required)")
-    return 0\n
+    return 0
 if __name__ == "__main__":
     sys.exit(main())
