@@ -143,7 +143,7 @@ namespace WoW112Updater
             startInfo.UseShellExecute = false;
             var environment = BuildEnvironmentBlock(startInfo);
             var si = new STARTUPINFO { cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO)) };
-            PROCESS_INFORMATION pi;
+            var pi = new PROCESS_INFORMATION();
             var commandLine = new StringBuilder(""" + startInfo.FileName + """ +
                 (string.IsNullOrWhiteSpace(startInfo.Arguments) ? string.Empty : " " + startInfo.Arguments));
             var created = false;
