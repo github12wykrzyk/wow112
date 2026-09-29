@@ -1,0 +1,7 @@
+## Interface: 11200
+## Title: AuxVmangos
+## Notes: vMaNGOS-aware AH scanner/sniper for WoW 1.12.1; independent implementation.
+## Author: github12wykrzyk/wow112
+## Version: 0.1-vmangos
+## SavedVariables: AVM_DB
+AuxVmangos.lua

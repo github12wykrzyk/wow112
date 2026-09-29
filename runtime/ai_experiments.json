@@ -382,6 +382,27 @@
       ],
       "package": null,
       "notes": "V1 diagnostic/dry-run feature preflight passed on exact SHA 078d97eac2b794c0d94aff389931ae606653cb48. Automation path contains no PlaceAuctionBid call; LowBuyout/page-0 mode, correct pagination, one-query state, timeout watchdog, unit-price diagnostics, watchlist engine, dry-run candidate logging and raw CHAT_MSG_SYSTEM/UI_INFO_MESSAGE/UI_ERROR_MESSAGE capture are ready for integration. Parallel full candidate/package evidence is still pending."
+    },
+    {
+      "id": "aux-vmangos",
+      "branch": "feature/aux-vmangos",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "auction-sniper-vmangos"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS buyout-ordered auction browse flow",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "8ceebf93d30e1728948a3d71d3296295b8306fba",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Independent implementation informed by AuctionSniper realm diagnostics and AUX behavioral audit. Default dry-run. Implements deduplicated AH result events, binary search for first positive-buyout page, cheapest-page scan, candidate revalidation and CONFIRMED/FAILED/UNKNOWN transaction states."
     }
   ]
 }

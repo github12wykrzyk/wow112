@@ -84,6 +84,7 @@
     "packager": "tools/package_lazyrogue_addons.py",
     "roots": [
       "AuctionSniper",
+      "AuxVmangos",
       "LazyRogue",
       "LazyScript",
       "LazyWarlock",
