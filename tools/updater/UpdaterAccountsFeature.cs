@@ -23,6 +23,9 @@ namespace WoW112Updater
         public string Login { get; set; }
         public string ProtectedPassword { get; set; }
         public bool LowSpec { get; set; }
+        public bool MultiboxSelected { get; set; }
+        public bool BackgroundSound { get; set; }
+        public bool AutoFirstCharacter { get; set; }
     }
 
     internal sealed class WowAccountData
@@ -194,7 +197,7 @@ namespace WoW112Updater
                 };
                 var info = new Label
                 {
-                    Text = "Każde zaznaczone konto dostaje osobny proces WoW już przypisany do profilu. Native AutoLogin loguje bez klawiatury, fokusu i opóźnień pól.",
+                    Text = "Wybory MULTIBOX są zapamiętywane per konto. Native AutoLogin loguje bez klawiatury, fokusu i opóźnień pól.",
                     Location = new Point(14, 5),
                     Size = new Size(1202, 18),
                     AutoEllipsis = true
@@ -250,9 +253,9 @@ namespace WoW112Updater
                 var stateIndex = new Dictionary<string, int>(StringComparer.Ordinal);
                 foreach (var account in accountVault.Data.Accounts)
                 {
-                    accounts.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
-                    backgroundSound.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
-                    autoFirstCharacter.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
+                    accounts.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), account.MultiboxSelected);
+                    backgroundSound.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), account.BackgroundSound);
+                    autoFirstCharacter.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), account.AutoFirstCharacter);
                     accountByIndex.Add(account);
                     stateIndex[account.Id] = states.Items.Count;
                     states.Items.Add(account.Label + " • gotowy");
@@ -292,6 +295,18 @@ namespace WoW112Updater
                     return selected;
                 };
 
+                Action persistPreferences = delegate
+                {
+                    for (int i = 0; i < accountByIndex.Count; i++)
+                    {
+                        var account = accountByIndex[i];
+                        account.MultiboxSelected = accounts.GetItemChecked(i);
+                        account.BackgroundSound = backgroundSound.GetItemChecked(i);
+                        account.AutoFirstCharacter = autoFirstCharacter.GetItemChecked(i);
+                    }
+                    accountVault.Save();
+                };
+
                 Action<bool> setButtons = delegate(bool enabled)
                 {
                     selectAll.Enabled = enabled;
@@ -315,6 +330,13 @@ namespace WoW112Updater
 
                 launchSelected.Click += async delegate
                 {
+                    try { persistPreferences(); }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(dialog, "Nie udało się zapisać ustawień MULTIBOX:\n" + ex.Message,
+                            "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
                     var selected = checkedAccounts();
                     if (selected.Count == 0)
                     {
@@ -328,6 +350,13 @@ namespace WoW112Updater
                 };
                 launchAll.Click += async delegate
                 {
+                    try { persistPreferences(); }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(dialog, "Nie udało się zapisać ustawień MULTIBOX:\n" + ex.Message,
+                            "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
                     setButtons(false);
                     try { await RunMultiboxAsync(allAccounts(), setState); }
                     finally { setButtons(true); }
@@ -340,6 +369,14 @@ namespace WoW112Updater
                         e.Cancel = true;
                         MessageBox.Show(dialog, "Poczekaj na zakończenie uruchamiania zaznaczonych klientów.",
                             "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    try { persistPreferences(); }
+                    catch (Exception ex)
+                    {
+                        e.Cancel = true;
+                        MessageBox.Show(dialog, "Nie udało się zapisać ustawień MULTIBOX:\n" + ex.Message,
+                            "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
                 };
                 dialog.ShowDialog(this);
@@ -603,7 +640,11 @@ namespace WoW112Updater
             var path = Path.Combine(folder, "account-vault-smoke.json");
             var vault = new WowAccountVault(path);
             if (vault.Selected != null) throw new Exception("Account smoke: empty vault is not empty");
-            var accountA = new WowAccount { Id = "a", Label = "Rogue", Login = "rogue_login", ProtectedPassword = vault.Protect("vault-test-secret-A"), LowSpec = true };
+            var accountA = new WowAccount {
+                Id = "a", Label = "Rogue", Login = "rogue_login",
+                ProtectedPassword = vault.Protect("vault-test-secret-A"), LowSpec = true,
+                MultiboxSelected = true, BackgroundSound = true, AutoFirstCharacter = true
+            };
             var accountB = new WowAccount { Id = "b", Label = "Priest", Login = "priest_login", ProtectedPassword = vault.Protect("vault-test-secret-B") };
             vault.Data.Accounts.Add(accountA); vault.Data.Accounts.Add(accountB);
             vault.Data.SelectedId = "b";
@@ -616,6 +657,12 @@ namespace WoW112Updater
             if (loaded.Selected == null || loaded.Selected.Id != "b" || loaded.Data.Accounts.Count != 2
                 || loaded.Unprotect(loaded.Data.Accounts[0]) != "vault-test-secret-A"
                 || !loaded.Data.Accounts[0].LowSpec
+                || !loaded.Data.Accounts[0].MultiboxSelected
+                || !loaded.Data.Accounts[0].BackgroundSound
+                || !loaded.Data.Accounts[0].AutoFirstCharacter
+                || loaded.Data.Accounts[1].MultiboxSelected
+                || loaded.Data.Accounts[1].BackgroundSound
+                || loaded.Data.Accounts[1].AutoFirstCharacter
                 || loaded.Unprotect(loaded.Data.Accounts[1]) != "vault-test-secret-B")
                 throw new Exception("Account smoke: encrypted profile roundtrip failed");
             var lowRoot = Path.Combine(folder, "low-spec-smoke");

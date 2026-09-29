@@ -108,11 +108,11 @@
         "per-profile LOW Config.wtf"
       ],
       "status": "in_progress",
-      "observed_head": "0775ddc87ad6ebc717c0d980818c3c98b8f958f4",
+      "observed_head": "3463257f616b5afdfab7b2c6cf343d21f5964518",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Transient per-launch BG SOUND toggle for each multibox account. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table. UI follow-up: reserve a separate header row so the top description cannot cover column captions; middle column is explicitly labeled DŹWIĘK W TLE (BG SOUND)."
+      "notes": "BG SOUND toggle for each multibox account; the choice is persisted locally in that account profile and restored when MULTIBOX reopens. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table. UI follow-up: reserve a separate header row so the top description cannot cover column captions; middle column is explicitly labeled DŹWIĘK W TLE (BG SOUND). Preference persistence also covers the URUCHOM checkbox and AUTO POSTAĆ 1."
     },
     {
       "id": "multibox-auto-first-character-parallel",
@@ -131,11 +131,11 @@
         "child-process AutoLogin environment contract"
       ],
       "status": "in_progress",
-      "observed_head": "3269a7a4fe9e671ccdc68f0488d064d89ced4589",
+      "observed_head": "3463257f616b5afdfab7b2c6cf343d21f5964518",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Per-launch AUTO POSTAĆ 1 toggle in MULTIBOX. Updater passes WOW112_AUTOCHAR_FIRST=1 only to selected child processes. AutoLoginBridge waits for successful native login, then on the WoW window thread executes guarded GlueXML: CharacterSelect_SelectCharacter(1,1) followed by CharacterSelect_EnterWorld(). No SendInput/focus. 60s fail-safe window; one-shot Lua flag prevents repeated EnterWorld. Exact project evidence: current PARALLEL uses FrameScript_Execute 0x00704CD0 and object-manager 0x00B41414; external Vanilla GlueXML confirms first list slot is index 1. LOW reliability follow-up: readiness now keys off CharacterSelectUI (the actual GlueXML screen), not the CharacterSelect model frame. Selection and EnterWorld are split into two UI-thread polls; EnterWorld waits until CharacterSelect.selectedIndex==1 after UPDATE_SELECTED_CHARACTER. Poll window increased from 60s to 120s for slow LOW launches."
+      "notes": "Per-launch AUTO POSTAĆ 1 toggle in MULTIBOX. Updater passes WOW112_AUTOCHAR_FIRST=1 only to selected child processes. AutoLoginBridge waits for successful native login, then on the WoW window thread executes guarded GlueXML: CharacterSelect_SelectCharacter(1,1) followed by CharacterSelect_EnterWorld(). No SendInput/focus. 60s fail-safe window; one-shot Lua flag prevents repeated EnterWorld. Exact project evidence: current PARALLEL uses FrameScript_Execute 0x00704CD0 and object-manager 0x00B41414; external Vanilla GlueXML confirms first list slot is index 1. LOW reliability follow-up: readiness now keys off CharacterSelectUI (the actual GlueXML screen), not the CharacterSelect model frame. Selection and EnterWorld are split into two UI-thread polls; EnterWorld waits until CharacterSelect.selectedIndex==1 after UPDATE_SELECTED_CHARACTER. Poll window increased from 60s to 120s for slow LOW launches. UI persistence follow-up: URUCHOM, BG SOUND and AUTO POSTAĆ 1 are stored per account in the local DPAPI-backed account vault, restored on dialog open, and saved before launch or normal dialog close."
     },
     {
       "id": "patrol-route-5875",
