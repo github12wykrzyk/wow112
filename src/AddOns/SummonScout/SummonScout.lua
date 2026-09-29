@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.29"
+local ADDON_VERSION = "1.30"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -1375,7 +1375,8 @@ local function showSummonCheck()
         .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
     chat("summoncheck bridge request=" .. tostring(W112_AUTOSUMMON_REQUEST or "-")
         .. " ack=" .. tostring(W112_AUTOSUMMON_ACK or "-")
-        .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0))
+        .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0)
+        .. " nativeStatus=" .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "-"))
 end
 
 local function describeTest(message)
@@ -1986,6 +1987,7 @@ frame:SetScript("OnEvent", function()
         W112_AUTOSUMMON_REQUEST = ""
         W112_AUTOSUMMON_ACK = ""
         W112_AUTOSUMMON_NATIVE_COUNT = W112_AUTOSUMMON_NATIVE_COUNT or 0
+        W112_AUTOSUMMON_NATIVE_STATUS = W112_AUTOSUMMON_NATIVE_STATUS or "idle"
         syncPartyRoster(true)
         SS.nextRosterPollAt = now() + 0.75
         chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")

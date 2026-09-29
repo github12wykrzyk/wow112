@@ -200,6 +200,8 @@ def main():
         },
         "native_summon_cast_bridge": True,
         "native_summon_busy_gate": "none; failed busy casts are retried by SummonScout",
+        "native_summon_module_enabled_dependency": False,
+        "native_summon_cast_path": "TargetByName -> spellbook GetSpellName/CastSpell -> CastSpellByName fallback",
         "native_summon_request_global": "W112_AUTOSUMMON_REQUEST",
         "native_summon_ack_global": "W112_AUTOSUMMON_ACK",
         "background_trade_auto_accept": True,

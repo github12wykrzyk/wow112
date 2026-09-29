@@ -1,4 +1,4 @@
-# SummonScout 1.29
+# SummonScout 1.30
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -386,3 +386,10 @@ Examples that now trigger smart auto-invite:
 - `123 please`
 
 This keeps the code explicit while tolerating normal player politeness/punctuation.
+
+
+## 1.30 native bridge independence
+
+The native summon-cast bridge no longer depends on the AutoSummonAssist portal-scanner Enabled toggle. SummonScout's own `Auto summon new party member` setting is the authority for whether requests are published.
+
+The DLL now resolves `Ritual of Summoning` through the spellbook and uses `CastSpell(index, "spell")` first, with `CastSpellByName` only as fallback. `/ssi summoncheck` also shows `nativeStatus` so bridge dispatch can be distinguished from an actual spell lookup/cast failure.

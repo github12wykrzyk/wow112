@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v16 - nonblocking summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v17 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -484,24 +484,33 @@ static void pollNativeSummonBridge(u32 player,u32 now)
         "local n=W112_AUTOSUMMON_REQUEST or '';"
         "W112_AUTOSUMMON_ACK=W112_AUTOSUMMON_ACK or '';"
         "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT or 0;"
+        "W112_AUTOSUMMON_NATIVE_STATUS='idle';"
         "if n~='' then "
         "W112_AUTOSUMMON_REQUEST='';"
         "if type(TargetByName)=='function' then TargetByName(n,1) end;"
-        "if type(CastSpellByName)=='function' then CastSpellByName('Ritual of Summoning') end;"
+        "local casted=nil;local book=BOOKTYPE_SPELL or 'spell';"
+        "if type(GetSpellName)=='function' and type(CastSpell)=='function' then "
+        "local i;for i=1,200 do local sn=GetSpellName(i,book);"
+        "if not sn then break end;"
+        "if sn=='Ritual of Summoning' then CastSpell(i,book);casted='spellbook:'..i;break end end "
+        "end;"
+        "if not casted and type(CastSpellByName)=='function' then "
+        "CastSpellByName('Ritual of Summoning');casted='byname' end;"
         "W112_AUTOSUMMON_ACK=n;"
         "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT+1;"
+        "W112_AUTOSUMMON_NATIVE_STATUS=casted or 'no-cast-api-or-spell';"
         "end";
     const char *req;
 
+    (void)player;
     if(g_lastSummonBridgePoll && (u32)(now-g_lastSummonBridgePoll)<SUMMON_BRIDGE_POLL_MS) return;
     g_lastSummonBridgePoll=now;
     req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
     if(!req||!req[0]) return;
 
-    /* Do not gate bridge consumption on the raw cast/channel memory fields.
-     * Some ritual completions leave those fields stale on this client/server,
-     * which previously deadlocked every later customer. If WoW is genuinely
-     * busy, the cast request simply fails and SummonScout retries. */
+    /* SummonScout owns the user-facing auto-summon toggle. The bridge must
+     * consume its request even when the portal scanner module itself is
+     * disabled in ControlHub. */
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
 }
 
@@ -725,13 +734,16 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
     antiAfkFlushSlashFeedback();
     antiAfkTick(player,now);
 
+    /* The summon-cast bridge is independent from the portal scanner toggle.
+     * SummonScout only publishes requests when its own auto-summon setting is ON. */
+    pollNativeSummonBridge(player,now);
+
     if(!g_enabled) {
         g_status=STATUS_DISABLED;
         resetPortal();
         return;
     }
 
-    pollNativeSummonBridge(player,now);
     g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
     scanAndMaybeClick(player,now);
 }
@@ -844,7 +856,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00100000u,
+    0x00110000u,
     31u,
     g_settings,
     getValue,
