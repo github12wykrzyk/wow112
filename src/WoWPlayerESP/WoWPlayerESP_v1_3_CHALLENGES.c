@@ -620,14 +620,14 @@ static void ui_sync_summon(void) {
         *p++='/';p=app_u32(p,hi.u32);
         p=app_str(p," | retry PRE ");p=app_u32(p,current.u32);
         p=app_str(p,"/8 | PRE ");p=app_u32(p,pre.u32);
-        p=app_str(p," | POST ");p=app_u32(p,post.u32);
+        p=app_str(p," | Native POST returns ");p=app_u32(p,post.u32);
         *p=0;SetWindowTextA(g_ui_summon_guid,buf);
     }
     if(g_ui_summon_scan){
         p=buf;p=app_str(p,"Scanner ticks: ");p=app_u32(p,scans.u32);
         p=app_str(p," | GO <=12yd: ");p=app_u32(p,nearCount.u32);
         p=app_str(p," | state: ");p=app_str(p,status.u32<8u?states[status.u32]:"UNKNOWN");
-        p=app_str(p," | gate ");p=app_u32(p,gate.u32);
+        p=app_str(p," | Gate reason ");p=app_u32(p,gate.u32);
         p=app_str(p," | busy ");p=app_u32(p,busy.u32);
         *p=0;SetWindowTextA(g_ui_summon_scan,buf);
     }
