@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.37"
+local ADDON_VERSION = "1.38"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -702,7 +702,8 @@ end
 
 local SUMMON_PLAYER_BLACKLIST = {
     ["hydraone"] = true,
-    ["hydratwo"] = true
+    ["hydratwo"] = true,
+    ["bolthyjal"] = true
 }
 
 local function summonPlayerBlacklisted(name)
