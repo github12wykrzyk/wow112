@@ -86,12 +86,12 @@
       "shared_resources": [
         "GameObject native right-click 0x005F8660"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "9260d0676fa3126b2c54d8bb4ee9e1c73b14b8be",
+      "status": "in_progress",
+      "observed_head": "093dd2cad77883815a34bc1cdc88cf9ed80dbf86",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Parallel updater integration of AutoSummonAssist. Exact Vanilla scope: Ritual of Summoning spell 698 -> Summoning Portal GameObject 36727; 4.75 yd physical gate; grouped/alive/out-of-combat/no-active-cast eligibility; one native right-click per portal GUID; no movement/position spoof. No hook ownership added to parallel dependency registry because the module calls the existing native interaction primitive rather than patching it."
+      "notes": "v2 reliability iteration after in-game report of no visible portal interaction: preserve exact GO entry 36727/native right-click, remove Lua party/combat pre-gate, retry up to 8x at 120 ms, stop on native local cast/channel state, widen local scan gate to 5.5 yd, and emit one chat diagnostic per new portal GUID. No movement/position spoof or gameplay hooks."
     }
   ]
 }

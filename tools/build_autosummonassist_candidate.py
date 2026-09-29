@@ -122,7 +122,7 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "autosummonassist",
-        "settings": ["Enabled", "Eligible (read-only)", "Portal in range (read-only)", "Click attempts"],
+        "settings": ["Enabled", "Portal in range (read-only)", "Click attempts", "Last portal entry"],
         "timings_ms": timing,
     }
 
@@ -162,13 +162,14 @@ def main():
         "abi": "W112_CONTROL_API_V1",
         "default_enabled": True,
         "scope": "Vanilla Ritual of Summoning portal GameObject entry 36727 only",
-        "eligibility": "alive + party/raid + out of combat + no active cast/channel",
+        "eligibility": "server-authoritative ritual eligibility; local retries are suppressed while player cast/channel state is active",
         "interaction": "native 5875 0x005F8660 GameObject right-click on UI thread",
-        "range_yd": 4.75,
+        "range_yd": 5.5,
         "portal_radius_reference_yd": 5.0,
-        "retry_policy": "one click per observed portal GUID",
+        "retry_policy": "up to 8 native clicks per observed portal GUID, 120ms apart; stop immediately on local cast/channel",
         "position_spoof": False,
         "timer_period_ms": 25,
+        "chat_diagnostic": "one message per newly observed portal GUID",
         "world_reacquire_ms": 500,
     }
     hub = package_meta.get("controlhub_pilot")
