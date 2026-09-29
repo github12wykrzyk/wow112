@@ -199,10 +199,10 @@ def main():
             "shared_state_with_gui": True
         },
         "native_summon_cast_bridge": True,
-        "native_summon_busy_gate": "request remains pending only while stock CastingBarFrame reports casting/channeling; raw UNIT_CHANNEL_INDEX is deliberately not used for this transaction gate",
-        "native_summon_busy_source": "CastingBarFrame.casting/channeling via FrameScript on the WoW UI thread; avoids stale raw channel descriptor after completed Ritual",
+        "native_summon_busy_gate": "no pre-issue level gate; every sequenced request is consumed once and CastSpell is allowed to prove readiness, so stale cast/channel state cannot pin later customers",
+        "native_summon_busy_source": "SummonScout SPELLCAST_START is authoritative for the exact request sequence; the native 1600ms watchdog reports no-start only when that sequence was not marked started",
         "native_summon_module_enabled_dependency": False,
-        "native_summon_cast_path": "sequenced request -> TargetByName/roster target verification -> spellbook GetSpellName/CastSpell -> SpellTargetUnit fallback -> native cast/channel start confirmation",
+        "native_summon_cast_path": "sequenced request -> target verification -> spellbook GetSpellName/CastSpell -> SpellTargetUnit fallback -> SummonScout SPELLCAST_START publishes exact started sequence -> retry/no-start watchdog",
         "native_summon_request_global": "W112_AUTOSUMMON_REQUEST",
         "native_summon_request_seq_global": "W112_AUTOSUMMON_REQUEST_SEQ",
         "native_summon_ack_global": "W112_AUTOSUMMON_ACK",

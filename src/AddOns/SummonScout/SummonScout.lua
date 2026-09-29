@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.34"
+local ADDON_VERSION = "1.35"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -947,6 +947,15 @@ local function markActiveSummonStarted(source)
 
     local item = table.getn(SS.summonQueue) > 0 and SS.summonQueue[1] or nil
     if item and samePlayer(item.name, name) then
+        local startedSeq = trim(tostring(item.requestSeq or ""))
+        if startedSeq ~= "" then
+            -- The client SPELLCAST_START event is the authoritative proof that
+            -- this exact Ritual request really began. Publish it back to the
+            -- native bridge so a stale CastingBarFrame cannot poison the next
+            -- queued customer.
+            W112_AUTOSUMMON_STARTED_SEQ = startedSeq
+            W112_AUTOSUMMON_NATIVE_STATUS = "cast-started:event"
+        end
         item.phase = "casting"
         if not item.startReported then
             item.startReported = true
@@ -1028,7 +1037,11 @@ local function processPartySummon()
         end
 
         if nativeStatus == "blocked-busy" then
-            SS.summonActiveExpires = t + 0.75
+            -- Backward-compatible recovery for older bridge builds: never let
+            -- a level-triggered busy flag extend the transaction forever.
+            if t < (SS.summonActiveExpires or 0) then return end
+            SS.lastSummonError = nativeStatus
+            retryActiveSummon(0.20)
             return
         end
 

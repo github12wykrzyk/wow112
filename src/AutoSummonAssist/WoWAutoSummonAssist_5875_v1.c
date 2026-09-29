@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v19 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v20 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -482,46 +482,21 @@ static void antiAfkTick(u32 player,u32 now)
 }
 
 /* SummonScout publishes a player name plus a monotonically increasing
- * request sequence. The bridge reports transaction stages instead of treating
- * "CastSpell returned" as proof that Ritual actually started. */
-static void publishSummonStarted(void)
-{
-    static const char script[]=
-        "W112_AUTOSUMMON_NATIVE_STATUS='cast-started';"
-        "W112_AUTOSUMMON_STARTED_SEQ=W112_AUTOSUMMON_ACTIVE_SEQ or ''";
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
-}
-
+ * request sequence. The bridge acknowledges and issues that exact request.
+ * SPELLCAST_START in SummonScout is authoritative proof that Ritual began;
+ * the native watchdog only reports no-start when that exact sequence was not
+ * marked started by the client event. This avoids any level-triggered cast/
+ * channel flag from pinning every request after the first successful Ritual. */
 static void publishSummonNoStart(void)
 {
-    static const char script[]="W112_AUTOSUMMON_NATIVE_STATUS='no-start'";
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
-}
-
-/* Raw UNIT_CHANNEL_INDEX can remain non-zero after a completed Ritual on some
- * 1.12/private-server states while the client is already free to cast again.
- * Using that raw descriptor as the summon transaction gate therefore makes
- * the first customer work and all later requests sit forever at blocked-busy.
- *
- * For the summon bridge only, use the stock Vanilla casting-bar state that the
- * addon also observes. Scanner/portal retry and Anti-AFK keep the conservative
- * raw playerBusy() guard. */
-static int summonUiBusy(void)
-{
     static const char script[]=
-        "W112_AUTOSUMMON_UI_BUSY=(CastingBarFrame and "
-        "(CastingBarFrame.casting or CastingBarFrame.channeling)) and '1' or '0'";
-    const char *busy;
+        "if tostring(W112_AUTOSUMMON_STARTED_SEQ or '')~=tostring(W112_AUTOSUMMON_ACTIVE_SEQ or '') then "
+        "W112_AUTOSUMMON_NATIVE_STATUS='no-start' end";
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
-    busy=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_UI_BUSY",-1,0u);
-    return busy && busy[0]=='1' && busy[1]==0;
 }
 
 static void pollNativeSummonBridge(u32 player,u32 now)
 {
-    static const char blockedScript[]=
-        "if (W112_AUTOSUMMON_REQUEST or '')~='' then "
-        "W112_AUTOSUMMON_NATIVE_STATUS='blocked-busy' end";
     static const char consumeScript[]=
         "local n=W112_AUTOSUMMON_REQUEST or '';"
         "local seq=tostring(W112_AUTOSUMMON_REQUEST_SEQ or '');"
@@ -594,11 +569,7 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     (void)player;
 
     if(g_summonAwaitingStart) {
-        if(summonUiBusy()) {
-            publishSummonStarted();
-            g_summonAwaitingStart=0u;
-            g_summonIssuedAt=0u;
-        } else if((u32)(now-g_summonIssuedAt)>=SUMMON_START_WATCH_MS) {
+        if((u32)(now-g_summonIssuedAt)>=SUMMON_START_WATCH_MS) {
             publishSummonNoStart();
             g_summonAwaitingStart=0u;
             g_summonIssuedAt=0u;
@@ -612,22 +583,16 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
     if(!req||!req[0]) return;
 
-    if(summonUiBusy()) {
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(blockedScript,"AutoSummonAssist");
-        return;
-    }
-
+    /* Do not pre-gate on CastingBarFrame/raw channel state. A stale level
+     * signal after Ritual used to leave W112_AUTOSUMMON_REQUEST unconsumed,
+     * reproducing the exact "first summon works, later summons stop" failure.
+     * Consume each sequence once and let CastSpell + SPELLCAST_START decide. */
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(consumeScript,"AutoSummonAssist");
     issued=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_NATIVE_ISSUED",-1,0u);
     if(issued && issued[0]=='1' && issued[1]==0) {
         ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearIssuedScript,"AutoSummonAssist");
         g_summonIssuedAt=now;
         g_summonAwaitingStart=1u;
-        if(summonUiBusy()) {
-            publishSummonStarted();
-            g_summonAwaitingStart=0u;
-            g_summonIssuedAt=0u;
-        }
     }
 }
 
