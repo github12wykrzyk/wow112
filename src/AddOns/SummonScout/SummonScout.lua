@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.26"
+local ADDON_VERSION = "1.27"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -25,6 +25,7 @@ SS.tradeMoneyBefore = 0
 SS.tradeTargetMoney = 0
 SS.tradeBothAccepted = false
 SS.tradeActive = false
+SS.pendingTrade = nil
 SS.gui = nil
 SS.nextGuiRefreshAt = 0
 SS.partyKnown = {}
@@ -626,29 +627,42 @@ end
 local function finishTrade()
     if not SS.tradeActive then return end
 
-    local partner = SS.tradePartner or currentTradePartner()
-    local before = SS.tradeMoneyBefore or 0
-    local offered = SS.tradeTargetMoney or 0
-    local accepted = SS.tradeBothAccepted
-    local after = GetMoney and GetMoney() or before
-    local delta = after - before
-    local amount = 0
+    -- TRADE_CLOSED can fire before GetMoney() reflects the received copper on
+    -- this client/server. Snapshot the session and settle from the actual wallet
+    -- change a few frames later instead of trusting GetTargetTradeMoney().
+    SS.pendingTrade = {
+        partner = SS.tradePartner or currentTradePartner(),
+        before = SS.tradeMoneyBefore or (GetMoney and GetMoney() or 0),
+        offered = SS.tradeTargetMoney or 0,
+        accepted = SS.tradeBothAccepted and true or false,
+        closedAt = now(),
+        deadline = now() + 2.0
+    }
 
-    -- Close the session first so a duplicate TRADE_CLOSED cannot record again.
+    -- Close the session immediately so duplicate TRADE_CLOSED cannot enqueue twice.
     resetTradeState()
+end
 
-    -- The payer's accepted offer is the authoritative per-trade amount.
-    -- Wallet delta is only a fallback when the acceptance event was missed.
-    if accepted and offered > 0 then
-        amount = offered
-    elseif offered > 0 and delta > 0 then
-        amount = offered
-    elseif accepted and delta > 0 then
-        amount = delta
+local function processPendingTrade()
+    local p = SS.pendingTrade
+    if not p then return end
+
+    local after = GetMoney and GetMoney() or p.before
+    local delta = after - (p.before or 0)
+
+    if delta > 0 then
+        -- Actual wallet gain is authoritative. This cannot accidentally count
+        -- the character's pre-trade balance as revenue.
+        SS.pendingTrade = nil
+        recordPayment(p.partner, delta)
+        return
     end
 
-    if amount > 0 then
-        recordPayment(partner, amount)
+    if now() >= (p.deadline or 0) then
+        if SummonScoutDB.debug and (p.offered or 0) > 0 then
+            chat("trade closed with no positive wallet gain; payment ignored")
+        end
+        SS.pendingTrade = nil
     end
 end
 
@@ -1204,6 +1218,17 @@ local function setDefaults()
     if SummonScoutDB.partyAutoSummon == nil then SummonScoutDB.partyAutoSummon = false end
     if SummonScoutDB.summonWhisperEnabled == nil then SummonScoutDB.summonWhisperEnabled = true end
     if SummonScoutDB.paymentChatEnabled == nil then SummonScoutDB.paymentChatEnabled = true end
+    if SummonScoutDB.paymentLedgerVersion == nil or SummonScoutDB.paymentLedgerVersion < 2 then
+        -- Older builds could record the full wallet/incorrect trade amount.
+        -- Preserve that history separately, but start the trusted ledger clean.
+        SummonScoutDB.legacyPaymentLog = SummonScoutDB.paymentLog or {}
+        SummonScoutDB.legacyRevenueCopper = SummonScoutDB.revenueCopper or 0
+        SummonScoutDB.legacyPaymentCount = SummonScoutDB.paymentCount or 0
+        SummonScoutDB.paymentLog = {}
+        SummonScoutDB.revenueCopper = 0
+        SummonScoutDB.paymentCount = 0
+        SummonScoutDB.paymentLedgerVersion = 2
+    end
     if SummonScoutDB.lastAdvertNormalized == nil then SummonScoutDB.lastAdvertNormalized = "" end
     if SummonScoutDB.lastAdvertWall == nil then SummonScoutDB.lastAdvertWall = 0 end
     ensureStats()
@@ -1290,7 +1315,8 @@ local function clearPayments()
     SummonScoutDB.paymentLog = {}
     SummonScoutDB.revenueCopper = 0
     SummonScoutDB.paymentCount = 0
-    chat("payment ledger cleared")
+    SS.pendingTrade = nil
+    chat("trusted payment ledger cleared")
     guiRefreshSafe()
 end
 
@@ -1587,7 +1613,7 @@ local function createGui()
     guiHeader(f, "Live operation", 370, -278)
     GUI.lastInviteText = guiText(f, "Last invite: -", 370, -302, true)
     GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -326, true)
-    GUI.revenueText = guiText(f, "Received total: 0c", 370, -350, true)
+    GUI.revenueText = guiText(f, "Received total (trusted): 0c", 370, -350, true)
     GUI.currentGoldText = guiText(f, "Current gold: 0c", 370, -374, true)
     GUI.counterText = guiText(f, "Counter: -", 370, -398, true)
     GUI.summonStateText = guiText(f, "Summon: idle", 370, -422, true)
@@ -1630,7 +1656,7 @@ guiRefresh = function()
             .. (last and ((last.player or "?") .. " -> " .. formatMoney(last.copper or 0)) or "-"))
     end
     if GUI.revenueText then
-        GUI.revenueText:SetText("Received total: " .. formatMoney(SummonScoutDB.revenueCopper or 0)
+        GUI.revenueText:SetText("Received total (trusted): " .. formatMoney(SummonScoutDB.revenueCopper or 0)
             .. " | payments: " .. tostring(SummonScoutDB.paymentCount or 0))
     end
     if GUI.currentGoldText then
@@ -2124,6 +2150,7 @@ frame:SetScript("OnUpdate", function()
         syncPartyRoster(false)
         SS.nextRosterPollAt = t + 0.75
     end
+    processPendingTrade()
     processQueue()
     processPartySummon()
     processCounter()

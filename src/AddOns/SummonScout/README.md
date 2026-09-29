@@ -1,4 +1,4 @@
-# SummonScout 1.26
+# SummonScout 1.27
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -343,3 +343,19 @@ Two reliability fixes protect auto-summon from unrelated chat/reporting failures
 - `reportMaster()` is isolated with `pcall`; a ChatThrottleLib or SendChatMessage error is treated as a reporting failure instead of aborting the roster event handler.
 
 Roster detection also has a 750 ms reconciliation poll in addition to `PARTY_MEMBERS_CHANGED` / `RAID_ROSTER_UPDATE`. If this client/server misses a roster event, a genuinely new member is still detected and queued on the next poll.
+
+
+## 1.27 trusted payment ledger
+
+Payment accounting now uses the **actual post-trade wallet increase** as the only authoritative amount.
+
+`TRADE_CLOSED` no longer records `GetTargetTradeMoney()` immediately. The trade session is snapshotted and, for up to 2 seconds, SummonScout waits for `GetMoney()` to reflect the completed transaction. A positive wallet delta is recorded; no positive delta means no payment entry.
+
+This eliminates the earlier failure mode where an incorrect trade API value or stale wallet state could inflate revenue.
+
+Because older builds are known to have polluted the saved total, the first 1.27 load performs a one-time ledger migration:
+- old `paymentLog/revenueCopper/paymentCount` are preserved under `legacyPaymentLog/legacyRevenueCopper/legacyPaymentCount`;
+- the active trusted ledger starts from zero;
+- future totals are accumulated only from confirmed wallet gains.
+
+The GUI label is now `Received total (trusted)` to distinguish this clean ledger from historical data.
