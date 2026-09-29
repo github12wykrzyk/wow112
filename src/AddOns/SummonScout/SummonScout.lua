@@ -33,6 +33,7 @@ SS.summonQueue = {}
 SS.summonQueued = {}
 SS.summonActiveName = nil
 SS.summonActiveExpires = 0
+SS.summonActiveStarted = false
 SS.summonWhisperRecent = {}
 SS.lastAdvertMessage = ""
 SS.lastAdvertSentAt = -100000
@@ -601,7 +602,9 @@ local function finishTrade()
     -- Wallet delta is only a fallback when the acceptance event was missed.
     if accepted and offered > 0 then
         amount = offered
-    elseif delta > 0 then
+    elseif offered > 0 and delta > 0 then
+        amount = offered
+    elseif accepted and delta > 0 then
         amount = delta
     end
 
@@ -734,6 +737,12 @@ local function whisperSummonTarget(name)
     SS.summonWhisperRecent[key] = t
 end
 
+local function clearActiveSummon()
+    SS.summonActiveName = nil
+    SS.summonActiveExpires = 0
+    SS.summonActiveStarted = false
+end
+
 local function finishActiveSummon(name)
     name = trim(name or SS.summonActiveName or "")
     if name ~= "" then
@@ -750,16 +759,28 @@ local function finishActiveSummon(name)
             end
         end
     end
-    SS.summonActiveName = nil
-    SS.summonActiveExpires = 0
+    clearActiveSummon()
+end
+
+local function retryActiveSummon(delay)
+    local name = SS.summonActiveName
+    clearActiveSummon()
+    if name and table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, name) then
+        SS.summonQueue[1].phase = "target"
+        SS.summonQueue[1].nextAt = now() + (delay or 0.50)
+    end
 end
 
 local function processPartySummon()
     if not SummonScoutDB.enabled or not SummonScoutDB.partyAutoSummon then return end
     if SS.summonActiveName then
         if now() < (SS.summonActiveExpires or 0) then return end
-        SS.summonActiveName = nil
-        SS.summonActiveExpires = 0
+        if SS.summonActiveStarted then
+            finishActiveSummon(SS.summonActiveName)
+        else
+            retryActiveSummon(0.20)
+        end
+        return
     end
     if table.getn(SS.summonQueue) == 0 then return end
     if playerIsCasting() then return end
@@ -804,12 +825,14 @@ local function processPartySummon()
             return
         end
 
+        SS.summonActiveName = item.name
+        SS.summonActiveStarted = false
+        SS.summonActiveExpires = now() + 1.25
+
         local requested, slot = castRitualOnUnit(unit)
         if requested then
-            SS.summonActiveName = item.name
-            SS.summonActiveExpires = now() + 1.50
-            item.phase = "wait"
-            item.nextAt = now() + 4.0
+            item.phase = SS.summonActiveStarted and "casting" or "wait"
+            item.nextAt = now() + 1.25
             if SummonScoutDB.debug then
                 chat("summon cast requested -> " .. item.name
                     .. " attempt " .. tostring(item.attempts)
@@ -948,7 +971,7 @@ local function sendSpamMessage(manual)
     if not manual and normalizeMessage(message) == normalizeMessage(SS.lastAdvertMessage or "")
         and (now() - (SS.lastAdvertSentAt or -100000)) < 10 then
         if SummonScoutDB.debug then chat("duplicate advert suppressed") end
-        return true
+        return true, "suppressed"
     end
 
     local channelId = configuredChannelId()
@@ -966,9 +989,9 @@ local function sendSpamMessage(manual)
         if manual or SummonScoutDB.debug then
             chat("spam -> #" .. (SummonScoutDB.channel or "World") .. ": " .. message)
         end
-        return true
+        return true, "sent"
     end
-    return false
+    return false, "failed"
 end
 
 local function processCounter()
@@ -982,7 +1005,8 @@ local function processCounter()
     if t < SS.counterAt then return end
 
     local sender = SS.counterSender or "?"
-    if sendSpamMessage(false) then
+    local ok, result = sendSpamMessage(false)
+    if ok then
         SS.lastCounterAt = t
         clearCounterPending()
 
@@ -991,7 +1015,11 @@ local function processCounter()
         if SummonScoutDB.spamEnabled then
             SS.nextSpamAt = t + (SummonScoutDB.spamInterval or 120)
         end
-        chat("counter sent -> " .. sender)
+        if result == "sent" then
+            chat("counter sent -> " .. sender)
+        elseif SummonScoutDB.debug then
+            chat("counter handled without send -> " .. sender .. " [duplicate cooldown]")
+        end
     else
         -- World temporarily unavailable: retain one pending response and retry
         -- slowly rather than create additional queued advertisements.
@@ -1735,6 +1763,7 @@ frame:RegisterEvent("CHAT_MSG_WHISPER")
 frame:RegisterEvent("PARTY_MEMBERS_CHANGED")
 frame:RegisterEvent("RAID_ROSTER_UPDATE")
 frame:RegisterEvent("SPELLCAST_START")
+frame:RegisterEvent("SPELLCAST_STOP")
 frame:RegisterEvent("SPELLCAST_FAILED")
 frame:RegisterEvent("SPELLCAST_INTERRUPTED")
 frame:SetScript("OnEvent", function()
@@ -1774,21 +1803,39 @@ frame:SetScript("OnEvent", function()
     if event == "SPELLCAST_START" then
         local spell = normalizeMessage(arg1 or "")
         if spell == "ritual of summoning" then
-            local targetName = trim(UnitName("target") or SS.summonActiveName or "")
+            local targetName = trim(SS.summonActiveName or UnitName("target") or "")
             if targetName ~= "" then whisperSummonTarget(targetName) end
-            if SS.summonActiveName then finishActiveSummon(SS.summonActiveName) end
+
+            if SS.summonActiveName and samePlayer(UnitName("target"), SS.summonActiveName) then
+                SS.summonActiveStarted = true
+                SS.summonActiveExpires = now() + 8.0
+                if table.getn(SS.summonQueue) > 0
+                    and samePlayer(SS.summonQueue[1].name, SS.summonActiveName) then
+                    SS.summonQueue[1].phase = "casting"
+                end
+            end
+        end
+        return
+    end
+
+    if event == "SPELLCAST_STOP" then
+        if SS.summonActiveName and SS.summonActiveStarted then
+            if SummonScoutDB.debug then
+                chat("summon cast completed -> " .. SS.summonActiveName)
+            end
+            finishActiveSummon(SS.summonActiveName)
         end
         return
     end
 
     if event == "SPELLCAST_FAILED" or event == "SPELLCAST_INTERRUPTED" then
         if SS.summonActiveName then
-            local failed = SS.summonActiveName
-            SS.summonActiveName = nil
-            SS.summonActiveExpires = 0
-            if table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, failed) then
-                SS.summonQueue[1].phase = "target"
-                SS.summonQueue[1].nextAt = now() + 0.75
+            local spell = normalizeMessage(arg1 or "")
+            if spell == "" or spell == "ritual of summoning" then
+                if SummonScoutDB.debug then
+                    chat("summon cast retry -> " .. SS.summonActiveName)
+                end
+                retryActiveSummon(0.75)
             end
         end
         return

@@ -1,4 +1,4 @@
-# SummonScout 1.15
+# SummonScout 1.16
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -226,3 +226,12 @@ The 10 second cooldown is applied to **outgoing summon-status whispers**, not to
 - Auto-summon now resolves both `partyN` and `raidN` units and listens to both party and raid roster changes.
 - `Ritual of Summoning` is cast through the actual spellbook slot when available, with `CastSpellByName` retained only as a fallback. This avoids the observed case where the target changed correctly but the spell request never started.
 - If the spell opens targeting mode, the resolved party/raid unit is explicitly passed to `SpellTargetUnit`.
+
+
+## 1.16 audit hardening
+
+- Ritual queue completion now follows the full cast lifecycle: START marks the cast as started, STOP completes the queue, and FAILED/INTERRUPTED retries. The customer is no longer forgotten merely because the 5-second Ritual began.
+- Auto-summon active state is installed before the spell request, avoiding a synchronous START race.
+- A started Ritual gets an 8-second completion watchdog; a request that never produces START is retried after the short request watchdog.
+- Trade fallback accounting requires either a remembered incoming offer or an accepted trade, preventing unrelated wallet gains during a cancelled trade from being counted as summon payment.
+- Suppressed duplicate World adverts are distinguished from actual sends, so debug output no longer claims `counter sent` when dedupe blocked the message.
