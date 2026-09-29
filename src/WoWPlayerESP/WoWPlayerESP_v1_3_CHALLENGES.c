@@ -609,7 +609,7 @@ static void ui_sync_summon(void) {
     const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,31u);
     W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
     W112_ControlValueV1 pre,current,post,scans,nearCount,nearEntry,nearType,nearDist,status,gate,busy;
-    W112_ControlValueV1 anti,nextSec,actions,channelDefers,lastAction,afkDetected,recoveries;
+    W112_ControlValueV1 anti,nextSec,actions,channelDefers,lastAction,downPosts,upPosts;
     char buf[260],*p;
 
     if(!m) {
@@ -655,8 +655,8 @@ static void ui_sync_summon(void) {
     if(!m->get_value(23u,&actions))actions.u32=0u;
     if(!m->get_value(24u,&channelDefers))channelDefers.u32=0u;
     if(!m->get_value(29u,&lastAction))lastAction.u32=0u;
-    if(!m->get_value(30u,&afkDetected))afkDetected.u32=0u;
-    if(!m->get_value(31u,&recoveries))recoveries.u32=0u;
+    if(!m->get_value(30u,&downPosts))downPosts.u32=0u;
+    if(!m->get_value(31u,&upPosts))upPosts.u32=0u;
 
     if(g_ui_summon_check)
         SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
@@ -702,11 +702,10 @@ static void ui_sync_summon(void) {
     }
     if(g_ui_summon_antiafk_state){
         p=buf;p=app_str(p,"ANTI-AFK: ");p=app_str(p,anti.u32?"ON":"OFF");
-        p=app_str(p," | AFK ");p=app_str(p,afkDetected.u32?"YES":"NO");
         p=app_str(p," | next ~");p=app_u32(p,nextSec.u32);p=app_str(p,"s");
-        p=app_str(p," | actions ");p=app_u32(p,actions.u32);
-        p=app_str(p," | last ");p=app_str(p,lastAction.u32==1u?"STAND":(lastAction.u32==2u?"ARMOR":(lastAction.u32==3u?"SAY":"NONE")));
-        p=app_str(p," | recovered ");p=app_u32(p,recoveries.u32);
+        p=app_str(p," | spaces ");p=app_u32(p,actions.u32);
+        p=app_str(p," | posts ");p=app_u32(p,downPosts.u32);*p++='/';p=app_u32(p,upPosts.u32);
+        p=app_str(p," | last ");p=app_str(p,lastAction.u32==1u?"SPACE":"NONE");
         p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
         *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
     }
@@ -1874,7 +1873,7 @@ static BOOL ui_create(HWND game) {
     g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,505,665,42,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
     g_ui_summon_antiafk_check=ui_button(g_parallel_ui_hwnd,
-        "ANTI-AFK - react only on AFK: stand -> Demon Armor -> /say fallback",
+        "ANTI-AFK - SPACE to this WoW every random 100-120s",
         46,555,665,36,230u,TRUE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_check);
     g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,600,665,32,FALSE);

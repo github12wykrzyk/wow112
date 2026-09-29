@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c"
 DLL_NAME = "WoWAutoSummonAssist_5875_v1.dll"
 DLL_LIST_NAME = "dlls.txt"
-PROFILE = "clangcl_i686_crtless"
+PROFILE = "clangcl_i686_win32imports"
 
 
 def loader_manifest_bytes(names):
@@ -106,8 +106,8 @@ def main():
     timing, pe = build_one(PROFILE, SOURCE, obj, output)
     if pe.get("machine_hex") != "0x014C" or pe.get("entrypoint_rva") == 0:
         raise SystemExit("AutoSummon Assist PE32/x86/entrypoint verification failed")
-    if pe.get("has_import_directory"):
-        raise SystemExit("AutoSummon Assist unexpectedly has PE imports; crtless provider contract violated")
+    if not pe.get("has_import_directory"):
+        raise SystemExit("AutoSummon Assist SPACE heartbeat requires Win32 imports but PE import directory is missing")
 
     module_meta = {
         "name": DLL_NAME,
@@ -184,24 +184,17 @@ def main():
         "interaction_diagnostics": "PRE increments before 0x005F8660; POST increments after return; gate reason exposed live",
         "anti_afk": {
             "default_enabled": True,
-            "mode": "reactive_afk_detection",
-            "poll_ms": 2000,
-            "stand_settle_ms": 500,
-            "verify_ms": 1000,
-            "retry_ms": 3000,
-            "trigger": "native CGPlayer info flags: *(u8*)(*(u32*)(player+0xE68)+0x08) & 0x02",
-            "recovery_sequence": "wait for cast/channel -> DoEmote('STAND') -> settle -> Demon Armor when known, otherwise /say . -> verify AFK -> retry if needed",
-            "background_safe": True,
-            "os_input_simulation": False,
+            "mode": "per_client_space_key_heartbeat",
+            "interval_seconds": [100, 120],
+            "delivery": "PostMessageA WM_KEYDOWN/WM_KEYUP VK_SPACE to exact 5875 GetGameWindow(0)",
+            "game_window_fn": "0x00435C30",
+            "foreground_required": False,
+            "global_sendinput": False,
+            "per_process_window_only": True,
             "defer_during_cast_or_channel": True,
-            "random_heartbeat_removed": True,
+            "retry_ms_if_post_fails": 3000,
             "slash_command": "/antiafk on | off | toggle | status",
-            "slash_registration": "pure Lua SlashCmdList bridge installed via FrameScript_Execute 0x00704CD0; direct hash insertion/import when available; self-heals every 3s for /reload",
-            "slash_bridge_read": "FrameScript_GetText 0x00703BF0 reads W112_ANTIAFK_CMD on the game/UI timer",
-            "framescript_execute_abi": "__fastcall(const char*, const char*)",
-            "shared_state_with_gui": True,
-            "vanilla_afk_reference": "https://octowow.st/git/brues/ClassicAPI - 1.12.1 CGPlayer info +0xE68, flags byte +0x08, PLAYER_FLAG_AFK 0x02; live screenshot proved Lua UnitIsAFK self-check false-negative on this client/server",
-            "stand_reference": "https://warcraft.wiki.gg/wiki/API:SitStandOrDescendStart - pre-2.1 DoEmote('STAND') / SitOrStand lineage"
+            "shared_state_with_gui": True
         },
         "background_trade_auto_accept": True,
         "incoming_trade_request": "Stock 1.12 TradeFrame is authoritative; TRADE popup/BeginTrade is compatibility fallback only",

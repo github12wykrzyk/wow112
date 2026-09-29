@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v13 - payer-first gold trade + native reactive AFK recovery.
+ * WoWAutoSummonAssist 5875 v14 - payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -54,9 +54,12 @@ typedef u32 UINT32;
 typedef u32 UINT_PTR32;
 typedef int BOOL32;
 
+__declspec(dllimport) BOOL32 STDCALL PostMessageA(HWND32,u32,u32,u32);
+
 typedef void (STDCALL *TimerProc32)(HWND32,UINT32,UINT_PTR32,u32);
 typedef UINT_PTR32 (STDCALL *SetTimerFn)(HWND32,UINT_PTR32,UINT32,TimerProc32);
 typedef BOOL32 (STDCALL *KillTimerFn)(HWND32,UINT_PTR32);
+typedef HWND32 (FASTCALL *GetGameWindowFn)(int);
 typedef u32 (FASTCALL *GetObjectByGuidFn)(u64);
 typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 typedef const char* (FASTCALL *FrameScriptGetTextFn)(const char*,int,u32);
@@ -65,6 +68,7 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define WOW_OBJMGR                  0x00B41414u
 #define WOW_GET_OBJECT_BY_GUID      0x00464870u
 #define WOW_ON_RIGHT_CLICK_OBJECT   0x005F8660u
+#define WOW_GET_GAME_WINDOW         0x00435C30u
 #define WOW_FRAMESCRIPT_GETTEXT     0x00703BF0u
 #define WOW_FRAMESCRIPT_EXECUTE     0x00704CD0u
 #define WOW_IAT_SETTIMER            0x007FF4F4u
@@ -83,9 +87,10 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define PLAYER_Z                    0x09C0u
 #define UNIT_CAST_OFFSET            0x0C8Cu
 #define UNIT_CHANNEL_INDEX          0x0090u
-#define CGPLAYER_INFO_PTR           0x0E68u
-#define CGPLAYER_INFO_FLAGS         0x0008u
-#define PLAYER_FLAG_AFK             0x02u
+
+#define WM_KEYDOWN                  0x0100u
+#define WM_KEYUP                    0x0101u
+#define VK_SPACE                    0x20u
 
 #define OBJECT_FIELD_TYPE_INDEX     0x0002u
 #define OBJECT_FIELD_ENTRY_INDEX    0x0003u
@@ -108,17 +113,11 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define MAX_ATTEMPTS_PER_GUID       8u
 #define INTERACT_RANGE_SQ           (5.50f*5.50f)
 #define DEBUG_NEAR_RANGE_SQ         (12.0f*12.0f)
-#define ANTI_AFK_POLL_MS            2000u
-#define ANTI_AFK_STAND_SETTLE_MS     500u
-#define ANTI_AFK_VERIFY_MS           1000u
-#define ANTI_AFK_RETRY_MS            3000u
-#define ANTI_AFK_DEFER_RECHECK_MS   1000u
-#define ANTI_AFK_SLASH_REPAIR_MS    3000u
-
-#define ANTI_AFK_PHASE_IDLE            0u
-#define ANTI_AFK_PHASE_STAND_SETTLE    1u
-#define ANTI_AFK_PHASE_VERIFY          2u
-#define ANTI_AFK_PHASE_RETRY_WAIT      3u
+#define ANTI_AFK_MIN_MS             100000u
+#define ANTI_AFK_MAX_EXTRA_MS        20000u
+#define ANTI_AFK_RETRY_MS             3000u
+#define ANTI_AFK_DEFER_RECHECK_MS     1000u
+#define ANTI_AFK_SLASH_REPAIR_MS      3000u
 #define TRADE_POLL_MS               100u
 
 #define STATUS_DETACHED             0u
@@ -166,9 +165,9 @@ static volatile u32 g_antiAfkEnabled = 1u;
 static volatile u32 g_antiAfkSecondsLeft = 0u;
 static volatile u32 g_antiAfkActions = 0u;
 static volatile u32 g_antiAfkChannelDefers = 0u;
-static volatile u32 g_antiAfkLastAction = 0u; /* 0 none, 1 stand, 2 Demon Armor, 3 /say fallback */
-static volatile u32 g_antiAfkDetected = 0u;
-static volatile u32 g_antiAfkRecoveries = 0u;
+static volatile u32 g_antiAfkLastAction = 0u; /* 0 none, 1 SPACE */
+static volatile u32 g_antiAfkDownPosts = 0u;
+static volatile u32 g_antiAfkUpPosts = 0u;
 static volatile u32 g_tradeOpen = 0u;
 static volatile u32 g_tradeOfferCopper = 0u;
 static volatile u32 g_tradeAcceptAttempts = 0u;
@@ -176,8 +175,7 @@ static volatile u32 g_tradeTargetAccepted = 0u;
 
 static u32 g_antiAfkNextAt = 0u;
 static u32 g_antiAfkDeferCheckAt = 0u;
-static u32 g_antiAfkPhase = ANTI_AFK_PHASE_IDLE;
-static u32 g_antiAfkKnownArmor = 0u;
+static u32 g_antiAfkRng = 0u;
 static u32 g_antiAfkSlashInstallAt = 0u;
 static volatile u32 g_antiAfkSlashFeedback = 0u;
 static volatile u32 g_antiAfkSlashCommands = 0u;
@@ -263,9 +261,6 @@ static void resetWorld(void)
     g_antiAfkSlashInstallAt=0u;
     g_antiAfkNextAt=0u;
     g_antiAfkDeferCheckAt=0u;
-    g_antiAfkPhase=ANTI_AFK_PHASE_IDLE;
-    g_antiAfkKnownArmor=0u;
-    g_antiAfkDetected=0u;
     g_antiAfkSecondsLeft=0u;
     g_lastTradePoll=0u;
     g_tradeOpen=0u;
@@ -288,8 +283,11 @@ static int buildGuard(void)
     for(i=0u;i<(u32)sizeof(sig);i++) if(p[i]!=sig[i]) return 0;
     p=(const volatile u8*)(ptr32)WOW_ON_RIGHT_CLICK_OBJECT;
     if((p[0]==0u && p[1]==0u) || (p[0]==0xCCu && p[1]==0xCCu)) return 0;
-    /* FrameScript_Execute/GetText are exact 5875 addresses also used by the
-     * proven MovementCore lineage. Do not impose a guessed prologue here. */
+    p=(const volatile u8*)(ptr32)WOW_GET_GAME_WINDOW;
+    {
+        static const u8 winSig[]={0x83,0xE9,0x00,0x74,0x15,0x49,0x74,0x0C,0x49,0x74,0x03,0x33,0xC0,0xC3};
+        for(i=0u;i<(u32)sizeof(winSig);i++) if(p[i]!=winSig[i]) return 0;
+    }
     return 1;
 }
 
@@ -348,19 +346,22 @@ static int playerBusy(u32 player)
     return 0;
 }
 
-/* Reactive Anti-AFK for Vanilla 1.12.1.
- * Poll UnitIsAFK("player") every ~2s. Normal play causes no heartbeat action.
- * On a real AFK flag: wait out any cast/channel, force a deterministic stand,
- * wait 500ms, then (only if AFK persists) cast Demon Armor when known or use
- * one-character SAY as fallback. Verify the flag and retry after 3s if needed.
- * Everything executes in-process on the existing UI timer: no OS input/focus.
- *
- * Vanilla API evidence:
- * - UnitIsAFK / PLAYER_FLAGS_CHANGED: MikeBeloborodov/VanillaWowApi (1.12.1)
- * - DoEmote("STAND") / legacy SitOrStand: pre-2.1 player script API. */
-static void antiAfkSetNext(u32 now,u32 delay)
+/* Per-client SPACE heartbeat. No AFK-state detection is used.
+ * Every 100-120 seconds, queue a normal SPACE key transition to THIS WoW HWND.
+ * PostMessageA targets only this process's game window: no foreground switch
+ * and no global SendInput, so multibox instances remain isolated. */
+static u32 antiAfkRandomDelay(u32 now)
 {
+    if(!g_antiAfkRng) g_antiAfkRng=0xA341316Cu^now^g_lo^(g_hi*33u);
+    g_antiAfkRng=g_antiAfkRng*1664525u+1013904223u;
+    return ANTI_AFK_MIN_MS+(g_antiAfkRng%(ANTI_AFK_MAX_EXTRA_MS+1u));
+}
+
+static void antiAfkSchedule(u32 now)
+{
+    u32 delay=antiAfkRandomDelay(now);
     g_antiAfkNextAt=now+delay;
+    g_antiAfkDeferCheckAt=0u;
     g_antiAfkSecondsLeft=(delay+999u)/1000u;
 }
 
@@ -368,9 +369,6 @@ static void antiAfkResetRuntime(void)
 {
     g_antiAfkNextAt=0u;
     g_antiAfkDeferCheckAt=0u;
-    g_antiAfkPhase=ANTI_AFK_PHASE_IDLE;
-    g_antiAfkKnownArmor=0u;
-    g_antiAfkDetected=0u;
     g_antiAfkSecondsLeft=0u;
 }
 
@@ -395,17 +393,10 @@ static void antiAfkInstallSlash(u32 now)
         "SlashCmdList['W112ANTIAFK']=function(msg) "
         "local c=string.lower(msg or ''); "
         "if string.gsub then c=string.gsub(c,'^%s*(.-)%s*$','%1') end; "
-        "if c=='' then c='status' end; "
-        "W112_ANTIAFK_CMD=c "
-        "end;"
-        "if hash_SlashCmdList then "
-        "hash_SlashCmdList['/ANTIAFK']=SlashCmdList['W112ANTIAFK'] "
-        "end;"
+        "if c=='' then c='status' end; W112_ANTIAFK_CMD=c end;"
+        "if hash_SlashCmdList then hash_SlashCmdList['/ANTIAFK']=SlashCmdList['W112ANTIAFK'] end;"
         "if ChatFrame_ImportAllListsToHash then ChatFrame_ImportAllListsToHash() end";
-
-    if(g_antiAfkSlashInstallAt &&
-       (u32)(now-g_antiAfkSlashInstallAt)<ANTI_AFK_SLASH_REPAIR_MS) return;
-
+    if(g_antiAfkSlashInstallAt && (u32)(now-g_antiAfkSlashInstallAt)<ANTI_AFK_SLASH_REPAIR_MS) return;
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(initScript,"AutoSummonAssist");
     g_antiAfkSlashInstallAt=now;
 }
@@ -413,182 +404,73 @@ static void antiAfkInstallSlash(u32 now)
 static void antiAfkPollSlash(void)
 {
     static const char clearScript[]="W112_ANTIAFK_CMD=''";
-    const char *cmd=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
-        "W112_ANTIAFK_CMD",-1,0u);
+    const char *cmd=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_ANTIAFK_CMD",-1,0u);
     u32 feedback=0u;
-
     if(!cmd||!cmd[0]) return;
-
-    if(antiAfkCmdIs(cmd,"on")){
-        antiAfkSetEnabled(1u);
-        feedback=1u;
-    } else if(antiAfkCmdIs(cmd,"off")){
-        antiAfkSetEnabled(0u);
-        feedback=1u;
-    } else if(antiAfkCmdIs(cmd,"toggle")){
-        antiAfkSetEnabled(g_antiAfkEnabled?0u:1u);
-        feedback=1u;
-    } else if(antiAfkCmdIs(cmd,"status")){
-        feedback=1u;
-    } else {
-        feedback=2u;
-    }
-
-    ++g_antiAfkSlashCommands;
-    g_antiAfkSlashFeedback=feedback;
+    if(antiAfkCmdIs(cmd,"on")){antiAfkSetEnabled(1u);feedback=1u;}
+    else if(antiAfkCmdIs(cmd,"off")){antiAfkSetEnabled(0u);feedback=1u;}
+    else if(antiAfkCmdIs(cmd,"toggle")){antiAfkSetEnabled(g_antiAfkEnabled?0u:1u);feedback=1u;}
+    else if(antiAfkCmdIs(cmd,"status")) feedback=1u;
+    else feedback=2u;
+    ++g_antiAfkSlashCommands;g_antiAfkSlashFeedback=feedback;
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearScript,"AutoSummonAssist");
 }
 
 static void antiAfkFlushSlashFeedback(void)
 {
     static const char onMsg[]=
-        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cff55ff55[Anti-AFK]|r ON - reactive AFK watch: stand -> Demon Armor -> /say fallback') end";
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Anti-AFK]|r ON - SPACE every random 100-120s') end";
     static const char offMsg[]=
-        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cffff7777[Anti-AFK]|r OFF') end";
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffff7777[Anti-AFK]|r OFF') end";
     static const char usageMsg[]=
-        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cffffcc00[Anti-AFK]|r /antiafk on | off | toggle | status') end";
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffcc00[Anti-AFK]|r /antiafk on | off | toggle | status') end";
     u32 feedback=g_antiAfkSlashFeedback;
-
-    if(!feedback) return;
+    if(!feedback)return;
     g_antiAfkSlashFeedback=0u;
-    if(feedback==2u)
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(usageMsg,"AutoSummonAssist");
-    else if(g_antiAfkEnabled)
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(onMsg,"AutoSummonAssist");
-    else
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(offMsg,"AutoSummonAssist");
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(
+        feedback==2u?usageMsg:(g_antiAfkEnabled?onMsg:offMsg),"AutoSummonAssist");
 }
 
-static int antiAfkQueryAfk(u32 player)
+static int antiAfkPostSpace(void)
 {
-    u32 info;
-    u8 flags;
-
-    /* Exact Vanilla 1.12 CGPlayer path. The local player object is already
-     * validated as TYPEID_PLAYER by localPlayer(); +0xE68 is therefore safe
-     * to treat as the CGPlayer-side info pointer. Its byte +0x08 carries
-     * PLAYER_FLAGS; bit 0x02 is AFK. This is the same client-side state used
-     * for the visible <AFK> marker, and avoids the false-negative Lua
-     * UnitIsAFK("player") behavior observed in live testing. */
-    if(!ptrOk(player) || read32(player+OBJ_TYPE_ID)!=4u) return 0;
-    info=read32(player+CGPLAYER_INFO_PTR);
-    if(!ptrOk(info)) return 0;
-    flags=*(volatile u8*)(ptr32)(info+CGPLAYER_INFO_FLAGS);
-    return (flags&PLAYER_FLAG_AFK)!=0u;
-}
-
-static void antiAfkMarkRecovered(u32 now)
-{
-    if(g_antiAfkDetected) ++g_antiAfkRecoveries;
-    g_antiAfkDetected=0u;
-    g_antiAfkPhase=ANTI_AFK_PHASE_IDLE;
-    g_antiAfkKnownArmor=0u;
-    g_antiAfkDeferCheckAt=0u;
-    antiAfkSetNext(now,ANTI_AFK_POLL_MS);
-}
-
-static void antiAfkStandAndProbeArmor(u32 now)
-{
-    static const char standScript[]=
-        "W112_ANTIAFK_KNOWS_ARMOR='0';"
-        "if type(DoEmote)=='function' then DoEmote('STAND') "
-        "elseif type(SitOrStand)=='function' then SitOrStand() end;"
-        "if type(GetSpellName)=='function' and BOOKTYPE_SPELL then "
-        "local i;for i=1,512 do "
-        "local n=GetSpellName(i,BOOKTYPE_SPELL);"
-        "if not n then break end;"
-        "if n=='Demon Armor' then W112_ANTIAFK_KNOWS_ARMOR='1';break end "
-        "end end";
-    const char *known;
-
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(standScript,"AutoSummonAssist");
-    known=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
-        "W112_ANTIAFK_KNOWS_ARMOR",-1,0u);
-    g_antiAfkKnownArmor=(known&&known[0]=='1'&&known[1]==0)?1u:0u;
+    GetGameWindowFn getWindow=(GetGameWindowFn)(ptr32)WOW_GET_GAME_WINDOW;
+    HWND32 hwnd=getWindow?getWindow(0):0;
+    BOOL32 downOk,upOk;
+    if(!hwnd)return 0;
+    downOk=PostMessageA(hwnd,WM_KEYDOWN,VK_SPACE,0x00390001u);
+    if(downOk)++g_antiAfkDownPosts;
+    upOk=PostMessageA(hwnd,WM_KEYUP,VK_SPACE,0xC0390001u);
+    if(upOk)++g_antiAfkUpPosts;
+    if(!downOk||!upOk)return 0;
+    ++g_antiAfkActions;
     g_antiAfkLastAction=1u;
-    ++g_antiAfkActions;
-    g_antiAfkPhase=ANTI_AFK_PHASE_STAND_SETTLE;
-    antiAfkSetNext(now,ANTI_AFK_STAND_SETTLE_MS);
-}
-
-static void antiAfkDoActivity(u32 now)
-{
-    static const char armorScript[]=
-        "if type(CastSpellByName)=='function' then CastSpellByName('Demon Armor') end";
-    static const char sayScript[]=
-        "if type(SendChatMessage)=='function' then SendChatMessage('.','SAY') end";
-
-    if(g_antiAfkKnownArmor){
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(armorScript,"AutoSummonAssist");
-        g_antiAfkLastAction=2u;
-    } else {
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(sayScript,"AutoSummonAssist");
-        g_antiAfkLastAction=3u;
-    }
-    ++g_antiAfkActions;
-    g_antiAfkPhase=ANTI_AFK_PHASE_VERIFY;
-    antiAfkSetNext(now,ANTI_AFK_VERIFY_MS);
+    return 1;
 }
 
 static void antiAfkTick(u32 player,u32 now)
 {
-    int afk;
-
-    if(!g_antiAfkEnabled){
-        antiAfkResetRuntime();
-        return;
-    }
-
-    if(!g_antiAfkNextAt){
-        antiAfkSetNext(now,0u);
-    } else if((int)(now-g_antiAfkNextAt)<0){
+    if(!g_antiAfkEnabled){antiAfkResetRuntime();return;}
+    if(!g_antiAfkNextAt){antiAfkSchedule(now);return;}
+    if((int)(now-g_antiAfkNextAt)<0){
         g_antiAfkSecondsLeft=(u32)(g_antiAfkNextAt-now+999u)/1000u;
         return;
     }
-
     g_antiAfkSecondsLeft=0u;
-    afk=antiAfkQueryAfk(player);
-
-    if(!afk){
-        antiAfkMarkRecovered(now);
-        return;
-    }
-
-    g_antiAfkDetected=1u;
-
     if(playerBusy(player)){
         if(!g_antiAfkDeferCheckAt||(int)(now-g_antiAfkDeferCheckAt)>=0){
             ++g_antiAfkChannelDefers;
             g_antiAfkDeferCheckAt=now+ANTI_AFK_DEFER_RECHECK_MS;
         }
-        antiAfkSetNext(now,ANTI_AFK_DEFER_RECHECK_MS);
+        g_antiAfkNextAt=now+ANTI_AFK_DEFER_RECHECK_MS;
+        g_antiAfkSecondsLeft=1u;
         return;
     }
-
     g_antiAfkDeferCheckAt=0u;
-
-    if(g_antiAfkPhase==ANTI_AFK_PHASE_IDLE ||
-       g_antiAfkPhase==ANTI_AFK_PHASE_RETRY_WAIT){
-        antiAfkStandAndProbeArmor(now);
-        return;
+    if(antiAfkPostSpace())antiAfkSchedule(now);
+    else{
+        g_antiAfkNextAt=now+ANTI_AFK_RETRY_MS;
+        g_antiAfkSecondsLeft=(ANTI_AFK_RETRY_MS+999u)/1000u;
     }
-
-    if(g_antiAfkPhase==ANTI_AFK_PHASE_STAND_SETTLE){
-        antiAfkDoActivity(now);
-        return;
-    }
-
-    if(g_antiAfkPhase==ANTI_AFK_PHASE_VERIFY){
-        g_antiAfkPhase=ANTI_AFK_PHASE_RETRY_WAIT;
-        antiAfkSetNext(now,ANTI_AFK_RETRY_MS);
-        return;
-    }
-
-    g_antiAfkPhase=ANTI_AFK_PHASE_IDLE;
-    antiAfkSetNext(now,ANTI_AFK_POLL_MS);
 }
 
 /* Background trade handling runs on WoW's own UI-thread timer. Vanilla 1.12
@@ -831,10 +713,10 @@ static void initSettings(void)
         "current_guid_pre_calls","native_post_returns","scan_ticks",
         "nearby_go_count","nearest_go_entry","nearest_go_type",
         "nearest_go_distance_x100","status","gate_reason","busy_raw",
-        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_actions",
+        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_space_pulses",
         "anti_afk_channel_defers","trade_open","trade_gold_copper","trade_accepts",
-        "trade_target_accepted","anti_afk_last_action","anti_afk_detected",
-        "anti_afk_recoveries"
+        "trade_target_accepted","anti_afk_last_action","anti_afk_space_down_posts",
+        "anti_afk_space_up_posts"
     };
     static const char *labels[31]={
         "Enabled","Scanner alive","Ritual candidate","Match source",
@@ -843,10 +725,10 @@ static void initSettings(void)
         "Current GUID PRE calls","Native POST returns","Scan ticks",
         "Nearby GO <=12yd","Nearest GO entry","Nearest GO type",
         "Nearest GO distance x100","Status","Gate reason","Busy raw",
-        "Anti-AFK Demon Armor priority","Anti-AFK next seconds","Anti-AFK actions",
+        "Anti-AFK SPACE 100-120s","Anti-AFK next seconds","Anti-AFK space pulses",
         "Anti-AFK channel defers","Trade window open","Trade gold offered (copper)",
         "Trade accept attempts","Trade payer accepted first","Anti-AFK last action",
-        "Anti-AFK detected","Anti-AFK recoveries"
+        "Anti-AFK SPACE keydown posts","Anti-AFK SPACE keyup posts"
     };
 
     if(g_descriptorReady) return;
@@ -903,8 +785,8 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==27u) v->u32=g_tradeAcceptAttempts;
     else if(id==28u) v->u32=g_tradeTargetAccepted;
     else if(id==29u) v->u32=g_antiAfkLastAction;
-    else if(id==30u) v->u32=g_antiAfkDetected;
-    else if(id==31u) v->u32=g_antiAfkRecoveries;
+    else if(id==30u) v->u32=g_antiAfkDownPosts;
+    else if(id==31u) v->u32=g_antiAfkUpPosts;
     else return 0;
     return 1;
 }
@@ -929,7 +811,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x000D0000u,
+    0x000E0000u,
     31u,
     g_settings,
     getValue,
@@ -969,14 +851,13 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkEnabled=1u;
         g_antiAfkNextAt=0u;
         g_antiAfkDeferCheckAt=0u;
-        g_antiAfkPhase=ANTI_AFK_PHASE_IDLE;
-        g_antiAfkKnownArmor=0u;
+        g_antiAfkRng=0u;
         g_antiAfkSecondsLeft=0u;
         g_antiAfkActions=0u;
         g_antiAfkChannelDefers=0u;
         g_antiAfkLastAction=0u;
-        g_antiAfkDetected=0u;
-        g_antiAfkRecoveries=0u;
+        g_antiAfkDownPosts=0u;
+        g_antiAfkUpPosts=0u;
         g_antiAfkSlashInstallAt=0u;
         g_antiAfkSlashFeedback=0u;
         g_antiAfkSlashCommands=0u;
