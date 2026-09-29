@@ -129,8 +129,10 @@ def main():
             "Current GUID PRE calls", "Native POST returns", "Scan ticks",
             "Nearby GO <=12yd", "Nearest GO entry", "Nearest GO type",
             "Nearest GO distance x100", "Status", "Gate reason", "Busy raw",
-            "Anti-AFK random jump", "Anti-AFK next seconds",
-            "Anti-AFK jump calls", "Anti-AFK channel defers"
+            "Anti-AFK random /say", "Anti-AFK next seconds",
+            "Anti-AFK say calls", "Anti-AFK channel defers",
+            "Trade window open", "Trade gold offered (copper)",
+            "Trade accept attempts"
         ],
         "timings_ms": timing,
     }
@@ -181,7 +183,7 @@ def main():
         "os_input_simulation": False,
         "interaction_diagnostics": "PRE increments before 0x005F8660; POST increments after return; gate reason exposed live",
         "anti_afk": {
-            "default_enabled": False,
+            "default_enabled": True,
             "say_interval_seconds": [120, 360],
             "say_payload": ".",
             "say_channel": "SAY",
@@ -195,6 +197,13 @@ def main():
             "framescript_execute_abi": "__fastcall(const char*, const char*)",
             "shared_state_with_gui": True
         },
+        "background_trade_auto_accept": True,
+        "incoming_trade_request": "Stock 1.12 TradeFrame is authoritative; TRADE popup/BeginTrade is compatibility fallback only",
+        "payment_gate": "TradeFrame visible; target gold > 0; own offered money == 0; own trade item slots empty",
+        "payment_stable_ms": 250,
+        "payment_reaccept_ms": 500,
+        "trade_poll_ms": 100,
+        "trade_research_reference": "https://github.com/samwhosung/benilla/blob/f000aa01282eac35a99370c680250d50adc67970/crates/benilla-ui/src/script/trade.rs",
         "timer_period_ms": 25,
         "chat_diagnostic": "one message per newly observed ritual candidate GUID",
         "debug_surface": "W112_CONTROL_API_V1 + Parallel SUMMON GUI tab",
