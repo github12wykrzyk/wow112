@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.2-vmangos-watch"
+AVM_VERSION = "0.3-vmangos-cache"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -21,6 +21,9 @@ AVM = {
 	queryName = "",
 	ruleIndex = 1,
 	activeRuleName = "",
+	boundaryCache = {},
+	cacheBoundary = nil,
+	cachePrevOk = false,
 	nextQueryAt = 0,
 	lastResultAt = 0,
 	total = 0,
@@ -42,6 +45,9 @@ AVM = {
 		extraEvents = 0,
 		timeouts = 0,
 		boundaryQueries = 0,
+		cacheVerifications = 0,
+		cacheHits = 0,
+		cacheMisses = 0,
 		candidates = 0,
 		revalidations = 0,
 		buySent = 0,
@@ -132,6 +138,30 @@ local function avm_active_rule()
 	return AVM_DB.rules[AVM.ruleIndex], AVM.ruleIndex
 end
 
+local function avm_rule_cache_key(rule)
+	if not rule then return nil end
+	return (rule.partial and "p:" or "e:") .. string.lower(rule.name or "")
+end
+
+local function avm_cached_boundary(rule)
+	local key = avm_rule_cache_key(rule)
+	if not key then return nil end
+	local row = AVM.boundaryCache[key]
+	if not row then return nil end
+	return tonumber(row.page)
+end
+
+local function avm_store_boundary(rule, page)
+	local key = avm_rule_cache_key(rule)
+	if not key then return end
+	AVM.boundaryCache[key] = { page = page, savedAt = GetTime() }
+end
+
+local function avm_invalidate_boundary(rule)
+	local key = avm_rule_cache_key(rule)
+	if key then AVM.boundaryCache[key] = nil end
+end
+
 local function avm_signature(name, count, buyout, owner, quality, level)
 	return tostring(name) .. "|" .. tostring(count) .. "|" .. tostring(buyout) .. "|" ..
 		tostring(owner) .. "|" .. tostring(quality) .. "|" .. tostring(level)
@@ -208,7 +238,7 @@ local function avm_send_query(kind, page, name)
 	return true
 end
 
-local function avm_restart_boundary()
+local function avm_restart_boundary(forceFull)
 	AVM.boundaryLow = 0
 	AVM.boundaryHigh = 0
 	AVM.boundaryPage = nil
@@ -216,6 +246,8 @@ local function avm_restart_boundary()
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
 	AVM.revalidatePos = 0
+	AVM.cacheBoundary = nil
+	AVM.cachePrevOk = false
 
 	local rule = avm_active_rule()
 	if not rule then
@@ -224,6 +256,23 @@ local function avm_restart_boundary()
 		return
 	end
 	AVM.activeRuleName = rule.name or ""
+
+	if not forceFull then
+		local cached = avm_cached_boundary(rule)
+		if cached and cached >= 0 then
+			AVM.cacheBoundary = cached
+			AVM.stats.cacheVerifications = AVM.stats.cacheVerifications + 1
+			if cached > 0 then
+				AVM.phase = "CACHE_VERIFY_PREV"
+			else
+				AVM.phase = "CACHE_VERIFY_BOUNDARY"
+			end
+			avm_print("CACHE verify rule='" .. tostring(AVM.activeRuleName) ..
+				"' boundary=" .. tostring(cached))
+			return
+		end
+	end
+
 	AVM.phase = "BOUNDARY_INIT"
 end
 
@@ -231,7 +280,7 @@ local function avm_advance_rule()
 	local n = avm_rule_count()
 	if n == 0 then
 		AVM.ruleIndex = 1
-		avm_restart_boundary()
+		avm_restart_boundary(true)
 		return
 	end
 	AVM.ruleIndex = AVM.ruleIndex + 1
@@ -240,7 +289,10 @@ local function avm_advance_rule()
 end
 
 local function avm_start_scan(boundary)
+	local rule = avm_active_rule()
+	if rule then avm_store_boundary(rule, boundary) end
 	AVM.boundaryPage = boundary
+	AVM.cacheBoundary = boundary
 	AVM.scanOffset = 0
 	AVM.phase = "CHEAPEST_SCAN"
 	avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' first buyout page=" ..
@@ -374,6 +426,39 @@ local function avm_accept_result()
 		tostring(AVM.queryName) .. "' page=" .. page ..
 		" rows=" .. rows .. "/" .. total .. " positive=" .. tostring(positive) ..
 		" latency=" .. string.format("%.3f", latency) .. "s")
+
+	if kind == "CACHE_VERIFY_PREV" then
+		if positive then
+			AVM.stats.cacheMisses = AVM.stats.cacheMisses + 1
+			local rule = avm_active_rule()
+			avm_invalidate_boundary(rule)
+			avm_print("CACHE miss rule='" .. tostring(AVM.activeRuleName) ..
+				"' previous page became positive; full search")
+			avm_restart_boundary(true)
+		else
+			AVM.cachePrevOk = true
+			AVM.phase = "CACHE_VERIFY_BOUNDARY"
+		end
+		return
+	end
+
+	if kind == "CACHE_VERIFY_BOUNDARY" then
+		local prevOk = (AVM.cacheBoundary == 0) or AVM.cachePrevOk
+		if positive and prevOk then
+			AVM.stats.cacheHits = AVM.stats.cacheHits + 1
+			avm_print("CACHE hit rule='" .. tostring(AVM.activeRuleName) ..
+				"' boundary=" .. tostring(AVM.cacheBoundary))
+			avm_start_scan(AVM.cacheBoundary)
+		else
+			AVM.stats.cacheMisses = AVM.stats.cacheMisses + 1
+			local rule = avm_active_rule()
+			avm_invalidate_boundary(rule)
+			avm_print("CACHE miss rule='" .. tostring(AVM.activeRuleName) ..
+				"' boundary changed; full search")
+			avm_restart_boundary(true)
+		end
+		return
+	end
 
 	if kind == "BOUNDARY_INIT" then
 		if total == 0 then
@@ -550,7 +635,11 @@ local function avm_tick()
 	if not rule then return end
 	local queryName = rule.name or ""
 
-	if AVM.phase == "BOUNDARY_INIT" then
+	if AVM.phase == "CACHE_VERIFY_PREV" then
+		avm_send_query("CACHE_VERIFY_PREV", AVM.cacheBoundary - 1, queryName)
+	elseif AVM.phase == "CACHE_VERIFY_BOUNDARY" then
+		avm_send_query("CACHE_VERIFY_BOUNDARY", AVM.cacheBoundary, queryName)
+	elseif AVM.phase == "BOUNDARY_INIT" then
 		avm_send_query("BOUNDARY_INIT", 0, queryName)
 	elseif AVM.phase == "BOUNDARY_SEARCH" then
 		if AVM.boundaryLow == AVM.boundaryHigh then
@@ -579,11 +668,15 @@ local function avm_status()
 		" rule=" .. tostring(AVM.ruleIndex) .. "/" .. tostring(avm_rule_count()) ..
 		" '" .. tostring(rule and rule.name or "") .. "'" ..
 		" boundary=" .. tostring(AVM.boundaryPage) ..
+		" cache=" .. tostring(avm_cached_boundary(rule)) ..
 		" spend=" .. avm_money(AVM.sessionSpend))
 	avm_print("queries=" .. AVM.stats.queries ..
 		" results=" .. AVM.stats.results ..
 		" extraEvents=" .. AVM.stats.extraEvents ..
 		" timeouts=" .. AVM.stats.timeouts ..
+		" cacheV=" .. AVM.stats.cacheVerifications ..
+		" cacheHit=" .. AVM.stats.cacheHits ..
+		" cacheMiss=" .. AVM.stats.cacheMisses ..
 		" candidates=" .. AVM.stats.candidates ..
 		" revalidations=" .. AVM.stats.revalidations ..
 		" sent=" .. AVM.stats.buySent ..
@@ -665,7 +758,9 @@ local function avm_slash(msg)
 	elseif cmd == "del" then
 		local n = tonumber(avm_trim(rest))
 		if n and AVM_DB.rules[n] then
-			local old = AVM_DB.rules[n].name
+			local oldRule = AVM_DB.rules[n]
+			local old = oldRule.name
+			avm_invalidate_boundary(oldRule)
 			table.remove(AVM_DB.rules, n)
 			if AVM.ruleIndex > table.getn(AVM_DB.rules) then AVM.ruleIndex = 1 end
 			avm_print("rule removed: " .. old)
@@ -694,6 +789,7 @@ local function avm_slash(msg)
 	elseif cmd == "reset" then
 		AVM.sessionSpend = 0
 		AVM.recent = {}
+		AVM.boundaryCache = {}
 		for k in AVM.stats do AVM.stats[k] = 0 end
 		AVM.pending = nil
 		AVM.unknown = nil
@@ -732,8 +828,8 @@ frame:SetScript("OnEvent", function()
 		AVM.nextQueryAt = 0
 		AVM.pending = nil
 		AVM.unknown = nil
-		avm_restart_boundary()
-		if AVM_DB.enabled then avm_print("AH open; boundary search armed") end
+		avm_restart_boundary(false)
+		if AVM_DB.enabled then avm_print("AH open; cached boundary verification armed") end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM.open = false
 		AVM.queryInFlight = false

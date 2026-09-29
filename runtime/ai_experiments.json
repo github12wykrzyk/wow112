@@ -398,8 +398,8 @@
         "parallel addon packager src/AddOns auto-discovery"
       ],
       "status": "in_progress",
-      "observed_head": "6dd065d1fcb023913391be9b5ef2460acd28fcef",
-      "verified_commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
+      "observed_head": "c647b4d4e8b63fec76b4eb19bc4a5f020f027f82",
+      "verified_commit": "c647b4d4e8b63fec76b4eb19bc4a5f020f027f82",
       "tests": [
         {
           "kind": "ci",
@@ -421,10 +421,17 @@
           "commit": "6dd065d1fcb023913391be9b5ef2460acd28fcef",
           "date": "2026-09-30",
           "evidence": "Verify AI experiment registry run 36642227019 failed because repository regression test test_no_invented_game_test_or_package intentionally requires zero kind=game ledger records. Ledger validation itself passed. No verifier was weakened; gameplay observation is moved to descriptive notes."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "c647b4d4e8b63fec76b4eb19bc4a5f020f027f82",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36642312343 and AI experiment registry run 36642312358 passed on exact V0.2 feature SHA."
         }
       ],
       "package": null,
-      "notes": "Independent AuxVmangos V0.2 watchlist engine. Exact gameplay evidence from parent e548cc34: user screenshot showed global vMaNGOS buyout boundary converging 557 -> 279 -> 140 -> 70 -> 35 -> 53 -> 62 -> 66 -> 68 -> 67 at roughly 55.7k auctions; this validated binary boundary discovery but exposed that a global cheapest-page scan cannot reliably find an item-specific Black Lotus rule, and that unrelated pre-enable AH events polluted extraEvents. Current follow-up fixes this by querying each watch rule by name first, binary-searching only its filtered result set, revalidating source/adjacent filtered pages, adding a post-result settle window, and rotating past no-buyout rules. Gameplay evidence remains descriptive notes because the current routing regression suite intentionally requires zero kind=game records."
+      "notes": "Independent AuxVmangos V0.2 watchlist engine. Exact gameplay evidence from parent e548cc34: user screenshot showed global vMaNGOS buyout boundary converging 557 -> 279 -> 140 -> 70 -> 35 -> 53 -> 62 -> 66 -> 68 -> 67 at roughly 55.7k auctions; this validated binary boundary discovery but exposed that a global cheapest-page scan cannot reliably find an item-specific Black Lotus rule, and that unrelated pre-enable AH events polluted extraEvents. Current follow-up fixes this by querying each watch rule by name first, binary-searching only its filtered result set, revalidating source/adjacent filtered pages, adding a post-result settle window, and rotating past no-buyout rules. Gameplay evidence remains descriptive notes because the current routing regression suite intentionally requires zero kind=game records. AuctionSniper V1.2 gameplay evidence also showed that repeatedly discarding a known buyout boundary causes unnecessary full binary searches after each scan window. V0.3 therefore adds per-rule boundary cache verification (boundary-1 false, boundary true) with automatic invalidation/fallback."
     }
   ]
 }

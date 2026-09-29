@@ -12,7 +12,7 @@ Reference: vmangos/core development commit 464179081673cfd240f7ffe7f0daf96bca0b5
 
 The reference core keeps browse auctions in a buyout-keyed ordered multimap. On the tested realm, page 0 was observed to contain bid-only auctions (buyout = 0), so page 0 is not a useful "cheapest buyout" page.
 
-AuxVmangos schedules each watchlist rule independently. It sends the rule name to QueryAuctionItems first, locates the buyout=0 to buyout>0 transition inside that filtered result set, then scans a configurable number of the cheapest matching pages. It never relies on the global AH boundary for an item-specific rule.
+AuxVmangos schedules each watchlist rule independently. It sends the rule name to QueryAuctionItems first, locates the buyout=0 to buyout>0 transition inside that filtered result set, then scans a configurable number of the cheapest matching pages. The discovered boundary is cached per rule. On the next cycle the addon verifies boundary-1 is still bid-only and boundary is still positive; a valid cache skips the full binary search, while a failed verification invalidates the cache and falls back to a full search.
 
 Only one AUCTION_ITEM_LIST_UPDATE is consumed per query. A short post-result settle window absorbs delayed duplicate events before the next query is sent. Extra events are counted only when they occur near a result from our enabled scanner, so unrelated AH traffic no longer pollutes the counter.
 
