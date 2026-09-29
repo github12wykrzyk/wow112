@@ -1,4 +1,4 @@
-# SummonScout 1.2
+# SummonScout 1.3
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -61,3 +61,11 @@ Plain `DM` remains deliberately ambiguous (Deadmines vs Dire Maul). Explicit `VC
 - `/ssi channel World`
 - `/ssi debug on|off`
 - `/ssi test <chat text>`
+
+
+## 1.3 notes
+
+- `/ssi observe` enables the scanner/logger while keeping automatic invites OFF.
+- World-channel matching accepts both the Vanilla base-name argument and visible full channel names such as `5. World`.
+- `hydraxian`, `hydraxian waterlords`, and `hydrax` are classified as `Hydraxian Waterlords`.
+- Example: `WTB hydraxian summon` is a summon request and should increment the persistent request total even in observe mode.

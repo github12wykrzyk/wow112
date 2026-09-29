@@ -81,6 +81,7 @@ local LOCATIONS = {
     { id="felwood", label="Felwood", aliases={"felwood"} },
     { id="feralas", label="Feralas", aliases={"feralas"} },
     { id="desolace", label="Desolace", aliases={"desolace"} },
+    { id="hydraxian", label="Hydraxian Waterlords", aliases={"hydraxian waterlords", "hydraxian", "hydrax"} },
     { id="azshara", label="Azshara", aliases={"azshara"} },
     { id="ashenvale", label="Ashenvale", aliases={"ashenvale"} },
     { id="barrens", label="The Barrens", aliases={"the barrens", "barrens"} },
@@ -233,10 +234,18 @@ local function locationAllowed(loc, ambiguous)
     return loc.id == service
 end
 
-local function channelMatches(channelName)
+local function channelMatches(channelBaseName, channelFullName)
     local wanted = lower(trim(SummonScoutDB.channel or "world"))
-    local got = lower(trim(channelName or ""))
-    return wanted ~= "" and got == wanted
+    local base = lower(trim(channelBaseName or ""))
+    local full = lower(trim(channelFullName or ""))
+    local stripped = full
+
+    -- Vanilla normally exposes arg9 as the base name, but private servers can
+    -- be inconsistent. Accept the visible form too, e.g. "5. World".
+    stripped = string.gsub(stripped, "^%s*%d+%s*%.%s*", "")
+    stripped = trim(stripped)
+
+    return wanted ~= "" and (base == wanted or stripped == wanted)
 end
 
 local function samePlayer(a, b)
@@ -483,6 +492,14 @@ local function slash(msg)
         SS.queue = {}
         SS.queued = {}
         status()
+    elseif cmd == "observe" then
+        SummonScoutDB.enabled = true
+        SummonScoutDB.loggingEnabled = true
+        SummonScoutDB.autoInvite = false
+        SS.queue = {}
+        SS.queued = {}
+        chat("observe mode: logging ON, auto-invite OFF")
+        status()
     elseif cmd == "invite" then
         rest = lower(trim(rest))
         if rest == "on" then SummonScoutDB.autoInvite = true end
@@ -531,7 +548,7 @@ local function slash(msg)
     elseif cmd == "status" or cmd == "" then
         status()
     else
-        chat("/ssi on|off|status | invite on/off | log on/off | stats | recent [n] | unknown [n]")
+        chat("/ssi on|off|status | observe | invite on/off | log on/off | stats | recent [n] | unknown [n]")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -554,8 +571,9 @@ frame:SetScript("OnEvent", function()
         local message = arg1 or ""
         local sender = arg2 or ""
         local channelBaseName = arg9 or ""
+        local channelFullName = arg4 or ""
 
-        if not channelMatches(channelBaseName) or not looksLikeSummonRequest(message) then
+        if not channelMatches(channelBaseName, channelFullName) or not looksLikeSummonRequest(message) then
             return
         end
 
