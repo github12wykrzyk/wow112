@@ -95,6 +95,7 @@
     "tools/verify_verified_symbols.py",
     "tools/verify_parallel_dependency_registry.py",
     "tools/verify_parallel_gui_abi.py",
+    "tools/verify_parallel_gui_contract.py",
     "tools/verify_candidate_source_scope.py",
     "tools/verify_candidate_package.py",
     "tools/verify_candidate_provenance.py"

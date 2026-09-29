@@ -32,6 +32,13 @@ jobs:
           python tools/verify_parallel_gui_abi.py
           if ($LASTEXITCODE -ne 0) { throw "Parallel GUI Win32 ABI preflight failed" }
 
+      - name: Check Parallel GUI behavioral contract
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          python tools/verify_parallel_gui_contract.py
+          if ($LASTEXITCODE -ne 0) { throw "Parallel GUI behavioral contract failed" }
+
       - name: Audit registered Parallel DLL hook ownership and arbitration
         if: github.ref_name == 'parallel'
         shell: pwsh

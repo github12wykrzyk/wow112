@@ -18,6 +18,7 @@ STATIC_GATES = [
     ["tools/verify_candidate_source_scope.py"],
     ["tools/verify_parallel_candidate_manifest.py"],
     ["tools/verify_parallel_gui_abi.py"],
+    ["tools/verify_parallel_gui_contract.py"],
     ["tools/ai_experiments.py", "validate"],
 ]
 
@@ -44,10 +45,6 @@ def main():
 
     for gate in STATIC_GATES:
         run(gate)
-    contract = ROOT / "tools/verify_parallel_gui_contract.py"
-    if contract.is_file():
-        run(["tools/verify_parallel_gui_contract.py"])
-
     runtime = json.loads(RUNTIME.read_text(encoding="utf-8"))
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     force_active = any(
