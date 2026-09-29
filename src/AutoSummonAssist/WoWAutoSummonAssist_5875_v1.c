@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v17 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v18 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -120,6 +120,7 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define ANTI_AFK_SLASH_REPAIR_MS      3000u
 #define TRADE_POLL_MS               100u
 #define SUMMON_BRIDGE_POLL_MS         50u
+#define SUMMON_START_WATCH_MS        1600u
 
 #define STATUS_DETACHED             0u
 #define STATUS_WAIT_WORLD           1u
@@ -182,6 +183,8 @@ static volatile u32 g_antiAfkSlashFeedback = 0u;
 static volatile u32 g_antiAfkSlashCommands = 0u;
 static u32 g_lastTradePoll = 0u;
 static u32 g_lastSummonBridgePoll = 0u;
+static u32 g_summonIssuedAt = 0u;
+static u32 g_summonAwaitingStart = 0u;
 
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
@@ -265,6 +268,9 @@ static void resetWorld(void)
     g_antiAfkDeferCheckAt=0u;
     g_antiAfkSecondsLeft=0u;
     g_lastTradePoll=0u;
+    g_lastSummonBridgePoll=0u;
+    g_summonIssuedAt=0u;
+    g_summonAwaitingStart=0u;
     g_tradeOpen=0u;
     g_tradeOfferCopper=0u;
     g_tradeTargetAccepted=0u;
@@ -475,43 +481,133 @@ static void antiAfkTick(u32 player,u32 now)
     }
 }
 
-/* SummonScout publishes a player name in W112_AUTOSUMMON_REQUEST.
- * Execute target + Ritual through the same native FrameScript path already
- * used successfully by other 5875 modules. */
-static void pollNativeSummonBridge(u32 player,u32 now)
+/* SummonScout publishes a player name plus a monotonically increasing
+ * request sequence. The bridge reports transaction stages instead of treating
+ * "CastSpell returned" as proof that Ritual actually started. */
+static void publishSummonStarted(void)
 {
     static const char script[]=
+        "W112_AUTOSUMMON_NATIVE_STATUS='cast-started';"
+        "W112_AUTOSUMMON_STARTED_SEQ=W112_AUTOSUMMON_ACTIVE_SEQ or ''";
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
+}
+
+static void publishSummonNoStart(void)
+{
+    static const char script[]="W112_AUTOSUMMON_NATIVE_STATUS='no-start'";
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
+}
+
+static void pollNativeSummonBridge(u32 player,u32 now)
+{
+    static const char blockedScript[]=
+        "if (W112_AUTOSUMMON_REQUEST or '')~='' then "
+        "W112_AUTOSUMMON_NATIVE_STATUS='blocked-busy' end";
+    static const char consumeScript[]=
         "local n=W112_AUTOSUMMON_REQUEST or '';"
+        "local seq=tostring(W112_AUTOSUMMON_REQUEST_SEQ or '');"
         "W112_AUTOSUMMON_ACK=W112_AUTOSUMMON_ACK or '';"
+        "W112_AUTOSUMMON_ACK_SEQ=W112_AUTOSUMMON_ACK_SEQ or '';"
+        "W112_AUTOSUMMON_STARTED_SEQ=W112_AUTOSUMMON_STARTED_SEQ or '';"
         "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT or 0;"
-        "W112_AUTOSUMMON_NATIVE_STATUS='idle';"
+        "W112_AUTOSUMMON_NATIVE_ISSUED='0';"
         "if n~='' then "
         "W112_AUTOSUMMON_REQUEST='';"
-        "if type(TargetByName)=='function' then TargetByName(n,1) end;"
-        "local casted=nil;local book=BOOKTYPE_SPELL or 'spell';"
-        "if type(GetSpellName)=='function' and type(CastSpell)=='function' then "
+        "W112_AUTOSUMMON_NATIVE_STATUS='received';"
+        "W112_AUTOSUMMON_ACTIVE_SEQ=seq;"
+        "W112_AUTOSUMMON_NATIVE_TARGET='';"
+        "W112_AUTOSUMMON_NATIVE_SLOT='';"
+        "W112_AUTOSUMMON_ACK=n;"
+        "W112_AUTOSUMMON_ACK_SEQ=seq;"
+        "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT+1;"
+        "local unit=nil;local want=n;"
+        "if type(string)=='table' and type(string.lower)=='function' then want=string.lower(n) end;"
+        "if type(GetNumPartyMembers)=='function' and type(UnitName)=='function' then "
+        "local i;for i=1,(GetNumPartyMembers() or 0) do local u='party'..i;local un=UnitName(u);"
+        "local cmp=un;if cmp and type(string)=='table' and type(string.lower)=='function' then cmp=string.lower(cmp) end;"
+        "if cmp==want then unit=u;break end end end;"
+        "if not unit and type(GetNumRaidMembers)=='function' and type(UnitName)=='function' then "
+        "local i;for i=1,(GetNumRaidMembers() or 0) do local u='raid'..i;local un=UnitName(u);"
+        "local cmp=un;if cmp and type(string)=='table' and type(string.lower)=='function' then cmp=string.lower(cmp) end;"
+        "if cmp==want then unit=u;break end end end;"
+        "if type(TargetByName)=='function' then TargetByName(n,1) "
+        "elseif unit and type(TargetUnit)=='function' then TargetUnit(unit) end;"
+        "local tn='';if type(UnitName)=='function' then tn=UnitName('target') or '' end;"
+        "local same=(tn==n);"
+        "if not same and type(string)=='table' and type(string.lower)=='function' then same=(string.lower(tn)==want) end;"
+        "if not same and unit and type(TargetUnit)=='function' then "
+        "TargetUnit(unit);tn=UnitName('target') or '';same=(tn==n);"
+        "if not same and type(string)=='table' and type(string.lower)=='function' then same=(string.lower(tn)==want) end end;"
+        "W112_AUTOSUMMON_NATIVE_TARGET=tn;"
+        "if not same then "
+        "W112_AUTOSUMMON_NATIVE_STATUS='target-failed';"
+        "else "
+        "W112_AUTOSUMMON_NATIVE_STATUS='target-ok';"
+        "local book=BOOKTYPE_SPELL or 'spell';local slot=nil;"
+        "if type(GetSpellName)=='function' then "
         "local i;for i=1,200 do local sn=GetSpellName(i,book);"
         "if not sn then break end;"
-        "if sn=='Ritual of Summoning' then CastSpell(i,book);casted='spellbook:'..i;break end end "
-        "end;"
-        "if not casted and type(CastSpellByName)=='function' then "
-        "CastSpellByName('Ritual of Summoning');casted='byname' end;"
-        "W112_AUTOSUMMON_ACK=n;"
-        "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT+1;"
-        "W112_AUTOSUMMON_NATIVE_STATUS=casted or 'no-cast-api-or-spell';"
+        "if sn=='Ritual of Summoning' then slot=i;break end end end;"
+        "if slot then "
+        "W112_AUTOSUMMON_NATIVE_SLOT=tostring(slot);"
+        "W112_AUTOSUMMON_NATIVE_STATUS='spell-slot:'..tostring(slot);"
+        "if type(CastSpell)=='function' then "
+        "CastSpell(slot,book);"
+        "if type(SpellIsTargeting)=='function' and SpellIsTargeting() and type(SpellTargetUnit)=='function' then "
+        "SpellTargetUnit(unit or 'target') end;"
+        "W112_AUTOSUMMON_NATIVE_STATUS='cast-issued:'..tostring(slot);"
+        "W112_AUTOSUMMON_NATIVE_ISSUED='1';"
+        "else W112_AUTOSUMMON_NATIVE_STATUS='no-cast-api-or-spell' end;"
+        "elseif type(CastSpellByName)=='function' then "
+        "CastSpellByName('Ritual of Summoning');"
+        "if type(SpellIsTargeting)=='function' and SpellIsTargeting() and type(SpellTargetUnit)=='function' then "
+        "SpellTargetUnit(unit or 'target') end;"
+        "W112_AUTOSUMMON_NATIVE_STATUS='cast-issued:byname';"
+        "W112_AUTOSUMMON_NATIVE_SLOT='byname';"
+        "W112_AUTOSUMMON_NATIVE_ISSUED='1';"
+        "else W112_AUTOSUMMON_NATIVE_STATUS='no-spell' end;"
+        "end "
         "end";
+    static const char clearIssuedScript[]="W112_AUTOSUMMON_NATIVE_ISSUED='0'";
     const char *req;
+    const char *issued;
 
-    (void)player;
+    if(g_summonAwaitingStart) {
+        if(playerBusy(player)) {
+            publishSummonStarted();
+            g_summonAwaitingStart=0u;
+            g_summonIssuedAt=0u;
+        } else if((u32)(now-g_summonIssuedAt)>=SUMMON_START_WATCH_MS) {
+            publishSummonNoStart();
+            g_summonAwaitingStart=0u;
+            g_summonIssuedAt=0u;
+        } else {
+            return;
+        }
+    }
+
     if(g_lastSummonBridgePoll && (u32)(now-g_lastSummonBridgePoll)<SUMMON_BRIDGE_POLL_MS) return;
     g_lastSummonBridgePoll=now;
     req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
     if(!req||!req[0]) return;
 
-    /* SummonScout owns the user-facing auto-summon toggle. The bridge must
-     * consume its request even when the portal scanner module itself is
-     * disabled in ControlHub. */
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
+    if(playerBusy(player)) {
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(blockedScript,"AutoSummonAssist");
+        return;
+    }
+
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(consumeScript,"AutoSummonAssist");
+    issued=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_NATIVE_ISSUED",-1,0u);
+    if(issued && issued[0]=='1' && issued[1]==0) {
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearIssuedScript,"AutoSummonAssist");
+        g_summonIssuedAt=now;
+        g_summonAwaitingStart=1u;
+        if(playerBusy(player)) {
+            publishSummonStarted();
+            g_summonAwaitingStart=0u;
+            g_summonIssuedAt=0u;
+        }
+    }
 }
 
 /* Background trade handling runs on WoW's own UI-thread timer. Vanilla 1.12
@@ -908,6 +1004,8 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkSlashCommands=0u;
         g_lastTradePoll=0u;
         g_lastSummonBridgePoll=0u;
+        g_summonIssuedAt=0u;
+        g_summonAwaitingStart=0u;
         g_tradeOpen=0u;
         g_tradeOfferCopper=0u;
         g_tradeAcceptAttempts=0u;

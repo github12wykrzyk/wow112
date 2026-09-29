@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.31"
+local ADDON_VERSION = "1.32"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -45,6 +45,7 @@ SS.lastAdvertSentAt = -100000
 SS.lastSummonRequestAt = -100000
 SS.lastSummonRequestName = nil
 SS.lastSummonError = ""
+SS.summonRequestSeq = 0
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -828,10 +829,30 @@ end
 
 local function nativeSummonBridgeRequest(name)
     name = trim(name)
-    if name == "" then return false end
+    if name == "" then return nil end
+
+    SS.summonRequestSeq = (SS.summonRequestSeq or 0) + 1
+    local seq = tostring(SS.summonRequestSeq)
+
     W112_AUTOSUMMON_ACK = ""
+    W112_AUTOSUMMON_ACK_SEQ = ""
+    W112_AUTOSUMMON_STARTED_SEQ = ""
+    W112_AUTOSUMMON_NATIVE_STATUS = "queued"
+    W112_AUTOSUMMON_NATIVE_TARGET = ""
+    W112_AUTOSUMMON_NATIVE_SLOT = ""
+    W112_AUTOSUMMON_REQUEST_SEQ = seq
     W112_AUTOSUMMON_REQUEST = name
-    return true
+
+    SS.lastSummonRequestAt = now()
+    SS.lastSummonRequestName = name
+    SS.lastSummonError = ""
+    return seq
+end
+
+local function nativeSummonStatus()
+    return trim(tostring(W112_AUTOSUMMON_NATIVE_STATUS or "idle")),
+        trim(tostring(W112_AUTOSUMMON_ACK_SEQ or "")),
+        trim(tostring(W112_AUTOSUMMON_STARTED_SEQ or ""))
 end
 
 local function summonDestinationLabel()
@@ -874,6 +895,7 @@ local function clearActiveSummon()
     SS.summonActiveExpires = 0
     SS.summonActiveStarted = false
     W112_AUTOSUMMON_REQUEST = ""
+    W112_AUTOSUMMON_REQUEST_SEQ = ""
 end
 
 local function finishActiveSummon(name)
@@ -900,25 +922,59 @@ local function retryActiveSummon(delay)
     clearActiveSummon()
     if name and table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, name) then
         SS.summonQueue[1].phase = "cast"
+        SS.summonQueue[1].requestSeq = nil
         SS.summonQueue[1].nextAt = now() + (delay or 0.50)
     end
 end
 
+local function markActiveSummonStarted(source)
+    local name = trim(SS.summonActiveName or "")
+    if name == "" then return end
+    if SS.summonActiveStarted then return end
+
+    SS.summonActiveStarted = true
+    SS.summonActiveExpires = now() + 8.0
+
+    local item = table.getn(SS.summonQueue) > 0 and SS.summonQueue[1] or nil
+    if item and samePlayer(item.name, name) then
+        item.phase = "casting"
+        if not item.startReported then
+            item.startReported = true
+            whisperSummonTarget(name)
+            if SummonScoutDB.masterReportLifecycle then
+                reportMaster("SUMMON START", name .. " -> " .. summonDestinationLabel())
+            end
+        end
+    else
+        whisperSummonTarget(name)
+    end
+
+    if SummonScoutDB.debug then
+        chat("summon start confirmed -> " .. name .. " [" .. tostring(source or "unknown") .. "]")
+    end
+    guiRefreshSafe()
+end
+
 local function processPartySummon()
     if not SummonScoutDB.enabled or not SummonScoutDB.partyAutoSummon then return end
-    if SS.summonActiveName then
-        if now() < (SS.summonActiveExpires or 0) then return end
-        if SS.summonActiveStarted then
-            finishActiveSummon(SS.summonActiveName)
-        else
-            retryActiveSummon(0.20)
-        end
+    if table.getn(SS.summonQueue) == 0 then
+        if SS.summonActiveName then clearActiveSummon() end
         return
     end
-    if table.getn(SS.summonQueue) == 0 then return end
-    if UnitAffectingCombat and UnitAffectingCombat("player") then return end
 
+    local t = now()
     local item = SS.summonQueue[1]
+
+    -- Queue timeout must run even while combat/cast state blocks new attempts.
+    if (t - (item.queuedAt or t)) > 25 then
+        chat("summon queue watchdog dropped -> " .. item.name)
+        if SummonScoutDB.masterReportLifecycle then
+            reportMaster("SUMMON FAIL", item.name .. " - queue watchdog timeout")
+        end
+        finishActiveSummon(item.name)
+        return
+    end
+
     local unit = groupUnitByName(item.name)
     if not unit and not isInGroup(item.name) then
         if SummonScoutDB.masterReportLifecycle then
@@ -928,32 +984,74 @@ local function processPartySummon()
         return
     end
 
-    -- Do not block forever on stale UnitIsConnected/raid UnitID state. The DLL
-    -- targets by character name, so a roster-confirmed member can be attempted
-    -- even while the unit token is still settling.
-    if (now() - (item.queuedAt or now())) > 20 then
-        chat("summon queue watchdog dropped -> " .. item.name)
-        if SummonScoutDB.masterReportLifecycle then
-            reportMaster("SUMMON FAIL", item.name .. " - queue watchdog timeout")
+    if SS.summonActiveName and not samePlayer(SS.summonActiveName, item.name) then
+        clearActiveSummon()
+    end
+
+    if SS.summonActiveName then
+        local nativeStatus, ackSeq, startedSeq = nativeSummonStatus()
+        local requestSeq = trim(tostring(item.requestSeq or ""))
+
+        if requestSeq ~= "" and startedSeq == requestSeq then
+            markActiveSummonStarted("native")
         end
-        finishActiveSummon(item.name)
+
+        if SS.summonActiveStarted then
+            if t >= (SS.summonActiveExpires or 0) then
+                if SummonScoutDB.debug then
+                    chat("summon completion watchdog -> " .. item.name)
+                end
+                finishActiveSummon(item.name)
+            end
+            return
+        end
+
+        if requestSeq ~= "" and ackSeq == requestSeq then
+            if nativeStatus == "target-failed"
+                or nativeStatus == "no-spell"
+                or nativeStatus == "no-cast-api-or-spell"
+                or nativeStatus == "no-start" then
+                SS.lastSummonError = nativeStatus
+                retryActiveSummon(0.35)
+                return
+            end
+        end
+
+        if nativeStatus == "blocked-busy" then
+            SS.summonActiveExpires = t + 0.75
+            return
+        end
+
+        if t < (SS.summonActiveExpires or 0) then return end
+        retryActiveSummon(0.20)
         return
     end
-    if now() < (item.nextAt or 0) then return end
 
+    if UnitAffectingCombat and UnitAffectingCombat("player") then return end
+    if t < (item.nextAt or 0) then return end
     if not item.phase then item.phase = "cast" end
 
     if item.phase == "cast" then
         item.attempts = (item.attempts or 0) + 1
         if item.attempts > 3 then
             local slot = findSpellBookSlot("Ritual of Summoning")
-            local failReason = SS.lastSummonError ~= "" and SS.lastSummonError or "no cast start after retries"
+            local nativeStatus, ackSeq = nativeSummonStatus()
+            local requestSeq = trim(tostring(item.requestSeq or ""))
+            local failReason = SS.lastSummonError
+            if failReason == "" then
+                if requestSeq ~= "" and ackSeq ~= requestSeq then
+                    failReason = "native bridge no ack (" .. nativeStatus .. ")"
+                else
+                    failReason = nativeStatus ~= "" and nativeStatus or "no cast start after retries"
+                end
+            end
             chat("summon failed after retries: " .. item.name
                 .. " | unit=" .. tostring(groupUnitByName(item.name) or "-")
                 .. " spellbook=" .. tostring(slot or "NONE")
                 .. " shards=" .. tostring(countSoulShards())
                 .. " nativeAck=" .. tostring(W112_AUTOSUMMON_ACK or "-")
-                .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0)
+                .. " nativeSeq=" .. tostring(W112_AUTOSUMMON_ACK_SEQ or "-")
+                .. " nativeStatus=" .. tostring(nativeStatus or "-")
                 .. " lastError=" .. failReason)
             if SummonScoutDB.masterReportLifecycle then
                 reportMaster("SUMMON FAIL", item.name .. " -> " .. summonDestinationLabel()
@@ -965,13 +1063,16 @@ local function processPartySummon()
 
         SS.summonActiveName = item.name
         SS.summonActiveStarted = false
-        SS.summonActiveExpires = now() + 1.75
+        SS.summonActiveExpires = t + 2.20
 
-        if nativeSummonBridgeRequest(item.name) then
+        local seq = nativeSummonBridgeRequest(item.name)
+        if seq then
+            item.requestSeq = seq
             item.phase = "wait"
-            item.nextAt = now() + 1.75
+            item.nextAt = t + 2.20
             if SummonScoutDB.debug then
                 chat("native summon request -> " .. item.name
+                    .. " seq " .. seq
                     .. " attempt " .. tostring(item.attempts))
             end
         else
@@ -981,13 +1082,6 @@ local function processPartySummon()
             end
             finishActiveSummon(item.name)
         end
-        return
-    end
-
-    if item.phase == "wait" then
-        -- No SPELLCAST_START arrived: retry the simple target + cast sequence.
-        item.phase = "cast"
-        item.nextAt = now() + 0.20
     end
 end
 
@@ -1405,9 +1499,14 @@ local function showSummonCheck()
     local _k
     for _k in pairs(SS.pendingManualInvites) do pendingInvites = pendingInvites + 1 end
     chat("summoncheck bridge request=" .. tostring(W112_AUTOSUMMON_REQUEST or "-")
+        .. " requestSeq=" .. tostring(W112_AUTOSUMMON_REQUEST_SEQ or "-")
         .. " ack=" .. tostring(W112_AUTOSUMMON_ACK or "-")
+        .. " ackSeq=" .. tostring(W112_AUTOSUMMON_ACK_SEQ or "-")
+        .. " startedSeq=" .. tostring(W112_AUTOSUMMON_STARTED_SEQ or "-")
         .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0)
         .. " nativeStatus=" .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "-")
+        .. " nativeTarget=" .. tostring(W112_AUTOSUMMON_NATIVE_TARGET or "-")
+        .. " nativeSlot=" .. tostring(W112_AUTOSUMMON_NATIVE_SLOT or "-")
         .. " manualPending=" .. tostring(pendingInvites))
 end
 
@@ -1736,6 +1835,7 @@ guiRefresh = function()
             or (table.getn(SS.summonQueue) > 0 and SS.summonQueue[1].name)
             or "-"
         GUI.summonStateText:SetText("Summon: " .. pendingName
+            .. " | " .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "idle")
             .. (SS.lastSummonError ~= "" and (" | " .. SS.lastSummonError) or ""))
     end
     if GUI.stateText then
@@ -2018,9 +2118,14 @@ frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
         W112_AUTOSUMMON_REQUEST = ""
+        W112_AUTOSUMMON_REQUEST_SEQ = ""
         W112_AUTOSUMMON_ACK = ""
+        W112_AUTOSUMMON_ACK_SEQ = ""
+        W112_AUTOSUMMON_STARTED_SEQ = ""
         W112_AUTOSUMMON_NATIVE_COUNT = W112_AUTOSUMMON_NATIVE_COUNT or 0
-        W112_AUTOSUMMON_NATIVE_STATUS = W112_AUTOSUMMON_NATIVE_STATUS or "idle"
+        W112_AUTOSUMMON_NATIVE_STATUS = "idle"
+        W112_AUTOSUMMON_NATIVE_TARGET = ""
+        W112_AUTOSUMMON_NATIVE_SLOT = ""
         syncPartyRoster(true)
         SS.nextRosterPollAt = now() + 0.75
         chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
@@ -2030,7 +2135,7 @@ frame:SetScript("OnEvent", function()
     end
 
     if event == "UI_ERROR_MESSAGE" or event == "CHAT_MSG_SPELL_FAILED_LOCALPLAYER" then
-        if (now() - (SS.lastSummonRequestAt or -100000)) < 3 then
+        if SS.summonActiveName and (now() - (SS.lastSummonRequestAt or -100000)) < 6 then
             SS.lastSummonError = trim(arg1 or "spell rejected")
             chat("summon rejected -> " .. SS.lastSummonError)
             guiRefreshSafe()
@@ -2049,7 +2154,7 @@ frame:SetScript("OnEvent", function()
         -- Manual /invite and right-click invites do not pass through SSI's own
         -- InviteByName path. Track the client's confirmation and reconcile it
         -- against the real roster until that player actually joins.
-        local _, _, invitedName = string.find(line, "^You have invited (.+) to join your group%.$")
+        local _, _, invitedName = string.find(line, "^You have invited (.+) to join your group%.?$")
         invitedName = trim(invitedName or "")
         if invitedName ~= "" then
             notePendingManualInvite(invitedName)
@@ -2057,12 +2162,12 @@ frame:SetScript("OnEvent", function()
             return
         end
 
-        local _, _, joinedName = string.find(line, "^(.+) has joined the raid group%.$")
+        local _, _, joinedName = string.find(line, "^(.+) has joined the raid group%.?$")
         if not joinedName then
-            _, _, joinedName = string.find(line, "^(.+) has joined the party%.$")
+            _, _, joinedName = string.find(line, "^(.+) has joined the party%.?$")
         end
         if not joinedName then
-            _, _, joinedName = string.find(line, "^(.+) joins the party%.$")
+            _, _, joinedName = string.find(line, "^(.+) joins the party%.?$")
         end
         joinedName = trim(joinedName or "")
         if joinedName ~= "" and not samePlayer(joinedName, UnitName("player")) then
@@ -2094,25 +2199,8 @@ frame:SetScript("OnEvent", function()
 
     if event == "SPELLCAST_START" then
         local spell = normalizeMessage(arg1 or "")
-        if spell == "ritual of summoning" then
-            local targetName = trim(SS.summonActiveName or UnitName("target") or "")
-            if targetName ~= "" then whisperSummonTarget(targetName) end
-
-            if SS.summonActiveName and samePlayer(UnitName("target"), SS.summonActiveName) then
-                SS.summonActiveStarted = true
-                SS.summonActiveExpires = now() + 8.0
-                if table.getn(SS.summonQueue) > 0
-                    and samePlayer(SS.summonQueue[1].name, SS.summonActiveName) then
-                    local item = SS.summonQueue[1]
-                    item.phase = "casting"
-                    if not item.startReported then
-                        item.startReported = true
-                        if SummonScoutDB.masterReportLifecycle then
-                            reportMaster("SUMMON START", SS.summonActiveName .. " -> " .. summonDestinationLabel())
-                        end
-                    end
-                end
-            end
+        if SS.summonActiveName and spell == "ritual of summoning" then
+            markActiveSummonStarted("event")
         end
         return
     end

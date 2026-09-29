@@ -1,4 +1,4 @@
-# SummonScout 1.31
+# SummonScout 1.32
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -407,3 +407,19 @@ This covers:
 - addon-generated invites (deduped by the existing summon queue).
 
 The pending marker is cleared when the player joins, expires, or Auto summon new party member is turned off. `/ssi summoncheck` now exposes `manualPending`.
+
+
+## 1.32 sequenced summon transaction
+
+Party auto-summon now uses one request-sequenced transaction shared by SummonScout and AutoSummonAssist.
+
+- every summon attempt gets a monotonically increasing request sequence;
+- the DLL reports queued / blocked-busy / target-failed / spell-slot / cast-issued / cast-started / no-start stages;
+- cast start is confirmed by either the Ritual SPELLCAST_START event or the DLL observing build-5875 cast/channel state after issuing the spell;
+- cast start no longer depends on the current target still being the summoned player;
+- active-transaction UI errors use a refreshed request timestamp;
+- the queue watchdog runs even while combat or another cast/channel blocks the request;
+- join/invite system messages are accepted with or without a final period;
+- /ssi summoncheck exposes request, ACK and started sequence IDs plus native target/slot/status.
+
+This replaces the previous optimistic ACK, which only proved that the bridge called CastSpell and did not prove that Ritual actually started.
