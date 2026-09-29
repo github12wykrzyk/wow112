@@ -1,4 +1,4 @@
-# SummonScout 1.3
+# SummonScout 1.4
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -69,3 +69,23 @@ Plain `DM` remains deliberately ambiguous (Deadmines vs Dire Maul). Explicit `VC
 - World-channel matching accepts both the Vanilla base-name argument and visible full channel names such as `5. World`.
 - `hydraxian`, `hydraxian waterlords`, and `hydrax` are classified as `Hydraxian Waterlords`.
 - Example: `WTB hydraxian summon` is a summon request and should increment the persistent request total even in observe mode.
+
+
+## 1.4 World advertisement scheduler
+
+SummonScout can periodically advertise a configurable message on its configured channel (World by default).
+
+Commands:
+- `/ssi spammsg <text>` - save the advertisement text
+- `/ssi spamsec <30-3600>` - set interval in seconds
+- `/ssi spam on` / `/ssi spam off` - enable/disable periodic posting
+- `/ssi spamnow` - send once immediately
+
+Defaults: scheduler OFF, interval 120 seconds, empty message. Enabling spam requires a non-empty message.
+
+The sender's own World messages are excluded from summon-demand statistics and auto-invite matching, so an advertisement containing the word "summon" does not pollute `/ssi stats`.
+
+Example:
+`/ssi spammsg WTS summons Hydraxian - whisper me`
+`/ssi spamsec 120`
+`/ssi spam on`

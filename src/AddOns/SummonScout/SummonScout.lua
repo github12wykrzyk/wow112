@@ -10,6 +10,7 @@ SS.queued = {}
 SS.recent = {}
 SS.loggedRecent = {}
 SS.nextInviteAt = 0
+SS.nextSpamAt = 0
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -362,6 +363,60 @@ local function popInvite()
     return item
 end
 
+local function configuredChannelId()
+    if not GetChannelName then return 0 end
+    local id = GetChannelName(SummonScoutDB.channel or "World")
+    if type(id) ~= "number" then return 0 end
+    return id
+end
+
+local function sendSpamMessage(manual)
+    local message = trim(SummonScoutDB.spamMessage or "")
+    if message == "" then
+        if manual then chat("spam message is empty; use /ssi spammsg <text>") end
+        return false
+    end
+
+    local channelId = configuredChannelId()
+    if not channelId or channelId <= 0 then
+        if manual or SummonScoutDB.debug then
+            chat("cannot send spam: not joined to #" .. (SummonScoutDB.channel or "World"))
+        end
+        return false
+    end
+
+    if SendChatMessage then
+        SendChatMessage(message, "CHANNEL", nil, channelId)
+        if manual or SummonScoutDB.debug then
+            chat("spam -> #" .. (SummonScoutDB.channel or "World") .. ": " .. message)
+        end
+        return true
+    end
+    return false
+end
+
+local function processSpam()
+    if not SummonScoutDB.enabled or not SummonScoutDB.spamEnabled then return end
+
+    local t = now()
+    if SS.nextSpamAt == 0 then
+        SS.nextSpamAt = t + 1
+        return
+    end
+    if t < SS.nextSpamAt then return end
+
+    local interval = tonumber(SummonScoutDB.spamInterval) or 120
+    if interval < 30 then interval = 30 end
+    if interval > 3600 then interval = 3600 end
+
+    if sendSpamMessage(false) then
+        SS.nextSpamAt = t + interval
+    else
+        -- Channel unavailable: retry later without hammering the API.
+        SS.nextSpamAt = t + 10
+    end
+end
+
 local function processQueue()
     if not SummonScoutDB.enabled or not SummonScoutDB.autoInvite then return end
     if now() < SS.nextInviteAt then return end
@@ -387,6 +442,9 @@ local function setDefaults()
     if SummonScoutDB.maxLogEntries == nil then SummonScoutDB.maxLogEntries = 200 end
     if SummonScoutDB.debug == nil then SummonScoutDB.debug = false end
     if SummonScoutDB.service == nil then SummonScoutDB.service = "all" end
+    if SummonScoutDB.spamEnabled == nil then SummonScoutDB.spamEnabled = false end
+    if SummonScoutDB.spamInterval == nil then SummonScoutDB.spamInterval = 120 end
+    if SummonScoutDB.spamMessage == nil then SummonScoutDB.spamMessage = "" end
     ensureStats()
 end
 
@@ -398,6 +456,8 @@ local function status()
         .. ", channel=" .. (SummonScoutDB.channel or "world")
         .. ", serving=" .. servedLocationLabel()
         .. ", requests=" .. tostring(SummonScoutDB.stats.total or 0)
+        .. ", spam=" .. (SummonScoutDB.spamEnabled and "ON" or "OFF")
+        .. "/" .. tostring(SummonScoutDB.spamInterval or 120) .. "s"
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
 
@@ -514,6 +574,46 @@ local function slash(msg)
         if rest == "on" then SummonScoutDB.loggingEnabled = true end
         if rest == "off" then SummonScoutDB.loggingEnabled = false end
         status()
+    elseif cmd == "spam" then
+        rest = lower(trim(rest))
+        if rest == "on" then
+            if trim(SummonScoutDB.spamMessage or "") == "" then
+                chat("set text first: /ssi spammsg <text>")
+            else
+                SummonScoutDB.spamEnabled = true
+                SS.nextSpamAt = now() + 1
+                status()
+            end
+        elseif rest == "off" then
+            SummonScoutDB.spamEnabled = false
+            SS.nextSpamAt = 0
+            status()
+        else
+            chat("use /ssi spam on|off")
+        end
+    elseif cmd == "spammsg" then
+        rest = trim(rest)
+        if rest == "" then
+            chat("spam message: " .. (trim(SummonScoutDB.spamMessage or "") ~= "" and SummonScoutDB.spamMessage or "<empty>"))
+        elseif string.len(rest) > 220 then
+            chat("spam message too long (max 220 chars)")
+        else
+            SummonScoutDB.spamMessage = rest
+            chat("spam message set: " .. rest)
+        end
+    elseif cmd == "spamsec" then
+        local seconds = tonumber(trim(rest))
+        if not seconds or seconds < 30 or seconds > 3600 then
+            chat("spam interval must be 30-3600 seconds")
+        else
+            SummonScoutDB.spamInterval = math.floor(seconds)
+            if SummonScoutDB.spamEnabled then SS.nextSpamAt = now() + SummonScoutDB.spamInterval end
+            chat("spam interval -> " .. tostring(SummonScoutDB.spamInterval) .. "s")
+        end
+    elseif cmd == "spamnow" then
+        if sendSpamMessage(true) and SummonScoutDB.spamEnabled then
+            SS.nextSpamAt = now() + (SummonScoutDB.spamInterval or 120)
+        end
     elseif cmd == "debug" then
         rest = lower(trim(rest))
         SummonScoutDB.debug = (rest == "on" or rest == "1" or rest == "true")
@@ -549,6 +649,7 @@ local function slash(msg)
         status()
     else
         chat("/ssi on|off|status | observe | invite on/off | log on/off | stats | recent [n] | unknown [n]")
+        chat("/ssi spam on|off | spammsg <text> | spamsec <30-3600> | spamnow")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -577,6 +678,10 @@ frame:SetScript("OnEvent", function()
             return
         end
 
+        -- Never let this character's own advertisement/request contaminate
+        -- summon-demand statistics or trigger the invite pipeline.
+        if samePlayer(sender, UnitName("player")) then return end
+
         local loc, ambiguous = findLocation(message)
 
         -- Logging happens before the service filter, so demand outside the
@@ -600,6 +705,7 @@ frame:SetScript("OnEvent", function()
 end)
 frame:SetScript("OnUpdate", function()
     processQueue()
+    processSpam()
 end)
 
 SLASH_SUMMONSCOUT1 = "/ssi"
