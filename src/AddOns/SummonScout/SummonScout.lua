@@ -11,6 +11,10 @@ SS.recent = {}
 SS.loggedRecent = {}
 SS.nextInviteAt = 0
 SS.nextSpamAt = 0
+SS.counterAt = 0
+SS.counterSender = nil
+SS.counterLocationLabel = nil
+SS.lastCounterAt = -100000
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -143,24 +147,55 @@ local function phraseHas(s, phrase)
     return has(" " .. s .. " ", " " .. p .. " ")
 end
 
-local function isSellerMessage(s)
-    local seller = {
-        "wts", "selling", "sell summon", "selling summon",
-        "summon service", "summoning service", "summons available",
-        "summoning to", "portal service"
-    }
+local BUYER_CUES = {
+    "need", "lf", "lf summon", "lf summ", "wtb", "buy", "want", "looking",
+    "pls", "plz", "please", "can i", "could i", "anyone",
+    "who can", "inv", "invite", "me", "port"
+}
+
+local SELLER_CUES = {
+    "wts", "selling", "sell", "service", "available", "offering",
+    "summons available", "summon service", "summoning service",
+    "selling summon", "sell summon", "summoning to", "portal service",
+    "pst", "whisper me", "dm me"
+}
+
+local function hasCue(s, cues)
     local j
-    for j = 1, table.getn(seller) do
-        if has(s, seller[j]) then return true end
+    for j = 1, table.getn(cues) do
+        if phraseHas(s, cues[j]) then return true end
     end
     return false
 end
 
+local function hasBuyerCue(s)
+    return hasCue(s, BUYER_CUES)
+end
+
+local function hasSellerCue(s)
+    return hasCue(s, SELLER_CUES)
+end
+
 local function hasSummonToken(s)
     return phraseHas(s, "summon")
+        or phraseHas(s, "summons")
+        or phraseHas(s, "summoning")
         or phraseHas(s, "summ")
+        or phraseHas(s, "summs")
         or phraseHas(s, "sum")
         or phraseHas(s, "sumon")
+end
+
+local function hasGoldPrice(s)
+    return string.find(s, "%d+%s*g") ~= nil
+end
+
+local function isSellerMessage(s)
+    s = normalizeMessage(s)
+    if s == "" or hasBuyerCue(s) or not hasSummonToken(s) then
+        return false
+    end
+    return hasSellerCue(s) or hasGoldPrice(s)
 end
 
 local function looksLikeSummonRequest(message)
@@ -169,15 +204,7 @@ local function looksLikeSummonRequest(message)
         return false
     end
 
-    local cues = {
-        "need", "lf", "wtb", "buy", "want", "looking",
-        "pls", "plz", "please", "can i", "could i", "anyone",
-        "who can", "inv", "invite", "me", "port"
-    }
-    local j
-    for j = 1, table.getn(cues) do
-        if phraseHas(s, cues[j]) then return true end
-    end
+    if hasBuyerCue(s) then return true end
 
     if string.len(s) <= 32 then
         return true
@@ -380,6 +407,60 @@ local function tryImmediateInvite(name, loc)
 end
 
 
+local function counterDelay(sender, message)
+    local minDelay = tonumber(SummonScoutDB.counterDelayMin) or 4
+    local maxDelay = tonumber(SummonScoutDB.counterDelayMax) or 8
+    local seed = math.floor(now() * 10)
+    local key = lower(sender or "") .. "|" .. normalizeMessage(message or "")
+    local j
+
+    if minDelay < 1 then minDelay = 1 end
+    if maxDelay < minDelay then maxDelay = minDelay end
+    if maxDelay > 60 then maxDelay = 60 end
+
+    for j = 1, string.len(key) do
+        seed = math.mod((seed * 33) + string.byte(key, j), 1000003)
+    end
+
+    local tenths = math.floor((maxDelay - minDelay) * 10)
+    if tenths <= 0 then return minDelay end
+    return minDelay + (math.mod(seed, tenths + 1) / 10)
+end
+
+local function counterLocationAllowed(loc, ambiguous)
+    if ambiguous or not loc then return false end
+    local service = SummonScoutDB.service or "all"
+    return service == "all" or loc.id == service
+end
+
+local function clearCounterPending()
+    SS.counterAt = 0
+    SS.counterSender = nil
+    SS.counterLocationLabel = nil
+end
+
+local function scheduleCounter(sender, message, loc, ambiguous)
+    if not SummonScoutDB.counterEnabled then return end
+    if trim(SummonScoutDB.spamMessage or "") == "" then return end
+    if not counterLocationAllowed(loc, ambiguous) then return end
+    if SS.counterAt and SS.counterAt > 0 then return end
+
+    local cooldown = tonumber(SummonScoutDB.counterCooldown) or 60
+    local t = now()
+    if cooldown < 15 then cooldown = 15 end
+    if cooldown > 3600 then cooldown = 3600 end
+    if (t - (SS.lastCounterAt or -100000)) < cooldown then return end
+
+    local delay = counterDelay(sender, message)
+    SS.counterAt = t + delay
+    SS.counterSender = trim(sender)
+    SS.counterLocationLabel = loc and loc.label or "?"
+    if SummonScoutDB.debug then
+        chat("competitor " .. SS.counterSender .. " [" .. SS.counterLocationLabel
+            .. "] -> counter in " .. tostring(delay) .. "s")
+    end
+end
+
 local function configuredChannelId()
     if not GetChannelName then return 0 end
     local id = GetChannelName(SummonScoutDB.channel or "World")
@@ -412,8 +493,37 @@ local function sendSpamMessage(manual)
     return false
 end
 
+local function processCounter()
+    if not SummonScoutDB.enabled or not SummonScoutDB.counterEnabled then
+        clearCounterPending()
+        return
+    end
+    if not SS.counterAt or SS.counterAt <= 0 then return end
+
+    local t = now()
+    if t < SS.counterAt then return end
+
+    local sender = SS.counterSender or "?"
+    if sendSpamMessage(false) then
+        SS.lastCounterAt = t
+        clearCounterPending()
+
+        -- A competitive response is already an advert. Push the regular
+        -- scheduler out by its full interval to avoid two posts back-to-back.
+        if SummonScoutDB.spamEnabled then
+            SS.nextSpamAt = t + (SummonScoutDB.spamInterval or 120)
+        end
+        chat("counter sent -> " .. sender)
+    else
+        -- World temporarily unavailable: retain one pending response and retry
+        -- slowly rather than create additional queued advertisements.
+        SS.counterAt = t + 10
+    end
+end
+
 local function processSpam()
     if not SummonScoutDB.enabled or not SummonScoutDB.spamEnabled then return end
+    if SS.counterAt and SS.counterAt > 0 then return end
 
     local t = now()
     if SS.nextSpamAt == 0 then
@@ -462,6 +572,10 @@ local function setDefaults()
     if SummonScoutDB.spamEnabled == nil then SummonScoutDB.spamEnabled = false end
     if SummonScoutDB.spamInterval == nil then SummonScoutDB.spamInterval = 120 end
     if SummonScoutDB.spamMessage == nil then SummonScoutDB.spamMessage = "" end
+    if SummonScoutDB.counterEnabled == nil then SummonScoutDB.counterEnabled = false end
+    if SummonScoutDB.counterDelayMin == nil then SummonScoutDB.counterDelayMin = 4 end
+    if SummonScoutDB.counterDelayMax == nil then SummonScoutDB.counterDelayMax = 8 end
+    if SummonScoutDB.counterCooldown == nil then SummonScoutDB.counterCooldown = 60 end
     ensureStats()
 end
 
@@ -475,6 +589,10 @@ local function status()
         .. ", requests=" .. tostring(SummonScoutDB.stats.total or 0)
         .. ", spam=" .. (SummonScoutDB.spamEnabled and "ON" or "OFF")
         .. "/" .. tostring(SummonScoutDB.spamInterval or 120) .. "s"
+        .. ", counter=" .. (SummonScoutDB.counterEnabled and "ON" or "OFF")
+        .. "/" .. tostring(SummonScoutDB.counterDelayMin or 4)
+        .. "-" .. tostring(SummonScoutDB.counterDelayMax or 8)
+        .. "s cd=" .. tostring(SummonScoutDB.counterCooldown or 60) .. "s"
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
 
@@ -556,6 +674,20 @@ local function describeTest(message)
     chat("test: request, location=" .. loc.label .. ", decision=" .. (locationAllowed(loc, nil) and "INVITE" or "IGNORE"))
 end
 
+local function describeCounterTest(message)
+    local s = normalizeMessage(message)
+    local loc, ambiguous = findLocation(message)
+    local seller = isSellerMessage(s)
+    local allowed = seller and counterLocationAllowed(loc, ambiguous)
+    if seller then
+        chat("countertest: OFFER, location="
+            .. (ambiguous and "AMBIGUOUS DM" or (loc and loc.label or "UNKNOWN"))
+            .. ", decision=" .. (allowed and "COUNTER" or "IGNORE"))
+    else
+        chat("countertest: NOT A SUMMON OFFER")
+    end
+end
+
 local function slash(msg)
     msg = trim(msg)
     local _, _, cmd, rest = string.find(msg, "^(%S+)%s*(.-)$")
@@ -628,9 +760,49 @@ local function slash(msg)
             chat("spam interval -> " .. tostring(SummonScoutDB.spamInterval) .. "s")
         end
     elseif cmd == "spamnow" then
-        if sendSpamMessage(true) and SummonScoutDB.spamEnabled then
-            SS.nextSpamAt = now() + (SummonScoutDB.spamInterval or 120)
+        if sendSpamMessage(true) then
+            clearCounterPending()
+            if SummonScoutDB.spamEnabled then
+                SS.nextSpamAt = now() + (SummonScoutDB.spamInterval or 120)
+            end
         end
+    elseif cmd == "counter" then
+        rest = lower(trim(rest))
+        if rest == "on" then
+            if trim(SummonScoutDB.spamMessage or "") == "" then
+                chat("set text first: /ssi spammsg <text>")
+            else
+                SummonScoutDB.counterEnabled = true
+                status()
+            end
+        elseif rest == "off" then
+            SummonScoutDB.counterEnabled = false
+            clearCounterPending()
+            status()
+        else
+            chat("use /ssi counter on|off")
+        end
+    elseif cmd == "counterdelay" then
+        local _, _, a, b = string.find(trim(rest), "^(%d+)%s+(%d+)$")
+        local minDelay = tonumber(a)
+        local maxDelay = tonumber(b)
+        if not minDelay or not maxDelay or minDelay < 1 or maxDelay < minDelay or maxDelay > 60 then
+            chat("counter delay must be: /ssi counterdelay <1-60> <min..60>")
+        else
+            SummonScoutDB.counterDelayMin = minDelay
+            SummonScoutDB.counterDelayMax = maxDelay
+            chat("counter delay -> " .. tostring(minDelay) .. "-" .. tostring(maxDelay) .. "s")
+        end
+    elseif cmd == "countercool" then
+        local seconds = tonumber(trim(rest))
+        if not seconds or seconds < 15 or seconds > 3600 then
+            chat("counter cooldown must be 15-3600 seconds")
+        else
+            SummonScoutDB.counterCooldown = math.floor(seconds)
+            chat("counter cooldown -> " .. tostring(SummonScoutDB.counterCooldown) .. "s")
+        end
+    elseif cmd == "countertest" and trim(rest) ~= "" then
+        describeCounterTest(rest)
     elseif cmd == "debug" then
         rest = lower(trim(rest))
         SummonScoutDB.debug = (rest == "on" or rest == "1" or rest == "true")
@@ -667,6 +839,7 @@ local function slash(msg)
     else
         chat("/ssi on|off|status | observe | invite on/off | log on/off | stats | recent [n] | unknown [n]")
         chat("/ssi spam on|off | spammsg <text> | spamsec <30-3600> | spamnow")
+        chat("/ssi counter on|off | counterdelay <min> <max> | countercool <15-3600> | countertest <message>")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -691,15 +864,24 @@ frame:SetScript("OnEvent", function()
         local channelBaseName = arg9 or ""
         local channelFullName = arg4 or ""
 
-        if not channelMatches(channelBaseName, channelFullName) or not looksLikeSummonRequest(message) then
+        if not channelMatches(channelBaseName, channelFullName) then
             return
         end
 
-        -- Never let this character's own advertisement/request contaminate
-        -- summon-demand statistics or trigger the invite pipeline.
+        -- Never react to this character's own advertisement/request.
         if samePlayer(sender, UnitName("player")) then return end
 
         local loc, ambiguous = findLocation(message)
+
+        -- Seller detection is independent from buyer detection. Competitor ads
+        -- never enter demand statistics or the invite queue.
+        if isSellerMessage(message) then
+            scheduleCounter(sender, message, loc, ambiguous)
+            return
+        end
+
+        if not looksLikeSummonRequest(message) then return end
+
         local inviteCandidate = SummonScoutDB.autoInvite and locationAllowed(loc, ambiguous)
 
         -- Lowest-latency path: the first eligible request after idle is invited
@@ -730,6 +912,7 @@ frame:SetScript("OnEvent", function()
 end)
 frame:SetScript("OnUpdate", function()
     processQueue()
+    processCounter()
     processSpam()
 end)
 

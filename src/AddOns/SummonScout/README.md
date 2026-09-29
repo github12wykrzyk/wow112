@@ -1,4 +1,4 @@
-# SummonScout 1.6
+# SummonScout 1.7
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -112,3 +112,20 @@ The first eligible summon request after an idle period now calls `InviteByName()
 It no longer waits for the next `OnUpdate` frame. The existing 0.8 s spacing remains only for subsequent requests: if another request arrives while the invite cooldown is active or the queue is non-empty, it is queued and processed normally.
 
 Demand logging is intentionally performed after the latency-critical invite path, so persistent statistics do not delay the first invite.
+
+
+## 1.7 competitive response
+
+Optional competitive-response mode watches the configured World channel for another player's summon advertisement to the location currently served by SummonScout.
+
+An offer must contain a summon token plus a seller signal such as `WTS`, `selling`, `service`, `available`, `pst` / `whisper me`, or a gold price. Buyer language such as `WTB`, `need`, `LF`, `want`, or `looking` prevents seller classification. The destination must be recognized and match `/ssi serve`; the player's own messages are ignored.
+
+The response reuses the existing `/ssi spammsg` text. Only one response may be pending at a time. Default delay is pseudo-random 4-8 seconds and default cooldown is 60 seconds. A successful counter postpones the regular spam scheduler by its full interval, avoiding back-to-back advertisements.
+
+Commands:
+- `/ssi counter on|off`
+- `/ssi counterdelay <min> <max>` - 1..60 seconds
+- `/ssi countercool <seconds>` - 15..3600 seconds
+- `/ssi countertest <message>` - classify a sample without sending anything
+
+Counter mode defaults OFF and is independent of regular `/ssi spam on|off`; only a non-empty `spammsg` is required.
