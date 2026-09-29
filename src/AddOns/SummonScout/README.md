@@ -1,4 +1,4 @@
-# SummonScout 1.22
+# SummonScout 1.23
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -303,3 +303,10 @@ There is no immediate `TargetLastTarget()`, `ClearTarget()`, or extra `SpellTarg
 ## 1.22 summon player blacklist
 
 Automatic party/raid summoning skips exact character names `Hydraone` and `Hydratwo` (case-insensitive). They may still remain in the group and use the rest of SummonScout normally; only automatic summon queueing is suppressed.
+
+
+## 1.23 direct-whisper invite priority
+
+Natural direct-whisper requests such as `hey, still summoning? i'd take one` are treated as explicit summon demand.
+
+Direct whisper auto-invite no longer inherits the long 120-second World-chat duplicate window. A valid whisper gets an immediate invite even if that player was seen/invited from World recently. Only a 2-second same-sender guard remains to suppress duplicate chat events.

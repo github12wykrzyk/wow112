@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.22"
+local ADDON_VERSION = "1.23"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -36,6 +36,7 @@ SS.summonActiveName = nil
 SS.summonActiveExpires = 0
 SS.summonActiveStarted = false
 SS.summonWhisperRecent = {}
+SS.whisperInviteRecent = {}
 SS.lastAdvertMessage = ""
 SS.lastAdvertSentAt = -100000
 SS.lastSummonRequestAt = -100000
@@ -197,7 +198,8 @@ local REQUEST_CUES = {
 local WHISPER_INVITE_CUES = {
     "inv", "invite", "invite me", "port", "summon me", "sum me",
     "can i get a summon", "can i get summon", "need summon", "need summ",
-    "lf summon", "lf summ", "wtb summon", "wtb summ"
+    "lf summon", "lf summ", "wtb summon", "wtb summ",
+    "still summoning", "take one", "i d take one", "ill take one", "i ll take one"
 }
 
 local WHISPER_PRICE_CUES = {
@@ -914,6 +916,31 @@ local function tryImmediateInvite(name, loc)
     return true
 end
 
+
+local function tryWhisperInvite(name, loc)
+    name = trim(name)
+    if name == "" or samePlayer(name, UnitName("player")) or isInGroup(name) then
+        return false, "invalid"
+    end
+
+    local key = lower(name)
+    local t = now()
+    local last = SS.whisperInviteRecent[key]
+    if last and (t - last) < 2 then
+        return false, "duplicate-event"
+    end
+
+    -- Direct whisper demand is stronger than the long World-chat duplicate
+    -- window. A customer who whispers again after an earlier World invite
+    -- should still receive an immediate invite.
+    SS.whisperInviteRecent[key] = t
+    SS.recent[key] = t
+    SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
+    InviteByName(name)
+    recordInvite(name, loc)
+    chat("whisper invite -> " .. name .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
+    return true, "invited"
+end
 
 local function counterDelay(sender, message)
     local minDelay = tonumber(SummonScoutDB.counterDelayMin) or 4
@@ -1873,11 +1900,9 @@ frame:SetScript("OnEvent", function()
         if sender == "" or samePlayer(sender, UnitName("player")) or isInGroup(sender) then return end
         local accept, loc, reason = whisperInviteDecision(message)
         if accept then
-            if not tryImmediateInvite(sender, loc) then
-                queueInvite(sender, message, loc)
-            end
-            if SummonScoutDB.debug then
-                chat("whisper invite match -> " .. sender .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
+            local invited, why = tryWhisperInvite(sender, loc)
+            if not invited and SummonScoutDB.debug then
+                chat("whisper invite suppressed -> " .. sender .. " [" .. tostring(why) .. "]")
             end
         elseif SummonScoutDB.debug then
             chat("whisper ignore -> " .. sender .. " [" .. tostring(reason) .. "]")
