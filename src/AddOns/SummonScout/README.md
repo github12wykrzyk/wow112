@@ -1,4 +1,4 @@
-# SummonScout 1.8
+# SummonScout 1.9
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -145,3 +145,22 @@ Seller detection now also recognizes:
 
 New command:
 - `/ssi counterscope all|same` (default: `all`)
+
+
+## 1.9 classic GUI, master reporting and payment ledger
+
+The exact buyer wording `LF summon to Hydraxians` is now recognized as **Hydraxian Waterlords (Azshara)**; the plural `hydraxians` and singular `hydraxian waterlord` aliases are included.
+
+Open the new Vanilla-style control panel with `/ssi gui` or `/ssi options`. The panel provides classic framed sections and checkboxes for automation, service/advert settings, competitive response, master reporting, and live operation status.
+
+Master reporting sends whispers to a configured master character:
+- `[SSI INVITE] <player> -> <destination>`
+- `[SSI PAID] <player> -> <amount> | total <revenue>`
+
+Commands:
+- `/ssi master <character>`
+- `/ssi master on|off`
+- `/ssi reporttest`
+- `/ssi gui`
+
+Payment accounting observes Vanilla trade state and stores positive incoming payments in `SummonScoutDB.paymentLog` (last 100 entries), `revenueCopper`, and `paymentCount`. The payer is resolved from the active trade partner, with the latest recent invite as a fallback. Invite and payment reports can be enabled independently in the GUI.

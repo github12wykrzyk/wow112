@@ -15,6 +15,16 @@ SS.counterAt = 0
 SS.counterSender = nil
 SS.counterLocationLabel = nil
 SS.lastCounterAt = -100000
+SS.lastInvitedName = nil
+SS.lastInvitedLocation = nil
+SS.lastInvitedAt = 0
+SS.tradeRequestedBy = nil
+SS.tradePartner = nil
+SS.tradeMoneyBefore = 0
+SS.tradeTargetMoney = 0
+SS.tradeBothAccepted = false
+SS.gui = nil
+SS.nextGuiRefreshAt = 0
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -87,7 +97,7 @@ local LOCATIONS = {
     { id="felwood", label="Felwood", aliases={"felwood"} },
     { id="feralas", label="Feralas", aliases={"feralas"} },
     { id="desolace", label="Desolace", aliases={"desolace"} },
-    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "hydraxian waterlords", "hydraxian waterlods", "hydraxian", "hydraxis", "hydrax"} },
+    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "hydraxian waterlords", "hydraxian waterlods", "hydraxian waterlord", "hydraxians", "hydraxian", "hydraxis", "hydrax"} },
     { id="ashenvale", label="Ashenvale", aliases={"ashenvale"} },
     { id="barrens", label="The Barrens", aliases={"the barrens", "barrens"} },
     { id="dustwallow", label="Dustwallow Marsh", aliases={"dustwallow marsh", "dustwallow"} },
@@ -339,6 +349,9 @@ local function ensureStats()
     if SummonScoutDB.stats.total == nil then SummonScoutDB.stats.total = 0 end
     if SummonScoutDB.stats.unknown == nil then SummonScoutDB.stats.unknown = 0 end
     if SummonScoutDB.stats.ambiguous == nil then SummonScoutDB.stats.ambiguous = 0 end
+    if type(SummonScoutDB.paymentLog) ~= "table" then SummonScoutDB.paymentLog = {} end
+    if SummonScoutDB.revenueCopper == nil then SummonScoutDB.revenueCopper = 0 end
+    if SummonScoutDB.paymentCount == nil then SummonScoutDB.paymentCount = 0 end
 end
 
 local function logRequest(sender, message, loc, ambiguous)
@@ -381,6 +394,125 @@ local function logRequest(sender, message, loc, ambiguous)
     end
 end
 
+local function formatMoney(copper)
+    copper = math.floor(tonumber(copper) or 0)
+    if copper < 0 then copper = 0 end
+    local gold = math.floor(copper / 10000)
+    local silver = math.floor(math.mod(copper, 10000) / 100)
+    local coin = math.mod(copper, 100)
+    if gold > 0 then
+        return tostring(gold) .. "g " .. tostring(silver) .. "s " .. tostring(coin) .. "c"
+    elseif silver > 0 then
+        return tostring(silver) .. "s " .. tostring(coin) .. "c"
+    end
+    return tostring(coin) .. "c"
+end
+
+local function masterReady()
+    local name = trim(SummonScoutDB.masterName or "")
+    return SummonScoutDB.masterReportingEnabled
+        and name ~= ""
+        and not samePlayer(name, UnitName("player"))
+end
+
+local function reportMaster(kind, text)
+    if not masterReady() or not SendChatMessage then return false end
+    SendChatMessage("[SSI " .. tostring(kind or "INFO") .. "] " .. tostring(text or ""),
+        "WHISPER", nil, trim(SummonScoutDB.masterName or ""))
+    return true
+end
+
+local function guiRefreshSafe()
+    if SS.guiRefresh then SS.guiRefresh() end
+end
+
+local function recordInvite(name, loc)
+    local label = loc and loc.label or "?"
+    SS.lastInvitedName = trim(name)
+    SS.lastInvitedLocation = label
+    SS.lastInvitedAt = now()
+    if SummonScoutDB.masterReportInvites then
+        reportMaster("INVITE", SS.lastInvitedName .. " -> " .. label)
+    end
+    guiRefreshSafe()
+end
+
+local function currentTradePartner()
+    local name
+    if UnitName then
+        name = UnitName("NPC")
+        if trim(name or "") ~= "" then return trim(name) end
+    end
+    if TradeFrameRecipientNameText and TradeFrameRecipientNameText.GetText then
+        name = TradeFrameRecipientNameText:GetText()
+        if trim(name or "") ~= "" then return trim(name) end
+    end
+    if trim(SS.tradeRequestedBy or "") ~= "" then return trim(SS.tradeRequestedBy) end
+    if SS.lastInvitedName and (now() - (SS.lastInvitedAt or 0)) < 600 then
+        return SS.lastInvitedName
+    end
+    return "UNKNOWN"
+end
+
+local function resetTradeState()
+    SS.tradeRequestedBy = nil
+    SS.tradePartner = nil
+    SS.tradeMoneyBefore = 0
+    SS.tradeTargetMoney = 0
+    SS.tradeBothAccepted = false
+end
+
+local function beginTrade()
+    SS.tradePartner = currentTradePartner()
+    SS.tradeMoneyBefore = GetMoney and GetMoney() or 0
+    SS.tradeTargetMoney = GetTargetTradeMoney and GetTargetTradeMoney() or 0
+    SS.tradeBothAccepted = false
+end
+
+local function recordPayment(name, copper)
+    copper = math.floor(tonumber(copper) or 0)
+    if copper <= 0 then return end
+    ensureStats()
+
+    name = trim(name or "")
+    if name == "" then name = "UNKNOWN" end
+
+    SummonScoutDB.revenueCopper = (SummonScoutDB.revenueCopper or 0) + copper
+    SummonScoutDB.paymentCount = (SummonScoutDB.paymentCount or 0) + 1
+    SummonScoutDB.paymentLog[table.getn(SummonScoutDB.paymentLog) + 1] = {
+        ts = wallTime(),
+        player = name,
+        copper = copper
+    }
+    while table.getn(SummonScoutDB.paymentLog) > 100 do
+        table.remove(SummonScoutDB.paymentLog, 1)
+    end
+
+    if SummonScoutDB.masterReportPayments then
+        reportMaster("PAID", name .. " -> " .. formatMoney(copper)
+            .. " | total " .. formatMoney(SummonScoutDB.revenueCopper or 0))
+    end
+    chat("payment: " .. name .. " -> " .. formatMoney(copper))
+    guiRefreshSafe()
+end
+
+local function finishTrade()
+    local after = GetMoney and GetMoney() or SS.tradeMoneyBefore
+    local delta = after - (SS.tradeMoneyBefore or 0)
+    local amount = 0
+
+    if delta > 0 then
+        amount = delta
+    elseif SS.tradeBothAccepted and (SS.tradeTargetMoney or 0) > 0 then
+        amount = SS.tradeTargetMoney
+    end
+
+    if amount > 0 then
+        recordPayment(SS.tradePartner or currentTradePartner(), amount)
+    end
+    resetTradeState()
+end
+
 local function queueInvite(name, message, loc)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) then return end
@@ -420,6 +552,7 @@ local function tryImmediateInvite(name, loc)
     SS.recent[lower(name)] = t
     SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
     InviteByName(name)
+    recordInvite(name, loc)
     chat("invite -> " .. name .. " [" .. (loc and loc.label or "?") .. "]")
     return true
 end
@@ -576,6 +709,7 @@ local function processQueue()
     SS.recent[lower(item.name)] = now()
     SS.nextInviteAt = now() + (SummonScoutDB.inviteDelay or 0.8)
     InviteByName(item.name)
+    recordInvite(item.name, item.locationId and LOCATION_BY_ID[item.locationId] or nil)
     chat("invite -> " .. item.name .. " [" .. (item.locationLabel or "?") .. "]")
 end
 
@@ -598,6 +732,10 @@ local function setDefaults()
     if SummonScoutDB.counterDelayMax == nil then SummonScoutDB.counterDelayMax = 8 end
     if SummonScoutDB.counterCooldown == nil then SummonScoutDB.counterCooldown = 60 end
     if SummonScoutDB.counterScope == nil then SummonScoutDB.counterScope = "all" end
+    if SummonScoutDB.masterReportingEnabled == nil then SummonScoutDB.masterReportingEnabled = false end
+    if SummonScoutDB.masterName == nil then SummonScoutDB.masterName = "" end
+    if SummonScoutDB.masterReportInvites == nil then SummonScoutDB.masterReportInvites = true end
+    if SummonScoutDB.masterReportPayments == nil then SummonScoutDB.masterReportPayments = true end
     ensureStats()
 end
 
@@ -616,6 +754,8 @@ local function status()
         .. "-" .. tostring(SummonScoutDB.counterDelayMax or 8)
         .. "s cd=" .. tostring(SummonScoutDB.counterCooldown or 60) .. "s"
         .. " scope=" .. tostring(SummonScoutDB.counterScope or "all")
+        .. ", master=" .. (SummonScoutDB.masterReportingEnabled and (trim(SummonScoutDB.masterName or "") ~= "" and SummonScoutDB.masterName or "NO-NAME") or "OFF")
+        .. ", revenue=" .. formatMoney(SummonScoutDB.revenueCopper or 0)
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
 
@@ -709,6 +849,253 @@ local function describeCounterTest(message)
     else
         chat("countertest: NOT A SUMMON OFFER")
     end
+end
+
+local GUI = {}
+local guiRefresh
+local guiControlId = 0
+
+local function guiText(parent, text, x, y, small)
+    local fs = parent:CreateFontString(nil, "OVERLAY", small and "GameFontNormalSmall" or "GameFontNormal")
+    fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    fs:SetText(text or "")
+    return fs
+end
+
+local function guiHeader(parent, text, x, y)
+    local fs = guiText(parent, text, x, y, false)
+    fs:SetTextColor(1.0, 0.82, 0.0)
+    return fs
+end
+
+local function guiName(prefix)
+    guiControlId = guiControlId + 1
+    return "SummonScout" .. prefix .. tostring(guiControlId)
+end
+
+local function guiCheck(parent, x, y, label, getter, setter)
+    local b = CreateFrame("CheckButton", guiName("Check"), parent, "UICheckButtonTemplate")
+    b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    b.ssGetter = getter
+    guiText(parent, label, x + 24, y - 4, false)
+    b:SetScript("OnClick", function()
+        setter(b:GetChecked() and true or false)
+        if guiRefresh then guiRefresh() end
+    end)
+    return b
+end
+
+local function guiEdit(parent, x, y, width, text)
+    local e = CreateFrame("EditBox", guiName("Edit"), parent, "InputBoxTemplate")
+    e:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    e:SetWidth(width)
+    e:SetHeight(22)
+    e:SetAutoFocus(false)
+    e:SetMaxLetters(220)
+    e:SetText(text or "")
+    e:SetScript("OnEscapePressed", function() e:ClearFocus() end)
+    return e
+end
+
+local function guiButton(parent, x, y, width, text, onClick)
+    local b = CreateFrame("Button", guiName("Button"), parent, "UIPanelButtonTemplate")
+    b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    b:SetWidth(width)
+    b:SetHeight(22)
+    b:SetText(text)
+    b:SetScript("OnClick", onClick)
+    return b
+end
+
+local function guiApplyService()
+    local value = trim(GUI.serviceEdit and GUI.serviceEdit:GetText() or "")
+    local id, label = resolveLocationName(value)
+    if id then
+        SummonScoutDB.service = id
+        chat("serving -> " .. label)
+    else
+        chat("unknown/ambiguous place: " .. value)
+    end
+    if guiRefresh then guiRefresh() end
+end
+
+local function guiSaveAdvert()
+    local value = trim(GUI.advertEdit and GUI.advertEdit:GetText() or "")
+    if string.len(value) > 220 then
+        chat("spam message too long (max 220 chars)")
+        return
+    end
+    SummonScoutDB.spamMessage = value
+    chat("advert saved")
+    if guiRefresh then guiRefresh() end
+end
+
+local function guiSaveMaster()
+    local value = trim(GUI.masterEdit and GUI.masterEdit:GetText() or "")
+    SummonScoutDB.masterName = value
+    chat("master -> " .. (value ~= "" and value or "<empty>"))
+    if guiRefresh then guiRefresh() end
+end
+
+local function createGui()
+    if GUI.frame then return GUI.frame end
+
+    local f = CreateFrame("Frame", "SummonScoutOptionsFrame", UIParent)
+    f:SetWidth(720)
+    f:SetHeight(470)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
+    f:SetFrameStrata("DIALOG")
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function() f:StartMoving() end)
+    f:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+    f:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    f:SetBackdropColor(0.035, 0.025, 0.045, 0.96)
+    f:SetBackdropBorderColor(0.55, 0.55, 0.55, 1)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOP", f, "TOP", 0, -14)
+    title:SetText("SummonScout Control Center")
+    title:SetTextColor(1.0, 0.82, 0.0)
+
+    guiButton(f, 682, -8, 26, "X", function() f:Hide() end)
+
+    guiHeader(f, "Automation", 28, -46)
+    GUI.enabledCheck = guiCheck(f, 26, -68, "SummonScout enabled",
+        function() return SummonScoutDB.enabled end,
+        function(v) SummonScoutDB.enabled = v end)
+    GUI.inviteCheck = guiCheck(f, 26, -94, "Instant auto invite",
+        function() return SummonScoutDB.autoInvite end,
+        function(v) SummonScoutDB.autoInvite = v end)
+    GUI.logCheck = guiCheck(f, 26, -120, "Demand logging",
+        function() return SummonScoutDB.loggingEnabled end,
+        function(v) SummonScoutDB.loggingEnabled = v end)
+    GUI.counterCheck = guiCheck(f, 26, -146, "Competitive response",
+        function() return SummonScoutDB.counterEnabled end,
+        function(v)
+            if v and trim(SummonScoutDB.spamMessage or "") == "" then
+                chat("set advert text first")
+                SummonScoutDB.counterEnabled = false
+            else
+                SummonScoutDB.counterEnabled = v
+                if not v then clearCounterPending() end
+            end
+        end)
+    GUI.spamCheck = guiCheck(f, 26, -172, "Periodic World advert",
+        function() return SummonScoutDB.spamEnabled end,
+        function(v)
+            if v and trim(SummonScoutDB.spamMessage or "") == "" then
+                chat("set advert text first")
+                SummonScoutDB.spamEnabled = false
+            else
+                SummonScoutDB.spamEnabled = v
+                SS.nextSpamAt = v and (now() + 1) or 0
+            end
+        end)
+    GUI.scopeCheck = guiCheck(f, 26, -198, "Counter all summon sellers",
+        function() return (SummonScoutDB.counterScope or "all") == "all" end,
+        function(v)
+            SummonScoutDB.counterScope = v and "all" or "same"
+            clearCounterPending()
+        end)
+
+    guiHeader(f, "Service / advert", 28, -236)
+    guiText(f, "Serve:", 28, -260, true)
+    GUI.serviceEdit = guiEdit(f, 80, -253, 155, SummonScoutDB.service or "all")
+    guiButton(f, 244, -253, 66, "Apply", guiApplyService)
+
+    guiText(f, "World text:", 28, -292, true)
+    GUI.advertEdit = guiEdit(f, 100, -285, 210, SummonScoutDB.spamMessage or "")
+    guiButton(f, 244, -316, 66, "Save", guiSaveAdvert)
+
+    guiHeader(f, "Master reporting", 370, -46)
+    GUI.masterEnabledCheck = guiCheck(f, 368, -68, "Report to master character",
+        function() return SummonScoutDB.masterReportingEnabled end,
+        function(v) SummonScoutDB.masterReportingEnabled = v end)
+    GUI.masterInviteCheck = guiCheck(f, 368, -94, "Report invite attempts",
+        function() return SummonScoutDB.masterReportInvites end,
+        function(v) SummonScoutDB.masterReportInvites = v end)
+    GUI.masterPaymentCheck = guiCheck(f, 368, -120, "Report received payments",
+        function() return SummonScoutDB.masterReportPayments end,
+        function(v) SummonScoutDB.masterReportPayments = v end)
+
+    guiText(f, "Master:", 370, -158, true)
+    GUI.masterEdit = guiEdit(f, 430, -151, 170, SummonScoutDB.masterName or "")
+    guiButton(f, 608, -151, 70, "Save", guiSaveMaster)
+    guiButton(f, 608, -180, 70, "Test", function()
+        if not reportMaster("TEST", "reporting online from " .. (UnitName("player") or "?")) then
+            chat("master reporting is OFF or master name is empty")
+        end
+    end)
+
+    guiHeader(f, "Live operation", 370, -220)
+    GUI.lastInviteText = guiText(f, "Last invite: -", 370, -244, true)
+    GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -268, true)
+    GUI.revenueText = guiText(f, "Revenue: 0c", 370, -292, true)
+    GUI.counterText = guiText(f, "Counter: -", 370, -316, true)
+    GUI.stateText = guiText(f, "State: -", 28, -372, true)
+    GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -438, true)
+
+    f:Hide()
+    GUI.frame = f
+    SS.gui = f
+    return f
+end
+
+guiRefresh = function()
+    local f = createGui()
+    local checks = {
+        GUI.enabledCheck, GUI.inviteCheck, GUI.logCheck, GUI.counterCheck,
+        GUI.spamCheck, GUI.scopeCheck, GUI.masterEnabledCheck,
+        GUI.masterInviteCheck, GUI.masterPaymentCheck
+    }
+    local i
+    for i = 1, table.getn(checks) do
+        local c = checks[i]
+        if c and c.ssGetter then c:SetChecked(c.ssGetter() and 1 or nil) end
+    end
+
+    if GUI.lastInviteText then
+        GUI.lastInviteText:SetText("Last invite: " .. (SS.lastInvitedName or "-")
+            .. (SS.lastInvitedLocation and (" -> " .. SS.lastInvitedLocation) or ""))
+    end
+
+    local last = SummonScoutDB.paymentLog and SummonScoutDB.paymentLog[table.getn(SummonScoutDB.paymentLog)]
+    if GUI.lastPaymentText then
+        GUI.lastPaymentText:SetText("Last payment: "
+            .. (last and ((last.player or "?") .. " -> " .. formatMoney(last.copper or 0)) or "-"))
+    end
+    if GUI.revenueText then
+        GUI.revenueText:SetText("Revenue: " .. formatMoney(SummonScoutDB.revenueCopper or 0)
+            .. " | payments: " .. tostring(SummonScoutDB.paymentCount or 0))
+    end
+    if GUI.counterText then
+        local pending = SS.counterAt and SS.counterAt > now()
+        GUI.counterText:SetText("Counter: " .. (SummonScoutDB.counterEnabled and "ON" or "OFF")
+            .. " | scope " .. tostring(SummonScoutDB.counterScope or "all")
+            .. (pending and (" | pending " .. tostring(math.ceil(SS.counterAt - now())) .. "s") or ""))
+    end
+    if GUI.stateText then
+        GUI.stateText:SetText("Serve: " .. servedLocationLabel()
+            .. " | invite " .. (SummonScoutDB.autoInvite and "ON" or "OFF")
+            .. " | World advert " .. (SummonScoutDB.spamEnabled and "ON" or "OFF")
+            .. " | master " .. (SummonScoutDB.masterReportingEnabled and (trim(SummonScoutDB.masterName or "") ~= "" and SummonScoutDB.masterName or "NO NAME") or "OFF"))
+    end
+    return f
+end
+
+SS.guiRefresh = guiRefresh
+
+local function toggleGui()
+    local f = createGui()
+    guiRefresh()
+    if f:IsShown() then f:Hide() else f:Show() end
 end
 
 local function slash(msg)
@@ -835,6 +1222,27 @@ local function slash(msg)
         end
     elseif cmd == "countertest" and trim(rest) ~= "" then
         describeCounterTest(rest)
+    elseif cmd == "gui" or cmd == "options" then
+        toggleGui()
+    elseif cmd == "master" then
+        local sub = lower(trim(rest))
+        if sub == "on" then
+            SummonScoutDB.masterReportingEnabled = true
+            status()
+        elseif sub == "off" then
+            SummonScoutDB.masterReportingEnabled = false
+            status()
+        elseif trim(rest) ~= "" then
+            SummonScoutDB.masterName = trim(rest)
+            chat("master -> " .. SummonScoutDB.masterName)
+            guiRefreshSafe()
+        else
+            chat("use /ssi master <name>|on|off")
+        end
+    elseif cmd == "reporttest" then
+        if not reportMaster("TEST", "reporting online from " .. (UnitName("player") or "?")) then
+            chat("master reporting is OFF or master name is empty")
+        end
     elseif cmd == "debug" then
         rest = lower(trim(rest))
         SummonScoutDB.debug = (rest == "on" or rest == "1" or rest == "true")
@@ -872,7 +1280,8 @@ local function slash(msg)
         chat("/ssi on|off|status | observe | invite on/off | log on/off | stats | recent [n] | unknown [n]")
         chat("/ssi spam on|off | spammsg <text> | spamsec <30-3600> | spamnow")
         chat("/ssi counter on|off | counterscope all|same | counterdelay <min> <max> | countercool <15-3600>")
-        chat("/ssi countertest <message>")
+        chat("/ssi countertest <message> | gui")
+        chat("/ssi master <name>|on|off | reporttest")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -880,12 +1289,53 @@ end
 local frame = CreateFrame("Frame", "SummonScoutFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
+frame:RegisterEvent("TRADE_REQUEST")
+frame:RegisterEvent("TRADE_SHOW")
+frame:RegisterEvent("TRADE_MONEY_CHANGED")
+frame:RegisterEvent("TRADE_ACCEPT_UPDATE")
+frame:RegisterEvent("TRADE_CLOSED")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
         chat("loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
+        return
+    end
+
+    if event == "TRADE_REQUEST" then
+        SS.tradeRequestedBy = trim(arg1 or "")
+        return
+    end
+
+    if event == "TRADE_SHOW" then
+        beginTrade()
+        return
+    end
+
+    if event == "TRADE_MONEY_CHANGED" then
+        if GetTargetTradeMoney then
+            SS.tradeTargetMoney = GetTargetTradeMoney() or SS.tradeTargetMoney or 0
+        end
+        if not SS.tradePartner or SS.tradePartner == "" then
+            SS.tradePartner = currentTradePartner()
+        end
+        return
+    end
+
+    if event == "TRADE_ACCEPT_UPDATE" then
+        SS.tradeBothAccepted = (arg1 == 1 and arg2 == 1) and true or false
+        if GetTargetTradeMoney then
+            SS.tradeTargetMoney = GetTargetTradeMoney() or SS.tradeTargetMoney or 0
+        end
+        if not SS.tradePartner or SS.tradePartner == "" then
+            SS.tradePartner = currentTradePartner()
+        end
+        return
+    end
+
+    if event == "TRADE_CLOSED" then
+        finishTrade()
         return
     end
 
@@ -947,6 +1397,10 @@ frame:SetScript("OnUpdate", function()
     processQueue()
     processCounter()
     processSpam()
+    if SS.gui and SS.gui:IsShown() and guiRefresh and now() >= (SS.nextGuiRefreshAt or 0) then
+        SS.nextGuiRefreshAt = now() + 0.5
+        guiRefresh()
+    end
 end)
 
 SLASH_SUMMONSCOUT1 = "/ssi"
