@@ -122,7 +122,14 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "autosummonassist",
-        "settings": ["Enabled", "Eligible (read-only)", "Portal in range (read-only)", "Click attempts"],
+        "settings": [
+            "Enabled",
+            "Eligible (read-only)",
+            "Portal in range (read-only)",
+            "Click attempts",
+            "Trade gold offered (copper)",
+            "Trade accept attempts",
+        ],
         "timings_ms": timing,
     }
 
@@ -170,6 +177,12 @@ def main():
         "position_spoof": False,
         "timer_period_ms": 25,
         "world_reacquire_ms": 500,
+        "background_trade_auto_accept": True,
+        "incoming_trade_request": "BeginTrade() only while the vanilla TRADE popup is visible",
+        "payment_gate": "target gold > 0; own offered money == 0; own trade item slots empty",
+        "payment_stable_ms": 350,
+        "payment_reaccept_ms": 750,
+        "trade_poll_ms": 100,
     }
     hub = package_meta.get("controlhub_pilot")
     if isinstance(hub, dict):

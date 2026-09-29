@@ -7,6 +7,9 @@
  * Summoning Portal GameObject entry 36727 in Vanilla. This module scans only
  * that exact client-visible GameObject and performs the same native right-click
  * primitive already verified by the current AutoGather/AutoFlag lineages.
+ * It also automates background payment collection: incoming trade requests are
+ * accepted, then the trade is accepted only when the other player offers gold
+ * while this client offers neither money nor items.
  *
  * Safety model:
  * - no movement or position spoofing;
@@ -29,6 +32,7 @@
 #pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
 #pragma comment(linker, "/EXPORT:AutoSummonAssist_GetStatus=_AutoSummonAssist_GetStatus@0")
 #pragma comment(linker, "/EXPORT:AutoSummonAssist_GetAttempts=_AutoSummonAssist_GetAttempts@0")
+#pragma comment(linker, "/EXPORT:AutoSummonAssist_GetTradeAccepts=_AutoSummonAssist_GetTradeAccepts@0")
 #else
 #define STDCALL __attribute__((stdcall))
 #define FASTCALL __attribute__((fastcall))
@@ -86,6 +90,7 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define WORLD_GRACE_MS              500u
 #define INTERACT_RANGE_SQ           (4.75f*4.75f)
 #define CLICKED_CACHE_CAP           16u
+#define TRADE_POLL_MS               100u
 
 #define STATUS_DETACHED             0u
 #define STATUS_WAIT_WORLD           1u
@@ -109,14 +114,17 @@ static volatile u32 g_eligible = 0u;
 static volatile u32 g_portalInRange = 0u;
 static volatile u32 g_attemptCount = 0u;
 static volatile u32 g_lastPortalEntry = 0u;
+static volatile u32 g_tradeOfferCopper = 0u;
+static volatile u32 g_tradeAcceptAttempts = 0u;
 
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_lastEligibilityCheck = 0u;
+static u32 g_lastTradePoll = 0u;
 static struct ClickedGuid g_clicked[CLICKED_CACHE_CAP];
 static u32 g_clickedCount = 0u;
 static u32 g_clickedNext = 0u;
 
-static W112_ControlSettingV1 g_settings[4];
+static W112_ControlSettingV1 g_settings[6];
 static u32 g_descriptorReady = 0u;
 
 int _fltused = 0;
@@ -137,6 +145,19 @@ static int validPos(float x,float y,float z)
     return finiteCoord(x) && finiteCoord(y) && finiteCoord(z);
 }
 
+static u32 parseDecimalU32(const char *s)
+{
+    u32 value=0u;
+    if(!s) return 0u;
+    while(*s>='0' && *s<='9') {
+        u32 digit=(u32)(*s-'0');
+        if(value>429496729u || (value==429496729u && digit>5u)) return 0xFFFFFFFFu;
+        value=value*10u+digit;
+        ++s;
+    }
+    return value;
+}
+
 static void clearClicked(void)
 {
     u32 i;
@@ -155,8 +176,10 @@ static void resetWorld(void)
     g_hi=0u;
     g_readyAt=0u;
     g_lastEligibilityCheck=0u;
+    g_lastTradePoll=0u;
     g_eligible=0u;
     g_portalInRange=0u;
+    g_tradeOfferCopper=0u;
     clearClicked();
 }
 
@@ -260,6 +283,52 @@ static u32 localPlayer(u32 now)
     return obj;
 }
 
+
+/* Vanilla 1.12 trade APIs are driven through FrameScript on the WoW UI thread,
+ * so this continues to work for an injected background client without keyboard
+ * focus. BeginTrade() accepts the incoming request. AcceptTrade() is only called
+ * after the offered gold amount has been stable for 350 ms, with a hard gate
+ * that our side contributes neither money nor items. Any offer change resets
+ * stabilization; repeating AcceptTrade every 750 ms covers acceptance resets
+ * caused by later trade-window changes. */
+static void pollAndMaybeAcceptGold(u32 now)
+{
+    static const char script[] =
+        "W112_AUTOGOLD_OFFER='0';"
+        "W112_AUTOGOLD_ACCEPTS=W112_AUTOGOLD_ACCEPTS or 0;"
+        "if type(StaticPopup_Visible)=='function' and type(BeginTrade)=='function' and StaticPopup_Visible('TRADE') then BeginTrade() end;"
+        "if type(GetTargetTradeMoney)=='function' and type(GetPlayerTradeMoney)=='function' and type(AcceptTrade)=='function' and type(GetTradePlayerItemLink)=='function' then "
+        "local tm=tonumber(GetTargetTradeMoney()) or 0;"
+        "local pm=tonumber(GetPlayerTradeMoney()) or 0;"
+        "local own=0;local i;"
+        "for i=1,7 do if GetTradePlayerItemLink(i) then own=1;break end end;"
+        "if tm>0 and pm==0 and own==0 then "
+        "W112_AUTOGOLD_OFFER=tostring(tm);"
+        "local t=GetTime();"
+        "if W112_AUTOGOLD_LAST~=tm then "
+        "W112_AUTOGOLD_LAST=tm;W112_AUTOGOLD_SINCE=t;W112_AUTOGOLD_LASTACCEPT=0;"
+        "elseif W112_AUTOGOLD_SINCE and t-W112_AUTOGOLD_SINCE>=0.35 and (not W112_AUTOGOLD_LASTACCEPT or t-W112_AUTOGOLD_LASTACCEPT>=0.75) then "
+        "AcceptTrade();W112_AUTOGOLD_LASTACCEPT=t;W112_AUTOGOLD_ACCEPTS=W112_AUTOGOLD_ACCEPTS+1;"
+        "end "
+        "else "
+        "W112_AUTOGOLD_LAST=nil;W112_AUTOGOLD_SINCE=nil;W112_AUTOGOLD_LASTACCEPT=0;"
+        "end "
+        "else "
+        "W112_AUTOGOLD_LAST=nil;W112_AUTOGOLD_SINCE=nil;W112_AUTOGOLD_LASTACCEPT=0;"
+        "end";
+    const char *offer;
+    const char *accepts;
+
+    if(g_lastTradePoll && (u32)(now-g_lastTradePoll)<TRADE_POLL_MS) return;
+    g_lastTradePoll=now;
+
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,script);
+    offer=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOGOLD_OFFER",-1,0u);
+    accepts=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOGOLD_ACCEPTS",-1,0u);
+    g_tradeOfferCopper=parseDecimalU32(offer);
+    g_tradeAcceptAttempts=parseDecimalU32(accepts);
+}
+
 static void scanAndMaybeClick(u32 player,int allowClick)
 {
     u32 mgr=g_mgr,obj,i,found=0u,lo=0u,hi=0u;
@@ -344,6 +413,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
         return;
     }
 
+    pollAndMaybeAcceptGold(now);
     refreshEligibility(now);
     allowClick=1;
 
@@ -363,16 +433,17 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
 static void initSettings(void)
 {
     u32 i;
-    static const char *keys[4]={
-        "enabled","eligible","portal_in_range","click_attempts"
+    static const char *keys[6]={
+        "enabled","eligible","portal_in_range","click_attempts","trade_gold_copper","trade_accepts"
     };
-    static const char *labels[4]={
-        "Enabled","Eligible (read-only)","Portal in range (read-only)","Click attempts"
+    static const char *labels[6]={
+        "Enabled","Eligible (read-only)","Portal in range (read-only)","Click attempts",
+        "Trade gold offered (copper)","Trade accept attempts"
     };
 
     if(g_descriptorReady) return;
 
-    for(i=0u;i<4u;i++) {
+    for(i=0u;i<6u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];
         s->struct_size=sizeof(*s);
         s->setting_id=i+1u;
@@ -398,6 +469,8 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==2u) v->u32=g_eligible?1u:0u;
     else if(id==3u) v->u32=g_portalInRange?1u:0u;
     else if(id==4u) v->u32=g_attemptCount;
+    else if(id==5u) v->u32=g_tradeOfferCopper;
+    else if(id==6u) v->u32=g_tradeAcceptAttempts;
     else return 0;
     return 1;
 }
@@ -415,8 +488,8 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00010000u,
-    4u,
+    0x00010100u,
+    6u,
     g_settings,
     getValue,
     setValue
@@ -438,6 +511,11 @@ DLLEXPORT u32 STDCALL AutoSummonAssist_GetAttempts(void)
     return g_attemptCount;
 }
 
+DLLEXPORT u32 STDCALL AutoSummonAssist_GetTradeAccepts(void)
+{
+    return g_tradeAcceptAttempts;
+}
+
 BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
 {
     (void)module;
@@ -448,6 +526,8 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         resetWorld();
         g_attemptCount=0u;
         g_lastPortalEntry=0u;
+        g_tradeOfferCopper=0u;
+        g_tradeAcceptAttempts=0u;
 
         if(!buildGuard()) {
             g_status=STATUS_BUILD_MISMATCH;
