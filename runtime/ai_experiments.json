@@ -397,12 +397,27 @@
         "vMaNGOS buyout-ordered auction browse flow",
         "parallel addon packager src/AddOns auto-discovery"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "8ceebf93d30e1728948a3d71d3296295b8306fba",
-      "verified_commit": null,
-      "tests": [],
+      "status": "in_progress",
+      "observed_head": "e548cc348acef53fb504d63a3544bb12b578ae5b",
+      "verified_commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36641030951 and AI experiment registry run 36641030747 passed on exact feature SHA."
+        },
+        {
+          "kind": "game",
+          "result": "partial_pass",
+          "commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
+          "date": "2026-09-30",
+          "evidence": "User screenshot confirmed vMaNGOS global boundary search converged from page 557 through 279/140/70/35/53/62/66/68 to first positive-buyout page 67 at roughly 55.7k auctions. Test also exposed that global cheapest-page scanning is unsuitable for an item-specific Black Lotus rule and that pre-enable AH events polluted extraEvents."
+        }
+      ],
       "package": null,
-      "notes": "Independent implementation informed by AuctionSniper realm diagnostics and AUX behavioral audit. Default dry-run. Implements deduplicated AH result events, binary search for first positive-buyout page, cheapest-page scan, candidate revalidation and CONFIRMED/FAILED/UNKNOWN transaction states."
+      "notes": "V0.2 follow-up routes each watchlist rule through its own name-filtered vMaNGOS result set, binary-searches the first positive-buyout page within that set, revalidates on source/adjacent filtered pages, and uses a post-result settle window. Parent SHA e548cc34 gameplay validated the binary boundary mechanism but exposed the global-scan design flaw corrected here."
     }
   ]
 }

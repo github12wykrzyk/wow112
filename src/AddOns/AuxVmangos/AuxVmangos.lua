@@ -2,10 +2,12 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.1-vmangos"
+AVM_VERSION = "0.2-vmangos-watch"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
+AVM_EVENT_SETTLE = 0.35
+AVM_EXTRA_EVENT_WINDOW = 1.0
 AVM_TICK = 0.05
 
 AVM = {
@@ -17,6 +19,10 @@ AVM = {
 	queryKind = "",
 	querySentAt = 0,
 	queryName = "",
+	ruleIndex = 1,
+	activeRuleName = "",
+	nextQueryAt = 0,
+	lastResultAt = 0,
 	total = 0,
 	lastPage = 0,
 	boundaryLow = 0,
@@ -24,6 +30,8 @@ AVM = {
 	boundaryPage = nil,
 	scanOffset = 0,
 	candidate = nil,
+	revalidatePages = nil,
+	revalidatePos = 0,
 	pending = nil,
 	unknown = nil,
 	nextTick = 0,
@@ -113,14 +121,15 @@ local function avm_rule_matches(rule, name)
 	return string.lower(name) == string.lower(rule.name)
 end
 
-local function avm_find_rule(name)
-	for i = 1, table.getn(AVM_DB.rules) do
-		local rule = AVM_DB.rules[i]
-		if avm_rule_matches(rule, name) then
-			return rule, i
-		end
-	end
-	return nil, nil
+local function avm_rule_count()
+	return table.getn(AVM_DB.rules)
+end
+
+local function avm_active_rule()
+	local n = avm_rule_count()
+	if n == 0 then return nil, nil end
+	if AVM.ruleIndex < 1 or AVM.ruleIndex > n then AVM.ruleIndex = 1 end
+	return AVM_DB.rules[AVM.ruleIndex], AVM.ruleIndex
 end
 
 local function avm_signature(name, count, buyout, owner, quality, level)
@@ -143,8 +152,8 @@ local function avm_candidate_from_row(i)
 	if not name or not count or count < 1 or not buyout or buyout <= 0 then return nil end
 	if owner == UnitName("player") then return nil end
 
-	local rule, ruleIndex = avm_find_rule(name)
-	if not rule then return nil end
+	local rule, ruleIndex = avm_active_rule()
+	if not rule or not avm_rule_matches(rule, name) then return nil end
 
 	local unit = math.floor(buyout / count)
 	local minStack = tonumber(rule.minStack) or 1
@@ -177,6 +186,7 @@ end
 
 local function avm_send_query(kind, page, name)
 	if not AVM.open or AVM.queryInFlight then return false end
+	if GetTime() < (AVM.nextQueryAt or 0) then return false end
 	if not CanSendAuctionQuery() then return false end
 
 	page = tonumber(page) or 0
@@ -199,19 +209,58 @@ local function avm_send_query(kind, page, name)
 end
 
 local function avm_restart_boundary()
-	AVM.phase = "BOUNDARY_INIT"
 	AVM.boundaryLow = 0
 	AVM.boundaryHigh = 0
 	AVM.boundaryPage = nil
 	AVM.scanOffset = 0
 	AVM.candidate = nil
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
+
+	local rule = avm_active_rule()
+	if not rule then
+		AVM.activeRuleName = ""
+		AVM.phase = "WAIT_RULE"
+		return
+	end
+	AVM.activeRuleName = rule.name or ""
+	AVM.phase = "BOUNDARY_INIT"
+end
+
+local function avm_advance_rule()
+	local n = avm_rule_count()
+	if n == 0 then
+		AVM.ruleIndex = 1
+		avm_restart_boundary()
+		return
+	end
+	AVM.ruleIndex = AVM.ruleIndex + 1
+	if AVM.ruleIndex > n then AVM.ruleIndex = 1 end
+	avm_restart_boundary()
 end
 
 local function avm_start_scan(boundary)
 	AVM.boundaryPage = boundary
 	AVM.scanOffset = 0
 	AVM.phase = "CHEAPEST_SCAN"
-	avm_print("first buyout page = " .. tostring(boundary) .. "; scanning cheapest buyouts")
+	avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' first buyout page=" ..
+		tostring(boundary) .. "; scanning cheapest matching buyouts")
+end
+
+local function avm_prepare_revalidate(c)
+	local pages = {}
+	local seen = {}
+	local function add_page(p)
+		if p and p >= 0 and p <= AVM.lastPage and not seen[p] then
+			seen[p] = true
+			table.insert(pages, p)
+		end
+	end
+	add_page(c.sourcePage)
+	add_page(c.sourcePage - 1)
+	add_page(c.sourcePage + 1)
+	AVM.revalidatePages = pages
+	AVM.revalidatePos = 1
 end
 
 local function avm_page_has_positive()
@@ -293,10 +342,18 @@ local function avm_revalidate_candidate()
 		end
 	end
 
+	if AVM.revalidatePages and AVM.revalidatePos < table.getn(AVM.revalidatePages) then
+		AVM.revalidatePos = AVM.revalidatePos + 1
+		AVM.phase = "REVALIDATE"
+		return
+	end
+
 	AVM.stats.failed = AVM.stats.failed + 1
 	AVM.recent[c.signature] = GetTime() + 2
 	avm_print("revalidate miss: " .. c.name .. " - stale/raced candidate")
 	AVM.candidate = nil
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
 	avm_restart_boundary()
 end
 
@@ -313,13 +370,15 @@ local function avm_accept_result()
 	local kind = AVM.queryKind
 	local page = AVM.queryPage
 	local latency = GetTime() - AVM.querySentAt
-	avm_print("RESULT q" .. AVM.querySeq .. " " .. kind .. " page=" .. page ..
+	avm_print("RESULT q" .. AVM.querySeq .. " " .. kind .. " rule='" ..
+		tostring(AVM.queryName) .. "' page=" .. page ..
 		" rows=" .. rows .. "/" .. total .. " positive=" .. tostring(positive) ..
 		" latency=" .. string.format("%.3f", latency) .. "s")
 
 	if kind == "BOUNDARY_INIT" then
 		if total == 0 then
-			AVM.phase = "BOUNDARY_INIT"
+			avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' has no auction results")
+			avm_advance_rule()
 			return
 		end
 		if positive then
@@ -372,6 +431,7 @@ local function avm_accept_result()
 		if candidate then
 			AVM.stats.candidates = AVM.stats.candidates + 1
 			AVM.candidate = candidate
+			avm_prepare_revalidate(candidate)
 			AVM.phase = "REVALIDATE"
 			return
 		end
@@ -379,7 +439,7 @@ local function avm_accept_result()
 		AVM.scanOffset = AVM.scanOffset + 1
 		if AVM.scanOffset >= (tonumber(AVM_DB.cheapPages) or 4) or
 		   AVM.boundaryPage + AVM.scanOffset > AVM.lastPage then
-			avm_restart_boundary()
+			avm_advance_rule()
 		else
 			AVM.phase = "CHEAPEST_SCAN"
 		end
@@ -393,13 +453,20 @@ local function avm_accept_result()
 end
 
 local function avm_handle_list_update()
+	local now = GetTime()
 	if not AVM.queryInFlight then
-		AVM.stats.extraEvents = AVM.stats.extraEvents + 1
+		if AVM.open and AVM_DB.enabled and AVM.lastResultAt > 0 and
+		   now - AVM.lastResultAt <= AVM_EXTRA_EVENT_WINDOW then
+			AVM.stats.extraEvents = AVM.stats.extraEvents + 1
+		end
 		return
 	end
 
-	-- Consume exactly one update for the query. Further client-side events are extras.
+	-- Consume exactly one update for the query, then leave a short quiet window
+	-- so a delayed duplicate cannot be mistaken for the next query's response.
 	AVM.queryInFlight = false
+	AVM.lastResultAt = now
+	AVM.nextQueryAt = now + AVM_EVENT_SETTLE
 	avm_accept_result()
 end
 
@@ -472,26 +539,28 @@ local function avm_tick()
 		return
 	end
 
-	if AVM.phase == "IDLE" then
+	if AVM.phase == "IDLE" or AVM.phase == "WAIT_RULE" then
 		avm_restart_boundary()
 	end
 
+	local rule = avm_active_rule()
+	if not rule then return end
+	local queryName = rule.name or ""
+
 	if AVM.phase == "BOUNDARY_INIT" then
-		avm_send_query("BOUNDARY_INIT", 0, "")
+		avm_send_query("BOUNDARY_INIT", 0, queryName)
 	elseif AVM.phase == "BOUNDARY_SEARCH" then
 		if AVM.boundaryLow == AVM.boundaryHigh then
-			avm_send_query("BOUNDARY_FINAL", AVM.boundaryLow, "")
+			avm_send_query("BOUNDARY_FINAL", AVM.boundaryLow, queryName)
 		else
 			local mid = math.floor((AVM.boundaryLow + AVM.boundaryHigh) / 2)
-			avm_send_query("BOUNDARY_SEARCH", mid, "")
+			avm_send_query("BOUNDARY_SEARCH", mid, queryName)
 		end
 	elseif AVM.phase == "CHEAPEST_SCAN" then
-		avm_send_query("CHEAPEST_SCAN", AVM.boundaryPage + AVM.scanOffset, "")
+		avm_send_query("CHEAPEST_SCAN", AVM.boundaryPage + AVM.scanOffset, queryName)
 	elseif AVM.phase == "REVALIDATE" then
-		if AVM.candidate then
-			-- Exact candidate name narrows the result set; page 0 is sufficient for
-			-- candidates discovered in the globally cheapest pages on vMaNGOS.
-			avm_send_query("REVALIDATE", 0, AVM.candidate.name)
+		if AVM.candidate and AVM.revalidatePages and AVM.revalidatePages[AVM.revalidatePos] then
+			avm_send_query("REVALIDATE", AVM.revalidatePages[AVM.revalidatePos], AVM.candidate.name)
 		else
 			avm_restart_boundary()
 		end
@@ -499,12 +568,14 @@ local function avm_tick()
 end
 
 local function avm_status()
+	local rule = avm_active_rule()
 	avm_print("v" .. AVM_VERSION ..
 		" enabled=" .. tostring(AVM_DB.enabled) ..
 		" live=" .. tostring(AVM_DB.live) ..
 		" phase=" .. AVM.phase ..
+		" rule=" .. tostring(AVM.ruleIndex) .. "/" .. tostring(avm_rule_count()) ..
+		" '" .. tostring(rule and rule.name or "") .. "'" ..
 		" boundary=" .. tostring(AVM.boundaryPage) ..
-		" rules=" .. table.getn(AVM_DB.rules) ..
 		" spend=" .. avm_money(AVM.sessionSpend))
 	avm_print("queries=" .. AVM.stats.queries ..
 		" results=" .. AVM.stats.results ..
@@ -593,6 +664,7 @@ local function avm_slash(msg)
 		if n and AVM_DB.rules[n] then
 			local old = AVM_DB.rules[n].name
 			table.remove(AVM_DB.rules, n)
+			if AVM.ruleIndex > table.getn(AVM_DB.rules) then AVM.ruleIndex = 1 end
 			avm_print("rule removed: " .. old)
 			avm_restart_boundary()
 		else
@@ -622,6 +694,9 @@ local function avm_slash(msg)
 		for k in AVM.stats do AVM.stats[k] = 0 end
 		AVM.pending = nil
 		AVM.unknown = nil
+		AVM.lastResultAt = 0
+		AVM.nextQueryAt = 0
+		AVM.ruleIndex = 1
 		avm_restart_boundary()
 		avm_print("session state reset")
 	elseif cmd == "status" then
@@ -650,6 +725,8 @@ frame:SetScript("OnEvent", function()
 	elseif event == "AUCTION_HOUSE_SHOW" then
 		AVM.open = true
 		AVM.queryInFlight = false
+		AVM.lastResultAt = 0
+		AVM.nextQueryAt = 0
 		AVM.pending = nil
 		AVM.unknown = nil
 		avm_restart_boundary()
@@ -657,6 +734,8 @@ frame:SetScript("OnEvent", function()
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM.open = false
 		AVM.queryInFlight = false
+		AVM.lastResultAt = 0
+		AVM.nextQueryAt = 0
 		AVM.pending = nil
 		AVM.unknown = nil
 		AVM.phase = "IDLE"

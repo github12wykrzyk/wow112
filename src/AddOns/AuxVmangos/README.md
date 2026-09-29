@@ -12,15 +12,15 @@ Reference: vmangos/core development commit 464179081673cfd240f7ffe7f0daf96bca0b5
 
 The reference core keeps browse auctions in a buyout-keyed ordered multimap. On the tested realm, page 0 was observed to contain bid-only auctions (buyout = 0), so page 0 is not a useful "cheapest buyout" page.
 
-AuxVmangos first locates the transition from buyout=0 to buyout>0 by binary-searching auction pages, then scans a configurable number of pages from that boundary.
+AuxVmangos schedules each watchlist rule independently. It sends the rule name to QueryAuctionItems first, locates the buyout=0 to buyout>0 transition inside that filtered result set, then scans a configurable number of the cheapest matching pages. It never relies on the global AH boundary for an item-specific rule.
 
-Only one AUCTION_ITEM_LIST_UPDATE is consumed per query. Extra client events after the query has already been consumed are counted and ignored.
+Only one AUCTION_ITEM_LIST_UPDATE is consumed per query. A short post-result settle window absorbs delayed duplicate events before the next query is sent. Extra events are counted only when they occur near a result from our enabled scanner, so unrelated AH traffic no longer pollutes the counter.
 
 ## Purchase safety
 
 Default is DRY-RUN. LIVE must be explicitly enabled with /avm live on.
 
-Before a live purchase, the candidate is queried again by item name and matched by an equivalent signature. The list index from the original browse result is never reused blindly.
+Before a live purchase, the candidate is queried again by item name on its source page and adjacent filtered pages, then matched by an equivalent signature. The list index from the original result is never reused blindly.
 
 A sent buyout enters BUY_PENDING. Exact money delta is used as positive confirmation evidence. Timeout is UNKNOWN, never success. During UNKNOWN_HOLD, new live purchases are paused to avoid duplicate purchases after delayed server/client state.
 
