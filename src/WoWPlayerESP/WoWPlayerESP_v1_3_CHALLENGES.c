@@ -23,7 +23,17 @@
 /* The game WndProc can be superseded by a companion DLL. Sample Insert in the
  * existing render tick as a fallback; both paths share one press latch. */
 __declspec(dllimport) short WINAPI GetAsyncKeyState(int);
+__declspec(dllimport) DWORD WINAPI GetCurrentProcessId(void);
+__declspec(dllimport) DWORD WINAPI GetWindowThreadProcessId(HWND,DWORD*);
 static volatile DWORD g_gui_insert_latched=0u;
+
+static BOOL parallel_this_process_foreground(void) {
+    DWORD pid=0u;
+    HWND active=GetForegroundWindow();
+    if(!active) return FALSE;
+    if(!GetWindowThreadProcessId(active,&pid)) return FALSE;
+    return pid==GetCurrentProcessId();
+}
 #define BG_SCORE_POLL_FRAMES 30u /* ~1s at 33ms/render frame */
 #define CHALLENGE_WORLD_STABLE_POLLS 15u /* 15 x 100 ms = 1.5 s quarantine after world/BG rebuild */
 
@@ -1489,12 +1499,9 @@ static void parallel_gui_tick(void) {
     {
         BOOL down=(GetAsyncKeyState(VK_INSERT)&0x8000)!=0;
         if(!down)g_gui_insert_latched=0u;
-        else if(!g_gui_insert_latched && game && IsWindow(game)) {
-            HWND active=GetForegroundWindow();
-            if(active==game || active==g_parallel_ui_hwnd) {
-                g_gui_insert_latched=1u;
-                g_parallel_gui_open=g_parallel_gui_open?0u:1u;
-            }
+        else if(!g_gui_insert_latched && parallel_this_process_foreground()) {
+            g_gui_insert_latched=1u;
+            g_parallel_gui_open=g_parallel_gui_open?0u:1u;
         }
     }
     if(!g_ui_profile_initialized)ui_profile_bootstrap();

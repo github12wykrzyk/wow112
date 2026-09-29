@@ -1206,10 +1206,16 @@ static DWORD W112_TeleMapShown(void)
  return !raw||raw[0]!='0'||raw[1]!=0;/* unknown != proof map closed */
 }
 
+/* Multibox-safe foreground gate: bind manual hotkeys to the process that
+   owns the actual foreground window. Do not rely on a client HWND resolver,
+   because multiple WoW instances can otherwise resolve the same window. */
 static DWORD W112_TeleGameForeground(void)
 {
-    HWND window=((W112OpenGetWindow)0x00435C30u)(0);
-    return window&&GetForegroundWindow()==window;
+    DWORD pid=0u;
+    HWND window=GetForegroundWindow();
+    if(!window)return 0u;
+    if(!GetWindowThreadProcessId(window,&pid))return 0u;
+    return pid==GetCurrentProcessId();
 }
 
 static void W112_KeyTeleTick(BYTE *p,DWORD now)
@@ -1643,7 +1649,7 @@ static void Plane_TimerRestore(BYTE *player)
 
 static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
 {
-    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused;BYTE*p;
+    DWORD now,dur,gap,k7,k8,k9,kAlt,k10,k11,k12,paused,hotkeyFocus;BYTE*p;
     (void)w;(void)m;(void)id;(void)tm;
     if(!GT()||!GK())return;
     now=GT()();
@@ -1669,6 +1675,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     PPBlacklistTick(now);
     PPFixed_Flush();
     FlushPendingPPLog();
+    hotkeyFocus=W112_TeleGameForeground();
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
     k8=(GK()(VK_F8)&(short)0x8000)?1u:0u;
     k9=(GK()(VK_F9)&(short)0x8000)?1u:0u;
@@ -1677,7 +1684,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k11=(GK()(VK_F11)&(short)0x8000)?1u:0u;
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
     {DWORD f6=(GK()(W112_TELE_F6)&(short)0x8000)?1u:0u;
-     if(f6&&!g_stepKey6&&!W112_Q_ChatHasFocus()){
+     if(hotkeyFocus&&f6&&!g_stepKey6&&!W112_Q_ChatHasFocus()){
         g_stepEnabled=g_stepEnabled?0u:1u;
         g_stepActive=0u;
         g_telePending=0u;g_telePendingFromMap=0u;g_mapFallPending=0u;
@@ -1689,15 +1696,15 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
      g_stepKey6=f6;
     }
 
-    if(k7&&!g_key7){g_mapFallPending=0u;W112_MapBackRelease(now);g_telePendingFromMap=0u;if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
-    if(k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
-    if(k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
+    if(hotkeyFocus&&k7&&!g_key7){g_mapFallPending=0u;W112_MapBackRelease(now);g_telePendingFromMap=0u;if(g_ppRecoveryPhase==2u){g_ppRecoveryUserAbort=1u;g_ppRecoveryOwnsAlt=0u;}g_stepActive=0u;g_telePending=0u;g_altPriorityPendingUntil=0u;AltPriority_Stop(TRUE);if(g_gatherActive||g_gatherLootWait)GatherStop(LocalPlayer(),now,"F7_ABORT",1u,0u);}
+    if(hotkeyFocus&&k8&&!g_key8&&!CoordRearOwned())Start(MODE_LEGACY_FAST,now);
+    if(hotkeyFocus&&k9&&!g_gatherKey9){g_gatherEnabled=g_gatherEnabled?0u:1u;GatherFileLog(g_gatherEnabled?"TOGGLE_ON":"TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);DebugChat(g_gatherEnabled?g_chatOn:g_chatOff);}
     /* A key edge used to be discarded while PvERear had the rear lease.
        Queue this explicit manual request, even for a short ALT tap. */
-    if(kAlt&&!g_keyAlt&&!(k7&&!g_key7)){g_ppRecoveryOwnsAlt=0u;g_altPriorityPendingUntil=now+7000u;}
-    if(k10&&!g_key10&&!CoordRearOwned())Start(MODE_PURSUIT,now);
-    if(k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
-    if(k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
+    if(hotkeyFocus&&kAlt&&!g_keyAlt&&!(k7&&!g_key7)){g_ppRecoveryOwnsAlt=0u;g_altPriorityPendingUntil=now+7000u;}
+    if(hotkeyFocus&&k10&&!g_key10&&!CoordRearOwned())Start(MODE_PURSUIT,now);
+    if(hotkeyFocus&&k11&&!g_key11){g_autoPPEnabled=g_autoPPEnabled?0u:1u;DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);GatherFileLog(g_autoPPEnabled?"AUTOPP_TOGGLE_ON":"AUTOPP_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);}
+    if(hotkeyFocus&&k12&&!g_autoOpenKey12){g_autoOpenEnabled=g_autoOpenEnabled?0u:1u;DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);GatherFileLog(g_autoOpenEnabled?"AUTOOPEN_TOGGLE_ON":"AUTOOPEN_TOGGLE_OFF",now,0u,0u,0u,0.0f,0u,0u);if(!g_autoOpenEnabled&&g_gatherActive&&g_gatherKind==3u)GatherStop(LocalPlayer(),now,"AUTOOPEN_DISABLED_ABORT",1u,0u);}
     g_key7=k7;g_key8=k8;g_gatherKey9=k9;g_keyAlt=kAlt;g_key10=k10;g_key11=k11;g_autoOpenKey12=k12;
 
     if(p && W112_AB_CapCastVisible()){
