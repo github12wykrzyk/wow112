@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.35"
+local ADDON_VERSION = "1.36"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -723,6 +723,11 @@ local function queuePartySummon(name)
         attempts = 0,
         startReported = false,
         queuedAt = now(),
+        -- CHAT_MSG_SYSTEM can announce a join before Vanilla 1.12 exposes the
+        -- new partyX/raidX unit. Keep the item alive briefly so the roster can
+        -- converge instead of dropping the customer before native cast starts.
+        rosterGraceUntil = now() + 5.0,
+        rosterMissLogged = false,
         phase = "cast",
         nextAt = now() + 0.35
     }
@@ -996,12 +1001,24 @@ local function processPartySummon()
 
     local unit = groupUnitByName(item.name)
     if not unit and not isInGroup(item.name) then
+        -- Roster-event race: a system "joined" line may arrive a few frames
+        -- before UnitName("partyX")/raid roster becomes readable. Do not erase
+        -- the freshly queued customer during that convergence window.
+        local graceUntil = item.rosterGraceUntil or ((item.queuedAt or t) + 5.0)
+        if t < graceUntil then
+            if SummonScoutDB.debug and not item.rosterMissLogged then
+                item.rosterMissLogged = true
+                chat("summon roster pending -> " .. item.name)
+            end
+            return
+        end
         if SummonScoutDB.masterReportLifecycle then
-            reportMaster("SUMMON FAIL", item.name .. " - left party/raid before cast")
+            reportMaster("SUMMON FAIL", item.name .. " - not visible in party/raid after roster grace")
         end
         finishActiveSummon(item.name)
         return
     end
+    item.rosterMissLogged = false
 
     if SS.summonActiveName and not samePlayer(SS.summonActiveName, item.name) then
         clearActiveSummon()
@@ -1514,6 +1531,8 @@ local function showSummonCheck()
         .. " CastSpell=" .. (CastSpell and "YES" or "NO")
         .. " shards=" .. tostring(shards))
     chat("summoncheck queued=" .. queued
+        .. " depth=" .. tostring(table.getn(SS.summonQueue))
+        .. " active=" .. tostring(SS.summonActiveName or "-")
         .. " groupUnit=" .. tostring(targetUnit or "-")
         .. " target=" .. (target ~= "" and target or "-")
         .. " combat=" .. ((UnitAffectingCombat and UnitAffectingCombat("player")) and "YES" or "NO")
