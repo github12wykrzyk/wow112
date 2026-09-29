@@ -22,6 +22,7 @@ namespace WoW112Updater
         public string Label { get; set; }
         public string Login { get; set; }
         public string ProtectedPassword { get; set; }
+        public bool LowSpec { get; set; }
     }
 
     internal sealed class WowAccountData
@@ -339,8 +340,8 @@ namespace WoW112Updater
             using (var dialog = new Form
             {
                 Text = "Konta WoW — lokalne profile",
-                ClientSize = new Size(690, 456),
-                MinimumSize = new Size(706, 495),
+                ClientSize = new Size(690, 510),
+                MinimumSize = new Size(706, 549),
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
                 StartPosition = FormStartPosition.CenterParent,
@@ -356,19 +357,20 @@ namespace WoW112Updater
                     Text = "Nowy profil: wpisz hasło i kliknij Zapisz profil." };
                 var newButton = new Button { Text = "Nowe", Location = new Point(14, 360), Size = new Size(96, 32) };
                 var deleteButton = new Button { Text = "Usuń", Location = new Point(120, 360), Size = new Size(96, 32) };
-                var saveButton = new Button { Text = "Zapisz profil", Location = new Point(237, 253), Size = new Size(142, 32) };
-                var defaultButton = new Button { Text = "Ustaw domyślne", Location = new Point(386, 253), Size = new Size(138, 32) };
-                var launchProfile = new Button { Text = "Uruchom grę z profilem", Location = new Point(237, 306), Size = new Size(209, 36) };
-                var fillButton = new Button { Text = "Wpisz dane do gry", Location = new Point(453, 306), Size = new Size(216, 36) };
-                var info = new Label { Location = new Point(14, 402), Size = new Size(660, 44),
-                    Text = "Zapisane hasła są szyfrowane. Uruchom grę z profilem, ustaw kursor w polu loginu, wróć tutaj i kliknij Wpisz dane do gry." };
+                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (800x600, bez dźwięku, niższy priorytet)", Location = new Point(237, 250), Size = new Size(432, 26) };
+                var saveButton = new Button { Text = "Zapisz profil", Location = new Point(237, 287), Size = new Size(142, 32) };
+                var defaultButton = new Button { Text = "Ustaw domyślne", Location = new Point(386, 287), Size = new Size(138, 32) };
+                var launchProfile = new Button { Text = "Uruchom grę z profilem", Location = new Point(237, 340), Size = new Size(209, 36) };
+                var fillButton = new Button { Text = "Wpisz dane do gry", Location = new Point(453, 340), Size = new Size(216, 36) };
+                var info = new Label { Location = new Point(14, 456), Size = new Size(660, 44),
+                    Text = "LOW SPEC jest per profil. Ustawienia runtime są odtwarzane przy wylogowaniu; zwykłe konto nie dostaje tego presetu." };
                 dialog.Controls.AddRange(new Control[] {
                     new Label { Text = "Zapisane profile", Location = new Point(14, 12), AutoSize = true },
                     list, newButton, deleteButton,
                     new Label { Text = "Nazwa profilu", Location = new Point(237, 38), AutoSize = true }, label,
                     new Label { Text = "Login", Location = new Point(237, 98), AutoSize = true }, login,
                     new Label { Text = "Hasło", Location = new Point(237, 160), AutoSize = true }, password,
-                    hint, saveButton, defaultButton, launchProfile, fillButton, info
+                    hint, lowSpec, saveButton, defaultButton, launchProfile, fillButton, info
                 });
 
                 WowAccount editing = null;
@@ -399,6 +401,7 @@ namespace WoW112Updater
                     label.Text = editing == null ? "" : editing.Label;
                     login.Text = editing == null ? "" : editing.Login;
                     password.Clear(); // Displaying a blank field does NOT mean the saved password is missing.
+                    lowSpec.Checked = editing != null && editing.LowSpec;
                     ShowPasswordStatus(hint, accountVault, editing);
                     deleteButton.Enabled = editing != null;
                     defaultButton.Enabled = editing != null;
@@ -407,7 +410,7 @@ namespace WoW112Updater
                 newButton.Click += delegate
                 {
                     list.ClearSelected(); editing = null;
-                    label.Clear(); login.Clear(); password.Clear();
+                    label.Clear(); login.Clear(); password.Clear(); lowSpec.Checked = false;
                     ShowPasswordStatus(hint, accountVault, null);
                     label.Focus();
                 };
@@ -433,6 +436,7 @@ namespace WoW112Updater
                         }
                         editing.Label = name; editing.Login = username;
                         editing.ProtectedPassword = protectedPassword;
+                        editing.LowSpec = lowSpec.Checked;
                         if (accountVault.Selected == null) accountVault.Data.SelectedId = editing.Id;
                         accountVault.Save();
                         // Re-open the on-disk vault and decrypt it before reporting success.
@@ -524,7 +528,7 @@ namespace WoW112Updater
             var path = Path.Combine(folder, "account-vault-smoke.json");
             var vault = new WowAccountVault(path);
             if (vault.Selected != null) throw new Exception("Account smoke: empty vault is not empty");
-            var accountA = new WowAccount { Id = "a", Label = "Rogue", Login = "rogue_login", ProtectedPassword = vault.Protect("vault-test-secret-A") };
+            var accountA = new WowAccount { Id = "a", Label = "Rogue", Login = "rogue_login", ProtectedPassword = vault.Protect("vault-test-secret-A"), LowSpec = true };
             var accountB = new WowAccount { Id = "b", Label = "Priest", Login = "priest_login", ProtectedPassword = vault.Protect("vault-test-secret-B") };
             vault.Data.Accounts.Add(accountA); vault.Data.Accounts.Add(accountB);
             vault.Data.SelectedId = "b";
@@ -536,6 +540,7 @@ namespace WoW112Updater
             loaded.Load();
             if (loaded.Selected == null || loaded.Selected.Id != "b" || loaded.Data.Accounts.Count != 2
                 || loaded.Unprotect(loaded.Data.Accounts[0]) != "vault-test-secret-A"
+                || !loaded.Data.Accounts[0].LowSpec
                 || loaded.Unprotect(loaded.Data.Accounts[1]) != "vault-test-secret-B")
                 throw new Exception("Account smoke: encrypted profile roundtrip failed");
             loaded.Data.Accounts.RemoveAt(0);
@@ -550,6 +555,7 @@ namespace WoW112Updater
             if (nativeStart.UseShellExecute ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] != loaded.Selected.Login ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] != loaded.Selected.ProtectedPassword ||
+                nativeStart.EnvironmentVariables["WOW112_LOW_SPEC"] != (loaded.Selected.LowSpec ? "1" : "0") ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"].Contains("vault-test-secret"))
                 throw new Exception("Account smoke: native AutoLogin child environment contract failed");
             // Validate the physical-key translator using a test string only; no real accounts or focus changes.
@@ -562,7 +568,7 @@ namespace WoW112Updater
             public readonly WowAccount Account;
             public readonly bool Default;
             public WowAccountListItem(WowAccount account, bool isDefault) { Account = account; Default = isDefault; }
-            public override string ToString() { return Account.Label + (Default ? "  [domyślne]" : ""); }
+            public override string ToString() { return Account.Label + (Account.LowSpec ? "  [LOW]" : "") + (Default ? "  [domyślne]" : ""); }
         }
 
         private static void ShowPasswordStatus(Label hint, WowAccountVault vault, WowAccount account)

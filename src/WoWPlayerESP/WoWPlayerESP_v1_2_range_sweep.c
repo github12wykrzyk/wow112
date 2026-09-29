@@ -2224,13 +2224,9 @@ static void render_frame_fast(void) {
         overlay_hide();
         return;
     }
-    if (GetForegroundWindow() != projCtx.hwnd &&
-        GetForegroundWindow() != g_parallel_ui_hwnd) {
-        g_esp_status = 8u;
-        g_click_hit_count = 0u;
-        overlay_hide();
-        return;
-    }
+    /* Multibox: rendering is process-local and may stay visible while another
+       WoW client owns foreground. Input hotkeys remain foreground-gated in the
+       wrapper; do not hide this process' ESP solely because focus moved. */
     if (!ensure_game_click_hook(projCtx.hwnd)) {
         g_click_hit_count = 0u;
     }

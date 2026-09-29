@@ -30,15 +30,23 @@
 #define GLUE_READY2    0x00B41E04u
 #define GLUE_STATE     0x00B41DA0u
 #define WM_AUTOLOGIN   (WM_APP + 0x2A7u)
+#define WM_LOW_SPEC    (WM_APP + 0x2A8u)
+#define FRAMESCRIPT_EXECUTE 0x00704CD0u
+#define OBJMGR_GLOBAL  0x00B41414u
+#define OM_LOCAL_GUID_LO 0x000000C0u
+#define OM_LOCAL_GUID_HI 0x000000C4u
 #define ACCOUNT_CAP    64u
 #define BLOB_CAP       2048u
 
 typedef void (__fastcall *GlueLoginFn)(const char*, char*);
+typedef void (__fastcall *FrameScriptExecuteFn)(const char*, const char*);
 typedef BOOL (WINAPI *CryptStringToBinaryAFn)(LPCSTR,DWORD,DWORD,BYTE*,DWORD*,DWORD*,DWORD*);
 typedef BOOL (WINAPI *CryptUnprotectDataFn)(DATA_BLOB*,LPWSTR*,DATA_BLOB*,PVOID,CRYPTPROTECT_PROMPTSTRUCT*,DWORD,DATA_BLOB*);
 
 static volatile LONG g_stop=0;
 static volatile LONG g_done=0;
+static volatile LONG g_low_spec=0;
+static volatile LONG g_low_spec_done=0;
 static DWORD g_pid=0;
 static HWND g_hwnd=NULL;
 static WNDPROC g_prev=NULL;
@@ -87,10 +95,15 @@ static int glue_ready(void)
 
 static int load_profile(void)
 {
+    char low[8]={0};
     DWORD a=GetEnvironmentVariableA("WOW112_AUTOLOGIN_ACCOUNT",g_account,ACCOUNT_CAP);
     DWORD b=GetEnvironmentVariableA("WOW112_AUTOLOGIN_BLOB",g_blob,BLOB_CAP);
+    DWORD l=GetEnvironmentVariableA("WOW112_LOW_SPEC",low,(DWORD)sizeof(low));
     SetEnvironmentVariableA("WOW112_AUTOLOGIN_ACCOUNT",NULL);
     SetEnvironmentVariableA("WOW112_AUTOLOGIN_BLOB",NULL);
+    SetEnvironmentVariableA("WOW112_LOW_SPEC",NULL);
+    g_low_spec=(l>0u && l<(DWORD)sizeof(low) && low[0]=='1')?1:0;
+    wipe(low,(DWORD)sizeof(low));
     if(a==0u || a>=ACCOUNT_CAP || b==0u || b>=BLOB_CAP) {
         wipe(g_account,sizeof(g_account));
         wipe(g_blob,sizeof(g_blob));
@@ -149,12 +162,42 @@ done:
     return ok;
 }
 
+static int world_ready(void)
+{
+    DWORD manager=*(volatile DWORD*)(DWORD)OBJMGR_GLOBAL;
+    DWORD lo,hi;
+    if(manager<0x00010000u || manager>0x7FFF0000u) return 0;
+    lo=*(volatile DWORD*)(DWORD)(manager+OM_LOCAL_GUID_LO);
+    hi=*(volatile DWORD*)(DWORD)(manager+OM_LOCAL_GUID_HI);
+    return (lo|hi)!=0u;
+}
+
+static void apply_low_spec(void)
+{
+    static const char script[]=
+        "if not W112_LOW_SPEC_APPLIED then "
+        "W112_LOW_SPEC_APPLIED=1;"
+        "W112_LOW_SPEC_KEYS={'farclip','groundEffectDensity','groundEffectDist','detailDoodadAlpha','smallcull','skycloudlod','particleDensity','extShadowQuality','weatherDensity','specular','anisotropic','gxMultisample'};"
+        "W112_LOW_SPEC_OLD={};local v={'177','16','1','1','2','0','0.3','0','0','0','1','1'};"
+        "for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];W112_LOW_SPEC_OLD[i]=GetCVar(k);SetCVar(k,v[i]) end;"
+        "W112_LOW_SPEC_FRAME=CreateFrame('Frame');W112_LOW_SPEC_FRAME:RegisterEvent('PLAYER_LOGOUT');"
+        "W112_LOW_SPEC_FRAME:SetScript('OnEvent',function() if W112_LOW_SPEC_OLD then for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];local x=W112_LOW_SPEC_OLD[i];if x then SetCVar(k,x) end end end end);"
+        "end";
+    ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(script,script);
+}
+
 static LRESULT WINAPI login_wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp)
 {
     if(msg==WM_AUTOLOGIN && !g_done) {
         if(!guard_ok()) { g_done=-1; return 0; }
         if(!glue_ready()) return 0;
         g_done=native_login()?1:-2;
+        return 0;
+    }
+    if(msg==WM_LOW_SPEC && g_low_spec && !g_low_spec_done) {
+        if(!world_ready()) return 0;
+        apply_low_spec();
+        g_low_spec_done=1;
         return 0;
     }
     return g_prev ? CallWindowProcA(g_prev,hwnd,msg,wp,lp) : DefWindowProcA(hwnd,msg,wp,lp);
@@ -219,6 +262,13 @@ static DWORD WINAPI worker(LPVOID unused)
         Sleep(50u);
     }
     if(!g_done) { wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); }
+    if(g_low_spec && g_done==1) {
+        start=GetTickCount();
+        while(!g_stop && !g_low_spec_done && (DWORD)(GetTickCount()-start)<60000u) {
+            if(world_ready() && ensure_hook()) PostMessageA(g_hwnd,WM_LOW_SPEC,0,0);
+            Sleep(100u);
+        }
+    }
     release_hook();
     return 0u;
 }
@@ -228,7 +278,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
     HANDLE th;
     (void)reserved;
     if(reason==DLL_PROCESS_ATTACH) {
-        g_stop=0; g_done=0;
+        g_stop=0; g_done=0; g_low_spec=0; g_low_spec_done=0;
         DisableThreadLibraryCalls(module);
         th=CreateThread(NULL,0u,worker,NULL,0u,NULL);
         if(th) CloseHandle(th);

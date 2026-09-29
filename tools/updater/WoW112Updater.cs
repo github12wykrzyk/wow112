@@ -1016,6 +1016,9 @@ namespace WoW112Updater
             startInfo.UseShellExecute = false;
             startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] = account.Login;
             startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] = account.ProtectedPassword;
+            startInfo.EnvironmentVariables["WOW112_LOW_SPEC"] = account.LowSpec ? "1" : "0";
+            if (account.LowSpec)
+                startInfo.Arguments = "-windowed -800x600 -nosound";
         }
 
         private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null)
@@ -1040,8 +1043,14 @@ namespace WoW112Updater
             ConfigureAutoLoginEnvironment(startInfo, autoLoginAccount);
             var game = Process.Start(startInfo);
             if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
+            if (autoLoginAccount != null && autoLoginAccount.LowSpec)
+            {
+                try { game.PriorityClass = ProcessPriorityClass.BelowNormal; }
+                catch (Exception ex) { Log("LOW SPEC: nie udało się obniżyć priorytetu PID " + game.Id + ": " + ex.GetType().Name); }
+            }
             Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ")" +
-                (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin."));
+                (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin" +
+                    (autoLoginAccount.LowSpec ? " • LOW SPEC/WINDOWED." : ".")));
             return game;
         }
 
