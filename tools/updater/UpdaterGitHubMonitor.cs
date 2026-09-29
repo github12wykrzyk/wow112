@@ -57,13 +57,17 @@ namespace WoW112Updater
             var head = GetString(AsDictionary(GetValue(root, "commit")), "sha");
             if (string.IsNullOrWhiteSpace(head)) throw new InvalidOperationException("Brak HEAD: " + branch);
             var runs = AsDictionary(serializer.DeserializeObject(runsJson));
+            var expectedWorkflow = string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase)
+                ? StableWorkflowName : TestWorkflowName;
             Dictionary<string, object> active = null, failed = null, passed = null;
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenExpectedWorkflow = false;
             foreach (var item in AsArray(GetValue(runs, "workflow_runs")))
             {
                 var run = item as Dictionary<string, object>;
                 if (run == null || !string.Equals(GetString(run, "head_sha"), head, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!seen.Add(GetString(run, "name"))) continue; // latest attempt per workflow
+                if (!string.Equals(GetString(run, "name"), expectedWorkflow, StringComparison.Ordinal)) continue;
+                if (seenExpectedWorkflow) continue; // API is newest-first: only the latest run of the branch's authoritative workflow counts.
+                seenExpectedWorkflow = true;
                 var status = GetString(run, "status");
                 var conclusion = GetString(run, "conclusion");
                 if (!string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
@@ -85,7 +89,8 @@ namespace WoW112Updater
             var selected = active ?? failed ?? passed;
             if (selected == null)
                 return new MonitorBadgeState { Status = "UNKNOWN", Head = head,
-                    Detail = branch + " / HEAD " + head + ": brak wyników Actions na aktualnym SHA. Starsze sukcesy nie są uwzględniane." };
+                    Detail = branch + " / HEAD " + head + ": brak workflow " + expectedWorkflow +
+                        " na aktualnym SHA. Inne workflow (np. Guardian) nie wpływają na badge brancha." };
             var state = active != null
                 ? (string.Equals(GetString(selected, "status"), "in_progress", StringComparison.OrdinalIgnoreCase) ? "RUNNING" : "PENDING")
                 : failed != null ? "FAIL" : "SUCCESS";
