@@ -5,6 +5,7 @@
  * A Multibox-launched WoW process inherits:
  *   WOW112_AUTOLOGIN_ACCOUNT - account name
  *   WOW112_AUTOLOGIN_BLOB    - DPAPI-protected password (base64)
+ *   WOW112_AUTOCHAR_FIRST     - optional "1": select list index 1 and enter world
  *
  * The bridge removes both variables immediately, waits for Glue readiness,
  * dispatches on the game window thread, calls native login 0x0046AFB0 and
@@ -14,8 +15,12 @@
  * candidate 5328812bebb5bdfdd0d554ed95c4e243ae918c7c
  * EXE sha256 c841336b297e10df597da6a0b5ded4a66efae22f17c3d64d0a88438d39e4bc06
  * DefaultServerLogin binding 0x0046D160; native Glue login 0x0046AFB0.
- * External corroboration only: brues-code/ClassicAPI commit
- * 71805db62f1e8a154477033dc1f50960c535af8b (GPL-3.0-or-later).
+ * FrameScript_Execute 0x00704CD0 is already used by current PARALLEL sources.
+ * Vanilla GlueXML CharacterSelect.lua uses 1-based list index 1 and
+ * CharacterSelect_SelectCharacter(1,1) -> CharacterSelect_EnterWorld().
+ * External references:
+ * https://octowow.st/git/brues/ClassicAPI/ (5875 FrameScript_Execute)
+ * https://octowow.st/git/paste/GlueXML/ (Vanilla CharacterSelect.lua)
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error WoWAutoLoginBridge requires x86.
@@ -25,20 +30,25 @@
 #include <wincrypt.h>
 #include <dpapi.h>
 
-#define LOGIN_FN       0x0046AFB0u
-#define GLUE_READY1    0x00B41DFCu
-#define GLUE_READY2    0x00B41E04u
-#define GLUE_STATE     0x00B41DA0u
-#define WM_AUTOLOGIN   (WM_APP + 0x2A7u)
+#define LOGIN_FN            0x0046AFB0u
+#define FRAMESCRIPT_EXECUTE  0x00704CD0u
+#define WOW_OBJMGR           0x00B41414u
+#define GLUE_READY1          0x00B41DFCu
+#define GLUE_READY2          0x00B41E04u
+#define GLUE_STATE           0x00B41DA0u
+#define WM_AUTOLOGIN        (WM_APP + 0x2A7u)
+#define WM_AUTOCHAR         (WM_APP + 0x2A8u)
 #define ACCOUNT_CAP    64u
 #define BLOB_CAP       2048u
 
 typedef void (__fastcall *GlueLoginFn)(const char*, char*);
+typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
 typedef BOOL (WINAPI *CryptStringToBinaryAFn)(LPCSTR,DWORD,DWORD,BYTE*,DWORD*,DWORD*,DWORD*);
 typedef BOOL (WINAPI *CryptUnprotectDataFn)(DATA_BLOB*,LPWSTR*,DATA_BLOB*,PVOID,CRYPTPROTECT_PROMPTSTRUCT*,DWORD,DATA_BLOB*);
 
 static volatile LONG g_stop=0;
 static volatile LONG g_done=0;
+static volatile LONG g_autochar=0;
 static DWORD g_pid=0;
 static HWND g_hwnd=NULL;
 static WNDPROC g_prev=NULL;
@@ -87,10 +97,17 @@ static int glue_ready(void)
 
 static int load_profile(void)
 {
+    char autoChar[8];
     DWORD a=GetEnvironmentVariableA("WOW112_AUTOLOGIN_ACCOUNT",g_account,ACCOUNT_CAP);
     DWORD b=GetEnvironmentVariableA("WOW112_AUTOLOGIN_BLOB",g_blob,BLOB_CAP);
+    DWORD c;
+    ZeroMemory(autoChar,sizeof(autoChar));
+    c=GetEnvironmentVariableA("WOW112_AUTOCHAR_FIRST",autoChar,(DWORD)sizeof(autoChar));
     SetEnvironmentVariableA("WOW112_AUTOLOGIN_ACCOUNT",NULL);
     SetEnvironmentVariableA("WOW112_AUTOLOGIN_BLOB",NULL);
+    SetEnvironmentVariableA("WOW112_AUTOCHAR_FIRST",NULL);
+    g_autochar=(c==1u && autoChar[0]=='1')?1:0;
+    wipe(autoChar,sizeof(autoChar));
     if(a==0u || a>=ACCOUNT_CAP || b==0u || b>=BLOB_CAP) {
         wipe(g_account,sizeof(g_account));
         wipe(g_blob,sizeof(g_blob));
@@ -151,10 +168,22 @@ done:
 
 static LRESULT WINAPI login_wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp)
 {
+    static const char autoCharScript[]=
+        "if not W112_AUTOCHAR_FIRST_DONE and CharacterSelect and CharacterSelect.IsVisible "
+        "and CharacterSelect:IsVisible() and type(GetNumCharacters)=='function' "
+        "and GetNumCharacters()>0 and type(CharacterSelect_SelectCharacter)=='function' "
+        "and type(CharacterSelect_EnterWorld)=='function' then "
+        "CharacterSelect_SelectCharacter(1,1);CharacterSelect_EnterWorld();"
+        "W112_AUTOCHAR_FIRST_DONE=true end";
+
     if(msg==WM_AUTOLOGIN && !g_done) {
         if(!guard_ok()) { g_done=-1; return 0; }
         if(!glue_ready()) return 0;
         g_done=native_login()?1:-2;
+        return 0;
+    }
+    if(msg==WM_AUTOCHAR && g_done==1 && g_autochar) {
+        ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(autoCharScript,"WoW112AutoLoginBridge");
         return 0;
     }
     return g_prev ? CallWindowProcA(g_prev,hwnd,msg,wp,lp) : DefWindowProcA(hwnd,msg,wp,lp);
@@ -207,7 +236,7 @@ static void release_hook(void)
 
 static DWORD WINAPI worker(LPVOID unused)
 {
-    DWORD start;
+    DWORD start,autoStart;
     (void)unused;
     if(!load_profile()) return 0u; /* ordinary launch: bridge stays inert */
     if(!guard_ok()) { g_done=-1; wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); return 0u; }
@@ -219,6 +248,19 @@ static DWORD WINAPI worker(LPVOID unused)
         Sleep(50u);
     }
     if(!g_done) { wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); }
+
+    /* AUTO POSTAĆ 1 remains entirely inside this process: once native login
+     * succeeds, poll the GlueXML character screen on WoW's own window thread.
+     * The Lua flag makes the action one-shot; object-manager readiness ends the
+     * bridge promptly after the world starts loading. */
+    if(g_done==1 && g_autochar) {
+        autoStart=GetTickCount();
+        while(!g_stop && (DWORD)(GetTickCount()-autoStart)<60000u) {
+            if(*(volatile DWORD*)(DWORD)WOW_OBJMGR!=0u) break;
+            if(ensure_hook()) PostMessageA(g_hwnd,WM_AUTOCHAR,0,0);
+            Sleep(100u);
+        }
+    }
     release_hook();
     return 0u;
 }
@@ -228,7 +270,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
     HANDLE th;
     (void)reserved;
     if(reason==DLL_PROCESS_ATTACH) {
-        g_stop=0; g_done=0;
+        g_stop=0; g_done=0; g_autochar=0;
         DisableThreadLibraryCalls(module);
         th=CreateThread(NULL,0u,worker,NULL,0u,NULL);
         if(th) CloseHandle(th);

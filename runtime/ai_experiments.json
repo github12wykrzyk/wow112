@@ -113,6 +113,29 @@
       "tests": [],
       "package": null,
       "notes": "Transient per-launch BG SOUND toggle for each multibox account. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table. UI follow-up: reserve a separate header row so the top description cannot cover column captions; middle column is explicitly labeled DŹWIĘK W TLE (BG SOUND)."
+    },
+    {
+      "id": "multibox-auto-first-character-parallel",
+      "branch": "parallel",
+      "modules": [
+        "UpdaterMultibox",
+        "AutoLoginBridge"
+      ],
+      "dependencies": [
+        "multibox-background-sound-parallel"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 build 5875 game-window WndProc chain",
+        "FrameScript_Execute 0x00704CD0",
+        "GlueXML CharacterSelect first-slot flow",
+        "child-process AutoLogin environment contract"
+      ],
+      "status": "in_progress",
+      "observed_head": "5ba76cc067ebdaaf8611ad7e62c26e07a0d95376",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Per-launch AUTO POSTAĆ 1 toggle in MULTIBOX. Updater passes WOW112_AUTOCHAR_FIRST=1 only to selected child processes. AutoLoginBridge waits for successful native login, then on the WoW window thread executes guarded GlueXML: CharacterSelect_SelectCharacter(1,1) followed by CharacterSelect_EnterWorld(). No SendInput/focus. 60s fail-safe window; one-shot Lua flag prevents repeated EnterWorld. Exact project evidence: current PARALLEL uses FrameScript_Execute 0x00704CD0 and object-manager 0x00B41414; external Vanilla GlueXML confirms first list slot is index 1."
     }
   ]
 }

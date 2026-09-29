@@ -96,6 +96,7 @@ namespace WoW112Updater
     {
         public WowAccount Account;
         public bool BackgroundSound;
+        public bool AutoFirstCharacter;
     }
 
     internal sealed partial class MainForm
@@ -154,8 +155,8 @@ namespace WoW112Updater
             using (var dialog = new Form
             {
                 Text = "MULTIBOX — World of Warcraft 1.12.1",
-                ClientSize = new Size(1010, 500),
-                MinimumSize = new Size(1026, 539),
+                ClientSize = new Size(1230, 500),
+                MinimumSize = new Size(1246, 539),
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
                 MinimizeBox = false,
@@ -167,67 +168,82 @@ namespace WoW112Updater
                 var accounts = new CheckedListBox
                 {
                     Location = new Point(14, 48),
-                    Size = new Size(260, 349),
+                    Size = new Size(250, 349),
                     CheckOnClick = true,
                     IntegralHeight = false
                 };
                 var backgroundSound = new CheckedListBox
                 {
-                    Location = new Point(292, 48),
+                    Location = new Point(278, 48),
+                    Size = new Size(200, 349),
+                    CheckOnClick = true,
+                    IntegralHeight = false
+                };
+                var autoFirstCharacter = new CheckedListBox
+                {
+                    Location = new Point(492, 48),
                     Size = new Size(210, 349),
                     CheckOnClick = true,
                     IntegralHeight = false
                 };
                 var states = new ListBox
                 {
-                    Location = new Point(520, 48),
-                    Size = new Size(474, 349),
+                    Location = new Point(716, 48),
+                    Size = new Size(500, 349),
                     IntegralHeight = false
                 };
                 var info = new Label
                 {
                     Text = "Każde zaznaczone konto dostaje osobny proces WoW już przypisany do profilu. Native AutoLogin loguje bez klawiatury, fokusu i opóźnień pól.",
                     Location = new Point(14, 5),
-                    Size = new Size(980, 18),
+                    Size = new Size(1202, 18),
                     AutoEllipsis = true
                 };
                 var accountsHeader = new Label
                 {
                     Text = "KONTA — URUCHOM",
                     Location = new Point(14, 27),
-                    Size = new Size(260, 18),
+                    Size = new Size(250, 18),
                     Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
                 };
                 var backgroundSoundHeader = new Label
                 {
                     Text = "DŹWIĘK W TLE (BG SOUND)",
-                    Location = new Point(292, 27),
-                    Size = new Size(210, 18),
+                    Location = new Point(278, 27),
+                    Size = new Size(200, 18),
                     Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
                     ForeColor = Color.DarkBlue
+                };
+                var autoFirstCharacterHeader = new Label
+                {
+                    Text = "AUTO POSTAĆ 1",
+                    Location = new Point(492, 27),
+                    Size = new Size(210, 18),
+                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                    ForeColor = Color.DarkGreen
                 };
                 var statesHeader = new Label
                 {
                     Text = "STATUS INSTANCJI",
-                    Location = new Point(520, 27),
-                    Size = new Size(474, 18),
+                    Location = new Point(716, 27),
+                    Size = new Size(500, 18),
                     Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
                 };
                 var selectAll = new Button { Text = "Zaznacz wszystkie", Location = new Point(14, 414), Size = new Size(138, 34) };
                 var clearAll = new Button { Text = "Wyczyść", Location = new Point(160, 414), Size = new Size(92, 34) };
-                var launchSelected = new Button { Text = "URUCHOM ZAZNACZONE", Location = new Point(520, 414), Size = new Size(190, 34) };
-                var launchAll = new Button { Text = "URUCHOM WSZYSTKIE", Location = new Point(718, 414), Size = new Size(160, 34) };
-                var close = new Button { Text = "Zamknij", Location = new Point(886, 414), Size = new Size(108, 34) };
+                var launchSelected = new Button { Text = "URUCHOM ZAZNACZONE", Location = new Point(716, 414), Size = new Size(190, 34) };
+                var launchAll = new Button { Text = "URUCHOM WSZYSTKIE", Location = new Point(914, 414), Size = new Size(160, 34) };
+                var close = new Button { Text = "Zamknij", Location = new Point(1082, 414), Size = new Size(134, 34) };
                 var footer = new Label
                 {
                     Text = "Hasła są odszyfrowywane z DPAPI tylko lokalnie, bez zapisu do logu ani GitHuba.",
                     Location = new Point(14, 462),
-                    Size = new Size(980, 24),
+                    Size = new Size(1202, 24),
                     ForeColor = Color.DimGray
                 };
                 dialog.Controls.AddRange(new Control[] {
-                    info, accountsHeader, backgroundSoundHeader, statesHeader,
-                    accounts, backgroundSound, states, selectAll, clearAll, launchSelected, launchAll, close, footer
+                    info, accountsHeader, backgroundSoundHeader, autoFirstCharacterHeader, statesHeader,
+                    accounts, backgroundSound, autoFirstCharacter, states, selectAll, clearAll, launchSelected, launchAll, close, footer
                 });
 
                 var accountByIndex = new List<WowAccount>();
@@ -236,6 +252,7 @@ namespace WoW112Updater
                 {
                     accounts.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
                     backgroundSound.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
+                    autoFirstCharacter.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
                     accountByIndex.Add(account);
                     stateIndex[account.Id] = states.Items.Count;
                     states.Items.Add(account.Label + " • gotowy");
@@ -258,7 +275,8 @@ namespace WoW112Updater
                         if (accounts.GetItemChecked(i))
                             selected.Add(new MultiboxLaunchEntry {
                                 Account = accountByIndex[i],
-                                BackgroundSound = backgroundSound.GetItemChecked(i)
+                                BackgroundSound = backgroundSound.GetItemChecked(i),
+                                AutoFirstCharacter = autoFirstCharacter.GetItemChecked(i)
                             });
                     return selected;
                 };
@@ -268,7 +286,8 @@ namespace WoW112Updater
                     for (int i = 0; i < accountByIndex.Count; i++)
                         selected.Add(new MultiboxLaunchEntry {
                             Account = accountByIndex[i],
-                            BackgroundSound = backgroundSound.GetItemChecked(i)
+                            BackgroundSound = backgroundSound.GetItemChecked(i),
+                            AutoFirstCharacter = autoFirstCharacter.GetItemChecked(i)
                         });
                     return selected;
                 };
@@ -278,6 +297,7 @@ namespace WoW112Updater
                     selectAll.Enabled = enabled;
                     clearAll.Enabled = enabled;
                     backgroundSound.Enabled = enabled;
+                    autoFirstCharacter.Enabled = enabled;
                     launchSelected.Enabled = enabled;
                     launchAll.Enabled = enabled;
                     close.Enabled = enabled;
@@ -352,11 +372,12 @@ namespace WoW112Updater
                     try
                     {
                         setState(account, "STARTING • profil przy CreateProcess");
-                        var game = StartGameProcess(account, launch.BackgroundSound);
+                        var game = StartGameProcess(account, launch.BackgroundSound, launch.AutoFirstCharacter);
                         accountSessions.Add(new WowAccountSession { Game = game, AccountId = account.Id });
                         setState(account, "PID " + game.Id + " • NATIVE AUTOLOGIN" +
                             (account.LowSpec ? " • LOWCFG " + LowSpecConfigName(account) : "") +
-                            (launch.BackgroundSound ? " • BG SOUND" : ""));
+                            (launch.BackgroundSound ? " • BG SOUND" : "") +
+                            (launch.AutoFirstCharacter ? " • AUTO POSTAĆ 1" : ""));
                         Log("Multibox: profil " + account.Label + " przypisany przy starcie do PID " + game.Id + ".");
                         ok++;
 
@@ -625,9 +646,14 @@ namespace WoW112Updater
             if (nativeStart.UseShellExecute ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] != loaded.Selected.Login ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] != loaded.Selected.ProtectedPassword ||
+                nativeStart.EnvironmentVariables.ContainsKey("WOW112_AUTOCHAR_FIRST") ||
                 nativeStart.EnvironmentVariables.ContainsKey("WOW112_LOW_SPEC") ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"].Contains("vault-test-secret"))
                 throw new Exception("Account smoke: native AutoLogin child environment contract failed");
+            var autoCharStart = new ProcessStartInfo("WoW.exe") { UseShellExecute = true };
+            ConfigureAutoLoginEnvironment(autoCharStart, loaded.Selected, true);
+            if (autoCharStart.EnvironmentVariables["WOW112_AUTOCHAR_FIRST"] != "1")
+                throw new Exception("Account smoke: AUTO POSTAĆ 1 child environment contract failed");
             // Validate the physical-key translator using a test string only; no real accounts or focus changes.
             if (PrepareKeys("Ab9@!.-", GetKeyboardLayout(0)).Count != 7)
                 throw new Exception("Account smoke: keyboard translation failed");

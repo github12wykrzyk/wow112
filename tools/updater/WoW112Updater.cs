@@ -1000,7 +1000,7 @@ namespace WoW112Updater
             return Path.Combine(root, ".wow112_parallel_updater", "installed.json");
         }
 
-        private static void ConfigureAutoLoginEnvironment(ProcessStartInfo startInfo, WowAccount account)
+        private static void ConfigureAutoLoginEnvironment(ProcessStartInfo startInfo, WowAccount account, bool autoFirstCharacter = false)
         {
             if (startInfo == null) throw new ArgumentNullException("startInfo");
             if (account == null) return;
@@ -1017,6 +1017,9 @@ namespace WoW112Updater
             startInfo.UseShellExecute = false;
             startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] = account.Login;
             startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] = account.ProtectedPassword;
+            startInfo.EnvironmentVariables.Remove("WOW112_AUTOCHAR_FIRST");
+            if (autoFirstCharacter)
+                startInfo.EnvironmentVariables["WOW112_AUTOCHAR_FIRST"] = "1";
         }
 
         private static string LowSpecConfigName(WowAccount account)
@@ -1107,7 +1110,7 @@ namespace WoW112Updater
             return name;
         }
 
-        private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null, bool backgroundSound = false)
+        private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null, bool backgroundSound = false, bool autoFirstCharacter = false)
         {
             var root = gameDir.Text.Trim();
             if (!Directory.Exists(root)) throw new InvalidOperationException("Wybierz katalog gry.");
@@ -1126,7 +1129,7 @@ namespace WoW112Updater
             if (exe == null) throw new InvalidOperationException("Nie znalazłem WoW*.exe w wybranym katalogu.");
 
             var startInfo = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true };
-            ConfigureAutoLoginEnvironment(startInfo, autoLoginAccount);
+            ConfigureAutoLoginEnvironment(startInfo, autoLoginAccount, autoFirstCharacter);
             string lowConfig = null;
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
@@ -1145,7 +1148,8 @@ namespace WoW112Updater
             Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ")" +
                 (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin" +
                     (autoLoginAccount.LowSpec ? " • LOW CFG " + lowConfig + " • 800x600/WINDOWED" : "") +
-                    (backgroundSound ? " • BG SOUND." : ".")));
+                    (backgroundSound ? " • BG SOUND" : "") +
+                    (autoFirstCharacter ? " • AUTO POSTAĆ 1." : ".")));
             return game;
         }
 
