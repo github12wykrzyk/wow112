@@ -29,23 +29,9 @@ jobs:
         shell: pwsh
         run: git fetch origin parallel:refs/remotes/origin/parallel
 
-      - name: Run fast repository and parallel gates
+      - name: Run fast gates and compile changed native modules
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python tools/verify_current.py
-          if ($LASTEXITCODE -ne 0) { throw "verify_current failed" }
-          python tools/verify_runtime_artifacts.py
-          if ($LASTEXITCODE -ne 0) { throw "runtime artifact verification failed" }
-          python tools/verify_verified_symbols.py
-          if ($LASTEXITCODE -ne 0) { throw "verified-symbol check failed" }
-          python tools/verify_parallel_dependency_registry.py
-          if ($LASTEXITCODE -ne 0) { throw "parallel dependency audit failed" }
-          python tools/verify_candidate_source_scope.py
-          if ($LASTEXITCODE -ne 0) { throw "candidate source scope failed" }
-          python tools/verify_parallel_candidate_manifest.py
-          if ($LASTEXITCODE -ne 0) { throw "parallel candidate manifest failed" }
-          python tools/verify_parallel_gui_abi.py
-          if ($LASTEXITCODE -ne 0) { throw "parallel GUI ABI/contract preflight failed" }
-          python tools/ai_experiments.py validate
-          if ($LASTEXITCODE -ne 0) { throw "experiment ledger validation failed" }
+          python tools/parallel_feature_preflight.py --base origin/parallel
+          if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
