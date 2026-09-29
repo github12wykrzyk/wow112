@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.21"
+local ADDON_VERSION = "1.22"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -639,9 +639,22 @@ local function groupUnitByName(name)
     return nil
 end
 
+local SUMMON_PLAYER_BLACKLIST = {
+    ["hydraone"] = true,
+    ["hydratwo"] = true
+}
+
+local function summonPlayerBlacklisted(name)
+    return SUMMON_PLAYER_BLACKLIST[lower(trim(name or ""))] == true
+end
+
 local function queuePartySummon(name)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) then return end
+    if summonPlayerBlacklisted(name) then
+        if SummonScoutDB.debug then chat("summon blacklist skip -> " .. name) end
+        return
+    end
     if SS.summonQueued[lower(name)] then return end
     SS.summonQueued[lower(name)] = true
     SS.summonQueue[table.getn(SS.summonQueue) + 1] = {

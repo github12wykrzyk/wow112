@@ -1,4 +1,4 @@
-# SummonScout 1.21
+# SummonScout 1.22
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -298,3 +298,8 @@ There is no immediate `TargetLastTarget()`, `ClearTarget()`, or extra `SpellTarg
 - Automatic party/raid summon no longer casts directly from SummonScout Lua. The addon publishes the queued player name through `W112_AUTOSUMMON_REQUEST`.
 - `WoWAutoSummonAssist_5875_v1.dll` consumes that request on its native WoW UI-thread timer and executes target + `Ritual of Summoning` through the same FrameScript execution path already used by native modules in this repository.
 - `/ssi summoncheck` shows native bridge request/ack/count diagnostics.
+
+
+## 1.22 summon player blacklist
+
+Automatic party/raid summoning skips exact character names `Hydraone` and `Hydratwo` (case-insensitive). They may still remain in the group and use the rest of SummonScout normally; only automatic summon queueing is suppressed.
