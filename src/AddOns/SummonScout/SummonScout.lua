@@ -23,6 +23,7 @@ SS.tradePartner = nil
 SS.tradeMoneyBefore = 0
 SS.tradeTargetMoney = 0
 SS.tradeBothAccepted = false
+SS.tradeActive = false
 SS.gui = nil
 SS.nextGuiRefreshAt = 0
 SS.partyKnown = {}
@@ -34,6 +35,8 @@ SS.summonActiveName = nil
 SS.summonActiveExpires = 0
 SS.lastSummonWhisperName = nil
 SS.lastSummonWhisperAt = 0
+SS.lastAdvertMessage = ""
+SS.lastAdvertSentAt = -100000
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -197,6 +200,10 @@ local WHISPER_PRICE_CUES = {
     "how much", "price", "cost", "fee"
 }
 
+local WHISPER_EXACT_CODES = {
+    ["123"] = true
+}
+
 -- Strong buyer intent only. Generic words such as "me", "inv" and "port"
 -- are intentionally excluded because seller ads often contain "whisper me",
 -- "invite me" or "portal/port" language.
@@ -337,6 +344,7 @@ local function whisperInviteDecision(message)
 
     if s == "" or isSellerMessage(s) then return false, nil, "not-request" end
     if ambiguous then return false, nil, "ambiguous-location" end
+    if WHISPER_EXACT_CODES[s] then score = score + 3 end
 
     -- Explicitly asking for another known destination must never trigger.
     if loc then
@@ -510,6 +518,29 @@ local function recordInvite(name, loc)
     guiRefreshSafe()
 end
 
+local function tryWhisperInvite(name, loc)
+    name = trim(name)
+    if name == "" or samePlayer(name, UnitName("player")) or isInGroup(name) then
+        return false, "invalid"
+    end
+
+    local t = now()
+    local last = SS.recent[lower(name)]
+    local cooldown = tonumber(SummonScoutDB.whisperInviteCooldown) or 10
+    if cooldown < 1 then cooldown = 1 end
+    if cooldown > 120 then cooldown = 120 end
+    if last and (t - last) < cooldown then
+        return false, "cooldown"
+    end
+
+    SS.recent[lower(name)] = t
+    SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
+    InviteByName(name)
+    recordInvite(name, loc)
+    chat("whisper invite -> " .. name .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
+    return true, "invited"
+end
+
 local function currentTradePartner()
     local name
     if UnitName then
@@ -533,9 +564,14 @@ local function resetTradeState()
     SS.tradeMoneyBefore = 0
     SS.tradeTargetMoney = 0
     SS.tradeBothAccepted = false
+    SS.tradeActive = false
 end
 
 local function beginTrade()
+    -- Some 1.12/custom-server UIs can surface TRADE_SHOW more than once for
+    -- the same window. Never overwrite the wallet snapshot mid-session.
+    if SS.tradeActive then return end
+    SS.tradeActive = true
     SS.tradePartner = currentTradePartner()
     SS.tradeMoneyBefore = GetMoney and GetMoney() or 0
     SS.tradeTargetMoney = GetTargetTradeMoney and GetTargetTradeMoney() or 0
@@ -572,20 +608,30 @@ local function recordPayment(name, copper)
 end
 
 local function finishTrade()
-    local after = GetMoney and GetMoney() or SS.tradeMoneyBefore
-    local delta = after - (SS.tradeMoneyBefore or 0)
+    if not SS.tradeActive then return end
+
+    local partner = SS.tradePartner or currentTradePartner()
+    local before = SS.tradeMoneyBefore or 0
+    local offered = SS.tradeTargetMoney or 0
+    local accepted = SS.tradeBothAccepted
+    local after = GetMoney and GetMoney() or before
+    local delta = after - before
     local amount = 0
 
-    if delta > 0 then
+    -- Close the session first so a duplicate TRADE_CLOSED cannot record again.
+    resetTradeState()
+
+    -- The payer's accepted offer is the authoritative per-trade amount.
+    -- Wallet delta is only a fallback when the acceptance event was missed.
+    if accepted and offered > 0 then
+        amount = offered
+    elseif delta > 0 then
         amount = delta
-    elseif SS.tradeBothAccepted and (SS.tradeTargetMoney or 0) > 0 then
-        amount = SS.tradeTargetMoney
     end
 
     if amount > 0 then
-        recordPayment(SS.tradePartner or currentTradePartner(), amount)
+        recordPayment(partner, amount)
     end
-    resetTradeState()
 end
 
 local function playerIsCasting()
@@ -609,6 +655,7 @@ local function queuePartySummon(name)
     SS.summonQueue[table.getn(SS.summonQueue) + 1] = {
         name = name,
         attempts = 0,
+        phase = "target",
         nextAt = now() + 0.35
     }
     chat("party join -> summon queued: " .. name)
@@ -698,19 +745,53 @@ local function processPartySummon()
     end
     if now() < (item.nextAt or 0) then return end
 
-    item.attempts = (item.attempts or 0) + 1
-    if item.attempts > 3 then
-        chat("summon failed after retries: " .. item.name)
-        finishActiveSummon(item.name)
+    -- Vanilla is more reliable when target selection and spell execution are
+    -- separated by a short UI-frame settle instead of happening back-to-back.
+    if not item.phase or item.phase == "target" then
+        if TargetUnit then
+            TargetUnit(unit)
+        elseif TargetByName then
+            TargetByName(item.name, true)
+        end
+        item.phase = "cast"
+        item.nextAt = now() + 0.20
         return
     end
 
-    if TargetByName and CastSpellByName then
-        TargetByName(item.name, true)
-        SS.summonActiveName = item.name
-        SS.summonActiveExpires = now() + 2
-        item.nextAt = now() + 5
-        CastSpellByName("Ritual of Summoning")
+    if item.phase == "cast" then
+        if not samePlayer(UnitName("target"), item.name) then
+            item.phase = "target"
+            item.nextAt = now() + 0.10
+            return
+        end
+
+        item.attempts = (item.attempts or 0) + 1
+        if item.attempts > 3 then
+            chat("summon failed after retries: " .. item.name)
+            finishActiveSummon(item.name)
+            return
+        end
+
+        if CastSpellByName then
+            CastSpellByName("Ritual of Summoning")
+            if SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
+                SpellTargetUnit(unit)
+            end
+            SS.summonActiveName = item.name
+            SS.summonActiveExpires = now() + 1.50
+            item.phase = "wait"
+            item.nextAt = now() + 4.0
+            if SummonScoutDB.debug then
+                chat("summon cast requested -> " .. item.name .. " attempt " .. tostring(item.attempts))
+            end
+        end
+        return
+    end
+
+    if item.phase == "wait" then
+        -- No SPELLCAST_START arrived: retry the target+cast sequence.
+        item.phase = "target"
+        item.nextAt = now() + 0.10
     end
 end
 
@@ -830,6 +911,12 @@ local function sendSpamMessage(manual)
         return false
     end
 
+    if not manual and normalizeMessage(message) == normalizeMessage(SS.lastAdvertMessage or "")
+        and (now() - (SS.lastAdvertSentAt or -100000)) < 10 then
+        if SummonScoutDB.debug then chat("duplicate advert suppressed") end
+        return true
+    end
+
     local channelId = configuredChannelId()
     if not channelId or channelId <= 0 then
         if manual or SummonScoutDB.debug then
@@ -840,6 +927,8 @@ local function sendSpamMessage(manual)
 
     if SendChatMessage then
         SendChatMessage(message, "CHANNEL", nil, channelId)
+        SS.lastAdvertMessage = message
+        SS.lastAdvertSentAt = now()
         if manual or SummonScoutDB.debug then
             chat("spam -> #" .. (SummonScoutDB.channel or "World") .. ": " .. message)
         end
@@ -938,6 +1027,7 @@ local function setDefaults()
     if SummonScoutDB.masterReportInvites == nil then SummonScoutDB.masterReportInvites = true end
     if SummonScoutDB.masterReportPayments == nil then SummonScoutDB.masterReportPayments = true end
     if SummonScoutDB.whisperAutoInvite == nil then SummonScoutDB.whisperAutoInvite = true end
+    if SummonScoutDB.whisperInviteCooldown == nil then SummonScoutDB.whisperInviteCooldown = 10 end
     if SummonScoutDB.partyAutoSummon == nil then SummonScoutDB.partyAutoSummon = false end
     if SummonScoutDB.summonWhisperEnabled == nil then SummonScoutDB.summonWhisperEnabled = true end
     if SummonScoutDB.paymentChatEnabled == nil then SummonScoutDB.paymentChatEnabled = true end
@@ -1018,6 +1108,14 @@ local function showRecent(filterUnknown, limit)
     if shown == 0 then
         chat(filterUnknown and "no UNKNOWN requests logged" or "request log is empty")
     end
+end
+
+local function clearPayments()
+    SummonScoutDB.paymentLog = {}
+    SummonScoutDB.revenueCopper = 0
+    SummonScoutDB.paymentCount = 0
+    chat("payment ledger cleared")
+    guiRefreshSafe()
 end
 
 local function clearStats()
@@ -1522,6 +1620,12 @@ local function slash(msg)
         showRecent(false, trim(rest))
     elseif cmd == "unknown" then
         showRecent(true, trim(rest))
+    elseif cmd == "clearpayments" then
+        if lower(trim(rest)) == "confirm" then
+            clearPayments()
+        else
+            chat("use /ssi clearpayments confirm")
+        end
     elseif cmd == "clearstats" then
         if lower(trim(rest)) == "confirm" then
             clearStats()
@@ -1539,6 +1643,7 @@ local function slash(msg)
         chat("/ssi countertest <message> | gui")
         chat("/ssi master <name>|on|off | reporttest")
         chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | paymentchat on|off")
+        chat("/ssi clearpayments confirm")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -1578,11 +1683,9 @@ frame:SetScript("OnEvent", function()
         if sender == "" or samePlayer(sender, UnitName("player")) or isInGroup(sender) then return end
         local accept, loc, reason = whisperInviteDecision(message)
         if accept then
-            if not tryImmediateInvite(sender, loc) then
-                queueInvite(sender, message, loc)
-            end
-            if SummonScoutDB.debug then
-                chat("whisper invite -> " .. sender .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
+            local invited, why = tryWhisperInvite(sender, loc)
+            if not invited and SummonScoutDB.debug then
+                chat("whisper invite suppressed -> " .. sender .. " [" .. tostring(why) .. "]")
             end
         elseif SummonScoutDB.debug then
             chat("whisper ignore -> " .. sender .. " [" .. tostring(reason) .. "]")
@@ -1602,8 +1705,13 @@ frame:SetScript("OnEvent", function()
 
     if event == "SPELLCAST_FAILED" or event == "SPELLCAST_INTERRUPTED" then
         if SS.summonActiveName then
+            local failed = SS.summonActiveName
             SS.summonActiveName = nil
             SS.summonActiveExpires = 0
+            if table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, failed) then
+                SS.summonQueue[1].phase = "target"
+                SS.summonQueue[1].nextAt = now() + 0.75
+            end
         end
         return
     end

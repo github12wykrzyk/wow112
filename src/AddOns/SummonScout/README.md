@@ -1,4 +1,4 @@
-# SummonScout 1.11
+# SummonScout 1.12
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -189,3 +189,13 @@ New automation toggles are available in `/ssi gui` and as slash commands:
 - `Show received gold in chat` / `/ssi paymentchat on|off`: successful positive incoming trade payments print locally as `SummonScout: received gold from <player>: <amount>`. Existing master payment reporting and persistent revenue accounting remain unchanged.
 
 The new-party detector uses a roster diff rather than blindly summoning everyone on login/reload, so existing multibox helpers are treated as the baseline rather than new customers.
+
+
+## 1.12 field fixes: 123 whisper, payment sessions, party cast, advert dedupe
+
+- Exact direct whisper `123` is now treated as a summon/invite request.
+- Direct-whisper auto-invites have a dedicated 10 second cooldown per player. This is intentionally separate from the longer World-chat duplicate suppression.
+- Trade accounting is session-gated. Duplicate `TRADE_CLOSED` events are ignored, repeated `TRADE_SHOW` no longer overwrites the pre-trade wallet snapshot, and an accepted `GetTargetTradeMoney()` offer is preferred as the per-trade payment amount. This prevents the character's whole wallet balance being logged as a payment.
+- Existing bad payment history is not silently rewritten. Use `/ssi clearpayments confirm` once if the previous buggy build polluted the saved revenue total.
+- Party auto-summon now uses a two-stage target/cast sequence: target the actual party unit, wait 200 ms for the target state to settle, cast `Ritual of Summoning`, and use `SpellTargetUnit` when the spell opens targeting mode. Failed/interrupted casts are re-queued up to the existing retry limit.
+- Identical automatic World advertisements are hard-deduplicated for 10 seconds, preventing counter/periodic paths from producing a double post.
