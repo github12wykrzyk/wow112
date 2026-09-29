@@ -100,7 +100,7 @@ def main():
         '#define UI_SS_WHITERECT 0x00000006u',
         'WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT',
         '#define UI_TAB_REAR 3u',
-        'g_ui_pages[6][UI_MAX_PAGE_CONTROLS]',
+        'g_ui_pages[7][UI_MAX_PAGE_CONTROLS]',
         'if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}',
         'if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}',
         'ui_button(g_parallel_ui_hwnd,',
@@ -209,7 +209,7 @@ def main():
         'if(id==230u){',
         'Nearest GO <=12yd: entry ',
         'TYPE 18 = ritual fallback.',
-        'page==UI_TAB_SUMMON?3u:(page==UI_TAB_PATROL?4u:page)',
+        'page==UI_TAB_SUMMON?3u:(page==UI_TAB_PATROL?4u:(page==UI_TAB_FOLLOW?5u:page))',
         'background-safe, no mouse/focus',
         'Native POST returns',
         'Gate reason',
@@ -242,11 +242,28 @@ def main():
             print("ERROR: Patrol GUI/control contract regression:", token)
             return 1
     print("PARALLEL_GUI_PATROL: PASS (dedicated tab + recorder + live diagnostics)")
+    for token in (
+        '#define UI_TAB_FOLLOW 6u',
+        'g_ui_tabs[5]=ui_button(g_parallel_ui_hwnd,"FOLLOW"',
+        'if(id==232u){ui_set_page(UI_TAB_FOLLOW);return 0;}',
+        'ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_master)',
+        'ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_follower)',
+        'MASTER TAG ONLY: LOCKED ON',
+        'ui_work_pp_module(PAR_CORE_DLL,109u)',
+        'ui_work_pp_get(PAR_CORE_DLL,109u,91u,&value)',
+        'ui_sync_follow();',
+        'else if(g_ui_current_tab==UI_TAB_FOLLOW)ui_sync_follow();',
+        'g_ui_follow_off=NULL;g_ui_follow_master=NULL;g_ui_follow_follower=NULL;',
+    ):
+        if token not in text:
+            print("ERROR: Follow/Master GUI/control contract regression:", token)
+            return 1
+    print("PARALLEL_GUI_FOLLOW_MASTER: PASS (role/channel/tag-only/LazyScript controls)")
     Path("dist").mkdir(exist_ok=True)
     Path("dist/parallel_gui_regression.json").write_text(
         json.dumps({"result": "PASS", "scope": "source/Win32 ABI and render-loop wiring",
                     "game_runtime_tested": False, "insert": True,
-                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203, 228, 231],
+                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203, 228, 231, 232],
                     "wndproc_chain": True, "render_tick_and_destroy": True},
                    indent=2) + "\n", encoding="utf-8")
     print("PARALLEL_GUI_REGRESSION: PASS (source guards only; in-game test required)")

@@ -429,6 +429,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_TAB_REAR 3u /* internal details page, same root HWND */
 #define UI_TAB_SUMMON 4u
 #define UI_TAB_PATROL 5u
+#define UI_TAB_FOLLOW 6u
 
 typedef void* HFONT;
 typedef void* HBRUSH;
@@ -467,9 +468,9 @@ static HBRUSH g_ui_sidebar_brush=NULL,g_ui_content_brush=NULL;
 static HBRUSH g_ui_button_brush=NULL,g_ui_press_brush=NULL,g_ui_accent_brush=NULL;
 static HWND g_ui_brand=NULL,g_ui_build=NULL,g_ui_hotkey=NULL;
 static HWND g_ui_sidebar_gather=NULL,g_ui_sidebar_chests=NULL;
-static HWND g_ui_tabs[5]={NULL,NULL,NULL,NULL,NULL};
-static HWND g_ui_pages[6][UI_MAX_PAGE_CONTROLS];
-static DWORD g_ui_page_count[6]={0u,0u,0u,0u,0u,0u};
+static HWND g_ui_tabs[6]={NULL,NULL,NULL,NULL,NULL,NULL};
+static HWND g_ui_pages[7][UI_MAX_PAGE_CONTROLS];
+static DWORD g_ui_page_count[7]={0u,0u,0u,0u,0u,0u,0u};
 static DWORD g_ui_current_tab=UI_TAB_ESP;
 static HWND g_ui_checks[5]={NULL,NULL,NULL,NULL,NULL};
 static HWND g_ui_speedfloor_check=NULL;
@@ -490,6 +491,9 @@ static HWND g_ui_summon_guid=NULL,g_ui_summon_scan=NULL,g_ui_summon_nearest=NULL
 static HWND g_ui_summon_antiafk_state=NULL;
 static HWND g_ui_patrol_check=NULL,g_ui_patrol_record_check=NULL;
 static HWND g_ui_patrol_route=NULL,g_ui_patrol_config=NULL,g_ui_patrol_stats=NULL,g_ui_patrol_state=NULL;
+static HWND g_ui_follow_off=NULL,g_ui_follow_master=NULL,g_ui_follow_follower=NULL;
+static HWND g_ui_follow_assist=NULL,g_ui_follow_lazy=NULL,g_ui_follow_teleport=NULL;
+static HWND g_ui_follow_state=NULL,g_ui_follow_link=NULL,g_ui_follow_target=NULL,g_ui_follow_config=NULL,g_ui_follow_stats=NULL;
 /* Gather is a subview of the existing GUI: no new game-window hook. */
 static HWND g_ui_gather_controls[40]={NULL};
 static DWORD g_ui_gather_control_pages[40]={0u};
@@ -710,6 +714,11 @@ static BOOL ui_core_set_u32(DWORD id,DWORD bits) {
     W112_ControlValueV1 v;
     if(!m)return FALSE;v.u32=bits;return m->set_value(id,&v)?TRUE:FALSE;
 }
+static BOOL ui_core_set_i32(DWORD id,int value) {
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_CORE_DLL,109u);
+    W112_ControlValueV1 v;
+    if(!m)return FALSE;v.i32=value;return m->set_value(id,&v)?TRUE:FALSE;
+}
 static void ui_sync_patrol(void) {
     static const char* states[11]={
         "OFF","NO ROUTE","RECORDING","WALKING","PAUSED: PICK POCKET",
@@ -772,6 +781,75 @@ static void ui_sync_patrol(void) {
         p=app_str(p," | stuck ");p=app_u32(p,stucks.u32);
         p=app_str(p," | CTM calls ");p=app_u32(p,ctm.u32);*p=0;
         SetWindowTextA(g_ui_patrol_stats,buf);
+    }
+}
+
+
+static char *ui_app_signed_centi(char *p,int value) {
+    DWORD u;
+    if(value<0){*p++='-';u=(DWORD)(-value);}else u=(DWORD)value;
+    return ui_app_centi(p,u);
+}
+static void ui_sync_follow(void) {
+    static const char* states[10]={
+        "OFF","MASTER: PUBLISHING","WAIT MASTER","FOLLOWING","IN POSITION",
+        "TELEPORT CATCH-UP","PAUSED: MOVEMENT OWNER","ZONE MISMATCH",
+        "ASSISTING TAGGED TARGET","STALE / NO MASTER"
+    };
+    W112_ControlValueV1 role,channel,assist,lazy,tp,dist,tpdist,side,hb,liveDist,tagged,resolved;
+    W112_ControlValueV1 pulses,targets,tps,state,pid,zone,link,lazyReady;
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_CORE_DLL,109u);
+    char buf[260],*p;
+    if(!m){
+        if(g_ui_follow_state)SetWindowTextA(g_ui_follow_state,"FOLLOW: MovementCore v1.4 not ready");
+        return;
+    }
+    m->get_value(90u,&role);m->get_value(91u,&channel);m->get_value(92u,&assist);
+    m->get_value(93u,&lazy);m->get_value(94u,&tp);m->get_value(95u,&dist);
+    m->get_value(96u,&tpdist);m->get_value(97u,&side);m->get_value(98u,&hb);
+    m->get_value(99u,&liveDist);m->get_value(100u,&tagged);m->get_value(101u,&resolved);
+    m->get_value(102u,&pulses);m->get_value(103u,&targets);m->get_value(104u,&tps);
+    m->get_value(105u,&state);m->get_value(106u,&pid);m->get_value(107u,&zone);
+    m->get_value(108u,&link);m->get_value(109u,&lazyReady);
+    if(g_ui_follow_off)SendMessageA(g_ui_follow_off,UI_SETCHECK,role.i32==0?1u:0u,0);
+    if(g_ui_follow_master)SendMessageA(g_ui_follow_master,UI_SETCHECK,role.i32==1?1u:0u,0);
+    if(g_ui_follow_follower)SendMessageA(g_ui_follow_follower,UI_SETCHECK,role.i32==2?1u:0u,0);
+    if(g_ui_follow_assist)SendMessageA(g_ui_follow_assist,UI_SETCHECK,assist.u32?1u:0u,0);
+    if(g_ui_follow_lazy)SendMessageA(g_ui_follow_lazy,UI_SETCHECK,lazy.u32?1u:0u,0);
+    if(g_ui_follow_teleport)SendMessageA(g_ui_follow_teleport,UI_SETCHECK,tp.u32?1u:0u,0);
+    if(g_ui_follow_state){
+        p=buf;p=app_str(p,"ROLE ");
+        p=app_str(p,role.i32==1?"MASTER":(role.i32==2?"FOLLOWER":"OFF"));
+        p=app_str(p," | channel ");p=app_u32(p,channel.u32);
+        p=app_str(p," | ");p=app_str(p,state.u32<10u?states[state.u32]:"UNKNOWN");*p=0;
+        SetWindowTextA(g_ui_follow_state,buf);
+    }
+    if(g_ui_follow_link){
+        p=buf;p=app_str(p,"Link ");p=app_str(p,link.u32?"READY":"WAIT");
+        p=app_str(p," | master PID ");p=app_u32(p,pid.u32);
+        p=app_str(p," | heartbeat ");p=app_u32(p,hb.u32);p=app_str(p," ms");
+        p=app_str(p," | zone ");p=app_str(p,zone.u32?"MATCH":"NO");*p=0;
+        SetWindowTextA(g_ui_follow_link,buf);
+    }
+    if(g_ui_follow_target){
+        p=buf;p=app_str(p,"MASTER TAG ONLY: LOCKED ON | tagged ");
+        p=app_str(p,tagged.u32?"YES":"NO");
+        p=app_str(p," | resolved ");p=app_str(p,resolved.u32?"YES":"NO");
+        p=app_str(p," | LazyScript ");p=app_str(p,lazyReady.u32?"READY":"WAIT");*p=0;
+        SetWindowTextA(g_ui_follow_target,buf);
+    }
+    if(g_ui_follow_config){
+        p=buf;p=app_str(p,"Distance ");p=ui_app_centi(p,dist.u32);
+        p=app_str(p," yd | teleport >");p=ui_app_centi(p,tpdist.u32);
+        p=app_str(p," yd | side ");p=ui_app_signed_centi(p,side.i32);
+        p=app_str(p," yd | live ");p=ui_app_centi(p,liveDist.u32);p=app_str(p," yd");*p=0;
+        SetWindowTextA(g_ui_follow_config,buf);
+    }
+    if(g_ui_follow_stats){
+        p=buf;p=app_str(p,"Rotation pulses ");p=app_u32(p,pulses.u32);
+        p=app_str(p," | targets ");p=app_u32(p,targets.u32);
+        p=app_str(p," | catch-up teleports ");p=app_u32(p,tps.u32);*p=0;
+        SetWindowTextA(g_ui_follow_stats,buf);
     }
 }
 
@@ -1218,24 +1296,25 @@ static void ui_profile_sync(void) {
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
    requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
-    static const char *tab_names[5][5]={
-        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
-        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
-        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
-        {"ESP","ROGUE","STATUS","SUMMON","PATROL"},
-        {"ESP","ROGUE","STATUS","SUMMON","PATROL"}
+    static const char *tab_names[6][6]={
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL","FOLLOW"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL","FOLLOW"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL","FOLLOW"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL","FOLLOW"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL","FOLLOW"},
+        {"ESP","ROGUE","STATUS","SUMMON","PATROL","FOLLOW"}
     };
     DWORD t,i;
     DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:
-        (page==UI_TAB_SUMMON?3u:(page==UI_TAB_PATROL?4u:page));
-    if(page>UI_TAB_PATROL)return;
+        (page==UI_TAB_SUMMON?3u:(page==UI_TAB_PATROL?4u:(page==UI_TAB_FOLLOW?5u:page)));
+    if(page>UI_TAB_FOLLOW)return;
     g_ui_current_tab=page;
     g_ui_gather_open=0u;
     for(i=0u;i<g_ui_gather_count;++i)
         if(g_ui_gather_controls[i])ShowWindow(g_ui_gather_controls[i],SW_HIDE);
-    for(t=0u;t<5u;++t)
-        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
     for(t=0u;t<6u;++t)
+        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
+    for(t=0u;t<7u;++t)
         for(i=0u;i<g_ui_page_count[t];++i) {
             HWND control=g_ui_pages[t][i];
             if(control)ShowWindow(control,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
@@ -1245,18 +1324,19 @@ static void ui_set_page(DWORD page) {
     else if(page==UI_TAB_REAR)ui_sync_rear();
     else if(page==UI_TAB_SUMMON)ui_sync_summon();
     else if(page==UI_TAB_PATROL)ui_sync_patrol();
+    else if(page==UI_TAB_FOLLOW)ui_sync_follow();
     else ui_sync_rogue();
-    for(t=0u;t<5u;++t)if(g_ui_tabs[t])InvalidateRect(g_ui_tabs[t],NULL,TRUE);
+    for(t=0u;t<6u;++t)if(g_ui_tabs[t])InvalidateRect(g_ui_tabs[t],NULL,TRUE);
     if(g_ui_sidebar_gather)InvalidateRect(g_ui_sidebar_gather,NULL,TRUE);
     if(g_ui_sidebar_chests)InvalidateRect(g_ui_sidebar_chests,NULL,TRUE);
 }
 static void ui_add_to_page(DWORD page,HWND control) {
-    if(page>UI_TAB_PATROL || !control)return;
+    if(page>UI_TAB_FOLLOW || !control)return;
     if(g_ui_page_count[page]<UI_MAX_PAGE_CONTROLS)
         g_ui_pages[page][g_ui_page_count[page]++]=control;
 }
 static BOOL ui_is_sidebar_id(DWORD id) {
-    return id==201u||id==202u||id==203u||id==228u||id==231u||id==240u||id==241u;
+    return id==201u||id==202u||id==203u||id==228u||id==231u||id==232u||id==240u||id==241u;
 }
 static BOOL ui_sidebar_id_active(DWORD id) {
     if(id==201u)return g_ui_current_tab==UI_TAB_ESP && !g_ui_gather_open;
@@ -1264,6 +1344,7 @@ static BOOL ui_sidebar_id_active(DWORD id) {
     if(id==203u)return g_ui_current_tab==UI_TAB_STATUS || g_ui_current_tab==UI_TAB_REAR;
     if(id==228u)return g_ui_current_tab==UI_TAB_SUMMON;
     if(id==231u)return g_ui_current_tab==UI_TAB_PATROL;
+    if(id==232u)return g_ui_current_tab==UI_TAB_FOLLOW;
     if(id==240u)return g_ui_current_tab==UI_TAB_ROGUE && g_ui_gather_open && g_ui_gather_page!=1u;
     if(id==241u)return g_ui_current_tab==UI_TAB_ROGUE && g_ui_gather_open && g_ui_gather_page==1u;
     return FALSE;
@@ -1389,6 +1470,37 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
         if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}
         if(id==231u){ui_set_page(UI_TAB_PATROL);return 0;}
+        if(id==232u){ui_set_page(UI_TAB_FOLLOW);return 0;}
+        if(id==255u){ui_core_set_i32(90u,0);ui_sync_follow();return 0;}
+        if(id==256u){ui_core_set_i32(90u,1);ui_sync_follow();return 0;}
+        if(id==257u){ui_core_set_i32(90u,2);ui_sync_follow();return 0;}
+        if(id==258u){
+            if(ui_work_pp_get(PAR_CORE_DLL,109u,91u,&value)){
+                int v=value.i32>=4?1:value.i32+1;ui_core_set_i32(91u,v);
+            }
+            ui_sync_follow();return 0;
+        }
+        if(id==259u){ui_work_pp_flip(PAR_CORE_DLL,109u,92u);ui_sync_follow();return 0;}
+        if(id==260u){ui_work_pp_flip(PAR_CORE_DLL,109u,93u);ui_sync_follow();return 0;}
+        if(id==261u){ui_work_pp_flip(PAR_CORE_DLL,109u,94u);ui_sync_follow();return 0;}
+        if(id==262u||id==263u){
+            if(ui_work_pp_get(PAR_CORE_DLL,109u,95u,&value)){
+                int v=value.i32+(id==262u?-50:50);if(v<100)v=100;if(v>1000)v=1000;ui_core_set_i32(95u,v);
+            }
+            ui_sync_follow();return 0;
+        }
+        if(id==264u||id==265u){
+            if(ui_work_pp_get(PAR_CORE_DLL,109u,96u,&value)){
+                int v=value.i32+(id==264u?-100:100);if(v<500)v=500;if(v>5000)v=5000;ui_core_set_i32(96u,v);
+            }
+            ui_sync_follow();return 0;
+        }
+        if(id==266u||id==267u){
+            if(ui_work_pp_get(PAR_CORE_DLL,109u,97u,&value)){
+                int v=value.i32+(id==266u?-50:50);if(v<-500)v=-500;if(v>500)v=500;ui_core_set_i32(97u,v);
+            }
+            ui_sync_follow();return 0;
+        }
         if(id==242u){ui_work_pp_flip(PAR_CORE_DLL,89u,71u);ui_sync_patrol();return 0;}
         if(id==243u){ui_work_pp_flip(PAR_CORE_DLL,89u,72u);ui_sync_patrol();return 0;}
         if(id==244u){ui_core_set_u32(73u,1u);ui_sync_patrol();return 0;}
@@ -1571,7 +1683,8 @@ static BOOL ui_create(HWND game) {
     g_ui_sidebar_chests=ui_button(g_parallel_ui_hwnd,"CHESTS",18,250,144,40,241u,FALSE);
     g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON",18,296,144,40,228u,FALSE);
     g_ui_tabs[4]=ui_button(g_parallel_ui_hwnd,"PATROL",18,342,144,40,231u,FALSE);
-    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",18,388,144,40,203u,FALSE);
+    g_ui_tabs[5]=ui_button(g_parallel_ui_hwnd,"FOLLOW",18,388,144,40,232u,FALSE);
+    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",18,434,144,40,203u,FALSE);
 
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
         "ESP / PLAYERS",36,137,670,37,TRUE));
@@ -1809,6 +1922,43 @@ static BOOL ui_create(HWND game) {
         "Route files: PatrolRoute_1/2/3.w112 in the game folder. Patrol starts OFF after launch.",
         46,593,665,32,FALSE));
 
+
+    ui_add_to_page(UI_TAB_FOLLOW,ui_label(g_parallel_ui_hwnd,
+        "FOLLOW / MASTER ASSIST",36,137,665,40,TRUE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_label(g_parallel_ui_hwnd,
+        "Cross-process link. Follower attacks only a target already tagged by this channel's Master.",
+        42,181,665,34,FALSE));
+    g_ui_follow_off=ui_button(g_parallel_ui_hwnd,"OFF",46,226,205,38,255u,TRUE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_off);
+    g_ui_follow_master=ui_button(g_parallel_ui_hwnd,"MASTER",269,226,205,38,256u,TRUE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_master);
+    g_ui_follow_follower=ui_button(g_parallel_ui_hwnd,"FOLLOWER",492,226,219,38,257u,TRUE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_follower);
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,
+        "CHANNEL 1 -> 2 -> 3 -> 4",46,274,665,36,258u,FALSE));
+    g_ui_follow_assist=ui_button(g_parallel_ui_hwnd,"ASSIST TAGGED",46,318,205,36,259u,TRUE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_assist);
+    g_ui_follow_lazy=ui_button(g_parallel_ui_hwnd,"LAZYSCRIPT",269,318,205,36,260u,TRUE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_lazy);
+    g_ui_follow_teleport=ui_button(g_parallel_ui_hwnd,"TELEPORT CATCH-UP",492,318,219,36,261u,TRUE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_teleport);
+    g_ui_follow_state=ui_label(g_parallel_ui_hwnd,"",46,364,665,28,FALSE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_state);
+    g_ui_follow_link=ui_label(g_parallel_ui_hwnd,"",46,397,665,28,FALSE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_link);
+    g_ui_follow_target=ui_label(g_parallel_ui_hwnd,"",46,430,665,28,FALSE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_target);
+    g_ui_follow_config=ui_label(g_parallel_ui_hwnd,"",46,463,665,28,FALSE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_config);
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"DIST -",46,500,150,34,262u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"DIST +",210,500,150,34,263u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"TELE -",374,500,150,34,264u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"TELE +",538,500,173,34,265u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"SIDE -",46,542,314,34,266u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"SIDE +",374,542,337,34,267u,FALSE));
+    g_ui_follow_stats=ui_label(g_parallel_ui_hwnd,"",46,585,665,32,FALSE);
+    ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_stats);
+
     /* The detailed counters occupy their own view: no overlapping controls,
        no scroll subclass, no changes to Insert, ESP hook or settings parents. */
     ui_add_to_page(UI_TAB_REAR,ui_label(g_parallel_ui_hwnd,
@@ -1876,6 +2026,7 @@ static void parallel_gui_tick(void) {
         } else if(g_ui_current_tab==UI_TAB_REAR)ui_sync_rear();
         else if(g_ui_current_tab==UI_TAB_SUMMON)ui_sync_summon();
         else if(g_ui_current_tab==UI_TAB_PATROL)ui_sync_patrol();
+        else if(g_ui_current_tab==UI_TAB_FOLLOW)ui_sync_follow();
         else if(g_ui_current_tab==UI_TAB_ESP)ui_sync_wsg();
         if(g_ui_gather_open)ui_sync_gather();
     }
@@ -1889,8 +2040,8 @@ static void parallel_gui_destroy(void) {
         DestroyWindow(g_parallel_ui_hwnd);
     }
     g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
-    for(page=0u;page<6u;++page) {
-        if(page<5u)g_ui_tabs[page]=NULL;
+    for(page=0u;page<7u;++page) {
+        if(page<6u)g_ui_tabs[page]=NULL;
         g_ui_page_count[page]=0u;
     }
     for(page=0u;page<5u;++page)g_ui_checks[page]=NULL;
@@ -1907,6 +2058,9 @@ static void parallel_gui_destroy(void) {
     g_ui_summon_antiafk_state=NULL;
     g_ui_patrol_check=NULL;g_ui_patrol_record_check=NULL;
     g_ui_patrol_route=NULL;g_ui_patrol_config=NULL;g_ui_patrol_stats=NULL;g_ui_patrol_state=NULL;
+    g_ui_follow_off=NULL;g_ui_follow_master=NULL;g_ui_follow_follower=NULL;
+    g_ui_follow_assist=NULL;g_ui_follow_lazy=NULL;g_ui_follow_teleport=NULL;
+    g_ui_follow_state=NULL;g_ui_follow_link=NULL;g_ui_follow_target=NULL;g_ui_follow_config=NULL;g_ui_follow_stats=NULL;
     for(page=0u;page<40u;++page){g_ui_gather_controls[page]=NULL;g_ui_gather_control_pages[page]=0u;}
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;

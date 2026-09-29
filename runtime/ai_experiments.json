@@ -158,6 +158,31 @@
       "tests": [],
       "package": null,
       "notes": "Native 5875 CTM waypoint patrol with three persistent route slots, GUI recording/save/clear, correlated lateral randomization, stuck recovery, combat/cast/PP arbitration, and AutoPP pause while recording. Feature branch is based on current parallel; in-game CTM/server behavior remains unverified until candidate test."
+    },
+    {
+      "id": "follow-master-assist-5875",
+      "branch": "feature/follow-master",
+      "modules": [
+        "MovementCore",
+        "WoWPlayerESP",
+        "LazyScript"
+      ],
+      "dependencies": [
+        "parallel-rogue",
+        "patrol-route-5875"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_Follow_N named shared memory",
+        "verified native target-by-GUID 0x00489A40",
+        "FrameScript_Execute 0x00704CD0 + Vanilla UnitIsTappedByPlayer",
+        "native CTM 0x00611130 and existing MovementCore heartbeat injector"
+      ],
+      "status": "in_progress",
+      "observed_head": "44e18e37e5ebdc8f7223c3e9cd5917383d298dd5",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "MASTER publishes position/facing/zone/selected GUID and master-owned tap state. FOLLOWER uses CTM, jump/distance catch-up teleport, exact GUID targeting and a dedicated LazyScript W112AssistPulse with autoTarget suppressed. Follower suspends AutoPP/Gather. Role is transient and PATROL/FOLLOW are mutually exclusive. In-game shared-memory, tag and server teleport behavior require candidate test."
     }
   ]
 }

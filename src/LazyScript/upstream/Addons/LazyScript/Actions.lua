@@ -2214,6 +2214,24 @@ function lazyScript.TryActions(actionLines, doNothing)
 	return nil
 end
 
+
+-- Native FOLLOW/ASSIST bridge entrypoint. The native layer authorizes one
+-- exact Master-tagged GUID before setting W112_FOLLOW_ASSIST_ALLOWED=1.
+-- Never auto-target from this path: if the target vanished between native
+-- validation and Lua execution, do nothing instead of selecting another mob.
+function lazyScript.W112AssistPulse()
+	if W112_FOLLOW_ASSIST_ALLOWED ~= 1 then return false end
+	if not lazyScript.perPlayerConf or not lazyScript.perPlayerConf.defaultForm then return false end
+	if not UnitExists("target") or UnitIsDead("target") or UnitIsPlayer("target") then return false end
+	local actions = lazyScript.FindParsedForm(lazyScript.perPlayerConf.defaultForm, false)
+	if not actions then return false end
+	local oldAutoTarget = lazyScript.perPlayerConf.autoTarget
+	lazyScript.perPlayerConf.autoTarget = false
+	lazyScript.TryActions(actions, false)
+	lazyScript.perPlayerConf.autoTarget = oldAutoTarget
+	return true
+end
+
 function lazyScript.TryActionsOnly(actionLines, doNothing)
 	if (actionLines) then
 		for _, actionLine in ipairs(actionLines) do

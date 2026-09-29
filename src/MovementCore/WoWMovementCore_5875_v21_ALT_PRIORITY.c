@@ -34,6 +34,10 @@ __declspec(dllimport) DWORD __stdcall GetCurrentProcessId(void);
 __declspec(dllimport) DWORD __stdcall GetWindowThreadProcessId(HWND,DWORD*);
 __declspec(dllimport) BOOL __stdcall ReadFile(HANDLE,LPVOID,DWORD,DWORD*,LPVOID);
 __declspec(dllimport) BOOL __stdcall DeleteFileA(const char*);
+__declspec(dllimport) HANDLE __stdcall CreateFileMappingA(HANDLE,LPVOID,DWORD,DWORD,DWORD,const char*);
+__declspec(dllimport) LPVOID __stdcall MapViewOfFile(HANDLE,DWORD,DWORD,DWORD,DWORD);
+__declspec(dllimport) BOOL __stdcall UnmapViewOfFile(const void*);
+__declspec(dllimport) LONG __stdcall InterlockedIncrement(volatile LONG*);
 /* windows.h is intentionally not included in this CRT-light source. */
 #define W112_VK_LCONTROL 0xA2u
 
@@ -354,11 +358,64 @@ static DWORD g_patrolStuckSequence=0u,g_patrolSeed=0x51A2B3C4u;
 static float g_patrolLastProgressD2=0.0f;
 static void Patrol_Tick(BYTE *p,DWORD now);
 
+/* Cross-process MASTER/FOLLOWER bridge. One shared-memory channel can have
+   one publishing Master and any number of readers. No party/raid UnitID is
+   required. Master is the only process that decides tap ownership. */
+#define W112_FOLLOW_ROLE_OFF          0u
+#define W112_FOLLOW_ROLE_MASTER       1u
+#define W112_FOLLOW_ROLE_FOLLOWER     2u
+#define W112_FOLLOW_MAGIC             0x314C4F46u /* "FOL1" */
+#define W112_FOLLOW_VERSION           1u
+#define W112_FOLLOW_PAGE_READWRITE    0x00000004u
+#define W112_FOLLOW_MAP_ALL_ACCESS    0x000F001Fu
+#define W112_FOLLOW_HEARTBEAT_MAX_MS  650u
+#define W112_FOLLOW_MASTER_LUA_MS      80u
+#define W112_FOLLOW_ZONE_LUA_MS       500u
+#define W112_FOLLOW_CTM_REFRESH_MS    350u
+#define W112_FOLLOW_LAZY_PULSE_MS      80u
+#define W112_FOLLOW_TELE_COOLDOWN_MS  450u
+#define W112_FOLLOW_MASTER_JUMP_D2     64.0f
+#define W112_FOLLOW_TARGET_GUID_FN 0x00489A40u
+
+typedef struct W112_FollowShared {
+    volatile LONG seq;
+    DWORD magic,version,owner_pid,tick,zone_hash,world_ready;
+    float x,y,z,o;
+    DWORD target_lo,target_hi,target_tagged;
+} W112_FollowShared;
+typedef struct W112_FollowSnapshot {
+    DWORD owner_pid,tick,zone_hash,world_ready,target_lo,target_hi,target_tagged;
+    float x,y,z,o;
+} W112_FollowSnapshot;
+typedef void (__fastcall *W112_FollowTargetGuidFn)(unsigned long long*);
+
+static volatile DWORD g_followRole=0u,g_followChannel=1u;
+static volatile DWORD g_followAssistEnabled=1u,g_followLazyEnabled=1u,g_followTeleportEnabled=1u;
+static volatile DWORD g_followDistance100=350u,g_followTeleportDistance100=1400u;
+static volatile LONG g_followSideOffset100=0;
+static volatile DWORD g_followHeartbeatAge=0u,g_followDistanceLive100=0u;
+static volatile DWORD g_followMasterTagged=0u,g_followTargetResolved=0u;
+static volatile DWORD g_followRotationPulses=0u,g_followTargetsAssisted=0u,g_followTeleports=0u;
+static volatile DWORD g_followState=0u,g_followMasterPid=0u,g_followZoneMatch=0u,g_followLinkReady=0u,g_followLazyReady=0u;
+static HANDLE g_followMapHandle=0;
+static W112_FollowShared *g_followShared=0;
+static volatile DWORD g_followMoving=0u,g_followHadAssist=0u;
+static DWORD g_followLastCtm=0u,g_followLastTele=0u,g_followLastLazy=0u,g_followLastMasterLua=0u,g_followLastZoneLua=0u;
+static DWORD g_followLocalZoneHash=0u,g_followMasterZoneHash=0u;
+static DWORD g_followLastAssistLo=0u,g_followLastAssistHi=0u;
+static DWORD g_followLastMasterTick=0u,g_followLastMasterPid=0u;
+static float g_followLastMasterX=0.0f,g_followLastMasterY=0.0f,g_followLastMasterZ=0.0f;
+static void Follow_Tick(BYTE *p,DWORD now);
+static void Follow_CloseMap(void);
+static void Follow_SetRole(DWORD role,BYTE *p,DWORD now);
+
+
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
     return g_loginGuardReady&&g_autoPPEnabled&&Ptr(p)&&
            GatherHasStealth(p)&&!Combat(p)&&!g_planeEnabled&&
-           !g_patrolRecording&&!g_ppLowHpHold&&g_ppRecoveryPhase<2u;
+           !g_patrolRecording&&g_followRole!=W112_FOLLOW_ROLE_FOLLOWER&&
+           !g_ppLowHpHold&&g_ppRecoveryPhase<2u;
 }
 static DWORD W112_PPGuard_Allow(DWORD lo,DWORD hi,DWORD now)
 {
@@ -403,6 +460,7 @@ static volatile DWORD g_abCapBlockMovementCurrent=0u;
 #define COORD_MANUAL_PENDING 0x20u
 #define COORD_STEP_MOVE 0x40u
 #define COORD_PATROL 0x80u
+#define COORD_FOLLOW 0x100u
 static volatile DWORD g_coordRearUntil=0u;
 static void W112_CancelTeleForBlink(void); /* defined with E pending state below */
 /* A short rear lease gates only competing synthetic movement transformations. */
@@ -427,6 +485,7 @@ __declspec(dllexport) DWORD __stdcall MovementCore_CoordFlags(void){
  if(g_altPriorityPendingUntil)flags|=COORD_MANUAL_PENDING;
  if(g_stepMoveInjecting||g_stepActive)flags|=COORD_STEP_MOVE;
  if(g_patrolEnabled||g_patrolMoving||g_patrolRecording)flags|=COORD_PATROL;
+ if(g_followRole!=W112_FOLLOW_ROLE_OFF||g_followMoving)flags|=COORD_FOLLOW;
  return flags;
 }
 __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell){
@@ -1789,7 +1848,8 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
         if(!g_gatherReadyChat){g_gatherReadyChat=1u;DebugChat(g_ppChainOk?g_chatReady:g_chatChainBad);if(g_ppChainOk){DebugChat(g_autoPPEnabled?g_chatPPOn:g_chatPPOff);DebugChat(g_autoOpenEnabled?g_chatOpenOn:g_chatOpenOff);}}
         TrackChestNativeTick(p);
         TrackChestTick(p,now);
-        if(!g_patrolRecording&&!g_ppLowHpHold&&!g_telePending&&!CoordRearOwned()&&
+        if(!g_patrolRecording&&g_followRole!=W112_FOLLOW_ROLE_FOLLOWER&&
+           !g_ppLowHpHold&&!g_telePending&&!CoordRearOwned()&&
            (!g_abCapGuardActive||g_gatherActive||g_gatherLootWait)){
             DWORD autoOpenWasEnabled=g_autoOpenEnabled;
             if(autoOpenWasEnabled&&W112_AutoOpenBusy(p)){
@@ -1825,6 +1885,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
             AltPriority_Start(now);
         }
     }
+    Follow_Tick(p,now);
     Patrol_Tick(p,now);
     if(g_mode==MODE_OFF||g_abCapGuardActive||g_telePending)return;
     /* A physical Blink has the existing rear lease: do not inject an
@@ -1923,6 +1984,11 @@ static const W112_ControlEnumOptionV1 g_modeOptions[]={
     {MODE_LOCAL_STRONG,"CTRL Strong"},
     {MODE_PURSUIT,"F10 Pursuit"},
     {MODE_INSTANCE_UNREACHABLE,"Instance"}
+};
+static const W112_ControlEnumOptionV1 g_followRoleOptions[]={
+    {W112_FOLLOW_ROLE_OFF,"Off"},
+    {W112_FOLLOW_ROLE_MASTER,"Master"},
+    {W112_FOLLOW_ROLE_FOLLOWER,"Follower"}
 };
 /* GUI checkbox ON means ignore the entire mining-node family. */
 
@@ -2240,6 +2306,334 @@ static void Patrol_Tick(BYTE *p,DWORD now)
     }else g_patrolState=3u;
 }
 
+
+/* ------------------------- MASTER / FOLLOW ------------------------- */
+static const char *Follow_ChannelName(void)
+{
+    static const char *names[4]={
+        "Local\\WoW112_Follow_1","Local\\WoW112_Follow_2",
+        "Local\\WoW112_Follow_3","Local\\WoW112_Follow_4"
+    };
+    DWORD c=g_followChannel;
+    if(c<1u||c>4u)c=1u;
+    return names[c-1u];
+}
+static DWORD Follow_HashText(const char *s)
+{
+    DWORD h=2166136261u;
+    if(!s||!*s)return 0u;
+    while(*s){h^=(BYTE)*s++;h*=16777619u;}
+    return h?h:1u;
+}
+static void Follow_CloseMap(void)
+{
+    if(g_followShared){UnmapViewOfFile(g_followShared);g_followShared=0;}
+    if(g_followMapHandle){if(CH())CH()(g_followMapHandle);g_followMapHandle=0;}
+    g_followLinkReady=0u;
+}
+static DWORD Follow_OpenMap(void)
+{
+    if(g_followShared&&g_followMapHandle)return 1u;
+    g_followMapHandle=CreateFileMappingA(INVALID_HANDLE_VALUE,0,
+        W112_FOLLOW_PAGE_READWRITE,0u,(DWORD)sizeof(W112_FollowShared),
+        Follow_ChannelName());
+    if(!g_followMapHandle)return 0u;
+    g_followShared=(W112_FollowShared*)MapViewOfFile(g_followMapHandle,
+        W112_FOLLOW_MAP_ALL_ACCESS,0u,0u,(DWORD)sizeof(W112_FollowShared));
+    if(!g_followShared){if(CH())CH()(g_followMapHandle);g_followMapHandle=0;return 0u;}
+    return 1u;
+}
+static DWORD Follow_QueryMasterLua(DWORD *tagged,DWORD *zone)
+{
+    static const char script[]=
+      "W112_FOLLOW_SYNC=((UnitExists('target') and not UnitIsDead('target') and "
+      "UnitIsTappedByPlayer('target')) and '1' or '0')..'|'.."
+      "((GetRealZoneText and GetRealZoneText()) or '')";
+    W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
+    const char *raw;
+    if(tagged)*tagged=0u;if(zone)*zone=0u;
+    if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 0u;
+    DebugChat(script);
+    raw=getText("W112_FOLLOW_SYNC",-1,0u);
+    if(!raw||!raw[0]||raw[1]!='|')return 0u;
+    if(tagged)*tagged=raw[0]=='1'?1u:0u;
+    if(zone)*zone=Follow_HashText(raw+2);
+    return zone&&*zone?1u:0u;
+}
+static DWORD Follow_QueryLocalZone(DWORD *zone)
+{
+    static const char script[]=
+      "W112_FOLLOW_ZONE=((GetRealZoneText and GetRealZoneText()) or '')";
+    W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
+    const char *raw;
+    if(zone)*zone=0u;
+    if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 0u;
+    DebugChat(script);
+    raw=getText("W112_FOLLOW_ZONE",-1,0u);
+    if(!raw||!*raw)return 0u;
+    if(zone)*zone=Follow_HashText(raw);
+    return zone&&*zone?1u:0u;
+}
+static DWORD Follow_TargetValid(BYTE *t)
+{
+    DWORD *d;
+    if(!Ptr(t))return 0u;
+    d=*(DWORD**)(t+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!Ptr(d))return 0u;
+    if(!(d[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_UNIT)||
+       (d[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_PLAYER)||
+       d[UNIT_FIELD_HEALTH_INDEX]==0u)return 0u;
+    return 1u;
+}
+static DWORD Follow_TargetAbiOk(void)
+{
+    static volatile DWORD state=0u;
+    static const BYTE sig[8]={0x56u,0x8Bu,0xF1u,0x8Bu,0x46u,0x04u,0x8Bu,0x0Eu};
+    DWORD i;
+    if(state)return state==1u;
+    for(i=0u;i<8u;++i)if(((BYTE*)W112_FOLLOW_TARGET_GUID_FN)[i]!=sig[i]){
+        state=2u;return 0u;
+    }
+    state=1u;return 1u;
+}
+static void Follow_TargetGuid(DWORD lo,DWORD hi)
+{
+    unsigned long long guid;
+    if((lo|hi)==0u||!Follow_TargetAbiOk())return;
+    guid=((unsigned long long)hi<<32)|(unsigned long long)lo;
+    ((W112_FollowTargetGuidFn)W112_FOLLOW_TARGET_GUID_FN)(&guid);
+}
+static void Follow_StopAssist(void)
+{
+    static const char script[]=
+      "W112_FOLLOW_ASSIST_ALLOWED=0;"
+      "if SpellStopCasting then SpellStopCasting() end;"
+      "if ClearTarget then ClearTarget() end";
+    if(g_followHadAssist)DebugChat(script);
+    g_followHadAssist=0u;g_followTargetResolved=0u;
+    g_followLastAssistLo=g_followLastAssistHi=0u;
+}
+static void Follow_LazyPulse(DWORD now)
+{
+    static const char script[]=
+      "W112_FOLLOW_LS_READY=(lazyScript and lazyScript.W112AssistPulse) and '1' or '0';"
+      "if W112_FOLLOW_LS_READY=='1' then "
+      "W112_FOLLOW_ASSIST_ALLOWED=1;lazyScript.W112AssistPulse();W112_FOLLOW_ASSIST_ALLOWED=0 end";
+    W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
+    const char *raw;
+    if(g_followLastLazy&&(DWORD)(now-g_followLastLazy)<W112_FOLLOW_LAZY_PULSE_MS)return;
+    g_followLastLazy=now;
+    DebugChat(script);
+    raw=getText("W112_FOLLOW_LS_READY",-1,0u);
+    g_followLazyReady=(raw&&raw[0]=='1'&&raw[1]==0)?1u:0u;
+    if(g_followLazyReady)++g_followRotationPulses;
+}
+static DWORD Follow_Ctm(BYTE *p,DWORD action,float x,float y,float z)
+{
+    unsigned long long guid=0ull;float pos[3];
+    if(!Ptr(p)||!ValidWorldPos(x,y,z))return 0u;
+    pos[0]=x;pos[1]=y;pos[2]=z;
+    ((W112_PatrolCtmFn)(DWORD)W112_PATROL_CTM_FN)(p,action,&guid,pos,0.5f);
+    return 1u;
+}
+static void Follow_StopMovement(BYTE *p)
+{
+    if(g_followMoving&&Ptr(p))
+        Follow_Ctm(p,W112_PATROL_CTM_STOP,
+            *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),*(float*)(p+OFF_UNIT_Z));
+    g_followMoving=0u;g_followLastCtm=0u;
+}
+static DWORD Follow_TeleportPulse(BYTE *p,float x,float y,float z,float o,DWORD now)
+{
+    float ox,oy,oz,oo;SendMove_t sm=(SendMove_t)ADDR_SEND_MOVE;
+    if(!Ptr(p)||!ValidWorldPos(x,y,z)||LongPPActive()||LongPPInjecting()||
+       (*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return 0u;
+    ox=*(float*)(p+OFF_UNIT_X);oy=*(float*)(p+OFF_UNIT_Y);
+    oz=*(float*)(p+OFF_UNIT_Z);oo=*(float*)(p+OFF_UNIT_O);
+    g_injecting=1u;
+    *(float*)(p+OFF_UNIT_X)=x;*(float*)(p+OFF_UNIT_Y)=y;
+    *(float*)(p+OFF_UNIT_Z)=z;*(float*)(p+OFF_UNIT_O)=o;
+    sm(p,MSG_MOVE_HEARTBEAT);sm(p,MSG_MOVE_HEARTBEAT);g_hb+=2u;
+    *(float*)(p+OFF_UNIT_X)=ox;*(float*)(p+OFF_UNIT_Y)=oy;
+    *(float*)(p+OFF_UNIT_Z)=oz;*(float*)(p+OFF_UNIT_O)=oo;
+    g_injecting=0u;
+    g_followLastTele=now;++g_followTeleports;
+    return 1u;
+}
+static void Follow_MasterPublishDown(DWORD now)
+{
+    W112_FollowShared *s=g_followShared;
+    if(!s||s->magic!=W112_FOLLOW_MAGIC||s->owner_pid!=GetCurrentProcessId())return;
+    InterlockedIncrement(&s->seq);
+    s->tick=now;s->world_ready=0u;s->target_tagged=0u;
+    InterlockedIncrement(&s->seq);
+}
+static void Follow_SetChannel(DWORD channel,DWORD now)
+{
+    if(channel<1u||channel>4u||channel==g_followChannel)return;
+    if(g_followRole==W112_FOLLOW_ROLE_MASTER)Follow_MasterPublishDown(now);
+    Follow_CloseMap();g_followChannel=channel;g_followState=0u;
+    g_followMasterPid=0u;g_followHeartbeatAge=0u;g_followZoneMatch=0u;
+}
+static void Follow_SetRole(DWORD role,BYTE *p,DWORD now)
+{
+    if(role>W112_FOLLOW_ROLE_FOLLOWER)role=W112_FOLLOW_ROLE_OFF;
+    if(role==g_followRole)return;
+    if(g_followRole==W112_FOLLOW_ROLE_MASTER)Follow_MasterPublishDown(now);
+    Follow_StopMovement(p);Follow_StopAssist();Follow_CloseMap();
+    g_followRole=role;g_followState=0u;g_followMasterPid=0u;
+    g_followHeartbeatAge=0u;g_followDistanceLive100=0u;
+    g_followMasterTagged=0u;g_followZoneMatch=0u;g_followLazyReady=0u;
+    g_followLastMasterTick=0u;g_followLastMasterPid=0u;
+    if(role!=W112_FOLLOW_ROLE_OFF){
+        g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
+    }
+}
+static void Follow_MasterPublish(BYTE *p,DWORD now)
+{
+    W112_FollowShared *s;DWORD tap=0u,zone=g_followMasterZoneHash;
+    DWORD lo=0u,hi=0u,tagged=0u;BYTE *t=0;
+    if(!Follow_OpenMap()){g_followState=2u;return;}
+    s=g_followShared;g_followLinkReady=1u;g_followMasterPid=GetCurrentProcessId();
+    if(!g_followLastMasterLua||(DWORD)(now-g_followLastMasterLua)>=W112_FOLLOW_MASTER_LUA_MS){
+        g_followLastMasterLua=now;
+        if(Follow_QueryMasterLua(&tap,&zone))g_followMasterZoneHash=zone;
+        else tap=0u;
+    }else{
+        /* Tag is fail-closed between Lua samples unless the same target remains
+           authoritatively tagged in the last published frame. */
+        tap=(s->magic==W112_FOLLOW_MAGIC&&s->owner_pid==GetCurrentProcessId())?s->target_tagged:0u;
+    }
+    if(Ptr(p)&&g_loginGuardReady){
+        lo=*(DWORD*)ADDR_SELECTED_GUID_LOW;hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;
+        t=ObjByGuid(lo,hi);
+        if((lo|hi)&&Follow_TargetValid(t)&&tap)tagged=1u;
+    }
+    InterlockedIncrement(&s->seq);
+    s->magic=W112_FOLLOW_MAGIC;s->version=W112_FOLLOW_VERSION;
+    s->owner_pid=GetCurrentProcessId();s->tick=now;s->zone_hash=g_followMasterZoneHash;
+    s->world_ready=(Ptr(p)&&g_loginGuardReady&&g_followMasterZoneHash)?1u:0u;
+    if(Ptr(p)){
+        s->x=*(float*)(p+OFF_UNIT_X);s->y=*(float*)(p+OFF_UNIT_Y);
+        s->z=*(float*)(p+OFF_UNIT_Z);s->o=*(float*)(p+OFF_UNIT_O);
+    }
+    s->target_lo=lo;s->target_hi=hi;s->target_tagged=tagged;
+    InterlockedIncrement(&s->seq);
+    g_followMasterTagged=tagged;g_followState=1u;g_followHeartbeatAge=0u;
+    g_followZoneMatch=1u;g_followDistanceLive100=0u;
+}
+static DWORD Follow_ReadSnapshot(W112_FollowSnapshot *o,DWORD now)
+{
+    W112_FollowShared *s;LONG a,b;
+    if(!o||!Follow_OpenMap())return 0u;
+    s=g_followShared;a=s->seq;
+    if(a&1)return 0u;
+    o->owner_pid=s->owner_pid;o->tick=s->tick;o->zone_hash=s->zone_hash;
+    o->world_ready=s->world_ready;o->x=s->x;o->y=s->y;o->z=s->z;o->o=s->o;
+    o->target_lo=s->target_lo;o->target_hi=s->target_hi;o->target_tagged=s->target_tagged;
+    b=s->seq;
+    if(a!=b||(b&1)||s->magic!=W112_FOLLOW_MAGIC||
+       s->version!=W112_FOLLOW_VERSION||o->owner_pid==GetCurrentProcessId()||
+       !o->world_ready)return 0u;
+    g_followHeartbeatAge=(DWORD)(now-o->tick);
+    if(g_followHeartbeatAge>W112_FOLLOW_HEARTBEAT_MAX_MS)return 0u;
+    return 1u;
+}
+static void Follow_FollowerTick(BYTE *p,DWORD now)
+{
+    W112_FollowSnapshot s;DWORD flags,jumped=0u;
+    BYTE *target=0;DWORD *d=0;
+    float px,py,pz,dx,dy,dz,d2,sn=0.0f,cs=1.0f,back,side,tx,ty,tz;
+    if(!Ptr(p)){g_followState=2u;g_followLinkReady=0u;return;}
+    if(!g_followLastZoneLua||(DWORD)(now-g_followLastZoneLua)>=W112_FOLLOW_ZONE_LUA_MS){
+        g_followLastZoneLua=now;
+        Follow_QueryLocalZone(&g_followLocalZoneHash);
+    }
+    if(!Follow_ReadSnapshot(&s,now)){
+        Follow_StopMovement(p);Follow_StopAssist();
+        g_followLinkReady=0u;g_followState=9u;g_followMasterPid=0u;
+        g_followMasterTagged=0u;g_followZoneMatch=0u;return;
+    }
+    g_followLinkReady=1u;g_followMasterPid=s.owner_pid;g_followMasterTagged=s.target_tagged;
+    g_followZoneMatch=(g_followLocalZoneHash&&s.zone_hash&&g_followLocalZoneHash==s.zone_hash)?1u:0u;
+    if(!g_followZoneMatch){
+        Follow_StopMovement(p);Follow_StopAssist();g_followState=7u;return;
+    }
+    if(g_followLastMasterTick&&g_followLastMasterPid==s.owner_pid&&s.tick!=g_followLastMasterTick&&
+       (DWORD)(s.tick-g_followLastMasterTick)<=500u&&
+       Patrol_D2(s.x,s.y,s.z,g_followLastMasterX,g_followLastMasterY,g_followLastMasterZ)>W112_FOLLOW_MASTER_JUMP_D2)
+        jumped=1u;
+    g_followLastMasterTick=s.tick;g_followLastMasterPid=s.owner_pid;
+    g_followLastMasterX=s.x;g_followLastMasterY=s.y;g_followLastMasterZ=s.z;
+
+    px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);
+    dx=px-s.x;dy=py-s.y;dz=pz-s.z;d2=dx*dx+dy*dy+dz*dz;
+    g_followDistanceLive100=(DWORD)(Patrol_Sqrt(d2)*100.0f);
+
+    flags=MovementCore_CoordFlags()&0x7Fu;
+    if(flags){
+        Follow_StopMovement(p);g_followState=6u;
+    }else{
+        back=(float)g_followDistance100/100.0f;
+        side=(float)g_followSideOffset100/100.0f;
+        SinCosF(s.o,&sn,&cs);
+        tx=s.x-cs*back-sn*side;
+        ty=s.y-sn*back+cs*side;
+        tz=s.z;
+        if(g_followTeleportEnabled&&(!g_followLastTele||(DWORD)(now-g_followLastTele)>=W112_FOLLOW_TELE_COOLDOWN_MS)&&
+           (jumped||d2>((float)g_followTeleportDistance100/100.0f)*((float)g_followTeleportDistance100/100.0f))){
+            Follow_StopMovement(p);
+            if(Follow_TeleportPulse(p,tx,ty,tz,s.o,now))g_followState=5u;
+        }else{
+            float td2=Patrol_D2(px,py,pz,tx,ty,tz);
+            if(td2>1.44f){
+                if(!g_followLastCtm||(DWORD)(now-g_followLastCtm)>=W112_FOLLOW_CTM_REFRESH_MS){
+                    if(Follow_Ctm(p,W112_PATROL_CTM_WALK,tx,ty,tz)){
+                        g_followMoving=1u;g_followLastCtm=now;
+                    }
+                }
+                g_followState=3u;
+            }else{
+                Follow_StopMovement(p);g_followState=4u;
+            }
+        }
+    }
+
+    if(!g_followAssistEnabled||!s.target_tagged||(s.target_lo|s.target_hi)==0u){
+        Follow_StopAssist();g_followTargetResolved=0u;return;
+    }
+    target=ObjByGuid(s.target_lo,s.target_hi);
+    if(!Follow_TargetValid(target)){
+        Follow_StopAssist();g_followTargetResolved=0u;return;
+    }
+    d=*(DWORD**)(target+OFF_OBJ_DESCRIPTOR_PTR);
+    if(!Ptr(d)||(d[OBJECT_FIELD_TYPE_INDEX]&TYPEMASK_PLAYER)){
+        Follow_StopAssist();return;
+    }
+    if(g_followHadAssist&&(g_followLastAssistLo!=s.target_lo||g_followLastAssistHi!=s.target_hi))
+        Follow_StopAssist();
+    if(*(DWORD*)ADDR_SELECTED_GUID_LOW!=s.target_lo||*(DWORD*)ADDR_SELECTED_GUID_HIGH!=s.target_hi)
+        Follow_TargetGuid(s.target_lo,s.target_hi);
+    g_followTargetResolved=1u;
+    if(!g_followHadAssist||g_followLastAssistLo!=s.target_lo||g_followLastAssistHi!=s.target_hi){
+        g_followLastAssistLo=s.target_lo;g_followLastAssistHi=s.target_hi;
+        g_followHadAssist=1u;++g_followTargetsAssisted;
+    }
+    g_followState=8u;
+    if(g_followLazyEnabled)Follow_LazyPulse(now);
+}
+static void Follow_Tick(BYTE *p,DWORD now)
+{
+    if(g_followRole==W112_FOLLOW_ROLE_OFF)return;
+    if(g_patrolEnabled||g_patrolRecording){
+        g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
+    }
+    if(g_followRole==W112_FOLLOW_ROLE_MASTER){
+        Follow_StopMovement(p);Follow_StopAssist();Follow_MasterPublish(p,now);return;
+    }
+    Follow_FollowerTick(p,now);
+}
+
 static const struct {const char*key;const char*label;} g_miningBlacklistControls[]={
     {"skip_copper","Skip Copper Vein"},
     {"skip_tin","Skip Tin Vein"},
@@ -2261,7 +2655,7 @@ static const struct {const char*key;const char*label;} g_miningBlacklistControls
 static volatile DWORD g_miningBlacklistEnabled=1u;
 static volatile DWORD g_miningBlacklistSavedMask=0u;
 /* One provider owns Gather/Herb/AutoOpen/AutoChest; no competing hook DLL. */
-static W112_ControlSettingV1 g_controlSettings[89u];
+static W112_ControlSettingV1 g_controlSettings[109u];
 
 static void W112_MiningBlacklistApply(BYTE*p,DWORD now)
 {
@@ -2563,12 +2957,67 @@ static void init_control_descriptor(void)
         s=&g_controlSettings[87u];s->type=W112_CTL_BOOL;s->min_value.u32=0u;s->max_value.u32=1u;
         s=&g_controlSettings[88u];s->type=W112_CTL_BOOL;s->min_value.u32=0u;s->max_value.u32=1u;
     }
+
+    {
+        static const char* keys[20]={
+            "follow_role","follow_channel","follow_assist","follow_lazyscript",
+            "follow_teleport","follow_distance_x100","follow_teleport_distance_x100",
+            "follow_side_offset_x100","follow_heartbeat_age_ms","follow_distance_live_x100",
+            "follow_master_tagged","follow_target_resolved","follow_rotation_pulses",
+            "follow_targets_assisted","follow_teleports","follow_state","follow_master_pid",
+            "follow_zone_match","follow_link_ready","follow_lazy_ready"
+        };
+        static const char* labels[20]={
+            "Follow role","Follow channel","Assist master target","Use LazyScript rotation",
+            "Teleport catch-up","Follow distance x100 yd","Teleport distance x100 yd",
+            "Side offset x100 yd","Master heartbeat age ms","Distance to master x100 yd",
+            "Master target tagged by master","Master target resolved locally","LazyScript rotation pulses",
+            "Targets assisted","Catch-up teleports","Follow state","Master process id",
+            "Same zone","Shared link ready","LazyScript bridge ready"
+        };
+        for(i=0u;i<20u;++i){
+            s=&g_controlSettings[89u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
+            s->setting_id=90u+i;s->key=keys[i];s->label=labels[i];s->type=W112_CTL_INT;
+            s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;
+            s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;
+            s->enum_options=0;s->enum_option_count=0u;
+        }
+        s=&g_controlSettings[89u];s->type=W112_CTL_ENUM;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2;
+        s->flags=W112_CTL_LIVE;s->enum_options=g_followRoleOptions;s->enum_option_count=3u;
+        s=&g_controlSettings[90u];s->default_value.i32=1;s->min_value.i32=1;s->max_value.i32=4;s->flags=W112_CTL_LIVE;
+        for(i=91u;i<=93u;++i){s=&g_controlSettings[i];s->type=W112_CTL_BOOL;s->default_value.u32=1u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_LIVE;}
+        s=&g_controlSettings[94u];s->default_value.i32=350;s->min_value.i32=100;s->max_value.i32=1000;s->step.i32=50;s->flags=W112_CTL_LIVE;
+        s=&g_controlSettings[95u];s->default_value.i32=1400;s->min_value.i32=500;s->max_value.i32=5000;s->step.i32=100;s->flags=W112_CTL_LIVE;
+        s=&g_controlSettings[96u];s->default_value.i32=0;s->min_value.i32=-500;s->max_value.i32=500;s->step.i32=50;s->flags=W112_CTL_LIVE;
+        for(i=99u;i<=100u;++i){s=&g_controlSettings[i];s->type=W112_CTL_BOOL;s->min_value.u32=0u;s->max_value.u32=1u;}
+        for(i=106u;i<=108u;++i){s=&g_controlSettings[i];s->type=W112_CTL_BOOL;s->min_value.u32=0u;s->max_value.u32=1u;}
+    }
     g_controlDescriptorReady=1u;
 }
 
 static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1*out)
 {
     if(!out)return 0;
+    if(id==90u){out->i32=(w112_i32)g_followRole;return 1;}
+    if(id==91u){out->i32=(w112_i32)g_followChannel;return 1;}
+    if(id==92u){out->u32=g_followAssistEnabled?1u:0u;return 1;}
+    if(id==93u){out->u32=g_followLazyEnabled?1u:0u;return 1;}
+    if(id==94u){out->u32=g_followTeleportEnabled?1u:0u;return 1;}
+    if(id==95u){out->i32=(w112_i32)g_followDistance100;return 1;}
+    if(id==96u){out->i32=(w112_i32)g_followTeleportDistance100;return 1;}
+    if(id==97u){out->i32=(w112_i32)g_followSideOffset100;return 1;}
+    if(id==98u){out->i32=(w112_i32)g_followHeartbeatAge;return 1;}
+    if(id==99u){out->i32=(w112_i32)g_followDistanceLive100;return 1;}
+    if(id==100u){out->u32=g_followMasterTagged?1u:0u;return 1;}
+    if(id==101u){out->u32=g_followTargetResolved?1u:0u;return 1;}
+    if(id==102u){out->i32=(w112_i32)g_followRotationPulses;return 1;}
+    if(id==103u){out->i32=(w112_i32)g_followTargetsAssisted;return 1;}
+    if(id==104u){out->i32=(w112_i32)g_followTeleports;return 1;}
+    if(id==105u){out->i32=(w112_i32)g_followState;return 1;}
+    if(id==106u){out->i32=(w112_i32)g_followMasterPid;return 1;}
+    if(id==107u){out->u32=g_followZoneMatch?1u:0u;return 1;}
+    if(id==108u){out->u32=g_followLinkReady?1u:0u;return 1;}
+    if(id==109u){out->u32=g_followLazyReady?1u:0u;return 1;}
     if(id==71u){out->u32=g_patrolEnabled?1u:0u;return 1;}
     if(id==72u){out->u32=g_patrolRecording?1u:0u;return 1;}
     if(id==73u||id==74u){out->u32=0u;return 1;}
@@ -2658,10 +3107,23 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     if(id==76u){if(value->i32<0||value->i32>150)return 0;g_patrolRandomWidth100=(DWORD)value->i32;Patrol_PrepareLapOffsets(GT()?GT()():0u);return 1;}
     if(id==77u){if(value->i32<200||value->i32>1000)return 0;g_patrolSpacing100=(DWORD)value->i32;return 1;}
     if(id==78u){if(value->i32<1000||value->i32>8000)return 0;g_patrolStuckTimeout=(DWORD)value->i32;return 1;}
+    if(id==90u){
+        if(value->i32<0||value->i32>2)return 0;
+        Follow_SetRole((DWORD)value->i32,LocalPlayer(),GT()?GT()():0u);return 1;
+    }
+    if(id==91u){if(value->i32<1||value->i32>4)return 0;Follow_SetChannel((DWORD)value->i32,GT()?GT()():0u);return 1;}
+    if(id==95u){if(value->i32<100||value->i32>1000)return 0;g_followDistance100=(DWORD)value->i32;return 1;}
+    if(id==96u){if(value->i32<500||value->i32>5000)return 0;g_followTeleportDistance100=(DWORD)value->i32;return 1;}
+    if(id==97u){if(value->i32<-500||value->i32>500)return 0;g_followSideOffset100=(LONG)value->i32;return 1;}
     if(id!=46u&&value->u32>1u)return 0;
     now=GT()?GT()():0u;
     p=LocalPlayer();
+    if(id==92u){g_followAssistEnabled=value->u32?1u:0u;if(!g_followAssistEnabled)Follow_StopAssist();return 1;}
+    if(id==93u){g_followLazyEnabled=value->u32?1u:0u;if(!g_followLazyEnabled)g_followLazyReady=0u;return 1;}
+    if(id==94u){g_followTeleportEnabled=value->u32?1u:0u;return 1;}
     if(id==71u){
+        if(value->u32&&g_followRole!=W112_FOLLOW_ROLE_OFF)
+            Follow_SetRole(W112_FOLLOW_ROLE_OFF,p,now);
         g_patrolEnabled=value->u32?1u:0u;
         g_patrolRecording=0u;g_patrolNeedRejoin=1u;
         if(g_patrolEnabled&&!g_patrolRouteLoaded)g_patrolLoadPending=1u;
@@ -2784,7 +3246,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
 
 static const W112_ControlModuleV1 g_controlModule={
     W112_CONTROL_API_V1,(w112_u32)sizeof(W112_ControlModuleV1),
-    "movementcore","MovementCore",0x00130000u,89u,g_controlSettings,
+    "movementcore","MovementCore",0x00140000u,109u,g_controlSettings,
     movement_control_get,movement_control_set
 };
 
@@ -2798,7 +3260,7 @@ W112_CTL_EXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetMo
    active. A nonzero count does not prove server-side acceptance of the spoof. */
 __declspec(dllexport) DWORD __stdcall MovementCore_PPRearLiveRefreshes(void)
 {return g_ppRearLiveRefresh;}
-__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00130000u;}
+__declspec(dllexport) DWORD __stdcall MovementCore_GetVersion(void){return 0x00140000u;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetAltPriorityInstalled(void){return g_altPriorityInstalled;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetRearPriorityPackets(void){return g_rearPriorityDirectPackets;}
 __declspec(dllexport) DWORD __stdcall MovementCore_GetLoginGuardReady(void){return g_loginGuardReady;}
@@ -2838,6 +3300,8 @@ BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
         g_planeEnabled=0u;g_planeLastApplied=0u;
         g_planeRestorePending=0u;g_planeNotice=0u;
         g_patrolEnabled=0u;g_patrolRecording=0u;g_patrolMoving=0u;
+        Follow_MasterPublishDown(GT()?GT()():0u);
+        Follow_CloseMap();g_followRole=W112_FOLLOW_ROLE_OFF;g_followMoving=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);
     }
     return TRUE;
