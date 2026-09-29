@@ -38,6 +38,7 @@ __declspec(dllimport) HANDLE __stdcall CreateFileMappingA(HANDLE,LPVOID,DWORD,DW
 __declspec(dllimport) LPVOID __stdcall MapViewOfFile(HANDLE,DWORD,DWORD,DWORD,DWORD);
 __declspec(dllimport) BOOL __stdcall UnmapViewOfFile(const void*);
 __declspec(dllimport) LONG __stdcall InterlockedIncrement(volatile LONG*);
+__declspec(dllimport) LONG __stdcall InterlockedCompareExchange(volatile LONG*,LONG,LONG);
 /* windows.h is intentionally not included in this CRT-light source. */
 #define W112_VK_LCONTROL 0xA2u
 
@@ -369,6 +370,7 @@ static void Patrol_Tick(BYTE *p,DWORD now);
 #define W112_FOLLOW_PAGE_READWRITE    0x00000004u
 #define W112_FOLLOW_MAP_ALL_ACCESS    0x000F001Fu
 #define W112_FOLLOW_HEARTBEAT_MAX_MS  650u
+#define W112_FOLLOW_OWNER_STALE_MS    2000u
 #define W112_FOLLOW_MASTER_LUA_MS      80u
 #define W112_FOLLOW_ZONE_LUA_MS       500u
 #define W112_FOLLOW_CTM_REFRESH_MS    350u
@@ -390,6 +392,7 @@ typedef struct W112_FollowSnapshot {
 typedef void (__fastcall *W112_FollowTargetGuidFn)(unsigned long long*);
 
 static volatile DWORD g_followRole=0u,g_followChannel=1u;
+static volatile DWORD g_followRequestedRole=0u,g_followRequestedChannel=1u;
 static volatile DWORD g_followAssistEnabled=1u,g_followLazyEnabled=1u,g_followTeleportEnabled=1u;
 static volatile DWORD g_followDistance100=350u,g_followTeleportDistance100=1400u;
 static volatile LONG g_followSideOffset100=0;
@@ -2408,7 +2411,6 @@ static void Follow_StopAssist(void)
 {
     static const char script[]=
       "W112_FOLLOW_ASSIST_ALLOWED=0;"
-      "if SpellStopCasting then SpellStopCasting() end;"
       "if ClearTarget then ClearTarget() end";
     if(g_followHadAssist)DebugChat(script);
     g_followHadAssist=0u;g_followTargetResolved=0u;
@@ -2461,12 +2463,50 @@ static DWORD Follow_TeleportPulse(BYTE *p,float x,float y,float z,float o,DWORD 
     g_followLastTele=now;++g_followTeleports;
     return 1u;
 }
+static DWORD Follow_MasterClaim(W112_FollowShared *s,DWORD now)
+{
+    DWORD me,owner,age,valid,needInit=0u;
+    LONG prior;
+    if(!s)return 0u;
+    me=GetCurrentProcessId();owner=s->owner_pid;
+    valid=(s->magic==W112_FOLLOW_MAGIC&&s->version==W112_FOLLOW_VERSION)?1u:0u;
+    age=valid?(DWORD)(now-s->tick):0xFFFFFFFFu;
+
+    /* One live writer per channel. A stale/crashed owner may be replaced only
+       after its heartbeat expires. CAS prevents two replacement Masters from
+       both believing they own the same mapping. */
+    if(valid&&owner&&owner!=me&&age<=W112_FOLLOW_OWNER_STALE_MS){
+        g_followMasterPid=owner;return 0u;
+    }
+    if(owner!=me){
+        prior=InterlockedCompareExchange((volatile LONG*)&s->owner_pid,(LONG)me,(LONG)owner);
+        if((DWORD)prior!=owner&&(DWORD)prior!=me){
+            g_followMasterPid=(DWORD)prior;return 0u;
+        }
+        needInit=1u;
+    }else if(!valid||age>W112_FOLLOW_OWNER_STALE_MS||(s->seq&1))
+        needInit=1u;
+
+    if(needInit){
+        /* Normalize a mapping left odd by a crashed writer. The odd phase is
+           published before any field reset, so readers fail closed. */
+        s->seq=1;
+        s->magic=W112_FOLLOW_MAGIC;s->version=W112_FOLLOW_VERSION;
+        s->owner_pid=me;s->tick=now;s->zone_hash=0u;s->world_ready=0u;
+        s->x=s->y=s->z=s->o=0.0f;
+        s->target_lo=s->target_hi=s->target_tagged=0u;
+        InterlockedIncrement(&s->seq); /* 1 -> 2, stable even snapshot */
+    }
+    return 1u;
+}
 static void Follow_MasterPublishDown(DWORD now)
 {
     W112_FollowShared *s=g_followShared;
     if(!s||s->magic!=W112_FOLLOW_MAGIC||s->owner_pid!=GetCurrentProcessId())return;
+    if(s->seq&1)s->seq=0;
     InterlockedIncrement(&s->seq);
-    s->tick=now;s->world_ready=0u;s->target_tagged=0u;
+    s->tick=now;s->world_ready=0u;s->target_tagged=0u;s->target_lo=s->target_hi=0u;
+    s->owner_pid=0u; /* graceful release: next Master may claim immediately */
     InterlockedIncrement(&s->seq);
 }
 static void Follow_SetChannel(DWORD channel,DWORD now)
@@ -2491,12 +2531,24 @@ static void Follow_SetRole(DWORD role,BYTE *p,DWORD now)
         g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
     }
 }
+static void Follow_ApplyRequestedState(BYTE *p,DWORD now)
+{
+    DWORD channel=g_followRequestedChannel,role=g_followRequestedRole;
+    /* Called only from MovementCore's game timer. GUI setters never unmap,
+       target, execute FrameScript or touch the shared mapping directly. */
+    if(channel!=g_followChannel)Follow_SetChannel(channel,now);
+    if(role!=g_followRole)Follow_SetRole(role,p,now);
+}
 static void Follow_MasterPublish(BYTE *p,DWORD now)
 {
     W112_FollowShared *s;DWORD tap=0u,zone=g_followMasterZoneHash,sampled=0u;
     DWORD lo=0u,hi=0u,tagged=0u;BYTE *t=0;
-    if(!Follow_OpenMap()){g_followState=2u;return;}
-    s=g_followShared;g_followLinkReady=1u;g_followMasterPid=GetCurrentProcessId();
+    if(!Follow_OpenMap()){g_followState=2u;g_followLinkReady=0u;return;}
+    s=g_followShared;
+    if(!Follow_MasterClaim(s,now)){
+        g_followState=2u;g_followLinkReady=0u;g_followMasterTagged=0u;return;
+    }
+    g_followLinkReady=1u;g_followMasterPid=GetCurrentProcessId();
     if(Ptr(p)&&g_loginGuardReady){
         lo=*(DWORD*)ADDR_SELECTED_GUID_LOW;hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;
         t=ObjByGuid(lo,hi);
@@ -2616,6 +2668,12 @@ static void Follow_FollowerTick(BYTE *p,DWORD now)
         Follow_StopAssist();
     if(*(DWORD*)ADDR_SELECTED_GUID_LOW!=s.target_lo||*(DWORD*)ADDR_SELECTED_GUID_HIGH!=s.target_hi)
         Follow_TargetGuid(s.target_lo,s.target_hi);
+    if(*(DWORD*)ADDR_SELECTED_GUID_LOW!=s.target_lo||
+       *(DWORD*)ADDR_SELECTED_GUID_HIGH!=s.target_hi){
+        /* TargetGuid can fail transiently while the client object list changes.
+           Never run LazyScript against the previous/manual target. */
+        g_followTargetResolved=0u;g_followLazyReady=0u;return;
+    }
     g_followTargetResolved=1u;
     if(!g_followHadAssist||g_followLastAssistLo!=s.target_lo||g_followLastAssistHi!=s.target_hi){
         g_followLastAssistLo=s.target_lo;g_followLastAssistHi=s.target_hi;
@@ -2626,6 +2684,7 @@ static void Follow_FollowerTick(BYTE *p,DWORD now)
 }
 static void Follow_Tick(BYTE *p,DWORD now)
 {
+    Follow_ApplyRequestedState(p,now);
     if(g_followRole==W112_FOLLOW_ROLE_OFF)return;
     if(g_patrolEnabled||g_patrolRecording){
         g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
@@ -3000,8 +3059,8 @@ static void init_control_descriptor(void)
 static int W112_CTL_STDCALL movement_control_get(w112_u32 id,W112_ControlValueV1*out)
 {
     if(!out)return 0;
-    if(id==90u){out->i32=(w112_i32)g_followRole;return 1;}
-    if(id==91u){out->i32=(w112_i32)g_followChannel;return 1;}
+    if(id==90u){out->i32=(w112_i32)g_followRequestedRole;return 1;}
+    if(id==91u){out->i32=(w112_i32)g_followRequestedChannel;return 1;}
     if(id==92u){out->u32=g_followAssistEnabled?1u:0u;return 1;}
     if(id==93u){out->u32=g_followLazyEnabled?1u:0u;return 1;}
     if(id==94u){out->u32=g_followTeleportEnabled?1u:0u;return 1;}
@@ -3111,21 +3170,20 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     if(id==78u){if(value->i32<1000||value->i32>8000)return 0;g_patrolStuckTimeout=(DWORD)value->i32;return 1;}
     if(id==90u){
         if(value->i32<0||value->i32>2)return 0;
-        Follow_SetRole((DWORD)value->i32,LocalPlayer(),GT()?GT()():0u);return 1;
+        g_followRequestedRole=(DWORD)value->i32;return 1;
     }
-    if(id==91u){if(value->i32<1||value->i32>4)return 0;Follow_SetChannel((DWORD)value->i32,GT()?GT()():0u);return 1;}
+    if(id==91u){if(value->i32<1||value->i32>4)return 0;g_followRequestedChannel=(DWORD)value->i32;return 1;}
     if(id==95u){if(value->i32<100||value->i32>1000)return 0;g_followDistance100=(DWORD)value->i32;return 1;}
     if(id==96u){if(value->i32<500||value->i32>5000)return 0;g_followTeleportDistance100=(DWORD)value->i32;return 1;}
     if(id==97u){if(value->i32<-500||value->i32>500)return 0;g_followSideOffset100=(LONG)value->i32;return 1;}
     if(id!=46u&&value->u32>1u)return 0;
     now=GT()?GT()():0u;
     p=LocalPlayer();
-    if(id==92u){g_followAssistEnabled=value->u32?1u:0u;if(!g_followAssistEnabled)Follow_StopAssist();return 1;}
+    if(id==92u){g_followAssistEnabled=value->u32?1u:0u;return 1;}
     if(id==93u){g_followLazyEnabled=value->u32?1u:0u;if(!g_followLazyEnabled)g_followLazyReady=0u;return 1;}
     if(id==94u){g_followTeleportEnabled=value->u32?1u:0u;return 1;}
     if(id==71u){
-        if(value->u32&&g_followRole!=W112_FOLLOW_ROLE_OFF)
-            Follow_SetRole(W112_FOLLOW_ROLE_OFF,p,now);
+        if(value->u32)g_followRequestedRole=W112_FOLLOW_ROLE_OFF;
         g_patrolEnabled=value->u32?1u:0u;
         g_patrolRecording=0u;g_patrolNeedRejoin=1u;
         if(g_patrolEnabled&&!g_patrolRouteLoaded)g_patrolLoadPending=1u;
@@ -3134,6 +3192,7 @@ static int W112_CTL_STDCALL movement_control_set(w112_u32 id,const W112_ControlV
     }
     if(id==72u){
         if(value->u32){
+            g_followRequestedRole=W112_FOLLOW_ROLE_OFF;
             Patrol_StopMovement(p);g_patrolEnabled=0u;g_patrolRecording=1u;
             g_patrolPointCount=0u;g_patrolRouteLoaded=0u;g_patrolSaveOk=0u;
             g_patrolCurrent=0u;g_patrolState=2u;
@@ -3303,7 +3362,8 @@ BOOL __stdcall W112_V21_ENTRY(HINSTANCE h,DWORD r,LPVOID x)
         g_planeRestorePending=0u;g_planeNotice=0u;
         g_patrolEnabled=0u;g_patrolRecording=0u;g_patrolMoving=0u;
         Follow_MasterPublishDown(GT()?GT()():0u);
-        Follow_CloseMap();g_followRole=W112_FOLLOW_ROLE_OFF;g_followMoving=0u;
+        Follow_CloseMap();g_followRole=W112_FOLLOW_ROLE_OFF;g_followRequestedRole=W112_FOLLOW_ROLE_OFF;
+        g_followMoving=0u;
         return W112_MovementCoreV20_DllMain(h,r,x);
     }
     return TRUE;
