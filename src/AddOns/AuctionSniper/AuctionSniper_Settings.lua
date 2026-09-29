@@ -1,3 +1,11 @@
+-- vMaNGOS diagnostic watchlist.
+-- Empty by default: the scanner uses browse-mode diagnostics.
+-- Future project iterations can populate rules in this form:
+-- { name = "Black Lotus", partial = false, maxUnitPrice = 350000, minStack = 1, maxTotalPrice = 0, enabled = true }
+-- Prices are copper. V1 is hard dry-run and never purchases.
+B_AS_VM_Watchlist = {
+}
+
 
 --[[
 

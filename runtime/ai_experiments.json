@@ -368,12 +368,12 @@
         "vMaNGOS AuctionHouse query/bid flow",
         "parallel addon packager src/AddOns auto-discovery"
       ],
-      "status": "in_progress",
-      "observed_head": "74b56d787024dd5fdd41355edee1f292618ad0c9",
+      "status": "awaiting_ci",
+      "observed_head": "e87006a8f151b3799536775abd086ffaa8048380",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Foundation import from EinBaum/AuctionSniper@d9d85807de9c82201e5e01c42ec5917c90257389 with MIT provenance plus vMaNGOS server audit against upstream development@464179081673cfd240f7ffe7f0daf96bca0b5a70. No intentional gameplay behavior change yet; branch is based on observed parallel head 74b56d787024dd5fdd41355edee1f292618ad0c9. Exact feature HEAD and CI must be queried live."
+      "notes": "V1 diagnostic/dry-run staged from baseline. Automation path contains no PlaceAuctionBid call; LowBuyout/page-0 mode, correct pagination, one-query state, timeout watchdog, unit-price diagnostics, watchlist engine, dry-run candidate logging and raw CHAT_MSG_SYSTEM/UI_INFO_MESSAGE/UI_ERROR_MESSAGE capture added. parallel_candidate addon inventory now declares AuctionSniper. Await exact-SHA feature preflight before integration."
     }
   ]
 }

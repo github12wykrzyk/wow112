@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Auction|cff60ff00Sniper|r
 ## Author: EinBaum https://github.com/EinBaum
-## Version: 1.2
-## Notes: Scan and buy items automatically. Define your own filters.
+## Version: 1.3-vmangos-diag
+## Notes: vMaNGOS diagnostic/dry-run scanner for WoW 1.12.1; purchases disabled.
 ## SavedVariables: B_AS_GS
 AuctionSniper.xml
 AuctionSniper_Settings.lua

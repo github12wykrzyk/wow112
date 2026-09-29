@@ -127,3 +127,36 @@ Before speed tuning, collect evidence for:
 This document belongs to `feature/auction-sniper-vmangos`.
 It does not mean the addon is integrated into `parallel`, published through
 the updater, or gameplay-accepted.
+
+
+## Vanilla 1.12 client-result evidence
+
+Blizzard's default 1.12.1 Auction UI calls `PlaceAuctionBid` directly and
+refreshes browse state from `AUCTION_ITEM_LIST_UPDATE`; it does not expose a
+dedicated AuctionUI Lua callback for the server command result.
+
+Historical Auctioneer 3.9.0 code targeting WoW 1.12.1 tracks pending bids using:
+- `CHAT_MSG_SYSTEM` with `ERR_AUCTION_BID_PLACED` as accepted;
+- `UI_ERROR_MESSAGE` for failures such as `ERR_ITEM_NOT_FOUND`,
+  `ERR_NOT_ENOUGH_MONEY`, `ERR_AUCTION_BID_OWN` and
+  `ERR_AUCTION_HIGHER_BID`.
+
+This is strong compatibility evidence, but V1 intentionally logs the raw
+`CHAT_MSG_SYSTEM`, `UI_INFO_MESSAGE` and `UI_ERROR_MESSAGE` channels on the
+actual 5875 client before V2 relies on any one of them for confirmed purchases.
+
+## V1 diagnostic implementation
+
+The first project revision after the upstream import is intentionally hard
+dry-run:
+- no `PlaceAuctionBid` call exists in the addon automation code;
+- old LastPage behavior is replaced by LowBuyout/page-0 mode;
+- all-pages mode uses correct zero-based last-page calculation;
+- one local query-in-flight state is enforced with a timeout watchdog;
+- result summaries measure latency, zero-buyout rows, total/unit price ranges
+  and ascending-buyout order violations;
+- watchlist-aware item-name queries and unit-price candidate filtering are
+  implemented but the default watchlist is empty;
+- candidate evaluation logs `[DRYRUN]` only.
+
+This V1 is intended to establish realm evidence before enabling AutoBuy.
