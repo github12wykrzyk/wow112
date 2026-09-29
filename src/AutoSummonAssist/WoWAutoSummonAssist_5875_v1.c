@@ -96,6 +96,9 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define MAX_ATTEMPTS_PER_GUID       8u
 #define INTERACT_RANGE_SQ           (5.50f*5.50f)
 #define DEBUG_NEAR_RANGE_SQ         (12.0f*12.0f)
+#define ANTI_AFK_MIN_MS             120000u
+#define ANTI_AFK_MAX_EXTRA_MS       240000u
+#define ANTI_AFK_DEFER_RECHECK_MS   1000u
 
 #define STATUS_DETACHED             0u
 #define STATUS_WAIT_WORLD           1u
@@ -138,12 +141,20 @@ static volatile u32 g_nearbyGoCount = 0u;
 static volatile u32 g_nearestEntry = 0u;
 static volatile u32 g_nearestType = 0u;
 static volatile u32 g_nearestDistance100 = 0u;
+static volatile u32 g_antiAfkEnabled = 0u;
+static volatile u32 g_antiAfkSecondsLeft = 0u;
+static volatile u32 g_antiAfkJumpCalls = 0u;
+static volatile u32 g_antiAfkChannelDefers = 0u;
+
+static u32 g_antiAfkNextAt = 0u;
+static u32 g_antiAfkDeferCheckAt = 0u;
+static u32 g_antiAfkRng = 0u;
 
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
 
-static W112_ControlSettingV1 g_settings[20];
+static W112_ControlSettingV1 g_settings[24];
 static u32 g_descriptorReady = 0u;
 
 int _fltused = 0;
@@ -276,6 +287,64 @@ static int playerBusy(u32 player)
     if(ptrOk(desc) && read32(desc+4u*UNIT_CHANNEL_INDEX)!=0u) return 1;
     if(read32(player+UNIT_CAST_OFFSET)!=0u) return 1;
     return 0;
+}
+
+/* Vanilla 1.12.1 registers Jump in the in-game Movement & mouselook
+ * FrameScript batch.  Invoke it inside this WoW process on the existing game
+ * timer: no OS keyboard/mouse input and no foreground-window dependency.
+ * Public cross-check: brues-code/ClassicAPI docs/BlizzardScriptAPI.md,
+ * Movement & mouselook table [0x008500B8] lists Jump first. */
+static u32 antiAfkRandomDelay(u32 now)
+{
+    if(!g_antiAfkRng)
+        g_antiAfkRng=0xA341316Cu^now^g_lo^(g_hi*33u);
+    g_antiAfkRng=g_antiAfkRng*1664525u+1013904223u;
+    return ANTI_AFK_MIN_MS+(g_antiAfkRng%(ANTI_AFK_MAX_EXTRA_MS+1u));
+}
+
+static void antiAfkSchedule(u32 now)
+{
+    u32 delay=antiAfkRandomDelay(now);
+    g_antiAfkNextAt=now+delay;
+    g_antiAfkDeferCheckAt=0u;
+    g_antiAfkSecondsLeft=(delay+999u)/1000u;
+}
+
+static void antiAfkTick(u32 player,u32 now)
+{
+    static const char jumpScript[]="Jump()";
+
+    if(!g_antiAfkEnabled){
+        g_antiAfkNextAt=0u;
+        g_antiAfkDeferCheckAt=0u;
+        g_antiAfkSecondsLeft=0u;
+        return;
+    }
+
+    if(!g_antiAfkNextAt){
+        antiAfkSchedule(now);
+        return;
+    }
+
+    if((int)(now-g_antiAfkNextAt)<0){
+        g_antiAfkSecondsLeft=(u32)(g_antiAfkNextAt-now+999u)/1000u;
+        return;
+    }
+
+    g_antiAfkSecondsLeft=0u;
+    /* User requirement: never interrupt the summon/channel.  The existing
+     * exact-build busy detector also covers a normal cast, which is safer. */
+    if(playerBusy(player)){
+        if(!g_antiAfkDeferCheckAt||(int)(now-g_antiAfkDeferCheckAt)>=0){
+            ++g_antiAfkChannelDefers;
+            g_antiAfkDeferCheckAt=now+ANTI_AFK_DEFER_RECHECK_MS;
+        }
+        return;
+    }
+
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(jumpScript,jumpScript);
+    ++g_antiAfkJumpCalls;
+    antiAfkSchedule(now);
 }
 
 static void scanAndMaybeClick(u32 player,u32 now)
@@ -424,43 +493,52 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
     busy=playerBusy(player);
     g_busyRaw=busy ? 1u:0u;
     g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
+
+    /* Anti-AFK is independent from AutoSummon enable state and remains
+     * background-safe because it executes inside this client process. */
+    antiAfkTick(player,now);
     scanAndMaybeClick(player,now);
 }
 
 static void initSettings(void)
 {
     u32 i;
-    static const char *keys[20]={
+    static const char *keys[24]={
         "enabled","scanner_alive","candidate_present","match_source",
         "candidate_entry","candidate_type","candidate_distance_x100",
         "candidate_guid_lo","candidate_guid_hi","native_pre_calls",
         "current_guid_pre_calls","native_post_returns","scan_ticks",
         "nearby_go_count","nearest_go_entry","nearest_go_type",
-        "nearest_go_distance_x100","status","gate_reason","busy_raw"
+        "nearest_go_distance_x100","status","gate_reason","busy_raw",
+        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_jump_calls",
+        "anti_afk_channel_defers"
     };
-    static const char *labels[20]={
+    static const char *labels[24]={
         "Enabled","Scanner alive","Ritual candidate","Match source",
         "Candidate entry","Candidate type","Candidate distance x100",
         "Candidate GUID low","Candidate GUID high","Native PRE calls",
         "Current GUID PRE calls","Native POST returns","Scan ticks",
         "Nearby GO <=12yd","Nearest GO entry","Nearest GO type",
-        "Nearest GO distance x100","Status","Gate reason","Busy raw"
+        "Nearest GO distance x100","Status","Gate reason","Busy raw",
+        "Anti-AFK random jump","Anti-AFK next seconds","Anti-AFK jump calls",
+        "Anti-AFK channel defers"
     };
 
     if(g_descriptorReady) return;
 
-    for(i=0u;i<20u;i++) {
+    for(i=0u;i<24u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];
+        int writableBool=(i==0u||i==20u);
         s->struct_size=sizeof(*s);
         s->setting_id=i+1u;
         s->key=keys[i];
         s->label=labels[i];
-        s->type=(i<=2u) ? W112_CTL_BOOL:W112_CTL_INT;
+        s->type=(i<=2u||i==20u) ? W112_CTL_BOOL:W112_CTL_INT;
         s->default_value.u32=(i==0u)?1u:0u;
         s->min_value.u32=0u;
-        s->max_value.u32=(i<=2u)?1u:2147483647u;
+        s->max_value.u32=(i<=2u||i==20u)?1u:2147483647u;
         s->step.u32=1u;
-        s->flags=(i==0u)?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
+        s->flags=writableBool?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
         s->enum_options=0;
         s->enum_option_count=0u;
     }
@@ -491,16 +569,30 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==18u) v->u32=g_status;
     else if(id==19u) v->u32=g_gateReason;
     else if(id==20u) v->u32=g_busyRaw;
+    else if(id==21u) v->u32=g_antiAfkEnabled?1u:0u;
+    else if(id==22u) v->u32=g_antiAfkSecondsLeft;
+    else if(id==23u) v->u32=g_antiAfkJumpCalls;
+    else if(id==24u) v->u32=g_antiAfkChannelDefers;
     else return 0;
     return 1;
 }
 
 static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
 {
-    if(id!=1u||!v||v->u32>1u) return 0;
-    g_enabled=v->u32;
-    if(!g_enabled) resetPortal();
-    return 1;
+    if(!v||v->u32>1u) return 0;
+    if(id==1u){
+        g_enabled=v->u32;
+        if(!g_enabled) resetPortal();
+        return 1;
+    }
+    if(id==21u){
+        g_antiAfkEnabled=v->u32;
+        g_antiAfkNextAt=0u;
+        g_antiAfkDeferCheckAt=0u;
+        g_antiAfkSecondsLeft=0u;
+        return 1;
+    }
+    return 0;
 }
 
 static const W112_ControlModuleV1 g_module={
@@ -508,8 +600,8 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00040000u,
-    20u,
+    0x00050000u,
+    24u,
     g_settings,
     getValue,
     setValue
@@ -545,6 +637,12 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_busyRaw=0u;
         g_heartbeat=0u;
         g_scanTicks=0u;
+        g_antiAfkNextAt=0u;
+        g_antiAfkDeferCheckAt=0u;
+        g_antiAfkRng=0u;
+        g_antiAfkSecondsLeft=0u;
+        g_antiAfkJumpCalls=0u;
+        g_antiAfkChannelDefers=0u;
 
         if(!buildGuard()) {
             g_status=STATUS_BUILD_MISMATCH;

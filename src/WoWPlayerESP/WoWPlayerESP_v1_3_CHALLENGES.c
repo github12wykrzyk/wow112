@@ -441,9 +441,10 @@ static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL,g_ui_rear_details_state=NULL;
 static HWND g_ui_wsg_check=NULL,g_ui_wsg_state=NULL;
-static HWND g_ui_summon_check=NULL;
+static HWND g_ui_summon_check=NULL,g_ui_summon_antiafk_check=NULL;
 static HWND g_ui_summon_loaded=NULL,g_ui_summon_candidate=NULL;
 static HWND g_ui_summon_guid=NULL,g_ui_summon_scan=NULL,g_ui_summon_nearest=NULL;
+static HWND g_ui_summon_antiafk_state=NULL;
 /* Gather is a subview of the existing GUI: no new game-window hook. */
 static HWND g_ui_gather_controls[40]={NULL};
 static DWORD g_ui_gather_control_pages[40]={0u};
@@ -556,9 +557,10 @@ static void ui_sync_summon(void) {
         "DISABLED","BUILD MISMATCH","NO TIMER","CAST/CHANNEL"
     };
     static const char* matches[4]={"NONE","ENTRY 36727","TYPE 18","ENTRY+TYPE"};
-    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,20u);
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,24u);
     W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
     W112_ControlValueV1 pre,current,post,scans,nearCount,nearEntry,nearType,nearDist,status,gate,busy;
+    W112_ControlValueV1 anti,nextSec,jumpCalls,channelDefers;
     char buf[260],*p;
 
     if(!m) {
@@ -573,6 +575,9 @@ static void ui_sync_summon(void) {
             "Scanner: unavailable");
         if(g_ui_summon_nearest)SetWindowTextA(g_ui_summon_nearest,
             "Nearest GO: unavailable");
+        if(g_ui_summon_antiafk_check)SendMessageA(g_ui_summon_antiafk_check,UI_SETCHECK,0u,0);
+        if(g_ui_summon_antiafk_state)SetWindowTextA(g_ui_summon_antiafk_state,
+            "ANTI-AFK: provider unavailable");
         return;
     }
 
@@ -596,9 +601,15 @@ static void ui_sync_summon(void) {
     if(!m->get_value(18u,&status))status.u32=0u;
     if(!m->get_value(19u,&gate))gate.u32=0u;
     if(!m->get_value(20u,&busy))busy.u32=0u;
+    if(!m->get_value(21u,&anti))anti.u32=0u;
+    if(!m->get_value(22u,&nextSec))nextSec.u32=0u;
+    if(!m->get_value(23u,&jumpCalls))jumpCalls.u32=0u;
+    if(!m->get_value(24u,&channelDefers))channelDefers.u32=0u;
 
     if(g_ui_summon_check)
         SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
+    if(g_ui_summon_antiafk_check)
+        SendMessageA(g_ui_summon_antiafk_check,UI_SETCHECK,anti.u32?1u:0u,0);
 
     if(g_ui_summon_loaded){
         p=buf;p=app_str(p,"DLL: LOADED | API module v");
@@ -636,6 +647,13 @@ static void ui_sync_summon(void) {
         p=app_str(p," | type ");p=app_u32(p,nearType.u32);
         p=app_str(p," | dist ");p=ui_app_centi(p,nearDist.u32);p=app_str(p," yd");
         *p=0;SetWindowTextA(g_ui_summon_nearest,buf);
+    }
+    if(g_ui_summon_antiafk_state){
+        p=buf;p=app_str(p,"ANTI-AFK: ");p=app_str(p,anti.u32?"ON":"OFF");
+        p=app_str(p," | next ~");p=app_u32(p,nextSec.u32);p=app_str(p,"s");
+        p=app_str(p," | jump calls ");p=app_u32(p,jumpCalls.u32);
+        p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
+        *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
     }
 }
 
@@ -1151,7 +1169,11 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
         if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}
         if(id==229u){
-            ui_work_pp_flip(PAR_SUMMON_DLL,20u,1u);
+            ui_work_pp_flip(PAR_SUMMON_DLL,24u,1u);
+            ui_sync_summon();return 0;
+        }
+        if(id==230u){
+            ui_work_pp_flip(PAR_SUMMON_DLL,24u,21u);
             ui_sync_summon();return 0;
         }
         if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
@@ -1468,11 +1490,14 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_guid);
     g_ui_summon_scan=ui_label(g_parallel_ui_hwnd,"",46,455,665,42,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_scan);
-    g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,515,665,52,FALSE);
+    g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,505,665,42,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
-    ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "If candidate=NO, screenshot Nearest GO while standing at the portal.",
-        42,585,665,34,FALSE));
+    g_ui_summon_antiafk_check=ui_button(g_parallel_ui_hwnd,
+        "ANTI-AFK - random jump every 120-360s (never during cast/channel)",
+        46,555,665,36,230u,TRUE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_check);
+    g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,600,665,32,FALSE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_state);
 
     /* The detailed counters occupy their own view: no overlapping controls,
        no scroll subclass, no changes to Insert, ESP hook or settings parents. */
@@ -1565,8 +1590,10 @@ static void parallel_gui_destroy(void) {
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;
     g_ui_wsg_check=NULL;g_ui_wsg_state=NULL;
-    g_ui_summon_check=NULL;g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;
+    g_ui_summon_check=NULL;g_ui_summon_antiafk_check=NULL;
+    g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;
     g_ui_summon_guid=NULL;g_ui_summon_scan=NULL;g_ui_summon_nearest=NULL;
+    g_ui_summon_antiafk_state=NULL;
     for(page=0u;page<40u;++page){g_ui_gather_controls[page]=NULL;g_ui_gather_control_pages[page]=0u;}
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;

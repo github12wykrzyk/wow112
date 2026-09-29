@@ -128,7 +128,9 @@ def main():
             "Candidate GUID low", "Candidate GUID high", "Native PRE calls",
             "Current GUID PRE calls", "Native POST returns", "Scan ticks",
             "Nearby GO <=12yd", "Nearest GO entry", "Nearest GO type",
-            "Nearest GO distance x100", "Status", "Gate reason", "Busy raw"
+            "Nearest GO distance x100", "Status", "Gate reason", "Busy raw",
+            "Anti-AFK random jump", "Anti-AFK next seconds",
+            "Anti-AFK jump calls", "Anti-AFK channel defers"
         ],
         "timings_ms": timing,
     }
@@ -178,6 +180,14 @@ def main():
         "foreground_required": False,
         "os_input_simulation": False,
         "interaction_diagnostics": "PRE increments before 0x005F8660; POST increments after return; gate reason exposed live",
+        "anti_afk": {
+            "default_enabled": False,
+            "jump_interval_seconds": [120, 360],
+            "background_safe": True,
+            "os_input_simulation": False,
+            "defer_during_cast_or_channel": True,
+            "implementation": "FrameScript Jump() on the existing in-process UI timer"
+        },
         "timer_period_ms": 25,
         "chat_diagnostic": "one message per newly observed ritual candidate GUID",
         "debug_surface": "W112_CONTROL_API_V1 + Parallel SUMMON GUI tab",
