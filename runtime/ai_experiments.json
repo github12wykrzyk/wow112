@@ -355,6 +355,25 @@
         "artifact_id": 11053003316
       },
       "notes": "Infrastructure hardening integrated to parallel: feature/** preflight with changed-module compilation, declarative parallel candidate inventory, modular companion compile helper, split GUI ABI/behavioral gates, feature-path updater/AutoLogin builds, and documented freeze-by-SHA test lifecycle. No gameplay runtime behavior was intentionally changed."
+    },
+    {
+      "id": "lazyscript-warlock-gcd-armor",
+      "branch": "feature/lazyscript-warlock-gcd",
+      "modules": [
+        "LazyScript",
+        "LazyWarlock"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "LazyScript ifGlobalCooldown Warlock probe action",
+        "parallel addon package"
+      ],
+      "status": "in_progress",
+      "observed_head": "78514d9c410955c5ba2216cb7b7d5c8a8bc9656a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Warlock Global Cooldown probe is adapted for this server from stock Demon Skin to Demon Armor. The user-visible GCD help text is updated consistently. Gameplay/100 ms rotation spam remains to be tested after exact-SHA preflight and parallel integration."
     }
   ]
 }
