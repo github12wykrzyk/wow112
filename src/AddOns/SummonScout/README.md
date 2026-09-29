@@ -1,4 +1,4 @@
-# SummonScout 1.20
+# SummonScout 1.21
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -290,3 +290,11 @@ Implementation:
 - `CastSpell(index, "spell")`.
 
 There is no immediate `TargetLastTarget()`, `ClearTarget()`, or extra `SpellTargetUnit()` after the cast request. The 1.19 target restore was a likely race: the client could see the target changed back before it committed the Ritual request. SSI now changes target once and leaves it on the summoned player while the cast starts.
+
+
+## 1.21 native summon bridge + bare plus invite
+
+- A direct whisper containing only `+` is an explicit smart auto-invite trigger, just like `123`.
+- Automatic party/raid summon no longer casts directly from SummonScout Lua. The addon publishes the queued player name through `W112_AUTOSUMMON_REQUEST`.
+- `WoWAutoSummonAssist_5875_v1.dll` consumes that request on its native WoW UI-thread timer and executes target + `Ritual of Summoning` through the same FrameScript execution path already used by native modules in this repository.
+- `/ssi summoncheck` shows native bridge request/ack/count diagnostics.
