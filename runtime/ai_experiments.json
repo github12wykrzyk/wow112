@@ -398,7 +398,7 @@
         "parallel addon packager src/AddOns auto-discovery"
       ],
       "status": "in_progress",
-      "observed_head": "e548cc348acef53fb504d63a3544bb12b578ae5b",
+      "observed_head": "6dd065d1fcb023913391be9b5ef2460acd28fcef",
       "verified_commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
       "tests": [
         {
@@ -409,22 +409,22 @@
           "evidence": "Parallel feature preflight run 36641030951 and AI experiment registry run 36641030747 passed on exact feature SHA."
         },
         {
-          "kind": "game",
-          "result": "inconclusive",
-          "commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
-          "date": "2026-09-30",
-          "evidence": "User screenshot confirmed vMaNGOS global boundary search converged from page 557 through 279/140/70/35/53/62/66/68 to first positive-buyout page 67 at roughly 55.7k auctions. Test also exposed that global cheapest-page scanning is unsuitable for an item-specific Black Lotus rule and that pre-enable AH events polluted extraEvents."
-        },
-        {
           "kind": "ci",
           "result": "failed",
           "commit": "46cfe9f46281390ba21830c0596673631bcd05f5",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36642125000 and AI experiment registry run 36642125003 failed only because the new gameplay evidence used unsupported result value partial_pass; code/runtime gates reached before ledger validation were PASS. Follow-up changes the result to the supported inconclusive value."
+        },
+        {
+          "kind": "ci",
+          "result": "failed",
+          "commit": "6dd065d1fcb023913391be9b5ef2460acd28fcef",
+          "date": "2026-09-30",
+          "evidence": "Verify AI experiment registry run 36642227019 failed because repository regression test test_no_invented_game_test_or_package intentionally requires zero kind=game ledger records. Ledger validation itself passed. No verifier was weakened; gameplay observation is moved to descriptive notes."
         }
       ],
       "package": null,
-      "notes": "V0.2 follow-up routes each watchlist rule through its own name-filtered vMaNGOS result set, binary-searches the first positive-buyout page within that set, revalidates on source/adjacent filtered pages, and uses a post-result settle window. Parent SHA e548cc34 gameplay validated the binary boundary mechanism but exposed the global-scan design flaw corrected here. CI follow-up fixes ledger result enum and advances fairly past item filters that contain only bid-only/no-buyout auctions."
+      "notes": "Independent AuxVmangos V0.2 watchlist engine. Exact gameplay evidence from parent e548cc34: user screenshot showed global vMaNGOS buyout boundary converging 557 -> 279 -> 140 -> 70 -> 35 -> 53 -> 62 -> 66 -> 68 -> 67 at roughly 55.7k auctions; this validated binary boundary discovery but exposed that a global cheapest-page scan cannot reliably find an item-specific Black Lotus rule, and that unrelated pre-enable AH events polluted extraEvents. Current follow-up fixes this by querying each watch rule by name first, binary-searching only its filtered result set, revalidating source/adjacent filtered pages, adding a post-result settle window, and rotating past no-buyout rules. Gameplay evidence remains descriptive notes because the current routing regression suite intentionally requires zero kind=game records."
     }
   ]
 }
