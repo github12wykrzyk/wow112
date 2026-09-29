@@ -162,3 +162,26 @@ dry-run:
 - candidate evaluation logs `[DRYRUN]` only.
 
 This V1 is intended to establish realm evidence before enabling AutoBuy.
+
+
+## Realm evidence: first V1 dry-run test
+
+Exact tested Parallel candidate:
+`8ceebf93d30e1728948a3d71d3296295b8306fba`.
+
+The user-provided in-game screenshot showed roughly 55.5k visible auctions and
+page 0 repeatedly returned 50/50 rows with `buyout == 0`. Query-result latency
+was approximately 0.094-0.125 seconds. The same query sequence number was also
+logged more than once, showing that this client/server combination can emit
+extra `AUCTION_ITEM_LIST_UPDATE` notifications around one request.
+
+V1.1 therefore:
+- does not treat page 0 as the cheapest purchasable page;
+- binary-searches the transition from bid-only rows to positive buyouts;
+- scans a bounded 10-page cheap-buyout window from that boundary;
+- re-discovers the boundary after each window;
+- uses a 200 ms post-result guard and ignores list-update events received when
+  no addon query is in flight.
+
+Auto-buy remains hard-disabled; this revision still contains no
+`PlaceAuctionBid` call in the automation code.

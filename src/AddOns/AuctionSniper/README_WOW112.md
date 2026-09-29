@@ -7,7 +7,7 @@ Upstream baseline:
 - commit d9d85807de9c82201e5e01c42ec5917c90257389
 - MIT license retained as LICENSE.txt
 
-Current project revision: V1 diagnostic / dry-run.
+Current project revision: V1.1 cheap-buyout diagnostic / dry-run.
 
 ## Safety
 
@@ -17,10 +17,16 @@ House buttons remain untouched.
 
 ## vMaNGOS behavior
 
-- LowBuyout replaces the old LastPage strategy and scans page 0.
+- LowBuyout is now a cheap-buyout search, not a page-0 lock.
+- It probes page 0, then binary-searches the first page containing buyout > 0.
+- After the boundary is found it scans a 10-page window starting at that page,
+  then re-discovers the boundary so changes in the live AH are picked up.
 - With LowBuyout OFF and FixedPage OFF, pages are cycled using correct zero-based
   pagination: floor((total - 1) / 50).
 - Only one query is considered in flight at a time.
+- A 200 ms post-result guard prevents duplicate AUCTION_ITEM_LIST_UPDATE events
+  from being attributed to the next query; duplicates received with no query
+  in flight are ignored and counted.
 - A 12 second watchdog records a timeout and releases the local state if the
   expected list update never arrives.
 - Results record total buyout and buyout-per-unit ranges, no-buyout rows, query
@@ -32,7 +38,8 @@ House buttons remain untouched.
 
 - AutoScan: continuously submits diagnostic queries when CanSendAuctionQuery()
   permits it.
-- LowBuyout: page 0 only.
+- LowBuyout: automatically locate the first positive-buyout page, then scan the
+  10 cheapest buyout pages.
 - FixedPage: selected page only.
 - LowBuyout OFF + FixedPage OFF: cycle all result pages.
 - AutoBuy: DRY RUN only; evaluates and logs every candidate in a fresh result.
@@ -54,6 +61,8 @@ per AH result.
 
 Persistent log markers:
 - [VM-RESULT] query/page/latency/ranges/order diagnostics
+- [VM-BOUNDARY] binary-search progress/found buyout boundary
+- [VM-DUP] ignored duplicate list-update event when verbose is enabled
 - [VM-ITEM] individual row when verbose is enabled
 - [DRYRUN] candidate matching current filters/watchlist
 - [VM-EVENT] raw AH-adjacent client message event
