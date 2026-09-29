@@ -1,4 +1,4 @@
-# SummonScout 1.30
+# SummonScout 1.31
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -393,3 +393,17 @@ This keeps the code explicit while tolerating normal player politeness/punctuati
 The native summon-cast bridge no longer depends on the AutoSummonAssist portal-scanner Enabled toggle. SummonScout's own `Auto summon new party member` setting is the authority for whether requests are published.
 
 The DLL now resolves `Ritual of Summoning` through the spellbook and uses `CastSpell(index, "spell")` first, with `CastSpellByName` only as fallback. `/ssi summoncheck` also shows `nativeStatus` so bridge dispatch can be distinguished from an actual spell lookup/cast failure.
+
+
+## 1.31 manual invite -> summon reconciliation
+
+Manual invites are now an explicit auto-summon input.
+
+When the client prints `You have invited <player> to join your group.`, SummonScout remembers that player for up to 90 seconds. As soon as the player is actually visible in party/raid, SSI queues the summon even if the normal roster-diff or join-message path was missed.
+
+This covers:
+- manual `/invite <name>` / `/i <name>`;
+- right-click/manual UI invites;
+- addon-generated invites (deduped by the existing summon queue).
+
+The pending marker is cleared when the player joins, expires, or Auto summon new party member is turned off. `/ssi summoncheck` now exposes `manualPending`.

@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.30"
+local ADDON_VERSION = "1.31"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -39,6 +39,7 @@ SS.summonActiveExpires = 0
 SS.summonActiveStarted = false
 SS.summonWhisperRecent = {}
 SS.whisperInviteRecent = {}
+SS.pendingManualInvites = {}
 SS.lastAdvertMessage = ""
 SS.lastAdvertSentAt = -100000
 SS.lastSummonRequestAt = -100000
@@ -717,6 +718,33 @@ local function queuePartySummon(name)
     chat("party join -> summon queued: " .. name)
 end
 
+local function notePendingManualInvite(name)
+    name = trim(name)
+    if name == "" or samePlayer(name, UnitName("player")) then return end
+    if summonPlayerBlacklisted(name) then return end
+    SS.pendingManualInvites[lower(name)] = {
+        name = name,
+        invitedAt = now()
+    }
+    if SummonScoutDB.debug then
+        chat("invite tracked for summon -> " .. name)
+    end
+end
+
+local function processPendingManualInvites()
+    if not SummonScoutDB.enabled or not SummonScoutDB.partyAutoSummon then return end
+    local t = now()
+    local key, item
+    for key, item in pairs(SS.pendingManualInvites) do
+        if (t - (item.invitedAt or t)) > 90 then
+            SS.pendingManualInvites[key] = nil
+        elseif isInGroup(item.name) then
+            queuePartySummon(item.name)
+            SS.pendingManualInvites[key] = nil
+        end
+    end
+end
+
 local function syncPartyRoster(suppressNew)
     local current = {}
     local j
@@ -1373,10 +1401,14 @@ local function showSummonCheck()
         .. " target=" .. (target ~= "" and target or "-")
         .. " combat=" .. ((UnitAffectingCombat and UnitAffectingCombat("player")) and "YES" or "NO")
         .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
+    local pendingInvites = 0
+    local _k
+    for _k in pairs(SS.pendingManualInvites) do pendingInvites = pendingInvites + 1 end
     chat("summoncheck bridge request=" .. tostring(W112_AUTOSUMMON_REQUEST or "-")
         .. " ack=" .. tostring(W112_AUTOSUMMON_ACK or "-")
         .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0)
-        .. " nativeStatus=" .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "-"))
+        .. " nativeStatus=" .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "-")
+        .. " manualPending=" .. tostring(pendingInvites))
 end
 
 local function describeTest(message)
@@ -1563,6 +1595,7 @@ local function createGui()
                 SS.summonQueue = {}
                 SS.summonQueued = {}
                 SS.summonActiveName = nil
+                SS.pendingManualInvites = {}
             end
             syncPartyRoster(true)
         end)
@@ -2012,6 +2045,18 @@ frame:SetScript("OnEvent", function()
 
     if event == "CHAT_MSG_SYSTEM" then
         local line = trim(arg1 or "")
+
+        -- Manual /invite and right-click invites do not pass through SSI's own
+        -- InviteByName path. Track the client's confirmation and reconcile it
+        -- against the real roster until that player actually joins.
+        local _, _, invitedName = string.find(line, "^You have invited (.+) to join your group%.$")
+        invitedName = trim(invitedName or "")
+        if invitedName ~= "" then
+            notePendingManualInvite(invitedName)
+            SS.partySyncAt = now() + 0.20
+            return
+        end
+
         local _, _, joinedName = string.find(line, "^(.+) has joined the raid group%.$")
         if not joinedName then
             _, _, joinedName = string.find(line, "^(.+) has joined the party%.$")
@@ -2024,6 +2069,7 @@ frame:SetScript("OnEvent", function()
             if SummonScoutDB.partyAutoSummon then
                 queuePartySummon(joinedName)
             end
+            SS.pendingManualInvites[lower(joinedName)] = nil
             SS.partySyncAt = now() + 0.20
         end
         return
@@ -2202,6 +2248,7 @@ frame:SetScript("OnUpdate", function()
         SS.nextRosterPollAt = t + 0.75
     end
     processPendingTrade()
+    processPendingManualInvites()
     processQueue()
     processPartySummon()
     processCounter()
