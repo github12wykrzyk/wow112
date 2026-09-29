@@ -1208,12 +1208,14 @@ namespace WoW112Updater
                             && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
                     if (!isWow || !fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) continue;
 
+                    // Ask WoW to close normally and allow enough time for the
+                    // client's own logout/quit sequence to complete. Outside a
+                    // rest area Vanilla can legitimately need the full logout
+                    // countdown. Never force-kill here: an abrupt disconnect can
+                    // leave the character/session alive server-side.
                     var requestedGracefulClose = process.CloseMainWindow();
-                    if (!requestedGracefulClose || !process.WaitForExit(1500))
-                    {
-                        process.Kill();
-                        process.WaitForExit(3000);
-                    }
+                    if (requestedGracefulClose)
+                        process.WaitForExit(30000);
                 }
                 catch
                 {
