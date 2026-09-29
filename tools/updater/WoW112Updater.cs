@@ -1030,7 +1030,7 @@ namespace WoW112Updater
             }
         }
 
-        private static string PrepareLowSpecConfig(string root, WowAccount account)
+        private static string PrepareLowSpecConfig(string root, WowAccount account, bool backgroundSound)
         {
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 throw new InvalidOperationException("Brak katalogu gry dla profilu LOW.");
@@ -1080,17 +1080,26 @@ namespace WoW112Updater
                 new[] { "mapShadows", "0" },
                 new[] { "doodadAnim", "0" },
                 new[] { "M2BatchDoodads", "1" },
-                new[] { "M2UseThreads", "1" },
-                new[] { "MasterSoundEffects", "0" },
-                new[] { "EnableAmbience", "0" },
-                new[] { "EnableMusic", "0" },
-                new[] { "MasterVolume", "0" },
-                new[] { "SoundVolume", "0" },
-                new[] { "MusicVolume", "0" },
-                new[] { "AmbienceVolume", "0" }
+                new[] { "M2UseThreads", "1" }
             };
             foreach (var kv in low)
                 sb.Append("SET ").Append(kv[0]).Append(" \"").Append(kv[1]).Append("\"\r\n");
+
+            if (!backgroundSound)
+            {
+                var muted = new[]
+                {
+                    new[] { "MasterSoundEffects", "0" },
+                    new[] { "EnableAmbience", "0" },
+                    new[] { "EnableMusic", "0" },
+                    new[] { "MasterVolume", "0" },
+                    new[] { "SoundVolume", "0" },
+                    new[] { "MusicVolume", "0" },
+                    new[] { "AmbienceVolume", "0" }
+                };
+                foreach (var kv in muted)
+                    sb.Append("SET ").Append(kv[0]).Append(" \"").Append(kv[1]).Append("\"\r\n");
+            }
 
             var name = LowSpecConfigName(account);
             var path = Path.Combine(wtf, name);
@@ -1098,7 +1107,7 @@ namespace WoW112Updater
             return name;
         }
 
-        private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null)
+        private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null, bool backgroundSound = false)
         {
             var root = gameDir.Text.Trim();
             if (!Directory.Exists(root)) throw new InvalidOperationException("Wybierz katalog gry.");
@@ -1121,10 +1130,12 @@ namespace WoW112Updater
             string lowConfig = null;
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
-                lowConfig = PrepareLowSpecConfig(root, autoLoginAccount);
-                startInfo.Arguments = "-windowed -800x600 -nosound";
+                lowConfig = PrepareLowSpecConfig(root, autoLoginAccount, backgroundSound);
+                startInfo.Arguments = backgroundSound ? "-windowed -800x600" : "-windowed -800x600 -nosound";
             }
-            var game = lowConfig == null ? Process.Start(startInfo) : Process.Start(startInfo, lowConfig);
+            var game = autoLoginAccount == null
+                ? Process.Start(startInfo)
+                : Process.Start(startInfo, lowConfig, backgroundSound);
             if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
@@ -1133,7 +1144,8 @@ namespace WoW112Updater
             }
             Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ")" +
                 (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin" +
-                    (autoLoginAccount.LowSpec ? " • LOW CFG " + lowConfig + " • 800x600/WINDOWED." : ".")));
+                    (autoLoginAccount.LowSpec ? " • LOW CFG " + lowConfig + " • 800x600/WINDOWED" : "") +
+                    (backgroundSound ? " • BG SOUND." : ".")));
             return game;
         }
 

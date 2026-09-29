@@ -67,8 +67,15 @@ namespace WoW112Updater
         private const uint CreateSuspended = 0x00000004u;
         private const uint CreateUnicodeEnvironment = 0x00000400u;
         private const uint ResumeFailed = 0xFFFFFFFFu;
+        private const uint PageExecuteReadWrite = 0x40u;
         private static readonly IntPtr ConfigNameAddress = new IntPtr(0x0082E580);
         private static readonly byte[] ExpectedConfigName = Encoding.ASCII.GetBytes("Config.wtf\0");
+        // WoW 1.12.1 build 5875: vanilla-tweaks documents file offset/RVA 0x3A4869 -> 0x27
+        // for background audio; clean/off byte 0x14 is also used by OctoLauncher's 5875 patch.
+        // Applied only to the suspended child process; the on-disk EXE is never modified.
+        private static readonly IntPtr BackgroundSoundAddress = new IntPtr(0x007A4869);
+        private const byte BackgroundSoundOff = 0x14;
+        private const byte BackgroundSoundOn = 0x27;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct STARTUPINFO
@@ -110,6 +117,13 @@ namespace WoW112Updater
         private static extern uint ResumeThread(IntPtr hThread);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool VirtualProtectEx(
+            IntPtr hProcess, IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FlushInstructionCache(IntPtr hProcess, IntPtr lpBaseAddress, UIntPtr dwSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -134,17 +148,29 @@ namespace WoW112Updater
 
         public static System.Diagnostics.Process Start(ProcessStartInfo startInfo, string configName)
         {
+            return StartSuspended(startInfo, configName, null);
+        }
+
+        public static System.Diagnostics.Process Start(ProcessStartInfo startInfo, string configName, bool backgroundSound)
+        {
+            return StartSuspended(startInfo, configName, backgroundSound);
+        }
+
+        private static System.Diagnostics.Process StartSuspended(ProcessStartInfo startInfo, string configName, bool? backgroundSound)
+        {
             ResolveGameExecutable(startInfo);
-            if (string.IsNullOrWhiteSpace(configName)) return System.Diagnostics.Process.Start(startInfo);
-            if (configName.Length > 10 || !configName.EndsWith(".wtf", StringComparison.OrdinalIgnoreCase)
-                || Path.GetFileName(configName) != configName)
+            if (backgroundSound == null && string.IsNullOrWhiteSpace(configName))
+                return System.Diagnostics.Process.Start(startInfo);
+            if (!string.IsNullOrWhiteSpace(configName) &&
+                (configName.Length > 10 || !configName.EndsWith(".wtf", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(configName) != configName))
                 throw new InvalidDataException("Nieprawidłowa nazwa LOW Config.wtf: " + configName);
 
             startInfo.UseShellExecute = false;
             var environment = BuildEnvironmentBlock(startInfo);
             var si = new STARTUPINFO { cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO)) };
             var pi = new PROCESS_INFORMATION();
-            var commandLine = new StringBuilder(""" + startInfo.FileName + """ +
+            var commandLine = new StringBuilder("\"" + startInfo.FileName + "\"" +
                 (string.IsNullOrWhiteSpace(startInfo.Arguments) ? string.Empty : " " + startInfo.Arguments));
             var created = false;
             var resumed = false;
@@ -156,26 +182,32 @@ namespace WoW112Updater
                     CreateSuspended | CreateUnicodeEnvironment, environment,
                     startInfo.WorkingDirectory, ref si, out pi);
                 if (!created)
-                    throw new InvalidOperationException("CreateProcessW(LOW) failed, Win32=" + Marshal.GetLastWin32Error());
+                    throw new InvalidOperationException("CreateProcessW(profile) failed, Win32=" + Marshal.GetLastWin32Error());
 
-                var actual = new byte[ExpectedConfigName.Length];
-                IntPtr read;
-                if (!ReadProcessMemory(pi.hProcess, ConfigNameAddress, actual, actual.Length, out read)
-                    || read.ToInt64() != actual.Length || !BytesEqual(actual, ExpectedConfigName))
-                    throw new InvalidOperationException(
-                        "LOW fail-closed: build 5875 nie ma oczekiwanego Config.wtf pod 0x82E580.");
+                if (!string.IsNullOrWhiteSpace(configName))
+                {
+                    var actual = new byte[ExpectedConfigName.Length];
+                    IntPtr read;
+                    if (!ReadProcessMemory(pi.hProcess, ConfigNameAddress, actual, actual.Length, out read)
+                        || read.ToInt64() != actual.Length || !BytesEqual(actual, ExpectedConfigName))
+                        throw new InvalidOperationException(
+                            "LOW fail-closed: build 5875 nie ma oczekiwanego Config.wtf pod 0x82E580.");
 
-                var replacement = new byte[ExpectedConfigName.Length];
-                var encoded = Encoding.ASCII.GetBytes(configName);
-                Buffer.BlockCopy(encoded, 0, replacement, 0, encoded.Length);
-                IntPtr written;
-                if (!WriteProcessMemory(pi.hProcess, ConfigNameAddress, replacement, replacement.Length, out written)
-                    || written.ToInt64() != replacement.Length)
-                    throw new InvalidOperationException("LOW: nie udało się przypisać osobnego pliku WTF, Win32=" + Marshal.GetLastWin32Error());
+                    var replacement = new byte[ExpectedConfigName.Length];
+                    var encoded = Encoding.ASCII.GetBytes(configName);
+                    Buffer.BlockCopy(encoded, 0, replacement, 0, encoded.Length);
+                    IntPtr written;
+                    if (!WriteProcessMemory(pi.hProcess, ConfigNameAddress, replacement, replacement.Length, out written)
+                        || written.ToInt64() != replacement.Length)
+                        throw new InvalidOperationException("LOW: nie udało się przypisać osobnego pliku WTF, Win32=" + Marshal.GetLastWin32Error());
+                }
+
+                if (backgroundSound.HasValue)
+                    PatchBackgroundSound(pi.hProcess, backgroundSound.Value);
 
                 managed = System.Diagnostics.Process.GetProcessById((int)pi.dwProcessId);
                 if (ResumeThread(pi.hThread) == ResumeFailed)
-                    throw new InvalidOperationException("LOW: ResumeThread failed, Win32=" + Marshal.GetLastWin32Error());
+                    throw new InvalidOperationException("Profil: ResumeThread failed, Win32=" + Marshal.GetLastWin32Error());
                 resumed = true;
                 return managed;
             }
@@ -193,6 +225,47 @@ namespace WoW112Updater
                     if (pi.hProcess != IntPtr.Zero) CloseHandle(pi.hProcess);
                 }
                 if (environment != IntPtr.Zero) Marshal.FreeHGlobal(environment);
+            }
+        }
+
+        private static void PatchBackgroundSound(IntPtr processHandle, bool enabled)
+        {
+            var actual = new byte[1];
+            IntPtr read;
+            if (!ReadProcessMemory(processHandle, BackgroundSoundAddress, actual, 1, out read) || read.ToInt64() != 1)
+                throw new InvalidOperationException(
+                    "BG SOUND fail-closed: nie udało się odczytać bajtu builda 5875, Win32=" + Marshal.GetLastWin32Error());
+            if (actual[0] != BackgroundSoundOff && actual[0] != BackgroundSoundOn)
+                throw new InvalidOperationException(
+                    "BG SOUND fail-closed: nieoczekiwany bajt pod 0x7A4869: 0x" + actual[0].ToString("X2") + ".");
+
+            var desired = enabled ? BackgroundSoundOn : BackgroundSoundOff;
+            if (actual[0] == desired) return;
+
+            uint oldProtect;
+            var size = new UIntPtr(1u);
+            if (!VirtualProtectEx(processHandle, BackgroundSoundAddress, size, PageExecuteReadWrite, out oldProtect))
+                throw new InvalidOperationException(
+                    "BG SOUND: VirtualProtectEx failed, Win32=" + Marshal.GetLastWin32Error());
+
+            try
+            {
+                var replacement = new[] { desired };
+                IntPtr written;
+                if (!WriteProcessMemory(processHandle, BackgroundSoundAddress, replacement, 1, out written)
+                    || written.ToInt64() != 1)
+                    throw new InvalidOperationException(
+                        "BG SOUND: WriteProcessMemory failed, Win32=" + Marshal.GetLastWin32Error());
+                if (!FlushInstructionCache(processHandle, BackgroundSoundAddress, size))
+                    throw new InvalidOperationException(
+                        "BG SOUND: FlushInstructionCache failed, Win32=" + Marshal.GetLastWin32Error());
+            }
+            finally
+            {
+                uint ignored;
+                if (!VirtualProtectEx(processHandle, BackgroundSoundAddress, size, oldProtect, out ignored))
+                    throw new InvalidOperationException(
+                        "BG SOUND: nie udało się odtworzyć ochrony pamięci, Win32=" + Marshal.GetLastWin32Error());
             }
         }
 

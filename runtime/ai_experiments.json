@@ -94,6 +94,25 @@
       "tests": [],
       "package": null,
       "notes": "v8 replaces the Anti-AFK Jump() action after live testing showed no visible jump/activity. The same opt-in Anti-AFK state now executes FrameScript SendChatMessage(\".\",\"SAY\") once per independently randomized 120-360s interval. Due actions are still deferred while native cast/channel is active. SUMMON GUI now reports say-call count instead of jump-call count; /antiafk on|off|toggle|status continues to control the same state. Background-safe: no OS input or foreground focus."
+    },
+    {
+      "id": "multibox-background-sound-parallel",
+      "branch": "parallel",
+      "modules": [
+        "UpdaterMultibox"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "WoW 1.12.1 build 5875 suspended process launch",
+        "background-audio byte VA 0x007A4869",
+        "per-profile LOW Config.wtf"
+      ],
+      "status": "in_progress",
+      "observed_head": "6b8f54ca42cfd2e201b631dc6bd2a4bf39483b5f",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Transient per-launch BG SOUND toggle for each multibox account. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table."
     }
   ]
 }

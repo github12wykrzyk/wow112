@@ -92,6 +92,12 @@ namespace WoW112Updater
         public string AccountId;
     }
 
+    internal sealed class MultiboxLaunchEntry
+    {
+        public WowAccount Account;
+        public bool BackgroundSound;
+    }
+
     internal sealed partial class MainForm
     {
         private readonly Button accountsButton = new Button();
@@ -148,8 +154,8 @@ namespace WoW112Updater
             using (var dialog = new Form
             {
                 Text = "MULTIBOX — World of Warcraft 1.12.1",
-                ClientSize = new Size(790, 500),
-                MinimumSize = new Size(806, 539),
+                ClientSize = new Size(1010, 500),
+                MinimumSize = new Size(1026, 539),
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
                 MinimizeBox = false,
@@ -161,39 +167,47 @@ namespace WoW112Updater
                 var accounts = new CheckedListBox
                 {
                     Location = new Point(14, 42),
-                    Size = new Size(286, 355),
+                    Size = new Size(260, 355),
+                    CheckOnClick = true,
+                    IntegralHeight = false
+                };
+                var backgroundSound = new CheckedListBox
+                {
+                    Location = new Point(292, 42),
+                    Size = new Size(210, 355),
                     CheckOnClick = true,
                     IntegralHeight = false
                 };
                 var states = new ListBox
                 {
-                    Location = new Point(318, 42),
-                    Size = new Size(456, 355),
+                    Location = new Point(520, 42),
+                    Size = new Size(474, 355),
                     IntegralHeight = false
                 };
                 var info = new Label
                 {
                     Text = "Każde zaznaczone konto dostaje osobny proces WoW już przypisany do profilu. Native AutoLogin loguje bez klawiatury, fokusu i opóźnień pól.",
                     Location = new Point(14, 8),
-                    Size = new Size(760, 30)
+                    Size = new Size(980, 30)
                 };
                 var selectAll = new Button { Text = "Zaznacz wszystkie", Location = new Point(14, 414), Size = new Size(138, 34) };
                 var clearAll = new Button { Text = "Wyczyść", Location = new Point(160, 414), Size = new Size(92, 34) };
-                var launchSelected = new Button { Text = "URUCHOM ZAZNACZONE", Location = new Point(318, 414), Size = new Size(190, 34) };
-                var launchAll = new Button { Text = "URUCHOM WSZYSTKIE", Location = new Point(516, 414), Size = new Size(160, 34) };
-                var close = new Button { Text = "Zamknij", Location = new Point(684, 414), Size = new Size(90, 34) };
+                var launchSelected = new Button { Text = "URUCHOM ZAZNACZONE", Location = new Point(520, 414), Size = new Size(190, 34) };
+                var launchAll = new Button { Text = "URUCHOM WSZYSTKIE", Location = new Point(718, 414), Size = new Size(160, 34) };
+                var close = new Button { Text = "Zamknij", Location = new Point(886, 414), Size = new Size(108, 34) };
                 var footer = new Label
                 {
                     Text = "Hasła są odszyfrowywane z DPAPI tylko lokalnie, bez zapisu do logu ani GitHuba.",
                     Location = new Point(14, 462),
-                    Size = new Size(760, 24),
+                    Size = new Size(980, 24),
                     ForeColor = Color.DimGray
                 };
                 dialog.Controls.AddRange(new Control[] {
                     info,
-                    new Label { Text = "Konta", Location = new Point(14, 24), AutoSize = true },
-                    new Label { Text = "Status instancji", Location = new Point(318, 24), AutoSize = true },
-                    accounts, states, selectAll, clearAll, launchSelected, launchAll, close, footer
+                    new Label { Text = "Konta (uruchom)", Location = new Point(14, 24), AutoSize = true },
+                    new Label { Text = "BG SOUND", Location = new Point(292, 24), AutoSize = true },
+                    new Label { Text = "Status instancji", Location = new Point(520, 24), AutoSize = true },
+                    accounts, backgroundSound, states, selectAll, clearAll, launchSelected, launchAll, close, footer
                 });
 
                 var accountByIndex = new List<WowAccount>();
@@ -201,6 +215,7 @@ namespace WoW112Updater
                 foreach (var account in accountVault.Data.Accounts)
                 {
                     accounts.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
+                    backgroundSound.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
                     accountByIndex.Add(account);
                     stateIndex[account.Id] = states.Items.Count;
                     states.Items.Add(account.Label + " • gotowy");
@@ -216,11 +231,25 @@ namespace WoW112Updater
                     System.Windows.Forms.Application.DoEvents();
                 };
 
-                Func<List<WowAccount>> checkedAccounts = delegate
+                Func<List<MultiboxLaunchEntry>> checkedAccounts = delegate
                 {
-                    var selected = new List<WowAccount>();
+                    var selected = new List<MultiboxLaunchEntry>();
                     for (int i = 0; i < accounts.Items.Count; i++)
-                        if (accounts.GetItemChecked(i)) selected.Add(accountByIndex[i]);
+                        if (accounts.GetItemChecked(i))
+                            selected.Add(new MultiboxLaunchEntry {
+                                Account = accountByIndex[i],
+                                BackgroundSound = backgroundSound.GetItemChecked(i)
+                            });
+                    return selected;
+                };
+                Func<List<MultiboxLaunchEntry>> allAccounts = delegate
+                {
+                    var selected = new List<MultiboxLaunchEntry>();
+                    for (int i = 0; i < accountByIndex.Count; i++)
+                        selected.Add(new MultiboxLaunchEntry {
+                            Account = accountByIndex[i],
+                            BackgroundSound = backgroundSound.GetItemChecked(i)
+                        });
                     return selected;
                 };
 
@@ -228,6 +257,7 @@ namespace WoW112Updater
                 {
                     selectAll.Enabled = enabled;
                     clearAll.Enabled = enabled;
+                    backgroundSound.Enabled = enabled;
                     launchSelected.Enabled = enabled;
                     launchAll.Enabled = enabled;
                     close.Enabled = enabled;
@@ -259,7 +289,7 @@ namespace WoW112Updater
                 launchAll.Click += async delegate
                 {
                     setButtons(false);
-                    try { await RunMultiboxAsync(accountByIndex.ToList(), setState); }
+                    try { await RunMultiboxAsync(allAccounts(), setState); }
                     finally { setButtons(true); }
                 };
 
@@ -276,10 +306,10 @@ namespace WoW112Updater
             }
         }
 
-        private async Task RunMultiboxAsync(IList<WowAccount> accounts, Action<WowAccount, string> setState)
+        private async Task RunMultiboxAsync(IList<MultiboxLaunchEntry> launches, Action<WowAccount, string> setState)
         {
             if (multiboxRunning) return;
-            if (accounts == null || accounts.Count == 0) return;
+            if (launches == null || launches.Count == 0) return;
 
             var bridgePath = Path.Combine(gameDir.Text.Trim(), "WoWAutoLoginBridge_5875_v1.dll");
             if (!File.Exists(bridgePath))
@@ -295,16 +325,18 @@ namespace WoW112Updater
             int failed = 0;
             try
             {
-                SetBusy(true, "Multibox: uruchamianie " + accounts.Count + " instancji...");
-                foreach (var account in accounts)
+                SetBusy(true, "Multibox: uruchamianie " + launches.Count + " instancji...");
+                foreach (var launch in launches)
                 {
+                    var account = launch.Account;
                     try
                     {
                         setState(account, "STARTING • profil przy CreateProcess");
-                        var game = StartGameProcess(account);
+                        var game = StartGameProcess(account, launch.BackgroundSound);
                         accountSessions.Add(new WowAccountSession { Game = game, AccountId = account.Id });
                         setState(account, "PID " + game.Id + " • NATIVE AUTOLOGIN" +
-                            (account.LowSpec ? " • LOWCFG " + LowSpecConfigName(account) : ""));
+                            (account.LowSpec ? " • LOWCFG " + LowSpecConfigName(account) : "") +
+                            (launch.BackgroundSound ? " • BG SOUND" : ""));
                         Log("Multibox: profil " + account.Label + " przypisany przy starcie do PID " + game.Id + ".");
                         ok++;
 
@@ -358,13 +390,13 @@ namespace WoW112Updater
                     Text = "Nowy profil: wpisz hasło i kliknij Zapisz profil." };
                 var newButton = new Button { Text = "Nowe", Location = new Point(14, 360), Size = new Size(96, 32) };
                 var deleteButton = new Button { Text = "Usuń", Location = new Point(120, 360), Size = new Size(96, 32) };
-                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (800x600, osobny WTF, bez dźwięku)", Location = new Point(237, 250), Size = new Size(432, 26) };
+                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (800x600, osobny WTF)", Location = new Point(237, 250), Size = new Size(432, 26) };
                 var saveButton = new Button { Text = "Zapisz profil", Location = new Point(237, 287), Size = new Size(142, 32) };
                 var defaultButton = new Button { Text = "Ustaw domyślne", Location = new Point(386, 287), Size = new Size(138, 32) };
                 var launchProfile = new Button { Text = "Uruchom grę z profilem", Location = new Point(237, 340), Size = new Size(209, 36) };
                 var fillButton = new Button { Text = "Wpisz dane do gry", Location = new Point(453, 340), Size = new Size(216, 36) };
                 var info = new Label { Location = new Point(14, 456), Size = new Size(660, 44),
-                    Text = "LOW SPEC jest per profil: osobny plik WTF jest ładowany przed startem renderera. Zwykłe konto nadal używa Config.wtf." };
+                    Text = "LOW SPEC jest per profil. W Multibox opcja BG SOUND zachowuje audio tylko dla zaznaczonej instancji; bez niej LOW pozostaje wyciszony." };
                 dialog.Controls.AddRange(new Control[] {
                     new Label { Text = "Zapisane profile", Location = new Point(14, 12), AutoSize = true },
                     list, newButton, deleteButton,
@@ -548,13 +580,18 @@ namespace WoW112Updater
             var lowRoot = Path.Combine(folder, "low-spec-smoke");
             Directory.CreateDirectory(Path.Combine(lowRoot, "WTF"));
             File.WriteAllText(Path.Combine(lowRoot, "WTF", "Config.wtf"), "SET farclip \"777\"\r\nSET anisotropic \"16\"\r\n", Encoding.UTF8);
-            var lowName = PrepareLowSpecConfig(lowRoot, loaded.Data.Accounts[0]);
+            var lowName = PrepareLowSpecConfig(lowRoot, loaded.Data.Accounts[0], false);
             var lowText = File.ReadAllText(Path.Combine(lowRoot, "WTF", lowName), Encoding.UTF8);
             if (lowName.Length != 10 || !lowText.Contains("SET farclip \"177\"") ||
                 !lowText.Contains("SET gxResolution \"800x600\"") ||
                 !lowText.Contains("SET smallCull \"0.001\"") || !lowText.Contains("SET M2UseShaders \"1\"") ||
-                !lowText.Contains("SET M2UsePixelShaders \"0\""))
+                !lowText.Contains("SET M2UsePixelShaders \"0\"") ||
+                !lowText.Contains("SET MasterVolume \"0\""))
                 throw new Exception("Account smoke: per-profile LOW config generation failed");
+            PrepareLowSpecConfig(lowRoot, loaded.Data.Accounts[0], true);
+            var lowSoundText = File.ReadAllText(Path.Combine(lowRoot, "WTF", lowName), Encoding.UTF8);
+            if (lowSoundText.Contains("SET MasterVolume \"0\"") || lowSoundText.Contains("SET MasterSoundEffects \"0\""))
+                throw new Exception("Account smoke: BG SOUND must preserve base audio settings");
 
             loaded.Data.Accounts.RemoveAt(0);
             loaded.Save();
