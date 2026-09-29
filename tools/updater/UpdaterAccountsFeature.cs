@@ -172,7 +172,7 @@ namespace WoW112Updater
                 };
                 var info = new Label
                 {
-                    Text = "Każde zaznaczone konto dostaje osobny proces WoW. Launcher czeka na okno, wpisuje login i hasło do właściwego PID i zatwierdza Enterem.",
+                    Text = "Każde zaznaczone konto dostaje osobny proces WoW już przypisany do profilu. Native AutoLogin loguje bez klawiatury, fokusu i opóźnień pól.",
                     Location = new Point(14, 8),
                     Size = new Size(760, 30)
                 };
@@ -279,6 +279,16 @@ namespace WoW112Updater
         {
             if (multiboxRunning) return;
             if (accounts == null || accounts.Count == 0) return;
+
+            var bridgePath = Path.Combine(gameDir.Text.Trim(), "WoWAutoLoginBridge_5875_v1.dll");
+            if (!File.Exists(bridgePath))
+            {
+                MessageBox.Show(this,
+                    "Brak WoWAutoLoginBridge_5875_v1.dll. Kliknij najpierw Aktualizuj, aby pobrać nową paczkę PARALLEL.",
+                    "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             multiboxRunning = true;
             int ok = 0;
             int failed = 0;
@@ -289,23 +299,15 @@ namespace WoW112Updater
                 {
                     try
                     {
-                        setState(account, "STARTING");
-                        var password = accountVault.Unprotect(account);
-                        if (string.IsNullOrEmpty(password))
-                            throw new InvalidDataException("Puste hasło w magazynie DPAPI.");
-
-                        var game = StartGameProcess();
-                        var session = new WowAccountSession { Game = game, AccountId = account.Id };
-                        accountSessions.Add(session);
-                        setState(account, "PID " + game.Id + " • czekam na ekran logowania");
-
-                        await WaitForGameWindowAsync(game, 15000);
-                        setState(account, "PID " + game.Id + " • LOGIN");
-                        FillCredentials(game, account, password, true);
-                        setState(account, "PID " + game.Id + " • CONNECTING");
-                        Log("Multibox: wysłano login dla profilu " + account.Label + " do PID " + game.Id + ".");
+                        setState(account, "STARTING • profil przy CreateProcess");
+                        var game = StartGameProcess(account);
+                        accountSessions.Add(new WowAccountSession { Game = game, AccountId = account.Id });
+                        setState(account, "PID " + game.Id + " • NATIVE AUTOLOGIN");
+                        Log("Multibox: profil " + account.Label + " przypisany przy starcie do PID " + game.Id + ".");
                         ok++;
-                        await Task.Delay(650);
+
+                        // Only stagger process creation slightly; login itself has no UI-delay dependency.
+                        await Task.Delay(180);
                     }
                     catch (Exception ex)
                     {
@@ -318,34 +320,10 @@ namespace WoW112Updater
             finally
             {
                 multiboxRunning = false;
-                var final = "Multibox: uruchomiono " + ok + ", błędy " + failed + ".";
+                var final = "Multibox: uruchomiono " + ok + ", błędy " + failed + " • native autologin.";
                 SetBusy(false, final);
                 Log(final);
             }
-        }
-
-        private static async Task WaitForGameWindowAsync(System.Diagnostics.Process game, int timeoutMs)
-        {
-            if (game == null) throw new ArgumentNullException("game");
-            var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-            while (DateTime.UtcNow < deadline)
-            {
-                if (game.HasExited)
-                    throw new InvalidOperationException("Klient WoW zakończył się przed ekranem logowania.");
-                game.Refresh();
-                if (game.MainWindowHandle != IntPtr.Zero)
-                {
-                    try { game.WaitForInputIdle(750); }
-                    catch (InvalidOperationException) { }
-                    catch (System.ComponentModel.Win32Exception) { }
-
-                    await Task.Delay(2200);
-                    game.Refresh();
-                    if (!game.HasExited && game.MainWindowHandle != IntPtr.Zero) return;
-                }
-                await Task.Delay(120);
-            }
-            throw new TimeoutException("Nie pojawiło się gotowe okno WoW w ciągu 15 s.");
         }
 
         private void ShowAccounts()
@@ -567,6 +545,13 @@ namespace WoW112Updater
                 throw new Exception("Account smoke: account deletion/default persistence failed");
             if (!featureControls.ContainsKey("accounts") || !featureControls.ContainsKey("multibox"))
                 throw new Exception("Account smoke: accounts/multibox UI not registered");
+            var nativeStart = new ProcessStartInfo("WoW.exe") { UseShellExecute = true };
+            ConfigureAutoLoginEnvironment(nativeStart, loaded.Selected);
+            if (nativeStart.UseShellExecute ||
+                nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] != loaded.Selected.Login ||
+                nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] != loaded.Selected.ProtectedPassword ||
+                nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"].Contains("vault-test-secret"))
+                throw new Exception("Account smoke: native AutoLogin child environment contract failed");
             // Validate the physical-key translator using a test string only; no real accounts or focus changes.
             if (PrepareKeys("Ab9@!.-", GetKeyboardLayout(0)).Count != 7)
                 throw new Exception("Account smoke: keyboard translation failed");
@@ -670,7 +655,7 @@ namespace WoW112Updater
 
         // The 5875 client may ignore KEYEVENTF_UNICODE; emit physical scancodes instead.
         // All mappings are checked before touching either login field.
-        private static void FillCredentials(System.Diagnostics.Process process, WowAccount account, string password, bool submit = false)
+        private static void FillCredentials(System.Diagnostics.Process process, WowAccount account, string password)
         {
             if (process == null || process.HasExited)
                 throw new InvalidOperationException("Wybrany klient WoW jest zamknięty.");
@@ -697,13 +682,7 @@ namespace WoW112Updater
             Thread.Sleep(70);
             SendChord(process.Id, new KeyStroke { Scan = 0x1e, Modifiers = 2 }); // CTRL+A
             SendPrepared(process.Id, passwordKeys);
-            if (submit)
-            {
-                Thread.Sleep(90);
-                SendScan(process.Id, 0x1c, false, false); // ENTER down
-                Thread.Sleep(45);
-                SendScan(process.Id, 0x1c, true, false);  // ENTER up
-            }
+            // Manual fallback intentionally never submits with Enter.
         }
 
         private struct KeyStroke

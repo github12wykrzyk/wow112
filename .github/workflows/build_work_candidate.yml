@@ -161,6 +161,20 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "AutoSummon Assist candidate failed" }
           }
 
+      - name: Build and append AutoLogin Bridge when present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1.c') {
+            python tools/build_autologinbridge_candidate.py `
+              --package dist/WoW112_WORK_CANDIDATE.zip `
+              --package-metadata dist/candidate_metadata.json `
+              --summary dist/candidate_summary.json `
+              --build-metadata dist/autologinbridge_build.json `
+              --output build/WoWAutoLoginBridge_5875_v1.dll
+            if ($LASTEXITCODE -ne 0) { throw "AutoLogin Bridge candidate failed" }
+          }
+
       - name: Build and append Opener UI Recovery when present
         shell: pwsh
         run: |

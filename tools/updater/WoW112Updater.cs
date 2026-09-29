@@ -999,7 +999,26 @@ namespace WoW112Updater
             return Path.Combine(root, ".wow112_parallel_updater", "installed.json");
         }
 
-        private System.Diagnostics.Process StartGameProcess()
+        private static void ConfigureAutoLoginEnvironment(ProcessStartInfo startInfo, WowAccount account)
+        {
+            if (startInfo == null) throw new ArgumentNullException("startInfo");
+            if (account == null) return;
+            if (string.IsNullOrWhiteSpace(account.Login))
+                throw new InvalidDataException("Profil nie ma loginu.");
+            if (Encoding.UTF8.GetByteCount(account.Login) >= 64)
+                throw new InvalidDataException("Login jest za długi dla klienta WoW 1.12.1.");
+            if (string.IsNullOrWhiteSpace(account.ProtectedPassword))
+                throw new InvalidDataException("Profil nie ma zaszyfrowanego hasła.");
+            if (account.ProtectedPassword.Length >= 2048)
+                throw new InvalidDataException("Zaszyfrowane hasło profilu jest za duże.");
+
+            // EnvironmentVariables require direct CreateProcess semantics.
+            startInfo.UseShellExecute = false;
+            startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] = account.Login;
+            startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] = account.ProtectedPassword;
+        }
+
+        private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null)
         {
             var root = gameDir.Text.Trim();
             if (!Directory.Exists(root)) throw new InvalidOperationException("Wybierz katalog gry.");
@@ -1016,9 +1035,13 @@ namespace WoW112Updater
                 exe = candidates.FirstOrDefault();
             }
             if (exe == null) throw new InvalidOperationException("Nie znalazłem WoW*.exe w wybranym katalogu.");
-            var game = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true });
+
+            var startInfo = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true };
+            ConfigureAutoLoginEnvironment(startInfo, autoLoginAccount);
+            var game = Process.Start(startInfo);
             if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
-            Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ").");
+            Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ")" +
+                (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin."));
             return game;
         }
 
