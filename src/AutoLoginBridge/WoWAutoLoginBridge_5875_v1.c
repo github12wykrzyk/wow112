@@ -177,13 +177,29 @@ static void apply_low_spec(void)
     static const char script[]=
         "if not W112_LOW_SPEC_APPLIED then "
         "W112_LOW_SPEC_APPLIED=1;"
-        "W112_LOW_SPEC_KEYS={'farclip','groundEffectDensity','groundEffectDist','detailDoodadAlpha','smallcull','skycloudlod','particleDensity','extShadowQuality','weatherDensity','specular','anisotropic','gxMultisample'};"
-        "W112_LOW_SPEC_OLD={};local v={'177','16','1','1','2','0','0.3','0','0','0','1','1'};"
-        "for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];local ok,x=pcall(GetCVar,k);if ok and x then local sok=pcall(SetCVar,k,v[i]);if sok then W112_LOW_SPEC_OLD[i]=x end end end;"
+        "W112_LOW_SPEC_SET={{'farclip','177'},{'frillDensity','8'},{'frilldistance','30'},{'lodDist','50'},{'DistCull','100'},{'particleDensity','0.1'},{'specular','0'},{'pixelShaders','0'},{'M2UsePixelShaders','0'},{'weatherDensity','0'},{'shadowLevel','0'},{'anisotropic','1'},{'SkyCloudLOD','0'},{'M2Faster','3'},{'gxMultisample','1'},{'gxVSync','0'},{'gxTripleBuffer','0'},{'gxWindow','1'},{'gxMaximize','0'},{'gxResolution','800x600'},{'MaxFPS','20'},{'maxFPSBk','8'},{'EnableMusic','0'},{'EnableAmbience','0'},{'MasterSoundEffects','0'}};"
+        "W112_LOW_SPEC_OLD={};"
+        "for i=1,table.getn(W112_LOW_SPEC_SET) do local k=W112_LOW_SPEC_SET[i][1];local v=W112_LOW_SPEC_SET[i][2];local ok,x=pcall(GetCVar,k);if ok and x then local sok=pcall(SetCVar,k,v);if sok then W112_LOW_SPEC_OLD[i]=x end end end;"
         "W112_LOW_SPEC_FRAME=CreateFrame('Frame');W112_LOW_SPEC_FRAME:RegisterEvent('PLAYER_LOGOUT');"
-        "W112_LOW_SPEC_FRAME:SetScript('OnEvent',function() if W112_LOW_SPEC_OLD then for i=1,table.getn(W112_LOW_SPEC_KEYS) do local k=W112_LOW_SPEC_KEYS[i];local x=W112_LOW_SPEC_OLD[i];if x then pcall(SetCVar,k,x) end end end end);"
+        "W112_LOW_SPEC_FRAME:SetScript('OnEvent',function() if W112_LOW_SPEC_OLD then for i=1,table.getn(W112_LOW_SPEC_SET) do local x=W112_LOW_SPEC_OLD[i];if x then pcall(SetCVar,W112_LOW_SPEC_SET[i][1],x) end end end end);"
+        "if type(RestartGx)=='function' then pcall(RestartGx) end;"
         "end";
     ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(script,script);
+}
+
+static void force_low_spec_window(HWND hwnd)
+{
+    RECT r;
+    LONG style,exstyle;
+    if(!hwnd || !IsWindow(hwnd)) return;
+    r.left=0; r.top=0; r.right=800; r.bottom=600;
+    style=GetWindowLongA(hwnd,GWL_STYLE);
+    exstyle=GetWindowLongA(hwnd,GWL_EXSTYLE);
+    if(AdjustWindowRectEx(&r,(DWORD)style,FALSE,(DWORD)exstyle)) {
+        ShowWindow(hwnd,SW_RESTORE);
+        SetWindowPos(hwnd,NULL,0,0,(int)(r.right-r.left),(int)(r.bottom-r.top),
+                     SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+    }
 }
 
 static LRESULT WINAPI login_wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp)
@@ -267,6 +283,12 @@ static DWORD WINAPI worker(LPVOID unused)
         while(!g_stop && !g_low_spec_done && (DWORD)(GetTickCount()-start)<60000u) {
             if(world_ready() && ensure_hook()) PostMessageA(g_hwnd,WM_LOW_SPEC,0,0);
             Sleep(100u);
+        }
+        if(g_low_spec_done) {
+            HWND lowHwnd;
+            Sleep(750u);
+            lowHwnd=find_main_window();
+            force_low_spec_window(lowHwnd);
         }
     }
     release_hook();
