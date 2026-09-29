@@ -180,12 +180,14 @@ done:
 static LRESULT WINAPI login_wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp)
 {
     static const char autoCharScript[]=
-        "if not W112_AUTOCHAR_FIRST_DONE and CharacterSelect and CharacterSelect.IsVisible "
-        "and CharacterSelect:IsVisible() and type(GetNumCharacters)=='function' "
-        "and GetNumCharacters()>0 and type(CharacterSelect_SelectCharacter)=='function' "
+        "if CharacterSelectUI and CharacterSelectUI.IsVisible and CharacterSelectUI:IsVisible() "
+        "and CharacterSelect and type(GetNumCharacters)=='function' and GetNumCharacters()>0 "
+        "and type(CharacterSelect_SelectCharacter)=='function' "
         "and type(CharacterSelect_EnterWorld)=='function' then "
-        "CharacterSelect_SelectCharacter(1,1);CharacterSelect_EnterWorld();"
-        "W112_AUTOCHAR_FIRST_DONE=true end";
+        "if not W112_AUTOCHAR_FIRST_SELECTED then "
+        "CharacterSelect_SelectCharacter(1,1);W112_AUTOCHAR_FIRST_SELECTED=true "
+        "elseif not W112_AUTOCHAR_FIRST_DONE and CharacterSelect.selectedIndex==1 then "
+        "W112_AUTOCHAR_FIRST_DONE=true;CharacterSelect_EnterWorld() end end";
 
     if(msg==WM_AUTOLOGIN && !g_done) {
         if(!guard_ok()) { g_done=-1; return 0; }
@@ -260,13 +262,13 @@ static DWORD WINAPI worker(LPVOID unused)
     }
     if(!g_done) { wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); }
 
-    /* AUTO POSTAĆ 1 remains entirely inside this process: once native login
-     * succeeds, poll the GlueXML character screen on WoW's own window thread.
-     * The Lua flag makes the action one-shot; object-manager readiness ends the
-     * bridge promptly after the world starts loading. */
+    /* AUTO POSTAĆ 1 remains entirely inside this process. CharacterSelectUI is
+     * the actual GlueXML screen; CharacterSelect is the model/state frame.
+     * Select slot 1 first, then wait for UPDATE_SELECTED_CHARACTER to publish
+     * selectedIndex==1 before EnterWorld. This avoids a slow-render/LOW race. */
     if(g_done==1 && g_autochar) {
         autoStart=GetTickCount();
-        while(!g_stop && (DWORD)(GetTickCount()-autoStart)<60000u) {
+        while(!g_stop && (DWORD)(GetTickCount()-autoStart)<120000u) {
             if(*(volatile DWORD*)(DWORD)WOW_OBJMGR!=0u) break;
             if(ensure_hook()) PostMessageA(g_hwnd,WM_AUTOCHAR,0,0);
             Sleep(100u);
