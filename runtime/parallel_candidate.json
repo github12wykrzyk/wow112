@@ -18,49 +18,76 @@
       "sources": [
         "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
         "src/PVERear360/WoWPVERear360_5875_v1.c"
-      ]
+      ],
+      "profile": "clangcl_i686_win32imports"
     }
   ],
   "companions": [
     {
       "runtime_name": "WoWGroundTargetAssist_5875_v1.dll",
       "builder": "tools/build_groundtargetassist_candidate.py",
-      "sources": ["src/GroundTargetAssist/WoWGroundTargetAssist_5875_v1.c"]
+      "sources": [
+        "src/GroundTargetAssist/WoWGroundTargetAssist_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_crtless"
     },
     {
       "runtime_name": "WoWAutoFlagWSG_5875_v1.dll",
       "builder": "tools/build_autoflagwsg_candidate.py",
-      "sources": ["src/AutoFlagWSG/WoWAutoFlagWSG_5875_v1.c"]
+      "sources": [
+        "src/AutoFlagWSG/WoWAutoFlagWSG_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_crtless"
     },
     {
       "runtime_name": "WoWAutoSummonAssist_5875_v1.dll",
       "builder": "tools/build_autosummonassist_candidate.py",
-      "sources": ["src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c"]
+      "sources": [
+        "src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_win32imports"
     },
     {
       "runtime_name": "WoWAutoLoginBridge_5875_v1.dll",
       "builder": "tools/build_autologinbridge_candidate.py",
-      "sources": ["src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1.c"]
+      "sources": [
+        "src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_win32imports"
     },
     {
       "runtime_name": "WoWOpenerUIRecovery_5875_v1.dll",
       "builder": "tools/build_openeruirecovery_candidate.py",
-      "sources": ["src/OpenerUIRecovery/WoWOpenerUIRecovery_5875_v1.c"]
+      "sources": [
+        "src/OpenerUIRecovery/WoWOpenerUIRecovery_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_crtless"
     },
     {
       "runtime_name": "WoWAutoWotF_5875_v1.dll",
       "builder": "tools/build_autowotf_candidate.py",
-      "sources": ["src/AutoWotF/WoWAutoWotF_5875_v1.c"]
+      "sources": [
+        "src/AutoWotF/WoWAutoWotF_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_win32imports"
     },
     {
       "runtime_name": "WoWCastObserver_5875_v1.dll",
       "builder": "tools/build_castobserver_candidate.py",
-      "sources": ["src/CastObserver/WoWCastObserver_5875_v1.c"]
+      "sources": [
+        "src/CastObserver/WoWCastObserver_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_crtless"
     }
   ],
   "addons": {
     "packager": "tools/package_lazyrogue_addons.py",
-    "roots": ["LazyRogue", "LazyScript", "LazyWarlock", "SummonScout"]
+    "roots": [
+      "LazyRogue",
+      "LazyScript",
+      "LazyWarlock",
+      "SummonScout"
+    ]
   },
   "gates": [
     "tools/verify_current.py",

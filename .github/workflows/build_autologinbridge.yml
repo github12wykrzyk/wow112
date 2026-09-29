@@ -3,7 +3,7 @@ on:
   push:
     branches:
       - parallel
-      - feature/multibox-native-login
+      - 'feature/**'
     paths:
       - 'src/AutoLoginBridge/**'
       - 'tools/build_autologinbridge_candidate.py'
@@ -11,6 +11,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: build-autologinbridge-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: windows-2022
