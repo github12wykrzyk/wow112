@@ -1,4 +1,4 @@
-# SummonScout 1.13
+# SummonScout 1.14
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -209,3 +209,12 @@ The 10 second cooldown is applied to **outgoing summon-status whispers**, not to
 - `Summoning you to <destination>.` is rate-limited **per recipient**. The same player cannot receive that cast-related whisper more than once within 10 seconds, even if other players are summoned between attempts.
 - Default cast-whisper cooldown: 10 seconds.
 - Optional command: `/ssi summonwhispercd <1-120>`.
+
+
+## 1.14 GUI cleanup and live wallet
+
+- Checkbox controls are compacted to 20x20 with smaller labels so adjacent rows no longer overlap at low resolutions.
+- The summon-status whisper cooldown is editable directly in the GUI beside `Whisper summon destination`.
+- `Live operation` now separates `Received total` (the SummonScout payment ledger) from `Current gold` (live `GetMoney()` wallet balance).
+- `Reset total` clears the saved payment ledger only. It does not change the character's actual gold.
+- `Current gold` is display-only and is never used as the amount of a received payment.

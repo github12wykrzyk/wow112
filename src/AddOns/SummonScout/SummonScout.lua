@@ -1169,8 +1169,10 @@ end
 local function guiCheck(parent, x, y, label, getter, setter)
     local b = CreateFrame("CheckButton", guiName("Check"), parent, "UICheckButtonTemplate")
     b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    b:SetWidth(20)
+    b:SetHeight(20)
     b.ssGetter = getter
-    guiText(parent, label, x + 24, y - 4, false)
+    guiText(parent, label, x + 22, y - 2, true)
     b:SetScript("OnClick", function()
         setter(b:GetChecked() and true or false)
         if guiRefresh then guiRefresh() end
@@ -1230,6 +1232,20 @@ local function guiSaveMaster()
     if guiRefresh then guiRefresh() end
 end
 
+local function guiSaveSummonWhisperCd()
+    local seconds = tonumber(trim(GUI.summonWhisperCdEdit and GUI.summonWhisperCdEdit:GetText() or ""))
+    if not seconds or seconds < 1 or seconds > 120 then
+        chat("summon whisper cooldown must be 1-120 seconds")
+        if GUI.summonWhisperCdEdit then
+            GUI.summonWhisperCdEdit:SetText(tostring(SummonScoutDB.summonWhisperCooldown or 10))
+        end
+        return
+    end
+    SummonScoutDB.summonWhisperCooldown = math.floor(seconds)
+    chat("summon whisper cooldown -> " .. tostring(SummonScoutDB.summonWhisperCooldown) .. "s")
+    if guiRefresh then guiRefresh() end
+end
+
 local function createGui()
     if GUI.frame then return GUI.frame end
 
@@ -1283,6 +1299,10 @@ local function createGui()
     GUI.summonWhisperCheck = guiCheck(f, 26, -172, "Whisper summon destination",
         function() return SummonScoutDB.summonWhisperEnabled end,
         function(v) SummonScoutDB.summonWhisperEnabled = v end)
+    guiText(f, "CD:", 220, -176, true)
+    GUI.summonWhisperCdEdit = guiEdit(f, 244, -171, 38, tostring(SummonScoutDB.summonWhisperCooldown or 10))
+    GUI.summonWhisperCdEdit:SetMaxLetters(3)
+    guiButton(f, 286, -171, 40, "Set", guiSaveSummonWhisperCd)
     GUI.logCheck = guiCheck(f, 26, -198, "Demand logging",
         function() return SummonScoutDB.loggingEnabled end,
         function(v) SummonScoutDB.loggingEnabled = v end)
@@ -1350,8 +1370,10 @@ local function createGui()
     guiHeader(f, "Live operation", 370, -252)
     GUI.lastInviteText = guiText(f, "Last invite: -", 370, -276, true)
     GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -300, true)
-    GUI.revenueText = guiText(f, "Revenue: 0c", 370, -324, true)
-    GUI.counterText = guiText(f, "Counter: -", 370, -348, true)
+    GUI.revenueText = guiText(f, "Received total: 0c", 370, -324, true)
+    GUI.currentGoldText = guiText(f, "Current gold: 0c", 370, -348, true)
+    GUI.counterText = guiText(f, "Counter: -", 370, -372, true)
+    guiButton(f, 586, -316, 92, "Reset total", function() clearPayments() end)
     GUI.stateText = guiText(f, "State: -", 28, -450, true)
     GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -524, true)
 
@@ -1375,6 +1397,10 @@ guiRefresh = function()
         if c and c.ssGetter then c:SetChecked(c.ssGetter() and 1 or nil) end
     end
 
+    if GUI.summonWhisperCdEdit and not GUI.summonWhisperCdEdit:HasFocus() then
+        GUI.summonWhisperCdEdit:SetText(tostring(SummonScoutDB.summonWhisperCooldown or 10))
+    end
+
     if GUI.lastInviteText then
         GUI.lastInviteText:SetText("Last invite: " .. (SS.lastInvitedName or "-")
             .. (SS.lastInvitedLocation and (" -> " .. SS.lastInvitedLocation) or ""))
@@ -1386,8 +1412,11 @@ guiRefresh = function()
             .. (last and ((last.player or "?") .. " -> " .. formatMoney(last.copper or 0)) or "-"))
     end
     if GUI.revenueText then
-        GUI.revenueText:SetText("Revenue: " .. formatMoney(SummonScoutDB.revenueCopper or 0)
+        GUI.revenueText:SetText("Received total: " .. formatMoney(SummonScoutDB.revenueCopper or 0)
             .. " | payments: " .. tostring(SummonScoutDB.paymentCount or 0))
+    end
+    if GUI.currentGoldText then
+        GUI.currentGoldText:SetText("Current gold: " .. formatMoney(GetMoney and GetMoney() or 0))
     end
     if GUI.counterText then
         local pending = SS.counterAt and SS.counterAt > now()
