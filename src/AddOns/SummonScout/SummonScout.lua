@@ -83,6 +83,7 @@ local LOCATIONS = {
     { id="tanaris", label="Tanaris", aliases={"tanaris"} },
     { id="ungoro", label="Un'Goro Crater", aliases={"un goro crater", "ungoro crater", "un goro", "ungoro"} },
     { id="winterspring", label="Winterspring", aliases={"winterspring"} },
+    { id="hyjal", label="Mount Hyjal", aliases={"mount hyjal", "hyjal"} },
     { id="felwood", label="Felwood", aliases={"felwood"} },
     { id="feralas", label="Feralas", aliases={"feralas"} },
     { id="desolace", label="Desolace", aliases={"desolace"} },
@@ -158,14 +159,14 @@ local REQUEST_CUES = {
 -- "invite me" or "portal/port" language.
 local BUYER_INTENT_CUES = {
     "need", "lf", "lf summon", "lf summ", "wtb", "buy", "want", "looking",
-    "pls", "plz", "please", "can i", "could i", "anyone", "who can"
+    "can i", "could i", "anyone", "who can"
 }
 
 local SELLER_CUES = {
     "wts", "selling", "sell", "service", "available", "offering",
     "summons available", "summon service", "summoning service",
-    "selling summon", "sell summon", "summoning to", "portal service",
-    "pst", "whisper me", "dm me"
+    "selling summon", "sell summon", "summoning to", "summoning portals",
+    "portal service", "pst", "whisper me", "dm me"
 }
 
 local function hasCue(s, cues)
@@ -204,10 +205,15 @@ end
 
 local function isSellerMessage(s)
     s = normalizeMessage(s)
-    if s == "" or hasBuyerIntentCue(s) or not hasSummonToken(s) then
-        return false
-    end
-    return hasSellerCue(s) or hasGoldPrice(s)
+    if s == "" or not hasSummonToken(s) then return false end
+    if hasBuyerIntentCue(s) then return false end
+    if hasSellerCue(s) or hasGoldPrice(s) then return true end
+
+    -- Common seller format: "<name> Summons: place1, place2, place3...".
+    -- Keep the fallback long-only so a short buyer line like "summons hyjal?"
+    -- still falls through to the request classifier instead of becoming an ad.
+    if phraseHas(s, "summons") and string.len(s) >= 40 then return true end
+    return false
 end
 
 local function looksLikeSummonRequest(message)
@@ -440,6 +446,9 @@ local function counterDelay(sender, message)
 end
 
 local function counterLocationAllowed(loc, ambiguous)
+    local scope = SummonScoutDB.counterScope or "all"
+    if scope == "all" then return true end
+
     if ambiguous or not loc then return false end
     local service = SummonScoutDB.service or "all"
     return service == "all" or loc.id == service
@@ -588,6 +597,7 @@ local function setDefaults()
     if SummonScoutDB.counterDelayMin == nil then SummonScoutDB.counterDelayMin = 4 end
     if SummonScoutDB.counterDelayMax == nil then SummonScoutDB.counterDelayMax = 8 end
     if SummonScoutDB.counterCooldown == nil then SummonScoutDB.counterCooldown = 60 end
+    if SummonScoutDB.counterScope == nil then SummonScoutDB.counterScope = "all" end
     ensureStats()
 end
 
@@ -605,6 +615,7 @@ local function status()
         .. "/" .. tostring(SummonScoutDB.counterDelayMin or 4)
         .. "-" .. tostring(SummonScoutDB.counterDelayMax or 8)
         .. "s cd=" .. tostring(SummonScoutDB.counterCooldown or 60) .. "s"
+        .. " scope=" .. tostring(SummonScoutDB.counterScope or "all")
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
 
@@ -813,6 +824,15 @@ local function slash(msg)
             SummonScoutDB.counterCooldown = math.floor(seconds)
             chat("counter cooldown -> " .. tostring(SummonScoutDB.counterCooldown) .. "s")
         end
+    elseif cmd == "counterscope" then
+        rest = lower(trim(rest))
+        if rest == "all" or rest == "same" then
+            SummonScoutDB.counterScope = rest
+            clearCounterPending()
+            chat("counter scope -> " .. rest)
+        else
+            chat("use /ssi counterscope all|same")
+        end
     elseif cmd == "countertest" and trim(rest) ~= "" then
         describeCounterTest(rest)
     elseif cmd == "debug" then
@@ -851,7 +871,8 @@ local function slash(msg)
     else
         chat("/ssi on|off|status | observe | invite on/off | log on/off | stats | recent [n] | unknown [n]")
         chat("/ssi spam on|off | spammsg <text> | spamsec <30-3600> | spamnow")
-        chat("/ssi counter on|off | counterdelay <min> <max> | countercool <15-3600> | countertest <message>")
+        chat("/ssi counter on|off | counterscope all|same | counterdelay <min> <max> | countercool <15-3600>")
+        chat("/ssi countertest <message>")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end

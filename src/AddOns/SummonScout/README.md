@@ -1,4 +1,4 @@
-# SummonScout 1.7
+# SummonScout 1.8
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -129,3 +129,19 @@ Commands:
 - `/ssi countertest <message>` - classify a sample without sending anything
 
 Counter mode defaults OFF and is independent of regular `/ssi spam on|off`; only a non-empty `spammsg` is required.
+
+
+## 1.8 counter detection fixes
+
+Competitive response now defaults to `counterscope all`: any clearly identified competing summon seller on World can schedule the configured advert, even when that seller advertises a different destination. Use `/ssi counterscope same` to restore destination-matching behavior.
+
+Seller detection now also recognizes:
+- `WTS -- HYJAL SUMMON -- 4g`
+- long menu-style ads such as `Cels Summons: Moonglade, ... Winterspring`
+- `summoning portals ...` wording
+- seller ads containing polite text such as `please ...` without misclassifying them as buyers
+
+`Mount Hyjal` / `Hyjal` is also a recognized destination for diagnostics and same-scope matching.
+
+New command:
+- `/ssi counterscope all|same` (default: `all`)
