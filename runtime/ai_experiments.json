@@ -75,6 +75,23 @@
       "tests": [],
       "package": null,
       "notes": "Infrastructure-only experiment. Branch/CI/package status must be queried live; no game runtime change."
+    },
+    {
+      "id": "autosummon-assist-parallel",
+      "branch": "parallel",
+      "modules": [
+        "AutoSummonAssist"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "GameObject native right-click 0x005F8660"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9260d0676fa3126b2c54d8bb4ee9e1c73b14b8be",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Parallel updater integration of AutoSummonAssist. Exact Vanilla scope: Ritual of Summoning spell 698 -> Summoning Portal GameObject 36727; 4.75 yd physical gate; grouped/alive/out-of-combat/no-active-cast eligibility; one native right-click per portal GUID; no movement/position spoof. No hook ownership added to parallel dependency registry because the module calls the existing native interaction primitive rather than patching it."
     }
   ]
 }
