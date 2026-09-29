@@ -45,7 +45,9 @@
     "source_metadata_sync": "tools/sync_source_metadata.py",
     "promotion_workflow": ".github/workflows/pre_promote_stable.yml",
     "experiment_registry": "runtime/ai_experiments.json",
-    "experiment_workflow": ".github/workflows/ai_experiments.yml"
+    "experiment_workflow": ".github/workflows/ai_experiments.yml",
+    "parallel_candidate_manifest": "runtime/parallel_candidate.json",
+    "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
@@ -63,7 +65,8 @@
     "sync_source_metadata": "python tools/sync_source_metadata.py",
     "check_source_metadata": "python tools/sync_source_metadata.py --check",
     "validate_experiments": "python tools/ai_experiments.py validate",
-    "route_experiment": "python tools/ai_experiments.py route --module MODULE [--branch parallel]"
+    "route_experiment": "python tools/ai_experiments.py route --module MODULE [--branch parallel]",
+    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/parallel"
   },
   "directories": {
     "src": "canonical editable source/evidence grouped by module",
@@ -98,6 +101,8 @@
     "never mix TBC/Wrath/Retail assumptions into build 5875 code",
     "respect explicitly selected development branch and check live GitHub HEAD before writing",
     "route new features via active experiment ownership and dependencies; keep parallel and work distinct",
-    "ledger test/package evidence must identify exact commit; unknown results remain null"
+    "ledger test/package evidence must identify exact commit; unknown results remain null",
+    "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
+    "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded"
   ]
 }

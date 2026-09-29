@@ -12,7 +12,21 @@ Read `AGENTS.md -> AI_START_HERE.md -> AI_INDEX.json -> CURRENT.json -> runtime/
 
 `main` must be an ancestor of `work` before work-branch edits; retain existing parallel divergence without forced integration. Route independent work as described in `docs/AI_EXPERIMENTS.md`.
 
-## 2. TEST lifecycle on selected development branch
+## 2. Parallel integration lifecycle
+
+For non-trivial `parallel` work, branch from the current verified `parallel` HEAD into `feature/<purpose>`. Treat `parallel` as an integration/test trunk, not as the first compiler for unfinished native code.
+
+1. Make the complete logical iteration on the feature branch.
+2. Require `.github/workflows/parallel_feature_preflight.yml` to PASS on the exact feature SHA. It runs repository/parallel gates and compiles changed active and declared companion DLLs.
+3. Require any path-specific feature workflow, such as updater or AutoLogin, when it is triggered.
+4. Integrate the verified feature SHA into `parallel`.
+5. Require the full aggregate `Build work candidate` on the resulting exact `parallel` SHA, including final package verification and attestation.
+6. Hand off only that exact-SHA artifact for gameplay testing.
+7. Freeze an issued test SHA; unrelated work continues on another feature branch until the game result is recorded.
+
+Small documentation/metadata-only edits may remain direct, but an uncompiled native change must not advance `parallel` merely to obtain compiler feedback.
+
+## 3. TEST lifecycle on selected development branch
 
 1. Make one small functional change.
 2. Run `python tools/verify_current.py`.
@@ -25,13 +39,13 @@ Read `AGENTS.md -> AI_START_HERE.md -> AI_INDEX.json -> CURRENT.json -> runtime/
 
 Multiple failed/experimental commits may remain on their respective development branches; they do not consume stable version numbers.
 
-## 3. Why stable promotion is curated
+## 4. Why stable promotion is curated
 
 `work` can contain several unrelated experiments. Accepting one feature does not mean every work commit is accepted.
 
 For a stable release, start from current `main` and curate only accepted state into a promotion tree.
 
-## 4. Pre-promotion gate
+## 5. Pre-promotion gate
 
 Create `promote/<purpose>` at the curated stable SHA.
 
@@ -48,7 +62,7 @@ Create `promote/<purpose>` at the curated stable SHA.
 
 If any check fails, fix the promotion branch; do not move main.
 
-## 5. Exact-byte stable packaging
+## 6. Exact-byte stable packaging
 
 TEST can be rebuilt.
 
@@ -60,7 +74,7 @@ STABLE must use exact accepted DLL bytes referenced by runtime metadata or store
 
 This prevents a source/toolchain rebuild from silently changing a stable runtime.
 
-## 6. Promotion completion
+## 7. Promotion completion
 
 After `Pre-promote stable` passes:
 
@@ -69,7 +83,7 @@ After `Pre-promote stable` passes:
 3. preserve the previous stable baseline,
 4. integrate new main into `work` without destroying unrelated work-only experiments.
 
-## 7. Repository hygiene
+## 8. Repository hygiene
 
 Do not commit generated `build/`, `dist/`, `.wow112_debug/`, local updater state, logs or dumps.
 
