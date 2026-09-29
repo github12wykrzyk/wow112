@@ -86,9 +86,9 @@
       "shared_resources": [
         "GameObject native right-click 0x005F8660"
       ],
-      "status": "awaiting_game_test",
-      "observed_head": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
-      "verified_commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
+      "status": "in_progress",
+      "observed_head": "c47765252ff883c7f0c4b8d141f9b49ed6162d9d",
+      "verified_commit": "c47765252ff883c7f0c4b8d141f9b49ed6162d9d",
       "tests": [
         {
           "kind": "ci",
@@ -103,16 +103,37 @@
           "commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
           "date": "2026-09-28",
           "evidence": "Artifact 10991873746 produced FINAL_PACKAGE PASS; package SHA256 6b1f80a8132fc60b772cb5faf78b8dce0b9551ca114c703a38ac5d3114f50579, loader manifest exact, all binary entries PE32 x86."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "c47765252ff883c7f0c4b8d141f9b49ed6162d9d",
+          "date": "2026-09-29",
+          "evidence": "Build work candidate run 36553126820 passed on exact SHA; AutoSummon Assist x86 build and final package gate completed successfully."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "c47765252ff883c7f0c4b8d141f9b49ed6162d9d",
+          "date": "2026-09-29",
+          "evidence": "Artifact 11024883656; FINAL_PACKAGE PASS; package SHA256 ef47606450ee11081a2e2e90589b24925b812f0c3956a47db36b2901b44f087d."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "c47765252ff883c7f0c4b8d141f9b49ed6162d9d",
+          "date": "2026-09-29",
+          "evidence": "User report: automatic background gold trade acceptance did not appear to work."
         }
       ],
       "package": {
         "verified": true,
-        "commit": "6bf0914b3f6eb3cc03397cbfda8415ddbb0add1a",
-        "artifact_id": 10991873746,
-        "package_sha256": "6b1f80a8132fc60b772cb5faf78b8dce0b9551ca114c703a38ac5d3114f50579",
+        "commit": "c47765252ff883c7f0c4b8d141f9b49ed6162d9d",
+        "artifact_id": 11024883656,
+        "package_sha256": "ef47606450ee11081a2e2e90589b24925b812f0c3956a47db36b2901b44f087d",
         "package_name": "WoW112_WORK_CANDIDATE.zip"
       },
-      "notes": "Isolated TEST companion based on work. Exact Vanilla scope: Ritual of Summoning spell 698 -> Summoning Portal GameObject 36727; 4.75 yd physical gate; grouped/alive/out-of-combat/no-active-cast eligibility; one click per portal GUID; no movement/position spoof."
+      "notes": "AutoSummon Assist remains isolated TEST work. Gold-trade acceptance is being revised after the c477652 gameplay failure: authoritative detection is live TradeFrame, with popup fallback only. Anti-AFK is built into the DLL and defaults on while the module is enabled, sending '.' to SAY every 120-360 seconds outside cast/channel."
     }
   ]
 }

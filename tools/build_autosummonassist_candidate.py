@@ -129,6 +129,8 @@ def main():
             "Click attempts",
             "Trade gold offered (copper)",
             "Trade accept attempts",
+            "Trade window open (read-only)",
+            "Anti-AFK SAY messages",
         ],
         "timings_ms": timing,
     }
@@ -178,11 +180,16 @@ def main():
         "timer_period_ms": 25,
         "world_reacquire_ms": 500,
         "background_trade_auto_accept": True,
-        "incoming_trade_request": "BeginTrade() only while the vanilla TRADE popup is visible",
-        "payment_gate": "target gold > 0; own offered money == 0; own trade item slots empty",
-        "payment_stable_ms": 350,
-        "payment_reaccept_ms": 750,
+        "incoming_trade_request": "Stock 1.12 TradeFrame is authoritative; TRADE popup/BeginTrade is compatibility fallback only",
+        "payment_gate": "TradeFrame visible; target gold > 0; own offered money == 0; own trade item slots empty",
+        "payment_stable_ms": 250,
+        "payment_reaccept_ms": 500,
         "trade_poll_ms": 100,
+        "trade_research_reference": "https://github.com/samwhosung/benilla/blob/f000aa01282eac35a99370c680250d50adc67970/crates/benilla-ui/src/script/trade.rs",
+        "anti_afk_default": "always_on_while_module_enabled",
+        "anti_afk_action": "SendChatMessage('.', 'SAY')",
+        "anti_afk_interval_seconds": [120, 360],
+        "anti_afk_pause_while_casting_or_channeling": True,
     }
     hub = package_meta.get("controlhub_pilot")
     if isinstance(hub, dict):
