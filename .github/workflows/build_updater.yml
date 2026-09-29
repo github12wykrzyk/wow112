@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - parallel
+      - feature/multibox-native-login
     paths:
       - 'tools/updater/**'
       - '.github/workflows/build_updater.yml'
