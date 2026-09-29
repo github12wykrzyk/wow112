@@ -399,11 +399,30 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_BUTTON 0x00000000u
 #define UI_COMMAND 0x0111u
 #define UI_CLOSE 0x0010u
+#define UI_PAINT 0x000Fu
+#define UI_ERASEBKGND 0x0014u
+#define UI_DRAWITEM 0x002Bu
+#define UI_CTLCOLORBTN 0x0135u
+#define UI_CTLCOLORSTATIC 0x0138u
 #define UI_SETFONT 0x0030u
 #define UI_SETCHECK 0x00F1u
-#define UI_WIDTH 750
+#define UI_OWNERDRAW 0x0000000Bu
+#define UI_ODS_SELECTED 0x0001u
+#define UI_WIDTH 920
 #define UI_HEIGHT 660
+#define UI_CONTENT_X 170
+#define UI_SIDEBAR_W 180
 #define UI_MAX_PAGE_CONTROLS 14u
+
+/* COLORREF = 0x00BBGGRR. The Parallel panel intentionally stays GDI-only:
+   no external UI runtime, no new game hook, and negligible idle cost. */
+#define UI_COLOR_SIDEBAR 0x001B1510u
+#define UI_COLOR_CONTENT 0x00251F19u
+#define UI_COLOR_BUTTON  0x00372E25u
+#define UI_COLOR_PRESS   0x004A3D31u
+#define UI_COLOR_ACCENT  0x00E39A3Fu
+#define UI_COLOR_TEXT    0x00F4EFE9u
+#define UI_COLOR_MUTED   0x00BFB5AAu
 #define UI_TAB_ESP 0u
 #define UI_TAB_ROGUE 1u
 #define UI_TAB_STATUS 2u
@@ -411,10 +430,26 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_TAB_SUMMON 4u
 
 typedef void* HFONT;
+typedef void* HBRUSH;
+struct PAINTSTRUCT32 {
+    HDC hdc; BOOL fErase; struct RECT32 rcPaint; BOOL fRestore; BOOL fIncUpdate;
+    BYTE rgbReserved[32];
+};
+struct DRAWITEMSTRUCT32 {
+    UINT CtlType; UINT CtlID; UINT itemID; UINT itemAction; UINT itemState;
+    HWND hwndItem; HDC hDC; struct RECT32 rcItem; DWORD itemData;
+};
 __declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
 __declspec(dllimport) LONG WINAPI SendMessageA(HWND,UINT,DWORD,LONG);
 __declspec(dllimport) BOOL WINAPI SetForegroundWindow(HWND);
 __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
+__declspec(dllimport) int WINAPI GetWindowTextA(HWND,char*,int);
+__declspec(dllimport) HBRUSH WINAPI CreateSolidBrush(COLORREF);
+__declspec(dllimport) int WINAPI FillRect(HDC,const struct RECT32*,HBRUSH);
+__declspec(dllimport) COLORREF WINAPI SetBkColor(HDC,COLORREF);
+__declspec(dllimport) BOOL WINAPI InvalidateRect(HWND,const struct RECT32*,BOOL);
+__declspec(dllimport) HDC WINAPI BeginPaint(HWND,struct PAINTSTRUCT32*);
+__declspec(dllimport) BOOL WINAPI EndPaint(HWND,const struct PAINTSTRUCT32*);
 
 #define PAR_SPEED_DLL "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll"
 #define PAR_RANGE_DLL "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll"
@@ -427,6 +462,10 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
+static HBRUSH g_ui_sidebar_brush=NULL,g_ui_content_brush=NULL;
+static HBRUSH g_ui_button_brush=NULL,g_ui_press_brush=NULL,g_ui_accent_brush=NULL;
+static HWND g_ui_brand=NULL,g_ui_build=NULL,g_ui_hotkey=NULL;
+static HWND g_ui_sidebar_gather=NULL,g_ui_sidebar_chests=NULL;
 static HWND g_ui_tabs[4]={NULL,NULL,NULL,NULL};
 static HWND g_ui_pages[5][UI_MAX_PAGE_CONTROLS];
 static DWORD g_ui_page_count[5]={0u,0u,0u,0u,0u};
@@ -747,6 +786,9 @@ static void ui_show_gather_page(DWORD page) {
     DWORD i;
     if(g_ui_current_tab!=UI_TAB_ROGUE || page>2u)return;
     g_ui_gather_open=1u;g_ui_gather_page=page;
+    if(g_ui_sidebar_gather)InvalidateRect(g_ui_sidebar_gather,NULL,TRUE);
+    if(g_ui_sidebar_chests)InvalidateRect(g_ui_sidebar_chests,NULL,TRUE);
+    if(g_ui_tabs[1])InvalidateRect(g_ui_tabs[1],NULL,TRUE);
     for(i=0u;i<g_ui_page_count[UI_TAB_ROGUE];++i)
         if(g_ui_pages[UI_TAB_ROGUE][i])
             ShowWindow(g_ui_pages[UI_TAB_ROGUE][i],SW_HIDE);
@@ -1101,10 +1143,10 @@ static void ui_profile_sync(void) {
    requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
     static const char *tab_names[4][4]={
-        {"[ ESP ]","ROGUE","STATUS","SUMMON"},
-        {"ESP","[ ROGUE ]","STATUS","SUMMON"},
-        {"ESP","ROGUE","[ STATUS ]","SUMMON"},
-        {"ESP","ROGUE","STATUS","[ SUMMON ]"}
+        {"ESP","ROGUE","STATUS","SUMMON"},
+        {"ESP","ROGUE","STATUS","SUMMON"},
+        {"ESP","ROGUE","STATUS","SUMMON"},
+        {"ESP","ROGUE","STATUS","SUMMON"}
     };
     DWORD t,i;
     DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:(page==UI_TAB_SUMMON?3u:page);
@@ -1125,25 +1167,89 @@ static void ui_set_page(DWORD page) {
     else if(page==UI_TAB_REAR)ui_sync_rear();
     else if(page==UI_TAB_SUMMON)ui_sync_summon();
     else ui_sync_rogue();
+    for(t=0u;t<4u;++t)if(g_ui_tabs[t])InvalidateRect(g_ui_tabs[t],NULL,TRUE);
+    if(g_ui_sidebar_gather)InvalidateRect(g_ui_sidebar_gather,NULL,TRUE);
+    if(g_ui_sidebar_chests)InvalidateRect(g_ui_sidebar_chests,NULL,TRUE);
 }
 static void ui_add_to_page(DWORD page,HWND control) {
     if(page>UI_TAB_SUMMON || !control)return;
     if(g_ui_page_count[page]<UI_MAX_PAGE_CONTROLS)
         g_ui_pages[page][g_ui_page_count[page]++]=control;
 }
+static BOOL ui_is_sidebar_id(DWORD id) {
+    return id==201u||id==202u||id==203u||id==228u||id==240u||id==241u;
+}
+static BOOL ui_sidebar_id_active(DWORD id) {
+    if(id==201u)return g_ui_current_tab==UI_TAB_ESP && !g_ui_gather_open;
+    if(id==202u)return g_ui_current_tab==UI_TAB_ROGUE && !g_ui_gather_open;
+    if(id==203u)return g_ui_current_tab==UI_TAB_STATUS || g_ui_current_tab==UI_TAB_REAR;
+    if(id==228u)return g_ui_current_tab==UI_TAB_SUMMON;
+    if(id==240u)return g_ui_current_tab==UI_TAB_ROGUE && g_ui_gather_open && g_ui_gather_page!=1u;
+    if(id==241u)return g_ui_current_tab==UI_TAB_ROGUE && g_ui_gather_open && g_ui_gather_page==1u;
+    return FALSE;
+}
+static void ui_paint_background(HDC dc,HWND hwnd) {
+    struct RECT32 rc,side,accent;
+    if(!dc||!GetClientRect(hwnd,&rc))return;
+    if(g_ui_content_brush)FillRect(dc,&rc,g_ui_content_brush);
+    side=rc;side.right=UI_SIDEBAR_W;
+    if(g_ui_sidebar_brush)FillRect(dc,&side,g_ui_sidebar_brush);
+    accent=rc;accent.left=UI_SIDEBAR_W-1;accent.right=UI_SIDEBAR_W+1;
+    if(g_ui_accent_brush)FillRect(dc,&accent,g_ui_accent_brush);
+}
+static void ui_draw_button(struct DRAWITEMSTRUCT32 *d) {
+    char text[96];
+    struct SIZE32 sz;
+    struct RECT32 r;
+    HBRUSH brush;
+    BOOL nav,active,pressed;
+    COLORREF color;
+    int x,y,n;
+    if(!d||!d->hDC)return;
+    nav=ui_is_sidebar_id(d->CtlID);
+    active=nav&&ui_sidebar_id_active(d->CtlID);
+    pressed=(d->itemState&UI_ODS_SELECTED)!=0u;
+    brush=active?g_ui_accent_brush:(pressed?g_ui_press_brush:g_ui_button_brush);
+    if(brush)FillRect(d->hDC,&d->rcItem,brush);
+    r=d->rcItem;
+    if(nav&&active&&g_ui_accent_brush){
+        r.right=r.left+4;
+        FillRect(d->hDC,&r,g_ui_accent_brush);
+    }
+    n=GetWindowTextA(d->hwndItem,text,(int)sizeof(text));
+    if(n<0)n=0;
+    text[n<(int)sizeof(text)?n:(int)sizeof(text)-1]=0;
+    SetBkMode(d->hDC,TRANSPARENT_BK);
+    color=active?UI_COLOR_TEXT:(nav?UI_COLOR_MUTED:UI_COLOR_TEXT);
+    SetTextColor(d->hDC,color);
+    sz.cx=0;sz.cy=0;
+    GetTextExtentPoint32A(d->hDC,text,n,&sz);
+    x=nav?d->rcItem.left+18:d->rcItem.left+(d->rcItem.right-d->rcItem.left-sz.cx)/2;
+    y=d->rcItem.top+(d->rcItem.bottom-d->rcItem.top-sz.cy)/2;
+    TextOutA(d->hDC,x,y,text,n);
+}
+static HWND ui_sidebar_label(const char* label,int x,int y,int width,int height,BOOL title) {
+    HWND ctl=CreateWindowExA(0u,"STATIC",label,UI_CHILD|UI_VISIBLE,
+                            x,y,width,height,g_parallel_ui_hwnd,NULL,g_self,NULL);
+    HFONT font=title?g_ui_title_font:g_ui_font;
+    if(ctl&&font)SendMessageA(ctl,UI_SETFONT,(DWORD)font,1);
+    return ctl;
+}
 static HWND ui_label(HWND parent,const char* label,
                      int x,int y,int width,int height,BOOL title) {
     HWND ctl=CreateWindowExA(0u,"STATIC",label,UI_CHILD|UI_VISIBLE,
-                            x,y,width,height,parent,NULL,g_self,NULL);
+                            x+UI_CONTENT_X,y,width,height,parent,NULL,g_self,NULL);
     HFONT font=title?g_ui_title_font:g_ui_font;
     if(ctl && font)SendMessageA(ctl,UI_SETFONT,(DWORD)font,1);
     return ctl;
 }
 static HWND ui_button(HWND parent,const char* label,
                       int x,int y,int width,int height,DWORD id,BOOL check) {
+    int drawX=ui_is_sidebar_id(id)?x:x+UI_CONTENT_X;
+    DWORD style=check?UI_CHECKBOX:UI_OWNERDRAW;
     HWND ctl=CreateWindowExA(0u,"BUTTON",label,
-        UI_CHILD|UI_VISIBLE|(check?UI_CHECKBOX:UI_BUTTON),
-        x,y,width,height,parent,(HANDLE)id,g_self,NULL);
+        UI_CHILD|UI_VISIBLE|style,
+        drawX,y,width,height,parent,(HANDLE)id,g_self,NULL);
     if(ctl && g_ui_font)SendMessageA(ctl,UI_SETFONT,(DWORD)g_ui_font,1);
     return ctl;
 }
@@ -1155,6 +1261,37 @@ static void ui_filters_changed(void) {
 }
 static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
     DWORD id;
+    if(msg==UI_PAINT) {
+        struct PAINTSTRUCT32 ps;
+        HDC dc=BeginPaint(hwnd,&ps);
+        if(dc)ui_paint_background(dc,hwnd);
+        EndPaint(hwnd,&ps);
+        return 0;
+    }
+    if(msg==UI_ERASEBKGND) {
+        ui_paint_background((HDC)(DWORD)wp,hwnd);
+        return 1;
+    }
+    if(msg==UI_CTLCOLORSTATIC) {
+        HDC dc=(HDC)(DWORD)wp;
+        HWND child=(HWND)(DWORD)lp;
+        BOOL side=child==g_ui_brand||child==g_ui_build||child==g_ui_hotkey;
+        SetBkMode(dc,TRANSPARENT_BK);
+        SetBkColor(dc,side?UI_COLOR_SIDEBAR:UI_COLOR_CONTENT);
+        SetTextColor(dc,side?UI_COLOR_MUTED:UI_COLOR_TEXT);
+        return (LONG)(DWORD)(side?g_ui_sidebar_brush:g_ui_content_brush);
+    }
+    if(msg==UI_CTLCOLORBTN) {
+        HDC dc=(HDC)(DWORD)wp;
+        SetBkMode(dc,TRANSPARENT_BK);
+        SetBkColor(dc,UI_COLOR_CONTENT);
+        SetTextColor(dc,UI_COLOR_TEXT);
+        return (LONG)(DWORD)g_ui_content_brush;
+    }
+    if(msg==UI_DRAWITEM) {
+        ui_draw_button((struct DRAWITEMSTRUCT32*)(DWORD)lp);
+        return 1;
+    }
     if(msg==UI_CLOSE || (msg==WM_KEYDOWN && wp==VK_INSERT)) {
         if(msg==WM_KEYDOWN)g_gui_insert_latched=1u;
         g_parallel_gui_open=0u;
@@ -1171,6 +1308,8 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         }
         if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
         if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}
+        if(id==240u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(0u);return 0;}
+        if(id==241u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(1u);return 0;}
         if(id==229u){
             ui_work_pp_flip(PAR_SUMMON_DLL,24u,1u);
             ui_sync_summon();return 0;
@@ -1283,17 +1422,22 @@ static BOOL ui_create(HWND game) {
     struct RECT32 rc;
     DWORD i;
     static const char* filters[5]={
-        "ESP - display player labels",
-        "HORDE - display Horde characters",
-        "ALLIANCE - display Alliance characters",
-        "HOSTILE TO ME - opposing BG team",
-        "QUEST ESP - active quest kill targets (NPCs)"
+        "Player ESP",
+        "Horde players",
+        "Alliance players",
+        "Hostile BG team",
+        "Quest targets"
     };
     if(!game || !IsWindow(game))return FALSE;
     pt.x=pt.y=0;
     if(!GetClientRect(game,&rc) || !ClientToScreen(game,&pt))return FALSE;
+    if(!g_ui_sidebar_brush)g_ui_sidebar_brush=CreateSolidBrush(UI_COLOR_SIDEBAR);
+    if(!g_ui_content_brush)g_ui_content_brush=CreateSolidBrush(UI_COLOR_CONTENT);
+    if(!g_ui_button_brush)g_ui_button_brush=CreateSolidBrush(UI_COLOR_BUTTON);
+    if(!g_ui_press_brush)g_ui_press_brush=CreateSolidBrush(UI_COLOR_PRESS);
+    if(!g_ui_accent_brush)g_ui_accent_brush=CreateSolidBrush(UI_COLOR_ACCENT);
     g_parallel_ui_hwnd=CreateWindowExA(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,
-        "STATIC","PARALLEL - ESP / Rogue",WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT,
+        "STATIC","PARALLEL CONTROL",WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT,
         (int)(pt.x+(rc.right-UI_WIDTH)/2),(int)(pt.y+(rc.bottom-UI_HEIGHT)/2),
         UI_WIDTH,UI_HEIGHT,NULL,NULL,g_self,NULL);
     if(!g_parallel_ui_hwnd)return FALSE;
@@ -1303,18 +1447,24 @@ static BOOL ui_create(HWND game) {
         DestroyWindow(g_parallel_ui_hwnd);
         g_parallel_ui_hwnd=NULL;return FALSE;
     }
-    g_ui_font=CreateFontA(-22,0,0,0,500,0,0,0,1,0,0,0,0,"Segoe UI");
-    g_ui_title_font=CreateFontA(-29,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
-    ui_label(g_parallel_ui_hwnd,"PARALLEL / CONTROL",26,15,680,42,TRUE);
-    g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd,"ESP",30,75,160,47,201u,FALSE);
-    g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd,"ROGUE",205,75,160,47,202u,FALSE);
-    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",380,75,160,47,203u,FALSE);
-    g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON",555,75,160,47,228u,FALSE);
+    g_ui_font=CreateFontA(-20,0,0,0,500,0,0,0,1,0,0,0,0,"Segoe UI");
+    g_ui_title_font=CreateFontA(-28,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
+    g_ui_brand=ui_sidebar_label("PARALLEL",18,18,145,34,TRUE);
+    g_ui_build=ui_sidebar_label("CONTROL CENTER",20,53,140,24,FALSE);
+    g_ui_hotkey=ui_sidebar_label("5875 x86  |  INSERT",20,610,145,24,FALSE);
+    ui_label(g_parallel_ui_hwnd,"PARALLEL CONTROL",26,15,680,38,TRUE);
+    ui_label(g_parallel_ui_hwnd,"Live controls / diagnostics  |  branch: parallel",26,53,680,28,FALSE);
+    g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd,"ESP",18,112,144,40,201u,FALSE);
+    g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd,"ROGUE",18,158,144,40,202u,FALSE);
+    g_ui_sidebar_gather=ui_button(g_parallel_ui_hwnd,"GATHER",18,204,144,40,240u,FALSE);
+    g_ui_sidebar_chests=ui_button(g_parallel_ui_hwnd,"CHESTS",18,250,144,40,241u,FALSE);
+    g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON",18,296,144,40,228u,FALSE);
+    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",18,342,144,40,203u,FALSE);
 
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
-        "PLAYER ESP",36,137,670,37,TRUE));
+        "ESP / PLAYERS",36,137,670,37,TRUE));
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
-        "Live filters refresh nearby players. Click a visible label to target.",
+        "Live overlay filters. Click a visible player label to target.",
         42,179,665,30,FALSE));
     for(i=0u;i<5u;++i) {
         g_ui_checks[i]=ui_button(g_parallel_ui_hwnd,filters[i],
@@ -1322,16 +1472,15 @@ static BOOL ui_create(HWND game) {
         ui_add_to_page(UI_TAB_ESP,g_ui_checks[i]);
     }
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
-        "Player faction filters are separate from the quest mob overlay.",
-        40,483,675,30,FALSE));
+        "BATTLEGROUND",40,483,675,30,TRUE));
     g_ui_wsg_check=ui_button(g_parallel_ui_hwnd,
-        "WSG AUTO FLAG - dropped flags only (4.75 yd)",46,526,665,43,111u,TRUE);
+        "WSG Auto Flag  -  dropped flags <= 4.75 yd",46,526,665,43,111u,TRUE);
     ui_add_to_page(UI_TAB_ESP,g_ui_wsg_check);
 
     ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
-        "ROGUE / STEALTH FLOOR + PP",36,137,665,39,TRUE));
+        "ROGUE / COMBAT AUTOMATION",36,137,665,39,TRUE));
     ui_add_to_page(UI_TAB_ROGUE,ui_label(g_parallel_ui_hwnd,
-        "Current work AutoPP + Junkbox; exact AutoLootPP / LongPP binaries.",
+        "Stealth floor, Pick Pocket recovery and junkbox controls.",
         42,181,672,34,FALSE));
     g_ui_speedfloor_check=ui_button(g_parallel_ui_hwnd,
         "STEALTH FLOOR - enabled",46,228,650,43,105u,TRUE);
@@ -1365,7 +1514,7 @@ static BOOL ui_create(HWND game) {
         "",46,561,665,26,FALSE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_pp_control_state);
     ui_add_to_page(UI_TAB_ROGUE,ui_button(g_parallel_ui_hwnd,
-        "GATHER / CHESTS  >",46,591,310,42,206u,FALSE));
+        "OPEN GATHER TOOLS",46,591,310,42,206u,FALSE));
     g_ui_map_fall_check=ui_button(g_parallel_ui_hwnd,
         "MAP HIGH Z + S BACKSTEP",368,591,343,42,131u,TRUE);
     ui_add_to_page(UI_TAB_ROGUE,g_ui_map_fall_check);
@@ -1453,9 +1602,9 @@ static BOOL ui_create(HWND game) {
         "< BACK TO ROGUE",46,596,275,43,207u,FALSE),3u);
 
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
-        "ACTIVE MODULES",36,137,665,40,TRUE));
+        "SYSTEM HEALTH",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_STATUS,ui_label(g_parallel_ui_hwnd,
-        "LOADED = present. Function results require an in-game test.",
+        "Live module presence and runtime diagnostics. Gameplay still requires an in-game test.",
         42,179,665,32,FALSE));
     g_ui_esp_state=ui_label(g_parallel_ui_hwnd,"",46,229,665,31,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_esp_state);
@@ -1478,7 +1627,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_STATUS,g_ui_wsg_state);
 
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "AUTO SUMMON / DEBUG",36,137,665,40,TRUE));
+        "SUMMON / AUTOMATION",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "Native in-process interaction: background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
         42,181,665,32,FALSE));
@@ -1606,7 +1755,16 @@ static void parallel_gui_destroy(void) {
     g_ui_gather_status=NULL;g_ui_gather_count=0u;g_ui_gather_open=0u;g_ui_gather_page=0u;
     if(g_ui_font)DeleteObject((HGDIOBJ)g_ui_font);
     if(g_ui_title_font)DeleteObject((HGDIOBJ)g_ui_title_font);
+    if(g_ui_sidebar_brush)DeleteObject((HGDIOBJ)g_ui_sidebar_brush);
+    if(g_ui_content_brush)DeleteObject((HGDIOBJ)g_ui_content_brush);
+    if(g_ui_button_brush)DeleteObject((HGDIOBJ)g_ui_button_brush);
+    if(g_ui_press_brush)DeleteObject((HGDIOBJ)g_ui_press_brush);
+    if(g_ui_accent_brush)DeleteObject((HGDIOBJ)g_ui_accent_brush);
     g_ui_font=NULL;g_ui_title_font=NULL;
+    g_ui_sidebar_brush=NULL;g_ui_content_brush=NULL;
+    g_ui_button_brush=NULL;g_ui_press_brush=NULL;g_ui_accent_brush=NULL;
+    g_ui_brand=NULL;g_ui_build=NULL;g_ui_hotkey=NULL;
+    g_ui_sidebar_gather=NULL;g_ui_sidebar_chests=NULL;
 }
 
 BOOL WINAPI DllMain(HMODULE hinst, DWORD reason, LPVOID reserved) {
