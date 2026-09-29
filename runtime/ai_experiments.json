@@ -392,13 +392,6 @@
           "commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
           "date": "2026-09-30",
           "evidence": "Artifact 11065697618 was produced by successful exact-SHA candidate run and contains Interface/AddOns/AuctionSniper."
-        },
-        {
-          "kind": "game",
-          "result": "inconclusive",
-          "commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
-          "date": "2026-09-30",
-          "evidence": "User screenshot from exact V1 candidate showed page 0 as 50/50 buyout=0 rows at ~55.5k total auctions, 0.094-0.125s result latency, and repeated AUCTION_ITEM_LIST_UPDATE handling for one query. Diagnostic goal succeeded; cheap-buyout routing required follow-up."
         }
       ],
       "package": {
@@ -406,7 +399,7 @@
         "commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
         "artifact_id": 11065697618
       },
-      "notes": "Integrated V1 diagnostic/dry-run baseline. Gameplay evidence confirms page 0 is dominated by no-buyout rows on the target realm and duplicate list-update handling occurs; V1.1 follow-up is isolated on feature/auction-sniper-cheap-buyout."
+      "notes": "Integrated V1 diagnostic/dry-run baseline. Realm screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md; current registry regression tests prohibit kind=game entries, so no gameplay event is stored here. V1.1 follow-up is isolated on feature/auction-sniper-cheap-buyout."
     },
     {
       "id": "auction-sniper-cheap-buyout",
@@ -423,11 +416,19 @@
         "parallel addon packager src/AddOns auto-discovery"
       ],
       "status": "in_progress",
-      "observed_head": "8ceebf93d30e1728948a3d71d3296295b8306fba",
+      "observed_head": "5f880bcf80f69ed3291e0fc1f174d41759a21802",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5f880bcf80f69ed3291e0fc1f174d41759a21802",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36640792045 passed on exact V1.1 feature SHA. Separate registry workflow failed only because the then-ledger contained a kind=game entry forbidden by the current registry regression test; that ledger inconsistency is corrected in the V1.2 iteration."
+        }
+      ],
       "package": null,
-      "notes": "V1.1 follow-up: deduplicate list updates, binary-search first positive-buyout page, scan a bounded cheap-buyout window, then re-discover. Auto-buy remains hard-disabled."
+      "notes": "V1.1 binary-search + 10-page cheap window was manually tested from exact feature source 5f880bcf and worked end-to-end; screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md because current registry regression tests prohibit kind=game entries. V1.2 adds cached-boundary verification with narrowed fallback search. Auto-buy remains hard-disabled."
     }
   ]
 }

@@ -7,7 +7,7 @@ Upstream baseline:
 - commit d9d85807de9c82201e5e01c42ec5917c90257389
 - MIT license retained as LICENSE.txt
 
-Current project revision: V1.1 cheap-buyout diagnostic / dry-run.
+Current project revision: V1.2 cached-boundary cheap-buyout diagnostic / dry-run.
 
 ## Safety
 
@@ -19,8 +19,11 @@ House buttons remain untouched.
 
 - LowBuyout is now a cheap-buyout search, not a page-0 lock.
 - It probes page 0, then binary-searches the first page containing buyout > 0.
-- After the boundary is found it scans a 10-page window starting at that page,
-  then re-discovers the boundary so changes in the live AH are picked up.
+- After the boundary is found it scans a 10-page window starting at that page.
+- After each 10-page window it re-validates the cached boundary with the previous
+  and current page. In the normal unchanged case this costs only 2 queries.
+- If the boundary moved by one page, the adjacent page is adopted directly.
+  Larger moves fall back to a narrowed binary search instead of a full reset.
 - With LowBuyout OFF and FixedPage OFF, pages are cycled using correct zero-based
   pagination: floor((total - 1) / 50).
 - Only one query is considered in flight at a time.
@@ -61,7 +64,8 @@ per AH result.
 
 Persistent log markers:
 - [VM-RESULT] query/page/latency/ranges/order diagnostics
-- [VM-BOUNDARY] binary-search progress/found buyout boundary
+- [VM-BOUNDARY] binary-search progress/found/updated buyout boundary
+- [VM-CACHE] cached-boundary verification start
 - [VM-DUP] ignored duplicate list-update event when verbose is enabled
 - [VM-ITEM] individual row when verbose is enabled
 - [DRYRUN] candidate matching current filters/watchlist

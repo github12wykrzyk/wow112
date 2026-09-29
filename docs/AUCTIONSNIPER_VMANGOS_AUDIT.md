@@ -185,3 +185,26 @@ V1.1 therefore:
 
 Auto-buy remains hard-disabled; this revision still contains no
 `PlaceAuctionBid` call in the automation code.
+
+
+## Realm evidence: V1.1 cheap-buyout search
+
+Exact manually tested feature source:
+`5f880bcf80f69ed3291e0fc1f174d41759a21802`.
+
+The user tested the exception ZIP built from that exact feature tree. The first
+screen showed the binary search converging through pages 69, 34, 17 and 8:
+pages 69/34/17 contained 50 positive-buyout rows while page 8 contained 50
+bid-only rows. Query latency remained about 0.17-0.20 seconds.
+
+The next screen showed the scanner in `phase=scan` across pages 18, 19, 20
+and 21 with progressively rising total-price ranges. After the 10-page cheap
+window, V1.1 returned to page 0 and started a new full boundary search through
+about 1108 pages. This confirms the boundary finder and scan-window state
+machine work end-to-end on the target realm, and also shows that full
+re-discovery every cycle is unnecessary overhead.
+
+V1.2 therefore keeps the last boundary cached. Normal refresh verifies
+`boundary-1` and `boundary`; a +1 move is handled directly with
+`boundary+1`, while larger moves fall back to a narrowed binary search.
+The dry-run safety invariant remains unchanged: no `PlaceAuctionBid` call.
