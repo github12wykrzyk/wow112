@@ -122,7 +122,14 @@ def main():
         "has_import_directory": pe.get("has_import_directory"),
         "control_api": "W112_CONTROL_API_V1",
         "module_id": "autosummonassist",
-        "settings": ["Enabled", "Portal in range (read-only)", "Click attempts", "Last portal entry"],
+        "settings": [
+            "Enabled", "Scanner alive", "Ritual candidate", "Match source",
+            "Candidate entry", "Candidate type", "Candidate distance x100",
+            "Candidate GUID low", "Candidate GUID high", "Click attempts",
+            "Current GUID attempts", "Scan ticks", "Nearby GO <=12yd",
+            "Nearest GO entry", "Nearest GO type", "Nearest GO distance x100",
+            "Status"
+        ],
         "timings_ms": timing,
     }
 
@@ -161,7 +168,7 @@ def main():
         "module_id": "autosummonassist",
         "abi": "W112_CONTROL_API_V1",
         "default_enabled": True,
-        "scope": "Vanilla Ritual of Summoning portal GameObject entry 36727 only",
+        "scope": "Vanilla Summoning Portal entry 36727 OR GAMEOBJECT_TYPE_ID 18 ritual fallback",
         "eligibility": "server-authoritative ritual eligibility; local retries are suppressed while player cast/channel state is active",
         "interaction": "native 5875 0x005F8660 GameObject right-click on UI thread",
         "range_yd": 5.5,
@@ -169,7 +176,10 @@ def main():
         "retry_policy": "up to 8 native clicks per observed portal GUID, 120ms apart; stop immediately on local cast/channel",
         "position_spoof": False,
         "timer_period_ms": 25,
-        "chat_diagnostic": "one message per newly observed portal GUID",
+        "chat_diagnostic": "one message per newly observed ritual candidate GUID",
+        "debug_surface": "W112_CONTROL_API_V1 + Parallel SUMMON GUI tab",
+        "nearest_go_debug_radius_yd": 12.0,
+        "ritual_type_fallback": 18,
         "world_reacquire_ms": 500,
     }
     hub = package_meta.get("controlhub_pilot")

@@ -373,7 +373,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 }
 
 
-/* PARALLEL: one readable native window with real ESP / ROGUE / STATUS tabs.
+/* PARALLEL: one readable native window with real ESP / ROGUE / STATUS / SUMMON tabs.
    The GUI owns its existing ESP render-thread window only: no new game
    WndProc hook, no in-game engine access from GUI callbacks, and no unsafe
    hot-unloading of the legacy hook-owning PP/loot DLLs. */
@@ -395,6 +395,7 @@ static DWORD WINAPI EspBgWorker(LPVOID ignored) {
 #define UI_TAB_ROGUE 1u
 #define UI_TAB_STATUS 2u
 #define UI_TAB_REAR 3u /* internal details page, same root HWND */
+#define UI_TAB_SUMMON 4u
 
 typedef void* HFONT;
 __declspec(dllimport) HFONT WINAPI CreateFontA(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCSTR);
@@ -409,12 +410,13 @@ __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND,LPCSTR);
 #define PAR_REAR_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 #define PAR_CORE_DLL "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
 #define PAR_WSG_DLL "WoWAutoFlagWSG_5875_v1.dll"
+#define PAR_SUMMON_DLL "WoWAutoSummonAssist_5875_v1.dll"
 
 static WNDPROC32 g_ui_prev=NULL;
 static HFONT g_ui_font=NULL,g_ui_title_font=NULL;
-static HWND g_ui_tabs[3]={NULL,NULL,NULL};
-static HWND g_ui_pages[4][UI_MAX_PAGE_CONTROLS];
-static DWORD g_ui_page_count[4]={0u,0u,0u,0u};
+static HWND g_ui_tabs[4]={NULL,NULL,NULL,NULL};
+static HWND g_ui_pages[5][UI_MAX_PAGE_CONTROLS];
+static DWORD g_ui_page_count[5]={0u,0u,0u,0u,0u};
 static DWORD g_ui_current_tab=UI_TAB_ESP;
 static HWND g_ui_checks[5]={NULL,NULL,NULL,NULL,NULL};
 static HWND g_ui_speedfloor_check=NULL;
@@ -429,6 +431,9 @@ static HWND g_ui_range_state=NULL;
 static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL,g_ui_rear_details_state=NULL;
 static HWND g_ui_wsg_check=NULL,g_ui_wsg_state=NULL;
+static HWND g_ui_summon_check=NULL;
+static HWND g_ui_summon_loaded=NULL,g_ui_summon_candidate=NULL;
+static HWND g_ui_summon_guid=NULL,g_ui_summon_scan=NULL,g_ui_summon_nearest=NULL;
 /* Gather is a subview of the existing GUI: no new game-window hook. */
 static HWND g_ui_gather_controls[40]={NULL};
 static DWORD g_ui_gather_control_pages[40]={0u};
@@ -527,6 +532,97 @@ static void ui_sync_wsg(void) {
     }
     *p=0;SetWindowTextA(g_ui_wsg_state,buf);
 }
+
+static char *ui_app_centi(char *p,DWORD value) {
+    DWORD frac=value%100u;
+    p=app_u32(p,value/100u);
+    *p++='.';
+    if(frac<10u)*p++='0';
+    return app_u32(p,frac);
+}
+static void ui_sync_summon(void) {
+    static const char* states[8]={
+        "DETACHED","WAIT WORLD","WORLD GRACE","ACTIVE",
+        "DISABLED","BUILD MISMATCH","NO TIMER","CAST/CHANNEL"
+    };
+    static const char* matches[4]={"NONE","ENTRY 36727","TYPE 18","ENTRY+TYPE"};
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,17u);
+    W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
+    W112_ControlValueV1 clicks,current,scans,nearCount,nearEntry,nearType,nearDist,status;
+    char buf[260],*p;
+
+    if(!m) {
+        if(g_ui_summon_check)SendMessageA(g_ui_summon_check,UI_SETCHECK,0u,0);
+        if(g_ui_summon_loaded)SetWindowTextA(g_ui_summon_loaded,
+            "DLL/API: NOT LOADED - updater/dlls.txt or injection problem");
+        if(g_ui_summon_candidate)SetWindowTextA(g_ui_summon_candidate,
+            "Candidate: unavailable");
+        if(g_ui_summon_guid)SetWindowTextA(g_ui_summon_guid,
+            "GUID / retries: unavailable");
+        if(g_ui_summon_scan)SetWindowTextA(g_ui_summon_scan,
+            "Scanner: unavailable");
+        if(g_ui_summon_nearest)SetWindowTextA(g_ui_summon_nearest,
+            "Nearest GO: unavailable");
+        return;
+    }
+
+    if(!m->get_value(1u,&enabled))enabled.u32=0u;
+    if(!m->get_value(2u,&alive))alive.u32=0u;
+    if(!m->get_value(3u,&candidate))candidate.u32=0u;
+    if(!m->get_value(4u,&source))source.u32=0u;
+    if(!m->get_value(5u,&entry))entry.u32=0u;
+    if(!m->get_value(6u,&type))type.u32=0u;
+    if(!m->get_value(7u,&dist))dist.u32=0u;
+    if(!m->get_value(8u,&lo))lo.u32=0u;
+    if(!m->get_value(9u,&hi))hi.u32=0u;
+    if(!m->get_value(10u,&clicks))clicks.u32=0u;
+    if(!m->get_value(11u,&current))current.u32=0u;
+    if(!m->get_value(12u,&scans))scans.u32=0u;
+    if(!m->get_value(13u,&nearCount))nearCount.u32=0u;
+    if(!m->get_value(14u,&nearEntry))nearEntry.u32=0u;
+    if(!m->get_value(15u,&nearType))nearType.u32=0u;
+    if(!m->get_value(16u,&nearDist))nearDist.u32=0u;
+    if(!m->get_value(17u,&status))status.u32=0u;
+
+    if(g_ui_summon_check)
+        SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u);
+
+    if(g_ui_summon_loaded){
+        p=buf;p=app_str(p,"DLL: LOADED | API module v");
+        p=app_u32(p,(m->module_version>>16)&0xFFFFu);
+        p=app_str(p," | scanner heartbeat: ");p=app_str(p,alive.u32?"YES":"NO");
+        p=app_str(p," | enabled: ");p=app_str(p,enabled.u32?"ON":"OFF");
+        *p=0;SetWindowTextA(g_ui_summon_loaded,buf);
+    }
+    if(g_ui_summon_candidate){
+        p=buf;p=app_str(p,"Ritual candidate: ");p=app_str(p,candidate.u32?"YES":"NO");
+        p=app_str(p," | match: ");p=app_str(p,source.u32<4u?matches[source.u32]:"UNKNOWN");
+        p=app_str(p," | entry ");p=app_u32(p,entry.u32);
+        p=app_str(p," | type ");p=app_u32(p,type.u32);
+        p=app_str(p," | dist ");p=ui_app_centi(p,dist.u32);p=app_str(p," yd");
+        *p=0;SetWindowTextA(g_ui_summon_candidate,buf);
+    }
+    if(g_ui_summon_guid){
+        p=buf;p=app_str(p,"GUID lo/hi: ");p=app_u32(p,lo.u32);
+        *p++='/';p=app_u32(p,hi.u32);
+        p=app_str(p," | retries ");p=app_u32(p,current.u32);
+        p=app_str(p,"/8 | total native clicks ");p=app_u32(p,clicks.u32);
+        *p=0;SetWindowTextA(g_ui_summon_guid,buf);
+    }
+    if(g_ui_summon_scan){
+        p=buf;p=app_str(p,"Scanner ticks: ");p=app_u32(p,scans.u32);
+        p=app_str(p," | GO <=12yd: ");p=app_u32(p,nearCount.u32);
+        p=app_str(p," | state: ");p=app_str(p,status.u32<8u?states[status.u32]:"UNKNOWN");
+        *p=0;SetWindowTextA(g_ui_summon_scan,buf);
+    }
+    if(g_ui_summon_nearest){
+        p=buf;p=app_str(p,"Nearest GO <=12yd: entry ");p=app_u32(p,nearEntry.u32);
+        p=app_str(p," | type ");p=app_u32(p,nearType.u32);
+        p=app_str(p," | dist ");p=ui_app_centi(p,nearDist.u32);p=app_str(p," yd");
+        *p=0;SetWindowTextA(g_ui_summon_nearest,buf);
+    }
+}
+
 /* The active Parallel GUI is PlayerESP; gather stays inside MovementCore.
  * Page 0: vein blacklist. Page 1: AutoChest. Page 2: gather options.
  * All HWND children retain the root parent so WM_COMMAND routing is stable. */
@@ -967,21 +1063,22 @@ static void ui_profile_sync(void) {
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
    requested solely when a filter actually changes. */
 static void ui_set_page(DWORD page) {
-    static const char *tab_names[3][3]={
-        {"[ ESP ]","ROGUE","STATUS"},
-        {"ESP","[ ROGUE ]","STATUS"},
-        {"ESP","ROGUE","[ STATUS ]"}
+    static const char *tab_names[4][4]={
+        {"[ ESP ]","ROGUE","STATUS","SUMMON"},
+        {"ESP","[ ROGUE ]","STATUS","SUMMON"},
+        {"ESP","ROGUE","[ STATUS ]","SUMMON"},
+        {"ESP","ROGUE","STATUS","[ SUMMON ]"}
     };
     DWORD t,i;
     DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:page;
-    if(page>UI_TAB_REAR)return;
+    if(page>UI_TAB_SUMMON)return;
     g_ui_current_tab=page;
     g_ui_gather_open=0u;
     for(i=0u;i<g_ui_gather_count;++i)
         if(g_ui_gather_controls[i])ShowWindow(g_ui_gather_controls[i],SW_HIDE);
-    for(t=0u;t<3u;++t)
-        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
     for(t=0u;t<4u;++t)
+        if(g_ui_tabs[t])SetWindowTextA(g_ui_tabs[t],tab_names[active_tab][t]);
+    for(t=0u;t<5u;++t)
         for(i=0u;i<g_ui_page_count[t];++i) {
             HWND control=g_ui_pages[t][i];
             if(control)ShowWindow(control,t==page?SW_SHOWNOACTIVATE:SW_HIDE);
@@ -989,10 +1086,11 @@ static void ui_set_page(DWORD page) {
     if(page==UI_TAB_ESP){ui_sync_esp();ui_sync_wsg();}
     else if(page==UI_TAB_STATUS){ui_sync_rogue();ui_sync_rear();ui_sync_wsg();}
     else if(page==UI_TAB_REAR)ui_sync_rear();
+    else if(page==UI_TAB_SUMMON)ui_sync_summon();
     else ui_sync_rogue();
 }
 static void ui_add_to_page(DWORD page,HWND control) {
-    if(page>UI_TAB_REAR || !control)return;
+    if(page>UI_TAB_SUMMON || !control)return;
     if(g_ui_page_count[page]<UI_MAX_PAGE_CONTROLS)
         g_ui_pages[page][g_ui_page_count[page]++]=control;
 }
@@ -1035,6 +1133,11 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
             ui_set_page(id-201u);return 0;
         }
         if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
+        if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}
+        if(id==229u){
+            ui_work_pp_flip(PAR_SUMMON_DLL,17u,1u);
+            ui_sync_summon();return 0;
+        }
         if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
         if(id==206u){ui_show_gather();return 0;}
         if(id==207u){ui_set_page(UI_TAB_ROGUE);return 0;}
@@ -1162,9 +1265,10 @@ static BOOL ui_create(HWND game) {
     g_ui_font=CreateFontA(-22,0,0,0,500,0,0,0,1,0,0,0,0,"Segoe UI");
     g_ui_title_font=CreateFontA(-29,0,0,0,700,0,0,0,1,0,0,0,0,"Segoe UI");
     ui_label(g_parallel_ui_hwnd,"PARALLEL / CONTROL",26,15,680,42,TRUE);
-    g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd,"ESP",30,75,212,47,201u,FALSE);
-    g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd,"ROGUE",267,75,212,47,202u,FALSE);
-    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",503,75,212,47,203u,FALSE);
+    g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd,"ESP",30,75,160,47,201u,FALSE);
+    g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd,"ROGUE",205,75,160,47,202u,FALSE);
+    g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd,"STATUS",380,75,160,47,203u,FALSE);
+    g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON",555,75,160,47,228u,FALSE);
 
     ui_add_to_page(UI_TAB_ESP,ui_label(g_parallel_ui_hwnd,
         "PLAYER ESP",36,137,670,37,TRUE));
@@ -1332,6 +1436,28 @@ static BOOL ui_create(HWND game) {
     g_ui_wsg_state=ui_label(g_parallel_ui_hwnd,"",46,592,665,33,FALSE);
     ui_add_to_page(UI_TAB_STATUS,g_ui_wsg_state);
 
+    ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
+        "AUTO SUMMON / DEBUG",36,137,665,40,TRUE));
+    ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
+        "Live data from WoWAutoSummonAssist. TYPE 18 = ritual fallback.",
+        42,181,665,32,FALSE));
+    g_ui_summon_check=ui_button(g_parallel_ui_hwnd,
+        "AUTO SUMMON ASSIST - enabled",46,225,665,42,229u,TRUE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_check);
+    g_ui_summon_loaded=ui_label(g_parallel_ui_hwnd,"",46,285,665,34,FALSE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_loaded);
+    g_ui_summon_candidate=ui_label(g_parallel_ui_hwnd,"",46,335,665,42,FALSE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_candidate);
+    g_ui_summon_guid=ui_label(g_parallel_ui_hwnd,"",46,395,665,42,FALSE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_guid);
+    g_ui_summon_scan=ui_label(g_parallel_ui_hwnd,"",46,455,665,42,FALSE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_scan);
+    g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,515,665,52,FALSE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
+    ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
+        "If candidate=NO, screenshot Nearest GO while standing at the portal.",
+        42,585,665,34,FALSE));
+
     /* The detailed counters occupy their own view: no overlapping controls,
        no scroll subclass, no changes to Insert, ESP hook or settings parents. */
     ui_add_to_page(UI_TAB_REAR,ui_label(g_parallel_ui_hwnd,
@@ -1400,6 +1526,7 @@ static void parallel_gui_tick(void) {
         if(g_ui_current_tab==UI_TAB_STATUS){
             ui_sync_rogue();ui_sync_rear();ui_sync_wsg();
         } else if(g_ui_current_tab==UI_TAB_REAR)ui_sync_rear();
+        else if(g_ui_current_tab==UI_TAB_SUMMON)ui_sync_summon();
         else if(g_ui_current_tab==UI_TAB_ESP)ui_sync_wsg();
         if(g_ui_gather_open)ui_sync_gather();
     }
@@ -1413,8 +1540,8 @@ static void parallel_gui_destroy(void) {
         DestroyWindow(g_parallel_ui_hwnd);
     }
     g_parallel_ui_hwnd=NULL;g_ui_prev=NULL;
-    for(page=0u;page<4u;++page) {
-        if(page<3u)g_ui_tabs[page]=NULL;
+    for(page=0u;page<5u;++page) {
+        if(page<4u)g_ui_tabs[page]=NULL;
         g_ui_page_count[page]=0u;
     }
     for(page=0u;page<5u;++page)g_ui_checks[page]=NULL;
@@ -1425,6 +1552,8 @@ static void parallel_gui_destroy(void) {
     g_ui_esp_state=NULL;g_ui_autopp_state=NULL;g_ui_longpp_state=NULL;
     g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;
     g_ui_wsg_check=NULL;g_ui_wsg_state=NULL;
+    g_ui_summon_check=NULL;g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;
+    g_ui_summon_guid=NULL;g_ui_summon_scan=NULL;g_ui_summon_nearest=NULL;
     for(page=0u;page<40u;++page){g_ui_gather_controls[page]=NULL;g_ui_gather_control_pages[page]=0u;}
     for(page=0u;page<16u;++page)g_ui_gather_checks[page]=NULL;
     for(page=0u;page<4u;++page)g_ui_gather_extra_checks[page]=NULL;

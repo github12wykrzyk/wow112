@@ -80,18 +80,20 @@
       "id": "autosummon-assist-parallel",
       "branch": "parallel",
       "modules": [
-        "AutoSummonAssist"
+        "AutoSummonAssist",
+        "WoWPlayerESP"
       ],
       "dependencies": [],
       "shared_resources": [
-        "GameObject native right-click 0x005F8660"
+        "GameObject native right-click 0x005F8660",
+        "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "093dd2cad77883815a34bc1cdc88cf9ed80dbf86",
+      "observed_head": "0f2f5a610ef345b9b13ccfb183ef98d84cf28e6f",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v2 reliability iteration after in-game report of no visible portal interaction: preserve exact GO entry 36727/native right-click, remove Lua party/combat pre-gate, retry up to 8x at 120 ms, stop on native local cast/channel state, widen local scan gate to 5.5 yd, and emit one chat diagnostic per new portal GUID. No movement/position spoof or gameplay hooks."
+      "notes": "v3 after live report that visible Summoning Portal still did not auto-click. Detection now accepts canonical entry 36727 OR verified Vanilla GAMEOBJECT_TYPE_ID=18 ritual fallback, retains 5.5yd/8x120ms retry and native cast/channel stop. AutoSummon exports 17 live diagnostics. Existing Parallel PlayerESP GUI gains a dedicated SUMMON tab showing DLL/API loaded state, scanner heartbeat, candidate entry/type/GUID/distance, retries/clicks, scanner state and nearest GO within 12yd. No separate ControlHub is enabled on parallel; no new game WndProc hook."
     }
   ]
 }

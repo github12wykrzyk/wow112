@@ -100,7 +100,7 @@ def main():
         '#define UI_SS_WHITERECT 0x00000006u',
         'WS_POPUP|UI_CAPTION|UI_SYSMENU|UI_SS_WHITERECT',
         '#define UI_TAB_REAR 3u',
-        'g_ui_pages[4][UI_MAX_PAGE_CONTROLS]',
+        'g_ui_pages[5][UI_MAX_PAGE_CONTROLS]',
         'if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}',
         'if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}',
         'ui_button(g_parallel_ui_hwnd,',
@@ -158,6 +158,7 @@ def main():
         'g_ui_tabs[0]=ui_button(g_parallel_ui_hwnd',
         'g_ui_tabs[1]=ui_button(g_parallel_ui_hwnd',
         'g_ui_tabs[2]=ui_button(g_parallel_ui_hwnd',
+        'g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd',
         'g_ui_speedfloor_check=ui_button(g_parallel_ui_hwnd',
         'g_ui_hostile_guard_check=ui_button(g_parallel_ui_hwnd',
         'g_ui_pp_check=ui_button(g_parallel_ui_hwnd',
@@ -166,6 +167,7 @@ def main():
         'ui_add_to_page(UI_TAB_ROGUE,g_ui_junkbox_check)',
         'if(id>=201u && id<=203u)',
         'ui_set_page(id-201u);return 0;',
+        'if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}',
     ):
         if token not in text:
             print("ERROR: GUI control creation/tab routing regression:", token)
@@ -196,11 +198,26 @@ def main():
     )):
         print("ERROR: game WndProc chain/duplicate install/migration guard failed")
         return 1
+    for token in (
+        '#define UI_TAB_SUMMON 4u',
+        '#define PAR_SUMMON_DLL "WoWAutoSummonAssist_5875_v1.dll"',
+        'g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON"',
+        'ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_check)',
+        'ui_sync_summon();',
+        'ui_work_pp_flip(PAR_SUMMON_DLL,17u,1u);',
+        'Nearest GO <=12yd: entry ',
+        'TYPE 18 = ritual fallback.',
+        'g_ui_summon_check=NULL;g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;',
+    ):
+        if token not in text:
+            print("ERROR: AutoSummon dedicated debug tab regression:", token)
+            return 1
+    print("PARALLEL_GUI_AUTOSUMMON_DEBUG: PASS (dedicated tab + live provider diagnostics)")
     Path("dist").mkdir(exist_ok=True)
     Path("dist/parallel_gui_regression.json").write_text(
         json.dumps({"result": "PASS", "scope": "source/Win32 ABI and render-loop wiring",
                     "game_runtime_tested": False, "insert": True,
-                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203],
+                    "gui_controls": list(range(101, 111)), "tabs": [201, 202, 203, 228],
                     "wndproc_chain": True, "render_tick_and_destroy": True},
                    indent=2) + "\n", encoding="utf-8")
     print("PARALLEL_GUI_REGRESSION: PASS (source guards only; in-game test required)")
