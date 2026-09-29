@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.32"
+local ADDON_VERSION = "1.33"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -2096,6 +2096,58 @@ local function slash(msg)
     end
 end
 
+local function handleChannelMessage(message, sender, channelBaseName, channelFullName)
+    if not SummonScoutDB.enabled then return end
+
+    message = message or ""
+    sender = sender or ""
+    channelBaseName = channelBaseName or ""
+    channelFullName = channelFullName or ""
+
+    if not channelMatches(channelBaseName, channelFullName) then
+        return
+    end
+
+    -- Never react to this character's own advertisement/request.
+    if samePlayer(sender, UnitName("player")) then return end
+
+    local loc, ambiguous = findLocation(message)
+
+    -- Seller detection is independent from buyer detection. Competitor ads
+    -- never enter demand statistics or the invite queue.
+    if isSellerMessage(message) then
+        scheduleCounter(sender, message, loc, ambiguous)
+        return
+    end
+
+    if not looksLikeSummonRequest(message) then return end
+
+    local inviteCandidate = SummonScoutDB.autoInvite and locationAllowed(loc, ambiguous)
+
+    -- Lowest-latency path: the first eligible request after idle is invited
+    -- synchronously from the channel event. Later/cooldown requests are queued.
+    if inviteCandidate then
+        if not tryImmediateInvite(sender, loc) then
+            queueInvite(sender, message, loc)
+        end
+    end
+
+    -- Keep demand accounting after the latency-critical invite path.
+    logRequest(sender, message, loc, ambiguous)
+
+    if not inviteCandidate and SummonScoutDB.debug then
+        if not SummonScoutDB.autoInvite then
+            chat("observe only: " .. sender .. " -> " .. message)
+        elseif ambiguous then
+            chat("ignore: " .. sender .. " [ambiguous DM] -> " .. message)
+        elseif loc then
+            chat("ignore: " .. sender .. " [" .. loc.label .. "], serving=" .. servedLocationLabel())
+        else
+            chat("ignore: " .. sender .. " [unknown place], serving=" .. servedLocationLabel())
+        end
+    end
+end
+
 local frame = CreateFrame("Frame", "SummonScoutFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
@@ -2269,57 +2321,8 @@ frame:SetScript("OnEvent", function()
     end
 
     if event == "CHAT_MSG_CHANNEL" then
-        if not SummonScoutDB.enabled then return end
-
-        local message = arg1 or ""
-        local sender = arg2 or ""
-        local channelBaseName = arg9 or ""
-        local channelFullName = arg4 or ""
-
-        if not channelMatches(channelBaseName, channelFullName) then
-            return
-        end
-
-        -- Never react to this character's own advertisement/request.
-        if samePlayer(sender, UnitName("player")) then return end
-
-        local loc, ambiguous = findLocation(message)
-
-        -- Seller detection is independent from buyer detection. Competitor ads
-        -- never enter demand statistics or the invite queue.
-        if isSellerMessage(message) then
-            scheduleCounter(sender, message, loc, ambiguous)
-            return
-        end
-
-        if not looksLikeSummonRequest(message) then return end
-
-        local inviteCandidate = SummonScoutDB.autoInvite and locationAllowed(loc, ambiguous)
-
-        -- Lowest-latency path: the first eligible request after idle is invited
-        -- synchronously in CHAT_MSG_CHANNEL. Only subsequent/cooldown requests
-        -- use the OnUpdate queue.
-        if inviteCandidate then
-            if not tryImmediateInvite(sender, loc) then
-                queueInvite(sender, message, loc)
-            end
-        end
-
-        -- Keep demand accounting, but do it after the latency-critical invite
-        -- path so statistics cannot delay the first InviteByName().
-        logRequest(sender, message, loc, ambiguous)
-
-        if not inviteCandidate and SummonScoutDB.debug then
-            if not SummonScoutDB.autoInvite then
-                chat("observe only: " .. sender .. " -> " .. message)
-            elseif ambiguous then
-                chat("ignore: " .. sender .. " [ambiguous DM] -> " .. message)
-            elseif loc then
-                chat("ignore: " .. sender .. " [" .. loc.label .. "], serving=" .. servedLocationLabel())
-            else
-                chat("ignore: " .. sender .. " [unknown place], serving=" .. servedLocationLabel())
-            end
-        end
+        handleChannelMessage(arg1, arg2, arg9, arg4)
+        return
     end
 end)
 frame:SetScript("OnUpdate", function()

@@ -1,4 +1,4 @@
-# SummonScout 1.32
+# SummonScout 1.33
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -423,3 +423,10 @@ Party auto-summon now uses one request-sequenced transaction shared by SummonSco
 - /ssi summoncheck exposes request, ACK and started sequence IDs plus native target/slot/status.
 
 This replaces the previous optimistic ACK, which only proved that the bridge called CastSpell and did not prove that Ritual actually started.
+
+
+## 1.33 Vanilla Lua 32-upvalue loader fix
+
+WoW 1.12's Lua compiler limits a function to 32 upvalues. The monolithic OnEvent closure had grown past that limit after the 1.32 summon transaction work, so the addon could fail to load with `too many upvalues (limit=32)`.
+
+World-channel processing is now isolated in `handleChannelMessage()`. The OnEvent closure keeps only one reference for that whole path instead of capturing all channel parser/invite/counter/logging helpers. Runtime behavior of World detection is unchanged; the split restores Vanilla 1.12 loader compatibility and leaves headroom for future event changes.
