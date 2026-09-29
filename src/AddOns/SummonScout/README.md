@@ -1,10 +1,10 @@
-# SummonScout 1.5
+# SummonScout 1.6
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
 ## Flow
 
-World chat -> summon-request detection -> **persistent demand log** -> destination recognition -> service-place filter -> optional queued `InviteByName()`.
+World chat -> summon-request detection -> destination recognition -> service-place filter -> **immediate first `InviteByName()`** -> persistent demand log; later/cooldown matches use the queue.
 
 The addon remains independent from LazyScript.
 
@@ -103,3 +103,12 @@ The following World-chat destination terms resolve to the same canonical service
 - `hydrax`
 
 This means messages such as `WTB summon azshara`, `need summ hydraxis`, and `summ hydraxian waterlords` are grouped under one demand bucket.
+
+
+## 1.6 immediate first invite
+
+The first eligible summon request after an idle period now calls `InviteByName()` directly inside the `CHAT_MSG_CHANNEL` event handler.
+
+It no longer waits for the next `OnUpdate` frame. The existing 0.8 s spacing remains only for subsequent requests: if another request arrives while the invite cooldown is active or the queue is non-empty, it is queued and processed normally.
+
+Demand logging is intentionally performed after the latency-critical invite path, so persistent statistics do not delay the first invite.

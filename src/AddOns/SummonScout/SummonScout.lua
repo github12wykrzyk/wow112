@@ -362,6 +362,24 @@ local function popInvite()
     return item
 end
 
+local function tryImmediateInvite(name, loc)
+    name = trim(name)
+    if name == "" or samePlayer(name, UnitName("player")) then return false end
+    if table.getn(SS.queue) ~= 0 then return false end
+    if now() < SS.nextInviteAt then return false end
+    if isInGroup(name) or recentlyHandled(name) or SS.queued[lower(name)] then return false end
+
+    -- Fast path for the first eligible request after idle: invite directly from
+    -- CHAT_MSG_CHANNEL instead of waiting for the next OnUpdate frame.
+    local t = now()
+    SS.recent[lower(name)] = t
+    SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
+    InviteByName(name)
+    chat("invite -> " .. name .. " [" .. (loc and loc.label or "?") .. "]")
+    return true
+end
+
+
 local function configuredChannelId()
     if not GetChannelName then return 0 end
     local id = GetChannelName(SummonScoutDB.channel or "World")
@@ -682,14 +700,22 @@ frame:SetScript("OnEvent", function()
         if samePlayer(sender, UnitName("player")) then return end
 
         local loc, ambiguous = findLocation(message)
+        local inviteCandidate = SummonScoutDB.autoInvite and locationAllowed(loc, ambiguous)
 
-        -- Logging happens before the service filter, so demand outside the
-        -- currently served location is still measured.
+        -- Lowest-latency path: the first eligible request after idle is invited
+        -- synchronously in CHAT_MSG_CHANNEL. Only subsequent/cooldown requests
+        -- use the OnUpdate queue.
+        if inviteCandidate then
+            if not tryImmediateInvite(sender, loc) then
+                queueInvite(sender, message, loc)
+            end
+        end
+
+        -- Keep demand accounting, but do it after the latency-critical invite
+        -- path so statistics cannot delay the first InviteByName().
         logRequest(sender, message, loc, ambiguous)
 
-        if SummonScoutDB.autoInvite and locationAllowed(loc, ambiguous) then
-            queueInvite(sender, message, loc)
-        elseif SummonScoutDB.debug then
+        if not inviteCandidate and SummonScoutDB.debug then
             if not SummonScoutDB.autoInvite then
                 chat("observe only: " .. sender .. " -> " .. message)
             elseif ambiguous then
