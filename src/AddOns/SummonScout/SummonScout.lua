@@ -25,6 +25,15 @@ SS.tradeTargetMoney = 0
 SS.tradeBothAccepted = false
 SS.gui = nil
 SS.nextGuiRefreshAt = 0
+SS.partyKnown = {}
+SS.partyRosterReady = false
+SS.partySyncAt = 0
+SS.summonQueue = {}
+SS.summonQueued = {}
+SS.summonActiveName = nil
+SS.summonActiveExpires = 0
+SS.lastSummonWhisperName = nil
+SS.lastSummonWhisperAt = 0
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -178,6 +187,16 @@ local REQUEST_CUES = {
     "who can", "inv", "invite", "me", "port"
 }
 
+local WHISPER_INVITE_CUES = {
+    "inv", "invite", "invite me", "port", "summon me", "sum me",
+    "can i get a summon", "can i get summon", "need summon", "need summ",
+    "lf summon", "lf summ", "wtb summon", "wtb summ"
+}
+
+local WHISPER_PRICE_CUES = {
+    "how much", "price", "cost", "fee"
+}
+
 -- Strong buyer intent only. Generic words such as "me", "inv" and "port"
 -- are intentionally excluded because seller ads often contain "whisper me",
 -- "invite me" or "portal/port" language.
@@ -308,6 +327,39 @@ local function locationAllowed(loc, ambiguous)
     end
     if ambiguous or not loc then return false end
     return loc.id == service
+end
+
+local function whisperInviteDecision(message)
+    local s = normalizeMessage(message)
+    local loc, ambiguous = findLocation(message)
+    local service = SummonScoutDB.service or "all"
+    local score = 0
+
+    if s == "" or isSellerMessage(s) then return false, nil, "not-request" end
+    if ambiguous then return false, nil, "ambiguous-location" end
+
+    -- Explicitly asking for another known destination must never trigger.
+    if loc then
+        if service ~= "all" and loc.id ~= service then
+            return false, loc, "other-location"
+        end
+        score = score + 3
+    end
+
+    if hasSummonToken(s) then score = score + 3 end
+    if hasCue(s, WHISPER_INVITE_CUES) then score = score + 3 end
+    if hasBuyerIntentCue(s) then score = score + 2 end
+    if hasCue(s, WHISPER_PRICE_CUES) then score = score + 1 end
+    if hasGoldPrice(s) then score = score + 1 end
+
+    -- Direct whispers are a strong signal, but generic chatter is ignored.
+    if score < 3 then return false, loc, "weak-intent" end
+
+    -- A destination-less whisper inherits this summoner's configured service.
+    if not loc and service ~= "all" then
+        loc = LOCATION_BY_ID[service]
+    end
+    return true, loc, "smart-match"
 end
 
 local function channelMatches(channelBaseName, channelFullName)
@@ -513,7 +565,9 @@ local function recordPayment(name, copper)
         reportMaster("PAID", name .. " -> " .. formatMoney(copper)
             .. " | total " .. formatMoney(SummonScoutDB.revenueCopper or 0))
     end
-    chat("payment: " .. name .. " -> " .. formatMoney(copper))
+    if SummonScoutDB.paymentChatEnabled then
+        chat("received gold from " .. name .. ": " .. formatMoney(copper))
+    end
     guiRefreshSafe()
 end
 
@@ -532,6 +586,132 @@ local function finishTrade()
         recordPayment(SS.tradePartner or currentTradePartner(), amount)
     end
     resetTradeState()
+end
+
+local function playerIsCasting()
+    return CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling)
+end
+
+local function partyUnitByName(name)
+    local j
+    for j = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+        local unit = "party" .. j
+        if samePlayer(UnitName(unit), name) then return unit end
+    end
+    return nil
+end
+
+local function queuePartySummon(name)
+    name = trim(name)
+    if name == "" or samePlayer(name, UnitName("player")) then return end
+    if SS.summonQueued[lower(name)] then return end
+    SS.summonQueued[lower(name)] = true
+    SS.summonQueue[table.getn(SS.summonQueue) + 1] = {
+        name = name,
+        attempts = 0,
+        nextAt = now() + 0.35
+    }
+    chat("party join -> summon queued: " .. name)
+end
+
+local function syncPartyRoster(suppressNew)
+    local current = {}
+    local j
+    for j = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+        local name = trim(UnitName("party" .. j) or "")
+        if name ~= "" then
+            current[lower(name)] = name
+            if SS.partyRosterReady and not suppressNew and not SS.partyKnown[lower(name)]
+                and SummonScoutDB.partyAutoSummon then
+                queuePartySummon(name)
+            end
+        end
+    end
+    SS.partyKnown = current
+    SS.partyRosterReady = true
+end
+
+local function summonDestinationLabel()
+    local service = SummonScoutDB.service or "all"
+    if service ~= "all" then
+        local loc = LOCATION_BY_ID[service]
+        if loc and loc.label then return loc.label end
+    end
+    if GetZoneText then
+        local zone = trim(GetZoneText() or "")
+        if zone ~= "" then return zone end
+    end
+    return "my location"
+end
+
+local function whisperSummonTarget(name)
+    name = trim(name)
+    if not SummonScoutDB.summonWhisperEnabled or name == "" or not SendChatMessage then return end
+    if samePlayer(name, SS.lastSummonWhisperName)
+        and (now() - (SS.lastSummonWhisperAt or 0)) < 10 then return end
+
+    SendChatMessage("Summoning you to " .. summonDestinationLabel() .. ".", "WHISPER", nil, name)
+    SS.lastSummonWhisperName = name
+    SS.lastSummonWhisperAt = now()
+end
+
+local function finishActiveSummon(name)
+    name = trim(name or SS.summonActiveName or "")
+    if name ~= "" then
+        SS.summonQueued[lower(name)] = nil
+        if table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, name) then
+            table.remove(SS.summonQueue, 1)
+        else
+            local j
+            for j = table.getn(SS.summonQueue), 1, -1 do
+                if samePlayer(SS.summonQueue[j].name, name) then
+                    table.remove(SS.summonQueue, j)
+                    break
+                end
+            end
+        end
+    end
+    SS.summonActiveName = nil
+    SS.summonActiveExpires = 0
+end
+
+local function processPartySummon()
+    if not SummonScoutDB.enabled or not SummonScoutDB.partyAutoSummon then return end
+    if SS.summonActiveName then
+        if now() < (SS.summonActiveExpires or 0) then return end
+        SS.summonActiveName = nil
+        SS.summonActiveExpires = 0
+    end
+    if table.getn(SS.summonQueue) == 0 then return end
+    if playerIsCasting() then return end
+    if UnitAffectingCombat and UnitAffectingCombat("player") then return end
+
+    local item = SS.summonQueue[1]
+    local unit = partyUnitByName(item.name)
+    if not unit then
+        finishActiveSummon(item.name)
+        return
+    end
+    if UnitIsConnected and not UnitIsConnected(unit) then
+        item.nextAt = now() + 2
+        return
+    end
+    if now() < (item.nextAt or 0) then return end
+
+    item.attempts = (item.attempts or 0) + 1
+    if item.attempts > 3 then
+        chat("summon failed after retries: " .. item.name)
+        finishActiveSummon(item.name)
+        return
+    end
+
+    if TargetByName and CastSpellByName then
+        TargetByName(item.name, true)
+        SS.summonActiveName = item.name
+        SS.summonActiveExpires = now() + 2
+        item.nextAt = now() + 5
+        CastSpellByName("Ritual of Summoning")
+    end
 end
 
 local function queueInvite(name, message, loc)
@@ -757,6 +937,10 @@ local function setDefaults()
     if SummonScoutDB.masterName == nil then SummonScoutDB.masterName = "" end
     if SummonScoutDB.masterReportInvites == nil then SummonScoutDB.masterReportInvites = true end
     if SummonScoutDB.masterReportPayments == nil then SummonScoutDB.masterReportPayments = true end
+    if SummonScoutDB.whisperAutoInvite == nil then SummonScoutDB.whisperAutoInvite = true end
+    if SummonScoutDB.partyAutoSummon == nil then SummonScoutDB.partyAutoSummon = false end
+    if SummonScoutDB.summonWhisperEnabled == nil then SummonScoutDB.summonWhisperEnabled = true end
+    if SummonScoutDB.paymentChatEnabled == nil then SummonScoutDB.paymentChatEnabled = true end
     ensureStats()
 end
 
@@ -776,6 +960,9 @@ local function status()
         .. "s cd=" .. tostring(SummonScoutDB.counterCooldown or 60) .. "s"
         .. " scope=" .. tostring(SummonScoutDB.counterScope or "all")
         .. ", master=" .. (SummonScoutDB.masterReportingEnabled and (trim(SummonScoutDB.masterName or "") ~= "" and SummonScoutDB.masterName or "NO-NAME") or "OFF")
+        .. ", whisperInvite=" .. (SummonScoutDB.whisperAutoInvite and "ON" or "OFF")
+        .. ", partySummon=" .. (SummonScoutDB.partyAutoSummon and "ON" or "OFF")
+        .. ", summonWhisper=" .. (SummonScoutDB.summonWhisperEnabled and "ON" or "OFF")
         .. ", revenue=" .. formatMoney(SummonScoutDB.revenueCopper or 0)
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
@@ -963,7 +1150,7 @@ local function createGui()
 
     local f = CreateFrame("Frame", "SummonScoutOptionsFrame", UIParent)
     f:SetWidth(720)
-    f:SetHeight(470)
+    f:SetHeight(560)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
     f:SetFrameStrata("DIALOG")
     f:SetMovable(true)
@@ -991,13 +1178,30 @@ local function createGui()
     GUI.enabledCheck = guiCheck(f, 26, -68, "SummonScout enabled",
         function() return SummonScoutDB.enabled end,
         function(v) SummonScoutDB.enabled = v end)
-    GUI.inviteCheck = guiCheck(f, 26, -94, "Instant auto invite",
+    GUI.inviteCheck = guiCheck(f, 26, -94, "World smart auto invite",
         function() return SummonScoutDB.autoInvite end,
         function(v) SummonScoutDB.autoInvite = v end)
-    GUI.logCheck = guiCheck(f, 26, -120, "Demand logging",
+    GUI.whisperInviteCheck = guiCheck(f, 26, -120, "Whisper smart auto invite",
+        function() return SummonScoutDB.whisperAutoInvite end,
+        function(v) SummonScoutDB.whisperAutoInvite = v end)
+    GUI.partySummonCheck = guiCheck(f, 26, -146, "Auto summon new party member",
+        function() return SummonScoutDB.partyAutoSummon end,
+        function(v)
+            SummonScoutDB.partyAutoSummon = v
+            if not v then
+                SS.summonQueue = {}
+                SS.summonQueued = {}
+                SS.summonActiveName = nil
+            end
+            syncPartyRoster(true)
+        end)
+    GUI.summonWhisperCheck = guiCheck(f, 26, -172, "Whisper summon destination",
+        function() return SummonScoutDB.summonWhisperEnabled end,
+        function(v) SummonScoutDB.summonWhisperEnabled = v end)
+    GUI.logCheck = guiCheck(f, 26, -198, "Demand logging",
         function() return SummonScoutDB.loggingEnabled end,
         function(v) SummonScoutDB.loggingEnabled = v end)
-    GUI.counterCheck = guiCheck(f, 26, -146, "Competitive response",
+    GUI.counterCheck = guiCheck(f, 26, -224, "Competitive response",
         function() return SummonScoutDB.counterEnabled end,
         function(v)
             if v and trim(SummonScoutDB.spamMessage or "") == "" then
@@ -1008,7 +1212,7 @@ local function createGui()
                 if not v then clearCounterPending() end
             end
         end)
-    GUI.spamCheck = guiCheck(f, 26, -172, "Periodic World advert",
+    GUI.spamCheck = guiCheck(f, 26, -250, "Periodic World advert",
         function() return SummonScoutDB.spamEnabled end,
         function(v)
             if v and trim(SummonScoutDB.spamMessage or "") == "" then
@@ -1019,21 +1223,21 @@ local function createGui()
                 SS.nextSpamAt = v and (now() + 1) or 0
             end
         end)
-    GUI.scopeCheck = guiCheck(f, 26, -198, "Counter all summon sellers",
+    GUI.scopeCheck = guiCheck(f, 26, -276, "Counter all summon sellers",
         function() return (SummonScoutDB.counterScope or "all") == "all" end,
         function(v)
             SummonScoutDB.counterScope = v and "all" or "same"
             clearCounterPending()
         end)
 
-    guiHeader(f, "Service / advert", 28, -236)
-    guiText(f, "Serve:", 28, -260, true)
-    GUI.serviceEdit = guiEdit(f, 80, -253, 155, SummonScoutDB.service or "all")
-    guiButton(f, 244, -253, 66, "Apply", guiApplyService)
+    guiHeader(f, "Service / advert", 28, -314)
+    guiText(f, "Serve:", 28, -338, true)
+    GUI.serviceEdit = guiEdit(f, 80, -331, 155, SummonScoutDB.service or "all")
+    guiButton(f, 244, -331, 66, "Apply", guiApplyService)
 
-    guiText(f, "World text:", 28, -292, true)
-    GUI.advertEdit = guiEdit(f, 100, -285, 210, SummonScoutDB.spamMessage or "")
-    guiButton(f, 244, -316, 66, "Save", guiSaveAdvert)
+    guiText(f, "World text:", 28, -370, true)
+    GUI.advertEdit = guiEdit(f, 100, -363, 210, SummonScoutDB.spamMessage or "")
+    guiButton(f, 244, -394, 66, "Save", guiSaveAdvert)
 
     guiHeader(f, "Master reporting", 370, -46)
     GUI.masterEnabledCheck = guiCheck(f, 368, -68, "Report to master character",
@@ -1045,23 +1249,26 @@ local function createGui()
     GUI.masterPaymentCheck = guiCheck(f, 368, -120, "Report received payments",
         function() return SummonScoutDB.masterReportPayments end,
         function(v) SummonScoutDB.masterReportPayments = v end)
+    GUI.paymentChatCheck = guiCheck(f, 368, -146, "Show received gold in chat",
+        function() return SummonScoutDB.paymentChatEnabled end,
+        function(v) SummonScoutDB.paymentChatEnabled = v end)
 
-    guiText(f, "Master:", 370, -158, true)
-    GUI.masterEdit = guiEdit(f, 430, -151, 170, SummonScoutDB.masterName or "")
-    guiButton(f, 608, -151, 70, "Save", guiSaveMaster)
-    guiButton(f, 608, -180, 70, "Test", function()
+    guiText(f, "Master:", 370, -184, true)
+    GUI.masterEdit = guiEdit(f, 430, -177, 170, SummonScoutDB.masterName or "")
+    guiButton(f, 608, -177, 70, "Save", guiSaveMaster)
+    guiButton(f, 608, -206, 70, "Test", function()
         if not reportMaster("TEST", "reporting online from " .. (UnitName("player") or "?")) then
             chat("master reporting is OFF or master name is empty")
         end
     end)
 
-    guiHeader(f, "Live operation", 370, -220)
-    GUI.lastInviteText = guiText(f, "Last invite: -", 370, -244, true)
-    GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -268, true)
-    GUI.revenueText = guiText(f, "Revenue: 0c", 370, -292, true)
-    GUI.counterText = guiText(f, "Counter: -", 370, -316, true)
-    GUI.stateText = guiText(f, "State: -", 28, -372, true)
-    GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -438, true)
+    guiHeader(f, "Live operation", 370, -252)
+    GUI.lastInviteText = guiText(f, "Last invite: -", 370, -276, true)
+    GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -300, true)
+    GUI.revenueText = guiText(f, "Revenue: 0c", 370, -324, true)
+    GUI.counterText = guiText(f, "Counter: -", 370, -348, true)
+    GUI.stateText = guiText(f, "State: -", 28, -450, true)
+    GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -524, true)
 
     f:Hide()
     GUI.frame = f
@@ -1072,9 +1279,10 @@ end
 guiRefresh = function()
     local f = createGui()
     local checks = {
-        GUI.enabledCheck, GUI.inviteCheck, GUI.logCheck, GUI.counterCheck,
-        GUI.spamCheck, GUI.scopeCheck, GUI.masterEnabledCheck,
-        GUI.masterInviteCheck, GUI.masterPaymentCheck
+        GUI.enabledCheck, GUI.inviteCheck, GUI.whisperInviteCheck,
+        GUI.partySummonCheck, GUI.summonWhisperCheck, GUI.logCheck,
+        GUI.counterCheck, GUI.spamCheck, GUI.scopeCheck, GUI.masterEnabledCheck,
+        GUI.masterInviteCheck, GUI.masterPaymentCheck, GUI.paymentChatCheck
     }
     local i
     for i = 1, table.getn(checks) do
@@ -1264,6 +1472,33 @@ local function slash(msg)
         if not reportMaster("TEST", "reporting online from " .. (UnitName("player") or "?")) then
             chat("master reporting is OFF or master name is empty")
         end
+    elseif cmd == "whisperinvite" then
+        rest = lower(trim(rest))
+        if rest == "on" then SummonScoutDB.whisperAutoInvite = true end
+        if rest == "off" then SummonScoutDB.whisperAutoInvite = false end
+        status()
+    elseif cmd == "partysummon" then
+        rest = lower(trim(rest))
+        if rest == "on" then
+            SummonScoutDB.partyAutoSummon = true
+            syncPartyRoster(true)
+        elseif rest == "off" then
+            SummonScoutDB.partyAutoSummon = false
+            SS.summonQueue = {}
+            SS.summonQueued = {}
+            SS.summonActiveName = nil
+        end
+        status()
+    elseif cmd == "summonwhisper" then
+        rest = lower(trim(rest))
+        if rest == "on" then SummonScoutDB.summonWhisperEnabled = true end
+        if rest == "off" then SummonScoutDB.summonWhisperEnabled = false end
+        status()
+    elseif cmd == "paymentchat" then
+        rest = lower(trim(rest))
+        if rest == "on" then SummonScoutDB.paymentChatEnabled = true end
+        if rest == "off" then SummonScoutDB.paymentChatEnabled = false end
+        status()
     elseif cmd == "debug" then
         rest = lower(trim(rest))
         SummonScoutDB.debug = (rest == "on" or rest == "1" or rest == "true")
@@ -1303,6 +1538,7 @@ local function slash(msg)
         chat("/ssi counter on|off | counterscope all|same | counterdelay <min> <max> | countercool <15-3600>")
         chat("/ssi countertest <message> | gui")
         chat("/ssi master <name>|on|off | reporttest")
+        chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | paymentchat on|off")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -1315,12 +1551,60 @@ frame:RegisterEvent("TRADE_SHOW")
 frame:RegisterEvent("TRADE_MONEY_CHANGED")
 frame:RegisterEvent("TRADE_ACCEPT_UPDATE")
 frame:RegisterEvent("TRADE_CLOSED")
+frame:RegisterEvent("CHAT_MSG_WHISPER")
+frame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+frame:RegisterEvent("SPELLCAST_START")
+frame:RegisterEvent("SPELLCAST_FAILED")
+frame:RegisterEvent("SPELLCAST_INTERRUPTED")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
+        syncPartyRoster(true)
         chat("loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
+        return
+    end
+
+    if event == "PARTY_MEMBERS_CHANGED" then
+        SS.partySyncAt = now() + 0.20
+        return
+    end
+
+    if event == "CHAT_MSG_WHISPER" then
+        if not SummonScoutDB.enabled or not SummonScoutDB.whisperAutoInvite then return end
+        local message = arg1 or ""
+        local sender = trim(arg2 or "")
+        if sender == "" or samePlayer(sender, UnitName("player")) or isInGroup(sender) then return end
+        local accept, loc, reason = whisperInviteDecision(message)
+        if accept then
+            if not tryImmediateInvite(sender, loc) then
+                queueInvite(sender, message, loc)
+            end
+            if SummonScoutDB.debug then
+                chat("whisper invite -> " .. sender .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
+            end
+        elseif SummonScoutDB.debug then
+            chat("whisper ignore -> " .. sender .. " [" .. tostring(reason) .. "]")
+        end
+        return
+    end
+
+    if event == "SPELLCAST_START" then
+        local spell = normalizeMessage(arg1 or "")
+        if spell == "ritual of summoning" then
+            local targetName = trim(UnitName("target") or SS.summonActiveName or "")
+            if targetName ~= "" then whisperSummonTarget(targetName) end
+            if SS.summonActiveName then finishActiveSummon(SS.summonActiveName) end
+        end
+        return
+    end
+
+    if event == "SPELLCAST_FAILED" or event == "SPELLCAST_INTERRUPTED" then
+        if SS.summonActiveName then
+            SS.summonActiveName = nil
+            SS.summonActiveExpires = 0
+        end
         return
     end
 
@@ -1415,7 +1699,12 @@ frame:SetScript("OnEvent", function()
     end
 end)
 frame:SetScript("OnUpdate", function()
+    if SS.partySyncAt and SS.partySyncAt > 0 and now() >= SS.partySyncAt then
+        SS.partySyncAt = 0
+        syncPartyRoster(false)
+    end
     processQueue()
+    processPartySummon()
     processCounter()
     processSpam()
     if SS.gui and SS.gui:IsShown() and guiRefresh and now() >= (SS.nextGuiRefreshAt or 0) then

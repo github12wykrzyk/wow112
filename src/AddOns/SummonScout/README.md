@@ -1,4 +1,4 @@
-# SummonScout 1.10
+# SummonScout 1.11
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -177,3 +177,15 @@ Hydraxian no longer enumerates variants such as `hydraxis`, `hydraxians`, `hydra
 Any normalized word beginning with `hydrax` resolves to the same destination, so `hydrax`, `hydraxis`, `hydraxian`, `hydraxians`, and future inflections/near-spellings sharing that stable root work automatically.
 
 Root matching is token-based rather than arbitrary substring matching, and roots shorter than 5 characters are rejected. This avoids unsafe global partial matching for short aliases such as `org`, `sm`, `wc`, `dm`, etc. Other destinations can opt into the same mechanism later by adding a verified `roots={...}` entry.
+
+
+## 1.11 whisper intake + party auto-summon + payment chat controls
+
+New automation toggles are available in `/ssi gui` and as slash commands:
+
+- `Whisper smart auto invite` / `/ssi whisperinvite on|off`: direct whispers are classified by summon intent. Clear requests such as `inv`, `need summon`, `LF summ`, `WTB summon`, or destination + summon intent are invited immediately. Generic chat is ignored, seller ads are ignored, and an explicitly different destination is rejected when this character serves a specific location.
+- `Auto summon new party member` / `/ssi partysummon on|off`: after the initial roster snapshot, a newly joined party member is queued for `Ritual of Summoning`. The worker defers while casting/channeling or in combat, retries up to three times, and does not resummon members that were already in the party.
+- `Whisper summon destination` / `/ssi summonwhisper on|off`: whenever `Ritual of Summoning` actually starts, the summon target receives an English whisper: `Summoning you to <destination>.` The configured service label is used; if serving ALL, the current zone is used.
+- `Show received gold in chat` / `/ssi paymentchat on|off`: successful positive incoming trade payments print locally as `SummonScout: received gold from <player>: <amount>`. Existing master payment reporting and persistent revenue accounting remain unchanged.
+
+The new-party detector uses a roster diff rather than blindly summoning everyone on login/reload, so existing multibox helpers are treated as the baseline rather than new customers.
