@@ -71,8 +71,13 @@ namespace WoW112Updater
 
         private static Dictionary<string, object> Run(string branch, string status, string conclusion)
         {
+            return Run(branch, status, conclusion, Head);
+        }
+
+        private static Dictionary<string, object> Run(string branch, string status, string conclusion, string headSha)
+        {
             return new Dictionary<string, object> {
-                {"name", "Build work candidate"}, {"head_branch", branch},
+                {"name", "Build work candidate"}, {"head_branch", branch}, {"head_sha", headSha},
                 {"status", status}, {"conclusion", conclusion}
             };
         }
@@ -99,6 +104,44 @@ namespace WoW112Updater
                 catch (InvalidOperationException) { ++checks; continue; }
                 throw new Exception("Updater fell back to an older successful parallel run");
             }
+        }
+
+        private static void ExactHeadRunTests()
+        {
+            var previous = "1111111111111111111111111111111111111111";
+            var current = Head;
+            var runs = new object[] {
+                Run("parallel", "completed", "success", previous),
+                Run("parallel", "queued", "", current)
+            };
+
+            var exact = UpdaterSafety.FindRunForHead(runs, "Build work candidate", "parallel", current);
+            if (exact == null || !string.Equals(exact["head_sha"].ToString(), current, StringComparison.OrdinalIgnoreCase))
+                throw new Exception("Updater selected an older run instead of the exact current HEAD");
+            ++checks;
+
+            try {
+                UpdaterSafety.RequireSuccessfulRunForHead(runs, "Build work candidate", "parallel", current);
+            }
+            catch (InvalidOperationException) { ++checks; goto completed; }
+            throw new Exception("Updater accepted a pending exact-HEAD run");
+
+        completed:
+            var successRuns = new object[] {
+                Run("parallel", "completed", "success", previous),
+                Run("parallel", "completed", "success", current)
+            };
+            var selected = UpdaterSafety.RequireSuccessfulRunForHead(
+                successRuns, "Build work candidate", "parallel", current);
+            if (!string.Equals(selected["head_sha"].ToString(), current, StringComparison.OrdinalIgnoreCase))
+                throw new Exception("Updater did not bind the successful run to the exact current HEAD");
+            ++checks;
+
+            if (UpdaterSafety.FindRunForHead(
+                    new object[] { Run("parallel", "completed", "success", previous) },
+                    "Build work candidate", "parallel", current) != null)
+                throw new Exception("Updater fabricated an exact-HEAD run from an older success");
+            ++checks;
         }
 
         private static void UpdaterProvenanceTests()
@@ -161,6 +204,7 @@ namespace WoW112Updater
                 HeadReject("", Head);
                 HeadReject(Head, "X" + Head.Substring(1));
                 LatestRunTests();
+                ExactHeadRunTests();
                 UpdaterProvenanceTests();
                 Console.WriteLine("UPDATER_ATTESTATION_TESTS: PASS (" + checks + " assertions)");
                 return 0;

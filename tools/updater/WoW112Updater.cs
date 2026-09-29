@@ -355,41 +355,60 @@ namespace WoW112Updater
 
             using (var client = CreateClient())
             {
-                // A new Parallel commit may trigger a build while the user presses Update.
-                // Wait for that exact latest run instead of treating a normal 45s CI build
-                // as a permanent error. Never silently install an older artifact.
-                var chosen = await WaitForLatestSuccessfulRunAsync(client, workflowName, branch);
-                var runId = GetLong(chosen, "id");
-                var chosenSha = GetString(chosen, "head_sha");
-                var branchInfo = AsDictionary(json.DeserializeObject(
-                    await GetStringAsync(client, ApiRoot + "/branches/" + branch)));
-                var currentHead = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
-                UpdaterSafety.RequireCurrentParallelHead(chosenSha, currentHead);
-                var artifactsRoot = AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100")));
-                var artifacts = AsArray(GetValue(artifactsRoot, "artifacts"));
-                Dictionary<string, object> artifact = null;
-                foreach (var item in artifacts)
+                // Resolve the branch HEAD first, then wait only for the workflow of that
+                // exact SHA. GitHub can expose a new branch HEAD a few seconds before the
+                // corresponding Actions run appears; selecting "latest run" first creates
+                // a TOCTOU race and can momentarily pick the previous successful package.
+                for (var attempt = 0; attempt < 3; attempt++)
                 {
-                    var row = AsDictionary(item);
-                    var name = GetString(row, "name");
-                    var expired = GetBool(row, "expired");
-                    if (!expired && string.Equals(name, prefix + chosenSha, StringComparison.OrdinalIgnoreCase))
-                    {
-                        artifact = row;
-                        break;
-                    }
-                }
-                if (artifact == null) throw new InvalidOperationException("Najnowszy udany workflow nie ma aktywnego artefaktu " + prefix + "*." );
+                    var chosen = await WaitForCurrentHeadSuccessfulRunAsync(client, workflowName, branch);
+                    var runId = GetLong(chosen, "id");
+                    var chosenSha = GetString(chosen, "head_sha");
 
-                return new RemotePackageInfo
-                {
-                    Channel = "parallel",
-                    RunId = runId,
-                    HeadSha = GetString(chosen, "head_sha"),
-                    ArtifactName = GetString(artifact, "name"),
-                    DownloadUrl = GetString(artifact, "archive_download_url"),
-                    InnerZipName = innerName
-                };
+                    var branchInfo = AsDictionary(json.DeserializeObject(
+                        await GetStringAsync(client, ApiRoot + "/branches/" + branch)));
+                    var currentHead = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
+                    if (!string.Equals(chosenSha, currentHead, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log("HEAD Parallel zmienił się podczas wyboru paczki (" +
+                            ShortSha(chosenSha) + " -> " + ShortSha(currentHead) +
+                            "). Ponawiam automatycznie dla nowego HEAD.");
+                        status.Text = "Parallel dostał nowy commit • czekam na jego build...";
+                        continue;
+                    }
+
+                    var artifactsRoot = AsDictionary(json.DeserializeObject(
+                        await GetStringAsync(client, ApiRoot + "/actions/runs/" + runId + "/artifacts?per_page=100")));
+                    var artifacts = AsArray(GetValue(artifactsRoot, "artifacts"));
+                    Dictionary<string, object> artifact = null;
+                    foreach (var item in artifacts)
+                    {
+                        var row = AsDictionary(item);
+                        var name = GetString(row, "name");
+                        var expired = GetBool(row, "expired");
+                        if (!expired && string.Equals(name, prefix + chosenSha, StringComparison.OrdinalIgnoreCase))
+                        {
+                            artifact = row;
+                            break;
+                        }
+                    }
+                    if (artifact == null)
+                        throw new InvalidOperationException("Najnowszy udany workflow nie ma aktywnego artefaktu " + prefix + "*.");
+
+                    return new RemotePackageInfo
+                    {
+                        Channel = "parallel",
+                        RunId = runId,
+                        HeadSha = chosenSha,
+                        ArtifactName = GetString(artifact, "name"),
+                        DownloadUrl = GetString(artifact, "archive_download_url"),
+                        InnerZipName = innerName
+                    };
+                }
+
+                throw new InvalidOperationException(
+                    "HEAD Parallel zmieniał się podczas przygotowywania aktualizacji. " +
+                    "Updater nie zainstaluje starszej paczki; spróbuj ponownie po zakończeniu bieżącego builda.");
             }
         }
 
@@ -408,40 +427,69 @@ namespace WoW112Updater
             }
         }
 
-        private async Task<Dictionary<string, object>> WaitForLatestSuccessfulRunAsync(HttpClient client, string workflowName, string branch)
+        private async Task<Dictionary<string, object>> WaitForCurrentHeadSuccessfulRunAsync(
+            HttpClient client, string workflowName, string branch)
         {
             var deadlineUtc = DateTime.UtcNow.AddMinutes(3);
+            var trackedHead = string.Empty;
             var waitingRunId = 0L;
+
             while (true)
             {
+                var branchInfo = AsDictionary(json.DeserializeObject(
+                    await GetStringAsync(client, ApiRoot + "/branches/" + branch)));
+                var currentHead = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
+                // Reuse the strict SHA validator without weakening the existing stale-package gate.
+                UpdaterSafety.RequireCurrentParallelHead(currentHead, currentHead);
+
+                if (!string.Equals(trackedHead, currentHead, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrEmpty(trackedHead))
+                        Log("Wykryto nowszy HEAD Parallel: " + ShortSha(trackedHead) +
+                            " -> " + ShortSha(currentHead) + ". Czekam na jego własny build.");
+                    trackedHead = currentHead;
+                    waitingRunId = 0L;
+                }
+
                 var url = ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50";
                 var root = AsDictionary(json.DeserializeObject(await GetStringAsync(client, url)));
                 var runs = AsArray(GetValue(root, "workflow_runs"));
-                var newest = runs.Select(item => item as Dictionary<string, object>)
-                    .FirstOrDefault(row => row != null
-                        && string.Equals(GetString(row, "name"), workflowName, StringComparison.Ordinal)
-                        && string.Equals(GetString(row, "head_branch"), branch, StringComparison.Ordinal));
-                var state = GetString(newest, "status");
-                if (newest != null && !string.Equals(state, "completed", StringComparison.OrdinalIgnoreCase)
+                var exact = UpdaterSafety.FindRunForHead(runs, workflowName, branch, trackedHead);
+
+                if (exact == null)
+                {
+                    if (DateTime.UtcNow >= deadlineUtc)
+                        return UpdaterSafety.RequireSuccessfulRunForHead(runs, workflowName, branch, trackedHead);
+
+                    status.Text = "Nowy HEAD " + ShortSha(trackedHead) +
+                        " • czekam na uruchomienie jego builda...";
+                    Log("HEAD Parallel " + ShortSha(trackedHead) +
+                        " jest już widoczny, ale jego workflow jeszcze nie pojawił się w Actions. Czekam 3 s.");
+                    await Task.Delay(3000);
+                    continue;
+                }
+
+                var state = GetString(exact, "status");
+                if (!string.Equals(state, "completed", StringComparison.OrdinalIgnoreCase)
                     && DateTime.UtcNow < deadlineUtc)
                 {
-                    var runId = GetLong(newest, "id");
+                    var runId = GetLong(exact, "id");
                     if (waitingRunId != runId)
                     {
                         waitingRunId = runId;
-                        Log("Build Parallel #" + runId + " jest w toku (" + state
-                            + "). Czekam automatycznie na wynik; starszych paczek nie instaluję.");
+                        Log("Build Parallel #" + runId + " dla HEAD " + ShortSha(trackedHead) +
+                            " jest w toku (" + state + "). Czekam automatycznie; starszych paczek nie instaluję.");
                     }
-                    status.Text = "Trwa build Parallel • sprawdzam automatycznie co 8 s...";
+                    status.Text = "Trwa build " + ShortSha(trackedHead) + " • sprawdzam co 8 s...";
                     await Task.Delay(8000);
                     continue;
                 }
 
-                // This still fails closed for unsuccessful/cancelled/timed-out runs, or
-                // if the latest run remains pending after the three-minute wait.
-                var chosen = UpdaterSafety.RequireLatestSuccessfulRun(runs, workflowName, branch);
+                var chosen = UpdaterSafety.RequireSuccessfulRunForHead(
+                    runs, workflowName, branch, trackedHead);
                 if (waitingRunId != 0)
-                    Log("Build Parallel #" + GetLong(chosen, "id") + " zakończony sukcesem; pobieram zweryfikowaną paczkę.");
+                    Log("Build Parallel #" + GetLong(chosen, "id") + " dla HEAD " +
+                        ShortSha(trackedHead) + " zakończony sukcesem; pobieram zweryfikowaną paczkę.");
                 return chosen;
             }
         }

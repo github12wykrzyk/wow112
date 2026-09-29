@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.6-parallel.8";
+        public const string Version = "2.6-parallel.9";
     }
 
     internal static class UpdaterSafety
@@ -50,6 +50,49 @@ namespace WoW112Updater
                     "Updater nie użyje automatycznie starszego artefaktu.");
             }
 
+            return chosen;
+        }
+
+        public static Dictionary<string, object> FindRunForHead(
+            object[] runs, string workflowName, string branch, string headSha)
+        {
+            if (!IsCommitSha(headSha))
+                throw new InvalidOperationException("Nieprawidłowy HEAD branchu " + branch + ": " + ShortSha(headSha) + ".");
+
+            if (runs != null)
+            {
+                foreach (var item in runs)
+                {
+                    var row = item as Dictionary<string, object>;
+                    if (row == null) continue;
+                    if (string.Equals(GetString(row, "name"), workflowName, StringComparison.Ordinal)
+                        && string.Equals(GetString(row, "head_branch"), branch, StringComparison.Ordinal)
+                        && string.Equals(GetString(row, "head_sha"), headSha, StringComparison.OrdinalIgnoreCase))
+                        return row;
+                }
+            }
+            return null;
+        }
+
+        public static Dictionary<string, object> RequireSuccessfulRunForHead(
+            object[] runs, string workflowName, string branch, string headSha)
+        {
+            var chosen = FindRunForHead(runs, workflowName, branch, headSha);
+            if (chosen == null)
+                throw new InvalidOperationException(
+                    "Nie znaleziono workflow '" + workflowName + "' dla aktualnego HEAD " +
+                    ShortSha(headSha) + " na branchu " + branch + ".");
+
+            var status = GetString(chosen, "status");
+            var conclusion = GetString(chosen, "conclusion");
+            if (!string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "Workflow '" + workflowName + "' dla aktualnego HEAD " + ShortSha(headSha) +
+                    " nie jest jeszcze zakończony (status: " + EmptyAsUnknown(status) + ").");
+            if (!string.Equals(conclusion, "success", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "Workflow '" + workflowName + "' dla aktualnego HEAD " + ShortSha(headSha) +
+                    " nie zakończył się sukcesem (conclusion: " + EmptyAsUnknown(conclusion) + ").");
             return chosen;
         }
 
