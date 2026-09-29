@@ -585,7 +585,7 @@ static void ui_sync_summon(void) {
     if(!m->get_value(17u,&status))status.u32=0u;
 
     if(g_ui_summon_check)
-        SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u);
+        SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
 
     if(g_ui_summon_loaded){
         p=buf;p=app_str(p,"DLL: LOADED | API module v");
