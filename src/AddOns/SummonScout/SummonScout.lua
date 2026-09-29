@@ -33,8 +33,7 @@ SS.summonQueue = {}
 SS.summonQueued = {}
 SS.summonActiveName = nil
 SS.summonActiveExpires = 0
-SS.lastSummonWhisperName = nil
-SS.lastSummonWhisperAt = 0
+SS.summonWhisperRecent = {}
 SS.lastAdvertMessage = ""
 SS.lastAdvertSentAt = -100000
 
@@ -518,29 +517,6 @@ local function recordInvite(name, loc)
     guiRefreshSafe()
 end
 
-local function tryWhisperInvite(name, loc)
-    name = trim(name)
-    if name == "" or samePlayer(name, UnitName("player")) or isInGroup(name) then
-        return false, "invalid"
-    end
-
-    local t = now()
-    local last = SS.recent[lower(name)]
-    local cooldown = tonumber(SummonScoutDB.whisperInviteCooldown) or 10
-    if cooldown < 1 then cooldown = 1 end
-    if cooldown > 120 then cooldown = 120 end
-    if last and (t - last) < cooldown then
-        return false, "cooldown"
-    end
-
-    SS.recent[lower(name)] = t
-    SS.nextInviteAt = t + (SummonScoutDB.inviteDelay or 0.8)
-    InviteByName(name)
-    recordInvite(name, loc)
-    chat("whisper invite -> " .. name .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
-    return true, "invited"
-end
-
 local function currentTradePartner()
     local name
     if UnitName then
@@ -694,12 +670,23 @@ end
 local function whisperSummonTarget(name)
     name = trim(name)
     if not SummonScoutDB.summonWhisperEnabled or name == "" or not SendChatMessage then return end
-    if samePlayer(name, SS.lastSummonWhisperName)
-        and (now() - (SS.lastSummonWhisperAt or 0)) < 10 then return end
+
+    local key = lower(name)
+    local t = now()
+    local cooldown = tonumber(SummonScoutDB.summonWhisperCooldown) or 10
+    if cooldown < 1 then cooldown = 1 end
+    if cooldown > 120 then cooldown = 120 end
+
+    local last = SS.summonWhisperRecent[key]
+    if last and (t - last) < cooldown then
+        if SummonScoutDB.debug then
+            chat("summon whisper suppressed -> " .. name .. " [cooldown]")
+        end
+        return
+    end
 
     SendChatMessage("Summoning you to " .. summonDestinationLabel() .. ".", "WHISPER", nil, name)
-    SS.lastSummonWhisperName = name
-    SS.lastSummonWhisperAt = now()
+    SS.summonWhisperRecent[key] = t
 end
 
 local function finishActiveSummon(name)
@@ -1027,7 +1014,7 @@ local function setDefaults()
     if SummonScoutDB.masterReportInvites == nil then SummonScoutDB.masterReportInvites = true end
     if SummonScoutDB.masterReportPayments == nil then SummonScoutDB.masterReportPayments = true end
     if SummonScoutDB.whisperAutoInvite == nil then SummonScoutDB.whisperAutoInvite = true end
-    if SummonScoutDB.whisperInviteCooldown == nil then SummonScoutDB.whisperInviteCooldown = 10 end
+    if SummonScoutDB.summonWhisperCooldown == nil then SummonScoutDB.summonWhisperCooldown = 10 end
     if SummonScoutDB.partyAutoSummon == nil then SummonScoutDB.partyAutoSummon = false end
     if SummonScoutDB.summonWhisperEnabled == nil then SummonScoutDB.summonWhisperEnabled = true end
     if SummonScoutDB.paymentChatEnabled == nil then SummonScoutDB.paymentChatEnabled = true end
@@ -1592,6 +1579,14 @@ local function slash(msg)
         if rest == "on" then SummonScoutDB.summonWhisperEnabled = true end
         if rest == "off" then SummonScoutDB.summonWhisperEnabled = false end
         status()
+    elseif cmd == "summonwhispercd" then
+        local seconds = tonumber(trim(rest))
+        if not seconds or seconds < 1 or seconds > 120 then
+            chat("summon whisper cooldown must be 1-120 seconds")
+        else
+            SummonScoutDB.summonWhisperCooldown = math.floor(seconds)
+            chat("summon whisper cooldown -> " .. tostring(SummonScoutDB.summonWhisperCooldown) .. "s")
+        end
     elseif cmd == "paymentchat" then
         rest = lower(trim(rest))
         if rest == "on" then SummonScoutDB.paymentChatEnabled = true end
@@ -1642,7 +1637,8 @@ local function slash(msg)
         chat("/ssi counter on|off | counterscope all|same | counterdelay <min> <max> | countercool <15-3600>")
         chat("/ssi countertest <message> | gui")
         chat("/ssi master <name>|on|off | reporttest")
-        chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | paymentchat on|off")
+        chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | summonwhispercd <1-120>")
+        chat("/ssi paymentchat on|off")
         chat("/ssi clearpayments confirm")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
@@ -1683,9 +1679,11 @@ frame:SetScript("OnEvent", function()
         if sender == "" or samePlayer(sender, UnitName("player")) or isInGroup(sender) then return end
         local accept, loc, reason = whisperInviteDecision(message)
         if accept then
-            local invited, why = tryWhisperInvite(sender, loc)
-            if not invited and SummonScoutDB.debug then
-                chat("whisper invite suppressed -> " .. sender .. " [" .. tostring(why) .. "]")
+            if not tryImmediateInvite(sender, loc) then
+                queueInvite(sender, message, loc)
+            end
+            if SummonScoutDB.debug then
+                chat("whisper invite match -> " .. sender .. " [" .. (loc and loc.label or servedLocationLabel()) .. "]")
             end
         elseif SummonScoutDB.debug then
             chat("whisper ignore -> " .. sender .. " [" .. tostring(reason) .. "]")

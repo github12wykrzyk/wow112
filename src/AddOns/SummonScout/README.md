@@ -1,4 +1,4 @@
-# SummonScout 1.12
+# SummonScout 1.13
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -199,3 +199,13 @@ The new-party detector uses a roster diff rather than blindly summoning everyone
 - Existing bad payment history is not silently rewritten. Use `/ssi clearpayments confirm` once if the previous buggy build polluted the saved revenue total.
 - Party auto-summon now uses a two-stage target/cast sequence: target the actual party unit, wait 200 ms for the target state to settle, cast `Ritual of Summoning`, and use `SpellTargetUnit` when the spell opens targeting mode. Failed/interrupted casts are re-queued up to the existing retry limit.
 - Identical automatic World advertisements are hard-deduplicated for 10 seconds, preventing counter/periodic paths from producing a double post.
+
+
+## 1.13 correction: 10s cooldown belongs to cast whispers
+
+The 10 second cooldown is applied to **outgoing summon-status whispers**, not to incoming whisper auto-invites.
+
+- `123` remains a smart whisper auto-invite trigger and follows the normal invite duplicate/queue rules.
+- `Summoning you to <destination>.` is rate-limited **per recipient**. The same player cannot receive that cast-related whisper more than once within 10 seconds, even if other players are summoned between attempts.
+- Default cast-whisper cooldown: 10 seconds.
+- Optional command: `/ssi summonwhispercd <1-120>`.
