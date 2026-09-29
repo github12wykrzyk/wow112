@@ -129,10 +129,12 @@ def main():
             "Current GUID PRE calls", "Native POST returns", "Scan ticks",
             "Nearby GO <=12yd", "Nearest GO entry", "Nearest GO type",
             "Nearest GO distance x100", "Status", "Gate reason", "Busy raw",
-            "Anti-AFK random /say", "Anti-AFK next seconds",
-            "Anti-AFK say calls", "Anti-AFK channel defers",
+            "Anti-AFK SPACE 100-120s", "Anti-AFK next seconds",
+            "Anti-AFK space pulses", "Anti-AFK channel defers",
             "Trade window open", "Trade gold offered (copper)",
-            "Trade accept attempts", "Trade payer accepted first"
+            "Trade accept attempts", "Trade payer accepted first",
+            "Anti-AFK last action", "Anti-AFK SPACE keydown posts",
+            "Anti-AFK SPACE keyup posts"
         ],
         "timings_ms": timing,
     }
@@ -239,7 +241,7 @@ def main():
         and DLL_NAME in loader
         and pe.get("machine_hex") == "0x014C"
         and pe.get("entrypoint_rva") != 0
-        and not pe.get("has_import_directory")
+        and pe.get("has_import_directory")
     )
     summary["result"] = "PASS" if summary["ready_for_test"] else "FAIL"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
