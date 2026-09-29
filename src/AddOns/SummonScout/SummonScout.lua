@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.39"
+local ADDON_VERSION = "1.40"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -1247,8 +1247,8 @@ local function tryWhisperInvite(name, loc)
 end
 
 local function counterDelay(sender, message)
-    local minDelay = tonumber(SummonScoutDB.counterDelayMin) or 4
-    local maxDelay = tonumber(SummonScoutDB.counterDelayMax) or 8
+    local minDelay = tonumber(SummonScoutDB.counterDelayMin) or 2
+    local maxDelay = tonumber(SummonScoutDB.counterDelayMax) or 3
     local seed = math.floor(now() * 10)
     local key = lower(sender or "") .. "|" .. normalizeMessage(message or "")
     local j
@@ -1292,13 +1292,6 @@ local function scheduleCounter(sender, message, loc, ambiguous)
     if cooldown < 15 then cooldown = 15 end
     if cooldown > 3600 then cooldown = 3600 end
     if (t - (SS.lastCounterAt or -100000)) < cooldown then return end
-
-    local lastOwnAdvert = tonumber(SummonScoutDB.lastAdvertWall) or 0
-    local wall = wallTime()
-    if lastOwnAdvert > 0 and wall >= lastOwnAdvert and (wall - lastOwnAdvert) < cooldown then
-        if SummonScoutDB.debug then chat("counter suppressed: recent own advert") end
-        return
-    end
 
     local delay = counterDelay(sender, message)
     SS.counterAt = t + delay
@@ -1449,8 +1442,17 @@ local function setDefaults()
     if SummonScoutDB.spamInterval == nil then SummonScoutDB.spamInterval = 120 end
     if SummonScoutDB.spamMessage == nil then SummonScoutDB.spamMessage = "" end
     if SummonScoutDB.counterEnabled == nil then SummonScoutDB.counterEnabled = false end
-    if SummonScoutDB.counterDelayMin == nil then SummonScoutDB.counterDelayMin = 4 end
-    if SummonScoutDB.counterDelayMax == nil then SummonScoutDB.counterDelayMax = 8 end
+    if SummonScoutDB.counterDelayMin == nil then SummonScoutDB.counterDelayMin = 2 end
+    if SummonScoutDB.counterDelayMax == nil then SummonScoutDB.counterDelayMax = 3 end
+    if SummonScoutDB.counterDelayProfileVersion == nil then
+        -- Migrate the previous stock 4-8s defaults once. Other custom values
+        -- remain untouched.
+        if SummonScoutDB.counterDelayMin == 4 and SummonScoutDB.counterDelayMax == 8 then
+            SummonScoutDB.counterDelayMin = 2
+            SummonScoutDB.counterDelayMax = 3
+        end
+        SummonScoutDB.counterDelayProfileVersion = 2
+    end
     if SummonScoutDB.counterCooldown == nil then SummonScoutDB.counterCooldown = 60 end
     if SummonScoutDB.counterScope == nil then SummonScoutDB.counterScope = "all" end
     if SummonScoutDB.masterReportingEnabled == nil then SummonScoutDB.masterReportingEnabled = false end
@@ -1490,8 +1492,8 @@ local function status()
         .. ", spam=" .. (SummonScoutDB.spamEnabled and "ON" or "OFF")
         .. "/" .. tostring(SummonScoutDB.spamInterval or 120) .. "s"
         .. ", counter=" .. (SummonScoutDB.counterEnabled and "ON" or "OFF")
-        .. "/" .. tostring(SummonScoutDB.counterDelayMin or 4)
-        .. "-" .. tostring(SummonScoutDB.counterDelayMax or 8)
+        .. "/" .. tostring(SummonScoutDB.counterDelayMin or 2)
+        .. "-" .. tostring(SummonScoutDB.counterDelayMax or 3)
         .. "s cd=" .. tostring(SummonScoutDB.counterCooldown or 60) .. "s"
         .. " scope=" .. tostring(SummonScoutDB.counterScope or "all")
         .. ", master=" .. (SummonScoutDB.masterReportingEnabled and (trim(SummonScoutDB.masterName or "") ~= "" and SummonScoutDB.masterName or "NO-NAME") or "OFF")
