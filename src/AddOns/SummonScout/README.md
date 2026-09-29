@@ -1,4 +1,4 @@
-# SummonScout 1.23
+# SummonScout 1.24
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -310,3 +310,16 @@ Automatic party/raid summoning skips exact character names `Hydraone` and `Hydra
 Natural direct-whisper requests such as `hey, still summoning? i'd take one` are treated as explicit summon demand.
 
 Direct whisper auto-invite no longer inherits the long 120-second World-chat duplicate window. A valid whisper gets an immediate invite even if that player was seen/invited from World recently. Only a 2-second same-sender guard remains to suppress duplicate chat events.
+
+
+## 1.24 master lifecycle reporting
+
+Master reporting can now follow the full summon transaction, not only invite attempts and payments.
+
+With `Report joins / summon state` enabled, the configured master receives:
+- `[SSI JOIN] <player> -> <destination>` when a genuinely new, non-blacklisted party/raid member is detected;
+- `[SSI SUMMON START] <player> -> <destination>` when Ritual of Summoning actually starts (once per queued customer, not once per retry);
+- `[SSI SUMMON OK] <player> -> <destination>` on confirmed `SPELLCAST_STOP`;
+- `[SSI SUMMON FAIL] ...` on final retry exhaustion, bridge publication failure, or if the customer leaves the group before casting.
+
+The new lifecycle reporting switch defaults ON, remains gated by the global `Report to master character` switch, and is available in GUI or with `/ssi masterevents on|off`.

@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.23"
+local ADDON_VERSION = "1.24"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -662,6 +662,7 @@ local function queuePartySummon(name)
     SS.summonQueue[table.getn(SS.summonQueue) + 1] = {
         name = name,
         attempts = 0,
+        startReported = false,
         phase = "cast",
         nextAt = now() + 0.35
     }
@@ -675,10 +676,18 @@ local function syncPartyRoster(suppressNew)
     local function observeUnit(unit)
         local name = trim(UnitName(unit) or "")
         if name == "" or samePlayer(name, UnitName("player")) then return end
-        current[lower(name)] = name
-        if SS.partyRosterReady and not suppressNew and not SS.partyKnown[lower(name)]
-            and SummonScoutDB.partyAutoSummon then
-            queuePartySummon(name)
+
+        local key = lower(name)
+        if current[key] then return end
+        current[key] = name
+
+        if SS.partyRosterReady and not suppressNew and not SS.partyKnown[key] then
+            if SummonScoutDB.masterReportLifecycle and not summonPlayerBlacklisted(name) then
+                reportMaster("JOIN", name .. " -> " .. servedLocationLabel())
+            end
+            if SummonScoutDB.partyAutoSummon then
+                queuePartySummon(name)
+            end
         end
     end
 
@@ -821,6 +830,9 @@ local function processPartySummon()
     local item = SS.summonQueue[1]
     local unit = groupUnitByName(item.name)
     if not unit then
+        if SummonScoutDB.masterReportLifecycle then
+            reportMaster("SUMMON FAIL", item.name .. " | left party/raid before cast")
+        end
         finishActiveSummon(item.name)
         return
     end
@@ -836,13 +848,18 @@ local function processPartySummon()
         item.attempts = (item.attempts or 0) + 1
         if item.attempts > 3 then
             local slot = findSpellBookSlot("Ritual of Summoning")
+            local failReason = SS.lastSummonError ~= "" and SS.lastSummonError or "no cast start after retries"
             chat("summon failed after retries: " .. item.name
                 .. " | unit=" .. tostring(groupUnitByName(item.name) or "-")
                 .. " spellbook=" .. tostring(slot or "NONE")
                 .. " shards=" .. tostring(countSoulShards())
                 .. " nativeAck=" .. tostring(W112_AUTOSUMMON_ACK or "-")
                 .. " nativeCount=" .. tostring(W112_AUTOSUMMON_NATIVE_COUNT or 0)
-                .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
+                .. " lastError=" .. failReason)
+            if SummonScoutDB.masterReportLifecycle then
+                reportMaster("SUMMON FAIL", item.name .. " -> " .. summonDestinationLabel()
+                    .. " | " .. failReason)
+            end
             finishActiveSummon(item.name)
             return
         end
@@ -860,6 +877,9 @@ local function processPartySummon()
             end
         else
             chat("cannot queue native Ritual request")
+            if SummonScoutDB.masterReportLifecycle then
+                reportMaster("SUMMON FAIL", item.name .. " | native bridge request failed")
+            end
             finishActiveSummon(item.name)
         end
         return
@@ -1150,6 +1170,7 @@ local function setDefaults()
     if SummonScoutDB.masterName == nil then SummonScoutDB.masterName = "" end
     if SummonScoutDB.masterReportInvites == nil then SummonScoutDB.masterReportInvites = true end
     if SummonScoutDB.masterReportPayments == nil then SummonScoutDB.masterReportPayments = true end
+    if SummonScoutDB.masterReportLifecycle == nil then SummonScoutDB.masterReportLifecycle = true end
     if SummonScoutDB.whisperAutoInvite == nil then SummonScoutDB.whisperAutoInvite = true end
     if SummonScoutDB.summonWhisperCooldown == nil then SummonScoutDB.summonWhisperCooldown = 10 end
     if SummonScoutDB.partyAutoSummon == nil then SummonScoutDB.partyAutoSummon = false end
@@ -1176,6 +1197,7 @@ local function status()
         .. "s cd=" .. tostring(SummonScoutDB.counterCooldown or 60) .. "s"
         .. " scope=" .. tostring(SummonScoutDB.counterScope or "all")
         .. ", master=" .. (SummonScoutDB.masterReportingEnabled and (trim(SummonScoutDB.masterName or "") ~= "" and SummonScoutDB.masterName or "NO-NAME") or "OFF")
+        .. "/events=" .. (SummonScoutDB.masterReportLifecycle and "ON" or "OFF")
         .. ", whisperInvite=" .. (SummonScoutDB.whisperAutoInvite and "ON" or "OFF")
         .. ", partySummon=" .. (SummonScoutDB.partyAutoSummon and "ON" or "OFF")
         .. ", summonWhisper=" .. (SummonScoutDB.summonWhisperEnabled and "ON" or "OFF")
@@ -1518,27 +1540,30 @@ local function createGui()
     GUI.masterPaymentCheck = guiCheck(f, 368, -120, "Report received payments",
         function() return SummonScoutDB.masterReportPayments end,
         function(v) SummonScoutDB.masterReportPayments = v end)
-    GUI.paymentChatCheck = guiCheck(f, 368, -146, "Show received gold in chat",
+    GUI.masterLifecycleCheck = guiCheck(f, 368, -146, "Report joins / summon state",
+        function() return SummonScoutDB.masterReportLifecycle end,
+        function(v) SummonScoutDB.masterReportLifecycle = v end)
+    GUI.paymentChatCheck = guiCheck(f, 368, -172, "Show received gold in chat",
         function() return SummonScoutDB.paymentChatEnabled end,
         function(v) SummonScoutDB.paymentChatEnabled = v end)
 
-    guiText(f, "Master:", 370, -184, true)
-    GUI.masterEdit = guiEdit(f, 430, -177, 170, SummonScoutDB.masterName or "")
-    guiButton(f, 608, -177, 70, "Save", guiSaveMaster)
-    guiButton(f, 608, -206, 70, "Test", function()
+    guiText(f, "Master:", 370, -210, true)
+    GUI.masterEdit = guiEdit(f, 430, -203, 170, SummonScoutDB.masterName or "")
+    guiButton(f, 608, -203, 70, "Save", guiSaveMaster)
+    guiButton(f, 608, -232, 70, "Test", function()
         if not reportMaster("TEST", "reporting online from " .. (UnitName("player") or "?")) then
             chat("master reporting is OFF or master name is empty")
         end
     end)
 
-    guiHeader(f, "Live operation", 370, -252)
-    GUI.lastInviteText = guiText(f, "Last invite: -", 370, -276, true)
-    GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -300, true)
-    GUI.revenueText = guiText(f, "Received total: 0c", 370, -324, true)
-    GUI.currentGoldText = guiText(f, "Current gold: 0c", 370, -348, true)
-    GUI.counterText = guiText(f, "Counter: -", 370, -372, true)
-    GUI.summonStateText = guiText(f, "Summon: idle", 370, -396, true)
-    guiButton(f, 586, -316, 92, "Reset total", function() clearPayments() end)
+    guiHeader(f, "Live operation", 370, -278)
+    GUI.lastInviteText = guiText(f, "Last invite: -", 370, -302, true)
+    GUI.lastPaymentText = guiText(f, "Last payment: -", 370, -326, true)
+    GUI.revenueText = guiText(f, "Received total: 0c", 370, -350, true)
+    GUI.currentGoldText = guiText(f, "Current gold: 0c", 370, -374, true)
+    GUI.counterText = guiText(f, "Counter: -", 370, -398, true)
+    GUI.summonStateText = guiText(f, "Summon: idle", 370, -422, true)
+    guiButton(f, 586, -342, 92, "Reset total", function() clearPayments() end)
     GUI.stateText = guiText(f, "State: -", 28, -450, true)
     GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -524, true)
 
@@ -1554,7 +1579,7 @@ guiRefresh = function()
         GUI.enabledCheck, GUI.inviteCheck, GUI.whisperInviteCheck,
         GUI.partySummonCheck, GUI.summonWhisperCheck, GUI.logCheck,
         GUI.counterCheck, GUI.spamCheck, GUI.scopeCheck, GUI.masterEnabledCheck,
-        GUI.masterInviteCheck, GUI.masterPaymentCheck, GUI.paymentChatCheck
+        GUI.masterInviteCheck, GUI.masterPaymentCheck, GUI.masterLifecycleCheck, GUI.paymentChatCheck
     }
     local i
     for i = 1, table.getn(checks) do
@@ -1758,6 +1783,11 @@ local function slash(msg)
         if not reportMaster("TEST", "reporting online from " .. (UnitName("player") or "?")) then
             chat("master reporting is OFF or master name is empty")
         end
+    elseif cmd == "masterevents" then
+        rest = lower(trim(rest))
+        if rest == "on" then SummonScoutDB.masterReportLifecycle = true end
+        if rest == "off" then SummonScoutDB.masterReportLifecycle = false end
+        status()
     elseif cmd == "whisperinvite" then
         rest = lower(trim(rest))
         if rest == "on" then SummonScoutDB.whisperAutoInvite = true end
@@ -1841,7 +1871,7 @@ local function slash(msg)
         chat("/ssi spam on|off | spammsg <text> | spamsec <30-3600> | spamnow")
         chat("/ssi counter on|off | counterscope all|same | counterdelay <min> <max> | countercool <15-3600>")
         chat("/ssi countertest <message> | gui")
-        chat("/ssi master <name>|on|off | reporttest")
+        chat("/ssi master <name>|on|off | masterevents on|off | reporttest")
         chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | summonwhispercd <1-120>")
         chat("/ssi paymentchat on|off")
         chat("/ssi clearpayments confirm | summoncheck | version")
@@ -1921,7 +1951,14 @@ frame:SetScript("OnEvent", function()
                 SS.summonActiveExpires = now() + 8.0
                 if table.getn(SS.summonQueue) > 0
                     and samePlayer(SS.summonQueue[1].name, SS.summonActiveName) then
-                    SS.summonQueue[1].phase = "casting"
+                    local item = SS.summonQueue[1]
+                    item.phase = "casting"
+                    if not item.startReported then
+                        item.startReported = true
+                        if SummonScoutDB.masterReportLifecycle then
+                            reportMaster("SUMMON START", SS.summonActiveName .. " -> " .. summonDestinationLabel())
+                        end
+                    end
                 end
             end
         end
@@ -1930,10 +1967,14 @@ frame:SetScript("OnEvent", function()
 
     if event == "SPELLCAST_STOP" then
         if SS.summonActiveName and SS.summonActiveStarted then
+            local completedName = SS.summonActiveName
             if SummonScoutDB.debug then
-                chat("summon cast completed -> " .. SS.summonActiveName)
+                chat("summon cast completed -> " .. completedName)
             end
-            finishActiveSummon(SS.summonActiveName)
+            if SummonScoutDB.masterReportLifecycle then
+                reportMaster("SUMMON OK", completedName .. " -> " .. summonDestinationLabel())
+            end
+            finishActiveSummon(completedName)
         end
         return
     end
