@@ -89,11 +89,11 @@
         "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "18af1e6c98536023a3cb78e5a5cc408f1f60edc3",
+      "observed_head": "26ad79c5ee1b4f5ab11089e7d7d4de91d232170e",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v12 replaces periodic Anti-AFK heartbeats with reactive AFK recovery. The UI-thread timer polls UnitIsAFK('player') every 2s and performs no activity while the player is not AFK. On actual AFK it waits for native cast/channel to clear, executes DoEmote('STAND'), waits 500ms, then only if AFK persists casts Demon Armor when known or sends '.' to SAY as fallback. It verifies the AFK flag after 1s and retries after 3s while AFK remains. Diagnostics add current AFK detected state and successful recovery count. Sources: MikeBeloborodov/VanillaWowApi for 1.12.1 UnitIsAFK/PLAYER_FLAGS_CHANGED; Warcraft Wiki SitStandOrDescendStart history for pre-2.1 DoEmote('STAND') / SitOrStand behavior."
+      "notes": "v13 fixes a live false-negative in AFK detection: the game displayed 'You are now AFK' while the v12 GUI still showed AFK NO. Detection no longer depends on Lua UnitIsAFK('player'). The validated local TYPEID_PLAYER object is read through the exact Vanilla CGPlayer-side info pointer at player+0xE68; byte +0x08 is PLAYER_FLAGS and bit 0x02 is AFK. This is the same client-side state used for the visible <AFK> marker. The existing reactive recovery sequence is unchanged: wait out cast/channel -> stand -> settle -> Demon Armor if known or SAY fallback -> verify/retry. External exact-build evidence: ClassicAPI docs/offsets for OFF_CGPLAYER_INFO 0xE68, OFF_PLAYER_INFO_FLAGS 0x08, PLAYER_FLAG_AFK 0x02."
     },
     {
       "id": "multibox-background-sound-parallel",

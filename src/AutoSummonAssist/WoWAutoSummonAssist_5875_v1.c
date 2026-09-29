@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v12 - payer-first gold trade + reactive AFK recovery.
+ * WoWAutoSummonAssist 5875 v13 - payer-first gold trade + native reactive AFK recovery.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -83,6 +83,9 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define PLAYER_Z                    0x09C0u
 #define UNIT_CAST_OFFSET            0x0C8Cu
 #define UNIT_CHANNEL_INDEX          0x0090u
+#define CGPLAYER_INFO_PTR           0x0E68u
+#define CGPLAYER_INFO_FLAGS         0x0008u
+#define PLAYER_FLAG_AFK             0x02u
 
 #define OBJECT_FIELD_TYPE_INDEX     0x0002u
 #define OBJECT_FIELD_ENTRY_INDEX    0x0003u
@@ -459,15 +462,22 @@ static void antiAfkFlushSlashFeedback(void)
         ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(offMsg,"AutoSummonAssist");
 }
 
-static int antiAfkQueryAfk(void)
+static int antiAfkQueryAfk(u32 player)
 {
-    static const char queryScript[]=
-        "W112_ANTIAFK_IS_AFK=(type(UnitIsAFK)=='function' and UnitIsAFK('player')) and '1' or '0'";
-    const char *s;
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(queryScript,"AutoSummonAssist");
-    s=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
-        "W112_ANTIAFK_IS_AFK",-1,0u);
-    return s&&s[0]=='1'&&s[1]==0;
+    u32 info;
+    u8 flags;
+
+    /* Exact Vanilla 1.12 CGPlayer path. The local player object is already
+     * validated as TYPEID_PLAYER by localPlayer(); +0xE68 is therefore safe
+     * to treat as the CGPlayer-side info pointer. Its byte +0x08 carries
+     * PLAYER_FLAGS; bit 0x02 is AFK. This is the same client-side state used
+     * for the visible <AFK> marker, and avoids the false-negative Lua
+     * UnitIsAFK("player") behavior observed in live testing. */
+    if(!ptrOk(player) || read32(player+OBJ_TYPE_ID)!=4u) return 0;
+    info=read32(player+CGPLAYER_INFO_PTR);
+    if(!ptrOk(info)) return 0;
+    flags=*(volatile u8*)(ptr32)(info+CGPLAYER_INFO_FLAGS);
+    return (flags&PLAYER_FLAG_AFK)!=0u;
 }
 
 static void antiAfkMarkRecovered(u32 now)
@@ -540,7 +550,7 @@ static void antiAfkTick(u32 player,u32 now)
     }
 
     g_antiAfkSecondsLeft=0u;
-    afk=antiAfkQueryAfk();
+    afk=antiAfkQueryAfk(player);
 
     if(!afk){
         antiAfkMarkRecovered(now);
@@ -919,7 +929,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x000C0000u,
+    0x000D0000u,
     31u,
     g_settings,
     getValue,

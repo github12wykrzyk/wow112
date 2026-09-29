@@ -189,7 +189,7 @@ def main():
             "stand_settle_ms": 500,
             "verify_ms": 1000,
             "retry_ms": 3000,
-            "trigger": "UnitIsAFK('player')",
+            "trigger": "native CGPlayer info flags: *(u8*)(*(u32*)(player+0xE68)+0x08) & 0x02",
             "recovery_sequence": "wait for cast/channel -> DoEmote('STAND') -> settle -> Demon Armor when known, otherwise /say . -> verify AFK -> retry if needed",
             "background_safe": True,
             "os_input_simulation": False,
@@ -200,7 +200,7 @@ def main():
             "slash_bridge_read": "FrameScript_GetText 0x00703BF0 reads W112_ANTIAFK_CMD on the game/UI timer",
             "framescript_execute_abi": "__fastcall(const char*, const char*)",
             "shared_state_with_gui": True,
-            "vanilla_afk_reference": "https://github.com/MikeBeloborodov/VanillaWowApi - 1.12.1 PLAYER_FLAGS_CHANGED and UnitIsAFK",
+            "vanilla_afk_reference": "https://octowow.st/git/brues/ClassicAPI - 1.12.1 CGPlayer info +0xE68, flags byte +0x08, PLAYER_FLAG_AFK 0x02; live screenshot proved Lua UnitIsAFK self-check false-negative on this client/server",
             "stand_reference": "https://warcraft.wiki.gg/wiki/API:SitStandOrDescendStart - pre-2.1 DoEmote('STAND') / SitOrStand lineage"
         },
         "background_trade_auto_accept": True,
