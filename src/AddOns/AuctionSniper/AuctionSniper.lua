@@ -1,5 +1,5 @@
 
-B_AS_VERSION = "1.3-vmangos-diag"
+B_AS_VERSION = "1.3.2-vmangos-cached"
 
 B_AS_RecipeNames = {
 	"Pattern", "Schematic", "Plans", "Recipe", "Manual", "Formula",
@@ -111,6 +111,9 @@ B_AS_VarSettings["PageLock"][B_AS_S_CALLBACK] = function(setting, value)
 	if (value == true) then
 		B_AS_SetVar("PageFixed", false)
 	end
+	if B_AS_VM_ResetCheapSearch then
+		B_AS_VM_ResetCheapSearch(true)
+	end
 end
 -- Callback: PageFixed
 B_AS_VarSettings["PageFixed"][B_AS_S_CALLBACK] = function(setting, value)
@@ -179,11 +182,14 @@ B_AS_Page = 0
 -- vMaNGOS diagnostic mode. This revision never calls PlaceAuctionBid.
 B_AS_VM_DIAGNOSTIC_ONLY = true
 B_AS_VM_QUERY_TIMEOUT = 12.0
+B_AS_VM_DUP_GUARD = 0.20
+B_AS_VM_CHEAP_WINDOW_PAGES = 10
 B_AS_VM_LOG_LIMIT = 500
 
 B_AS_VM = {
 	queryInFlight = false,
 	querySentAt = 0.0,
+	nextQueryAt = 0.0,
 	querySeq = 0,
 	queryPage = 0,
 	queryName = "",
@@ -196,8 +202,19 @@ B_AS_VM = {
 	candidates = 0,
 	orderViolations = 0,
 	timeouts = 0,
+	duplicateListEvents = 0,
 	verbose = false,
 	lastEvaluatedSeq = -1,
+	cheapPhase = "probe",
+	cheapLow = 0,
+	cheapHigh = 0,
+	cheapCandidate = nil,
+	cheapBoundary = nil,
+	cheapScanPage = 0,
+	cheapLastPage = 0,
+	cheapCycles = 0,
+	cheapVerifications = 0,
+	cheapFallbacks = 0,
 }
 
 
@@ -336,6 +353,32 @@ function B_AS_VM_FindRule(name)
 	return nil
 end
 
+function B_AS_VM_ResetCheapSearch(clearBoundary)
+	B_AS_VM.cheapPhase = "probe"
+	B_AS_VM.cheapLow = 0
+	B_AS_VM.cheapHigh = 0
+	B_AS_VM.cheapCandidate = nil
+	B_AS_VM.cheapScanPage = 0
+	B_AS_VM.cheapLastPage = 0
+	if clearBoundary then
+		B_AS_VM.cheapBoundary = nil
+	end
+end
+
+function B_AS_VM_BeginCachedVerify()
+	if not B_AS_VM.cheapBoundary then
+		B_AS_VM_ResetCheapSearch(true)
+		return
+	end
+	B_AS_VM.cheapVerifications = B_AS_VM.cheapVerifications + 1
+	if B_AS_VM.cheapBoundary > 0 then
+		B_AS_VM.cheapPhase = "verify_prev"
+	else
+		B_AS_VM.cheapPhase = "verify_current"
+	end
+	B_AS_Log("[VM-CACHE] verify boundary="..B_AS_VM.cheapBoundary)
+end
+
 function B_AS_VM_GetQuery()
 	local count = B_AS_VM_WatchCount()
 	if count > 0 then
@@ -347,7 +390,23 @@ function B_AS_VM_GetQuery()
 	end
 
 	if B_AS_GS["PageLock"] then
-		return "", 0, nil
+		local page = 0
+		if B_AS_VM.cheapPhase == "search" then
+			page = math.floor((B_AS_VM.cheapLow + B_AS_VM.cheapHigh) / 2)
+		elseif B_AS_VM.cheapPhase == "scan" then
+			page = B_AS_VM.cheapScanPage
+		elseif B_AS_VM.cheapPhase == "verify_prev" then
+			page = (B_AS_VM.cheapBoundary or 0) - 1
+		elseif B_AS_VM.cheapPhase == "verify_current" then
+			page = B_AS_VM.cheapBoundary or 0
+		elseif B_AS_VM.cheapPhase == "verify_next" then
+			page = (B_AS_VM.cheapBoundary or 0) + 1
+		end
+		if page < 0 then page = 0 end
+		if B_AS_VM.cheapLastPage > 0 and page > B_AS_VM.cheapLastPage then
+			page = B_AS_VM.cheapLastPage
+		end
+		return "", page, nil
 	elseif B_AS_GS["PageFixed"] then
 		return "", tonumber(B_AS_GS["WhichPage"]) or 0, nil
 	end
@@ -355,7 +414,125 @@ function B_AS_VM_GetQuery()
 	return "", B_AS_Page, nil
 end
 
-function B_AS_VM_AdvanceQuery(totalAuctions)
+function B_AS_VM_StartSearch(lowPage, highPage, candidate, reason)
+	B_AS_VM.cheapLow = lowPage
+	B_AS_VM.cheapHigh = highPage
+	B_AS_VM.cheapCandidate = candidate
+	B_AS_VM.cheapPhase = "search"
+	B_AS_VM.cheapFallbacks = B_AS_VM.cheapFallbacks + 1
+	B_AS_Log("[VM-BOUNDARY] "..reason.." low="..lowPage.." high="..highPage)
+end
+
+function B_AS_VM_EnterScan(boundary, lastPage, reason)
+	B_AS_VM.cheapBoundary = boundary
+	B_AS_VM.cheapScanPage = boundary
+	B_AS_VM.cheapLastPage = lastPage
+	B_AS_VM.cheapPhase = "scan"
+	B_AS_Log("[VM-BOUNDARY] "..reason.." page="..boundary.." lastPage="..lastPage)
+end
+
+function B_AS_VM_AdvanceCheap(totalAuctions, positiveCount)
+	local lastPage = 0
+	if totalAuctions and totalAuctions > 0 then
+		lastPage = math.floor((totalAuctions - 1) / 50)
+	end
+	B_AS_VM.cheapLastPage = lastPage
+
+	if B_AS_VM.cheapPhase == "probe" then
+		if positiveCount > 0 then
+			B_AS_VM_EnterScan(0, lastPage, "first positive-buyout")
+		elseif lastPage <= 0 then
+			B_AS_VM.cheapPhase = "empty"
+			B_AS_Log("[VM-BOUNDARY] no positive buyouts found")
+		else
+			B_AS_VM_StartSearch(1, lastPage, nil, "initial search")
+		end
+		return
+	end
+
+	if B_AS_VM.cheapPhase == "search" then
+		local page = B_AS_VM.queryPage
+		if positiveCount > 0 then
+			B_AS_VM.cheapCandidate = page
+			B_AS_VM.cheapHigh = page - 1
+		else
+			B_AS_VM.cheapLow = page + 1
+		end
+
+		if B_AS_VM.cheapHigh > lastPage then
+			B_AS_VM.cheapHigh = lastPage
+		end
+
+		if B_AS_VM.cheapLow > B_AS_VM.cheapHigh then
+			if B_AS_VM.cheapCandidate then
+				B_AS_VM_EnterScan(B_AS_VM.cheapCandidate, lastPage, "found first positive-buyout")
+			else
+				B_AS_VM.cheapPhase = "empty"
+				B_AS_Log("[VM-BOUNDARY] no positive buyouts found through page "..lastPage)
+			end
+		end
+		return
+	end
+
+	if B_AS_VM.cheapPhase == "scan" then
+		local boundary = B_AS_VM.cheapBoundary or 0
+		local maxPage = boundary + B_AS_VM_CHEAP_WINDOW_PAGES - 1
+		if maxPage > lastPage then
+			maxPage = lastPage
+		end
+		if B_AS_VM.cheapScanPage < maxPage then
+			B_AS_VM.cheapScanPage = B_AS_VM.cheapScanPage + 1
+		else
+			B_AS_VM.cheapCycles = B_AS_VM.cheapCycles + 1
+			B_AS_VM_BeginCachedVerify()
+		end
+		return
+	end
+
+	if B_AS_VM.cheapPhase == "verify_prev" then
+		if positiveCount > 0 then
+			local candidate = B_AS_VM.queryPage
+			B_AS_VM_StartSearch(0, candidate - 1, candidate, "cached boundary moved earlier")
+		else
+			B_AS_VM.cheapPhase = "verify_current"
+		end
+		return
+	end
+
+	if B_AS_VM.cheapPhase == "verify_current" then
+		if positiveCount > 0 then
+			B_AS_VM_EnterScan(B_AS_VM.queryPage, lastPage, "cached boundary confirmed")
+		elseif B_AS_VM.queryPage >= lastPage then
+			B_AS_VM.cheapPhase = "empty"
+			B_AS_Log("[VM-BOUNDARY] cached boundary vanished at last page")
+		else
+			B_AS_VM.cheapPhase = "verify_next"
+		end
+		return
+	end
+
+	if B_AS_VM.cheapPhase == "verify_next" then
+		if positiveCount > 0 then
+			B_AS_VM_EnterScan(B_AS_VM.queryPage, lastPage, "cached boundary advanced")
+		else
+			local low = B_AS_VM.queryPage + 1
+			if low <= lastPage then
+				B_AS_VM_StartSearch(low, lastPage, nil, "cached boundary moved later")
+			else
+				B_AS_VM.cheapPhase = "empty"
+				B_AS_Log("[VM-BOUNDARY] no positive buyouts remain")
+			end
+		end
+		return
+	end
+
+	if B_AS_VM.cheapPhase == "empty" then
+		B_AS_VM.cheapCycles = B_AS_VM.cheapCycles + 1
+		B_AS_VM_ResetCheapSearch(true)
+	end
+end
+
+function B_AS_VM_AdvanceQuery(totalAuctions, positiveCount)
 	local lastPage = 0
 	if totalAuctions and totalAuctions > 0 then
 		lastPage = math.floor((totalAuctions - 1) / 50)
@@ -375,7 +552,12 @@ function B_AS_VM_AdvanceQuery(totalAuctions)
 		return
 	end
 
-	if not B_AS_GS["PageLock"] and not B_AS_GS["PageFixed"] then
+	if B_AS_GS["PageLock"] then
+		B_AS_VM_AdvanceCheap(totalAuctions, positiveCount or 0)
+		return
+	end
+
+	if not B_AS_GS["PageFixed"] then
 		B_AS_Page = B_AS_Page + 1
 		if B_AS_Page > lastPage then
 			B_AS_Page = 0
@@ -424,10 +606,9 @@ function B_AS_VM_AnalyzeResults()
 	B_AS_TotalAuctions = totalAuctions or 0
 
 	local now = GetTime()
-	if B_AS_VM.queryInFlight then
-		B_AS_VM.lastLatency = now - B_AS_VM.querySentAt
-	end
+	B_AS_VM.lastLatency = now - B_AS_VM.querySentAt
 	B_AS_VM.queryInFlight = false
+	B_AS_VM.nextQueryAt = now + B_AS_VM_DUP_GUARD
 
 	local zeroCount = 0
 	local positiveCount = 0
@@ -473,9 +654,9 @@ function B_AS_VM_AnalyzeResults()
 	if minUnit then
 		unitText = B_AS_MoneyToText(minUnit).."-"..B_AS_MoneyToText(maxUnit)
 	end
-	B_AS_Log("[VM-RESULT] q"..B_AS_VM.querySeq.." name='"..B_AS_VM.queryName.."' page="..B_AS_VM.queryPage.." rows="..B_AS_CurrentPageAuctions.."/"..B_AS_TotalAuctions.." latency="..string.format("%.3f", B_AS_VM.lastLatency).."s zero="..zeroCount.." buyouts="..positiveCount.." totalRange="..rangeText.." unitRange="..unitText.." orderViol="..violations)
+	B_AS_Log("[VM-RESULT] q"..B_AS_VM.querySeq.." name='"..B_AS_VM.queryName.."' page="..B_AS_VM.queryPage.." rows="..B_AS_CurrentPageAuctions.."/"..B_AS_TotalAuctions.." latency="..string.format("%.3f", B_AS_VM.lastLatency).."s zero="..zeroCount.." buyouts="..positiveCount.." totalRange="..rangeText.." unitRange="..unitText.." orderViol="..violations.." phase="..B_AS_VM.cheapPhase)
 
-	B_AS_VM_AdvanceQuery(B_AS_TotalAuctions)
+	B_AS_VM_AdvanceQuery(B_AS_TotalAuctions, positiveCount)
 end
 
 function B_AS_VM_ResetStats()
@@ -485,15 +666,25 @@ function B_AS_VM_ResetStats()
 	B_AS_VM.candidates = 0
 	B_AS_VM.orderViolations = 0
 	B_AS_VM.timeouts = 0
+	B_AS_VM.duplicateListEvents = 0
 	B_AS_VM.lastLatency = 0.0
+	B_AS_VM.nextQueryAt = 0.0
 	B_AS_VM.watchIndex = 1
 	B_AS_VM.watchPage = 0
+	B_AS_VM.cheapCycles = 0
+	B_AS_VM.cheapVerifications = 0
+	B_AS_VM.cheapFallbacks = 0
+	B_AS_VM_ResetCheapSearch(true)
 	B_AS_Page = 0
 	B_AS_Log("[VM-DIAG] stats reset")
 end
 
 function B_AS_VM_Status()
-	DEFAULT_CHAT_FRAME:AddMessage("[AS VM] q="..B_AS_VM.querySeq.." inFlight="..tostring(B_AS_VM.queryInFlight).." seen="..B_AS_VM.seen.." positive="..B_AS_VM.positiveBuyouts.." zero="..B_AS_VM.zeroBuyouts.." candidates="..B_AS_VM.candidates.." orderViol="..B_AS_VM.orderViolations.." timeouts="..B_AS_VM.timeouts.." watch="..B_AS_VM_WatchCount(), 0.37, 1, 0)
+	local boundary = "?"
+	if B_AS_VM.cheapBoundary then
+		boundary = tostring(B_AS_VM.cheapBoundary)
+	end
+	DEFAULT_CHAT_FRAME:AddMessage("[AS VM] q="..B_AS_VM.querySeq.." inFlight="..tostring(B_AS_VM.queryInFlight).." seen="..B_AS_VM.seen.." positive="..B_AS_VM.positiveBuyouts.." zero="..B_AS_VM.zeroBuyouts.." candidates="..B_AS_VM.candidates.." orderViol="..B_AS_VM.orderViolations.." timeouts="..B_AS_VM.timeouts.." dup="..B_AS_VM.duplicateListEvents.." cheapPhase="..B_AS_VM.cheapPhase.." boundary="..boundary.." scanPage="..B_AS_VM.cheapScanPage.." cycles="..B_AS_VM.cheapCycles.." verifies="..B_AS_VM.cheapVerifications.." fallbacks="..B_AS_VM.cheapFallbacks, 0.37, 1, 0)
 end
 
 function B_AS_VM_LogMessage(eventName, message)
@@ -552,11 +743,15 @@ function B_AS_Scan()
 	end
 
 	local now = GetTime()
+	if now < B_AS_VM.nextQueryAt then
+		return
+	end
 	if B_AS_VM.queryInFlight then
 		if now - B_AS_VM.querySentAt < B_AS_VM_QUERY_TIMEOUT then
 			return
 		end
 		B_AS_VM.queryInFlight = false
+		B_AS_VM.nextQueryAt = now + B_AS_VM_DUP_GUARD
 		B_AS_VM.timeouts = B_AS_VM.timeouts + 1
 		B_AS_Log("[VM-TIMEOUT] query #"..B_AS_VM.querySeq.." age="..string.format("%.3f", now - B_AS_VM.querySentAt).."s")
 	end
@@ -889,8 +1084,10 @@ function B_AS_OnEvent()
 		B_AS_Frame:Show()
 		B_AS_IsOpen = true
 		B_AS_VM.queryInFlight = false
+		B_AS_VM.nextQueryAt = 0.0
 		B_AS_VM.watchIndex = 1
 		B_AS_VM.watchPage = 0
+		B_AS_VM_ResetCheapSearch(true)
 		B_AS_Page = 0
 		B_AS_Log("[VM-DIAG] auction house opened; purchases hard-disabled")
 
@@ -900,11 +1097,18 @@ function B_AS_OnEvent()
 		B_AS_VM.queryInFlight = false
 
 	elseif (event == "AUCTION_ITEM_LIST_UPDATE") then
-		B_AS_VM_AnalyzeResults()
-		if (B_AS_GS["AutoBuy"] == true) then
-			B_AS_Buy(true)
-		elseif (B_AS_GS["AutoSlowBuy"] == true) then
-			B_AS_Buy(false)
+		if B_AS_VM.queryInFlight then
+			B_AS_VM_AnalyzeResults()
+			if (B_AS_GS["AutoBuy"] == true) then
+				B_AS_Buy(true)
+			elseif (B_AS_GS["AutoSlowBuy"] == true) then
+				B_AS_Buy(false)
+			end
+		else
+			B_AS_VM.duplicateListEvents = B_AS_VM.duplicateListEvents + 1
+			if B_AS_VM.verbose then
+				B_AS_Log("[VM-DUP] ignored AUCTION_ITEM_LIST_UPDATE with no query in flight")
+			end
 		end
 
 	elseif (event == "CHAT_MSG_SYSTEM" or event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") then

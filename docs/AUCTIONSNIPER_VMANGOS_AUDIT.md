@@ -162,3 +162,49 @@ dry-run:
 - candidate evaluation logs `[DRYRUN]` only.
 
 This V1 is intended to establish realm evidence before enabling AutoBuy.
+
+
+## Realm evidence: first V1 dry-run test
+
+Exact tested Parallel candidate:
+`8ceebf93d30e1728948a3d71d3296295b8306fba`.
+
+The user-provided in-game screenshot showed roughly 55.5k visible auctions and
+page 0 repeatedly returned 50/50 rows with `buyout == 0`. Query-result latency
+was approximately 0.094-0.125 seconds. The same query sequence number was also
+logged more than once, showing that this client/server combination can emit
+extra `AUCTION_ITEM_LIST_UPDATE` notifications around one request.
+
+V1.1 therefore:
+- does not treat page 0 as the cheapest purchasable page;
+- binary-searches the transition from bid-only rows to positive buyouts;
+- scans a bounded 10-page cheap-buyout window from that boundary;
+- re-discovers the boundary after each window;
+- uses a 200 ms post-result guard and ignores list-update events received when
+  no addon query is in flight.
+
+Auto-buy remains hard-disabled; this revision still contains no
+`PlaceAuctionBid` call in the automation code.
+
+
+## Realm evidence: V1.1 cheap-buyout search
+
+Exact manually tested feature source:
+`5f880bcf80f69ed3291e0fc1f174d41759a21802`.
+
+The user tested the exception ZIP built from that exact feature tree. The first
+screen showed the binary search converging through pages 69, 34, 17 and 8:
+pages 69/34/17 contained 50 positive-buyout rows while page 8 contained 50
+bid-only rows. Query latency remained about 0.17-0.20 seconds.
+
+The next screen showed the scanner in `phase=scan` across pages 18, 19, 20
+and 21 with progressively rising total-price ranges. After the 10-page cheap
+window, V1.1 returned to page 0 and started a new full boundary search through
+about 1108 pages. This confirms the boundary finder and scan-window state
+machine work end-to-end on the target realm, and also shows that full
+re-discovery every cycle is unnecessary overhead.
+
+V1.2 therefore keeps the last boundary cached. Normal refresh verifies
+`boundary-1` and `boundary`; a +1 move is handled directly with
+`boundary+1`, while larger moves fall back to a narrowed binary search.
+The dry-run safety invariant remains unchanged: no `PlaceAuctionBid` call.

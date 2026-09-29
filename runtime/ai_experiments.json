@@ -368,9 +368,9 @@
         "vMaNGOS AuctionHouse query/bid flow",
         "parallel addon packager src/AddOns auto-discovery"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "078d97eac2b794c0d94aff389931ae606653cb48",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "8ceebf93d30e1728948a3d71d3296295b8306fba",
+      "verified_commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
       "tests": [
         {
           "kind": "ci",
@@ -378,10 +378,64 @@
           "commit": "078d97eac2b794c0d94aff389931ae606653cb48",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36639456139 passed on exact feature SHA, including repository/runtime gates and changed-module preflight. Verify AI experiment registry run 36639455905 also passed on the same SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
+          "date": "2026-09-30",
+          "evidence": "Integrated Parallel Build work candidate run 36639667141 passed FINAL_PACKAGE, addon packaging and provenance on exact SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
+          "date": "2026-09-30",
+          "evidence": "Artifact 11065697618 was produced by successful exact-SHA candidate run and contains Interface/AddOns/AuctionSniper."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "8ceebf93d30e1728948a3d71d3296295b8306fba",
+        "artifact_id": 11065697618
+      },
+      "notes": "Integrated V1 diagnostic/dry-run baseline. Realm screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md; current registry regression tests prohibit kind=game entries, so no gameplay event is stored here. V1.1 follow-up is isolated on feature/auction-sniper-cheap-buyout."
+    },
+    {
+      "id": "auction-sniper-cheap-buyout",
+      "branch": "feature/auction-sniper-cheap-buyout",
+      "modules": [
+        "AuctionSniper"
+      ],
+      "dependencies": [
+        "auction-sniper-vmangos"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS buyout-sorted browse pagination",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "42164066298f360bedcb4c12f426cac75785d2e1",
+      "verified_commit": "42164066298f360bedcb4c12f426cac75785d2e1",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5f880bcf80f69ed3291e0fc1f174d41759a21802",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36640792045 passed on exact V1.1 feature SHA. Separate registry workflow failed only because the then-ledger contained a kind=game entry forbidden by the current registry regression test; that ledger inconsistency is corrected in the V1.2 iteration."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "42164066298f360bedcb4c12f426cac75785d2e1",
+          "date": "2026-09-30",
+          "evidence": "Verify AI experiment registry run 36641676554 and Parallel feature preflight run 36641676624 both passed on the exact V1.2 cached-boundary feature SHA."
         }
       ],
       "package": null,
-      "notes": "V1 diagnostic/dry-run feature preflight passed on exact SHA 078d97eac2b794c0d94aff389931ae606653cb48. Automation path contains no PlaceAuctionBid call; LowBuyout/page-0 mode, correct pagination, one-query state, timeout watchdog, unit-price diagnostics, watchlist engine, dry-run candidate logging and raw CHAT_MSG_SYSTEM/UI_INFO_MESSAGE/UI_ERROR_MESSAGE capture are ready for integration. Parallel full candidate/package evidence is still pending."
+      "notes": "V1.1 cheap-buyout boundary search and 10-page scan window worked end-to-end in the user's manual exact-source test; screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md. V1.2 cached-boundary feature SHA 42164066 passed registry and parallel preflight; integrated parallel full candidate/package verification is pending. Auto-buy remains hard-disabled."
     }
   ]
 }
