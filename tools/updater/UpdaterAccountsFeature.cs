@@ -212,7 +212,7 @@ namespace WoW112Updater
                     states.Items[index] = account.Label + " • " + text;
                     states.SelectedIndex = index;
                     states.TopIndex = Math.Max(0, index - 2);
-                    Application.DoEvents();
+                    System.Windows.Forms.Application.DoEvents();
                 };
 
                 Func<List<WowAccount>> checkedAccounts = delegate
