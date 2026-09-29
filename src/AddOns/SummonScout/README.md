@@ -1,4 +1,4 @@
-# SummonScout 1.33
+# SummonScout 1.34
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -430,3 +430,17 @@ This replaces the previous optimistic ACK, which only proved that the bridge cal
 WoW 1.12's Lua compiler limits a function to 32 upvalues. The monolithic OnEvent closure had grown past that limit after the 1.32 summon transaction work, so the addon could fail to load with `too many upvalues (limit=32)`.
 
 World-channel processing is now isolated in `handleChannelMessage()`. The OnEvent closure keeps only one reference for that whole path instead of capturing all channel parser/invite/counter/logging helpers. Runtime behavior of World detection is unchanged; the split restores Vanilla 1.12 loader compatibility and leaves headroom for future event changes.
+
+
+## 1.34 natural direct summon questions
+
+Direct whispers containing a clear summon question are treated as strong buyer intent.
+
+Examples:
+- `can I get summon?`
+- `can I get a summon?`
+- `could I get summon?`
+- `summon pls`
+- `summon please`
+
+These still respect the global `Whisper smart auto invite` toggle and destination filtering when a different explicit location is named.

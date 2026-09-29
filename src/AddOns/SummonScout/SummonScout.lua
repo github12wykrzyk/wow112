@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.33"
+local ADDON_VERSION = "1.34"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -358,12 +358,22 @@ local function whisperInviteDecision(message)
     local exactCode = WHISPER_EXACT_CODES[s]
         or raw == "+"
         or (string.len(s) <= 32 and phraseHas(s, "123"))
+    local directSummonQuestion = hasSummonToken(s)
+        and (phraseHas(s, "can i")
+            or phraseHas(s, "could i")
+            or phraseHas(s, "can i get")
+            or phraseHas(s, "could i get")
+            or phraseHas(s, "get summon")
+            or phraseHas(s, "get a summon")
+            or phraseHas(s, "summon pls")
+            or phraseHas(s, "summon please"))
 
     if (s == "" and not exactCode) or (s ~= "" and isSellerMessage(s)) then
         return false, nil, "not-request"
     end
     if ambiguous then return false, nil, "ambiguous-location" end
     if exactCode then score = score + 3 end
+    if directSummonQuestion then score = score + 5 end
 
     -- Explicitly asking for another known destination must never trigger.
     if loc then
