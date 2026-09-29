@@ -213,7 +213,7 @@ def main():
         'background-safe, no mouse/focus',
         'Native POST returns',
         'Gate reason',
-        'ANTI-AFK - random jump every 120-360s',
+        'ANTI-AFK - /say . every random 120-360s',
         'g_ui_summon_antiafk_state=ui_label',
         'cast/channel defers',
         'g_ui_summon_check=NULL;g_ui_summon_antiafk_check=NULL;',

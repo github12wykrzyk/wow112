@@ -563,7 +563,7 @@ static void ui_sync_summon(void) {
     const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,24u);
     W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
     W112_ControlValueV1 pre,current,post,scans,nearCount,nearEntry,nearType,nearDist,status,gate,busy;
-    W112_ControlValueV1 anti,nextSec,jumpCalls,channelDefers;
+    W112_ControlValueV1 anti,nextSec,sayCalls,channelDefers;
     char buf[260],*p;
 
     if(!m) {
@@ -606,7 +606,7 @@ static void ui_sync_summon(void) {
     if(!m->get_value(20u,&busy))busy.u32=0u;
     if(!m->get_value(21u,&anti))anti.u32=0u;
     if(!m->get_value(22u,&nextSec))nextSec.u32=0u;
-    if(!m->get_value(23u,&jumpCalls))jumpCalls.u32=0u;
+    if(!m->get_value(23u,&sayCalls))sayCalls.u32=0u;
     if(!m->get_value(24u,&channelDefers))channelDefers.u32=0u;
 
     if(g_ui_summon_check)
@@ -654,7 +654,7 @@ static void ui_sync_summon(void) {
     if(g_ui_summon_antiafk_state){
         p=buf;p=app_str(p,"ANTI-AFK: ");p=app_str(p,anti.u32?"ON":"OFF");
         p=app_str(p," | next ~");p=app_u32(p,nextSec.u32);p=app_str(p,"s");
-        p=app_str(p," | jump calls ");p=app_u32(p,jumpCalls.u32);
+        p=app_str(p," | say calls ");p=app_u32(p,sayCalls.u32);
         p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
         *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
     }
@@ -1496,7 +1496,7 @@ static BOOL ui_create(HWND game) {
     g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,505,665,42,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
     g_ui_summon_antiafk_check=ui_button(g_parallel_ui_hwnd,
-        "ANTI-AFK - random jump every 120-360s (never during cast/channel)",
+        "ANTI-AFK - /say . every random 120-360s (never during cast/channel)",
         46,555,665,36,230u,TRUE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_check);
     g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,600,665,32,FALSE);

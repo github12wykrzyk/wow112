@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v7 - Ritual helper, Anti-AFK + reliable slash bridge.
+ * WoWAutoSummonAssist 5875 v8 - Ritual helper + Anti-AFK /say heartbeat.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -146,7 +146,7 @@ static volatile u32 g_nearestType = 0u;
 static volatile u32 g_nearestDistance100 = 0u;
 static volatile u32 g_antiAfkEnabled = 0u;
 static volatile u32 g_antiAfkSecondsLeft = 0u;
-static volatile u32 g_antiAfkJumpCalls = 0u;
+static volatile u32 g_antiAfkSayCalls = 0u;
 static volatile u32 g_antiAfkChannelDefers = 0u;
 
 static u32 g_antiAfkNextAt = 0u;
@@ -390,7 +390,7 @@ static void antiAfkFlushSlashFeedback(void)
 {
     static const char onMsg[]=
         "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cff55ff55[Anti-AFK]|r ON - random jump 120-360s, cast/channel safe') end";
+        "'|cff55ff55[Anti-AFK]|r ON - /say . every 120-360s, cast/channel safe') end";
     static const char offMsg[]=
         "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
         "'|cffff7777[Anti-AFK]|r OFF') end";
@@ -411,7 +411,7 @@ static void antiAfkFlushSlashFeedback(void)
 
 static void antiAfkTick(u32 player,u32 now)
 {
-    static const char jumpScript[]="Jump()";
+    static const char sayScript[]="SendChatMessage(\".\",\"SAY\")";
 
     if(!g_antiAfkEnabled){
         g_antiAfkNextAt=0u;
@@ -441,8 +441,8 @@ static void antiAfkTick(u32 player,u32 now)
         return;
     }
 
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(jumpScript,"AutoSummonAssist");
-    ++g_antiAfkJumpCalls;
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(sayScript,"AutoSummonAssist");
+    ++g_antiAfkSayCalls;
     antiAfkSchedule(now);
 }
 
@@ -615,7 +615,7 @@ static void initSettings(void)
         "current_guid_pre_calls","native_post_returns","scan_ticks",
         "nearby_go_count","nearest_go_entry","nearest_go_type",
         "nearest_go_distance_x100","status","gate_reason","busy_raw",
-        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_jump_calls",
+        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_say_calls",
         "anti_afk_channel_defers"
     };
     static const char *labels[24]={
@@ -625,7 +625,7 @@ static void initSettings(void)
         "Current GUID PRE calls","Native POST returns","Scan ticks",
         "Nearby GO <=12yd","Nearest GO entry","Nearest GO type",
         "Nearest GO distance x100","Status","Gate reason","Busy raw",
-        "Anti-AFK random jump","Anti-AFK next seconds","Anti-AFK jump calls",
+        "Anti-AFK random /say","Anti-AFK next seconds","Anti-AFK say calls",
         "Anti-AFK channel defers"
     };
 
@@ -676,7 +676,7 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==20u) v->u32=g_busyRaw;
     else if(id==21u) v->u32=g_antiAfkEnabled?1u:0u;
     else if(id==22u) v->u32=g_antiAfkSecondsLeft;
-    else if(id==23u) v->u32=g_antiAfkJumpCalls;
+    else if(id==23u) v->u32=g_antiAfkSayCalls;
     else if(id==24u) v->u32=g_antiAfkChannelDefers;
     else return 0;
     return 1;
@@ -702,7 +702,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00070000u,
+    0x00080000u,
     24u,
     g_settings,
     getValue,
@@ -743,7 +743,7 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkDeferCheckAt=0u;
         g_antiAfkRng=0u;
         g_antiAfkSecondsLeft=0u;
-        g_antiAfkJumpCalls=0u;
+        g_antiAfkSayCalls=0u;
         g_antiAfkChannelDefers=0u;
         g_antiAfkSlashInstallAt=0u;
         g_antiAfkSlashFeedback=0u;
