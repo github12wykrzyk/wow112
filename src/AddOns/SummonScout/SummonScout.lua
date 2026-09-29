@@ -147,10 +147,18 @@ local function phraseHas(s, phrase)
     return has(" " .. s .. " ", " " .. p .. " ")
 end
 
-local BUYER_CUES = {
+local REQUEST_CUES = {
     "need", "lf", "lf summon", "lf summ", "wtb", "buy", "want", "looking",
     "pls", "plz", "please", "can i", "could i", "anyone",
     "who can", "inv", "invite", "me", "port"
+}
+
+-- Strong buyer intent only. Generic words such as "me", "inv" and "port"
+-- are intentionally excluded because seller ads often contain "whisper me",
+-- "invite me" or "portal/port" language.
+local BUYER_INTENT_CUES = {
+    "need", "lf", "lf summon", "lf summ", "wtb", "buy", "want", "looking",
+    "pls", "plz", "please", "can i", "could i", "anyone", "who can"
 }
 
 local SELLER_CUES = {
@@ -168,8 +176,12 @@ local function hasCue(s, cues)
     return false
 end
 
-local function hasBuyerCue(s)
-    return hasCue(s, BUYER_CUES)
+local function hasRequestCue(s)
+    return hasCue(s, REQUEST_CUES)
+end
+
+local function hasBuyerIntentCue(s)
+    return hasCue(s, BUYER_INTENT_CUES)
 end
 
 local function hasSellerCue(s)
@@ -192,7 +204,7 @@ end
 
 local function isSellerMessage(s)
     s = normalizeMessage(s)
-    if s == "" or hasBuyerCue(s) or not hasSummonToken(s) then
+    if s == "" or hasBuyerIntentCue(s) or not hasSummonToken(s) then
         return false
     end
     return hasSellerCue(s) or hasGoldPrice(s)
@@ -204,7 +216,7 @@ local function looksLikeSummonRequest(message)
         return false
     end
 
-    if hasBuyerCue(s) then return true end
+    if hasRequestCue(s) then return true end
 
     if string.len(s) <= 32 then
         return true
