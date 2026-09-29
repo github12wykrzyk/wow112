@@ -365,34 +365,33 @@ static void Patrol_Tick(BYTE *p,DWORD now);
 #define W112_FOLLOW_ROLE_OFF          0u
 #define W112_FOLLOW_ROLE_MASTER       1u
 #define W112_FOLLOW_ROLE_FOLLOWER     2u
-#define W112_FOLLOW_MAGIC             0x314C4F46u /* "FOL1" */
-#define W112_FOLLOW_VERSION           1u
+#define W112_FOLLOW_MAGIC             0x324C4F46u /* "FOL2" */
+#define W112_FOLLOW_VERSION           2u
 #define W112_FOLLOW_PAGE_READWRITE    0x00000004u
 #define W112_FOLLOW_MAP_ALL_ACCESS    0x000F001Fu
 #define W112_FOLLOW_HEARTBEAT_MAX_MS  650u
 #define W112_FOLLOW_OWNER_STALE_MS    2000u
 #define W112_FOLLOW_MASTER_LUA_MS      80u
-#define W112_FOLLOW_ZONE_LUA_MS      1500u
-#define W112_FOLLOW_CTM_REFRESH_MS   1200u
-#define W112_FOLLOW_CTM_RETARGET_D2     4.0f
-#define W112_FOLLOW_CTM_START_D2        6.25f
-#define W112_FOLLOW_CTM_STOP_D2         1.00f
+#define W112_FOLLOW_NAME_LUA_MS      2000u
+#define W112_FOLLOW_NATIVE_REISSUE_MS 3000u
+#define W112_FOLLOW_CATCHUP_REISSUE_MS 4000u
 #define W112_FOLLOW_CTM_NONE            0x0Du
+#define W112_FOLLOW_CATCHUP_REACHED_D2  4.0f
 #define W112_FOLLOW_LAZY_PULSE_MS      80u
-#define W112_FOLLOW_TELE_COOLDOWN_MS 2500u
-#define W112_FOLLOW_TELE_SETTLE_MS    700u
-#define W112_FOLLOW_MASTER_JUMP_D2     64.0f
+#define W112_FOLLOW_NAME_MAX           16u
 #define W112_FOLLOW_TARGET_GUID_FN 0x00489A40u
 
 typedef struct W112_FollowShared {
     volatile LONG seq;
-    DWORD magic,version,owner_pid,tick,zone_hash,world_ready;
+    DWORD magic,version,owner_pid,tick,map_id,world_ready;
     float x,y,z,o;
     DWORD target_lo,target_hi,target_tagged;
+    char master_name[W112_FOLLOW_NAME_MAX];
 } W112_FollowShared;
 typedef struct W112_FollowSnapshot {
-    DWORD owner_pid,tick,zone_hash,world_ready,target_lo,target_hi,target_tagged;
+    DWORD owner_pid,tick,map_id,world_ready,target_lo,target_hi,target_tagged;
     float x,y,z,o;
+    char master_name[W112_FOLLOW_NAME_MAX];
 } W112_FollowSnapshot;
 typedef void (__fastcall *W112_FollowTargetGuidFn)(unsigned long long*);
 
@@ -408,14 +407,13 @@ static volatile DWORD g_followState=0u,g_followMasterPid=0u,g_followZoneMatch=0u
 static HANDLE g_followMapHandle=0;
 static W112_FollowShared *g_followShared=0;
 static volatile DWORD g_followMoving=0u,g_followHadAssist=0u;
-static DWORD g_followLastCtm=0u,g_followLastTele=0u,g_followLastLazy=0u,g_followLastMasterLua=0u,g_followLastZoneLua=0u;
-static DWORD g_followTeleSettleUntil=0u,g_followCtmTargetValid=0u;
+static volatile DWORD g_followNativeIssued=0u,g_followNativeConfirmed=0u;
+static DWORD g_followLastCtm=0u,g_followLastTele=0u,g_followLastLazy=0u,g_followLastMasterLua=0u,g_followLastNameLua=0u;
+static DWORD g_followNativeLastIssue=0u,g_followCtmTargetValid=0u;
 static float g_followCtmTargetX=0.0f,g_followCtmTargetY=0.0f,g_followCtmTargetZ=0.0f;
-static DWORD g_followLocalZoneHash=0u,g_followMasterZoneHash=0u;
+static char g_followMasterName[W112_FOLLOW_NAME_MAX]={0};
 static DWORD g_followTagLo=0u,g_followTagHi=0u,g_followTagCached=0u;
 static DWORD g_followLastAssistLo=0u,g_followLastAssistHi=0u;
-static DWORD g_followLastMasterTick=0u,g_followLastMasterPid=0u;
-static float g_followLastMasterX=0.0f,g_followLastMasterY=0.0f,g_followLastMasterZ=0.0f;
 static void Follow_Tick(BYTE *p,DWORD now);
 static void Follow_CloseMap(void);
 static void Follow_SetRole(DWORD role,BYTE *p,DWORD now);
@@ -2322,19 +2320,12 @@ static void Patrol_Tick(BYTE *p,DWORD now)
 static const char *Follow_ChannelName(void)
 {
     static const char *names[4]={
-        "Local\\WoW112_Follow_1","Local\\WoW112_Follow_2",
-        "Local\\WoW112_Follow_3","Local\\WoW112_Follow_4"
+        "Local\\WoW112_Follow2_1","Local\\WoW112_Follow2_2",
+        "Local\\WoW112_Follow2_3","Local\\WoW112_Follow2_4"
     };
     DWORD c=g_followChannel;
     if(c<1u||c>4u)c=1u;
     return names[c-1u];
-}
-static DWORD Follow_HashText(const char *s)
-{
-    DWORD h=2166136261u;
-    if(!s||!*s)return 0u;
-    while(*s){h^=(BYTE)*s++;h*=16777619u;}
-    return h?h:1u;
 }
 static void Follow_CloseMap(void)
 {
@@ -2369,19 +2360,34 @@ static DWORD Follow_QueryMasterTag(DWORD *tagged)
     if(tagged)*tagged=raw[0]=='1'?1u:0u;
     return 1u;
 }
-static DWORD Follow_QueryLocalZone(DWORD *zone)
+static DWORD Follow_GetMapId(DWORD *mapId)
 {
-    static const char script[]=
-      "W112_FOLLOW_ZONE=((GetRealZoneText and GetRealZoneText()) or '')";
+    if(mapId)*mapId=0u;
+    if(!mapId||!W112_TeleRangeValid(W112_MAP_LOADED_ID,4u,0u))return 0u;
+    *mapId=*(volatile DWORD*)W112_MAP_LOADED_ID;
+    return 1u; /* map 0 (Eastern Kingdoms) is valid */
+}
+static DWORD Follow_CopyName(char *dst,const char *src)
+{
+    DWORD i=0u;char c;
+    if(!dst||!src)return 0u;
+    while(i+1u<W112_FOLLOW_NAME_MAX&&(c=src[i])!=0){
+        if(!((c>='A'&&c<='Z')||(c>='a'&&c<='z'))){dst[0]=0;return 0u;}
+        dst[i]=c;++i;
+    }
+    dst[i]=0;
+    return i?1u:0u;
+}
+static DWORD Follow_QueryMasterName(char *out)
+{
+    static const char script[]="W112_FOLLOW_NAME=(UnitName('player') or '')";
     W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
     const char *raw;
-    if(zone)*zone=0u;
-    if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 0u;
+    if(out)out[0]=0;
+    if(!out||!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 0u;
     DebugChat(script);
-    raw=getText("W112_FOLLOW_ZONE",-1,0u);
-    if(!raw||!*raw)return 0u;
-    if(zone)*zone=Follow_HashText(raw);
-    return zone&&*zone?1u:0u;
+    raw=getText("W112_FOLLOW_NAME",-1,0u);
+    return Follow_CopyName(out,raw);
 }
 static DWORD Follow_TargetValid(BYTE *t)
 {
@@ -2446,27 +2452,31 @@ static DWORD Follow_Ctm(BYTE *p,DWORD action,float x,float y,float z)
 }
 static void Follow_StopMovement(BYTE *p)
 {
-    if(g_followMoving&&Ptr(p))
+    if((g_followMoving||g_followNativeIssued)&&Ptr(p))
         Follow_Ctm(p,W112_FOLLOW_CTM_NONE,
             *(float*)(p+OFF_UNIT_X),*(float*)(p+OFF_UNIT_Y),*(float*)(p+OFF_UNIT_Z));
-    g_followMoving=0u;g_followLastCtm=0u;g_followCtmTargetValid=0u;
+    g_followMoving=0u;g_followNativeIssued=0u;
+    g_followLastCtm=0u;g_followCtmTargetValid=0u;
 }
-static DWORD Follow_TeleportPulse(BYTE *p,float x,float y,float z,float o,DWORD now)
+static DWORD Follow_IssueNative(BYTE *p,const char *name,DWORD now)
 {
-    SendMove_t sm=(SendMove_t)ADDR_SEND_MOVE;
-    if(!Ptr(p)||!ValidWorldPos(x,y,z)||LongPPActive()||LongPPInjecting()||
-       (*(DWORD*)ADDR_CASTING_SPELLID)==SPELL_PICK_POCKET)return 0u;
-    /* Same one-shot model as the tested Tele E path: move local client state,
-       send ONE heartbeat and leave the local position there. Restoring the old
-       XYZ immediately was the source of visible ping-pong/rubberband spam. */
-    g_stepMoveInjecting=1u;
-    *(float*)(p+OFF_UNIT_X)=x;*(float*)(p+OFF_UNIT_Y)=y;
-    *(float*)(p+OFF_UNIT_Z)=z;*(float*)(p+OFF_UNIT_O)=o;
-    sm(p,MSG_MOVE_HEARTBEAT);++g_hb;
-    g_stepMoveInjecting=0u;
-    g_followMoving=0u;g_followCtmTargetValid=0u;g_followLastCtm=0u;
-    g_followLastTele=now;g_followTeleSettleUntil=now+W112_FOLLOW_TELE_SETTLE_MS;
-    ++g_followTeleports;
+    char script[96],*q=script;DWORD i;
+    if(!Ptr(p)||!name||!name[0])return 0u;
+    q=AppStr(q,"if FollowByName then FollowByName('");
+    for(i=0u;i+1u<W112_FOLLOW_NAME_MAX&&name[i];++i)*q++=name[i];
+    q=AppStr(q,"',1) end");*q=0;
+    DebugChat(script);
+    g_followNativeIssued=1u;g_followNativeLastIssue=now;
+    return 1u;
+}
+static DWORD Follow_StartCatchup(BYTE *p,float x,float y,float z,DWORD now)
+{
+    if(!Ptr(p)||!ValidWorldPos(x,y,z))return 0u;
+    Follow_StopMovement(p);
+    if(!Follow_Ctm(p,W112_PATROL_CTM_WALK,x,y,z))return 0u;
+    g_followMoving=1u;g_followLastCtm=now;g_followLastTele=now;
+    g_followCtmTargetX=x;g_followCtmTargetY=y;g_followCtmTargetZ=z;
+    g_followCtmTargetValid=1u;++g_followTeleports;
     return 1u;
 }
 static DWORD Follow_MasterClaim(W112_FollowShared *s,DWORD now)
@@ -2497,10 +2507,12 @@ static DWORD Follow_MasterClaim(W112_FollowShared *s,DWORD now)
         /* Normalize a mapping left odd by a crashed writer. The odd phase is
            published before any field reset, so readers fail closed. */
         s->seq=1;
+        DWORD i;
         s->magic=W112_FOLLOW_MAGIC;s->version=W112_FOLLOW_VERSION;
-        s->owner_pid=me;s->tick=now;s->zone_hash=0u;s->world_ready=0u;
+        s->owner_pid=me;s->tick=now;s->map_id=0u;s->world_ready=0u;
         s->x=s->y=s->z=s->o=0.0f;
         s->target_lo=s->target_hi=s->target_tagged=0u;
+        for(i=0u;i<W112_FOLLOW_NAME_MAX;++i)s->master_name[i]=0;
         InterlockedIncrement(&s->seq); /* 1 -> 2, stable even snapshot */
     }
     return 1u;
@@ -2515,12 +2527,14 @@ static void Follow_MasterPublishDown(DWORD now)
     s->owner_pid=0u; /* graceful release: next Master may claim immediately */
     InterlockedIncrement(&s->seq);
 }
-static void Follow_SetChannel(DWORD channel,DWORD now)
+static void Follow_SetChannel(DWORD channel,BYTE *p,DWORD now)
 {
     if(channel<1u||channel>4u||channel==g_followChannel)return;
     if(g_followRole==W112_FOLLOW_ROLE_MASTER)Follow_MasterPublishDown(now);
-    Follow_CloseMap();g_followChannel=channel;g_followState=0u;
+    Follow_StopMovement(p);Follow_StopAssist();Follow_CloseMap();
+    g_followChannel=channel;g_followState=0u;
     g_followMasterPid=0u;g_followHeartbeatAge=0u;g_followZoneMatch=0u;
+    g_followNativeConfirmed=0u;g_followMasterName[0]=0;
 }
 static void Follow_SetRole(DWORD role,BYTE *p,DWORD now)
 {
@@ -2531,8 +2545,8 @@ static void Follow_SetRole(DWORD role,BYTE *p,DWORD now)
     g_followRole=role;g_followState=0u;g_followMasterPid=0u;
     g_followHeartbeatAge=0u;g_followDistanceLive100=0u;
     g_followMasterTagged=0u;g_followZoneMatch=0u;g_followLazyReady=0u;
-    g_followLastMasterTick=0u;g_followLastMasterPid=0u;
-    g_followTeleSettleUntil=0u;g_followCtmTargetValid=0u;
+    g_followNativeIssued=0u;g_followNativeConfirmed=0u;
+    g_followNativeLastIssue=0u;g_followCtmTargetValid=0u;g_followMasterName[0]=0;
     g_followTagLo=g_followTagHi=g_followTagCached=0u;
     if(role!=W112_FOLLOW_ROLE_OFF){
         g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
@@ -2543,12 +2557,12 @@ static void Follow_ApplyRequestedState(BYTE *p,DWORD now)
     DWORD channel=g_followRequestedChannel,role=g_followRequestedRole;
     /* Called only from MovementCore's game timer. GUI setters never unmap,
        target, execute FrameScript or touch the shared mapping directly. */
-    if(channel!=g_followChannel)Follow_SetChannel(channel,now);
+    if(channel!=g_followChannel)Follow_SetChannel(channel,p,now);
     if(role!=g_followRole)Follow_SetRole(role,p,now);
 }
 static void Follow_MasterPublish(BYTE *p,DWORD now)
 {
-    W112_FollowShared *s;DWORD tap=0u,zone=g_followMasterZoneHash,sampled=0u;
+    W112_FollowShared *s;DWORD tap=0u,mapId=0u,mapOk=0u,sampled=0u,i;
     DWORD lo=0u,hi=0u,tagged=0u;BYTE *t=0;
     if(!Follow_OpenMap()){g_followState=2u;g_followLinkReady=0u;return;}
     s=g_followShared;
@@ -2566,35 +2580,38 @@ static void Follow_MasterPublish(BYTE *p,DWORD now)
         g_followTagLo=lo;g_followTagHi=hi;
         g_followTagCached=((lo|hi)&&Follow_TargetValid(t)&&tap)?1u:0u;
     }
-    if(!g_followLastZoneLua||(DWORD)(now-g_followLastZoneLua)>=W112_FOLLOW_ZONE_LUA_MS){
-        g_followLastZoneLua=now;
-        if(Follow_QueryLocalZone(&zone))g_followMasterZoneHash=zone;
+    if(!g_followLastNameLua||(DWORD)(now-g_followLastNameLua)>=W112_FOLLOW_NAME_LUA_MS){
+        g_followLastNameLua=now;
+        Follow_QueryMasterName(g_followMasterName);
     }
+    mapOk=Follow_GetMapId(&mapId);
     if(!sampled)
         tap=(lo==g_followTagLo&&hi==g_followTagHi)?g_followTagCached:0u;
     if((lo|hi)&&Follow_TargetValid(t)&&tap)tagged=1u;
     InterlockedIncrement(&s->seq);
     s->magic=W112_FOLLOW_MAGIC;s->version=W112_FOLLOW_VERSION;
-    s->owner_pid=GetCurrentProcessId();s->tick=now;s->zone_hash=g_followMasterZoneHash;
-    s->world_ready=(Ptr(p)&&g_loginGuardReady&&g_followMasterZoneHash)?1u:0u;
+    s->owner_pid=GetCurrentProcessId();s->tick=now;s->map_id=mapId;
+    s->world_ready=(Ptr(p)&&g_loginGuardReady&&mapOk&&g_followMasterName[0])?1u:0u;
     if(Ptr(p)){
         s->x=*(float*)(p+OFF_UNIT_X);s->y=*(float*)(p+OFF_UNIT_Y);
         s->z=*(float*)(p+OFF_UNIT_Z);s->o=*(float*)(p+OFF_UNIT_O);
     }
     s->target_lo=lo;s->target_hi=hi;s->target_tagged=tagged;
+    for(i=0u;i<W112_FOLLOW_NAME_MAX;++i)s->master_name[i]=g_followMasterName[i];
     InterlockedIncrement(&s->seq);
     g_followMasterTagged=tagged;g_followState=1u;g_followHeartbeatAge=0u;
     g_followZoneMatch=1u;g_followDistanceLive100=0u;
 }
 static DWORD Follow_ReadSnapshot(W112_FollowSnapshot *o,DWORD now)
 {
-    W112_FollowShared *s;LONG a,b;
+    W112_FollowShared *s;LONG a,b;DWORD i;
     if(!o||!Follow_OpenMap())return 0u;
     s=g_followShared;a=s->seq;
     if(a&1)return 0u;
-    o->owner_pid=s->owner_pid;o->tick=s->tick;o->zone_hash=s->zone_hash;
+    o->owner_pid=s->owner_pid;o->tick=s->tick;o->map_id=s->map_id;
     o->world_ready=s->world_ready;o->x=s->x;o->y=s->y;o->z=s->z;o->o=s->o;
     o->target_lo=s->target_lo;o->target_hi=s->target_hi;o->target_tagged=s->target_tagged;
+    for(i=0u;i<W112_FOLLOW_NAME_MAX;++i)o->master_name[i]=s->master_name[i];
     b=s->seq;
     if(a!=b||(b&1)||s->magic!=W112_FOLLOW_MAGIC||
        s->version!=W112_FOLLOW_VERSION||o->owner_pid==GetCurrentProcessId()||
@@ -2605,87 +2622,63 @@ static DWORD Follow_ReadSnapshot(W112_FollowSnapshot *o,DWORD now)
 }
 static void Follow_FollowerTick(BYTE *p,DWORD now)
 {
-    W112_FollowSnapshot s;DWORD flags,jumped=0u;
+    W112_FollowSnapshot s;DWORD flags,localMap=0u,mapOk=0u;
     BYTE *target=0;DWORD *d=0;
     float px,py,pz,dx,dy,dz,d2,sn=0.0f,cs=1.0f,back,side,tx,ty,tz;
     if(!Ptr(p)){g_followState=2u;g_followLinkReady=0u;return;}
-    if(!g_followLastZoneLua||(DWORD)(now-g_followLastZoneLua)>=W112_FOLLOW_ZONE_LUA_MS){
-        g_followLastZoneLua=now;
-        Follow_QueryLocalZone(&g_followLocalZoneHash);
-    }
     if(!Follow_ReadSnapshot(&s,now)){
         Follow_StopMovement(p);Follow_StopAssist();
         g_followLinkReady=0u;g_followState=9u;g_followMasterPid=0u;
-        g_followMasterTagged=0u;g_followZoneMatch=0u;return;
+        g_followMasterTagged=0u;g_followZoneMatch=0u;g_followNativeConfirmed=0u;return;
     }
+    mapOk=Follow_GetMapId(&localMap);
     g_followLinkReady=1u;g_followMasterPid=s.owner_pid;g_followMasterTagged=s.target_tagged;
-    g_followZoneMatch=(g_followLocalZoneHash&&s.zone_hash&&g_followLocalZoneHash==s.zone_hash)?1u:0u;
-    if(!g_followZoneMatch){
-        Follow_StopMovement(p);Follow_StopAssist();g_followState=7u;return;
+    g_followZoneMatch=(mapOk&&localMap==s.map_id)?1u:0u;
+    if(!g_followZoneMatch||!s.master_name[0]){
+        Follow_StopMovement(p);Follow_StopAssist();g_followState=7u;g_followNativeConfirmed=0u;return;
     }
-    if(g_followLastMasterTick&&g_followLastMasterPid==s.owner_pid&&s.tick!=g_followLastMasterTick&&
-       (DWORD)(s.tick-g_followLastMasterTick)<=500u&&
-       Patrol_D2(s.x,s.y,s.z,g_followLastMasterX,g_followLastMasterY,g_followLastMasterZ)>W112_FOLLOW_MASTER_JUMP_D2)
-        jumped=1u;
-    g_followLastMasterTick=s.tick;g_followLastMasterPid=s.owner_pid;
-    g_followLastMasterX=s.x;g_followLastMasterY=s.y;g_followLastMasterZ=s.z;
 
     px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);pz=*(float*)(p+OFF_UNIT_Z);
     dx=px-s.x;dy=py-s.y;dz=pz-s.z;d2=dx*dx+dy*dy+dz*dz;
     g_followDistanceLive100=(DWORD)(Patrol_Sqrt(d2)*100.0f);
 
+    /* A nearby same-map Master is sufficient to establish the native-follow
+       relationship once. After that, safe CTM catch-up may recover from a
+       later large displacement/teleport without ever rewriting player XYZ. */
+    if(d2<=225.0f)g_followNativeConfirmed=1u;
+
     flags=MovementCore_CoordFlags()&0x7Fu;
-    if(flags){
+    if(flags&(~COORD_CAST)){
         Follow_StopMovement(p);g_followState=6u;
+    }else if(flags&COORD_CAST){
+        if(g_followMoving)Follow_StopMovement(p);
+        g_followState=6u;
     }else{
-        float td2,cmdD2=0.0f;
+        float trigger=(float)g_followTeleportDistance100/100.0f;
+        float triggerD2=trigger*trigger;
         back=(float)g_followDistance100/100.0f;
         side=(float)g_followSideOffset100/100.0f;
         SinCosF(s.o,&sn,&cs);
         tx=s.x-cs*back-sn*side;
         ty=s.y-sn*back+cs*side;
         tz=s.z;
-        if(g_followTeleportEnabled&&(!g_followLastTele||(DWORD)(now-g_followLastTele)>=W112_FOLLOW_TELE_COOLDOWN_MS)&&
-           (jumped||d2>((float)g_followTeleportDistance100/100.0f)*((float)g_followTeleportDistance100/100.0f))){
-            Follow_StopMovement(p);
-            if(Follow_TeleportPulse(p,tx,ty,tz,s.o,now))g_followState=5u;
-        }else if(g_followTeleSettleUntil&&(LONG)(now-g_followTeleSettleUntil)<0){
-            /* Let one-shot catch-up settle. Do not immediately overwrite it
-               with CTM or another synthetic movement packet. */
+
+        if(g_followTeleportEnabled&&g_followNativeConfirmed&&d2>triggerD2){
+            float remain=g_followCtmTargetValid?
+                Patrol_D2(px,py,pz,g_followCtmTargetX,g_followCtmTargetY,g_followCtmTargetZ):0.0f;
+            if(!g_followMoving){
+                Follow_StartCatchup(p,tx,ty,tz,now);
+            }else if(remain<=W112_FOLLOW_CATCHUP_REACHED_D2||
+                     (DWORD)(now-g_followLastCtm)>=W112_FOLLOW_CATCHUP_REISSUE_MS){
+                Follow_StartCatchup(p,tx,ty,tz,now);
+            }
             g_followState=5u;
         }else{
-            g_followTeleSettleUntil=0u;
-            td2=Patrol_D2(px,py,pz,tx,ty,tz);
-            if(g_followCtmTargetValid)
-                cmdD2=Patrol_D2(tx,ty,tz,g_followCtmTargetX,g_followCtmTargetY,g_followCtmTargetZ);
-            if(g_followMoving){
-                if(td2<=W112_FOLLOW_CTM_STOP_D2){
-                    /* One stop at the inner radius; do not chatter STOP/WALK
-                       around one boundary every timer tick. */
-                    Follow_StopMovement(p);g_followState=4u;
-                }else{
-                    if(!g_followCtmTargetValid||
-                       cmdD2>=W112_FOLLOW_CTM_RETARGET_D2||
-                       !g_followLastCtm||
-                       (DWORD)(now-g_followLastCtm)>=W112_FOLLOW_CTM_REFRESH_MS){
-                        if(Follow_Ctm(p,W112_PATROL_CTM_WALK,tx,ty,tz)){
-                            g_followCtmTargetX=tx;g_followCtmTargetY=ty;g_followCtmTargetZ=tz;
-                            g_followCtmTargetValid=1u;g_followLastCtm=now;
-                        }
-                    }
-                    g_followState=3u;
-                }
-            }else if(td2>=W112_FOLLOW_CTM_START_D2){
-                if(Follow_Ctm(p,W112_PATROL_CTM_WALK,tx,ty,tz)){
-                    g_followMoving=1u;g_followLastCtm=now;
-                    g_followCtmTargetX=tx;g_followCtmTargetY=ty;g_followCtmTargetZ=tz;
-                    g_followCtmTargetValid=1u;g_followState=3u;
-                }
-            }else{
-                /* Dead-band between stop and start radii keeps stationary
-                   followers stationary while Master makes tiny adjustments. */
-                g_followState=4u;
-            }
+            if(g_followMoving)Follow_StopMovement(p);
+            if(!g_followNativeIssued||
+               ((DWORD)(now-g_followNativeLastIssue)>=W112_FOLLOW_NATIVE_REISSUE_MS&&d2>36.0f))
+                Follow_IssueNative(p,s.master_name,now);
+            g_followState=d2<=36.0f?4u:3u;
         }
     }
 
@@ -3066,11 +3059,11 @@ static void init_control_descriptor(void)
         };
         static const char* labels[20]={
             "Follow role","Follow channel","Assist master target","Use LazyScript rotation",
-            "Teleport catch-up","Follow distance x100 yd","Teleport distance x100 yd",
-            "Side offset x100 yd","Master heartbeat age ms","Distance to master x100 yd",
+            "Safe CTM catch-up","Catch-up trailing distance x100 yd","Catch-up trigger x100 yd",
+            "Catch-up side offset x100 yd","Master heartbeat age ms","Distance to master x100 yd",
             "Master target tagged by master","Master target resolved locally","LazyScript rotation pulses",
-            "Targets assisted","Catch-up teleports","Follow state","Master process id",
-            "Same zone","Shared link ready","LazyScript bridge ready"
+            "Targets assisted","Catch-up starts","Follow state","Master process id",
+            "Same map","Shared link ready","LazyScript bridge ready"
         };
         for(i=0u;i<20u;++i){
             s=&g_controlSettings[89u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);

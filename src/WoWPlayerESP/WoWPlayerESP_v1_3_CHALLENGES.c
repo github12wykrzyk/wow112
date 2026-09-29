@@ -796,7 +796,7 @@ static char *ui_app_signed_centi(char *p,int value) {
 static void ui_sync_follow(void) {
     static const char* states[10]={
         "OFF","MASTER: PUBLISHING","WAIT MASTER","FOLLOWING","IN POSITION",
-        "TELEPORT CATCH-UP","PAUSED: MOVEMENT OWNER","ZONE MISMATCH",
+        "SAFE CATCH-UP","PAUSED: MOVEMENT OWNER","ZONE MISMATCH",
         "ASSISTING TAGGED TARGET","STALE / NO MASTER"
     };
     W112_ControlValueV1 role,channel,assist,lazy,tp,dist,tpdist,side,hb,liveDist,tagged,resolved;
@@ -831,7 +831,7 @@ static void ui_sync_follow(void) {
         p=buf;p=app_str(p,"Link ");p=app_str(p,link.u32?"READY":"WAIT");
         p=app_str(p," | master PID ");p=app_u32(p,pid.u32);
         p=app_str(p," | heartbeat ");p=app_u32(p,hb.u32);p=app_str(p," ms");
-        p=app_str(p," | zone ");p=app_str(p,zone.u32?"MATCH":"NO");*p=0;
+        p=app_str(p," | map ");p=app_str(p,zone.u32?"MATCH":"NO");*p=0;
         SetWindowTextA(g_ui_follow_link,buf);
     }
     if(g_ui_follow_target){
@@ -843,7 +843,7 @@ static void ui_sync_follow(void) {
     }
     if(g_ui_follow_config){
         p=buf;p=app_str(p,"Distance ");p=ui_app_centi(p,dist.u32);
-        p=app_str(p," yd | teleport >");p=ui_app_centi(p,tpdist.u32);
+        p=app_str(p," yd | catch-up >");p=ui_app_centi(p,tpdist.u32);
         p=app_str(p," yd | side ");p=ui_app_signed_centi(p,side.i32);
         p=app_str(p," yd | live ");p=ui_app_centi(p,liveDist.u32);p=app_str(p," yd");*p=0;
         SetWindowTextA(g_ui_follow_config,buf);
@@ -851,7 +851,7 @@ static void ui_sync_follow(void) {
     if(g_ui_follow_stats){
         p=buf;p=app_str(p,"Rotation pulses ");p=app_u32(p,pulses.u32);
         p=app_str(p," | targets ");p=app_u32(p,targets.u32);
-        p=app_str(p," | catch-up teleports ");p=app_u32(p,tps.u32);*p=0;
+        p=app_str(p," | catch-up starts ");p=app_u32(p,tps.u32);*p=0;
         SetWindowTextA(g_ui_follow_stats,buf);
     }
 }
@@ -1943,7 +1943,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_assist);
     g_ui_follow_lazy=ui_button(g_parallel_ui_hwnd,"LAZYSCRIPT",269,318,205,36,260u,TRUE);
     ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_lazy);
-    g_ui_follow_teleport=ui_button(g_parallel_ui_hwnd,"TELEPORT CATCH-UP",492,318,219,36,261u,TRUE);
+    g_ui_follow_teleport=ui_button(g_parallel_ui_hwnd,"SAFE CATCH-UP",492,318,219,36,261u,TRUE);
     ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_teleport);
     g_ui_follow_state=ui_label(g_parallel_ui_hwnd,"",46,364,665,28,FALSE);
     ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_state);
@@ -1955,8 +1955,8 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_FOLLOW,g_ui_follow_config);
     ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"DIST -",46,500,150,34,262u,FALSE));
     ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"DIST +",210,500,150,34,263u,FALSE));
-    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"TELE -",374,500,150,34,264u,FALSE));
-    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"TELE +",538,500,173,34,265u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"CATCHUP -",374,500,150,34,264u,FALSE));
+    ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"CATCHUP +",538,500,173,34,265u,FALSE));
     ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"SIDE -",46,542,314,34,266u,FALSE));
     ui_add_to_page(UI_TAB_FOLLOW,ui_button(g_parallel_ui_hwnd,"SIDE +",374,542,337,34,267u,FALSE));
     g_ui_follow_stats=ui_label(g_parallel_ui_hwnd,"",46,585,665,32,FALSE);
