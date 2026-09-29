@@ -216,7 +216,9 @@ def main():
         'ANTI-AFK - random jump every 120-360s',
         'g_ui_summon_antiafk_state=ui_label',
         'cast/channel defers',
-        'g_ui_summon_check=NULL;g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;',
+        'g_ui_summon_check=NULL;g_ui_summon_antiafk_check=NULL;',
+        'g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;',
+        'g_ui_summon_antiafk_state=NULL;',
     ):
         if token not in text:
             print("ERROR: AutoSummon dedicated debug tab regression:", token)
