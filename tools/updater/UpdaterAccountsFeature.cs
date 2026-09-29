@@ -303,7 +303,8 @@ namespace WoW112Updater
                         setState(account, "STARTING • profil przy CreateProcess");
                         var game = StartGameProcess(account);
                         accountSessions.Add(new WowAccountSession { Game = game, AccountId = account.Id });
-                        setState(account, "PID " + game.Id + " • NATIVE AUTOLOGIN");
+                        setState(account, "PID " + game.Id + " • NATIVE AUTOLOGIN" +
+                            (account.LowSpec ? " • LOWCFG " + LowSpecConfigName(account) : ""));
                         Log("Multibox: profil " + account.Label + " przypisany przy starcie do PID " + game.Id + ".");
                         ok++;
 
@@ -357,13 +358,13 @@ namespace WoW112Updater
                     Text = "Nowy profil: wpisz hasło i kliknij Zapisz profil." };
                 var newButton = new Button { Text = "Nowe", Location = new Point(14, 360), Size = new Size(96, 32) };
                 var deleteButton = new Button { Text = "Usuń", Location = new Point(120, 360), Size = new Size(96, 32) };
-                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (800x600, bez dźwięku, niższy priorytet)", Location = new Point(237, 250), Size = new Size(432, 26) };
+                var lowSpec = new CheckBox { Text = "Portal bot: LOW SPEC + WINDOWED (640x480, osobny WTF, bez dźwięku)", Location = new Point(237, 250), Size = new Size(432, 26) };
                 var saveButton = new Button { Text = "Zapisz profil", Location = new Point(237, 287), Size = new Size(142, 32) };
                 var defaultButton = new Button { Text = "Ustaw domyślne", Location = new Point(386, 287), Size = new Size(138, 32) };
                 var launchProfile = new Button { Text = "Uruchom grę z profilem", Location = new Point(237, 340), Size = new Size(209, 36) };
                 var fillButton = new Button { Text = "Wpisz dane do gry", Location = new Point(453, 340), Size = new Size(216, 36) };
                 var info = new Label { Location = new Point(14, 456), Size = new Size(660, 44),
-                    Text = "LOW SPEC jest per profil. Ustawienia runtime są odtwarzane przy wylogowaniu; zwykłe konto nie dostaje tego presetu." };
+                    Text = "LOW SPEC jest per profil: osobny plik WTF jest ładowany przed startem renderera. Zwykłe konto nadal używa Config.wtf." };
                 dialog.Controls.AddRange(new Control[] {
                     new Label { Text = "Zapisane profile", Location = new Point(14, 12), AutoSize = true },
                     list, newButton, deleteButton,
@@ -489,7 +490,8 @@ namespace WoW112Updater
                         accountVault.Data.SelectedId = editing.Id;
                         accountVault.Save();
                         dialog.Close();
-                        LaunchGame();
+                        var game = StartGameProcess(editing);
+                        RememberGameSession(game);
                     }
                     catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Konta WoW", MessageBoxButtons.OK, MessageBoxIcon.Error); }
                 };
@@ -543,6 +545,16 @@ namespace WoW112Updater
                 || !loaded.Data.Accounts[0].LowSpec
                 || loaded.Unprotect(loaded.Data.Accounts[1]) != "vault-test-secret-B")
                 throw new Exception("Account smoke: encrypted profile roundtrip failed");
+            var lowRoot = Path.Combine(folder, "low-spec-smoke");
+            Directory.CreateDirectory(Path.Combine(lowRoot, "WTF"));
+            File.WriteAllText(Path.Combine(lowRoot, "WTF", "Config.wtf"), "SET farclip \"777\"\r\nSET anisotropic \"16\"\r\n", Encoding.UTF8);
+            var lowName = PrepareLowSpecConfig(lowRoot, loaded.Data.Accounts[0]);
+            var lowText = File.ReadAllText(Path.Combine(lowRoot, "WTF", lowName), Encoding.UTF8);
+            if (lowName.Length != 10 || !lowText.Contains("SET farclip \"177\"") ||
+                !lowText.Contains("SET smallCull \"0.001\"") || !lowText.Contains("SET M2UseShaders \"1\"") ||
+                !lowText.Contains("SET M2UsePixelShaders \"0\""))
+                throw new Exception("Account smoke: per-profile LOW config generation failed");
+
             loaded.Data.Accounts.RemoveAt(0);
             loaded.Save();
             var afterDelete = new WowAccountVault(path); afterDelete.Load();
@@ -555,7 +567,7 @@ namespace WoW112Updater
             if (nativeStart.UseShellExecute ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] != loaded.Selected.Login ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] != loaded.Selected.ProtectedPassword ||
-                nativeStart.EnvironmentVariables["WOW112_LOW_SPEC"] != (loaded.Selected.LowSpec ? "1" : "0") ||
+                nativeStart.EnvironmentVariables.ContainsKey("WOW112_LOW_SPEC") ||
                 nativeStart.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"].Contains("vault-test-secret"))
                 throw new Exception("Account smoke: native AutoLogin child environment contract failed");
             // Validate the physical-key translator using a test string only; no real accounts or focus changes.

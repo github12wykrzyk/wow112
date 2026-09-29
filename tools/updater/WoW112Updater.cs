@@ -1016,9 +1016,84 @@ namespace WoW112Updater
             startInfo.UseShellExecute = false;
             startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_ACCOUNT"] = account.Login;
             startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_BLOB"] = account.ProtectedPassword;
-            startInfo.EnvironmentVariables["WOW112_LOW_SPEC"] = account.LowSpec ? "1" : "0";
-            if (account.LowSpec)
-                startInfo.Arguments = "-windowed -800x600 -nosound";
+        }
+
+        private static string LowSpecConfigName(WowAccount account)
+        {
+            if (account == null) throw new ArgumentNullException("account");
+            var seed = (account.Id ?? string.Empty) + "\n" + (account.Login ?? string.Empty);
+            using (var sha = SHA256.Create())
+            {
+                var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(seed));
+                return string.Format("{0:X2}{1:X2}{2:X2}.wtf", hash[0], hash[1], hash[2]);
+            }
+        }
+
+        private static string PrepareLowSpecConfig(string root, WowAccount account)
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                throw new InvalidOperationException("Brak katalogu gry dla profilu LOW.");
+            if (account == null || !account.LowSpec)
+                throw new InvalidOperationException("Profil nie jest oznaczony jako LOW.");
+
+            var wtf = Path.Combine(root, "WTF");
+            Directory.CreateDirectory(wtf);
+            var basePath = Path.Combine(wtf, "Config.wtf");
+            var baseText = File.Exists(basePath) ? File.ReadAllText(basePath, Encoding.UTF8) : string.Empty;
+            if (baseText.Length > 2 * 1024 * 1024)
+                throw new InvalidDataException("WTF\\Config.wtf jest nieoczekiwanie duży.");
+
+            var sb = new StringBuilder(baseText.TrimEnd('\0', '\r', '\n'));
+            if (sb.Length > 0) sb.Append("\r\n");
+            var low = new[]
+            {
+                new[] { "gxWindow", "1" },
+                new[] { "gxMaximize", "0" },
+                new[] { "gxVSync", "0" },
+                new[] { "gxTripleBuffer", "0" },
+                new[] { "gxFixLag", "0" },
+                new[] { "gxCursor", "1" },
+                new[] { "lod", "1" },
+                new[] { "farclip", "177" },
+                new[] { "shadowLevel", "1" },
+                new[] { "smallCull", "0.001" },
+                new[] { "baseMip", "1" },
+                new[] { "spellEffectLevel", "0" },
+                new[] { "weatherDensity", "0" },
+                new[] { "anisotropic", "1" },
+                new[] { "pixelShaders", "0" },
+                new[] { "specular", "0" },
+                new[] { "ffxGlow", "0" },
+                new[] { "ffxDeath", "0" },
+                new[] { "M2UseShaders", "1" },
+                new[] { "M2UsePixelShaders", "0" },
+                new[] { "useWeatherShaders", "0" },
+                new[] { "trilinear", "0" },
+                new[] { "frillDensity", "1" },
+                new[] { "lodDist", "50" },
+                new[] { "DistCull", "1" },
+                new[] { "textureLodDist", "80" },
+                new[] { "particleDensity", "0.25" },
+                new[] { "unitDrawDist", "100" },
+                new[] { "mapShadows", "0" },
+                new[] { "doodadAnim", "0" },
+                new[] { "M2BatchDoodads", "1" },
+                new[] { "M2UseThreads", "1" },
+                new[] { "MasterSoundEffects", "0" },
+                new[] { "EnableAmbience", "0" },
+                new[] { "EnableMusic", "0" },
+                new[] { "MasterVolume", "0" },
+                new[] { "SoundVolume", "0" },
+                new[] { "MusicVolume", "0" },
+                new[] { "AmbienceVolume", "0" }
+            };
+            foreach (var kv in low)
+                sb.Append("SET ").Append(kv[0]).Append(" \"").Append(kv[1]).Append("\"\r\n");
+
+            var name = LowSpecConfigName(account);
+            var path = Path.Combine(wtf, name);
+            UpdaterSafety.WriteUtf8Atomic(path, sb.ToString(), ".tmp", ".previous");
+            return name;
         }
 
         private System.Diagnostics.Process StartGameProcess(WowAccount autoLoginAccount = null)
@@ -1041,7 +1116,13 @@ namespace WoW112Updater
 
             var startInfo = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true };
             ConfigureAutoLoginEnvironment(startInfo, autoLoginAccount);
-            var game = Process.Start(startInfo);
+            string lowConfig = null;
+            if (autoLoginAccount != null && autoLoginAccount.LowSpec)
+            {
+                lowConfig = PrepareLowSpecConfig(root, autoLoginAccount);
+                startInfo.Arguments = "-windowed -640x480 -nosound";
+            }
+            var game = lowConfig == null ? Process.Start(startInfo) : Process.Start(startInfo, lowConfig);
             if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
@@ -1050,7 +1131,7 @@ namespace WoW112Updater
             }
             Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ")" +
                 (autoLoginAccount == null ? "." : " • profil " + autoLoginAccount.Label + " • native autologin" +
-                    (autoLoginAccount.LowSpec ? " • LOW SPEC/WINDOWED." : ".")));
+                    (autoLoginAccount.LowSpec ? " • LOW CFG " + lowConfig + " • 640x480/WINDOWED." : ".")));
             return game;
         }
 
