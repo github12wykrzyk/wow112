@@ -83,6 +83,7 @@
   "addons": {
     "packager": "tools/package_lazyrogue_addons.py",
     "roots": [
+      "AuctionSniper",
       "LazyRogue",
       "LazyScript",
       "LazyWarlock",

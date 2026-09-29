@@ -355,6 +355,33 @@
         "artifact_id": 11053003316
       },
       "notes": "Infrastructure hardening integrated to parallel: feature/** preflight with changed-module compilation, declarative parallel candidate inventory, modular companion compile helper, split GUI ABI/behavioral gates, feature-path updater/AutoLogin builds, and documented freeze-by-SHA test lifecycle. No gameplay runtime behavior was intentionally changed."
+    },
+    {
+      "id": "auction-sniper-vmangos",
+      "branch": "feature/auction-sniper-vmangos",
+      "modules": [
+        "AuctionSniper"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS AuctionHouse query/bid flow",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "078d97eac2b794c0d94aff389931ae606653cb48",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "078d97eac2b794c0d94aff389931ae606653cb48",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36639456139 passed on exact feature SHA, including repository/runtime gates and changed-module preflight. Verify AI experiment registry run 36639455905 also passed on the same SHA."
+        }
+      ],
+      "package": null,
+      "notes": "V1 diagnostic/dry-run feature preflight passed on exact SHA 078d97eac2b794c0d94aff389931ae606653cb48. Automation path contains no PlaceAuctionBid call; LowBuyout/page-0 mode, correct pagination, one-query state, timeout watchdog, unit-price diagnostics, watchlist engine, dry-run candidate logging and raw CHAT_MSG_SYSTEM/UI_INFO_MESSAGE/UI_ERROR_MESSAGE capture are ready for integration. Parallel full candidate/package evidence is still pending."
     }
   ]
 }
