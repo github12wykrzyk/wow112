@@ -386,7 +386,8 @@ local function avm_accept_result()
 			return
 		end
 		if AVM.lastPage == 0 then
-			AVM.phase = "BOUNDARY_INIT"
+			avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' has auctions but no buyout")
+			avm_advance_rule()
 			return
 		end
 		AVM.boundaryLow = 1
@@ -402,14 +403,15 @@ local function avm_accept_result()
 			AVM.boundaryLow = page + 1
 		end
 		if AVM.boundaryLow > AVM.boundaryHigh then
-			AVM.phase = "BOUNDARY_INIT"
+			avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' has no positive buyout page")
+			avm_advance_rule()
 			return
 		end
 		if AVM.boundaryLow == AVM.boundaryHigh and page == AVM.boundaryLow then
 			if positive then
 				avm_start_scan(page)
 			else
-				AVM.phase = "BOUNDARY_INIT"
+				avm_advance_rule()
 			end
 			return
 		end
@@ -421,7 +423,8 @@ local function avm_accept_result()
 		if positive then
 			avm_start_scan(page)
 		else
-			avm_restart_boundary()
+			avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' boundary changed/no buyout")
+			avm_advance_rule()
 		end
 		return
 	end

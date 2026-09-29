@@ -410,14 +410,21 @@
         },
         {
           "kind": "game",
-          "result": "partial_pass",
+          "result": "inconclusive",
           "commit": "e548cc348acef53fb504d63a3544bb12b578ae5b",
           "date": "2026-09-30",
           "evidence": "User screenshot confirmed vMaNGOS global boundary search converged from page 557 through 279/140/70/35/53/62/66/68 to first positive-buyout page 67 at roughly 55.7k auctions. Test also exposed that global cheapest-page scanning is unsuitable for an item-specific Black Lotus rule and that pre-enable AH events polluted extraEvents."
+        },
+        {
+          "kind": "ci",
+          "result": "failed",
+          "commit": "46cfe9f46281390ba21830c0596673631bcd05f5",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36642125000 and AI experiment registry run 36642125003 failed only because the new gameplay evidence used unsupported result value partial_pass; code/runtime gates reached before ledger validation were PASS. Follow-up changes the result to the supported inconclusive value."
         }
       ],
       "package": null,
-      "notes": "V0.2 follow-up routes each watchlist rule through its own name-filtered vMaNGOS result set, binary-searches the first positive-buyout page within that set, revalidates on source/adjacent filtered pages, and uses a post-result settle window. Parent SHA e548cc34 gameplay validated the binary boundary mechanism but exposed the global-scan design flaw corrected here."
+      "notes": "V0.2 follow-up routes each watchlist rule through its own name-filtered vMaNGOS result set, binary-searches the first positive-buyout page within that set, revalidates on source/adjacent filtered pages, and uses a post-result settle window. Parent SHA e548cc34 gameplay validated the binary boundary mechanism but exposed the global-scan design flaw corrected here. CI follow-up fixes ledger result enum and advances fairly past item filters that contain only bid-only/no-buyout auctions."
     }
   ]
 }
