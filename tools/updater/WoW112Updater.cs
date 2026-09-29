@@ -999,27 +999,34 @@ namespace WoW112Updater
             return Path.Combine(root, ".wow112_parallel_updater", "installed.json");
         }
 
+        private System.Diagnostics.Process StartGameProcess()
+        {
+            var root = gameDir.Text.Trim();
+            if (!Directory.Exists(root)) throw new InvalidOperationException("Wybierz katalog gry.");
+            var state = ReadInstalledState();
+            var exeName = state == null ? string.Empty : GetString(state, "exe_name");
+            string exe = null;
+            if (!string.IsNullOrWhiteSpace(exeName) && File.Exists(Path.Combine(root, exeName))) exe = Path.Combine(root, exeName);
+            if (exe == null)
+            {
+                var candidates = Directory.GetFiles(root, "*.exe")
+                    .Where(p => Path.GetFileName(p).StartsWith("WoW", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(p => string.Equals(Path.GetFileName(p), "WoW.exe", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .ToArray();
+                exe = candidates.FirstOrDefault();
+            }
+            if (exe == null) throw new InvalidOperationException("Nie znalazłem WoW*.exe w wybranym katalogu.");
+            var game = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true });
+            if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
+            Log("Uruchomiono: " + Path.GetFileName(exe) + " (PID " + game.Id + ").");
+            return game;
+        }
+
         private void LaunchGame()
         {
             try
             {
-                var root = gameDir.Text.Trim();
-                if (!Directory.Exists(root)) throw new InvalidOperationException("Wybierz katalog gry.");
-                var state = ReadInstalledState();
-                var exeName = state == null ? string.Empty : GetString(state, "exe_name");
-                string exe = null;
-                if (!string.IsNullOrWhiteSpace(exeName) && File.Exists(Path.Combine(root, exeName))) exe = Path.Combine(root, exeName);
-                if (exe == null)
-                {
-                    var candidates = Directory.GetFiles(root, "*.exe")
-                        .Where(p => Path.GetFileName(p).StartsWith("WoW", StringComparison.OrdinalIgnoreCase))
-                        .OrderBy(p => string.Equals(Path.GetFileName(p), "WoW.exe", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                        .ToArray();
-                    exe = candidates.FirstOrDefault();
-                }
-                if (exe == null) throw new InvalidOperationException("Nie znalazłem WoW*.exe w wybranym katalogu.");
-                var game = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true });
-                Log("Uruchomiono: " + Path.GetFileName(exe));
+                var game = StartGameProcess();
                 RememberGameSession(game);
             }
             catch (Exception ex)
