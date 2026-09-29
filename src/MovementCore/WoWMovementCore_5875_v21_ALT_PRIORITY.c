@@ -352,6 +352,7 @@ static volatile DWORD g_patrolLoadPending=1u,g_patrolNeedRejoin=1u;
 static DWORD g_patrolLastIssue=0u,g_patrolResumeAt=0u,g_patrolProgressTick=0u;
 static DWORD g_patrolStuckSequence=0u,g_patrolSeed=0x51A2B3C4u;
 static float g_patrolLastProgressD2=0.0f;
+static void Patrol_Tick(BYTE *p,DWORD now);
 
 static DWORD W112_PPGuard_Safe(BYTE*p)
 {
@@ -1937,10 +1938,12 @@ static const char* Patrol_FileName(void)
 }
 static float Patrol_Sqrt(float v)
 {
-    float out=0.0f;
+    float x;
+    DWORD i;
     if(v<=0.0f)return 0.0f;
-    __asm { fld v fsqrt fstp out }
-    return out;
+    x=v>1.0f?v:1.0f;
+    for(i=0u;i<7u;++i)x=0.5f*(x+v/x);
+    return x;
 }
 static float Patrol_D2(float ax,float ay,float az,float bx,float by,float bz)
 {
