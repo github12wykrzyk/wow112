@@ -1293,6 +1293,16 @@ local function scheduleCounter(sender, message, loc, ambiguous)
     if cooldown > 3600 then cooldown = 3600 end
     if (t - (SS.lastCounterAt or -100000)) < cooldown then return end
 
+    -- Short anti-spam grace after our own advert: do not stack a competitive
+    -- reply directly on top of a post we just sent. Fifteen seconds keeps the
+    -- behavior polite without suppressing counters for a full minute.
+    local lastOwnAdvert = tonumber(SummonScoutDB.lastAdvertWall) or 0
+    local wall = wallTime()
+    if lastOwnAdvert > 0 and wall >= lastOwnAdvert and (wall - lastOwnAdvert) < 15 then
+        if SummonScoutDB.debug then chat("counter suppressed: own advert <15s") end
+        return
+    end
+
     local delay = counterDelay(sender, message)
     SS.counterAt = t + delay
     SS.counterSender = trim(sender)
