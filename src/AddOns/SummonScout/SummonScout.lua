@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.38"
+local ADDON_VERSION = "1.39"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -32,11 +32,15 @@ SS.partyKnown = {}
 SS.partyRosterReady = false
 SS.partySyncAt = 0
 SS.nextRosterPollAt = 0
-SS.summonQueue = {}
-SS.summonQueued = {}
+SS.summonPending = {}
 SS.summonActiveName = nil
+SS.summonActiveQueuedAt = 0
+SS.summonActiveAttempts = 0
+SS.summonActiveRequestSeq = nil
+SS.summonActiveNextAt = 0
 SS.summonActiveExpires = 0
 SS.summonActiveStarted = false
+SS.summonActiveStartReported = false
 SS.summonWhisperRecent = {}
 SS.whisperInviteRecent = {}
 SS.pendingManualInvites = {}
@@ -331,20 +335,72 @@ local function resolveLocationName(text)
     return nil, nil
 end
 
+local function resolveServiceSpec(text)
+    local raw = trim(text or "")
+    if raw == "" then return nil, nil end
+    if lower(raw) == "all" then return "all", "ALL" end
+
+    raw = string.gsub(raw, ";", ",")
+    local ids = {}
+    local labels = {}
+    local seen = {}
+    local startAt = 1
+
+    while true do
+        local commaAt = string.find(raw, ",", startAt, true)
+        local part
+        if commaAt then
+            part = trim(string.sub(raw, startAt, commaAt - 1))
+        else
+            part = trim(string.sub(raw, startAt))
+        end
+
+        if part ~= "" then
+            local id, label = resolveLocationName(part)
+            if not id or id == "all" then return nil, nil end
+            if not seen[id] then
+                seen[id] = true
+                ids[table.getn(ids) + 1] = id
+                labels[table.getn(labels) + 1] = label
+            end
+        end
+
+        if not commaAt then break end
+        startAt = commaAt + 1
+    end
+
+    if table.getn(ids) == 0 then return nil, nil end
+    return table.concat(ids, ","), table.concat(labels, " + ")
+end
+
+local function serviceContains(locationId)
+    local service = lower(trim(SummonScoutDB.service or "all"))
+    if service == "all" then return true end
+    if not locationId or locationId == "" then return false end
+    local haystack = "," .. service .. ","
+    local needle = "," .. lower(locationId) .. ","
+    return string.find(haystack, needle, 1, true) ~= nil
+end
+
+local function singleServiceLocation()
+    local service = lower(trim(SummonScoutDB.service or "all"))
+    if service == "all" or string.find(service, ",", 1, true) then return nil end
+    return LOCATION_BY_ID[service]
+end
+
 local function servedLocationLabel()
     local service = SummonScoutDB.service or "all"
-    if service == "all" then return "ALL" end
-    local loc = LOCATION_BY_ID[service]
-    return loc and loc.label or service
+    local _, label = resolveServiceSpec(service)
+    return label or service
 end
 
 local function locationAllowed(loc, ambiguous)
-    local service = SummonScoutDB.service or "all"
+    local service = lower(trim(SummonScoutDB.service or "all"))
     if service == "all" then
         return ambiguous == nil
     end
     if ambiguous or not loc then return false end
-    return loc.id == service
+    return serviceContains(loc.id)
 end
 
 local function whisperInviteDecision(message)
@@ -377,7 +433,7 @@ local function whisperInviteDecision(message)
 
     -- Explicitly asking for another known destination must never trigger.
     if loc then
-        if service ~= "all" and loc.id ~= service then
+        if service ~= "all" and not serviceContains(loc.id) then
             return false, loc, "other-location"
         end
         score = score + 3
@@ -394,7 +450,9 @@ local function whisperInviteDecision(message)
 
     -- A destination-less whisper inherits this summoner's configured service.
     if not loc and service ~= "all" then
-        loc = LOCATION_BY_ID[service]
+        local single = singleServiceLocation()
+        if not single then return false, nil, "multi-service-needs-location" end
+        loc = single
     end
     return true, loc, "smart-match"
 end
@@ -710,6 +768,26 @@ local function summonPlayerBlacklisted(name)
     return SUMMON_PLAYER_BLACKLIST[lower(trim(name or ""))] == true
 end
 
+local function pendingSummonCount()
+    local count = 0
+    local _key
+    for _key in pairs(SS.summonPending) do count = count + 1 end
+    return count
+end
+
+local function oldestPendingSummon()
+    local bestKey = nil
+    local bestItem = nil
+    local key, item
+    for key, item in pairs(SS.summonPending) do
+        if not bestItem or (item.queuedAt or 0) < (bestItem.queuedAt or 0) then
+            bestKey = key
+            bestItem = item
+        end
+    end
+    return bestKey, bestItem
+end
+
 local function queuePartySummon(name)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) then return end
@@ -717,22 +795,17 @@ local function queuePartySummon(name)
         if SummonScoutDB.debug then chat("summon blacklist skip -> " .. name) end
         return
     end
-    if SS.summonQueued[lower(name)] then return end
-    SS.summonQueued[lower(name)] = true
-    SS.summonQueue[table.getn(SS.summonQueue) + 1] = {
+
+    local key = lower(name)
+    if SS.summonActiveName and samePlayer(SS.summonActiveName, name) then return end
+    if SS.summonPending[key] then return end
+
+    SS.summonPending[key] = {
         name = name,
-        attempts = 0,
-        startReported = false,
         queuedAt = now(),
-        -- CHAT_MSG_SYSTEM can announce a join before Vanilla 1.12 exposes the
-        -- new partyX/raidX unit. Keep the item alive briefly so the roster can
-        -- converge instead of dropping the customer before native cast starts.
-        rosterGraceUntil = now() + 5.0,
-        rosterMissLogged = false,
-        phase = "cast",
-        nextAt = now() + 0.35
+        readyAt = now() + 0.20
     }
-    chat("party join -> summon queued: " .. name)
+    chat("party join -> summon pending: " .. name)
 end
 
 local function notePendingManualInvite(name)
@@ -872,16 +945,13 @@ local function nativeSummonStatus()
 end
 
 local function summonDestinationLabel()
-    local service = SummonScoutDB.service or "all"
-    if service ~= "all" then
-        local loc = LOCATION_BY_ID[service]
-        if loc and loc.label then return loc.label end
-    end
+    local single = singleServiceLocation()
+    if single and single.label then return single.label end
     if GetZoneText then
         local zone = trim(GetZoneText() or "")
         if zone ~= "" then return zone end
     end
-    return "my location"
+    return servedLocationLabel()
 end
 
 local function whisperSummonTarget(name)
@@ -908,70 +978,52 @@ end
 
 local function clearActiveSummon()
     SS.summonActiveName = nil
+    SS.summonActiveQueuedAt = 0
+    SS.summonActiveAttempts = 0
+    SS.summonActiveRequestSeq = nil
+    SS.summonActiveNextAt = 0
     SS.summonActiveExpires = 0
     SS.summonActiveStarted = false
+    SS.summonActiveStartReported = false
     W112_AUTOSUMMON_REQUEST = ""
     W112_AUTOSUMMON_REQUEST_SEQ = ""
 end
 
 local function finishActiveSummon(name)
     name = trim(name or SS.summonActiveName or "")
-    if name ~= "" then
-        SS.summonQueued[lower(name)] = nil
-        if table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, name) then
-            table.remove(SS.summonQueue, 1)
-        else
-            local j
-            for j = table.getn(SS.summonQueue), 1, -1 do
-                if samePlayer(SS.summonQueue[j].name, name) then
-                    table.remove(SS.summonQueue, j)
-                    break
-                end
-            end
-        end
-    end
+    if name ~= "" then SS.summonPending[lower(name)] = nil end
     clearActiveSummon()
 end
 
 local function retryActiveSummon(delay)
-    local name = SS.summonActiveName
-    clearActiveSummon()
-    if name and table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, name) then
-        SS.summonQueue[1].phase = "cast"
-        SS.summonQueue[1].requestSeq = nil
-        SS.summonQueue[1].nextAt = now() + (delay or 0.50)
-    end
+    if not SS.summonActiveName then return end
+    SS.summonActiveStarted = false
+    SS.summonActiveRequestSeq = nil
+    SS.summonActiveExpires = 0
+    SS.summonActiveNextAt = now() + (delay or 0.50)
+    W112_AUTOSUMMON_REQUEST = ""
+    W112_AUTOSUMMON_REQUEST_SEQ = ""
 end
 
 local function markActiveSummonStarted(source)
     local name = trim(SS.summonActiveName or "")
-    if name == "" then return end
-    if SS.summonActiveStarted then return end
+    if name == "" or SS.summonActiveStarted then return end
 
     SS.summonActiveStarted = true
     SS.summonActiveExpires = now() + 8.0
 
-    local item = table.getn(SS.summonQueue) > 0 and SS.summonQueue[1] or nil
-    if item and samePlayer(item.name, name) then
-        local startedSeq = trim(tostring(item.requestSeq or ""))
-        if startedSeq ~= "" then
-            -- The client SPELLCAST_START event is the authoritative proof that
-            -- this exact Ritual request really began. Publish it back to the
-            -- native bridge so a stale CastingBarFrame cannot poison the next
-            -- queued customer.
-            W112_AUTOSUMMON_STARTED_SEQ = startedSeq
-            W112_AUTOSUMMON_NATIVE_STATUS = "cast-started:event"
-        end
-        item.phase = "casting"
-        if not item.startReported then
-            item.startReported = true
-            whisperSummonTarget(name)
-            if SummonScoutDB.masterReportLifecycle then
-                reportMaster("SUMMON START", name .. " -> " .. summonDestinationLabel())
-            end
-        end
-    else
+    local startedSeq = trim(tostring(SS.summonActiveRequestSeq or ""))
+    if startedSeq ~= "" then
+        W112_AUTOSUMMON_STARTED_SEQ = startedSeq
+        W112_AUTOSUMMON_NATIVE_STATUS = "cast-started:event"
+    end
+
+    if not SS.summonActiveStartReported then
+        SS.summonActiveStartReported = true
         whisperSummonTarget(name)
+        if SummonScoutDB.masterReportLifecycle then
+            reportMaster("SUMMON START", name .. " -> " .. summonDestinationLabel())
+        end
     end
 
     if SummonScoutDB.debug then
@@ -980,86 +1032,99 @@ local function markActiveSummonStarted(source)
     guiRefreshSafe()
 end
 
+local function popReadyPendingSummon(t)
+    local bestKey = nil
+    local bestItem = nil
+    local key, item
+
+    for key, item in pairs(SS.summonPending) do
+        local queuedAt = item.queuedAt or t
+        if summonPlayerBlacklisted(item.name) then
+            SS.summonPending[key] = nil
+        elseif isInGroup(item.name) then
+            if t >= (item.readyAt or 0) then
+                if not bestItem or queuedAt < (bestItem.queuedAt or t) then
+                    bestKey = key
+                    bestItem = item
+                end
+            end
+        elseif (t - queuedAt) > 25 then
+            SS.summonPending[key] = nil
+            if SummonScoutDB.masterReportLifecycle then
+                reportMaster("SUMMON FAIL", item.name .. " - never became visible in party/raid")
+            end
+        end
+    end
+
+    if bestKey then SS.summonPending[bestKey] = nil end
+    return bestItem
+end
+
 local function processPartySummon()
     if not SummonScoutDB.enabled or not SummonScoutDB.partyAutoSummon then return end
-    if table.getn(SS.summonQueue) == 0 then
-        if SS.summonActiveName then clearActiveSummon() end
-        return
-    end
-
     local t = now()
-    local item = SS.summonQueue[1]
 
-    -- Queue timeout must run even while combat/cast state blocks new attempts.
-    if (t - (item.queuedAt or t)) > 25 then
-        chat("summon queue watchdog dropped -> " .. item.name)
+    if not SS.summonActiveName then
+        if UnitAffectingCombat and UnitAffectingCombat("player") then return end
+        local item = popReadyPendingSummon(t)
+        if not item then return end
+
+        SS.summonActiveName = item.name
+        SS.summonActiveQueuedAt = item.queuedAt or t
+        SS.summonActiveAttempts = 0
+        SS.summonActiveRequestSeq = nil
+        SS.summonActiveNextAt = t
+        SS.summonActiveExpires = 0
+        SS.summonActiveStarted = false
+        SS.summonActiveStartReported = false
+    end
+
+    local name = SS.summonActiveName
+    if not isInGroup(name) then
+        if (t - (SS.summonActiveQueuedAt or t)) < 5 then return end
         if SummonScoutDB.masterReportLifecycle then
-            reportMaster("SUMMON FAIL", item.name .. " - queue watchdog timeout")
+            reportMaster("SUMMON FAIL", name .. " - left party/raid before cast")
         end
-        finishActiveSummon(item.name)
+        finishActiveSummon(name)
         return
     end
 
-    local unit = groupUnitByName(item.name)
-    if not unit and not isInGroup(item.name) then
-        -- Roster-event race: a system "joined" line may arrive a few frames
-        -- before UnitName("partyX")/raid roster becomes readable. Do not erase
-        -- the freshly queued customer during that convergence window.
-        local graceUntil = item.rosterGraceUntil or ((item.queuedAt or t) + 5.0)
-        if t < graceUntil then
-            if SummonScoutDB.debug and not item.rosterMissLogged then
-                item.rosterMissLogged = true
-                chat("summon roster pending -> " .. item.name)
-            end
-            return
-        end
+    if (t - (SS.summonActiveQueuedAt or t)) > 30 then
+        chat("summon watchdog dropped -> " .. name)
         if SummonScoutDB.masterReportLifecycle then
-            reportMaster("SUMMON FAIL", item.name .. " - not visible in party/raid after roster grace")
+            reportMaster("SUMMON FAIL", name .. " - transaction watchdog timeout")
         end
-        finishActiveSummon(item.name)
+        finishActiveSummon(name)
         return
     end
-    item.rosterMissLogged = false
 
-    if SS.summonActiveName and not samePlayer(SS.summonActiveName, item.name) then
-        clearActiveSummon()
+    local nativeStatus, ackSeq, startedSeq = nativeSummonStatus()
+    local requestSeq = trim(tostring(SS.summonActiveRequestSeq or ""))
+
+    if requestSeq ~= "" and startedSeq == requestSeq then
+        markActiveSummonStarted("native")
     end
 
-    if SS.summonActiveName then
-        local nativeStatus, ackSeq, startedSeq = nativeSummonStatus()
-        local requestSeq = trim(tostring(item.requestSeq or ""))
-
-        if requestSeq ~= "" and startedSeq == requestSeq then
-            markActiveSummonStarted("native")
-        end
-
-        if SS.summonActiveStarted then
-            if t >= (SS.summonActiveExpires or 0) then
-                if SummonScoutDB.debug then
-                    chat("summon completion watchdog -> " .. item.name)
-                end
-                finishActiveSummon(item.name)
+    if SS.summonActiveStarted then
+        if t >= (SS.summonActiveExpires or 0) then
+            if SummonScoutDB.debug then chat("summon completion watchdog -> " .. name) end
+            if SummonScoutDB.masterReportLifecycle then
+                reportMaster("SUMMON OK", name .. " -> " .. summonDestinationLabel())
             end
-            return
+            finishActiveSummon(name)
         end
+        return
+    end
 
-        if requestSeq ~= "" and ackSeq == requestSeq then
-            if nativeStatus == "target-failed"
+    if requestSeq ~= "" then
+        if ackSeq == requestSeq
+            and (nativeStatus == "target-failed"
                 or nativeStatus == "no-spell"
                 or nativeStatus == "no-cast-api-or-spell"
-                or nativeStatus == "no-start" then
-                SS.lastSummonError = nativeStatus
-                retryActiveSummon(0.35)
-                return
-            end
-        end
-
-        if nativeStatus == "blocked-busy" then
-            -- Backward-compatible recovery for older bridge builds: never let
-            -- a level-triggered busy flag extend the transaction forever.
-            if t < (SS.summonActiveExpires or 0) then return end
+                or nativeStatus == "no-start"
+                or nativeStatus == "blocked-busy") then
             SS.lastSummonError = nativeStatus
-            retryActiveSummon(0.20)
+            retryActiveSummon(nativeStatus == "blocked-busy" and 0.20 or 0.35)
             return
         end
 
@@ -1069,60 +1134,43 @@ local function processPartySummon()
     end
 
     if UnitAffectingCombat and UnitAffectingCombat("player") then return end
-    if t < (item.nextAt or 0) then return end
-    if not item.phase then item.phase = "cast" end
+    if t < (SS.summonActiveNextAt or 0) then return end
 
-    if item.phase == "cast" then
-        item.attempts = (item.attempts or 0) + 1
-        if item.attempts > 3 then
-            local slot = findSpellBookSlot("Ritual of Summoning")
-            local nativeStatus, ackSeq = nativeSummonStatus()
-            local requestSeq = trim(tostring(item.requestSeq or ""))
-            local failReason = SS.lastSummonError
-            if failReason == "" then
-                if requestSeq ~= "" and ackSeq ~= requestSeq then
-                    failReason = "native bridge no ack (" .. nativeStatus .. ")"
-                else
-                    failReason = nativeStatus ~= "" and nativeStatus or "no cast start after retries"
-                end
-            end
-            chat("summon failed after retries: " .. item.name
-                .. " | unit=" .. tostring(groupUnitByName(item.name) or "-")
-                .. " spellbook=" .. tostring(slot or "NONE")
-                .. " shards=" .. tostring(countSoulShards())
-                .. " nativeAck=" .. tostring(W112_AUTOSUMMON_ACK or "-")
-                .. " nativeSeq=" .. tostring(W112_AUTOSUMMON_ACK_SEQ or "-")
-                .. " nativeStatus=" .. tostring(nativeStatus or "-")
-                .. " lastError=" .. failReason)
-            if SummonScoutDB.masterReportLifecycle then
-                reportMaster("SUMMON FAIL", item.name .. " -> " .. summonDestinationLabel()
-                    .. " - " .. failReason)
-            end
-            finishActiveSummon(item.name)
-            return
+    SS.summonActiveAttempts = (SS.summonActiveAttempts or 0) + 1
+    if SS.summonActiveAttempts > 3 then
+        local slot = findSpellBookSlot("Ritual of Summoning")
+        local failReason = SS.lastSummonError
+        if failReason == "" then failReason = nativeStatus ~= "" and nativeStatus or "no cast start after retries" end
+        chat("summon failed after retries: " .. name
+            .. " | unit=" .. tostring(groupUnitByName(name) or "-")
+            .. " spellbook=" .. tostring(slot or "NONE")
+            .. " shards=" .. tostring(countSoulShards())
+            .. " nativeAck=" .. tostring(W112_AUTOSUMMON_ACK or "-")
+            .. " nativeSeq=" .. tostring(W112_AUTOSUMMON_ACK_SEQ or "-")
+            .. " nativeStatus=" .. tostring(nativeStatus or "-")
+            .. " lastError=" .. failReason)
+        if SummonScoutDB.masterReportLifecycle then
+            reportMaster("SUMMON FAIL", name .. " -> " .. summonDestinationLabel() .. " - " .. failReason)
         end
+        finishActiveSummon(name)
+        return
+    end
 
-        SS.summonActiveName = item.name
-        SS.summonActiveStarted = false
+    local seq = nativeSummonBridgeRequest(name)
+    if seq then
+        SS.summonActiveRequestSeq = seq
         SS.summonActiveExpires = t + 2.20
-
-        local seq = nativeSummonBridgeRequest(item.name)
-        if seq then
-            item.requestSeq = seq
-            item.phase = "wait"
-            item.nextAt = t + 2.20
-            if SummonScoutDB.debug then
-                chat("native summon request -> " .. item.name
-                    .. " seq " .. seq
-                    .. " attempt " .. tostring(item.attempts))
-            end
-        else
-            chat("cannot queue native Ritual request")
-            if SummonScoutDB.masterReportLifecycle then
-                reportMaster("SUMMON FAIL", item.name .. " - native bridge request failed")
-            end
-            finishActiveSummon(item.name)
+        if SummonScoutDB.debug then
+            chat("native summon request -> " .. name
+                .. " seq " .. seq
+                .. " attempt " .. tostring(SS.summonActiveAttempts))
         end
+    else
+        chat("cannot queue native Ritual request")
+        if SummonScoutDB.masterReportLifecycle then
+            reportMaster("SUMMON FAIL", name .. " - native bridge request failed")
+        end
+        finishActiveSummon(name)
     end
 end
 
@@ -1224,7 +1272,7 @@ local function counterLocationAllowed(loc, ambiguous)
 
     if ambiguous or not loc then return false end
     local service = SummonScoutDB.service or "all"
-    return service == "all" or loc.id == service
+    return service == "all" or serviceContains(loc.id)
 end
 
 local function clearCounterPending()
@@ -1395,6 +1443,8 @@ local function setDefaults()
     if SummonScoutDB.maxLogEntries == nil then SummonScoutDB.maxLogEntries = 200 end
     if SummonScoutDB.debug == nil then SummonScoutDB.debug = false end
     if SummonScoutDB.service == nil then SummonScoutDB.service = "all" end
+    local canonicalService = resolveServiceSpec(SummonScoutDB.service)
+    if canonicalService then SummonScoutDB.service = canonicalService else SummonScoutDB.service = "all" end
     if SummonScoutDB.spamEnabled == nil then SummonScoutDB.spamEnabled = false end
     if SummonScoutDB.spamInterval == nil then SummonScoutDB.spamInterval = 120 end
     if SummonScoutDB.spamMessage == nil then SummonScoutDB.spamMessage = "" end
@@ -1524,9 +1574,10 @@ end
 
 local function showSummonCheck()
     local slot = findSpellBookSlot("Ritual of Summoning")
-    local queued = table.getn(SS.summonQueue) > 0 and SS.summonQueue[1].name or "-"
+    local _, pendingItem = oldestPendingSummon()
+    local pending = pendingItem and pendingItem.name or "-"
     local target = trim(UnitName("target") or "")
-    local probeName = queued ~= "-" and queued or target
+    local probeName = SS.summonActiveName or (pending ~= "-" and pending or target)
     local targetUnit = probeName ~= "" and groupUnitByName(probeName) or nil
     local shards = countSoulShards()
     chat("summoncheck v" .. ADDON_VERSION
@@ -1534,8 +1585,8 @@ local function showSummonCheck()
         .. " byName=" .. (CastSpellByName and "YES" or "NO")
         .. " CastSpell=" .. (CastSpell and "YES" or "NO")
         .. " shards=" .. tostring(shards))
-    chat("summoncheck queued=" .. queued
-        .. " depth=" .. tostring(table.getn(SS.summonQueue))
+    chat("summoncheck pending=" .. pending
+        .. " depth=" .. tostring(pendingSummonCount())
         .. " active=" .. tostring(SS.summonActiveName or "-")
         .. " groupUnit=" .. tostring(targetUnit or "-")
         .. " target=" .. (target ~= "" and target or "-")
@@ -1651,7 +1702,7 @@ end
 
 local function guiApplyService()
     local value = trim(GUI.serviceEdit and GUI.serviceEdit:GetText() or "")
-    local id, label = resolveLocationName(value)
+    local id, label = resolveServiceSpec(value)
     if id then
         SummonScoutDB.service = id
         chat("serving -> " .. label)
@@ -1737,9 +1788,8 @@ local function createGui()
         function(v)
             SummonScoutDB.partyAutoSummon = v
             if not v then
-                SS.summonQueue = {}
-                SS.summonQueued = {}
-                SS.summonActiveName = nil
+                SS.summonPending = {}
+                clearActiveSummon()
                 SS.pendingManualInvites = {}
             end
             syncPartyRoster(true)
@@ -1877,8 +1927,9 @@ guiRefresh = function()
             .. (pending and (" | pending " .. tostring(math.ceil(SS.counterAt - now())) .. "s") or ""))
     end
     if GUI.summonStateText then
+        local _, pendingItem = oldestPendingSummon()
         local pendingName = SS.summonActiveName
-            or (table.getn(SS.summonQueue) > 0 and SS.summonQueue[1].name)
+            or (pendingItem and pendingItem.name)
             or "-"
         GUI.summonStateText:SetText("Summon: " .. pendingName
             .. " | " .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "idle")
@@ -2063,9 +2114,8 @@ local function slash(msg)
             syncPartyRoster(true)
         elseif rest == "off" then
             SummonScoutDB.partyAutoSummon = false
-            SS.summonQueue = {}
-            SS.summonQueued = {}
-            SS.summonActiveName = nil
+            SS.summonPending = {}
+            clearActiveSummon()
         end
         status()
     elseif cmd == "summonwhisper" then
@@ -2094,7 +2144,7 @@ local function slash(msg)
         SummonScoutDB.channel = trim(rest)
         status()
     elseif cmd == "serve" and trim(rest) ~= "" then
-        local id, label = resolveLocationName(rest)
+        local id, label = resolveServiceSpec(rest)
         if id then
             SummonScoutDB.service = id
             chat("serving -> " .. label)
@@ -2138,7 +2188,7 @@ local function slash(msg)
         chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | summonwhispercd <1-120>")
         chat("/ssi paymentchat on|off")
         chat("/ssi clearpayments confirm | summoncheck | version")
-        chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
+        chat("/ssi serve <place[,place]|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
 
