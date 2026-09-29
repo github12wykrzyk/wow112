@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v3 - Ritual of Summoning helper + diagnostics.
+ * WoWAutoSummonAssist 5875 v6 - Ritual helper, Anti-AFK + slash control.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -51,12 +51,15 @@ typedef void (STDCALL *TimerProc32)(HWND32,UINT32,UINT_PTR32,u32);
 typedef UINT_PTR32 (STDCALL *SetTimerFn)(HWND32,UINT_PTR32,UINT32,TimerProc32);
 typedef BOOL32 (STDCALL *KillTimerFn)(HWND32,UINT_PTR32);
 typedef u32 (FASTCALL *GetObjectByGuidFn)(u64);
+typedef int (FASTCALL *LuaCFunctionFn)(void*);
+typedef void (FASTCALL *FrameScriptRegisterFunctionFn)(const char*,LuaCFunctionFn);
 typedef void (STDCALL *FrameScriptExecuteFn)(const char*,const char*);
 typedef void (__thiscall *RightClickObjectFn)(void*,int);
 
 #define WOW_OBJMGR                  0x00B41414u
 #define WOW_GET_OBJECT_BY_GUID      0x00464870u
 #define WOW_ON_RIGHT_CLICK_OBJECT   0x005F8660u
+#define WOW_FRAMESCRIPT_REGISTER    0x00704120u
 #define WOW_FRAMESCRIPT_EXECUTE     0x00704CD0u
 #define WOW_IAT_SETTIMER            0x007FF4F4u
 #define WOW_IAT_KILLTIMER           0x007FF4F8u
@@ -99,6 +102,7 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define ANTI_AFK_MIN_MS             120000u
 #define ANTI_AFK_MAX_EXTRA_MS       240000u
 #define ANTI_AFK_DEFER_RECHECK_MS   1000u
+#define ANTI_AFK_SLASH_REPAIR_MS    30000u
 
 #define STATUS_DETACHED             0u
 #define STATUS_WAIT_WORLD           1u
@@ -149,6 +153,8 @@ static volatile u32 g_antiAfkChannelDefers = 0u;
 static u32 g_antiAfkNextAt = 0u;
 static u32 g_antiAfkDeferCheckAt = 0u;
 static u32 g_antiAfkRng = 0u;
+static u32 g_antiAfkSlashInstallAt = 0u;
+static volatile u32 g_antiAfkSlashFeedback = 0u;
 
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
@@ -214,6 +220,7 @@ static void resetWorld(void)
     g_lo=0u;
     g_hi=0u;
     g_readyAt=0u;
+    g_antiAfkSlashInstallAt=0u;
     resetPortal();
     g_nearbyGoCount=0u;
     g_nearestEntry=0u;
@@ -231,6 +238,10 @@ static int buildGuard(void)
     for(i=0u;i<(u32)sizeof(sig);i++) if(p[i]!=sig[i]) return 0;
     p=(const volatile u8*)(ptr32)WOW_ON_RIGHT_CLICK_OBJECT;
     if((p[0]==0u && p[1]==0u) || (p[0]==0xCCu && p[1]==0xCCu)) return 0;
+    p=(const volatile u8*)(ptr32)WOW_FRAMESCRIPT_REGISTER;
+    /* Exact 5875 FrameScript_RegisterFunction prologue verified against the
+     * project client line: 56 57 8B F9. */
+    if(p[0]!=0x56u || p[1]!=0x57u || p[2]!=0x8Bu || p[3]!=0xF9u) return 0;
     return 1;
 }
 
@@ -308,6 +319,89 @@ static void antiAfkSchedule(u32 now)
     g_antiAfkNextAt=now+delay;
     g_antiAfkDeferCheckAt=0u;
     g_antiAfkSecondsLeft=(delay+999u)/1000u;
+}
+
+static void antiAfkSetEnabled(u32 enabled)
+{
+    g_antiAfkEnabled=enabled?1u:0u;
+    g_antiAfkNextAt=0u;
+    g_antiAfkDeferCheckAt=0u;
+    g_antiAfkSecondsLeft=0u;
+}
+
+static int FASTCALL luaAntiAfkOn(void *L)
+{
+    (void)L;
+    antiAfkSetEnabled(1u);
+    g_antiAfkSlashFeedback=1u;
+    return 0;
+}
+
+static int FASTCALL luaAntiAfkOff(void *L)
+{
+    (void)L;
+    antiAfkSetEnabled(0u);
+    g_antiAfkSlashFeedback=1u;
+    return 0;
+}
+
+static int FASTCALL luaAntiAfkToggle(void *L)
+{
+    (void)L;
+    antiAfkSetEnabled(g_antiAfkEnabled?0u:1u);
+    g_antiAfkSlashFeedback=1u;
+    return 0;
+}
+
+static int FASTCALL luaAntiAfkStatus(void *L)
+{
+    (void)L;
+    g_antiAfkSlashFeedback=1u;
+    return 0;
+}
+
+static void antiAfkInstallSlash(u32 now)
+{
+    static const char initScript[]=
+        "SLASH_W112ANTIAFK1='/antiafk';"
+        "SlashCmdList['W112ANTIAFK']=function(msg) "
+        "local c=string.lower(msg or ''); "
+        "if c=='on' then W112AntiAFKOn(); "
+        "elseif c=='off' then W112AntiAFKOff(); "
+        "elseif c=='toggle' then W112AntiAFKToggle(); "
+        "elseif c=='status' or c=='' then W112AntiAFKStatus(); "
+        "elseif DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
+        "'|cffffcc00[Anti-AFK]|r /antiafk on | off | toggle | status'); end "
+        "end";
+
+    FrameScriptRegisterFunctionFn reg;
+    if(g_antiAfkSlashInstallAt &&
+       (u32)(now-g_antiAfkSlashInstallAt)<ANTI_AFK_SLASH_REPAIR_MS) return;
+
+    reg=(FrameScriptRegisterFunctionFn)(ptr32)WOW_FRAMESCRIPT_REGISTER;
+    reg("W112AntiAFKOn",luaAntiAfkOn);
+    reg("W112AntiAFKOff",luaAntiAfkOff);
+    reg("W112AntiAFKToggle",luaAntiAfkToggle);
+    reg("W112AntiAFKStatus",luaAntiAfkStatus);
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(initScript,initScript);
+    g_antiAfkSlashInstallAt=now;
+}
+
+static void antiAfkFlushSlashFeedback(void)
+{
+    static const char onMsg[]=
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
+        "'|cff55ff55[Anti-AFK]|r ON - random jump 120-360s, cast/channel safe') end";
+    static const char offMsg[]=
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
+        "'|cffff7777[Anti-AFK]|r OFF') end";
+
+    if(!g_antiAfkSlashFeedback) return;
+    g_antiAfkSlashFeedback=0u;
+    if(g_antiAfkEnabled)
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(onMsg,onMsg);
+    else
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(offMsg,offMsg);
 }
 
 static void antiAfkTick(u32 player,u32 now)
@@ -473,12 +567,6 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
 
     ++g_heartbeat;
 
-    if(!g_enabled) {
-        g_status=STATUS_DISABLED;
-        resetPortal();
-        return;
-    }
-
     if(!buildGuard()) {
         g_status=STATUS_BUILD_MISMATCH;
         return;
@@ -490,13 +578,24 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
         return;
     }
 
+    /* Re-register periodically so /reload cannot permanently lose the slash
+     * binding. Registration and command handling stay inside this WoW process. */
+    antiAfkInstallSlash(now);
+
     busy=playerBusy(player);
     g_busyRaw=busy ? 1u:0u;
-    g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
 
-    /* Anti-AFK is independent from AutoSummon enable state and remains
-     * background-safe because it executes inside this client process. */
+    /* Anti-AFK is deliberately independent from AutoSummon enable state. */
+    antiAfkFlushSlashFeedback();
     antiAfkTick(player,now);
+
+    if(!g_enabled) {
+        g_status=STATUS_DISABLED;
+        resetPortal();
+        return;
+    }
+
+    g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
     scanAndMaybeClick(player,now);
 }
 
@@ -586,10 +685,7 @@ static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
         return 1;
     }
     if(id==21u){
-        g_antiAfkEnabled=v->u32;
-        g_antiAfkNextAt=0u;
-        g_antiAfkDeferCheckAt=0u;
-        g_antiAfkSecondsLeft=0u;
+        antiAfkSetEnabled(v->u32);
         return 1;
     }
     return 0;
@@ -600,7 +696,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00050000u,
+    0x00060000u,
     24u,
     g_settings,
     getValue,
@@ -643,6 +739,8 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkSecondsLeft=0u;
         g_antiAfkJumpCalls=0u;
         g_antiAfkChannelDefers=0u;
+        g_antiAfkSlashInstallAt=0u;
+        g_antiAfkSlashFeedback=0u;
 
         if(!buildGuard()) {
             g_status=STATUS_BUILD_MISMATCH;

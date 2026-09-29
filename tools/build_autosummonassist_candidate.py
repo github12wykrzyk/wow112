@@ -186,7 +186,10 @@ def main():
             "background_safe": True,
             "os_input_simulation": False,
             "defer_during_cast_or_channel": True,
-            "implementation": "FrameScript Jump() on the existing in-process UI timer"
+            "implementation": "FrameScript Jump() on the existing in-process UI timer",
+            "slash_command": "/antiafk on | off | toggle | status",
+            "slash_registration": "FrameScript_RegisterFunction 0x00704120; self-heals every 30s for /reload",
+            "shared_state_with_gui": True
         },
         "timer_period_ms": 25,
         "chat_diagnostic": "one message per newly observed ritual candidate GUID",

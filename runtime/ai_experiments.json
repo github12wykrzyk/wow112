@@ -89,11 +89,11 @@
         "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "e8ae6b761fbc01de09ec6e14a862b6c645a0d861",
+      "observed_head": "ce31ba687bdc962cc9aeef89d9f63404f298f41c",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v5 extends the existing multibox AutoSummon companion with an opt-in background Anti-AFK toggle. Each client schedules an independent pseudo-random Jump() every 120-360s using local GUID/tick-mixed LCG state; due jumps are deferred while native cast/channel state is active and execute afterward without resetting the random cycle until a jump call is made. Uses in-process FrameScript on the existing timer: no SendInput, cursor movement or foreground focus. SUMMON GUI exposes toggle, seconds to next call, jump-call count and cast/channel defer count. AutoSummon v4 portal background interaction diagnostics remain intact."
+      "notes": "v6 adds native /antiafk on|off|toggle|status commands sharing the exact same g_antiAfkEnabled state as the SUMMON GUI toggle. Four no-argument WoW Lua C functions are registered through exact-build FrameScript_RegisterFunction 0x00704120 after world readiness; the slash dispatcher is reinstalled every 30s so /reload can self-heal. Slash feedback is deferred to the next UI timer tick to avoid nested FrameScript execution. Also fixes v5 ordering so Anti-AFK remains active when AutoSummon itself is disabled. Anti-AFK remains per-process/background-safe, random 120-360s, and due jumps defer during cast/channel."
     }
   ]
 }
