@@ -337,15 +337,8 @@ namespace WoW112Updater
 
         private async Task UpdateAndPlayAsync()
         {
-            var root = gameDir.Text.Trim();
-            if (Directory.Exists(root) && IsGameRunning(root))
-            {
-                status.Text = "WoW już działa • uruchamiam kolejną instancję...";
-                Log("WoW już działa. Pomijam aktualizację plików i uruchamiam dodatkową instancję.");
-                LaunchGame();
-                return;
-            }
-
+            // Do not silently keep stale Interface/AddOns files when WoW is
+            // already running. UpdateAsync owns the close-game confirmation.
             await UpdateAsync();
             if (!status.Text.StartsWith("Aktualizacja nie powiodła", StringComparison.OrdinalIgnoreCase))
             {

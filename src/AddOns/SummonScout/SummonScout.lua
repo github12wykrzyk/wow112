@@ -4,6 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
+local ADDON_VERSION = "1.17"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -37,6 +38,9 @@ SS.summonActiveStarted = false
 SS.summonWhisperRecent = {}
 SS.lastAdvertMessage = ""
 SS.lastAdvertSentAt = -100000
+SS.lastSummonRequestAt = -100000
+SS.lastSummonRequestName = nil
+SS.lastSummonError = ""
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -687,19 +691,26 @@ end
 local function castRitualOnUnit(unit)
     local slot, book = findSpellBookSlot("Ritual of Summoning")
     local requested = false
+    local method = "none"
 
-    if slot and CastSpell then
-        CastSpell(slot, book)
-        requested = true
-    elseif CastSpellByName then
+    SS.lastSummonRequestAt = now()
+    SS.lastSummonRequestName = trim(UnitName(unit) or UnitName("target") or "")
+    SS.lastSummonError = ""
+
+    if CastSpellByName then
         CastSpellByName("Ritual of Summoning")
         requested = true
+        method = "by-name"
+    elseif slot and CastSpell then
+        CastSpell(slot, book)
+        requested = true
+        method = "spellbook"
     end
 
     if requested and SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
         SpellTargetUnit(unit)
     end
-    return requested, slot
+    return requested, slot, method
 end
 
 local function summonDestinationLabel()
@@ -829,14 +840,15 @@ local function processPartySummon()
         SS.summonActiveStarted = false
         SS.summonActiveExpires = now() + 1.25
 
-        local requested, slot = castRitualOnUnit(unit)
+        local requested, slot, method = castRitualOnUnit(unit)
         if requested then
             item.phase = SS.summonActiveStarted and "casting" or "wait"
             item.nextAt = now() + 1.25
             if SummonScoutDB.debug then
                 chat("summon cast requested -> " .. item.name
                     .. " attempt " .. tostring(item.attempts)
-                    .. (slot and (" spellbook=" .. tostring(slot)) or " by-name"))
+                    .. " method=" .. tostring(method)
+                    .. (slot and (" spellbook=" .. tostring(slot)) or ""))
             end
         else
             chat("cannot cast Ritual of Summoning: spell API unavailable")
@@ -944,6 +956,13 @@ local function scheduleCounter(sender, message, loc, ambiguous)
     if cooldown > 3600 then cooldown = 3600 end
     if (t - (SS.lastCounterAt or -100000)) < cooldown then return end
 
+    local lastOwnAdvert = tonumber(SummonScoutDB.lastAdvertWall) or 0
+    local wall = wallTime()
+    if lastOwnAdvert > 0 and wall >= lastOwnAdvert and (wall - lastOwnAdvert) < cooldown then
+        if SummonScoutDB.debug then chat("counter suppressed: recent own advert") end
+        return
+    end
+
     local delay = counterDelay(sender, message)
     SS.counterAt = t + delay
     SS.counterSender = trim(sender)
@@ -968,8 +987,16 @@ local function sendSpamMessage(manual)
         return false
     end
 
-    if not manual and normalizeMessage(message) == normalizeMessage(SS.lastAdvertMessage or "")
-        and (now() - (SS.lastAdvertSentAt or -100000)) < 10 then
+    local normalized = normalizeMessage(message)
+    local wall = wallTime()
+    local sharedLast = tonumber(SummonScoutDB.lastAdvertWall) or 0
+    local sharedSame = normalized ~= ""
+        and normalized == (SummonScoutDB.lastAdvertNormalized or "")
+        and sharedLast > 0 and wall >= sharedLast and (wall - sharedLast) < 15
+    local localSame = normalized == normalizeMessage(SS.lastAdvertMessage or "")
+        and (now() - (SS.lastAdvertSentAt or -100000)) < 15
+
+    if not manual and (sharedSame or localSame) then
         if SummonScoutDB.debug then chat("duplicate advert suppressed") end
         return true, "suppressed"
     end
@@ -986,6 +1013,8 @@ local function sendSpamMessage(manual)
         SendChatMessage(message, "CHANNEL", nil, channelId)
         SS.lastAdvertMessage = message
         SS.lastAdvertSentAt = now()
+        SummonScoutDB.lastAdvertNormalized = normalized
+        SummonScoutDB.lastAdvertWall = wall
         if manual or SummonScoutDB.debug then
             chat("spam -> #" .. (SummonScoutDB.channel or "World") .. ": " .. message)
         end
@@ -1093,12 +1122,14 @@ local function setDefaults()
     if SummonScoutDB.partyAutoSummon == nil then SummonScoutDB.partyAutoSummon = false end
     if SummonScoutDB.summonWhisperEnabled == nil then SummonScoutDB.summonWhisperEnabled = true end
     if SummonScoutDB.paymentChatEnabled == nil then SummonScoutDB.paymentChatEnabled = true end
+    if SummonScoutDB.lastAdvertNormalized == nil then SummonScoutDB.lastAdvertNormalized = "" end
+    if SummonScoutDB.lastAdvertWall == nil then SummonScoutDB.lastAdvertWall = 0 end
     ensureStats()
 end
 
 local function status()
     ensureStats()
-    chat("enabled=" .. (SummonScoutDB.enabled and "ON" or "OFF")
+    chat("v" .. ADDON_VERSION .. " enabled=" .. (SummonScoutDB.enabled and "ON" or "OFF")
         .. ", invite=" .. (SummonScoutDB.autoInvite and "ON" or "OFF")
         .. ", log=" .. (SummonScoutDB.loggingEnabled and "ON" or "OFF")
         .. ", channel=" .. (SummonScoutDB.channel or "world")
@@ -1185,6 +1216,24 @@ local function clearStats()
     SummonScoutDB.requestLog = {}
     SS.loggedRecent = {}
     chat("request statistics and recent log cleared")
+end
+
+local function showSummonCheck()
+    local slot = findSpellBookSlot("Ritual of Summoning")
+    local queued = table.getn(SS.summonQueue) > 0 and SS.summonQueue[1].name or "-"
+    local target = trim(UnitName("target") or "")
+    local targetUnit = queued ~= "-" and groupUnitByName(queued) or nil
+    local shards = GetItemCount and GetItemCount(6265) or -1
+    chat("summoncheck v" .. ADDON_VERSION
+        .. " spellbook=" .. tostring(slot or "NONE")
+        .. " byName=" .. (CastSpellByName and "YES" or "NO")
+        .. " CastSpell=" .. (CastSpell and "YES" or "NO")
+        .. " shards=" .. tostring(shards))
+    chat("summoncheck queued=" .. queued
+        .. " groupUnit=" .. tostring(targetUnit or "-")
+        .. " target=" .. (target ~= "" and target or "-")
+        .. " combat=" .. ((UnitAffectingCombat and UnitAffectingCombat("player")) and "YES" or "NO")
+        .. " lastError=" .. (SS.lastSummonError ~= "" and SS.lastSummonError or "-"))
 end
 
 local function describeTest(message)
@@ -1348,7 +1397,7 @@ local function createGui()
 
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", f, "TOP", 0, -14)
-    title:SetText("SummonScout Control Center")
+    title:SetText("SummonScout " .. ADDON_VERSION .. " Control Center")
     title:SetTextColor(1.0, 0.82, 0.0)
 
     guiButton(f, 682, -8, 26, "X", function() f:Hide() end)
@@ -1451,6 +1500,7 @@ local function createGui()
     GUI.revenueText = guiText(f, "Received total: 0c", 370, -324, true)
     GUI.currentGoldText = guiText(f, "Current gold: 0c", 370, -348, true)
     GUI.counterText = guiText(f, "Counter: -", 370, -372, true)
+    GUI.summonStateText = guiText(f, "Summon: idle", 370, -396, true)
     guiButton(f, 586, -316, 92, "Reset total", function() clearPayments() end)
     GUI.stateText = guiText(f, "State: -", 28, -450, true)
     GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -524, true)
@@ -1501,6 +1551,13 @@ guiRefresh = function()
         GUI.counterText:SetText("Counter: " .. (SummonScoutDB.counterEnabled and "ON" or "OFF")
             .. " | scope " .. tostring(SummonScoutDB.counterScope or "all")
             .. (pending and (" | pending " .. tostring(math.ceil(SS.counterAt - now())) .. "s") or ""))
+    end
+    if GUI.summonStateText then
+        local pendingName = SS.summonActiveName
+            or (table.getn(SS.summonQueue) > 0 and SS.summonQueue[1].name)
+            or "-"
+        GUI.summonStateText:SetText("Summon: " .. pendingName
+            .. (SS.lastSummonError ~= "" and (" | " .. SS.lastSummonError) or ""))
     end
     if GUI.stateText then
         GUI.stateText:SetText("Serve: " .. servedLocationLabel()
@@ -1734,6 +1791,10 @@ local function slash(msg)
         else
             chat("use /ssi clearstats confirm")
         end
+    elseif cmd == "summoncheck" then
+        showSummonCheck()
+    elseif cmd == "version" then
+        chat("version " .. ADDON_VERSION)
     elseif cmd == "test" and trim(rest) ~= "" then
         describeTest(rest)
     elseif cmd == "status" or cmd == "" then
@@ -1746,7 +1807,7 @@ local function slash(msg)
         chat("/ssi master <name>|on|off | reporttest")
         chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | summonwhispercd <1-120>")
         chat("/ssi paymentchat on|off")
-        chat("/ssi clearpayments confirm")
+        chat("/ssi clearpayments confirm | summoncheck | version")
         chat("/ssi serve <place|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
 end
@@ -1766,13 +1827,24 @@ frame:RegisterEvent("SPELLCAST_START")
 frame:RegisterEvent("SPELLCAST_STOP")
 frame:RegisterEvent("SPELLCAST_FAILED")
 frame:RegisterEvent("SPELLCAST_INTERRUPTED")
+frame:RegisterEvent("UI_ERROR_MESSAGE")
+frame:RegisterEvent("CHAT_MSG_SPELL_FAILED_LOCALPLAYER")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
         syncPartyRoster(true)
-        chat("loaded; watching #" .. (SummonScoutDB.channel or "world")
+        chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
+        return
+    end
+
+    if event == "UI_ERROR_MESSAGE" or event == "CHAT_MSG_SPELL_FAILED_LOCALPLAYER" then
+        if (now() - (SS.lastSummonRequestAt or -100000)) < 3 then
+            SS.lastSummonError = trim(arg1 or "spell rejected")
+            chat("summon rejected -> " .. SS.lastSummonError)
+            guiRefreshSafe()
+        end
         return
     end
 

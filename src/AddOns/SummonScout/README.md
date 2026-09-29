@@ -1,4 +1,4 @@
-# SummonScout 1.16
+# SummonScout 1.17
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -235,3 +235,14 @@ The 10 second cooldown is applied to **outgoing summon-status whispers**, not to
 - A started Ritual gets an 8-second completion watchdog; a request that never produces START is retried after the short request watchdog.
 - Trade fallback accounting requires either a remembered incoming offer or an accepted trade, preventing unrelated wallet gains during a cancelled trade from being counted as summon payment.
 - Suppressed duplicate World adverts are distinguished from actual sends, so debug output no longer claims `counter sent` when dedupe blocked the message.
+
+
+## 1.17 stale-install, cast diagnostics and counter dedupe
+
+- Version is visible on load, in status, GUI title, and via `/ssi version`.
+- Automatic World-ad dedupe uses both runtime state and shared `SummonScoutDB` state with a 15-second lock.
+- Counter scheduling also respects the last regular World advert for the full counter cooldown, preventing periodic-spam + counter double posts.
+- Auto-summon prefers Vanilla `CastSpellByName("Ritual of Summoning")`; spellbook `CastSpell` remains fallback.
+- `UI_ERROR_MESSAGE` and `CHAT_MSG_SPELL_FAILED_LOCALPLAYER` are captured immediately after auto-summon attempts and printed as `summon rejected -> ...`.
+- `/ssi summoncheck` reports spellbook presence, cast API availability, Soul Shards, queued target, resolved party/raid unit, current target, combat state and last summon error.
+- Updater `Aktualizuj i uruchom` no longer silently skips file updates when WoW is already open; the normal close-game/update flow is used instead.
