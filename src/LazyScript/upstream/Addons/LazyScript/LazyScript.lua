@@ -434,6 +434,9 @@ function lazyScript.OnEvent()
 		lazyScript.DeCacheItemSlots()
 		
 		elseif (event == "UI_ERROR_MESSAGE") then
+		if lazyScript.ClearFreshOwnTargetDebuffAttempt then
+			lazyScript.ClearFreshOwnTargetDebuffAttempt(0.35)
+		end
 		if lazyScript.RearTrace and (arg1 == SPELL_FAILED_NOT_BEHIND or
 			(SPELL_FAILED_OUT_OF_RANGE and arg1 == SPELL_FAILED_OUT_OF_RANGE)) then
 			lazyScript.RearTrace("ui_reject",(arg1 == SPELL_FAILED_NOT_BEHIND and "behind" or "range")..
@@ -595,12 +598,18 @@ function lazyScript.OnEvent()
 		end
 		
 		elseif (event == "SPELLCAST_FAILED") then
+		if lazyScript.ClearFreshOwnTargetDebuffAttempt then
+			lazyScript.ClearFreshOwnTargetDebuffAttempt(3.0)
+		end
 		--lazyScript.d("Spellcast failure detected.")
 		if (lazyScript.spellcastInProgress) then
 			lazyScript.spellcastInProgress = false
 		end
 		
 		elseif (event == "SPELLCAST_INTERRUPTED") then
+		if lazyScript.ClearFreshOwnTargetDebuffAttempt then
+			lazyScript.ClearFreshOwnTargetDebuffAttempt(3.0)
+		end
 		lazyScript.d("Spellcast interruption detected.")
 		if (lazyScript.spellcastInProgress) then
 			lazyScript.spellcastInProgress = false

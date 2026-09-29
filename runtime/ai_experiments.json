@@ -369,11 +369,11 @@
         "parallel addon package"
       ],
       "status": "in_progress",
-      "observed_head": "78514d9c410955c5ba2216cb7b7d5c8a8bc9656a",
+      "observed_head": "82567ea7043c29b24904560062c1af61c785c523",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Warlock Global Cooldown probe is adapted for this server from stock Demon Skin to Demon Armor. The user-visible GCD help text is updated consistently. Gameplay/100 ms rotation spam remains to be tested after exact-SHA preflight and parallel integration."
+      "notes": "LazyScript Warlock compatibility experiment now covers two server/client mismatches: ifGlobalCooldown probes Demon Armor instead of unavailable Demon Skin, and Corruption/Curse of Agony target-debuff criteria track the player's own copy by pre/post duplicate-count delta because stock 1.12 UnitDebuff exposes no caster. Pending casts are 100 ms spam-safe and failed/interrupted casts release the lease. Corruption expiry fallback follows vanilla ranks (12s R1, 15s R2, 18s R3+); Curse of Agony uses 24s. External timing references: Wowhead Classic spell 172, 6222, 980. Exact private-server stacking/dispels remain gameplay-test evidence."
     }
   ]
 }

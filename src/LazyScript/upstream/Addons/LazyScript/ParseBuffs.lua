@@ -418,8 +418,141 @@ function lazyScript.masks.HasBuffOrDebuff(unitId, buffOrDebuff, texture, ttTitle
 end
 
 
+-- WoW 1.12 UnitDebuff() exposes texture/stacks/type but not the caster.
+-- For the Warlock DoTs below we therefore prove ownership by observing a new
+-- duplicate debuff appear after our own cast attempt, then keep a bounded
+-- per-target lease for the spell duration. A different Warlock's identical
+-- DoT never satisfies ifTargetHasDebuff for these tracked spell codes.
+lazyScript.ownTargetDebuffProfiles = {
+	corruption = true,
+	curseAgony = true,
+}
+lazyScript.ownTargetDebuffs = lazyScript.ownTargetDebuffs or {}
+lazyScript.pendingOwnTargetDebuffs = lazyScript.pendingOwnTargetDebuffs or {}
+
+function lazyScript.GetOwnTargetDebuffDuration(actionObj, maxRank, rankCount)
+	if (not actionObj) then return nil end
+	if actionObj.code == "curseAgony" then
+		return 24
+	elseif actionObj.code == "corruption" then
+		local rank = maxRank or rankCount
+		if rank == 1 then return 12 end
+		if rank == 2 then return 15 end
+		return 18
+	end
+	return nil
+end
+
+function lazyScript.GetOwnTargetDebuffKey()
+	if not UnitExists("target") then return nil end
+	-- UnitGUID is absent in stock 1.12, but some 1.12 servers backport it.
+	if UnitGUID then
+		local guid = UnitGUID("target")
+		if guid then return "guid:"..guid end
+	end
+	return "unit:"..(UnitName("target") or "").."|"..
+		tostring(UnitLevel("target") or 0).."|"..
+		tostring(UnitHealthMax("target") or 0)
+end
+
+function lazyScript.masks.CountMatchingTargetDebuffs(buffObj)
+	if (not buffObj) or not UnitExists("target") then return 0 end
+	local count = 0
+	for buffId = 1, 16 do
+		local thisTexture = UnitDebuff("target", buffId)
+		if not thisTexture then break end
+		local isMatch = true
+		if buffObj.texture and thisTexture ~= buffObj.texture then
+			isMatch = false
+		end
+		if isMatch and buffObj.name then
+			local title = lazyScript.Tooltip:GetUnitBuffOrDebuffTextLeftN("target", "debuff", buffId, 1)
+			if (not title) or not string.find(title, "^"..buffObj.name) then
+				isMatch = false
+			end
+		end
+		if isMatch then count = count + 1 end
+	end
+	return count
+end
+
+function lazyScript.TrackOwnTargetDebuffAttempt(actionObj, maxRank, rankCount)
+	local _, class = UnitClass("player")
+	if class ~= "WARLOCK" or not actionObj or
+		not lazyScript.ownTargetDebuffProfiles[actionObj.code] or
+		not UnitExists("target") then
+		return
+	end
+	local buffObj = lazyScript.buffTable and lazyScript.buffTable[actionObj.code]
+	local key = lazyScript.GetOwnTargetDebuffKey()
+	local duration = lazyScript.GetOwnTargetDebuffDuration(actionObj, maxRank, rankCount)
+	if not buffObj or not key or not duration then return end
+	lazyScript.pendingOwnTargetDebuffs[actionObj.code] = {
+		key = key,
+		before = lazyScript.masks.CountMatchingTargetDebuffs(buffObj),
+		at = GetTime(),
+		duration = duration,
+	}
+end
+
+function lazyScript.ClearFreshOwnTargetDebuffAttempt(maxAge)
+	local now = GetTime()
+	for code, pending in pairs(lazyScript.pendingOwnTargetDebuffs) do
+		if pending and now - pending.at <= (maxAge or 0.35) then
+			lazyScript.pendingOwnTargetDebuffs[code] = nil
+		end
+	end
+end
+
+function lazyScript.masks.HasOwnTargetDebuff(buffObj, sayNothing)
+	local code = buffObj and buffObj.code
+	if not code or not lazyScript.ownTargetDebuffProfiles[code] then return false end
+	local key = lazyScript.GetOwnTargetDebuffKey()
+	if not key then return false end
+	local now = GetTime()
+	local pending = lazyScript.pendingOwnTargetDebuffs[code]
+	if pending then
+		if pending.key ~= key then
+			lazyScript.pendingOwnTargetDebuffs[code] = nil
+		else
+			if lazyScript.spellcastInProgress then return true end
+			local age = now - pending.at
+			if age >= 0.05 then
+				local currentCount = lazyScript.masks.CountMatchingTargetDebuffs(buffObj)
+				if currentCount > pending.before then
+					lazyScript.ownTargetDebuffs[code] = {
+						key = key,
+						expiresAt = now + pending.duration,
+					}
+					lazyScript.pendingOwnTargetDebuffs[code] = nil
+					return true
+				end
+			end
+			if age < 2.75 then return true end
+			lazyScript.pendingOwnTargetDebuffs[code] = nil
+		end
+	end
+
+	local active = lazyScript.ownTargetDebuffs[code]
+	if active and active.key == key then
+		if now >= active.expiresAt or lazyScript.masks.CountMatchingTargetDebuffs(buffObj) == 0 then
+			lazyScript.ownTargetDebuffs[code] = nil
+			return false
+		end
+		return true
+	end
+	return false
+end
+
 function lazyScript.masks.CheckBuffOrDebuff(unitId, buffObj, buffType, gtLtEq, val)
 	return function(sayNothing)
+		local _, playerClass = UnitClass("player")
+		if unitId == "target" and buffType == "debuff" and gtLtEq == "" and
+			playerClass == "WARLOCK" and buffObj and
+			lazyScript.ownTargetDebuffProfiles[buffObj.code] then
+			return lazyScript.masks.HasOwnTargetDebuff(buffObj, sayNothing)
+		end
+
 		local buffId, buffApplications = lazyScript.masks.HasBuffOrDebuff(unitId, buffType, buffObj.texture, buffObj.name, buffObj.body, sayNothing)
 
 		if (not buffId) and (gtLtEq ~= "") then

@@ -327,6 +327,13 @@ function lazyScript.Action:Use()
 	local spellIndexStart, rankCount, maxRank = self:FindSpellRanks(false)
 	local rearRequest = nil
 
+	-- Vanilla UnitDebuff does not expose the caster.  Snapshot the number of
+	-- matching target debuffs before a tracked Warlock DoT is sent; ParseBuffs
+	-- confirms our copy only when the duplicate count increases after the cast.
+	if lazyScript.TrackOwnTargetDebuffAttempt then
+		lazyScript.TrackOwnTargetDebuffAttempt(self, maxRank, rankCount)
+	end
+
 	-- Keep the previous timers until the game accepts this rear attack.
 	-- UI_ERROR_MESSAGE can undo them if the server rejects its position.
 	if (self.code == "bs" or self.code == "ambush") then
