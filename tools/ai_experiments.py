@@ -63,6 +63,9 @@ def validate(data):
                     and isinstance(event.get("date"), str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", event["date"])
                     and isinstance(event.get("evidence"), str) and event["evidence"].strip(),
                     "test record must identify kind, result, exact SHA, date and evidence")
+            if event.get("kind") == "game":
+                require(event["evidence"].startswith("User report:"),
+                        "game test evidence must explicitly identify user-report provenance")
     graph = {entry["id"]: entry["dependencies"] for entry in entries}
     visited, stack = set(), set()
 
@@ -132,6 +135,9 @@ def main():
             require(bool(SHA.fullmatch(args.commit)), "full exact commit SHA required")
             require(bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date)), "ISO date required")
             require(bool(args.evidence.strip()), "evidence is required")
+            if args.kind == "game":
+                require(args.evidence.strip().startswith("User report:"),
+                        "game evidence must start with 'User report:'")
             event = {"kind": args.kind, "result": args.result, "commit": args.commit,
                      "date": args.date, "evidence": args.evidence.strip()}
             require(event not in matches[0]["tests"], "duplicate evidence record")

@@ -40,14 +40,16 @@ class ExperimentRoutingTests(unittest.TestCase):
             with self.subTest(branch=branch), self.assertRaises(ValueError):
                 route(self.entries, "MovementCore", branch)
 
-    def test_no_invented_game_test_or_package(self):
+    def test_game_tests_have_explicit_user_provenance_and_packages_are_evidenced(self):
         game_tests = [
             event
             for entry in self.entries
             for event in entry["tests"]
             if event["kind"] == "game"
         ]
-        self.assertEqual(game_tests, [])
+        for event in game_tests:
+            self.assertTrue(event["evidence"].startswith("User report:"))
+            self.assertRegex(event["commit"], r"^[0-9a-f]{40}$")
 
         for entry in self.entries:
             package = entry["package"]
@@ -80,6 +82,14 @@ class ExperimentRoutingTests(unittest.TestCase):
         obj["experiments"][0]["tests"] = [{"kind": "game", "result": "passed",
                                             "commit": "a" * 40, "date": "2026-09-21",
                                             "evidence": ""}]
+        with self.assertRaises(ValueError):
+            validate(obj)
+
+    def test_game_evidence_without_user_report_provenance_fails(self):
+        obj = copy.deepcopy(self.data)
+        obj["experiments"][0]["tests"] = [{"kind": "game", "result": "failed",
+                                            "commit": "b" * 40, "date": "2026-09-29",
+                                            "evidence": "Observed failure without provenance."}]
         with self.assertRaises(ValueError):
             validate(obj)
 
