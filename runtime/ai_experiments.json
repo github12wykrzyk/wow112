@@ -53,10 +53,29 @@
       ],
       "dependency_registry": "runtime/parallel_dependency_registry.json",
       "status": "in_progress",
-      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
+      "observed_head": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Build work candidate run 36610691008 passed on integrated parallel SHA, including dependency audit, consolidated Rogue MovementCore, final package gates and attestations."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Verified aggregate candidate artifact 11053003316 was produced for the exact integrated parallel SHA."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053003316
+      },
       "notes": "Existing independent parallel work; runtime/parallel_dependency_registry.json on parallel is the module-level evidence; no acceptance inferred."
     },
     {
@@ -92,8 +111,8 @@
         "per-client Anti-AFK SPACE pulse"
       ],
       "status": "awaiting_game_test",
-      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
-      "verified_commit": "b24369b4c467ce514687e56ba0500f002dc30741",
+      "observed_head": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
       "tests": [
         {
           "kind": "ci",
@@ -108,14 +127,28 @@
           "commit": "b24369b4c467ce514687e56ba0500f002dc30741",
           "date": "2026-09-29",
           "evidence": "GitHub Actions artifact 11050929711 (WoW112-WORK-CANDIDATE-b24369b4c467ce514687e56ba0500f002dc30741) was uploaded from the successful exact-SHA run."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Build work candidate run 36610691008 passed on exact integrated parallel SHA; AutoSummonAssist, GUI contract, addon packaging and final attestation all passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Verified aggregate candidate artifact 11053003316 contains the integrated summon stack and SummonScout addon package for this SHA."
         }
       ],
       "package": {
         "verified": true,
-        "commit": "b24369b4c467ce514687e56ba0500f002dc30741",
-        "artifact_id": 11050929711
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053003316
       },
-      "notes": "Integrated parallel summon stack: SummonScout + AutoSummonAssist + PlayerESP GUI. Current code includes repeated summon queue recovery, manual-invite handling, natural whisper parsing, payer-authoritative accounting, master/slave persistent profiles, native summon bridge and per-client Anti-AFK. CI/package evidence is exact-SHA; latest gameplay result after b24369b4 remains pending."
+      "notes": "Integrated parallel summon stack: SummonScout + AutoSummonAssist + PlayerESP GUI. Current code includes repeated summon queue recovery, manual-invite handling, natural whisper parsing, payer-authoritative accounting, persistent master/slave profiles, native summon bridge and per-client Anti-AFK. CI/package evidence is exact-SHA ae54bd44; latest gameplay acceptance remains pending."
     },
     {
       "id": "multibox-background-sound-parallel",
@@ -130,10 +163,22 @@
         "per-profile LOW Config.wtf"
       ],
       "status": "in_progress",
-      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
+      "observed_head": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Build WoW112 updater run 36610690943 passed on exact parallel SHA, including compile, dashboard smoke, PE32 x86/hash verification and updater artifact upload."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053103340
+      },
       "notes": "BG SOUND toggle for each multibox account; the choice is persisted locally in that account profile and restored when MULTIBOX reopens. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table. UI follow-up: reserve a separate header row so the top description cannot cover column captions; middle column is explicitly labeled DŹWIĘK W TLE (BG SOUND). Preference persistence also covers the URUCHOM checkbox and AUTO POSTAĆ 1."
     },
     {
@@ -153,10 +198,22 @@
         "child-process AutoLogin environment contract"
       ],
       "status": "in_progress",
-      "observed_head": "b24369b4c467ce514687e56ba0500f002dc30741",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
+      "observed_head": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Updater run 36610690943 and AutoLogin Bridge run 36610690932 both passed on exact parallel SHA; bridge artifact 11053252010 was uploaded."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053103340
+      },
       "notes": "Per-launch AUTO POSTAĆ 1 toggle in MULTIBOX. Updater passes WOW112_AUTOCHAR_FIRST=1 only to selected child processes. AutoLoginBridge waits for successful native login, then on the WoW window thread executes guarded GlueXML: CharacterSelect_SelectCharacter(1,1) followed by CharacterSelect_EnterWorld(). No SendInput/focus. 60s fail-safe window; one-shot Lua flag prevents repeated EnterWorld. Exact project evidence: current PARALLEL uses FrameScript_Execute 0x00704CD0 and object-manager 0x00B41414; external Vanilla GlueXML confirms first list slot is index 1. LOW reliability follow-up: readiness now keys off CharacterSelectUI (the actual GlueXML screen), not the CharacterSelect model frame. Selection and EnterWorld are split into two UI-thread polls; EnterWorld waits until CharacterSelect.selectedIndex==1 after UPDATE_SELECTED_CHARACTER. Poll window increased from 60s to 120s for slow LOW launches. UI persistence follow-up: URUCHOM, BG SOUND and AUTO POSTAĆ 1 are stored per account in the local DPAPI-backed account vault, restored on dialog open, and saved before launch or normal dialog close."
     },
     {
@@ -174,11 +231,23 @@
         "MovementCore coordination flags / game timer",
         "Parallel PlayerESP W112_CONTROL_API_V1 GUI"
       ],
-      "status": "in_progress",
-      "observed_head": "ee789fb802d8d30eae013f130c72486a9b2b84dd",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
+      "status": "awaiting_game_test",
+      "observed_head": "60b19b1740e6c0d1e5644e2a7788b3bc309cd8a6",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Patrol feature head is an ancestor of integrated parallel; exact parallel Build work candidate run 36610691008 passed MovementCore/GUI/final package gates."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053003316
+      },
       "notes": "Native 5875 CTM waypoint patrol with three persistent route slots, GUI recording/save/clear, correlated lateral randomization, stuck recovery, combat/cast/PP arbitration, and AutoPP pause while recording. Feature branch is based on current parallel; in-game CTM/server behavior remains unverified until candidate test."
     },
     {
@@ -199,16 +268,28 @@
         "FrameScript_Execute 0x00704CD0 + Vanilla UnitIsTappedByPlayer",
         "native CTM 0x00611130 and existing MovementCore heartbeat injector"
       ],
-      "status": "in_progress",
-      "observed_head": "44e18e37e5ebdc8f7223c3e9cd5917383d298dd5",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
+      "status": "awaiting_game_test",
+      "observed_head": "8cc51f6ae553d5ce9215bfa1f2e6c58072ca1922",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Follow feature head is an ancestor of integrated parallel; exact parallel Build work candidate run 36610691008 passed MovementCore/GUI/final package gates."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053003316
+      },
       "notes": "MASTER publishes position/facing/zone/selected GUID and master-owned tap state. FOLLOWER uses CTM, jump/distance catch-up teleport, exact GUID targeting and a dedicated LazyScript W112AssistPulse with autoTarget suppressed. Follower suspends AutoPP/Gather. Role is transient and PATROL/FOLLOW are mutually exclusive. In-game shared-memory, tag and server teleport behavior require candidate test."
     },
     {
       "id": "parallel-workflow-hardening",
-      "branch": "feature/parallel-workflow-hardening",
+      "branch": "parallel",
       "modules": [
         "AI-workflow",
         "AI-experiments",
@@ -221,12 +302,31 @@
         "candidate inventory manifest",
         "GUI ABI/behavioral gates"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "81fae93129112f3adac9dd9563f686ff51c52e2b",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Infrastructure-only hardening based on parallel b24369b4: feature/** preflight, declarative parallel candidate inventory, modular companion compile path, and split GUI ABI/behavioral verification. No runtime behavior change."
+      "status": "accepted",
+      "observed_head": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "verified_commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Parallel feature preflight run 36610556096 passed all static gates and compiled 7/7 declared companion DLLs; integrated Build work candidate run 36610691008 also passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Integrated exact-SHA aggregate candidate artifact 11053003316 passed FINAL_PACKAGE and provenance attestation."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+        "artifact_id": 11053003316
+      },
+      "notes": "Infrastructure hardening integrated to parallel: feature/** preflight with changed-module compilation, declarative parallel candidate inventory, modular companion compile helper, split GUI ABI/behavioral gates, feature-path updater/AutoLogin builds, and documented freeze-by-SHA test lifecycle. No gameplay runtime behavior was intentionally changed."
     }
   ]
 }
