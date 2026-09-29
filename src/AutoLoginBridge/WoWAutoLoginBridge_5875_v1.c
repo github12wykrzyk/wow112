@@ -73,6 +73,17 @@ void *memcpy(void *dst,const void *src,size_t n)
     return dst;
 }
 
+/* The compiler may also lower zero-initialization in worker() to memset.
+   Keep the bridge fully /NODEFAULTLIB rather than linking a CRT only for it. */
+void *memset(void *dst,int value,size_t n)
+{
+    BYTE *d=(BYTE*)dst;
+    BYTE v=(BYTE)value;
+    size_t i;
+    for(i=0;i<n;++i) d[i]=v;
+    return dst;
+}
+
 static int guard_ok(void)
 {
     static const BYTE sig[]={
