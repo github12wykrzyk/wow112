@@ -78,7 +78,7 @@
     },
     {
       "id": "autosummon-assist-parallel",
-      "branch": "feature/antiafk-space",
+      "branch": "parallel",
       "modules": [
         "AutoSummonAssist",
         "WoWPlayerESP"
@@ -89,11 +89,11 @@
         "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "84cdafd7a255922e87df84a5991e0e2f4ba63b35",
+      "observed_head": "ff5da2bb0ed98783cae762d6557ba386bcd4ec88",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v14 feature experiment: remove AFK detection, STAND, Demon Armor and SAY recovery. Every randomized 100-120s, defer during cast/channel then PostMessageA WM_KEYDOWN+WM_KEYUP for VK_SPACE to this process's WoW HWND from exact-build GetGameWindow 0x00435C30. No foreground switch and no global SendInput; multibox instances target only their own client. Setting 23 counts successful SPACE pulses; 30/31 count queued keydown/keyup messages."
+      "notes": "v14 feature experiment: remove AFK detection, STAND, Demon Armor and SAY recovery. Every randomized 100-120s, defer during cast/channel then PostMessageA WM_KEYDOWN+WM_KEYUP for VK_SPACE to this process's WoW HWND from exact-build GetGameWindow 0x00435C30. No foreground switch and no global SendInput; multibox instances target only their own client. Setting 23 counts successful SPACE pulses; 30/31 count queued keydown/keyup messages. Feature implementation is being fast-forward integrated into parallel after isolation from concurrent FOLLOW/SummonScout work."
     },
     {
       "id": "multibox-background-sound-parallel",
