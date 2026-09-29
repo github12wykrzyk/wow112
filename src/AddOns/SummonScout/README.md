@@ -1,4 +1,4 @@
-# SummonScout 1.4
+# SummonScout 1.5
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -89,3 +89,17 @@ Example:
 `/ssi spammsg WTS summons Hydraxian - whisper me`
 `/ssi spamsec 120`
 `/ssi spam on`
+
+
+## 1.5 Hydraxian/Azshara aliases
+
+The following World-chat destination terms resolve to the same canonical service location: **Hydraxian Waterlords (Azshara)**:
+
+- `azshara`
+- `hydraxian waterlords`
+- `hydraxian waterlods` (common typo)
+- `hydraxian`
+- `hydraxis`
+- `hydrax`
+
+This means messages such as `WTB summon azshara`, `need summ hydraxis`, and `summ hydraxian waterlords` are grouped under one demand bucket.
