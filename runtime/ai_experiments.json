@@ -355,6 +355,25 @@
         "artifact_id": 11053003316
       },
       "notes": "Infrastructure hardening integrated to parallel: feature/** preflight with changed-module compilation, declarative parallel candidate inventory, modular companion compile helper, split GUI ABI/behavioral gates, feature-path updater/AutoLogin builds, and documented freeze-by-SHA test lifecycle. No gameplay runtime behavior was intentionally changed."
+    },
+    {
+      "id": "auction-sniper-vmangos",
+      "branch": "feature/auction-sniper-vmangos",
+      "modules": [
+        "AuctionSniper"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS AuctionHouse query/bid flow",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "in_progress",
+      "observed_head": "74b56d787024dd5fdd41355edee1f292618ad0c9",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Foundation import from EinBaum/AuctionSniper@d9d85807de9c82201e5e01c42ec5917c90257389 with MIT provenance plus vMaNGOS server audit against upstream development@464179081673cfd240f7ffe7f0daf96bca0b5a70. No intentional gameplay behavior change yet; branch is based on observed parallel head 74b56d787024dd5fdd41355edee1f292618ad0c9. Exact feature HEAD and CI must be queried live."
     }
   ]
 }
