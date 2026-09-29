@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v10 - payer-first gold trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v11 - payer-first gold trade + Demon Armor-priority Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -154,8 +154,9 @@ static volatile u32 g_nearestType = 0u;
 static volatile u32 g_nearestDistance100 = 0u;
 static volatile u32 g_antiAfkEnabled = 1u;
 static volatile u32 g_antiAfkSecondsLeft = 0u;
-static volatile u32 g_antiAfkSayCalls = 0u;
+static volatile u32 g_antiAfkActions = 0u;
 static volatile u32 g_antiAfkChannelDefers = 0u;
+static volatile u32 g_antiAfkLastAction = 0u; /* 0 none, 1 Demon Armor, 2 /say fallback */
 static volatile u32 g_tradeOpen = 0u;
 static volatile u32 g_tradeOfferCopper = 0u;
 static volatile u32 g_tradeAcceptAttempts = 0u;
@@ -173,7 +174,7 @@ static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
 
-static W112_ControlSettingV1 g_settings[28];
+static W112_ControlSettingV1 g_settings[29];
 static u32 g_descriptorReady = 0u;
 
 int _fltused = 0;
@@ -328,11 +329,10 @@ static int playerBusy(u32 player)
     return 0;
 }
 
-/* Vanilla 1.12.1 registers Jump in the in-game Movement & mouselook
- * FrameScript batch.  Invoke it inside this WoW process on the existing game
- * timer: no OS keyboard/mouse input and no foreground-window dependency.
- * Public cross-check: brues-code/ClassicAPI docs/BlizzardScriptAPI.md,
- * Movement & mouselook table [0x008500B8] lists Jump first. */
+/* Anti-AFK actions execute through the in-process FrameScript path on the
+ * existing game/UI timer: no OS keyboard/mouse input and no foreground-window
+ * dependency. Demon Armor is preferred when present in the local spellbook;
+ * /say "." is only the fallback for characters that do not know the spell. */
 static u32 antiAfkRandomDelay(u32 now)
 {
     if(!g_antiAfkRng)
@@ -420,7 +420,7 @@ static void antiAfkFlushSlashFeedback(void)
 {
     static const char onMsg[]=
         "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cff55ff55[Anti-AFK]|r ON - /say . every 120-360s, cast/channel safe') end";
+        "'|cff55ff55[Anti-AFK]|r ON - Demon Armor priority; /say . fallback; 120-360s') end";
     static const char offMsg[]=
         "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
         "'|cffff7777[Anti-AFK]|r OFF') end";
@@ -441,7 +441,22 @@ static void antiAfkFlushSlashFeedback(void)
 
 static void antiAfkTick(u32 player,u32 now)
 {
-    static const char sayScript[]="SendChatMessage(\".\",\"SAY\")";
+    static const char actionScript[]=
+        "W112_ANTIAFK_ACTION='0';"
+        "local found=nil;"
+        "if type(GetSpellName)=='function' and BOOKTYPE_SPELL then "
+        "local i;for i=1,512 do "
+        "local n=GetSpellName(i,BOOKTYPE_SPELL);"
+        "if not n then break end;"
+        "if n=='Demon Armor' then found=1;break end "
+        "end end;"
+        "if found and type(CastSpellByName)=='function' then "
+        "CastSpellByName('Demon Armor');W112_ANTIAFK_ACTION='1';"
+        "elseif type(SendChatMessage)=='function' then "
+        "SendChatMessage('.','SAY');W112_ANTIAFK_ACTION='2';"
+        "end";
+    const char *result;
+    u32 action;
 
     if(!g_antiAfkEnabled){
         g_antiAfkNextAt=0u;
@@ -461,8 +476,8 @@ static void antiAfkTick(u32 player,u32 now)
     }
 
     g_antiAfkSecondsLeft=0u;
-    /* User requirement: never interrupt the summon/channel.  The existing
-     * exact-build busy detector also covers a normal cast, which is safer. */
+    /* Never interrupt the summon/channel. The native busy detector also
+     * covers a normal cast, so Demon Armor cannot steal an active cast. */
     if(playerBusy(player)){
         if(!g_antiAfkDeferCheckAt||(int)(now-g_antiAfkDeferCheckAt)>=0){
             ++g_antiAfkChannelDefers;
@@ -471,8 +486,12 @@ static void antiAfkTick(u32 player,u32 now)
         return;
     }
 
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(sayScript,"AutoSummonAssist");
-    ++g_antiAfkSayCalls;
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(actionScript,"AutoSummonAssist");
+    result=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
+        "W112_ANTIAFK_ACTION",-1,0u);
+    action=parseDecimalU32(result);
+    g_antiAfkLastAction=(action==1u||action==2u)?action:0u;
+    if(g_antiAfkLastAction) ++g_antiAfkActions;
     antiAfkSchedule(now);
 }
 
@@ -709,32 +728,32 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
 static void initSettings(void)
 {
     u32 i;
-    static const char *keys[28]={
+    static const char *keys[29]={
         "enabled","scanner_alive","candidate_present","match_source",
         "candidate_entry","candidate_type","candidate_distance_x100",
         "candidate_guid_lo","candidate_guid_hi","native_pre_calls",
         "current_guid_pre_calls","native_post_returns","scan_ticks",
         "nearby_go_count","nearest_go_entry","nearest_go_type",
         "nearest_go_distance_x100","status","gate_reason","busy_raw",
-        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_say_calls",
+        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_actions",
         "anti_afk_channel_defers","trade_open","trade_gold_copper","trade_accepts",
-        "trade_target_accepted"
+        "trade_target_accepted","anti_afk_last_action"
     };
-    static const char *labels[28]={
+    static const char *labels[29]={
         "Enabled","Scanner alive","Ritual candidate","Match source",
         "Candidate entry","Candidate type","Candidate distance x100",
         "Candidate GUID low","Candidate GUID high","Native PRE calls",
         "Current GUID PRE calls","Native POST returns","Scan ticks",
         "Nearby GO <=12yd","Nearest GO entry","Nearest GO type",
         "Nearest GO distance x100","Status","Gate reason","Busy raw",
-        "Anti-AFK random /say","Anti-AFK next seconds","Anti-AFK say calls",
+        "Anti-AFK Demon Armor priority","Anti-AFK next seconds","Anti-AFK actions",
         "Anti-AFK channel defers","Trade window open","Trade gold offered (copper)",
-        "Trade accept attempts","Trade payer accepted first"
+        "Trade accept attempts","Trade payer accepted first","Anti-AFK last action"
     };
 
     if(g_descriptorReady) return;
 
-    for(i=0u;i<28u;i++) {
+    for(i=0u;i<29u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];
         int writableBool=(i==0u||i==20u);
         s->struct_size=sizeof(*s);
@@ -779,12 +798,13 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==20u) v->u32=g_busyRaw;
     else if(id==21u) v->u32=g_antiAfkEnabled?1u:0u;
     else if(id==22u) v->u32=g_antiAfkSecondsLeft;
-    else if(id==23u) v->u32=g_antiAfkSayCalls;
+    else if(id==23u) v->u32=g_antiAfkActions;
     else if(id==24u) v->u32=g_antiAfkChannelDefers;
     else if(id==25u) v->u32=g_tradeOpen;
     else if(id==26u) v->u32=g_tradeOfferCopper;
     else if(id==27u) v->u32=g_tradeAcceptAttempts;
     else if(id==28u) v->u32=g_tradeTargetAccepted;
+    else if(id==29u) v->u32=g_antiAfkLastAction;
     else return 0;
     return 1;
 }
@@ -809,8 +829,8 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x000A0000u,
-    28u,
+    0x000B0000u,
+    29u,
     g_settings,
     getValue,
     setValue
@@ -851,8 +871,9 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkDeferCheckAt=0u;
         g_antiAfkRng=0u;
         g_antiAfkSecondsLeft=0u;
-        g_antiAfkSayCalls=0u;
+        g_antiAfkActions=0u;
         g_antiAfkChannelDefers=0u;
+        g_antiAfkLastAction=0u;
         g_antiAfkSlashInstallAt=0u;
         g_antiAfkSlashFeedback=0u;
         g_antiAfkSlashCommands=0u;

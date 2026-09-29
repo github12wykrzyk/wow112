@@ -89,11 +89,11 @@
         "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "5591f20b210f9317f11562f1d7f682db4c1f74c4",
+      "observed_head": "60b19b1740e6c0d1e5644e2a7788b3bc309cd8a6",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v8 replaces the Anti-AFK Jump() action after live testing showed no visible jump/activity. The same opt-in Anti-AFK state now executes FrameScript SendChatMessage(\".\",\"SAY\") once per independently randomized 120-360s interval. Due actions are still deferred while native cast/channel is active. SUMMON GUI now reports say-call count instead of jump-call count; /antiafk on|off|toggle|status continues to control the same state. Background-safe: no OS input or foreground focus."
+      "notes": "v11 changes Anti-AFK priority. At each randomized 120-360s due tick, after the existing cast/channel guard, the module scans the Vanilla spellbook via GetSpellName. If Demon Armor is known it executes CastSpellByName('Demon Armor'); only characters without the spell fall back to SendChatMessage('.', 'SAY'). GUI/slash share the same enabled state. Setting 23 counts Anti-AFK actions and new setting 29 reports last action: 1 Demon Armor, 2 SAY fallback. No OS input or focus dependency."
     },
     {
       "id": "multibox-background-sound-parallel",

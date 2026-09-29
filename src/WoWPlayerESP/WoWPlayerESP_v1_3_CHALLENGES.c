@@ -602,10 +602,10 @@ static void ui_sync_summon(void) {
         "DISABLED","BUILD MISMATCH","NO TIMER","CAST/CHANNEL"
     };
     static const char* matches[4]={"NONE","ENTRY 36727","TYPE 18","ENTRY+TYPE"};
-    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,24u);
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,29u);
     W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
     W112_ControlValueV1 pre,current,post,scans,nearCount,nearEntry,nearType,nearDist,status,gate,busy;
-    W112_ControlValueV1 anti,nextSec,sayCalls,channelDefers;
+    W112_ControlValueV1 anti,nextSec,actions,channelDefers,lastAction;
     char buf[260],*p;
 
     if(!m) {
@@ -648,8 +648,9 @@ static void ui_sync_summon(void) {
     if(!m->get_value(20u,&busy))busy.u32=0u;
     if(!m->get_value(21u,&anti))anti.u32=0u;
     if(!m->get_value(22u,&nextSec))nextSec.u32=0u;
-    if(!m->get_value(23u,&sayCalls))sayCalls.u32=0u;
+    if(!m->get_value(23u,&actions))actions.u32=0u;
     if(!m->get_value(24u,&channelDefers))channelDefers.u32=0u;
+    if(!m->get_value(29u,&lastAction))lastAction.u32=0u;
 
     if(g_ui_summon_check)
         SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
@@ -696,8 +697,9 @@ static void ui_sync_summon(void) {
     if(g_ui_summon_antiafk_state){
         p=buf;p=app_str(p,"ANTI-AFK: ");p=app_str(p,anti.u32?"ON":"OFF");
         p=app_str(p," | next ~");p=app_u32(p,nextSec.u32);p=app_str(p,"s");
-        p=app_str(p," | say calls ");p=app_u32(p,sayCalls.u32);
-        p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
+        p=app_str(p," | actions ");p=app_u32(p,actions.u32);
+        p=app_str(p," | last ");p=app_str(p,lastAction.u32==1u?"ARMOR":(lastAction.u32==2u?"SAY":"NONE"));
+        p=app_str(p," | defers ");p=app_u32(p,channelDefers.u32);
         *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
     }
 }
@@ -1420,11 +1422,11 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==240u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(0u);return 0;}
         if(id==241u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(1u);return 0;}
         if(id==229u){
-            ui_work_pp_flip(PAR_SUMMON_DLL,24u,1u);
+            ui_work_pp_flip(PAR_SUMMON_DLL,29u,1u);
             ui_sync_summon();return 0;
         }
         if(id==230u){
-            ui_work_pp_flip(PAR_SUMMON_DLL,24u,21u);
+            ui_work_pp_flip(PAR_SUMMON_DLL,29u,21u);
             ui_sync_summon();return 0;
         }
         if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
@@ -1755,7 +1757,7 @@ static BOOL ui_create(HWND game) {
     g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,505,665,42,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
     g_ui_summon_antiafk_check=ui_button(g_parallel_ui_hwnd,
-        "ANTI-AFK - /say . every random 120-360s (never during cast/channel)",
+        "ANTI-AFK - Demon Armor priority; /say . fallback; random 120-360s",
         46,555,665,36,230u,TRUE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_check);
     g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,600,665,32,FALSE);
