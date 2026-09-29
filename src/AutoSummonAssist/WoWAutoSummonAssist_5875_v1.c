@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v15 - native summon cast bridge + payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v16 - nonblocking summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -496,7 +496,12 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     if(g_lastSummonBridgePoll && (u32)(now-g_lastSummonBridgePoll)<SUMMON_BRIDGE_POLL_MS) return;
     g_lastSummonBridgePoll=now;
     req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
-    if(!req||!req[0]||playerBusy(player)) return;
+    if(!req||!req[0]) return;
+
+    /* Do not gate bridge consumption on the raw cast/channel memory fields.
+     * Some ritual completions leave those fields stale on this client/server,
+     * which previously deadlocked every later customer. If WoW is genuinely
+     * busy, the cast request simply fails and SummonScout retries. */
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
 }
 
@@ -839,7 +844,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x000F0000u,
+    0x00100000u,
     31u,
     g_settings,
     getValue,

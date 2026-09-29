@@ -1,4 +1,4 @@
-# SummonScout 1.27
+# SummonScout 1.28
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -359,3 +359,17 @@ Because older builds are known to have polluted the saved total, the first 1.27 
 - future totals are accumulated only from confirmed wallet gains.
 
 The GUI label is now `Received total (trusted)` to distinguish this clean ledger from historical data.
+
+
+## 1.28 repeated-summon deadlock recovery
+
+This release removes two gates that could leave the summon queue permanently stuck after one successful Ritual:
+- the Lua `CastingBarFrame` busy gate is no longer authoritative;
+- `UnitIsConnected(unit)` no longer blocks a roster-confirmed customer forever.
+
+The native AutoSummonAssist bridge is the execution authority. SummonScout queues by character name and retries if the actual cast is rejected.
+
+Additional recovery:
+- raid names are read through `GetRaidRosterInfo` when raid unit tokens lag;
+- system join messages provide a second immediate queue path;
+- a 20-second per-customer watchdog drops a pathological head-of-line entry so later customers cannot be blocked indefinitely.

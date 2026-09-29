@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.27"
+local ADDON_VERSION = "1.28"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -678,7 +678,8 @@ local function groupUnitByName(name)
     end
     for j = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
         local unit = "raid" .. j
-        if samePlayer(UnitName(unit), name) then return unit end
+        local raidName = GetRaidRosterInfo and GetRaidRosterInfo(j) or nil
+        if samePlayer(raidName or UnitName(unit), name) then return unit end
     end
     return nil
 end
@@ -705,6 +706,7 @@ local function queuePartySummon(name)
         name = name,
         attempts = 0,
         startReported = false,
+        queuedAt = now(),
         phase = "cast",
         nextAt = now() + 0.35
     }
@@ -737,7 +739,23 @@ local function syncPartyRoster(suppressNew)
         observeUnit("party" .. j)
     end
     for j = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
-        observeUnit("raid" .. j)
+        local raidName = GetRaidRosterInfo and GetRaidRosterInfo(j) or nil
+        if trim(raidName or "") ~= "" then
+            local key = lower(raidName)
+            if not current[key] and not samePlayer(raidName, UnitName("player")) then
+                current[key] = raidName
+                if SS.partyRosterReady and not suppressNew and not SS.partyKnown[key] then
+                    if SummonScoutDB.partyAutoSummon then
+                        queuePartySummon(raidName)
+                    end
+                    if SummonScoutDB.masterReportLifecycle and not summonPlayerBlacklisted(raidName) then
+                        reportMaster("JOIN", raidName .. " -> " .. servedLocationLabel())
+                    end
+                end
+            end
+        else
+            observeUnit("raid" .. j)
+        end
     end
 
     SS.partyKnown = current
@@ -866,20 +884,27 @@ local function processPartySummon()
         return
     end
     if table.getn(SS.summonQueue) == 0 then return end
-    if playerIsCasting() then return end
     if UnitAffectingCombat and UnitAffectingCombat("player") then return end
 
     local item = SS.summonQueue[1]
     local unit = groupUnitByName(item.name)
-    if not unit then
+    if not unit and not isInGroup(item.name) then
         if SummonScoutDB.masterReportLifecycle then
             reportMaster("SUMMON FAIL", item.name .. " - left party/raid before cast")
         end
         finishActiveSummon(item.name)
         return
     end
-    if UnitIsConnected and not UnitIsConnected(unit) then
-        item.nextAt = now() + 2
+
+    -- Do not block forever on stale UnitIsConnected/raid UnitID state. The DLL
+    -- targets by character name, so a roster-confirmed member can be attempted
+    -- even while the unit token is still settling.
+    if (now() - (item.queuedAt or now())) > 20 then
+        chat("summon queue watchdog dropped -> " .. item.name)
+        if SummonScoutDB.masterReportLifecycle then
+            reportMaster("SUMMON FAIL", item.name .. " - queue watchdog timeout")
+        end
+        finishActiveSummon(item.name)
         return
     end
     if now() < (item.nextAt or 0) then return end
@@ -1944,6 +1969,7 @@ frame:RegisterEvent("TRADE_CLOSED")
 frame:RegisterEvent("CHAT_MSG_WHISPER")
 frame:RegisterEvent("PARTY_MEMBERS_CHANGED")
 frame:RegisterEvent("RAID_ROSTER_UPDATE")
+frame:RegisterEvent("CHAT_MSG_SYSTEM")
 frame:RegisterEvent("SPELLCAST_START")
 frame:RegisterEvent("SPELLCAST_STOP")
 frame:RegisterEvent("SPELLCAST_FAILED")
@@ -1975,6 +2001,25 @@ frame:SetScript("OnEvent", function()
 
     if event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
         SS.partySyncAt = now() + 0.20
+        return
+    end
+
+    if event == "CHAT_MSG_SYSTEM" then
+        local line = trim(arg1 or "")
+        local _, _, joinedName = string.find(line, "^(.+) has joined the raid group%.$")
+        if not joinedName then
+            _, _, joinedName = string.find(line, "^(.+) has joined the party%.$")
+        end
+        if not joinedName then
+            _, _, joinedName = string.find(line, "^(.+) joins the party%.$")
+        end
+        joinedName = trim(joinedName or "")
+        if joinedName ~= "" and not samePlayer(joinedName, UnitName("player")) then
+            if SummonScoutDB.partyAutoSummon then
+                queuePartySummon(joinedName)
+            end
+            SS.partySyncAt = now() + 0.20
+        end
         return
     end
 
