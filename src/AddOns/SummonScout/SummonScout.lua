@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.19"
+local ADDON_VERSION = "1.20"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -707,47 +707,33 @@ end
 
 local function castRitualOnUnit(unit)
     local slot, book = findSpellBookSlot("Ritual of Summoning")
-    local requested = false
-    local method = "none"
-    local previousTarget = trim(UnitName("target") or "")
     local summonTarget = trim(UnitName(unit) or "")
 
     SS.lastSummonRequestAt = now()
     SS.lastSummonRequestName = summonTarget
     SS.lastSummonError = ""
 
-    -- Mirror the proven LazyScript 1.12 pattern atomically:
-    -- TargetUnit(unit) -> CastSpell(index, "spell") -> restore previous target.
-    -- Keeping these in one OnUpdate pass prevents the user's own target changes
-    -- from racing the old 200 ms target/cast split.
-    if TargetUnit then
-        TargetUnit(unit)
-    elseif TargetByName and summonTarget ~= "" then
+    -- Keep this intentionally equivalent to a vanilla two-line macro:
+    -- /target <player>
+    -- /cast Ritual of Summoning
+    --
+    -- Do NOT restore the old target here. The 1.19 restore could race the client
+    -- before the cast was committed, producing target changes with no START.
+    if summonTarget ~= "" and TargetByName then
         TargetByName(summonTarget, true)
+    elseif TargetUnit then
+        TargetUnit(unit)
     end
 
     if slot and CastSpell then
         CastSpell(slot, book)
-        requested = true
-        method = "spellbook"
+        return true, slot, "target+spellbook"
     elseif CastSpellByName then
         CastSpellByName("Ritual of Summoning")
-        requested = true
-        method = "by-name-fallback"
+        return true, slot, "target+by-name"
     end
 
-    if requested and SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
-        SpellTargetUnit(unit)
-    end
-
-    -- Do not leave SSI owning the player's target after issuing the cast.
-    if previousTarget ~= "" and not samePlayer(previousTarget, summonTarget) then
-        if TargetLastTarget then TargetLastTarget() end
-    elseif previousTarget == "" and ClearTarget then
-        ClearTarget()
-    end
-
-    return requested, slot, method
+    return false, slot, "none"
 end
 
 local function summonDestinationLabel()
@@ -883,7 +869,7 @@ local function processPartySummon()
     end
 
     if item.phase == "wait" then
-        -- No SPELLCAST_START arrived: retry the atomic target/cast/restore sequence.
+        -- No SPELLCAST_START arrived: retry the simple target + cast sequence.
         item.phase = "cast"
         item.nextAt = now() + 0.20
     end

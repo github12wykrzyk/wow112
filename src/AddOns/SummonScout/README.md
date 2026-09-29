@@ -1,4 +1,4 @@
-# SummonScout 1.19
+# SummonScout 1.20
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -274,3 +274,19 @@ The summon attempt now mirrors the proven LazyScript pattern in one atomic pass:
 `TargetUnit(groupUnit) -> CastSpell(spellbookIndex, "spell") -> SpellTargetUnit if needed -> TargetLastTarget/ClearTarget`.
 
 The user's previous target is restored immediately after issuing the Ritual, so SSI should no longer keep snapping the target back to the summoned party member.
+
+
+## 1.20 deliberately simple target + cast
+
+Auto-summon was reduced to the direct Vanilla equivalent of:
+
+`/target <new group member>`
+`/cast Ritual of Summoning`
+
+Implementation:
+- resolve the new member name;
+- `TargetByName(name, true)` (or `TargetUnit(unit)` fallback);
+- resolve `Ritual of Summoning` in the spellbook;
+- `CastSpell(index, "spell")`.
+
+There is no immediate `TargetLastTarget()`, `ClearTarget()`, or extra `SpellTargetUnit()` after the cast request. The 1.19 target restore was a likely race: the client could see the target changed back before it committed the Ritual request. SSI now changes target once and leaves it on the summoned player while the cast starts.
