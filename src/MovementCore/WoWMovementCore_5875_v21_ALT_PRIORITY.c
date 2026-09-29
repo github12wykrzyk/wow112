@@ -28,6 +28,11 @@
 #undef MovementCore_GetVersion
 #undef DllMain
 
+/* V21 additionally uses process ownership to scope manual hotkeys to the
+   foreground WoW instance in multibox setups. */
+__declspec(dllimport) DWORD __stdcall GetCurrentProcessId(void);
+__declspec(dllimport) DWORD __stdcall GetWindowThreadProcessId(HWND,DWORD*);
+
 #include "../common/W112ControlAPI.h"
 #if defined(_MSC_VER)
 #pragma comment(linker, "/EXPORT:W112_Control_GetModuleV1=_W112_Control_GetModuleV1@0")
