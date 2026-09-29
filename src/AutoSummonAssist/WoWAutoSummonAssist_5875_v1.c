@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v14 - payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v15 - native summon cast bridge + payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -119,6 +119,7 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define ANTI_AFK_DEFER_RECHECK_MS     1000u
 #define ANTI_AFK_SLASH_REPAIR_MS      3000u
 #define TRADE_POLL_MS               100u
+#define SUMMON_BRIDGE_POLL_MS         50u
 
 #define STATUS_DETACHED             0u
 #define STATUS_WAIT_WORLD           1u
@@ -180,6 +181,7 @@ static u32 g_antiAfkSlashInstallAt = 0u;
 static volatile u32 g_antiAfkSlashFeedback = 0u;
 static volatile u32 g_antiAfkSlashCommands = 0u;
 static u32 g_lastTradePoll = 0u;
+static u32 g_lastSummonBridgePoll = 0u;
 
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
@@ -473,6 +475,31 @@ static void antiAfkTick(u32 player,u32 now)
     }
 }
 
+/* SummonScout publishes a player name in W112_AUTOSUMMON_REQUEST.
+ * Execute target + Ritual through the same native FrameScript path already
+ * used successfully by other 5875 modules. */
+static void pollNativeSummonBridge(u32 player,u32 now)
+{
+    static const char script[]=
+        "local n=W112_AUTOSUMMON_REQUEST or '';"
+        "W112_AUTOSUMMON_ACK=W112_AUTOSUMMON_ACK or '';"
+        "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT or 0;"
+        "if n~='' then "
+        "W112_AUTOSUMMON_REQUEST='';"
+        "if type(TargetByName)=='function' then TargetByName(n,1) end;"
+        "if type(CastSpellByName)=='function' then CastSpellByName('Ritual of Summoning') end;"
+        "W112_AUTOSUMMON_ACK=n;"
+        "W112_AUTOSUMMON_NATIVE_COUNT=W112_AUTOSUMMON_NATIVE_COUNT+1;"
+        "end";
+    const char *req;
+
+    if(g_lastSummonBridgePoll && (u32)(now-g_lastSummonBridgePoll)<SUMMON_BRIDGE_POLL_MS) return;
+    g_lastSummonBridgePoll=now;
+    req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
+    if(!req||!req[0]||playerBusy(player)) return;
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
+}
+
 /* Background trade handling runs on WoW's own UI-thread timer. Vanilla 1.12
  * normally opens TradeFrame directly for an allowed incoming trade, so
  * TradeFrame visibility is the primary signal. The TRADE popup path is retained
@@ -699,6 +726,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
         return;
     }
 
+    pollNativeSummonBridge(player,now);
     g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
     scanAndMaybeClick(player,now);
 }
@@ -811,7 +839,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x000E0000u,
+    0x000F0000u,
     31u,
     g_settings,
     getValue,
@@ -862,6 +890,7 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkSlashFeedback=0u;
         g_antiAfkSlashCommands=0u;
         g_lastTradePoll=0u;
+        g_lastSummonBridgePoll=0u;
         g_tradeOpen=0u;
         g_tradeOfferCopper=0u;
         g_tradeAcceptAttempts=0u;
