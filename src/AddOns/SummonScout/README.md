@@ -1,4 +1,4 @@
-# SummonScout 1.28
+# SummonScout 1.29
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -373,3 +373,16 @@ Additional recovery:
 - raid names are read through `GetRaidRosterInfo` when raid unit tokens lag;
 - system join messages provide a second immediate queue path;
 - a 20-second per-customer watchdog drops a pathological head-of-line entry so later customers cannot be blocked indefinitely.
+
+
+## 1.29 tolerant 123 whisper code
+
+The direct-whisper invite code `123` is now recognized as a whole token inside short messages, not only as the entire message.
+
+Examples that now trigger smart auto-invite:
+- `123`
+- `123 pls`
+- `pls 123`
+- `123 please`
+
+This keeps the code explicit while tolerating normal player politeness/punctuation.

@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.28"
+local ADDON_VERSION = "1.29"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -351,7 +351,11 @@ local function whisperInviteDecision(message)
     local loc, ambiguous = findLocation(message)
     local service = SummonScoutDB.service or "all"
     local score = 0
-    local exactCode = WHISPER_EXACT_CODES[s] or raw == "+"
+    -- 123 is a service code, not natural language. Accept it as a whole token
+    -- in short whispers so common variants like "123 pls" and "pls 123" work.
+    local exactCode = WHISPER_EXACT_CODES[s]
+        or raw == "+"
+        or (string.len(s) <= 32 and phraseHas(s, "123"))
 
     if (s == "" and not exactCode) or (s ~= "" and isSellerMessage(s)) then
         return false, nil, "not-request"
