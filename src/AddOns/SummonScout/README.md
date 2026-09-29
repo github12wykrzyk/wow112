@@ -1,4 +1,4 @@
-# SummonScout 1.24
+# SummonScout 1.25
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -323,3 +323,13 @@ With `Report joins / summon state` enabled, the configured master receives:
 - `[SSI SUMMON FAIL] ...` on final retry exhaustion, bridge publication failure, or if the customer leaves the group before casting.
 
 The new lifecycle reporting switch defaults ON, remains gated by the global `Report to master character` switch, and is available in GUI or with `/ssi masterevents on|off`.
+
+
+## 1.25 ChatThrottleLib-safe master reports
+
+Master whispers are sanitized before `SendChatMessage`. Literal `|` characters are removed/replaced because WoW chat treats them as escape introducers and ChatThrottleLib can raise `invalid escape code in main message`.
+
+Payment reports now use:
+`[SSI PAID] <player> -> <amount> - total <received total>`
+
+The same protection applies centrally to all INVITE/JOIN/SUMMON/PAID/TEST master messages, including future error text. Newlines are flattened and outgoing SSI master reports are capped at 240 characters.

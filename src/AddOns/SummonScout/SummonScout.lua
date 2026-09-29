@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.24"
+local ADDON_VERSION = "1.25"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -507,10 +507,25 @@ local function masterReady()
         and not samePlayer(name, UnitName("player"))
 end
 
+local function safeOutboundChat(value)
+    local s = tostring(value or "")
+    -- A literal pipe starts WoW chat escape sequences. ChatThrottleLib rejects
+    -- unknown escapes (for example " | total "), so never send raw pipes.
+    s = string.gsub(s, "|", "/")
+    s = string.gsub(s, "[\r\n]", " ")
+    s = string.gsub(s, "%s+", " ")
+    s = trim(s)
+    if string.len(s) > 240 then
+        s = string.sub(s, 1, 240)
+    end
+    return s
+end
+
 local function reportMaster(kind, text)
     if not masterReady() or not SendChatMessage then return false end
-    SendChatMessage("[SSI " .. tostring(kind or "INFO") .. "] " .. tostring(text or ""),
-        "WHISPER", nil, trim(SummonScoutDB.masterName or ""))
+    local payload = safeOutboundChat("[SSI " .. tostring(kind or "INFO") .. "] " .. tostring(text or ""))
+    if payload == "" then return false end
+    SendChatMessage(payload, "WHISPER", nil, trim(SummonScoutDB.masterName or ""))
     return true
 end
 
@@ -587,7 +602,7 @@ local function recordPayment(name, copper)
 
     if SummonScoutDB.masterReportPayments then
         reportMaster("PAID", name .. " -> " .. formatMoney(copper)
-            .. " | total " .. formatMoney(SummonScoutDB.revenueCopper or 0))
+            .. " - total " .. formatMoney(SummonScoutDB.revenueCopper or 0))
     end
     if SummonScoutDB.paymentChatEnabled then
         chat("received gold from " .. name .. ": " .. formatMoney(copper))
@@ -831,7 +846,7 @@ local function processPartySummon()
     local unit = groupUnitByName(item.name)
     if not unit then
         if SummonScoutDB.masterReportLifecycle then
-            reportMaster("SUMMON FAIL", item.name .. " | left party/raid before cast")
+            reportMaster("SUMMON FAIL", item.name .. " - left party/raid before cast")
         end
         finishActiveSummon(item.name)
         return
@@ -858,7 +873,7 @@ local function processPartySummon()
                 .. " lastError=" .. failReason)
             if SummonScoutDB.masterReportLifecycle then
                 reportMaster("SUMMON FAIL", item.name .. " -> " .. summonDestinationLabel()
-                    .. " | " .. failReason)
+                    .. " - " .. failReason)
             end
             finishActiveSummon(item.name)
             return
@@ -878,7 +893,7 @@ local function processPartySummon()
         else
             chat("cannot queue native Ritual request")
             if SummonScoutDB.masterReportLifecycle then
-                reportMaster("SUMMON FAIL", item.name .. " | native bridge request failed")
+                reportMaster("SUMMON FAIL", item.name .. " - native bridge request failed")
             end
             finishActiveSummon(item.name)
         end
