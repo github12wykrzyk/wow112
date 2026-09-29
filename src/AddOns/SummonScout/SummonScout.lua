@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.25"
+local ADDON_VERSION = "1.26"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -30,6 +30,7 @@ SS.nextGuiRefreshAt = 0
 SS.partyKnown = {}
 SS.partyRosterReady = false
 SS.partySyncAt = 0
+SS.nextRosterPollAt = 0
 SS.summonQueue = {}
 SS.summonQueued = {}
 SS.summonActiveName = nil
@@ -525,7 +526,19 @@ local function reportMaster(kind, text)
     if not masterReady() or not SendChatMessage then return false end
     local payload = safeOutboundChat("[SSI " .. tostring(kind or "INFO") .. "] " .. tostring(text or ""))
     if payload == "" then return false end
-    SendChatMessage(payload, "WHISPER", nil, trim(SummonScoutDB.masterName or ""))
+
+    local master = trim(SummonScoutDB.masterName or "")
+    if pcall then
+        local ok = pcall(SendChatMessage, payload, "WHISPER", nil, master)
+        if not ok then
+            if SummonScoutDB.debug then
+                chat("master report failed -> " .. tostring(kind or "INFO"))
+            end
+            return false
+        end
+    else
+        SendChatMessage(payload, "WHISPER", nil, master)
+    end
     return true
 end
 
@@ -697,11 +710,11 @@ local function syncPartyRoster(suppressNew)
         current[key] = name
 
         if SS.partyRosterReady and not suppressNew and not SS.partyKnown[key] then
-            if SummonScoutDB.masterReportLifecycle and not summonPlayerBlacklisted(name) then
-                reportMaster("JOIN", name .. " -> " .. servedLocationLabel())
-            end
             if SummonScoutDB.partyAutoSummon then
                 queuePartySummon(name)
+            end
+            if SummonScoutDB.masterReportLifecycle and not summonPlayerBlacklisted(name) then
+                reportMaster("JOIN", name .. " -> " .. servedLocationLabel())
             end
         end
     end
@@ -1918,6 +1931,7 @@ frame:SetScript("OnEvent", function()
         W112_AUTOSUMMON_ACK = ""
         W112_AUTOSUMMON_NATIVE_COUNT = W112_AUTOSUMMON_NATIVE_COUNT or 0
         syncPartyRoster(true)
+        SS.nextRosterPollAt = now() + 0.75
         chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
@@ -2098,9 +2112,17 @@ frame:SetScript("OnEvent", function()
     end
 end)
 frame:SetScript("OnUpdate", function()
-    if SS.partySyncAt and SS.partySyncAt > 0 and now() >= SS.partySyncAt then
+    local t = now()
+    if SS.partySyncAt and SS.partySyncAt > 0 and t >= SS.partySyncAt then
         SS.partySyncAt = 0
         syncPartyRoster(false)
+        SS.nextRosterPollAt = t + 0.75
+    elseif t >= (SS.nextRosterPollAt or 0) then
+        -- Fallback for private-server/client cases where a roster event is
+        -- delayed or missed. Existing members remain known, so this only
+        -- queues genuinely new names.
+        syncPartyRoster(false)
+        SS.nextRosterPollAt = t + 0.75
     end
     processQueue()
     processPartySummon()

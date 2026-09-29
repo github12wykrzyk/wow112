@@ -1,4 +1,4 @@
-# SummonScout 1.25
+# SummonScout 1.26
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -333,3 +333,13 @@ Payment reports now use:
 `[SSI PAID] <player> -> <amount> - total <received total>`
 
 The same protection applies centrally to all INVITE/JOIN/SUMMON/PAID/TEST master messages, including future error text. Newlines are flattened and outgoing SSI master reports are capped at 240 characters.
+
+
+## 1.26 summon queue reliability
+
+Two reliability fixes protect auto-summon from unrelated chat/reporting failures:
+
+- A new party/raid member is queued for summon **before** the optional JOIN report is whispered to the master. Master reporting can therefore never block the actual summon path.
+- `reportMaster()` is isolated with `pcall`; a ChatThrottleLib or SendChatMessage error is treated as a reporting failure instead of aborting the roster event handler.
+
+Roster detection also has a 750 ms reconciliation poll in addition to `PARTY_MEMBERS_CHANGED` / `RAID_ROSTER_UPDATE`. If this client/server misses a roster event, a genuinely new member is still detected and queued on the next poll.
