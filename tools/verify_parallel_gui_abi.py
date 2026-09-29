@@ -221,6 +221,13 @@ def main():
         'g_ui_summon_check=NULL;g_ui_summon_antiafk_check=NULL;',
         'g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;',
         'g_ui_summon_antiafk_state=NULL;',
+        'g_ui_summon_master_profile=ui_button(g_parallel_ui_hwnd',
+        'g_ui_summon_slave_profile=ui_button(g_parallel_ui_hwnd',
+        'if(id==233u||id==234u){',
+        'ui_summon_apply_profile(id==234u?1u:0u);',
+        'static const DWORD g_ui_profile_summon_ids[]={1u,21u};',
+        '{PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,2u,FALSE',
+        'g_ui_summon_master_profile=NULL;g_ui_summon_slave_profile=NULL;',
     ):
         if token not in text:
             print("ERROR: AutoSummon dedicated debug tab regression:", token)

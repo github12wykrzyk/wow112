@@ -486,6 +486,7 @@ static HWND g_ui_esp_state=NULL;
 static HWND g_ui_rear_state=NULL,g_ui_rear_details_state=NULL;
 static HWND g_ui_wsg_check=NULL,g_ui_wsg_state=NULL;
 static HWND g_ui_summon_check=NULL,g_ui_summon_antiafk_check=NULL;
+static HWND g_ui_summon_master_profile=NULL,g_ui_summon_slave_profile=NULL;
 static HWND g_ui_summon_loaded=NULL,g_ui_summon_candidate=NULL;
 static HWND g_ui_summon_guid=NULL,g_ui_summon_scan=NULL,g_ui_summon_nearest=NULL;
 static HWND g_ui_summon_antiafk_state=NULL;
@@ -625,6 +626,8 @@ static void ui_sync_summon(void) {
         if(g_ui_summon_nearest)SetWindowTextA(g_ui_summon_nearest,
             "Nearest GO: unavailable");
         if(g_ui_summon_antiafk_check)SendMessageA(g_ui_summon_antiafk_check,UI_SETCHECK,0u,0);
+        if(g_ui_summon_master_profile)SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,0u,0);
+        if(g_ui_summon_slave_profile)SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,0u,0);
         if(g_ui_summon_antiafk_state)SetWindowTextA(g_ui_summon_antiafk_state,
             "ANTI-AFK: provider unavailable");
         return;
@@ -662,6 +665,10 @@ static void ui_sync_summon(void) {
         SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
     if(g_ui_summon_antiafk_check)
         SendMessageA(g_ui_summon_antiafk_check,UI_SETCHECK,anti.u32?1u:0u,0);
+    if(g_ui_summon_master_profile)
+        SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,(!enabled.u32&&!anti.u32)?1u:0u,0);
+    if(g_ui_summon_slave_profile)
+        SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,(enabled.u32&&anti.u32)?1u:0u,0);
 
     if(g_ui_summon_loaded){
         p=buf;p=app_str(p,"DLL: LOADED | API module v");
@@ -709,6 +716,19 @@ static void ui_sync_summon(void) {
         p=app_str(p," | cast/channel defers ");p=app_u32(p,channelDefers.u32);
         *p=0;SetWindowTextA(g_ui_summon_antiafk_state,buf);
     }
+}
+
+static BOOL ui_summon_apply_profile(DWORD slave) {
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,31u);
+    W112_ControlValueV1 oldEnabled,oldAnti,value;
+    if(!m||!m->get_value(1u,&oldEnabled)||!m->get_value(21u,&oldAnti))return FALSE;
+    value.u32=slave?1u:0u;
+    if(!m->set_value(1u,&value))return FALSE;
+    if(!m->set_value(21u,&value)) {
+        m->set_value(1u,&oldEnabled);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 
@@ -1143,6 +1163,7 @@ static DWORD g_ui_profile_next_frame=0u;
 static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u,66u,70u,75u,76u,77u,78u,79u,80u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
+static const DWORD g_ui_profile_summon_ids[]={1u,21u};
 struct UiProfileModule {
     const char *dll;
     DWORD minimum;
@@ -1156,7 +1177,8 @@ static struct UiProfileModule g_ui_profile_modules[]={
     {PAR_CORE_DLL,89u,g_ui_profile_core_ids,41u,FALSE,{0},{0}},
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
-    {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}}
+    {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
+    {PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,2u,FALSE,{0},{0}}
 };
 static volatile DWORD *const g_ui_profile_esp_flags[]={
     &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile,&g_quest_enabled
@@ -1536,12 +1558,19 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==254u){ui_work_pp_flip(PAR_CORE_DLL,89u,80u);ui_sync_patrol();ui_profile_sync();return 0;}
         if(id==240u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(0u);return 0;}
         if(id==241u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(1u);return 0;}
+        if(id==233u||id==234u){
+            ui_summon_apply_profile(id==234u?1u:0u);
+            ui_profile_sync();
+            ui_sync_summon();return 0;
+        }
         if(id==229u){
             ui_work_pp_flip(PAR_SUMMON_DLL,31u,1u);
+            ui_profile_sync();
             ui_sync_summon();return 0;
         }
         if(id==230u){
             ui_work_pp_flip(PAR_SUMMON_DLL,31u,21u);
+            ui_profile_sync();
             ui_sync_summon();return 0;
         }
         if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
@@ -1857,26 +1886,32 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "SUMMON / AUTOMATION",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "Native in-process interaction: background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
+        "Persistent role: MASTER/caster = Assist OFF + Anti-AFK OFF | SLAVE/helper = both ON.",
         42,181,665,32,FALSE));
+    g_ui_summon_master_profile=ui_button(g_parallel_ui_hwnd,
+        "MASTER / CASTER",46,221,321,36,233u,TRUE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_master_profile);
+    g_ui_summon_slave_profile=ui_button(g_parallel_ui_hwnd,
+        "SLAVE / HELPER",389,221,322,36,234u,TRUE);
+    ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_slave_profile);
     g_ui_summon_check=ui_button(g_parallel_ui_hwnd,
-        "AUTO SUMMON ASSIST - enabled",46,225,665,42,229u,TRUE);
+        "AUTO SUMMON ASSIST - enabled",46,265,665,38,229u,TRUE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_check);
-    g_ui_summon_loaded=ui_label(g_parallel_ui_hwnd,"",46,285,665,34,FALSE);
+    g_ui_summon_loaded=ui_label(g_parallel_ui_hwnd,"",46,310,665,28,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_loaded);
-    g_ui_summon_candidate=ui_label(g_parallel_ui_hwnd,"",46,335,665,42,FALSE);
+    g_ui_summon_candidate=ui_label(g_parallel_ui_hwnd,"",46,345,665,34,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_candidate);
-    g_ui_summon_guid=ui_label(g_parallel_ui_hwnd,"",46,395,665,42,FALSE);
+    g_ui_summon_guid=ui_label(g_parallel_ui_hwnd,"",46,385,665,34,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_guid);
-    g_ui_summon_scan=ui_label(g_parallel_ui_hwnd,"",46,455,665,42,FALSE);
+    g_ui_summon_scan=ui_label(g_parallel_ui_hwnd,"",46,425,665,34,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_scan);
-    g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,505,665,42,FALSE);
+    g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,465,665,34,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
     g_ui_summon_antiafk_check=ui_button(g_parallel_ui_hwnd,
         "ANTI-AFK - SPACE to this WoW every random 100-120s",
-        46,555,665,36,230u,TRUE);
+        46,507,665,36,230u,TRUE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_check);
-    g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,600,665,32,FALSE);
+    g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,550,665,58,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_state);
 
 
@@ -2056,6 +2091,7 @@ static void parallel_gui_destroy(void) {
     g_ui_range_state=NULL;g_ui_rear_state=NULL;g_ui_rear_details_state=NULL;
     g_ui_wsg_check=NULL;g_ui_wsg_state=NULL;
     g_ui_summon_check=NULL;g_ui_summon_antiafk_check=NULL;
+    g_ui_summon_master_profile=NULL;g_ui_summon_slave_profile=NULL;
     g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;
     g_ui_summon_guid=NULL;g_ui_summon_scan=NULL;g_ui_summon_nearest=NULL;
     g_ui_summon_antiafk_state=NULL;
