@@ -208,3 +208,30 @@ V1.2 therefore keeps the last boundary cached. Normal refresh verifies
 `boundary-1` and `boundary`; a +1 move is handled directly with
 `boundary+1`, while larger moves fall back to a narrowed binary search.
 The dry-run safety invariant remains unchanged: no `PlaceAuctionBid` call.
+
+
+## Realm evidence: cached-boundary transition regression
+
+Exact tested integrated Parallel candidate:
+`64363f612e5d39e1cdb7c155dd96129d557771bf`,
+Build work candidate run `36641778796`, artifact `11066823527`.
+
+The user's in-game log showed the expected cheap scan through the window ending
+at page 21, but the following query was page 0 with `phase=probe`, followed by
+a new full `low=1 high=1103` binary search. Therefore V1.2's cached-boundary
+transition was not reliable on the target client even though the binary search
+and 10-page scan window themselves remained correct.
+
+The cache-transition fix makes the end-of-window transition deterministic:
+- `EnterScan` stores an independent `cheapWindowStart`;
+- end-of-scan verification reconstructs the boundary from that window start
+  (or, as a last resort, from the scan page/window size) instead of resetting
+  to `probe`;
+- repeated application of the same LowBuyout value no longer resets the state;
+- `[VM-STATE]` and `[VM-CACHE]` logs expose the exact transition.
+
+Expected successful sequence after a boundary of 12 and scan through page 21:
+`[VM-STATE] scan-end boundary=12 next=verify_prev`,
+`[VM-CACHE] verify boundary=12`, then query page 11 followed by page 12.
+Auto-buy remains hard-disabled and the automation source still contains no
+`PlaceAuctionBid` call.

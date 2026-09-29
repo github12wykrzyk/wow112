@@ -435,7 +435,36 @@
         }
       ],
       "package": null,
-      "notes": "V1.1 cheap-buyout boundary search and 10-page scan window worked end-to-end in the user's manual exact-source test; screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md. V1.2 cached-boundary feature SHA 42164066 passed registry and parallel preflight; integrated parallel full candidate/package verification is pending. Auto-buy remains hard-disabled."
+      "notes": "V1.1 binary-search + 10-page cheap window works on the target realm. Integrated V1.2 cached-boundary candidate parallel@64363f6 passed full CI/package but the user's exact-candidate in-game log showed scan-end returning to page-0 probe/full binary search. Evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md. Auto-buy remains hard-disabled."
+    },
+    {
+      "id": "auction-sniper-cache-transition-fix",
+      "branch": "feature/auction-sniper-cache-transition-fix",
+      "modules": [
+        "AuctionSniper"
+      ],
+      "dependencies": [
+        "auction-sniper-cheap-buyout"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS cheap-buyout boundary state machine",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "d171e4b77bbe047915f6f04ab57713569a28d511",
+      "verified_commit": "d171e4b77bbe047915f6f04ab57713569a28d511",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "d171e4b77bbe047915f6f04ab57713569a28d511",
+          "date": "2026-09-30",
+          "evidence": "Verify AI experiment registry run 36643126700 and Parallel feature preflight run 36643126706 both passed on the exact cache-transition fix SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Feature fix passed registry and parallel preflight on exact SHA d171e4b77bbe047915f6f04ab57713569a28d511. The fix makes scan-end cached verification deterministic, preserves an independent scan-window start for recovery, and prevents repeated LowBuyout value re-application from resetting the state. Integrated parallel full candidate/package verification is pending. Auto-buy remains hard-disabled."
     }
   ]
 }
