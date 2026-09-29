@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v18 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v19 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -498,6 +498,25 @@ static void publishSummonNoStart(void)
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
 }
 
+/* Raw UNIT_CHANNEL_INDEX can remain non-zero after a completed Ritual on some
+ * 1.12/private-server states while the client is already free to cast again.
+ * Using that raw descriptor as the summon transaction gate therefore makes
+ * the first customer work and all later requests sit forever at blocked-busy.
+ *
+ * For the summon bridge only, use the stock Vanilla casting-bar state that the
+ * addon also observes. Scanner/portal retry and Anti-AFK keep the conservative
+ * raw playerBusy() guard. */
+static int summonUiBusy(void)
+{
+    static const char script[]=
+        "W112_AUTOSUMMON_UI_BUSY=(CastingBarFrame and "
+        "(CastingBarFrame.casting or CastingBarFrame.channeling)) and '1' or '0'";
+    const char *busy;
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(script,"AutoSummonAssist");
+    busy=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_UI_BUSY",-1,0u);
+    return busy && busy[0]=='1' && busy[1]==0;
+}
+
 static void pollNativeSummonBridge(u32 player,u32 now)
 {
     static const char blockedScript[]=
@@ -572,8 +591,10 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     const char *req;
     const char *issued;
 
+    (void)player;
+
     if(g_summonAwaitingStart) {
-        if(playerBusy(player)) {
+        if(summonUiBusy()) {
             publishSummonStarted();
             g_summonAwaitingStart=0u;
             g_summonIssuedAt=0u;
@@ -591,7 +612,7 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
     if(!req||!req[0]) return;
 
-    if(playerBusy(player)) {
+    if(summonUiBusy()) {
         ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(blockedScript,"AutoSummonAssist");
         return;
     }
@@ -602,7 +623,7 @@ static void pollNativeSummonBridge(u32 player,u32 now)
         ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearIssuedScript,"AutoSummonAssist");
         g_summonIssuedAt=now;
         g_summonAwaitingStart=1u;
-        if(playerBusy(player)) {
+        if(summonUiBusy()) {
             publishSummonStarted();
             g_summonAwaitingStart=0u;
             g_summonIssuedAt=0u;

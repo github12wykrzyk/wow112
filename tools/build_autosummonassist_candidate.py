@@ -199,7 +199,8 @@ def main():
             "shared_state_with_gui": True
         },
         "native_summon_cast_bridge": True,
-        "native_summon_busy_gate": "request remains pending while the local player is casting/channeling; SummonScout queue watchdog remains authoritative",
+        "native_summon_busy_gate": "request remains pending only while stock CastingBarFrame reports casting/channeling; raw UNIT_CHANNEL_INDEX is deliberately not used for this transaction gate",
+        "native_summon_busy_source": "CastingBarFrame.casting/channeling via FrameScript on the WoW UI thread; avoids stale raw channel descriptor after completed Ritual",
         "native_summon_module_enabled_dependency": False,
         "native_summon_cast_path": "sequenced request -> TargetByName/roster target verification -> spellbook GetSpellName/CastSpell -> SpellTargetUnit fallback -> native cast/channel start confirmation",
         "native_summon_request_global": "W112_AUTOSUMMON_REQUEST",
