@@ -132,7 +132,7 @@ def main():
             "Anti-AFK random /say", "Anti-AFK next seconds",
             "Anti-AFK say calls", "Anti-AFK channel defers",
             "Trade window open", "Trade gold offered (copper)",
-            "Trade accept attempts"
+            "Trade accept attempts", "Trade payer accepted first"
         ],
         "timings_ms": timing,
     }
@@ -199,9 +199,10 @@ def main():
         },
         "background_trade_auto_accept": True,
         "incoming_trade_request": "Stock 1.12 TradeFrame is authoritative; TRADE popup/BeginTrade is compatibility fallback only",
-        "payment_gate": "TradeFrame visible; target gold > 0; own offered money == 0; own trade item slots empty",
+        "payment_gate": "TradeFrame visible; target gold > 0; own money/items empty; payer/target has accepted first",
+        "payer_accept_signal": "Stock TradeFrame TRADE_ACCEPT_UPDATE targetState==1 is rendered as TradeHighlightRecipient shown; AutoSummon observes that stock UI state",
         "payment_stable_ms": 250,
-        "payment_reaccept_ms": 500,
+        "accept_policy": "one AcceptTrade call per payer-accept cycle; latch resets only when payer acceptance drops or offer becomes ineligible",
         "trade_poll_ms": 100,
         "trade_research_reference": "https://github.com/samwhosung/benilla/blob/f000aa01282eac35a99370c680250d50adc67970/crates/benilla-ui/src/script/trade.rs",
         "timer_period_ms": 25,

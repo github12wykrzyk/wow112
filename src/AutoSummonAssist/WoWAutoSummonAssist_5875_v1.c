@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v9 - Ritual helper + background gold trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v10 - payer-first gold trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -22,8 +22,9 @@
  * Background payment:
  * - stock 1.12 TradeFrame is authoritative for an open trade;
  * - compatibility fallback handles a custom-server TRADE popup via BeginTrade();
- * - AcceptTrade() is called only for a stable positive target-gold offer while
- *   this client contributes neither money nor items.
+ * - AcceptTrade() is called only after the paying player has accepted first,
+ *   with a positive target-gold offer while this client contributes no money/items;
+ * - one local AcceptTrade() call is allowed per payer-accept cycle (no accept spam).
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error WoWAutoSummonAssist requires 32-bit x86.
@@ -158,6 +159,7 @@ static volatile u32 g_antiAfkChannelDefers = 0u;
 static volatile u32 g_tradeOpen = 0u;
 static volatile u32 g_tradeOfferCopper = 0u;
 static volatile u32 g_tradeAcceptAttempts = 0u;
+static volatile u32 g_tradeTargetAccepted = 0u;
 
 static u32 g_antiAfkNextAt = 0u;
 static u32 g_antiAfkDeferCheckAt = 0u;
@@ -171,7 +173,7 @@ static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
 
-static W112_ControlSettingV1 g_settings[27];
+static W112_ControlSettingV1 g_settings[28];
 static u32 g_descriptorReady = 0u;
 
 int _fltused = 0;
@@ -248,6 +250,7 @@ static void resetWorld(void)
     g_lastTradePoll=0u;
     g_tradeOpen=0u;
     g_tradeOfferCopper=0u;
+    g_tradeTargetAccepted=0u;
     resetPortal();
     g_nearbyGoCount=0u;
     g_nearestEntry=0u;
@@ -482,6 +485,7 @@ static void pollAndMaybeAcceptGold(u32 now)
     static const char script[] =
         "W112_AUTOGOLD_OPEN='0';"
         "W112_AUTOGOLD_OFFER='0';"
+        "W112_AUTOGOLD_TARGET_ACCEPTED='0';"
         "W112_AUTOGOLD_ACCEPTS=W112_AUTOGOLD_ACCEPTS or 0;"
         "local popup=nil;"
         "if type(StaticPopup_Visible)=='function' then popup=StaticPopup_Visible('TRADE') end;"
@@ -493,6 +497,8 @@ static void pollAndMaybeAcceptGold(u32 now)
         "local open=(TradeFrame and TradeFrame.IsVisible and TradeFrame:IsVisible());"
         "if open then "
         "W112_AUTOGOLD_OPEN='1';"
+        "local targetAccepted=(TradeHighlightRecipient and TradeHighlightRecipient.IsShown and TradeHighlightRecipient:IsShown());"
+        "if targetAccepted then W112_AUTOGOLD_TARGET_ACCEPTED='1' end;"
         "if type(GetTargetTradeMoney)=='function' and type(GetPlayerTradeMoney)=='function' and type(AcceptTrade)=='function' and type(GetTradePlayerItemLink)=='function' then "
         "local tm=tonumber(GetTargetTradeMoney()) or 0;"
         "local pm=tonumber(GetPlayerTradeMoney()) or 0;"
@@ -502,24 +508,28 @@ static void pollAndMaybeAcceptGold(u32 now)
         "W112_AUTOGOLD_OFFER=tostring(tm);"
         "local t=GetTime();"
         "if W112_AUTOGOLD_LAST~=tm then "
-        "W112_AUTOGOLD_LAST=tm;W112_AUTOGOLD_SINCE=t;W112_AUTOGOLD_LASTACCEPT=0;"
+        "W112_AUTOGOLD_LAST=tm;W112_AUTOGOLD_SINCE=t;W112_AUTOGOLD_TARGET_LATCH=nil;"
+        "end;"
+        "if not targetAccepted then "
+        "W112_AUTOGOLD_TARGET_LATCH=nil;"
+        "elseif W112_AUTOGOLD_SINCE and t-W112_AUTOGOLD_SINCE>=0.25 and not W112_AUTOGOLD_TARGET_LATCH then "
+        "local selfAccepted=(TradeFrame and TradeFrame.acceptState==1);"
+        "if not selfAccepted then "
+        "AcceptTrade();W112_AUTOGOLD_ACCEPTS=W112_AUTOGOLD_ACCEPTS+1;"
+        "end;"
+        "W112_AUTOGOLD_TARGET_LATCH=1;"
+        "end "
         "else "
-        "local accepted=(TradeFrame and TradeFrame.acceptState==1);"
-        "if W112_AUTOGOLD_SINCE and t-W112_AUTOGOLD_SINCE>=0.25 and not accepted and "
-        "(not W112_AUTOGOLD_LASTACCEPT or t-W112_AUTOGOLD_LASTACCEPT>=0.50) then "
-        "AcceptTrade();W112_AUTOGOLD_LASTACCEPT=t;W112_AUTOGOLD_ACCEPTS=W112_AUTOGOLD_ACCEPTS+1;"
+        "W112_AUTOGOLD_LAST=nil;W112_AUTOGOLD_SINCE=nil;W112_AUTOGOLD_TARGET_LATCH=nil;"
         "end "
         "end "
         "else "
-        "W112_AUTOGOLD_LAST=nil;W112_AUTOGOLD_SINCE=nil;W112_AUTOGOLD_LASTACCEPT=0;"
-        "end "
-        "end "
-        "else "
-        "W112_AUTOGOLD_LAST=nil;W112_AUTOGOLD_SINCE=nil;W112_AUTOGOLD_LASTACCEPT=0;"
+        "W112_AUTOGOLD_LAST=nil;W112_AUTOGOLD_SINCE=nil;W112_AUTOGOLD_TARGET_LATCH=nil;"
         "end";
     const char *offer;
     const char *accepts;
     const char *open;
+    const char *targetAccepted;
 
     if(g_lastTradePoll && (u32)(now-g_lastTradePoll)<TRADE_POLL_MS) return;
     g_lastTradePoll=now;
@@ -528,9 +538,11 @@ static void pollAndMaybeAcceptGold(u32 now)
     offer=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOGOLD_OFFER",-1,0u);
     accepts=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOGOLD_ACCEPTS",-1,0u);
     open=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOGOLD_OPEN",-1,0u);
+    targetAccepted=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOGOLD_TARGET_ACCEPTED",-1,0u);
     g_tradeOfferCopper=parseDecimalU32(offer);
     g_tradeAcceptAttempts=parseDecimalU32(accepts);
     g_tradeOpen=(open && open[0]=='1' && open[1]==0) ? 1u:0u;
+    g_tradeTargetAccepted=(targetAccepted && targetAccepted[0]=='1' && targetAccepted[1]==0) ? 1u:0u;
 }
 
 static void scanAndMaybeClick(u32 player,u32 now)
@@ -697,7 +709,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
 static void initSettings(void)
 {
     u32 i;
-    static const char *keys[27]={
+    static const char *keys[28]={
         "enabled","scanner_alive","candidate_present","match_source",
         "candidate_entry","candidate_type","candidate_distance_x100",
         "candidate_guid_lo","candidate_guid_hi","native_pre_calls",
@@ -705,9 +717,10 @@ static void initSettings(void)
         "nearby_go_count","nearest_go_entry","nearest_go_type",
         "nearest_go_distance_x100","status","gate_reason","busy_raw",
         "anti_afk_enabled","anti_afk_next_seconds","anti_afk_say_calls",
-        "anti_afk_channel_defers","trade_open","trade_gold_copper","trade_accepts"
+        "anti_afk_channel_defers","trade_open","trade_gold_copper","trade_accepts",
+        "trade_target_accepted"
     };
-    static const char *labels[27]={
+    static const char *labels[28]={
         "Enabled","Scanner alive","Ritual candidate","Match source",
         "Candidate entry","Candidate type","Candidate distance x100",
         "Candidate GUID low","Candidate GUID high","Native PRE calls",
@@ -716,22 +729,22 @@ static void initSettings(void)
         "Nearest GO distance x100","Status","Gate reason","Busy raw",
         "Anti-AFK random /say","Anti-AFK next seconds","Anti-AFK say calls",
         "Anti-AFK channel defers","Trade window open","Trade gold offered (copper)",
-        "Trade accept attempts"
+        "Trade accept attempts","Trade payer accepted first"
     };
 
     if(g_descriptorReady) return;
 
-    for(i=0u;i<27u;i++) {
+    for(i=0u;i<28u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];
         int writableBool=(i==0u||i==20u);
         s->struct_size=sizeof(*s);
         s->setting_id=i+1u;
         s->key=keys[i];
         s->label=labels[i];
-        s->type=(i<=2u||i==20u||i==24u) ? W112_CTL_BOOL:W112_CTL_INT;
+        s->type=(i<=2u||i==20u||i==24u||i==27u) ? W112_CTL_BOOL:W112_CTL_INT;
         s->default_value.u32=(i==0u||i==20u)?1u:0u;
         s->min_value.u32=0u;
-        s->max_value.u32=(i<=2u||i==20u||i==24u)?1u:2147483647u;
+        s->max_value.u32=(i<=2u||i==20u||i==24u||i==27u)?1u:2147483647u;
         s->step.u32=1u;
         s->flags=writableBool?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
         s->enum_options=0;
@@ -771,6 +784,7 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==25u) v->u32=g_tradeOpen;
     else if(id==26u) v->u32=g_tradeOfferCopper;
     else if(id==27u) v->u32=g_tradeAcceptAttempts;
+    else if(id==28u) v->u32=g_tradeTargetAccepted;
     else return 0;
     return 1;
 }
@@ -795,8 +809,8 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00090000u,
-    27u,
+    0x000A0000u,
+    28u,
     g_settings,
     getValue,
     setValue
@@ -846,6 +860,7 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_tradeOpen=0u;
         g_tradeOfferCopper=0u;
         g_tradeAcceptAttempts=0u;
+        g_tradeTargetAccepted=0u;
 
         if(!buildGuard()) {
             g_status=STATUS_BUILD_MISMATCH;
