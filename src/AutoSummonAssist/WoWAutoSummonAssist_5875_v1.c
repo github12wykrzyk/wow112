@@ -341,7 +341,74 @@ static void antiAfkInstallSlash(u32 now)
         "SLASH_W112ANTIAFK1='/antiafk';"
         "SlashCmdList['W112ANTIAFK']=function(msg) "
         "local c=string.lower(msg or ''); "
-        "if string.gsub then c=string.gsub(c,'^%s*(.-)%s*
+        "if string.gsub then c=string.gsub(c,'^%s*(.-)%s*$','%1') end; "
+        "if c=='' then c='status' end; "
+        "W112_ANTIAFK_CMD=c "
+        "end;"
+        "if hash_SlashCmdList then "
+        "hash_SlashCmdList['/ANTIAFK']=SlashCmdList['W112ANTIAFK'] "
+        "end;"
+        "if ChatFrame_ImportAllListsToHash then ChatFrame_ImportAllListsToHash() end";
+
+    if(g_antiAfkSlashInstallAt &&
+       (u32)(now-g_antiAfkSlashInstallAt)<ANTI_AFK_SLASH_REPAIR_MS) return;
+
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(initScript,"AutoSummonAssist");
+    g_antiAfkSlashInstallAt=now;
+}
+
+static void antiAfkPollSlash(void)
+{
+    static const char clearScript[]="W112_ANTIAFK_CMD=''";
+    const char *cmd=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
+        "W112_ANTIAFK_CMD",-1,0u);
+    u32 feedback=0u;
+
+    if(!cmd||!cmd[0]) return;
+
+    if(antiAfkCmdIs(cmd,"on")){
+        antiAfkSetEnabled(1u);
+        feedback=1u;
+    } else if(antiAfkCmdIs(cmd,"off")){
+        antiAfkSetEnabled(0u);
+        feedback=1u;
+    } else if(antiAfkCmdIs(cmd,"toggle")){
+        antiAfkSetEnabled(g_antiAfkEnabled?0u:1u);
+        feedback=1u;
+    } else if(antiAfkCmdIs(cmd,"status")){
+        feedback=1u;
+    } else {
+        feedback=2u;
+    }
+
+    ++g_antiAfkSlashCommands;
+    g_antiAfkSlashFeedback=feedback;
+    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearScript,"AutoSummonAssist");
+}
+
+static void antiAfkFlushSlashFeedback(void)
+{
+    static const char onMsg[]=
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
+        "'|cff55ff55[Anti-AFK]|r ON - random jump 120-360s, cast/channel safe') end";
+    static const char offMsg[]=
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
+        "'|cffff7777[Anti-AFK]|r OFF') end";
+    static const char usageMsg[]=
+        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
+        "'|cffffcc00[Anti-AFK]|r /antiafk on | off | toggle | status') end";
+    u32 feedback=g_antiAfkSlashFeedback;
+
+    if(!feedback) return;
+    g_antiAfkSlashFeedback=0u;
+    if(feedback==2u)
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(usageMsg,"AutoSummonAssist");
+    else if(g_antiAfkEnabled)
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(onMsg,"AutoSummonAssist");
+    else
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(offMsg,"AutoSummonAssist");
+}
+
 static void antiAfkTick(u32 player,u32 now)
 {
     static const char jumpScript[]="Jump()";
@@ -681,435 +748,6 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_antiAfkSlashInstallAt=0u;
         g_antiAfkSlashFeedback=0u;
         g_antiAfkSlashCommands=0u;
-
-        if(!buildGuard()) {
-            g_status=STATUS_BUILD_MISMATCH;
-            return 1;
-        }
-
-        setTimer=(SetTimerFn)(ptr32)read32(WOW_IAT_SETTIMER);
-        if(!setTimer) {
-            g_status=STATUS_NO_TIMER;
-            return 1;
-        }
-
-        g_timer=setTimer(0,0u,TIMER_MS,timerTick);
-        g_status=g_timer ? STATUS_WAIT_WORLD:STATUS_NO_TIMER;
-    } else if(reason==0u) {
-        KillTimerFn killTimer=(KillTimerFn)(ptr32)read32(WOW_IAT_KILLTIMER);
-        if(killTimer && g_timer) killTimer(0,g_timer);
-        g_timer=0u;
-        resetWorld();
-        g_status=STATUS_DETACHED;
-    }
-
-    return 1;
-}
-,'%1') end; "
-        "if c=='' then c='status' end; "
-        "W112_ANTIAFK_CMD=c "
-        "end;"
-        "if hash_SlashCmdList then "
-        "hash_SlashCmdList['/ANTIAFK']=SlashCmdList['W112ANTIAFK'] "
-        "end;"
-        "if ChatFrame_ImportAllListsToHash then ChatFrame_ImportAllListsToHash() end";
-
-    if(g_antiAfkSlashInstallAt &&
-       (u32)(now-g_antiAfkSlashInstallAt)<ANTI_AFK_SLASH_REPAIR_MS) return;
-
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(initScript,"AutoSummonAssist");
-    g_antiAfkSlashInstallAt=now;
-}
-
-static void antiAfkPollSlash(void)
-{
-    static const char clearScript[]="W112_ANTIAFK_CMD=''";
-    const char *cmd=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
-        "W112_ANTIAFK_CMD",-1,0u);
-    u32 feedback=0u;
-
-    if(!cmd||!cmd[0]) return;
-
-    if(antiAfkCmdIs(cmd,"on")){
-        antiAfkSetEnabled(1u);
-        feedback=1u;
-    } else if(antiAfkCmdIs(cmd,"off")){
-        antiAfkSetEnabled(0u);
-        feedback=1u;
-    } else if(antiAfkCmdIs(cmd,"toggle")){
-        antiAfkSetEnabled(g_antiAfkEnabled?0u:1u);
-        feedback=1u;
-    } else if(antiAfkCmdIs(cmd,"status")){
-        feedback=1u;
-    } else {
-        feedback=2u;
-    }
-
-    ++g_antiAfkSlashCommands;
-    g_antiAfkSlashFeedback=feedback;
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearScript,"AutoSummonAssist");
-}
-
-static void antiAfkFlushSlashFeedback(void)
-{
-    static const char onMsg[]=
-        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cff55ff55[Anti-AFK]|r ON - random jump 120-360s, cast/channel safe') end";
-    static const char offMsg[]=
-        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cffff7777[Anti-AFK]|r OFF') end";
-    static const char usageMsg[]=
-        "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("
-        "'|cffffcc00[Anti-AFK]|r /antiafk on | off | toggle | status') end";
-    u32 feedback=g_antiAfkSlashFeedback;
-
-    if(!feedback) return;
-    g_antiAfkSlashFeedback=0u;
-    if(feedback==2u)
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(usageMsg,"AutoSummonAssist");
-    else if(g_antiAfkEnabled)
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(onMsg,"AutoSummonAssist");
-    else
-        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(offMsg,"AutoSummonAssist");
-}
-
-static void antiAfkTick(u32 player,u32 now)
-{
-    static const char jumpScript[]="Jump()";
-
-    if(!g_antiAfkEnabled){
-        g_antiAfkNextAt=0u;
-        g_antiAfkDeferCheckAt=0u;
-        g_antiAfkSecondsLeft=0u;
-        return;
-    }
-
-    if(!g_antiAfkNextAt){
-        antiAfkSchedule(now);
-        return;
-    }
-
-    if((int)(now-g_antiAfkNextAt)<0){
-        g_antiAfkSecondsLeft=(u32)(g_antiAfkNextAt-now+999u)/1000u;
-        return;
-    }
-
-    g_antiAfkSecondsLeft=0u;
-    /* User requirement: never interrupt the summon/channel.  The existing
-     * exact-build busy detector also covers a normal cast, which is safer. */
-    if(playerBusy(player)){
-        if(!g_antiAfkDeferCheckAt||(int)(now-g_antiAfkDeferCheckAt)>=0){
-            ++g_antiAfkChannelDefers;
-            g_antiAfkDeferCheckAt=now+ANTI_AFK_DEFER_RECHECK_MS;
-        }
-        return;
-    }
-
-    ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(jumpScript,jumpScript);
-    ++g_antiAfkJumpCalls;
-    antiAfkSchedule(now);
-}
-
-static void scanAndMaybeClick(u32 player,u32 now)
-{
-    u32 mgr=g_mgr,obj,i,found=0u,lo=0u,hi=0u;
-    u32 foundEntry=0u,foundType=0u,foundSource=MATCH_NONE;
-    float px,py,pz,best=INTERACT_RANGE_SQ+0.01f,nearest=DEBUG_NEAR_RANGE_SQ+0.01f;
-
-    ++g_scanTicks;
-    clearCandidate();
-    g_nearbyGoCount=0u;
-    g_nearestEntry=0u;
-    g_nearestType=0u;
-    g_nearestDistance100=0u;
-
-    if(!ptrOk(mgr)||!ptrOk(player)) return;
-
-    px=readFloat(player+PLAYER_X);
-    py=readFloat(player+PLAYER_Y);
-    pz=readFloat(player+PLAYER_Z);
-    if(!validPos(px,py,pz)) return;
-
-    obj=read32(mgr+OM_FIRST_OBJECT);
-    for(i=0u;i<4095u && ptrOk(obj);i++) {
-        u32 next=read32(obj+OBJ_NEXT);
-        if(read32(obj+OBJ_TYPE_ID)==TYPEID_GAMEOBJECT) {
-            u32 desc=read32(obj+OBJ_DESCRIPTOR_PTR);
-            if(ptrOk(desc) &&
-               (read32(desc+4u*OBJECT_FIELD_TYPE_INDEX)&TYPEMASK_GAMEOBJECT)) {
-                u32 entry=read32(desc+4u*OBJECT_FIELD_ENTRY_INDEX);
-                u32 goType=read32(desc+4u*GO_TYPE_ID_INDEX);
-                float x=readFloat(desc+4u*GO_X_INDEX);
-                float y=readFloat(desc+4u*GO_Y_INDEX);
-                float z=readFloat(desc+4u*GO_Z_INDEX);
-
-                if(validPos(x,y,z)) {
-                    float dx=x-px,dy=y-py,dz=z-pz;
-                    float d2=dx*dx+dy*dy+dz*dz;
-                    int entryMatch=entry==SUMMONING_PORTAL_ENTRY;
-                    int typeMatch=goType==GAMEOBJECT_TYPE_RITUAL;
-
-                    if(d2<=DEBUG_NEAR_RANGE_SQ) {
-                        ++g_nearbyGoCount;
-                        if(d2<nearest) {
-                            nearest=d2;
-                            g_nearestEntry=entry;
-                            g_nearestType=goType;
-                            g_nearestDistance100=distance100(d2);
-                        }
-                    }
-
-                    if((entryMatch||typeMatch) && d2<=INTERACT_RANGE_SQ && d2<best) {
-                        best=d2;
-                        found=obj;
-                        lo=read32(obj+OBJ_GUID_LO);
-                        hi=read32(obj+OBJ_GUID_HI);
-                        foundEntry=entry;
-                        foundType=goType;
-                        foundSource=(entryMatch&&typeMatch)?MATCH_ENTRY_AND_TYPE:
-                                    entryMatch?MATCH_ENTRY:MATCH_RITUAL_TYPE;
-                    }
-                }
-            }
-        }
-        if(!ptrOk(next)||next==obj) break;
-        obj=next;
-    }
-
-    if(!found || (!lo&&!hi)) {
-        if(g_portalLo||g_portalHi) resetPortal();
-        return;
-    }
-
-    g_candidatePresent=1u;
-    g_matchSource=foundSource;
-    g_candidateEntry=foundEntry;
-    g_candidateType=foundType;
-    g_candidateDistance100=distance100(best);
-    g_candidateGuidLo=lo;
-    g_candidateGuidHi=hi;
-
-    if(lo!=g_portalLo || hi!=g_portalHi) {
-        g_portalLo=lo;
-        g_portalHi=hi;
-        g_lastClick=0u;
-        g_portalAttempts=0u;
-        g_announced=0u;
-    }
-
-    /* Background multibox invariant: this is an in-process WoW object
-     * interaction. It never moves the OS cursor, never sends mouse/keyboard
-     * input and never requires the game window to be foreground. The FIRST
-     * interaction is unconditional once a ritual candidate is in range.
-     * Cast/channel state suppresses only later retries. */
-    if(g_portalAttempts>=MAX_ATTEMPTS_PER_GUID) {
-        g_gateReason=GATE_MAX_ATTEMPTS;
-        return;
-    }
-    if(g_portalAttempts>0u && g_busyRaw) {
-        g_gateReason=GATE_BUSY_AFTER_FIRST;
-        return;
-    }
-    if(g_lastClick && (u32)(now-g_lastClick)<RETRY_GAP_MS) {
-        g_gateReason=GATE_RETRY_GAP;
-        return;
-    }
-
-    g_gateReason=(g_portalAttempts==0u)?GATE_FIRST_NATIVE_CALL:GATE_RETRY_NATIVE_CALL;
-    g_lastClick=now;
-    ++g_portalAttempts;
-    ++g_attemptCount; /* PRE-CALL: proves execution reached 0x005F8660. */
-
-    ((RightClickObjectFn)(ptr32)WOW_ON_RIGHT_CLICK_OBJECT)((void*)(ptr32)found,0);
-
-    ++g_postCallCount; /* POST-CALL: proves the internal call returned. */
-}
-
-static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
-{
-    u32 player;
-    int busy;
-
-    (void)h;
-    (void)m;
-    (void)id;
-
-    ++g_heartbeat;
-
-    if(!buildGuard()) {
-        g_status=STATUS_BUILD_MISMATCH;
-        return;
-    }
-
-    player=localPlayer(now);
-    if(!player) {
-        g_status=(g_mgr ? STATUS_WORLD_GRACE:STATUS_WAIT_WORLD);
-        return;
-    }
-
-    /* Re-register periodically so /reload cannot permanently lose the slash
-     * binding. Registration and command handling stay inside this WoW process. */
-    antiAfkInstallSlash(now);
-
-    busy=playerBusy(player);
-    g_busyRaw=busy ? 1u:0u;
-
-    /* Anti-AFK is deliberately independent from AutoSummon enable state. */
-    antiAfkFlushSlashFeedback();
-    antiAfkTick(player,now);
-
-    if(!g_enabled) {
-        g_status=STATUS_DISABLED;
-        resetPortal();
-        return;
-    }
-
-    g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
-    scanAndMaybeClick(player,now);
-}
-
-static void initSettings(void)
-{
-    u32 i;
-    static const char *keys[24]={
-        "enabled","scanner_alive","candidate_present","match_source",
-        "candidate_entry","candidate_type","candidate_distance_x100",
-        "candidate_guid_lo","candidate_guid_hi","native_pre_calls",
-        "current_guid_pre_calls","native_post_returns","scan_ticks",
-        "nearby_go_count","nearest_go_entry","nearest_go_type",
-        "nearest_go_distance_x100","status","gate_reason","busy_raw",
-        "anti_afk_enabled","anti_afk_next_seconds","anti_afk_jump_calls",
-        "anti_afk_channel_defers"
-    };
-    static const char *labels[24]={
-        "Enabled","Scanner alive","Ritual candidate","Match source",
-        "Candidate entry","Candidate type","Candidate distance x100",
-        "Candidate GUID low","Candidate GUID high","Native PRE calls",
-        "Current GUID PRE calls","Native POST returns","Scan ticks",
-        "Nearby GO <=12yd","Nearest GO entry","Nearest GO type",
-        "Nearest GO distance x100","Status","Gate reason","Busy raw",
-        "Anti-AFK random jump","Anti-AFK next seconds","Anti-AFK jump calls",
-        "Anti-AFK channel defers"
-    };
-
-    if(g_descriptorReady) return;
-
-    for(i=0u;i<24u;i++) {
-        W112_ControlSettingV1 *s=&g_settings[i];
-        int writableBool=(i==0u||i==20u);
-        s->struct_size=sizeof(*s);
-        s->setting_id=i+1u;
-        s->key=keys[i];
-        s->label=labels[i];
-        s->type=(i<=2u||i==20u) ? W112_CTL_BOOL:W112_CTL_INT;
-        s->default_value.u32=(i==0u)?1u:0u;
-        s->min_value.u32=0u;
-        s->max_value.u32=(i<=2u||i==20u)?1u:2147483647u;
-        s->step.u32=1u;
-        s->flags=writableBool?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
-        s->enum_options=0;
-        s->enum_option_count=0u;
-    }
-
-    g_descriptorReady=1u;
-}
-
-static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
-{
-    if(!v) return 0;
-    if(id==1u) v->u32=g_enabled?1u:0u;
-    else if(id==2u) v->u32=g_heartbeat?1u:0u;
-    else if(id==3u) v->u32=g_candidatePresent?1u:0u;
-    else if(id==4u) v->u32=g_matchSource;
-    else if(id==5u) v->u32=g_candidateEntry;
-    else if(id==6u) v->u32=g_candidateType;
-    else if(id==7u) v->u32=g_candidateDistance100;
-    else if(id==8u) v->u32=g_candidateGuidLo;
-    else if(id==9u) v->u32=g_candidateGuidHi;
-    else if(id==10u) v->u32=g_attemptCount;
-    else if(id==11u) v->u32=g_portalAttempts;
-    else if(id==12u) v->u32=g_postCallCount;
-    else if(id==13u) v->u32=g_scanTicks;
-    else if(id==14u) v->u32=g_nearbyGoCount;
-    else if(id==15u) v->u32=g_nearestEntry;
-    else if(id==16u) v->u32=g_nearestType;
-    else if(id==17u) v->u32=g_nearestDistance100;
-    else if(id==18u) v->u32=g_status;
-    else if(id==19u) v->u32=g_gateReason;
-    else if(id==20u) v->u32=g_busyRaw;
-    else if(id==21u) v->u32=g_antiAfkEnabled?1u:0u;
-    else if(id==22u) v->u32=g_antiAfkSecondsLeft;
-    else if(id==23u) v->u32=g_antiAfkJumpCalls;
-    else if(id==24u) v->u32=g_antiAfkChannelDefers;
-    else return 0;
-    return 1;
-}
-
-static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
-{
-    if(!v||v->u32>1u) return 0;
-    if(id==1u){
-        g_enabled=v->u32;
-        if(!g_enabled) resetPortal();
-        return 1;
-    }
-    if(id==21u){
-        antiAfkSetEnabled(v->u32);
-        return 1;
-    }
-    return 0;
-}
-
-static const W112_ControlModuleV1 g_module={
-    W112_CONTROL_API_V1,
-    sizeof(W112_ControlModuleV1),
-    "autosummonassist",
-    "AutoSummon Assist",
-    0x00060000u,
-    24u,
-    g_settings,
-    getValue,
-    setValue
-};
-
-DLLEXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
-{
-    initSettings();
-    return &g_module;
-}
-
-DLLEXPORT u32 STDCALL AutoSummonAssist_GetStatus(void)
-{
-    return g_status;
-}
-
-DLLEXPORT u32 STDCALL AutoSummonAssist_GetAttempts(void)
-{
-    return g_attemptCount;
-}
-
-BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
-{
-    (void)module;
-    (void)reserved;
-
-    if(reason==1u) {
-        SetTimerFn setTimer;
-        resetWorld();
-        g_attemptCount=0u;
-        g_postCallCount=0u;
-        g_gateReason=GATE_NONE;
-        g_busyRaw=0u;
-        g_heartbeat=0u;
-        g_scanTicks=0u;
-        g_antiAfkNextAt=0u;
-        g_antiAfkDeferCheckAt=0u;
-        g_antiAfkRng=0u;
-        g_antiAfkSecondsLeft=0u;
-        g_antiAfkJumpCalls=0u;
-        g_antiAfkChannelDefers=0u;
-        g_antiAfkSlashInstallAt=0u;
-        g_antiAfkSlashFeedback=0u;
 
         if(!buildGuard()) {
             g_status=STATUS_BUILD_MISMATCH;
