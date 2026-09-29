@@ -1,4 +1,4 @@
-# SummonScout 1.14
+# SummonScout 1.15
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -218,3 +218,11 @@ The 10 second cooldown is applied to **outgoing summon-status whispers**, not to
 - `Live operation` now separates `Received total` (the SummonScout payment ledger) from `Current gold` (live `GetMoney()` wallet balance).
 - `Reset total` clears the saved payment ledger only. It does not change the character's actual gold.
 - `Current gold` is display-only and is never used as the amount of a received payment.
+
+
+## 1.15 Vanilla GUI focus fix + ritual cast hardening
+
+- Removed the unsupported Vanilla 1.12 EditBox `:HasFocus()` call that caused the GUI error at runtime. Edit focus is now tracked with `OnEditFocusGained` / `OnEditFocusLost`.
+- Auto-summon now resolves both `partyN` and `raidN` units and listens to both party and raid roster changes.
+- `Ritual of Summoning` is cast through the actual spellbook slot when available, with `CastSpellByName` retained only as a fallback. This avoids the observed case where the target changed correctly but the spell request never started.
+- If the spell opens targeting mode, the resolved party/raid unit is explicitly passed to `SpellTargetUnit`.

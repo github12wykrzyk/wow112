@@ -614,10 +614,14 @@ local function playerIsCasting()
     return CastingBarFrame and (CastingBarFrame.casting or CastingBarFrame.channeling)
 end
 
-local function partyUnitByName(name)
+local function groupUnitByName(name)
     local j
     for j = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
         local unit = "party" .. j
+        if samePlayer(UnitName(unit), name) then return unit end
+    end
+    for j = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
+        local unit = "raid" .. j
         if samePlayer(UnitName(unit), name) then return unit end
     end
     return nil
@@ -640,18 +644,59 @@ end
 local function syncPartyRoster(suppressNew)
     local current = {}
     local j
-    for j = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
-        local name = trim(UnitName("party" .. j) or "")
-        if name ~= "" then
-            current[lower(name)] = name
-            if SS.partyRosterReady and not suppressNew and not SS.partyKnown[lower(name)]
-                and SummonScoutDB.partyAutoSummon then
-                queuePartySummon(name)
-            end
+
+    local function observeUnit(unit)
+        local name = trim(UnitName(unit) or "")
+        if name == "" or samePlayer(name, UnitName("player")) then return end
+        current[lower(name)] = name
+        if SS.partyRosterReady and not suppressNew and not SS.partyKnown[lower(name)]
+            and SummonScoutDB.partyAutoSummon then
+            queuePartySummon(name)
         end
     end
+
+    for j = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+        observeUnit("party" .. j)
+    end
+    for j = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
+        observeUnit("raid" .. j)
+    end
+
     SS.partyKnown = current
     SS.partyRosterReady = true
+end
+
+local function findSpellBookSlot(spellName)
+    if not GetSpellName then return nil, nil end
+    local book = BOOKTYPE_SPELL or "spell"
+    local wanted = lower(spellName or "")
+    local index
+    for index = 1, 200 do
+        local name = GetSpellName(index, book)
+        if not name then break end
+        if lower(name) == wanted then
+            return index, book
+        end
+    end
+    return nil, book
+end
+
+local function castRitualOnUnit(unit)
+    local slot, book = findSpellBookSlot("Ritual of Summoning")
+    local requested = false
+
+    if slot and CastSpell then
+        CastSpell(slot, book)
+        requested = true
+    elseif CastSpellByName then
+        CastSpellByName("Ritual of Summoning")
+        requested = true
+    end
+
+    if requested and SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
+        SpellTargetUnit(unit)
+    end
+    return requested, slot
 end
 
 local function summonDestinationLabel()
@@ -721,7 +766,7 @@ local function processPartySummon()
     if UnitAffectingCombat and UnitAffectingCombat("player") then return end
 
     local item = SS.summonQueue[1]
-    local unit = partyUnitByName(item.name)
+    local unit = groupUnitByName(item.name)
     if not unit then
         finishActiveSummon(item.name)
         return
@@ -759,18 +804,20 @@ local function processPartySummon()
             return
         end
 
-        if CastSpellByName then
-            CastSpellByName("Ritual of Summoning")
-            if SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
-                SpellTargetUnit(unit)
-            end
+        local requested, slot = castRitualOnUnit(unit)
+        if requested then
             SS.summonActiveName = item.name
             SS.summonActiveExpires = now() + 1.50
             item.phase = "wait"
             item.nextAt = now() + 4.0
             if SummonScoutDB.debug then
-                chat("summon cast requested -> " .. item.name .. " attempt " .. tostring(item.attempts))
+                chat("summon cast requested -> " .. item.name
+                    .. " attempt " .. tostring(item.attempts)
+                    .. (slot and (" spellbook=" .. tostring(slot)) or " by-name"))
             end
+        else
+            chat("cannot cast Ritual of Summoning: spell API unavailable")
+            finishActiveSummon(item.name)
         end
         return
     end
@@ -1188,6 +1235,9 @@ local function guiEdit(parent, x, y, width, text)
     e:SetAutoFocus(false)
     e:SetMaxLetters(220)
     e:SetText(text or "")
+    e.ssFocused = false
+    e:SetScript("OnEditFocusGained", function() e.ssFocused = true end)
+    e:SetScript("OnEditFocusLost", function() e.ssFocused = false end)
     e:SetScript("OnEscapePressed", function() e:ClearFocus() end)
     return e
 end
@@ -1397,7 +1447,7 @@ guiRefresh = function()
         if c and c.ssGetter then c:SetChecked(c.ssGetter() and 1 or nil) end
     end
 
-    if GUI.summonWhisperCdEdit and not GUI.summonWhisperCdEdit:HasFocus() then
+    if GUI.summonWhisperCdEdit and not GUI.summonWhisperCdEdit.ssFocused then
         GUI.summonWhisperCdEdit:SetText(tostring(SummonScoutDB.summonWhisperCooldown or 10))
     end
 
@@ -1683,6 +1733,7 @@ frame:RegisterEvent("TRADE_ACCEPT_UPDATE")
 frame:RegisterEvent("TRADE_CLOSED")
 frame:RegisterEvent("CHAT_MSG_WHISPER")
 frame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+frame:RegisterEvent("RAID_ROSTER_UPDATE")
 frame:RegisterEvent("SPELLCAST_START")
 frame:RegisterEvent("SPELLCAST_FAILED")
 frame:RegisterEvent("SPELLCAST_INTERRUPTED")
@@ -1696,7 +1747,7 @@ frame:SetScript("OnEvent", function()
         return
     end
 
-    if event == "PARTY_MEMBERS_CHANGED" then
+    if event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
         SS.partySyncAt = now() + 0.20
         return
     end
