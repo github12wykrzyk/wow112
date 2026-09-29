@@ -293,8 +293,9 @@ namespace WoW112Updater
             try
             {
                 ValidateInputs();
-                if (IsGameRunning(gameDir.Text.Trim()))
-                    throw new InvalidOperationException("Gra działa z tego katalogu. Zamknij WoW przed aktualizacją.");
+                var updateRoot = gameDir.Text.Trim();
+                if (!ConfirmCloseRunningGameForUpdate(updateRoot))
+                    return;
 
                 SaveConfig(false);
                 SetBusy(true, "Pobieranie najnowszej paczki...");
@@ -1033,6 +1034,73 @@ namespace WoW112Updater
             {
                 Log("BŁĄD: " + ex.Message);
                 MessageBox.Show(this, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private bool ConfirmCloseRunningGameForUpdate(string root)
+        {
+            if (!IsGameRunning(root)) return true;
+
+            var answer = MessageBox.Show(
+                this,
+                "Gra działa z tego katalogu.\n\nTak — zamknij wszystkie instancje WoW z tego katalogu i kontynuuj aktualizację.\nNie — anuluj aktualizację i zostaw grę uruchomioną.",
+                "WoW112 Updater — gra jest uruchomiona",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2);
+
+            if (answer != DialogResult.Yes)
+            {
+                status.Text = "Aktualizacja anulowana.";
+                Log("Aktualizacja anulowana — WoW pozostał uruchomiony.");
+                return false;
+            }
+
+            status.Text = "Zamykanie WoW przed aktualizacją...";
+            Log("Użytkownik potwierdził zamknięcie WoW przed aktualizacją.");
+            CloseGameProcesses(root);
+
+            if (IsGameRunning(root))
+                throw new InvalidOperationException("Nie udało się zamknąć wszystkich instancji WoW z wybranego katalogu.");
+
+            Log("WoW zamknięty. Kontynuuję aktualizację.");
+            return true;
+        }
+
+        private static void CloseGameProcesses(string root)
+        {
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            foreach (var process in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    var module = process.MainModule;
+                    var file = module == null ? null : module.FileName;
+                    if (string.IsNullOrWhiteSpace(file)) continue;
+
+                    var fullPath = Path.GetFullPath(file);
+                    var name = Path.GetFileName(fullPath);
+                    var isWow = string.Equals(name, "WoW.exe", StringComparison.OrdinalIgnoreCase)
+                        || (name.StartsWith("WoW_", StringComparison.OrdinalIgnoreCase)
+                            && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+                    if (!isWow || !fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var requestedGracefulClose = process.CloseMainWindow();
+                    if (!requestedGracefulClose || !process.WaitForExit(1500))
+                    {
+                        process.Kill();
+                        process.WaitForExit(3000);
+                    }
+                }
+                catch
+                {
+                    // A process can disappear or deny access between enumeration and close.
+                    // The post-check in ConfirmCloseRunningGameForUpdate is authoritative.
+                }
+                finally
+                {
+                    process.Dispose();
+                }
             }
         }
 
