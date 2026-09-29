@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.18"
+local ADDON_VERSION = "1.19"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -642,7 +642,7 @@ local function queuePartySummon(name)
     SS.summonQueue[table.getn(SS.summonQueue) + 1] = {
         name = name,
         attempts = 0,
-        phase = "target",
+        phase = "cast",
         nextAt = now() + 0.35
     }
     chat("party join -> summon queued: " .. name)
@@ -688,17 +688,44 @@ local function findSpellBookSlot(spellName)
     return nil, book
 end
 
+local function countSoulShards()
+    local total = 0
+    if not GetContainerNumSlots or not GetContainerItemLink then return -1 end
+    local bag, slot
+    for bag = 0, 4 do
+        local size = GetContainerNumSlots(bag) or 0
+        for slot = 1, size do
+            local link = GetContainerItemLink(bag, slot)
+            if link and string.find(link, "|Hitem:6265:", 1, true) then
+                local _, count = GetContainerItemInfo(bag, slot)
+                total = total + (tonumber(count) or 1)
+            end
+        end
+    end
+    return total
+end
+
 local function castRitualOnUnit(unit)
     local slot, book = findSpellBookSlot("Ritual of Summoning")
     local requested = false
     local method = "none"
+    local previousTarget = trim(UnitName("target") or "")
+    local summonTarget = trim(UnitName(unit) or "")
 
     SS.lastSummonRequestAt = now()
-    SS.lastSummonRequestName = trim(UnitName(unit) or UnitName("target") or "")
+    SS.lastSummonRequestName = summonTarget
     SS.lastSummonError = ""
 
-    -- This mirrors the proven LazyScript 1.12 casting path in this repo:
-    -- resolve the spellbook index and call CastSpell(index, "spell").
+    -- Mirror the proven LazyScript 1.12 pattern atomically:
+    -- TargetUnit(unit) -> CastSpell(index, "spell") -> restore previous target.
+    -- Keeping these in one OnUpdate pass prevents the user's own target changes
+    -- from racing the old 200 ms target/cast split.
+    if TargetUnit then
+        TargetUnit(unit)
+    elseif TargetByName and summonTarget ~= "" then
+        TargetByName(summonTarget, true)
+    end
+
     if slot and CastSpell then
         CastSpell(slot, book)
         requested = true
@@ -712,6 +739,14 @@ local function castRitualOnUnit(unit)
     if requested and SpellIsTargeting and SpellIsTargeting() and SpellTargetUnit then
         SpellTargetUnit(unit)
     end
+
+    -- Do not leave SSI owning the player's target after issuing the cast.
+    if previousTarget ~= "" and not samePlayer(previousTarget, summonTarget) then
+        if TargetLastTarget then TargetLastTarget() end
+    elseif previousTarget == "" and ClearTarget then
+        ClearTarget()
+    end
+
     return requested, slot, method
 end
 
@@ -779,7 +814,7 @@ local function retryActiveSummon(delay)
     local name = SS.summonActiveName
     clearActiveSummon()
     if name and table.getn(SS.summonQueue) > 0 and samePlayer(SS.summonQueue[1].name, name) then
-        SS.summonQueue[1].phase = "target"
+        SS.summonQueue[1].phase = "cast"
         SS.summonQueue[1].nextAt = now() + (delay or 0.50)
     end
 end
@@ -811,26 +846,9 @@ local function processPartySummon()
     end
     if now() < (item.nextAt or 0) then return end
 
-    -- Vanilla is more reliable when target selection and spell execution are
-    -- separated by a short UI-frame settle instead of happening back-to-back.
-    if not item.phase or item.phase == "target" then
-        if TargetUnit then
-            TargetUnit(unit)
-        elseif TargetByName then
-            TargetByName(item.name, true)
-        end
-        item.phase = "cast"
-        item.nextAt = now() + 0.20
-        return
-    end
+    if not item.phase then item.phase = "cast" end
 
     if item.phase == "cast" then
-        if not samePlayer(UnitName("target"), item.name) then
-            item.phase = "target"
-            item.nextAt = now() + 0.10
-            return
-        end
-
         item.attempts = (item.attempts or 0) + 1
         if item.attempts > 3 then
             local slot = findSpellBookSlot("Ritual of Summoning")
@@ -865,9 +883,9 @@ local function processPartySummon()
     end
 
     if item.phase == "wait" then
-        -- No SPELLCAST_START arrived: retry the target+cast sequence.
-        item.phase = "target"
-        item.nextAt = now() + 0.10
+        -- No SPELLCAST_START arrived: retry the atomic target/cast/restore sequence.
+        item.phase = "cast"
+        item.nextAt = now() + 0.20
     end
 end
 
@@ -1223,23 +1241,6 @@ local function clearStats()
     SummonScoutDB.requestLog = {}
     SS.loggedRecent = {}
     chat("request statistics and recent log cleared")
-end
-
-local function countSoulShards()
-    local total = 0
-    if not GetContainerNumSlots or not GetContainerItemLink then return -1 end
-    local bag, slot
-    for bag = 0, 4 do
-        local size = GetContainerNumSlots(bag) or 0
-        for slot = 1, size do
-            local link = GetContainerItemLink(bag, slot)
-            if link and string.find(link, "|Hitem:6265:", 1, true) then
-                local _, count = GetContainerItemInfo(bag, slot)
-                total = total + (tonumber(count) or 1)
-            end
-        end
-    end
-    return total
 end
 
 local function showSummonCheck()

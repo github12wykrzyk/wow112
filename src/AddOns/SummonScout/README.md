@@ -1,4 +1,4 @@
-# SummonScout 1.18
+# SummonScout 1.19
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -260,3 +260,17 @@ Diagnostics were also corrected for Vanilla:
 - Soul Shards are counted by scanning bags for item 6265 instead of using unavailable `GetItemCount`.
 - `/ssi summoncheck` resolves `groupUnit` from the current target when the summon queue has already been exhausted.
 - final retry failure includes group unit, spellbook slot, shard count and last client error.
+
+
+## 1.19 atomic summon target/cast + scope fix
+
+Two field issues were fixed:
+
+- The retry failure path called `countSoulShards()` before that local function existed in lexical scope, producing the runtime `attempt to call global 'countSoulShards' (a nil value)` error. The helper now lives before the summon state machine.
+- Auto-summon no longer owns the player's target for a 200 ms target phase. That split created a race: if the player or another addon changed target before the next frame, SummonScout would retarget the party member again and could loop without ever casting.
+
+The summon attempt now mirrors the proven LazyScript pattern in one atomic pass:
+
+`TargetUnit(groupUnit) -> CastSpell(spellbookIndex, "spell") -> SpellTargetUnit if needed -> TargetLastTarget/ClearTarget`.
+
+The user's previous target is restored immediately after issuing the Ritual, so SSI should no longer keep snapping the target back to the summoned party member.
