@@ -402,6 +402,7 @@ static W112_FollowShared *g_followShared=0;
 static volatile DWORD g_followMoving=0u,g_followHadAssist=0u;
 static DWORD g_followLastCtm=0u,g_followLastTele=0u,g_followLastLazy=0u,g_followLastMasterLua=0u,g_followLastZoneLua=0u;
 static DWORD g_followLocalZoneHash=0u,g_followMasterZoneHash=0u;
+static DWORD g_followTagLo=0u,g_followTagHi=0u,g_followTagCached=0u;
 static DWORD g_followLastAssistLo=0u,g_followLastAssistHi=0u;
 static DWORD g_followLastMasterTick=0u,g_followLastMasterPid=0u;
 static float g_followLastMasterX=0.0f,g_followLastMasterY=0.0f,g_followLastMasterZ=0.0f;
@@ -2485,30 +2486,31 @@ static void Follow_SetRole(DWORD role,BYTE *p,DWORD now)
     g_followHeartbeatAge=0u;g_followDistanceLive100=0u;
     g_followMasterTagged=0u;g_followZoneMatch=0u;g_followLazyReady=0u;
     g_followLastMasterTick=0u;g_followLastMasterPid=0u;
+    g_followTagLo=g_followTagHi=g_followTagCached=0u;
     if(role!=W112_FOLLOW_ROLE_OFF){
         g_patrolEnabled=0u;g_patrolRecording=0u;Patrol_StopMovement(p);
     }
 }
 static void Follow_MasterPublish(BYTE *p,DWORD now)
 {
-    W112_FollowShared *s;DWORD tap=0u,zone=g_followMasterZoneHash;
+    W112_FollowShared *s;DWORD tap=0u,zone=g_followMasterZoneHash,sampled=0u;
     DWORD lo=0u,hi=0u,tagged=0u;BYTE *t=0;
     if(!Follow_OpenMap()){g_followState=2u;return;}
     s=g_followShared;g_followLinkReady=1u;g_followMasterPid=GetCurrentProcessId();
-    if(!g_followLastMasterLua||(DWORD)(now-g_followLastMasterLua)>=W112_FOLLOW_MASTER_LUA_MS){
-        g_followLastMasterLua=now;
-        if(Follow_QueryMasterLua(&tap,&zone))g_followMasterZoneHash=zone;
-        else tap=0u;
-    }else{
-        /* Tag is fail-closed between Lua samples unless the same target remains
-           authoritatively tagged in the last published frame. */
-        tap=(s->magic==W112_FOLLOW_MAGIC&&s->owner_pid==GetCurrentProcessId())?s->target_tagged:0u;
-    }
     if(Ptr(p)&&g_loginGuardReady){
         lo=*(DWORD*)ADDR_SELECTED_GUID_LOW;hi=*(DWORD*)ADDR_SELECTED_GUID_HIGH;
         t=ObjByGuid(lo,hi);
-        if((lo|hi)&&Follow_TargetValid(t)&&tap)tagged=1u;
     }
+    if(!g_followLastMasterLua||(DWORD)(now-g_followLastMasterLua)>=W112_FOLLOW_MASTER_LUA_MS){
+        g_followLastMasterLua=now;sampled=1u;
+        if(Follow_QueryMasterLua(&tap,&zone))g_followMasterZoneHash=zone;
+        else tap=0u;
+        g_followTagLo=lo;g_followTagHi=hi;
+        g_followTagCached=((lo|hi)&&Follow_TargetValid(t)&&tap)?1u:0u;
+    }
+    if(!sampled)
+        tap=(lo==g_followTagLo&&hi==g_followTagHi)?g_followTagCached:0u;
+    if((lo|hi)&&Follow_TargetValid(t)&&tap)tagged=1u;
     InterlockedIncrement(&s->seq);
     s->magic=W112_FOLLOW_MAGIC;s->version=W112_FOLLOW_VERSION;
     s->owner_pid=GetCurrentProcessId();s->tick=now;s->zone_hash=g_followMasterZoneHash;
