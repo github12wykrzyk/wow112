@@ -1208,14 +1208,12 @@ namespace WoW112Updater
                             && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
                     if (!isWow || !fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) continue;
 
-                    // Ask WoW to close normally and allow enough time for the
-                    // client's own logout/quit sequence to complete. Outside a
-                    // rest area Vanilla can legitimately need the full logout
-                    // countdown. Never force-kill here: an abrupt disconnect can
-                    // leave the character/session alive server-side.
-                    var requestedGracefulClose = process.CloseMainWindow();
-                    if (requestedGracefulClose)
-                        process.WaitForExit(30000);
+                    // Do not send WM_CLOSE here. In WoW 1.12.1 that can enter
+                    // the normal client logout path and start the in-world logout
+                    // countdown before the updater closes the process. For an
+                    // update we want an immediate process stop instead.
+                    process.Kill();
+                    process.WaitForExit(5000);
                 }
                 catch
                 {
