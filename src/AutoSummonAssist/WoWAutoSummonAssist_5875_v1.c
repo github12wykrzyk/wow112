@@ -111,6 +111,13 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define MATCH_RITUAL_TYPE           2u
 #define MATCH_ENTRY_AND_TYPE        3u
 
+#define GATE_NONE                   0u
+#define GATE_FIRST_NATIVE_CALL      1u
+#define GATE_RETRY_NATIVE_CALL      2u
+#define GATE_BUSY_AFTER_FIRST       3u
+#define GATE_RETRY_GAP              4u
+#define GATE_MAX_ATTEMPTS           5u
+
 static volatile UINT_PTR32 g_timer = 0u;
 static volatile u32 g_status = STATUS_DETACHED;
 static volatile u32 g_enabled = 1u;
@@ -123,7 +130,10 @@ static volatile u32 g_candidateType = 0u;
 static volatile u32 g_candidateDistance100 = 0u;
 static volatile u32 g_candidateGuidLo = 0u;
 static volatile u32 g_candidateGuidHi = 0u;
-static volatile u32 g_attemptCount = 0u;
+static volatile u32 g_attemptCount = 0u; /* PRE-CALL count */
+static volatile u32 g_postCallCount = 0u; /* native call returned */
+static volatile u32 g_gateReason = GATE_NONE;
+static volatile u32 g_busyRaw = 0u;
 static volatile u32 g_nearbyGoCount = 0u;
 static volatile u32 g_nearestEntry = 0u;
 static volatile u32 g_nearestType = 0u;
@@ -133,7 +143,7 @@ static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
 
-static W112_ControlSettingV1 g_settings[17];
+static W112_ControlSettingV1 g_settings[20];
 static u32 g_descriptorReady = 0u;
 
 int _fltused = 0;
@@ -183,6 +193,7 @@ static void resetPortal(void)
     g_lastClick=0u;
     g_portalAttempts=0u;
     g_announced=0u;
+    g_gateReason=GATE_NONE;
     clearCandidate();
 }
 
@@ -267,7 +278,7 @@ static int playerBusy(u32 player)
     return 0;
 }
 
-static void scanAndMaybeClick(u32 player,u32 now,int allowClick)
+static void scanAndMaybeClick(u32 player,u32 now)
 {
     u32 mgr=g_mgr,obj,i,found=0u,lo=0u,hi=0u;
     u32 foundEntry=0u,foundType=0u,foundSource=MATCH_NONE;
@@ -354,19 +365,32 @@ static void scanAndMaybeClick(u32 player,u32 now,int allowClick)
         g_announced=0u;
     }
 
-    if(!g_announced) {
-        announcePortal();
-        g_announced=1u;
+    /* Background multibox invariant: this is an in-process WoW object
+     * interaction. It never moves the OS cursor, never sends mouse/keyboard
+     * input and never requires the game window to be foreground. The FIRST
+     * interaction is unconditional once a ritual candidate is in range.
+     * Cast/channel state suppresses only later retries. */
+    if(g_portalAttempts>=MAX_ATTEMPTS_PER_GUID) {
+        g_gateReason=GATE_MAX_ATTEMPTS;
+        return;
+    }
+    if(g_portalAttempts>0u && g_busyRaw) {
+        g_gateReason=GATE_BUSY_AFTER_FIRST;
+        return;
+    }
+    if(g_lastClick && (u32)(now-g_lastClick)<RETRY_GAP_MS) {
+        g_gateReason=GATE_RETRY_GAP;
+        return;
     }
 
-    if(!allowClick) return;
-    if(g_portalAttempts>=MAX_ATTEMPTS_PER_GUID) return;
-    if(g_lastClick && (u32)(now-g_lastClick)<RETRY_GAP_MS) return;
-
-    ((RightClickObjectFn)(ptr32)WOW_ON_RIGHT_CLICK_OBJECT)((void*)(ptr32)found,0);
+    g_gateReason=(g_portalAttempts==0u)?GATE_FIRST_NATIVE_CALL:GATE_RETRY_NATIVE_CALL;
     g_lastClick=now;
     ++g_portalAttempts;
-    ++g_attemptCount;
+    ++g_attemptCount; /* PRE-CALL: proves execution reached 0x005F8660. */
+
+    ((RightClickObjectFn)(ptr32)WOW_ON_RIGHT_CLICK_OBJECT)((void*)(ptr32)found,0);
+
+    ++g_postCallCount; /* POST-CALL: proves the internal call returned. */
 }
 
 static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
@@ -398,33 +422,34 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
     }
 
     busy=playerBusy(player);
+    g_busyRaw=busy ? 1u:0u;
     g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
-    scanAndMaybeClick(player,now,!busy);
+    scanAndMaybeClick(player,now);
 }
 
 static void initSettings(void)
 {
     u32 i;
-    static const char *keys[17]={
+    static const char *keys[20]={
         "enabled","scanner_alive","candidate_present","match_source",
         "candidate_entry","candidate_type","candidate_distance_x100",
-        "candidate_guid_lo","candidate_guid_hi","click_attempts",
-        "current_guid_attempts","scan_ticks","nearby_go_count",
-        "nearest_go_entry","nearest_go_type","nearest_go_distance_x100",
-        "status"
+        "candidate_guid_lo","candidate_guid_hi","native_pre_calls",
+        "current_guid_pre_calls","native_post_returns","scan_ticks",
+        "nearby_go_count","nearest_go_entry","nearest_go_type",
+        "nearest_go_distance_x100","status","gate_reason","busy_raw"
     };
-    static const char *labels[17]={
+    static const char *labels[20]={
         "Enabled","Scanner alive","Ritual candidate","Match source",
         "Candidate entry","Candidate type","Candidate distance x100",
-        "Candidate GUID low","Candidate GUID high","Click attempts",
-        "Current GUID attempts","Scan ticks","Nearby GO <=12yd",
-        "Nearest GO entry","Nearest GO type","Nearest GO distance x100",
-        "Status"
+        "Candidate GUID low","Candidate GUID high","Native PRE calls",
+        "Current GUID PRE calls","Native POST returns","Scan ticks",
+        "Nearby GO <=12yd","Nearest GO entry","Nearest GO type",
+        "Nearest GO distance x100","Status","Gate reason","Busy raw"
     };
 
     if(g_descriptorReady) return;
 
-    for(i=0u;i<17u;i++) {
+    for(i=0u;i<20u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];
         s->struct_size=sizeof(*s);
         s->setting_id=i+1u;
@@ -457,12 +482,15 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==9u) v->u32=g_candidateGuidHi;
     else if(id==10u) v->u32=g_attemptCount;
     else if(id==11u) v->u32=g_portalAttempts;
-    else if(id==12u) v->u32=g_scanTicks;
-    else if(id==13u) v->u32=g_nearbyGoCount;
-    else if(id==14u) v->u32=g_nearestEntry;
-    else if(id==15u) v->u32=g_nearestType;
-    else if(id==16u) v->u32=g_nearestDistance100;
-    else if(id==17u) v->u32=g_status;
+    else if(id==12u) v->u32=g_postCallCount;
+    else if(id==13u) v->u32=g_scanTicks;
+    else if(id==14u) v->u32=g_nearbyGoCount;
+    else if(id==15u) v->u32=g_nearestEntry;
+    else if(id==16u) v->u32=g_nearestType;
+    else if(id==17u) v->u32=g_nearestDistance100;
+    else if(id==18u) v->u32=g_status;
+    else if(id==19u) v->u32=g_gateReason;
+    else if(id==20u) v->u32=g_busyRaw;
     else return 0;
     return 1;
 }
@@ -480,8 +508,8 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00030000u,
-    17u,
+    0x00040000u,
+    20u,
     g_settings,
     getValue,
     setValue
@@ -512,6 +540,9 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         SetTimerFn setTimer;
         resetWorld();
         g_attemptCount=0u;
+        g_postCallCount=0u;
+        g_gateReason=GATE_NONE;
+        g_busyRaw=0u;
         g_heartbeat=0u;
         g_scanTicks=0u;
 

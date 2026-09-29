@@ -89,11 +89,11 @@
         "Parallel PlayerESP native GUI tabs / W112_CONTROL_API_V1"
       ],
       "status": "in_progress",
-      "observed_head": "0f2f5a610ef345b9b13ccfb183ef98d84cf28e6f",
+      "observed_head": "5328812bebb5bdfdd0d554ed95c4e243ae918c7c",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "v3 after live report that visible Summoning Portal still did not auto-click. Detection now accepts canonical entry 36727 OR verified Vanilla GAMEOBJECT_TYPE_ID=18 ritual fallback, retains 5.5yd/8x120ms retry and native cast/channel stop. AutoSummon exports 17 live diagnostics. Existing Parallel PlayerESP GUI gains a dedicated SUMMON tab showing DLL/API loaded state, scanner heartbeat, candidate entry/type/GUID/distance, retries/clicks, scanner state and nearest GO within 12yd. No separate ControlHub is enabled on parallel; no new game WndProc hook."
+      "notes": "v4 after live SUMMON debug proved DLL/API/scanner and portal detection healthy (candidate YES, entry 36727, type 18, 3.77yd) while native-attempt counters remained 0. Multibox requirement: work in background with no OS input/focus. First in-process 0x005F8660 interaction now always executes once ritual candidate is in range; cast/channel only suppresses retries. Added PRE-call, POST-return, gate-reason and busy diagnostics; fixed SUMMON tab caption indexing. No cursor, SendInput, SetForegroundWindow, movement spoof or target changes."
     }
   ]
 }

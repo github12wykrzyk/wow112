@@ -125,10 +125,10 @@ def main():
         "settings": [
             "Enabled", "Scanner alive", "Ritual candidate", "Match source",
             "Candidate entry", "Candidate type", "Candidate distance x100",
-            "Candidate GUID low", "Candidate GUID high", "Click attempts",
-            "Current GUID attempts", "Scan ticks", "Nearby GO <=12yd",
-            "Nearest GO entry", "Nearest GO type", "Nearest GO distance x100",
-            "Status"
+            "Candidate GUID low", "Candidate GUID high", "Native PRE calls",
+            "Current GUID PRE calls", "Native POST returns", "Scan ticks",
+            "Nearby GO <=12yd", "Nearest GO entry", "Nearest GO type",
+            "Nearest GO distance x100", "Status", "Gate reason", "Busy raw"
         ],
         "timings_ms": timing,
     }
@@ -169,12 +169,15 @@ def main():
         "abi": "W112_CONTROL_API_V1",
         "default_enabled": True,
         "scope": "Vanilla Summoning Portal entry 36727 OR GAMEOBJECT_TYPE_ID 18 ritual fallback",
-        "eligibility": "server-authoritative ritual eligibility; local retries are suppressed while player cast/channel state is active",
+        "eligibility": "first native interaction is unconditional once the ritual GO is in range; cast/channel only suppresses later retries",
         "interaction": "native 5875 0x005F8660 GameObject right-click on UI thread",
         "range_yd": 5.5,
         "portal_radius_reference_yd": 5.0,
-        "retry_policy": "up to 8 native clicks per observed portal GUID, 120ms apart; stop immediately on local cast/channel",
+        "retry_policy": "first background native interact always fires; up to 7 retries at 120ms, retries suppressed by local cast/channel",
         "position_spoof": False,
+        "foreground_required": False,
+        "os_input_simulation": False,
+        "interaction_diagnostics": "PRE increments before 0x005F8660; POST increments after return; gate reason exposed live",
         "timer_period_ms": 25,
         "chat_diagnostic": "one message per newly observed ritual candidate GUID",
         "debug_surface": "W112_CONTROL_API_V1 + Parallel SUMMON GUI tab",

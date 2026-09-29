@@ -204,9 +204,13 @@ def main():
         'g_ui_tabs[3]=ui_button(g_parallel_ui_hwnd,"SUMMON"',
         'ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_check)',
         'ui_sync_summon();',
-        'ui_work_pp_flip(PAR_SUMMON_DLL,17u,1u);',
+        'ui_work_pp_flip(PAR_SUMMON_DLL,20u,1u);',
         'Nearest GO <=12yd: entry ',
         'TYPE 18 = ritual fallback.',
+        'page==UI_TAB_SUMMON?3u:page',
+        'background-safe, no mouse/focus',
+        'Native POST returns',
+        'Gate reason',
         'g_ui_summon_check=NULL;g_ui_summon_loaded=NULL;g_ui_summon_candidate=NULL;',
     ):
         if token not in text:

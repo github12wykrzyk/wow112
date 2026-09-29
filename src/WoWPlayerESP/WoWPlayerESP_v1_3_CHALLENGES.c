@@ -556,9 +556,9 @@ static void ui_sync_summon(void) {
         "DISABLED","BUILD MISMATCH","NO TIMER","CAST/CHANNEL"
     };
     static const char* matches[4]={"NONE","ENTRY 36727","TYPE 18","ENTRY+TYPE"};
-    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,17u);
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,20u);
     W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
-    W112_ControlValueV1 clicks,current,scans,nearCount,nearEntry,nearType,nearDist,status;
+    W112_ControlValueV1 pre,current,post,scans,nearCount,nearEntry,nearType,nearDist,status,gate,busy;
     char buf[260],*p;
 
     if(!m) {
@@ -585,14 +585,17 @@ static void ui_sync_summon(void) {
     if(!m->get_value(7u,&dist))dist.u32=0u;
     if(!m->get_value(8u,&lo))lo.u32=0u;
     if(!m->get_value(9u,&hi))hi.u32=0u;
-    if(!m->get_value(10u,&clicks))clicks.u32=0u;
+    if(!m->get_value(10u,&pre))pre.u32=0u;
     if(!m->get_value(11u,&current))current.u32=0u;
-    if(!m->get_value(12u,&scans))scans.u32=0u;
-    if(!m->get_value(13u,&nearCount))nearCount.u32=0u;
-    if(!m->get_value(14u,&nearEntry))nearEntry.u32=0u;
-    if(!m->get_value(15u,&nearType))nearType.u32=0u;
-    if(!m->get_value(16u,&nearDist))nearDist.u32=0u;
-    if(!m->get_value(17u,&status))status.u32=0u;
+    if(!m->get_value(12u,&post))post.u32=0u;
+    if(!m->get_value(13u,&scans))scans.u32=0u;
+    if(!m->get_value(14u,&nearCount))nearCount.u32=0u;
+    if(!m->get_value(15u,&nearEntry))nearEntry.u32=0u;
+    if(!m->get_value(16u,&nearType))nearType.u32=0u;
+    if(!m->get_value(17u,&nearDist))nearDist.u32=0u;
+    if(!m->get_value(18u,&status))status.u32=0u;
+    if(!m->get_value(19u,&gate))gate.u32=0u;
+    if(!m->get_value(20u,&busy))busy.u32=0u;
 
     if(g_ui_summon_check)
         SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
@@ -615,14 +618,17 @@ static void ui_sync_summon(void) {
     if(g_ui_summon_guid){
         p=buf;p=app_str(p,"GUID lo/hi: ");p=app_u32(p,lo.u32);
         *p++='/';p=app_u32(p,hi.u32);
-        p=app_str(p," | retries ");p=app_u32(p,current.u32);
-        p=app_str(p,"/8 | total native clicks ");p=app_u32(p,clicks.u32);
+        p=app_str(p," | retry PRE ");p=app_u32(p,current.u32);
+        p=app_str(p,"/8 | PRE ");p=app_u32(p,pre.u32);
+        p=app_str(p," | POST ");p=app_u32(p,post.u32);
         *p=0;SetWindowTextA(g_ui_summon_guid,buf);
     }
     if(g_ui_summon_scan){
         p=buf;p=app_str(p,"Scanner ticks: ");p=app_u32(p,scans.u32);
         p=app_str(p," | GO <=12yd: ");p=app_u32(p,nearCount.u32);
         p=app_str(p," | state: ");p=app_str(p,status.u32<8u?states[status.u32]:"UNKNOWN");
+        p=app_str(p," | gate ");p=app_u32(p,gate.u32);
+        p=app_str(p," | busy ");p=app_u32(p,busy.u32);
         *p=0;SetWindowTextA(g_ui_summon_scan,buf);
     }
     if(g_ui_summon_nearest){
@@ -1080,7 +1086,7 @@ static void ui_set_page(DWORD page) {
         {"ESP","ROGUE","STATUS","[ SUMMON ]"}
     };
     DWORD t,i;
-    DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:page;
+    DWORD active_tab=page==UI_TAB_REAR?UI_TAB_STATUS:(page==UI_TAB_SUMMON?3u:page);
     if(page>UI_TAB_SUMMON)return;
     g_ui_current_tab=page;
     g_ui_gather_open=0u;
@@ -1145,7 +1151,7 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==204u){ui_set_page(UI_TAB_REAR);return 0;}
         if(id==228u){ui_set_page(UI_TAB_SUMMON);return 0;}
         if(id==229u){
-            ui_work_pp_flip(PAR_SUMMON_DLL,17u,1u);
+            ui_work_pp_flip(PAR_SUMMON_DLL,20u,1u);
             ui_sync_summon();return 0;
         }
         if(id==205u){ui_set_page(UI_TAB_STATUS);return 0;}
@@ -1449,7 +1455,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "AUTO SUMMON / DEBUG",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "Live data from WoWAutoSummonAssist. TYPE 18 = ritual fallback.",
+        "Native in-process interaction: background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
         42,181,665,32,FALSE));
     g_ui_summon_check=ui_button(g_parallel_ui_hwnd,
         "AUTO SUMMON ASSIST - enabled",46,225,665,42,229u,TRUE);
