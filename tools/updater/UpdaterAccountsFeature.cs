@@ -166,29 +166,52 @@ namespace WoW112Updater
             {
                 var accounts = new CheckedListBox
                 {
-                    Location = new Point(14, 42),
-                    Size = new Size(260, 355),
+                    Location = new Point(14, 48),
+                    Size = new Size(260, 349),
                     CheckOnClick = true,
                     IntegralHeight = false
                 };
                 var backgroundSound = new CheckedListBox
                 {
-                    Location = new Point(292, 42),
-                    Size = new Size(210, 355),
+                    Location = new Point(292, 48),
+                    Size = new Size(210, 349),
                     CheckOnClick = true,
                     IntegralHeight = false
                 };
                 var states = new ListBox
                 {
-                    Location = new Point(520, 42),
-                    Size = new Size(474, 355),
+                    Location = new Point(520, 48),
+                    Size = new Size(474, 349),
                     IntegralHeight = false
                 };
                 var info = new Label
                 {
                     Text = "Każde zaznaczone konto dostaje osobny proces WoW już przypisany do profilu. Native AutoLogin loguje bez klawiatury, fokusu i opóźnień pól.",
-                    Location = new Point(14, 8),
-                    Size = new Size(980, 30)
+                    Location = new Point(14, 5),
+                    Size = new Size(980, 18),
+                    AutoEllipsis = true
+                };
+                var accountsHeader = new Label
+                {
+                    Text = "KONTA — URUCHOM",
+                    Location = new Point(14, 27),
+                    Size = new Size(260, 18),
+                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
+                };
+                var backgroundSoundHeader = new Label
+                {
+                    Text = "DŹWIĘK W TLE (BG SOUND)",
+                    Location = new Point(292, 27),
+                    Size = new Size(210, 18),
+                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                    ForeColor = Color.DarkBlue
+                };
+                var statesHeader = new Label
+                {
+                    Text = "STATUS INSTANCJI",
+                    Location = new Point(520, 27),
+                    Size = new Size(474, 18),
+                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold)
                 };
                 var selectAll = new Button { Text = "Zaznacz wszystkie", Location = new Point(14, 414), Size = new Size(138, 34) };
                 var clearAll = new Button { Text = "Wyczyść", Location = new Point(160, 414), Size = new Size(92, 34) };
@@ -203,10 +226,7 @@ namespace WoW112Updater
                     ForeColor = Color.DimGray
                 };
                 dialog.Controls.AddRange(new Control[] {
-                    info,
-                    new Label { Text = "Konta (uruchom)", Location = new Point(14, 24), AutoSize = true },
-                    new Label { Text = "BG SOUND", Location = new Point(292, 24), AutoSize = true },
-                    new Label { Text = "Status instancji", Location = new Point(520, 24), AutoSize = true },
+                    info, accountsHeader, backgroundSoundHeader, statesHeader,
                     accounts, backgroundSound, states, selectAll, clearAll, launchSelected, launchAll, close, footer
                 });
 

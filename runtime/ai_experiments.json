@@ -108,11 +108,11 @@
         "per-profile LOW Config.wtf"
       ],
       "status": "in_progress",
-      "observed_head": "6b8f54ca42cfd2e201b631dc6bd2a4bf39483b5f",
+      "observed_head": "0775ddc87ad6ebc717c0d980818c3c98b8f958f4",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Transient per-launch BG SOUND toggle for each multibox account. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table."
+      "notes": "Transient per-launch BG SOUND toggle for each multibox account. The updater patches only the selected child process in memory (0x14 off / 0x27 on); the on-disk EXE is untouched. LOW SPEC keeps its 800x600 graphics preset but preserves base audio and omits -nosound when BG SOUND is selected. External 5875 evidence: brndd/vanilla-tweaks sound-in-background patch and OctoLauncher patch table. UI follow-up: reserve a separate header row so the top description cannot cover column captions; middle column is explicitly labeled DŹWIĘK W TLE (BG SOUND)."
     }
   ]
 }
