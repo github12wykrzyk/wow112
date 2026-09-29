@@ -97,7 +97,7 @@ local LOCATIONS = {
     { id="felwood", label="Felwood", aliases={"felwood"} },
     { id="feralas", label="Feralas", aliases={"feralas"} },
     { id="desolace", label="Desolace", aliases={"desolace"} },
-    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "hydraxian waterlords", "hydraxian waterlods", "hydraxian waterlord", "hydraxians", "hydraxian", "hydraxis", "hydrax"} },
+    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "hydraxian waterlords"}, roots={"hydrax"} },
     { id="ashenvale", label="Ashenvale", aliases={"ashenvale"} },
     { id="barrens", label="The Barrens", aliases={"the barrens", "barrens"} },
     { id="dustwallow", label="Dustwallow Marsh", aliases={"dustwallow marsh", "dustwallow"} },
@@ -156,6 +156,20 @@ local function phraseHas(s, phrase)
     local p = normalizeMessage(phrase)
     if p == "" then return false end
     return has(" " .. s .. " ", " " .. p .. " ")
+end
+
+local function tokenHasRoot(s, root)
+    root = normalizeMessage(root)
+    if string.len(root) < 5 then return false end
+
+    local token
+    for token in string.gfind(s, "%S+") do
+        if string.len(token) >= string.len(root)
+            and string.sub(token, 1, string.len(root)) == root then
+            return true
+        end
+    end
+    return false
 end
 
 local REQUEST_CUES = {
@@ -250,6 +264,13 @@ local function findLocation(message)
         for k = 1, table.getn(loc.aliases) do
             if phraseHas(s, loc.aliases[k]) then
                 return loc, nil
+            end
+        end
+        if loc.roots then
+            for k = 1, table.getn(loc.roots) do
+                if tokenHasRoot(s, loc.roots[k]) then
+                    return loc, nil
+                end
             end
         end
     end

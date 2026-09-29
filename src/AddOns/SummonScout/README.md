@@ -1,4 +1,4 @@
-# SummonScout 1.9
+# SummonScout 1.10
 
 WoW 1.12.1 / build 5875 addon for the `parallel` experiment.
 
@@ -164,3 +164,16 @@ Commands:
 - `/ssi gui`
 
 Payment accounting observes Vanilla trade state and stores positive incoming payments in `SummonScoutDB.paymentLog` (last 100 entries), `revenueCopper`, and `paymentCount`. The payer is resolved from the active trade partner, with the latest recent invite as a fallback. Invite and payment reports can be enabled independently in the GUI.
+
+
+## 1.10 future-proof location roots
+
+Location matching now supports optional safe token roots in addition to exact aliases.
+
+Hydraxian no longer enumerates variants such as `hydraxis`, `hydraxians`, `hydraxian waterlods`, etc. Its canonical configuration is now:
+- exact aliases: `azshara`, `hydraxian waterlords`
+- safe token root: `hydrax`
+
+Any normalized word beginning with `hydrax` resolves to the same destination, so `hydrax`, `hydraxis`, `hydraxian`, `hydraxians`, and future inflections/near-spellings sharing that stable root work automatically.
+
+Root matching is token-based rather than arbitrary substring matching, and roots shorter than 5 characters are rejected. This avoids unsafe global partial matching for short aliases such as `org`, `sm`, `wc`, `dm`, etc. Other destinations can opt into the same mechanism later by adding a verified `roots={...}` entry.
