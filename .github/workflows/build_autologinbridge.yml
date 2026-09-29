@@ -1,0 +1,34 @@
+name: Build AutoLogin Bridge
+on:
+  push:
+    branches:
+      - parallel
+      - feature/multibox-native-login
+    paths:
+      - 'src/AutoLoginBridge/**'
+      - 'tools/build_autologinbridge_candidate.py'
+      - '.github/workflows/build_autologinbridge.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify current state
+        shell: pwsh
+        run: python tools/verify_current.py
+      - name: Build x86 bridge
+        shell: pwsh
+        run: |
+          python tools/build_autologinbridge_candidate.py --compile-only --output build/WoWAutoLoginBridge_5875_v1.dll --build-metadata dist/autologinbridge_build.json
+          if ($LASTEXITCODE -ne 0) { throw "AutoLoginBridge build failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoLoginBridge-${{ github.sha }}
+          path: |
+            build/WoWAutoLoginBridge_5875_v1.dll
+            dist/autologinbridge_build.json
+          if-no-files-found: error
+          compression-level: 0
