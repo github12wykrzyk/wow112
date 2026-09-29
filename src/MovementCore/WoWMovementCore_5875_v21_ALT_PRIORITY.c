@@ -1192,7 +1192,7 @@ static void W112_CancelTeleForBlink(void){
  g_mapFallPending=0u;
 }
 static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
-static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim TERRAIN + press E (walking/CTM allowed); unit/object/NPC hits are ignored; F7 abort') end";
+static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim TERRAIN + press/repeat E (movement/fall allowed); unit/object/NPC hits ignored; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
 static const char g_mapSentChat[]="if WorldMapFrame and WorldMapFrame:IsShown() then HideUIPanel(WorldMapFrame) end; if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r teleport pulse sent; optional S backstep queued; SERVER acceptance NOT confirmed') end";
@@ -1353,41 +1353,55 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     trigger=pressed&&!g_teleKeyWasDown;
     g_teleKeyWasDown=pressed;
     if(g_telePending){
-        /* A second E press aborts rather than applying a stale destination. */
-        if(trigger){g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;}
-        if(!W112_TeleAvailable(p)||
-           (DWORD)(now-g_teleWaitSince)>W112_TELE_TIMEOUT_MS){
-            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+        /* Terrain Tele E is re-entrant for manual recovery while falling,
+         * walking or otherwise moving. A fresh E edge replaces the pending
+         * terrain destination instead of aborting; map-tele keeps its old
+         * explicit second-E abort semantics. */
+        if(trigger&&!g_telePendingFromMap){
+            g_telePending=0u;g_stepActive=0u;
+            /* Fall through and capture the new terrain point below. */
+        } else {
+            if(trigger){
+                g_telePending=0u;g_stepActive=0u;
+                DebugChat(g_teleAbortChat);return;
+            }
+            if(!W112_TeleAvailable(p)||
+               (DWORD)(now-g_teleWaitSince)>W112_TELE_TIMEOUT_MS){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+            }
+            /* Native walking, falling, CTM state and player drift do not block
+             * a user E. Still reject invalid player coordinates before pulse. */
+            px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);
+            pz=*(float*)(p+OFF_UNIT_Z);
+            if(!W112_Q_PosValid(px,py,pz)){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+            }
+            /* The settle delay existed for object-hit stability. Terrain-only
+             * Tele E can dispatch on the next UI tick; map tele retains delay. */
+            if(g_telePendingFromMap&&
+               (DWORD)(now-g_teleWaitLast)<W112_TELE_SETTLE_MS)return;
+            if(!g_telePendingFromMap&&W112_TeleMapShown()){
+                g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
+            }
+            /* Map-only backstep follows on the timer once the map has closed.
+               Do not fake an in-memory yaw here: it never generated actual native
+               key-driven movement or a falling transition in the game test. */
+            g_telePending=0u;
+            g_stepMoveInjecting=1u;
+            *(float*)(p+OFF_UNIT_X)=g_teleDestX;
+            *(float*)(p+OFF_UNIT_Y)=g_teleDestY;
+            *(float*)(p+OFF_UNIT_Z)=g_teleDestZ;
+             ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
+            g_stepMoveInjecting=0u;
+            g_stepActive=0u;
+            if(g_telePendingFromMap&&g_mapHighEnabled){
+                g_mapFallDestX=g_teleDestX;g_mapFallDestY=g_teleDestY;
+                g_mapFallSentAt=now;g_mapFallPending=1u;
+            }
+            DebugChat(g_telePendingFromMap?g_mapSentChat:g_teleSentChat);
+            g_telePendingFromMap=0u;
+            return;
         }
-        /* Native walking, CTM state and player drift do not block a user E.
-         * Still reject invalid player coordinates before sending a pulse. */
-        px=*(float*)(p+OFF_UNIT_X);py=*(float*)(p+OFF_UNIT_Y);
-        pz=*(float*)(p+OFF_UNIT_Z);
-        if(!W112_Q_PosValid(px,py,pz)){
-            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
-        }
-        if((DWORD)(now-g_teleWaitLast)<W112_TELE_SETTLE_MS)return;
-        if(!g_telePendingFromMap&&W112_TeleMapShown()){
-            g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
-        }
-        /* Map-only backstep follows on the timer once the map has closed.
-           Do not fake an in-memory yaw here: it never generated actual native
-           key-driven movement or a falling transition in the game test. */
-        g_telePending=0u;
-        g_stepMoveInjecting=1u;
-        *(float*)(p+OFF_UNIT_X)=g_teleDestX;
-        *(float*)(p+OFF_UNIT_Y)=g_teleDestY;
-        *(float*)(p+OFF_UNIT_Z)=g_teleDestZ;
-         ((SendMove_t)ADDR_SEND_MOVE)(p,MSG_MOVE_HEARTBEAT);
-        g_stepMoveInjecting=0u;
-        g_stepActive=0u;
-        if(g_telePendingFromMap&&g_mapHighEnabled){
-            g_mapFallDestX=g_teleDestX;g_mapFallDestY=g_teleDestY;
-            g_mapFallSentAt=now;g_mapFallPending=1u;
-        }
-        DebugChat(g_telePendingFromMap?g_mapSentChat:g_teleSentChat);
-        g_telePendingFromMap=0u;
-        return;
     }
     if(!trigger)return;
     if(W112_Q_ChatHasFocus()){DebugChat(g_teleChatFocusChat);return;}
