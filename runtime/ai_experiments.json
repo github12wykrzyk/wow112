@@ -172,6 +172,13 @@
           "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
           "date": "2026-09-29",
           "evidence": "Build WoW112 updater run 36610690943 passed on exact parallel SHA, including compile, dashboard smoke, PE32 x86/hash verification and updater artifact upload."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Verified updater artifact 11053103340 (WoW112ParallelUpdater-ae54bd44...) was uploaded by successful updater run 36610690943 for the exact SHA."
         }
       ],
       "package": {
@@ -207,6 +214,13 @@
           "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
           "date": "2026-09-29",
           "evidence": "Updater run 36610690943 and AutoLogin Bridge run 36610690932 both passed on exact parallel SHA; bridge artifact 11053252010 was uploaded."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Verified updater artifact 11053103340 and AutoLoginBridge artifact 11053252010 were uploaded by successful exact-SHA workflows."
         }
       ],
       "package": {
@@ -241,6 +255,13 @@
           "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
           "date": "2026-09-29",
           "evidence": "Patrol feature head is an ancestor of integrated parallel; exact parallel Build work candidate run 36610691008 passed MovementCore/GUI/final package gates."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Verified aggregate candidate artifact 11053003316 contains the integrated Patrol implementation at exact parallel SHA."
         }
       ],
       "package": {
@@ -278,6 +299,13 @@
           "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
           "date": "2026-09-29",
           "evidence": "Follow feature head is an ancestor of integrated parallel; exact parallel Build work candidate run 36610691008 passed MovementCore/GUI/final package gates."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ae54bd4418dfd7d86b2c4aac3cef2d2eea738c32",
+          "date": "2026-09-29",
+          "evidence": "Verified aggregate candidate artifact 11053003316 contains the integrated Follow/Master implementation at exact parallel SHA."
         }
       ],
       "package": {
