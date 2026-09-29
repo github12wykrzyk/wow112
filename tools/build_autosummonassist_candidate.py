@@ -198,6 +198,9 @@ def main():
             "slash_command": "/antiafk on | off | toggle | status",
             "shared_state_with_gui": True
         },
+        "native_summon_cast_bridge": True,
+        "native_summon_request_global": "W112_AUTOSUMMON_REQUEST",
+        "native_summon_ack_global": "W112_AUTOSUMMON_ACK",
         "background_trade_auto_accept": True,
         "incoming_trade_request": "Stock 1.12 TradeFrame is authoritative; TRADE popup/BeginTrade is compatibility fallback only",
         "payment_gate": "TradeFrame visible; target gold > 0; own money/items empty; payer/target has accepted first",
