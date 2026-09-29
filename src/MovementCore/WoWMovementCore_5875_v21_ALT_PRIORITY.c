@@ -1,16 +1,16 @@
 /*
- * MovementCore V21 candidate overlay: deterministic manual LALT SafeBreak.
+ * MovementCore V21 candidate overlay: deterministic manual LCTRL SafeBreak.
  * Target: World of Warcraft 1.12.1 build 5875, Windows x86.
  *
  * The V20 source below remains the exact functional base. This overlay only
- * replaces the three arbitration surfaces that made manual LALT intermittent:
- *   1) movement callsite: synthetic LALT packets bypass downstream movement
+ * replaces the three arbitration surfaces that made manual LCTRL intermittent:
+ *   1) movement callsite: synthetic LCTRL packets bypass downstream movement
  *      rewriters (LongPickPocket / PositionalSpoof) and go straight through
  *      ClientServices::Send;
  *   2) ClientServices::Send: new Pick Pocket casts are rejected while manual
- *      LALT SafeBreak owns movement, preventing AutoPP from starving the reset;
+ *      LCTRL SafeBreak owns movement, preventing AutoPP from starving the reset;
  *   3) timer: an already-active Pick Pocket may finish, but its 1200 ms quiet
- *      tail is ignored for LALT. SafeBreak lifetime is paused only for the
+ *      tail is ignored for LCTRL. SafeBreak lifetime is paused only for the
  *      genuinely active PP transaction and resumes immediately afterwards.
  *
  * Ordinary NoFall, AutoGather, AutoOpen, AutoPP, F8/F10 SafeBreak modes and
@@ -259,7 +259,7 @@ static volatile DWORD g_altPriorityForceDirect=0u;
 static volatile DWORD g_stepMoveInjecting=0u;
 static volatile DWORD g_stepActive=0u;
 
-/* Preserve a manual LALT edge while PvERear owns its short rear lease or a
+/* Preserve a manual LCTRL edge while PvERear owns its short rear lease or a
  * cast/channel guard is active. Never steal an active pose or cast. */
 static volatile DWORD g_altPriorityPendingUntil=0u;
 /* clang-cl's inline-asm parser does not reliably bind an internal naked
@@ -389,7 +389,7 @@ __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireRear(DWORD spell)
  g_coordRearUntil=GT()()+6000u;return 1u;
 }
 /* Dedicated physical Blink lease. SafeBreak is PAUSED by the timer while the
- * lease is owned; queued LALT stays queued. E's pending destination is canceled.
+ * lease is owned; queued LCTRL stays queued. E's pending destination is canceled.
  * Active cast/PP/gather and an already-owned rear pose cannot be preempted.
  * Never relax general CoordAcquireRear used by other rear experiments. */
 __declspec(dllexport) DWORD __stdcall MovementCore_CoordAcquireBlink(DWORD spell){
@@ -531,7 +531,7 @@ static void __cdecl AltPriority_CheckPickPocket(DataStore5875* packet)
         return;
     }
     if(g_mode!=MODE_LOCAL_STRONG)return;
-    /* Manual LALT is an explicit user action and owns movement until it ends.
+    /* Manual LCTRL is an explicit user action and owns movement until it ends.
        Block both automatic and manual PP starts so a new LongPP transaction
        cannot repeatedly pause/starve the reset. Existing PP is allowed to
        finish and is handled by the timer below. */
@@ -564,7 +564,7 @@ alt_pp_blocked:
  * - every ordinary packet keeps the exact V20 chain;
  * - only MovementCore's own MODE_LOCAL_STRONG synthetic packet (and its final
  *   real-position restore) bypasses downstream movement hooks.
- * This prevents Gather / LongPP / PositionalSpoof from replacing LALT XYZ. */
+ * This prevents Gather / LongPP / PositionalSpoof from replacing LCTRL XYZ. */
 __declspec(naked) static void AltPriority_MoveWrapper(void)
 {
     __asm {
@@ -702,8 +702,8 @@ static void AltPriority_Start(DWORD now)
     BYTE*p=LocalPlayer();
     g_stepActive=0u;
     if(!p)return;
-    /* Abort any gather ownership before LALT starts. GatherStop clears spoof
-       state before its optional real heartbeat, so the first LALT injection
+    /* Abort any gather ownership before LCTRL starts. GatherStop clears spoof
+       state before its optional real heartbeat, so the first LCTRL injection
        begins from a clean gather state. */
     if(g_gatherActive||g_gatherLootWait)GatherStop(p,now,"ALT_PRIORITY_GATHER_ABORT",1u,0u);
     g_miningPriorityValidUntil=0u;
@@ -833,7 +833,7 @@ static void PPRecovery_Tick(BYTE*p,DWORD now)
        existing optional auto-Stealth behavior outside combat. */
     if(!g_ppRecoveryEnabled&&!g_ppLowHpHold&&g_ppRecoveryPhase!=3u)
         return;
-    /* Never interrupt a cast, gather or PP, or race manual ALT/other movement. */
+    /* Never interrupt a cast, gather or PP, or race manual CTRL/other movement. */
     if(g_ppRecoveryPhase==1u||g_mode!=MODE_OFF||
        g_altPriorityPendingUntil||g_keyAlt||CoordRearOwned()||
        g_abCapGuardActive||g_telePending||g_stepActive||
@@ -1684,7 +1684,7 @@ static void __stdcall AltPriority_TimerProc(HWND w,UINT m,UINT_PTR id,DWORD tm)
     k7=(GK()(VK_F7)&(short)0x8000)?1u:0u;
     k8=(GK()(VK_F8)&(short)0x8000)?1u:0u;
     k9=(GK()(VK_F9)&(short)0x8000)?1u:0u;
-    kAlt=(GK()(VK_LMENU)&(short)0x8000)?1u:0u;
+    kAlt=(GK()(VK_LCONTROL)&(short)0x8000)?1u:0u;
     k10=(GK()(VK_F10)&(short)0x8000)?1u:0u;
     k11=(GK()(VK_F11)&(short)0x8000)?1u:0u;
     k12=(GK()(VK_F12)&(short)0x8000)?1u:0u;
@@ -1870,7 +1870,7 @@ static void AltPriority_Remove(void)
 static const W112_ControlEnumOptionV1 g_modeOptions[]={
     {MODE_OFF,"Off"},
     {MODE_LEGACY_FAST,"F8 Fast"},
-    {MODE_LOCAL_STRONG,"ALT Strong"},
+    {MODE_LOCAL_STRONG,"CTRL Strong"},
     {MODE_PURSUIT,"F10 Pursuit"},
     {MODE_INSTANCE_UNREACHABLE,"Instance"}
 };
@@ -1939,11 +1939,11 @@ static void init_control_descriptor(void)
     s->type=W112_CTL_BOOL;s->default_value.u32=0u;s->min_value.u32=0u;s->max_value.u32=1u;s->step.u32=1u;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
     s=&g_controlSettings[5];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="alt_starts";s->label="ALT starts";
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=6u;s->key="alt_starts";s->label="CTRL starts";
     s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
     s=&g_controlSettings[6];
-    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="alt_pp_blocks";s->label="ALT PP blocks";
+    s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);s->setting_id=7u;s->key="alt_pp_blocks";s->label="CTRL PP blocks";
     s->type=W112_CTL_INT;s->default_value.i32=0;s->min_value.i32=0;s->max_value.i32=2147483647;s->step.i32=1;s->flags=W112_CTL_READ_ONLY|W112_CTL_LIVE;s->enum_options=0;s->enum_option_count=0u;
 
     for(i=0u;i<14u;i++){
@@ -2116,9 +2116,9 @@ static void init_control_descriptor(void)
         static const char* keys[6]={"pp_auto_stealth_recovery","pp_recovery_phase",
             "pp_recovery_alt_resets","pp_recovery_stealth_casts",
             "pp_recovery_combat_events","pp_recovery_last_fail"};
-        static const char* labels[6]={"AutoPP: auto Stealth + combat recovery (ALT)",
+        static const char* labels[6]={"AutoPP: auto Stealth + combat recovery (CTRL)",
             "PP recovery: phase (0 idle,1 PP,2 combat,3 stealth)",
-            "PP recovery: ALT reset starts","PP recovery: Stealth cast attempts",
+            "PP recovery: CTRL reset starts","PP recovery: Stealth cast attempts",
             "PP recovery: PP-correlated combat events","PP recovery: last PP failure reason"};
         for(i=0u;i<6u;++i){
             s=&g_controlSettings[59u+i];s->struct_size=(w112_u32)sizeof(W112_ControlSettingV1);
