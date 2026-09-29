@@ -1,5 +1,5 @@
 
-B_AS_VERSION = "1.3.2-vmangos-cached"
+B_AS_VERSION = "1.3.3-vmangos-cachefix"
 
 B_AS_RecipeNames = {
 	"Pattern", "Schematic", "Plans", "Recipe", "Manual", "Formula",
@@ -111,8 +111,13 @@ B_AS_VarSettings["PageLock"][B_AS_S_CALLBACK] = function(setting, value)
 	if (value == true) then
 		B_AS_SetVar("PageFixed", false)
 	end
-	if B_AS_VM_ResetCheapSearch then
-		B_AS_VM_ResetCheapSearch(true)
+	if B_AS_VM then
+		local changed = (B_AS_VM.pageLockValue == nil or B_AS_VM.pageLockValue ~= value)
+		B_AS_VM.pageLockValue = value
+		if changed and B_AS_VM_ResetCheapSearch then
+			B_AS_VM.stateResets = B_AS_VM.stateResets + 1
+			B_AS_VM_ResetCheapSearch(true)
+		end
 	end
 end
 -- Callback: PageFixed
@@ -210,11 +215,14 @@ B_AS_VM = {
 	cheapHigh = 0,
 	cheapCandidate = nil,
 	cheapBoundary = nil,
+	cheapWindowStart = nil,
 	cheapScanPage = 0,
 	cheapLastPage = 0,
 	cheapCycles = 0,
 	cheapVerifications = 0,
 	cheapFallbacks = 0,
+	stateResets = 0,
+	pageLockValue = nil,
 }
 
 
@@ -358,6 +366,7 @@ function B_AS_VM_ResetCheapSearch(clearBoundary)
 	B_AS_VM.cheapLow = 0
 	B_AS_VM.cheapHigh = 0
 	B_AS_VM.cheapCandidate = nil
+	B_AS_VM.cheapWindowStart = nil
 	B_AS_VM.cheapScanPage = 0
 	B_AS_VM.cheapLastPage = 0
 	if clearBoundary then
@@ -366,17 +375,31 @@ function B_AS_VM_ResetCheapSearch(clearBoundary)
 end
 
 function B_AS_VM_BeginCachedVerify()
-	if not B_AS_VM.cheapBoundary then
-		B_AS_VM_ResetCheapSearch(true)
-		return
+	local boundary = B_AS_VM.cheapBoundary
+	if boundary == nil then
+		boundary = B_AS_VM.cheapWindowStart
 	end
+	if boundary == nil then
+		boundary = B_AS_VM.cheapScanPage - (B_AS_VM_CHEAP_WINDOW_PAGES - 1)
+		if boundary < 0 then
+			boundary = 0
+		end
+		B_AS_Log("[VM-CACHE] recovered boundary from scan window="..boundary)
+	end
+
+	if B_AS_VM.cheapLastPage > 0 and boundary > B_AS_VM.cheapLastPage then
+		boundary = B_AS_VM.cheapLastPage
+	end
+
+	B_AS_VM.cheapBoundary = boundary
 	B_AS_VM.cheapVerifications = B_AS_VM.cheapVerifications + 1
-	if B_AS_VM.cheapBoundary > 0 then
+	if boundary > 0 then
 		B_AS_VM.cheapPhase = "verify_prev"
 	else
 		B_AS_VM.cheapPhase = "verify_current"
 	end
-	B_AS_Log("[VM-CACHE] verify boundary="..B_AS_VM.cheapBoundary)
+	B_AS_Log("[VM-STATE] scan-end boundary="..boundary.." next="..B_AS_VM.cheapPhase)
+	B_AS_Log("[VM-CACHE] verify boundary="..boundary)
 end
 
 function B_AS_VM_GetQuery()
@@ -425,6 +448,7 @@ end
 
 function B_AS_VM_EnterScan(boundary, lastPage, reason)
 	B_AS_VM.cheapBoundary = boundary
+	B_AS_VM.cheapWindowStart = boundary
 	B_AS_VM.cheapScanPage = boundary
 	B_AS_VM.cheapLastPage = lastPage
 	B_AS_VM.cheapPhase = "scan"
@@ -674,6 +698,7 @@ function B_AS_VM_ResetStats()
 	B_AS_VM.cheapCycles = 0
 	B_AS_VM.cheapVerifications = 0
 	B_AS_VM.cheapFallbacks = 0
+	B_AS_VM.stateResets = 0
 	B_AS_VM_ResetCheapSearch(true)
 	B_AS_Page = 0
 	B_AS_Log("[VM-DIAG] stats reset")
@@ -684,7 +709,11 @@ function B_AS_VM_Status()
 	if B_AS_VM.cheapBoundary then
 		boundary = tostring(B_AS_VM.cheapBoundary)
 	end
-	DEFAULT_CHAT_FRAME:AddMessage("[AS VM] q="..B_AS_VM.querySeq.." inFlight="..tostring(B_AS_VM.queryInFlight).." seen="..B_AS_VM.seen.." positive="..B_AS_VM.positiveBuyouts.." zero="..B_AS_VM.zeroBuyouts.." candidates="..B_AS_VM.candidates.." orderViol="..B_AS_VM.orderViolations.." timeouts="..B_AS_VM.timeouts.." dup="..B_AS_VM.duplicateListEvents.." cheapPhase="..B_AS_VM.cheapPhase.." boundary="..boundary.." scanPage="..B_AS_VM.cheapScanPage.." cycles="..B_AS_VM.cheapCycles.." verifies="..B_AS_VM.cheapVerifications.." fallbacks="..B_AS_VM.cheapFallbacks, 0.37, 1, 0)
+	local windowStart = "?"
+	if B_AS_VM.cheapWindowStart then
+		windowStart = tostring(B_AS_VM.cheapWindowStart)
+	end
+	DEFAULT_CHAT_FRAME:AddMessage("[AS VM] q="..B_AS_VM.querySeq.." inFlight="..tostring(B_AS_VM.queryInFlight).." seen="..B_AS_VM.seen.." positive="..B_AS_VM.positiveBuyouts.." zero="..B_AS_VM.zeroBuyouts.." candidates="..B_AS_VM.candidates.." orderViol="..B_AS_VM.orderViolations.." timeouts="..B_AS_VM.timeouts.." dup="..B_AS_VM.duplicateListEvents.." cheapPhase="..B_AS_VM.cheapPhase.." boundary="..boundary.." windowStart="..windowStart.." scanPage="..B_AS_VM.cheapScanPage.." cycles="..B_AS_VM.cheapCycles.." verifies="..B_AS_VM.cheapVerifications.." fallbacks="..B_AS_VM.cheapFallbacks.." resets="..B_AS_VM.stateResets, 0.37, 1, 0)
 end
 
 function B_AS_VM_LogMessage(eventName, message)

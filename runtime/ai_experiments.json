@@ -435,7 +435,28 @@
         }
       ],
       "package": null,
-      "notes": "V1.1 cheap-buyout boundary search and 10-page scan window worked end-to-end in the user's manual exact-source test; screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md. V1.2 cached-boundary feature SHA 42164066 passed registry and parallel preflight; integrated parallel full candidate/package verification is pending. Auto-buy remains hard-disabled."
+      "notes": "V1.1 binary-search + 10-page cheap window works on the target realm. Integrated V1.2 cached-boundary candidate parallel@64363f6 passed full CI/package but the user's exact-candidate in-game log showed scan-end returning to page-0 probe/full binary search. Evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md. Auto-buy remains hard-disabled."
+    },
+    {
+      "id": "auction-sniper-cache-transition-fix",
+      "branch": "feature/auction-sniper-cache-transition-fix",
+      "modules": [
+        "AuctionSniper"
+      ],
+      "dependencies": [
+        "auction-sniper-cheap-buyout"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS cheap-buyout boundary state machine",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "in_progress",
+      "observed_head": "64363f612e5d39e1cdb7c155dd96129d557771bf",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Fix scan-end cached-boundary transition observed to reset to page-0 probe on integrated parallel@64363f6. Store independent scan-window start, recover boundary without probe reset, guard repeated LowBuyout value re-application, and add explicit VM-STATE diagnostics. Auto-buy remains hard-disabled."
     }
   ]
 }

@@ -7,7 +7,7 @@ Upstream baseline:
 - commit d9d85807de9c82201e5e01c42ec5917c90257389
 - MIT license retained as LICENSE.txt
 
-Current project revision: V1.2 cached-boundary cheap-buyout diagnostic / dry-run.
+Current project revision: V1.3 cached-boundary transition fix / dry-run.
 
 ## Safety
 
@@ -22,6 +22,11 @@ House buttons remain untouched.
 - After the boundary is found it scans a 10-page window starting at that page.
 - After each 10-page window it re-validates the cached boundary with the previous
   and current page. In the normal unchanged case this costs only 2 queries.
+- The scan-end transition is now deterministic: it cannot fall back to page-0
+  probe merely because the cached boundary field is absent.
+- The start page of the active scan window is stored independently and can
+  reconstruct the boundary before verification if necessary.
+- Re-applying the same LowBuyout value no longer resets the state machine.
 - If the boundary moved by one page, the adjacent page is adopted directly.
   Larger moves fall back to a narrowed binary search instead of a full reset.
 - With LowBuyout OFF and FixedPage OFF, pages are cycled using correct zero-based
@@ -65,7 +70,8 @@ per AH result.
 Persistent log markers:
 - [VM-RESULT] query/page/latency/ranges/order diagnostics
 - [VM-BOUNDARY] binary-search progress/found/updated buyout boundary
-- [VM-CACHE] cached-boundary verification start
+- [VM-CACHE] cached-boundary verification/recovery
+- [VM-STATE] explicit scan-end -> cached-verification transition
 - [VM-DUP] ignored duplicate list-update event when verbose is enabled
 - [VM-ITEM] individual row when verbose is enabled
 - [DRYRUN] candidate matching current filters/watchlist
