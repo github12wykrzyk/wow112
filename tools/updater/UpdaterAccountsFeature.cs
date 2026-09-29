@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -93,13 +94,17 @@ namespace WoW112Updater
     internal sealed partial class MainForm
     {
         private readonly Button accountsButton = new Button();
+        private readonly Button multiboxButton = new Button();
         private WowAccountVault accountVault;
         private readonly List<WowAccountSession> accountSessions = new List<WowAccountSession>();
+        private bool multiboxRunning;
 
         internal void AttachAccounts()
         {
             accountsButton.Click += delegate { ShowAccounts(); };
+            multiboxButton.Click += delegate { ShowMultibox(); };
             ((IUpdaterHost)this).RegisterUiControl("accounts", accountsButton);
+            ((IUpdaterHost)this).RegisterUiControl("multibox", multiboxButton);
             try
             {
                 accountVault = new WowAccountVault(Path.Combine(configDir, "wow_accounts.json"));
@@ -119,6 +124,228 @@ namespace WoW112Updater
             accountSessions.RemoveAll(s => { try { return s.Game.HasExited; } catch { return true; } });
             accountSessions.Add(new WowAccountSession { Game = game, AccountId = accountVault.Selected.Id });
             Log("Uruchomiono klienta dla profilu: " + accountVault.Selected.Label + " (PID " + game.Id + ").");
+        }
+
+        private void ShowMultibox()
+        {
+            if (busy || multiboxRunning) return;
+            if (accountVault == null)
+            {
+                MessageBox.Show(this,
+                    "Magazyn kont nie jest dostępny. Istniejące dane nie zostały nadpisane.",
+                    "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (accountVault.Data.Accounts.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "Najpierw dodaj przynajmniej jedno konto w „Konta WoW”.",
+                    "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var dialog = new Form
+            {
+                Text = "MULTIBOX — World of Warcraft 1.12.1",
+                ClientSize = new Size(790, 500),
+                MinimumSize = new Size(806, 539),
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                StartPosition = FormStartPosition.CenterParent,
+                AutoScaleMode = AutoScaleMode.Dpi,
+                Font = new Font("Segoe UI", 9F)
+            })
+            {
+                var accounts = new CheckedListBox
+                {
+                    Location = new Point(14, 42),
+                    Size = new Size(286, 355),
+                    CheckOnClick = true,
+                    IntegralHeight = false
+                };
+                var states = new ListBox
+                {
+                    Location = new Point(318, 42),
+                    Size = new Size(456, 355),
+                    IntegralHeight = false
+                };
+                var info = new Label
+                {
+                    Text = "Każde zaznaczone konto dostaje osobny proces WoW. Launcher czeka na okno, wpisuje login i hasło do właściwego PID i zatwierdza Enterem.",
+                    Location = new Point(14, 8),
+                    Size = new Size(760, 30)
+                };
+                var selectAll = new Button { Text = "Zaznacz wszystkie", Location = new Point(14, 414), Size = new Size(138, 34) };
+                var clearAll = new Button { Text = "Wyczyść", Location = new Point(160, 414), Size = new Size(92, 34) };
+                var launchSelected = new Button { Text = "URUCHOM ZAZNACZONE", Location = new Point(318, 414), Size = new Size(190, 34) };
+                var launchAll = new Button { Text = "URUCHOM WSZYSTKIE", Location = new Point(516, 414), Size = new Size(160, 34) };
+                var close = new Button { Text = "Zamknij", Location = new Point(684, 414), Size = new Size(90, 34) };
+                var footer = new Label
+                {
+                    Text = "Hasła są odszyfrowywane z DPAPI tylko lokalnie, bez zapisu do logu ani GitHuba.",
+                    Location = new Point(14, 462),
+                    Size = new Size(760, 24),
+                    ForeColor = Color.DimGray
+                };
+                dialog.Controls.AddRange(new Control[] {
+                    info,
+                    new Label { Text = "Konta", Location = new Point(14, 24), AutoSize = true },
+                    new Label { Text = "Status instancji", Location = new Point(318, 24), AutoSize = true },
+                    accounts, states, selectAll, clearAll, launchSelected, launchAll, close, footer
+                });
+
+                var accountByIndex = new List<WowAccount>();
+                var stateIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var account in accountVault.Data.Accounts)
+                {
+                    accounts.Items.Add(new WowAccountListItem(account, account.Id == accountVault.Data.SelectedId), false);
+                    accountByIndex.Add(account);
+                    stateIndex[account.Id] = states.Items.Count;
+                    states.Items.Add(account.Label + " • gotowy");
+                }
+
+                Action<WowAccount, string> setState = delegate(WowAccount account, string text)
+                {
+                    int index;
+                    if (!stateIndex.TryGetValue(account.Id, out index)) return;
+                    states.Items[index] = account.Label + " • " + text;
+                    states.SelectedIndex = index;
+                    states.TopIndex = Math.Max(0, index - 2);
+                    Application.DoEvents();
+                };
+
+                Func<List<WowAccount>> checkedAccounts = delegate
+                {
+                    var selected = new List<WowAccount>();
+                    for (int i = 0; i < accounts.Items.Count; i++)
+                        if (accounts.GetItemChecked(i)) selected.Add(accountByIndex[i]);
+                    return selected;
+                };
+
+                Action<bool> setButtons = delegate(bool enabled)
+                {
+                    selectAll.Enabled = enabled;
+                    clearAll.Enabled = enabled;
+                    launchSelected.Enabled = enabled;
+                    launchAll.Enabled = enabled;
+                    close.Enabled = enabled;
+                };
+
+                selectAll.Click += delegate
+                {
+                    for (int i = 0; i < accounts.Items.Count; i++) accounts.SetItemChecked(i, true);
+                };
+                clearAll.Click += delegate
+                {
+                    for (int i = 0; i < accounts.Items.Count; i++) accounts.SetItemChecked(i, false);
+                };
+                close.Click += delegate { if (!multiboxRunning) dialog.Close(); };
+
+                launchSelected.Click += async delegate
+                {
+                    var selected = checkedAccounts();
+                    if (selected.Count == 0)
+                    {
+                        MessageBox.Show(dialog, "Zaznacz co najmniej jedno konto.", "Multibox",
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    setButtons(false);
+                    try { await RunMultiboxAsync(selected, setState); }
+                    finally { setButtons(true); }
+                };
+                launchAll.Click += async delegate
+                {
+                    setButtons(false);
+                    try { await RunMultiboxAsync(accountByIndex.ToList(), setState); }
+                    finally { setButtons(true); }
+                };
+
+                dialog.FormClosing += delegate(object sender, FormClosingEventArgs e)
+                {
+                    if (multiboxRunning)
+                    {
+                        e.Cancel = true;
+                        MessageBox.Show(dialog, "Poczekaj na zakończenie uruchamiania zaznaczonych klientów.",
+                            "Multibox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                };
+                dialog.ShowDialog(this);
+            }
+        }
+
+        private async Task RunMultiboxAsync(IList<WowAccount> accounts, Action<WowAccount, string> setState)
+        {
+            if (multiboxRunning) return;
+            if (accounts == null || accounts.Count == 0) return;
+            multiboxRunning = true;
+            int ok = 0;
+            int failed = 0;
+            try
+            {
+                SetBusy(true, "Multibox: uruchamianie " + accounts.Count + " instancji...");
+                foreach (var account in accounts)
+                {
+                    try
+                    {
+                        setState(account, "STARTING");
+                        var password = accountVault.Unprotect(account);
+                        if (string.IsNullOrEmpty(password))
+                            throw new InvalidDataException("Puste hasło w magazynie DPAPI.");
+
+                        var game = StartGameProcess();
+                        var session = new WowAccountSession { Game = game, AccountId = account.Id };
+                        accountSessions.Add(session);
+                        setState(account, "PID " + game.Id + " • czekam na ekran logowania");
+
+                        await WaitForGameWindowAsync(game, 15000);
+                        setState(account, "PID " + game.Id + " • LOGIN");
+                        FillCredentials(game, account, password, true);
+                        setState(account, "PID " + game.Id + " • CONNECTING");
+                        Log("Multibox: wysłano login dla profilu " + account.Label + " do PID " + game.Id + ".");
+                        ok++;
+                        await Task.Delay(650);
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        setState(account, "BŁĄD • " + ex.Message);
+                        Log("Multibox " + account.Label + ": BŁĄD: " + ex.Message);
+                    }
+                }
+            }
+            finally
+            {
+                multiboxRunning = false;
+                var final = "Multibox: uruchomiono " + ok + ", błędy " + failed + ".";
+                SetBusy(false, final);
+                Log(final);
+            }
+        }
+
+        private static async Task WaitForGameWindowAsync(System.Diagnostics.Process game, int timeoutMs)
+        {
+            if (game == null) throw new ArgumentNullException("game");
+            var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (game.HasExited)
+                    throw new InvalidOperationException("Klient WoW zakończył się przed ekranem logowania.");
+                game.Refresh();
+                if (game.MainWindowHandle != IntPtr.Zero)
+                {
+                    try { game.WaitForInputIdle(750); }
+                    catch (InvalidOperationException) { }
+                    catch (System.ComponentModel.Win32Exception) { }
+
+                    await Task.Delay(2200);
+                    game.Refresh();
+                    if (!game.HasExited && game.MainWindowHandle != IntPtr.Zero) return;
+                }
+                await Task.Delay(120);
+            }
+            throw new TimeoutException("Nie pojawiło się gotowe okno WoW w ciągu 15 s.");
         }
 
         private void ShowAccounts()
@@ -338,8 +565,8 @@ namespace WoW112Updater
             var afterDelete = new WowAccountVault(path); afterDelete.Load();
             if (afterDelete.Data.Accounts.Count != 1 || afterDelete.Selected.Id != "b")
                 throw new Exception("Account smoke: account deletion/default persistence failed");
-            if (!featureControls.ContainsKey("accounts"))
-                throw new Exception("Account smoke: accounts UI not registered");
+            if (!featureControls.ContainsKey("accounts") || !featureControls.ContainsKey("multibox"))
+                throw new Exception("Account smoke: accounts/multibox UI not registered");
             // Validate the physical-key translator using a test string only; no real accounts or focus changes.
             if (PrepareKeys("Ab9@!.-", GetKeyboardLayout(0)).Count != 7)
                 throw new Exception("Account smoke: keyboard translation failed");
@@ -443,7 +670,7 @@ namespace WoW112Updater
 
         // The 5875 client may ignore KEYEVENTF_UNICODE; emit physical scancodes instead.
         // All mappings are checked before touching either login field.
-        private static void FillCredentials(System.Diagnostics.Process process, WowAccount account, string password)
+        private static void FillCredentials(System.Diagnostics.Process process, WowAccount account, string password, bool submit = false)
         {
             if (process == null || process.HasExited)
                 throw new InvalidOperationException("Wybrany klient WoW jest zamknięty.");
@@ -470,7 +697,13 @@ namespace WoW112Updater
             Thread.Sleep(70);
             SendChord(process.Id, new KeyStroke { Scan = 0x1e, Modifiers = 2 }); // CTRL+A
             SendPrepared(process.Id, passwordKeys);
-            // No Enter. User verifies fields and submits manually.
+            if (submit)
+            {
+                Thread.Sleep(90);
+                SendScan(process.Id, 0x1c, false, false); // ENTER down
+                Thread.Sleep(45);
+                SendScan(process.Id, 0x1c, true, false);  // ENTER up
+            }
         }
 
         private struct KeyStroke

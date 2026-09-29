@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.6-parallel.9";
+        public const string Version = "2.7-parallel.0";
     }
 
     internal static class UpdaterSafety
