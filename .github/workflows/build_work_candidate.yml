@@ -39,6 +39,13 @@ jobs:
           python tools/verify_parallel_dependency_registry.py
           if ($LASTEXITCODE -ne 0) { throw "Parallel DLL conflict audit failed" }
 
+      - name: Validate declarative Parallel candidate inventory
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          python tools/verify_parallel_candidate_manifest.py
+          if ($LASTEXITCODE -ne 0) { throw "Parallel candidate manifest validation failed" }
+
       - name: Fail closed on unapproved candidate source drift
         shell: pwsh
         run: |

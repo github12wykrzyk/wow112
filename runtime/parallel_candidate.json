@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "branch": "parallel",
+  "purpose": "Declarative inventory for the aggregate parallel TEST candidate. Final package verification remains authoritative.",
+  "base_loader_manifest": "runtime/work_base_dlls.txt",
+  "base_dlls": [
+    "WoWPlayerESP_v1_2_range_sweep.dll",
+    "WoWNonPvPSpeedFloor_v0_4_ALWAYS_FLOOR7_1_DIAG.dll",
+    "PickPocketSelectiveRange_5875_v10_PP300_PICKLOCK300_9YD.dll",
+    "WoWAutoLootPP_v0_14_PP300YD_HU_ATTACKABLE_LEVELGATE3_NOSKIP_SELECTORCHECK.dll",
+    "WoWLongPickPocket_v1_0_ALLRANGE_360FACING_HARDLOS025.dll",
+    "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll"
+  ],
+  "replacements": [
+    {
+      "runtime_name": "MovementCore_V68_MINING_HARDLOS_COMBAT_AUTOPP_F11_BLACKLIST_HARDLOS3D_REARONLY_RETRY.dll",
+      "builder": "tools/build_rogue_movement_candidate.py",
+      "sources": [
+        "src/MovementCore/WoWMovementCore_5875_v21_ALT_PRIORITY.c",
+        "src/PVERear360/WoWPVERear360_5875_v1.c"
+      ]
+    }
+  ],
+  "companions": [
+    {
+      "runtime_name": "WoWGroundTargetAssist_5875_v1.dll",
+      "builder": "tools/build_groundtargetassist_candidate.py",
+      "sources": ["src/GroundTargetAssist/WoWGroundTargetAssist_5875_v1.c"]
+    },
+    {
+      "runtime_name": "WoWAutoFlagWSG_5875_v1.dll",
+      "builder": "tools/build_autoflagwsg_candidate.py",
+      "sources": ["src/AutoFlagWSG/WoWAutoFlagWSG_5875_v1.c"]
+    },
+    {
+      "runtime_name": "WoWAutoSummonAssist_5875_v1.dll",
+      "builder": "tools/build_autosummonassist_candidate.py",
+      "sources": ["src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c"]
+    },
+    {
+      "runtime_name": "WoWAutoLoginBridge_5875_v1.dll",
+      "builder": "tools/build_autologinbridge_candidate.py",
+      "sources": ["src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1.c"]
+    },
+    {
+      "runtime_name": "WoWOpenerUIRecovery_5875_v1.dll",
+      "builder": "tools/build_openeruirecovery_candidate.py",
+      "sources": ["src/OpenerUIRecovery/WoWOpenerUIRecovery_5875_v1.c"]
+    },
+    {
+      "runtime_name": "WoWAutoWotF_5875_v1.dll",
+      "builder": "tools/build_autowotf_candidate.py",
+      "sources": ["src/AutoWotF/WoWAutoWotF_5875_v1.c"]
+    },
+    {
+      "runtime_name": "WoWCastObserver_5875_v1.dll",
+      "builder": "tools/build_castobserver_candidate.py",
+      "sources": ["src/CastObserver/WoWCastObserver_5875_v1.c"]
+    }
+  ],
+  "addons": {
+    "packager": "tools/package_lazyrogue_addons.py",
+    "roots": ["LazyRogue", "LazyScript", "LazyWarlock", "SummonScout"]
+  },
+  "gates": [
+    "tools/verify_current.py",
+    "tools/verify_runtime_artifacts.py",
+    "tools/verify_verified_symbols.py",
+    "tools/verify_parallel_dependency_registry.py",
+    "tools/verify_parallel_gui_abi.py",
+    "tools/verify_candidate_source_scope.py",
+    "tools/verify_candidate_package.py",
+    "tools/verify_candidate_provenance.py"
+  ],
+  "comparison_candidates": [
+    "tools/build_rogue_auto_rear_candidate.py",
+    "tools/build_rogue_angle_candidate.py"
+  ],
+  "workflow": ".github/workflows/build_work_candidate.yml"
+}
