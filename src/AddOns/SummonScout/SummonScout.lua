@@ -342,14 +342,18 @@ local function locationAllowed(loc, ambiguous)
 end
 
 local function whisperInviteDecision(message)
+    local raw = trim(message or "")
     local s = normalizeMessage(message)
     local loc, ambiguous = findLocation(message)
     local service = SummonScoutDB.service or "all"
     local score = 0
+    local exactCode = WHISPER_EXACT_CODES[s] or raw == "+"
 
-    if s == "" or isSellerMessage(s) then return false, nil, "not-request" end
+    if (s == "" and not exactCode) or (s ~= "" and isSellerMessage(s)) then
+        return false, nil, "not-request"
+    end
     if ambiguous then return false, nil, "ambiguous-location" end
-    if WHISPER_EXACT_CODES[s] then score = score + 3 end
+    if exactCode then score = score + 3 end
 
     -- Explicitly asking for another known destination must never trigger.
     if loc then
