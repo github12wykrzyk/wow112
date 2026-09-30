@@ -1237,6 +1237,34 @@
       "tests": [],
       "package": null,
       "notes": "Manual diagnostic FAST slot 1/2 path does not call Logout(). It asks client Glue DisconnectFromServer, requests same-process AutoLoginBridge relogin using retained DPAPI-protected credential material (plaintext always scrubbed), then selects/enters requested slot. Bounded CharacterSwitchDiag.log tail is included in updater issue reports."
+    },
+    {
+      "id": "ah-throughput-debounce",
+      "branch": "feature/ah-throughput-debounce-v2",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-native-max-throughput"
+      ],
+      "shared_resources": [
+        "AUCTION_ITEM_LIST_UPDATE",
+        "existing WoWAHThrottleNative_5875_v2 sender"
+      ],
+      "status": "in_progress",
+      "observed_head": "64ce02657a66986689009a74d6d7e2a49c01151e",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "95e1aed77b5d24bc7ef0a1cb85299a68784fbc6c",
+          "date": "2026-09-30",
+          "evidence": "Initial debounce feature preflight 36784247147 and registry 36784247368 passed, but parallel advanced before integration."
+        }
+      ],
+      "package": null,
+      "notes": "Addon-only benchmark correction rebased onto current parallel. Keeps verified native V2 sender unchanged. AUCTION_ITEM_LIST_UPDATE is debounced 75ms before full-row fingerprinting. Reports stable/expected, raw events, overflow contamination, miss percentage and effective auctions/s."
     }
   ]
 }
