@@ -921,6 +921,38 @@
       ],
       "package": null,
       "notes": "SummonScout 1.44 integrated to parallel after exact-SHA feature preflight PASS. Exact normalized direct whisper 'sure' is an explicit smart auto-invite code alongside here/123/+; longer conversational text containing sure remains non-triggering."
+    },
+    {
+      "id": "aux-vendor-arbitrage-v1",
+      "branch": "parallel",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-watch-max1-earlystop",
+        "aux-watch-live-noop-fix"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "AuxVmangos serialized QueryAuctionItems scheduler",
+        "vMaNGOS global total-buyout ordering",
+        "V2 guarded revalidation/BUY_PENDING/UNKNOWN transaction state",
+        "LibVendorValue-2.0 Vanilla vendor sell-value table (MIT)"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "770d4d5efda4521a4885d1b8e79b2eaa8e3491cc",
+      "verified_commit": "770d4d5efda4521a4885d1b8e79b2eaa8e3491cc",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "770d4d5efda4521a4885d1b8e79b2eaa8e3491cc",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36753437599 passed on exact Vendor Arbitrage V1 feature SHA 770d4d5efda4521a4885d1b8e79b2eaa8e3491cc."
+        }
+      ],
+      "package": null,
+      "notes": "First money-oriented iteration. Vendor Arbitrage V1 scans a configurable number of cheapest positive-buyout global pages, selects the highest absolute expected vendor profit using Vanilla item sell values, revalidates the exact auction signature, and reuses the gameplay-proven LIVE transaction guards. Defaults are dry-run, minProfit=5s, maxBuyout=1g, maxPages=10. Static vendor data may differ on custom realms; live purchase requires explicit LIVE arming. Integrated onto current parallel after confirming AuxVmangos source, TOC, README and parallel addon manifest were byte-identical to the verified feature base; full aggregate candidate build pending."
     }
   ]
 }

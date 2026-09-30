@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.8.3-vmangos-max1-earlystop"
+AVM_VERSION = "0.9-vmangos-vendor-arbitrage"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -48,6 +48,21 @@ AVM = {
 	nextTick = 0,
 	sessionSpend = 0,
 	sessionBuys = 0,
+	vendor = {
+		active = false,
+		requested = false,
+		stopRequested = false,
+		phase = "IDLE",
+		boundary = nil,
+		low = 0,
+		high = 0,
+		page = 0,
+		lastPage = 0,
+		pagesScanned = 0,
+		startedAt = 0,
+		best = nil,
+		consecutiveTimeouts = 0,
+	},
 	market = {
 		active = false,
 		requested = false,
@@ -89,6 +104,11 @@ AVM = {
 		marketPages = 0,
 		marketRows = 0,
 		marketTimeouts = 0,
+		vendorScans = 0,
+		vendorPages = 0,
+		vendorCandidates = 0,
+		vendorBest = 0,
+		vendorTimeouts = 0,
 	},
 	recent = {},
 }
@@ -167,6 +187,10 @@ local function avm_defaults()
 	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 24 end
 	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
+	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 500 end
+	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 10000 end
+	if AVM_DB.vendorMaxPages == nil then AVM_DB.vendorMaxPages = 10 end
+	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
 end
 
 local function avm_rule_valid(rule)
@@ -685,6 +709,10 @@ local function avm_market_request_start()
 		avm_print("MARKET waits: purchase transaction is pending/unknown")
 		return
 	end
+	if AVM.vendor.active or AVM.vendor.requested then
+		avm_print("MARKET blocked while VENDOR owns/requests the AH scheduler")
+		return
+	end
 	if AVM_DB.live then
 		AVM_DB.live = false
 		avm_print("LIVE OFF - MARKET scan owns the AH query scheduler")
@@ -820,7 +848,7 @@ end
 local function avm_market_auto_due()
 	local mins = tonumber(AVM_DB.marketAutoMinutes) or 0
 	if mins <= 0 then return false end
-	if AVM.market.active or AVM.market.requested or AVM_DB.live or AVM.pending or AVM.unknown then return false end
+	if AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or AVM_DB.live or AVM.pending or AVM.unknown then return false end
 	local now = time()
 	local retryAfter = tonumber(AVM_DB.marketMeta.retryAfter) or 0
 	if retryAfter > now then return false end
@@ -887,6 +915,8 @@ local function avm_market_show_item(name)
 	end
 end
 
+local avm_revalidate_candidate
+
 local function avm_market_slash(rest)
 	rest = avm_trim(rest or "")
 	local _,_,sub,arg = string.find(rest, "^(%S+)%s*(.*)$")
@@ -935,6 +965,401 @@ local function avm_market_slash(rest)
 	end
 end
 
+
+local function avm_vendor_item_id(i)
+	local key = avm_item_link_key(i)
+	if key == "" then return nil end
+	local _,_,id = string.find(key, "^item:(%d+)")
+	return tonumber(id)
+end
+
+local function avm_vendor_candidate_from_row(i)
+	local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
+	if not name or not count or count <= 0 or not buyout or buyout <= 0 then return nil end
+
+	local itemId = avm_vendor_item_id(i)
+	if not itemId or not AVM_VENDOR_VALUES then return nil end
+	local vendorUnit = tonumber(AVM_VENDOR_VALUES[itemId]) or 0
+	if vendorUnit <= 0 then return nil end
+
+	local vendorTotal = vendorUnit * count
+	local profit = vendorTotal - buyout
+	local minProfit = tonumber(AVM_DB.vendorMinProfit) or 0
+	local maxBuyout = tonumber(AVM_DB.vendorMaxBuyout) or 0
+	if profit < minProfit then return nil end
+	if maxBuyout > 0 and buyout > maxBuyout then return nil end
+
+	local itemKey = avm_item_link_key(i)
+	local sig = avm_signature(name, count, buyout, owner, quality, level, itemKey)
+	if avm_recent(sig) then return nil end
+
+	local money = GetMoney()
+	local missing = buyout - money
+	if missing < 0 then missing = 0 end
+	return {
+		mode = "vendor",
+		name = name,
+		itemId = itemId,
+		count = count,
+		buyout = buyout,
+		unit = math.floor(buyout / count),
+		vendorUnit = vendorUnit,
+		vendorTotal = vendorTotal,
+		profit = profit,
+		owner = owner,
+		quality = quality,
+		level = level,
+		itemKey = itemKey,
+		signature = sig,
+		sourcePage = AVM.queryPage,
+		affordable = buyout <= money,
+		missing = missing,
+	}
+end
+
+local function avm_vendor_pick_page_best()
+	local n = GetNumAuctionItems("list") or 0
+	local best = nil
+	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
+	for i = 1, n do
+		local c = avm_vendor_candidate_from_row(i)
+		if c then
+			local eligible = true
+			if AVM_DB.live then
+				if not c.affordable then eligible = false end
+				if maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend then eligible = false end
+			end
+			if eligible and (not best or c.profit > best.profit or
+				(c.profit == best.profit and c.buyout < best.buyout)) then
+				c.index = i
+				best = c
+			end
+		end
+	end
+	return best
+end
+
+local function avm_vendor_finish(reason)
+	local v = AVM.vendor
+	if AVM_DB.live then
+		AVM_DB.live = false
+		avm_print("LIVE OFF - VENDOR stopped")
+	end
+	if AVM.candidate and AVM.candidate.mode == "vendor" then AVM.candidate = nil end
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
+	avm_print("VENDOR stopped: " .. tostring(reason or "stopped"))
+	v.active = false
+	v.requested = false
+	v.stopRequested = false
+	v.phase = "IDLE"
+	v.best = nil
+	v.consecutiveTimeouts = 0
+	if AVM_DB.enabled then avm_restart_boundary(false) end
+end
+
+local function avm_vendor_restart_cycle()
+	local v = AVM.vendor
+	if not v.active then return end
+	if v.stopRequested then
+		avm_vendor_finish("manual stop")
+		return
+	end
+	v.pagesScanned = 0
+	v.best = nil
+	v.low = 0
+	v.high = 0
+	v.page = 0
+	v.lastPage = 0
+	v.consecutiveTimeouts = 0
+	local cached = tonumber(AVM_DB.vendorMeta.boundary)
+	if cached and cached >= 0 then
+		v.boundary = cached
+		if cached > 0 then v.phase = "VERIFY_PREV" else v.phase = "VERIFY_BOUNDARY" end
+	else
+		v.boundary = nil
+		v.phase = "PROBE"
+	end
+end
+
+local function avm_vendor_begin()
+	local v = AVM.vendor
+	if v.active then return end
+	if AVM.pending or AVM.unknown then return end
+	v.active = true
+	v.requested = false
+	v.stopRequested = false
+	v.startedAt = GetTime()
+	AVM.stats.vendorScans = AVM.stats.vendorScans + 1
+	avm_print("VENDOR start minProfit=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
+		" maxBuyout=" .. avm_money(AVM_DB.vendorMaxBuyout or 0) ..
+		" pages=" .. tostring(AVM_DB.vendorMaxPages or 10))
+	avm_vendor_restart_cycle()
+end
+
+local function avm_vendor_request_start()
+	if not AVM.open then
+		avm_print("VENDOR requires open Auction House")
+		return
+	end
+	if AVM.pending or AVM.unknown then
+		avm_print("VENDOR waits: purchase transaction is pending/unknown")
+		return
+	end
+	if AVM.market.active or AVM.market.requested then
+		avm_print("VENDOR blocked while MARKET owns/requests the AH scheduler")
+		return
+	end
+	if AVM_DB.live then
+		AVM_DB.live = false
+		avm_print("LIVE OFF - VENDOR starts in DRY-RUN; arm LIVE explicitly after review")
+	end
+	AVM.vendor.requested = true
+	avm_print("VENDOR scan queued")
+end
+
+local function avm_vendor_enter_scan(boundary, lastPage)
+	local v = AVM.vendor
+	v.boundary = boundary
+	v.page = boundary
+	v.lastPage = lastPage
+	v.pagesScanned = 0
+	v.best = nil
+	v.phase = "SCAN"
+	AVM_DB.vendorMeta.boundary = boundary
+	avm_print("VENDOR first positive-buyout page=" .. tostring(boundary) ..
+		" lastPage=" .. tostring(lastPage))
+end
+
+local function avm_vendor_accept(kind, page, total, positive)
+	local v = AVM.vendor
+	v.consecutiveTimeouts = 0
+	local lastPage = 0
+	if total and total > 0 then lastPage = math.floor((total - 1) / 50) end
+	if lastPage > v.lastPage then v.lastPage = lastPage end
+
+	if v.stopRequested then
+		avm_vendor_finish("manual stop")
+		return
+	end
+
+	if kind == "VENDOR_VERIFY_PREV" then
+		if positive then
+			AVM_DB.vendorMeta.boundary = nil
+			v.boundary = nil
+			v.phase = "PROBE"
+		else
+			v.phase = "VERIFY_BOUNDARY"
+		end
+		return
+	end
+
+	if kind == "VENDOR_VERIFY_BOUNDARY" then
+		if positive then
+			avm_print("VENDOR cache hit boundary=" .. tostring(v.boundary))
+			avm_vendor_enter_scan(v.boundary or 0, lastPage)
+		else
+			AVM_DB.vendorMeta.boundary = nil
+			v.boundary = nil
+			v.phase = "PROBE"
+		end
+		return
+	end
+
+	if kind == "VENDOR_PROBE" then
+		if not total or total <= 0 then
+			avm_vendor_finish("no auction results")
+			return
+		end
+		if positive then
+			avm_vendor_enter_scan(0, lastPage)
+			return
+		end
+		if lastPage <= 0 then
+			avm_vendor_finish("no positive buyouts")
+			return
+		end
+		v.low = 1
+		v.high = lastPage
+		v.phase = "SEARCH"
+		return
+	end
+
+	if kind == "VENDOR_SEARCH" then
+		if positive then v.high = page else v.low = page + 1 end
+		if v.low > v.high then
+			avm_vendor_finish("no positive buyouts")
+			return
+		end
+		if v.low == v.high then
+			v.boundary = v.low
+			v.phase = "FINAL"
+		else
+			v.phase = "SEARCH"
+		end
+		return
+	end
+
+	if kind == "VENDOR_FINAL" then
+		if positive then
+			avm_vendor_enter_scan(page, lastPage)
+		else
+			AVM_DB.vendorMeta.boundary = nil
+			avm_vendor_finish("boundary verification failed")
+		end
+		return
+	end
+
+	if kind == "VENDOR_SCAN" then
+		AVM.stats.vendorPages = AVM.stats.vendorPages + 1
+		v.pagesScanned = v.pagesScanned + 1
+		local pageBest = avm_vendor_pick_page_best()
+		if pageBest then
+			AVM.stats.vendorCandidates = AVM.stats.vendorCandidates + 1
+			if not v.best or pageBest.profit > v.best.profit or
+				(pageBest.profit == v.best.profit and pageBest.buyout < v.best.buyout) then
+				v.best = pageBest
+			end
+		end
+
+		local maxPages = tonumber(AVM_DB.vendorMaxPages) or 10
+		if maxPages < 1 then maxPages = 1 end
+		if maxPages > 100 then maxPages = 100 end
+		v.page = page + 1
+		local done = v.page > v.lastPage or v.pagesScanned >= maxPages
+		if not done then return end
+
+		if v.best then
+			AVM.stats.vendorBest = AVM.stats.vendorBest + 1
+			AVM.candidate = v.best
+			v.best = nil
+			avm_print("VENDOR_BEST " .. AVM.candidate.count .. "x " .. AVM.candidate.name ..
+				" buy=" .. avm_money(AVM.candidate.buyout) ..
+				" vendor=" .. avm_money(AVM.candidate.vendorTotal) ..
+				" profit=" .. avm_money(AVM.candidate.profit) ..
+				" page=" .. tostring(AVM.candidate.sourcePage) ..
+				" scannedPages=" .. tostring(v.pagesScanned))
+			avm_prepare_revalidate(AVM.candidate)
+			v.phase = "REVALIDATE"
+		else
+			avm_print("VENDOR_NONE scannedPages=" .. tostring(v.pagesScanned))
+			avm_vendor_restart_cycle()
+		end
+		return
+	end
+
+	if kind == "VENDOR_REVALIDATE" then
+		avm_revalidate_candidate()
+		return
+	end
+end
+
+local function avm_vendor_tick()
+	local v = AVM.vendor
+	if not v.active then return end
+	if v.stopRequested and not AVM.queryInFlight then
+		avm_vendor_finish("manual stop")
+		return
+	end
+	if v.phase == "VERIFY_PREV" then
+		avm_send_query("VENDOR_VERIFY_PREV", (v.boundary or 0) - 1, "")
+	elseif v.phase == "VERIFY_BOUNDARY" then
+		avm_send_query("VENDOR_VERIFY_BOUNDARY", v.boundary or 0, "")
+	elseif v.phase == "PROBE" then
+		avm_send_query("VENDOR_PROBE", 0, "")
+	elseif v.phase == "SEARCH" then
+		local mid = math.floor((v.low + v.high) / 2)
+		avm_send_query("VENDOR_SEARCH", mid, "")
+	elseif v.phase == "FINAL" then
+		avm_send_query("VENDOR_FINAL", v.boundary or v.low or 0, "")
+	elseif v.phase == "SCAN" then
+		avm_send_query("VENDOR_SCAN", v.page, "")
+	elseif v.phase == "REVALIDATE" then
+		if AVM.candidate and AVM.revalidatePages and AVM.revalidatePages[AVM.revalidatePos] then
+			avm_send_query("VENDOR_REVALIDATE", AVM.revalidatePages[AVM.revalidatePos], "")
+		else
+			avm_vendor_restart_cycle()
+		end
+	end
+end
+
+local function avm_vendor_status()
+	local v = AVM.vendor
+	avm_print("VENDOR active=" .. tostring(v.active) ..
+		" requested=" .. tostring(v.requested) ..
+		" live=" .. tostring(AVM_DB.live) ..
+		" phase=" .. tostring(v.phase) ..
+		" page=" .. tostring(v.page) .. "/" .. tostring(v.lastPage) ..
+		" scanned=" .. tostring(v.pagesScanned))
+	avm_print("VENDOR minProfit=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
+		" maxBuyout=" .. avm_money(AVM_DB.vendorMaxBuyout or 0) ..
+		" maxPages=" .. tostring(AVM_DB.vendorMaxPages or 10) ..
+		" buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
+		" spend=" .. avm_money(AVM.sessionSpend))
+end
+
+local function avm_vendor_slash(rest)
+	rest = avm_trim(rest or "")
+	local _,_,sub,arg = string.find(rest, "^(%S+)%s*(.*)$")
+	sub = string.lower(sub or "status")
+	arg = arg or ""
+	if sub == "start" or sub == "on" then
+		avm_vendor_request_start()
+	elseif sub == "stop" or sub == "off" then
+		AVM.vendor.requested = false
+		if AVM.vendor.active then
+			AVM.vendor.stopRequested = true
+			avm_print("VENDOR stop requested")
+		else
+			avm_print("VENDOR not running")
+		end
+	elseif sub == "status" then
+		avm_vendor_status()
+	elseif sub == "minprofit" then
+		local n = avm_parse_money(avm_trim(arg))
+		if n and n >= 0 then
+			AVM_DB.vendorMinProfit = n
+			avm_print("VENDOR minProfit=" .. avm_money(n))
+		else
+			avm_print("invalid minprofit")
+		end
+	elseif sub == "maxbuyout" then
+		local n = avm_parse_money(avm_trim(arg))
+		if n and n >= 0 then
+			AVM_DB.vendorMaxBuyout = n
+			avm_print("VENDOR maxBuyout=" .. avm_money(n) .. " (0 = unlimited)")
+		else
+			avm_print("invalid maxbuyout")
+		end
+	elseif sub == "pages" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 100 then
+			AVM_DB.vendorMaxPages = math.floor(n)
+			avm_print("VENDOR maxPages=" .. tostring(AVM_DB.vendorMaxPages))
+		else
+			avm_print("vendor pages must be 1..100")
+		end
+	else
+		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|pages 10")
+	end
+end
+
+local function avm_resume_after_candidate(c, dryRun)
+	if c and c.mode == "vendor" then
+		AVM.candidate = nil
+		AVM.revalidatePages = nil
+		AVM.revalidatePos = 0
+		avm_vendor_restart_cycle()
+	elseif dryRun then
+		AVM.candidate = nil
+		AVM.revalidatePages = nil
+		AVM.revalidatePos = 0
+		avm_advance_rule()
+	else
+		avm_restart_boundary()
+	end
+end
+
 local function avm_pick_candidate()
 	local n = GetNumAuctionItems("list")
 	local best = nil
@@ -960,10 +1385,10 @@ local function avm_pick_candidate()
 	return best
 end
 
-local function avm_revalidate_candidate()
+avm_revalidate_candidate = function()
 	local c = AVM.candidate
 	if not c then
-		avm_restart_boundary()
+		if AVM.vendor.active then avm_vendor_restart_cycle() else avm_restart_boundary() end
 		return
 	end
 
@@ -984,13 +1409,17 @@ local function avm_revalidate_candidate()
 					if not c.affordable then
 						wallet = " affordable=false missing=" .. avm_money(c.missing or 0)
 					end
-					avm_print("DRYRUN_BEST " .. c.count .. "x " .. c.name .. " total=" ..
-						avm_money(c.buyout) .. " unit=" .. avm_money(c.unit) ..
-						" seller=" .. tostring(c.owner) .. wallet)
-					AVM.candidate = nil
-					AVM.revalidatePages = nil
-					AVM.revalidatePos = 0
-					avm_advance_rule()
+					if c.mode == "vendor" then
+						avm_print("VENDOR_DRYRUN " .. c.count .. "x " .. c.name ..
+							" buy=" .. avm_money(c.buyout) ..
+							" vendor=" .. avm_money(c.vendorTotal or 0) ..
+							" profit=" .. avm_money(c.profit or 0) .. wallet)
+					else
+						avm_print("DRYRUN_BEST " .. c.count .. "x " .. c.name .. " total=" ..
+							avm_money(c.buyout) .. " unit=" .. avm_money(c.unit) ..
+							" seller=" .. tostring(c.owner) .. wallet)
+					end
+					avm_resume_after_candidate(c, true)
 					return
 				end
 
@@ -1005,10 +1434,7 @@ local function avm_revalidate_candidate()
 					avm_print("LIVE_BLOCKED no money for " .. c.name ..
 						" need=" .. avm_money(c.buyout) ..
 						" have=" .. avm_money(GetMoney()))
-					AVM.candidate = nil
-					AVM.revalidatePages = nil
-					AVM.revalidatePos = 0
-					avm_restart_boundary()
+					avm_resume_after_candidate(c, false)
 					return
 				end
 
@@ -1017,10 +1443,7 @@ local function avm_revalidate_candidate()
 					AVM_DB.live = false
 					avm_print("LIVE_AUTO_OFF purchase limit reached (" ..
 						tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
-					AVM.candidate = nil
-					AVM.revalidatePages = nil
-					AVM.revalidatePos = 0
-					avm_restart_boundary()
+					avm_resume_after_candidate(c, false)
 					return
 				end
 
@@ -1028,10 +1451,7 @@ local function avm_revalidate_candidate()
 				if maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend then
 					avm_print("session spend limit blocks " .. c.name)
 					AVM.recent[c.signature] = GetTime() + 10
-					AVM.candidate = nil
-					AVM.revalidatePages = nil
-					AVM.revalidatePos = 0
-					avm_restart_boundary()
+					avm_resume_after_candidate(c, false)
 					return
 				end
 
@@ -1039,10 +1459,7 @@ local function avm_revalidate_candidate()
 				if c.buyout > before then
 					AVM.stats.walletBlocks = AVM.stats.walletBlocks + 1
 					avm_print("LIVE_BLOCKED wallet changed before buy " .. c.name)
-					AVM.candidate = nil
-					AVM.revalidatePages = nil
-					AVM.revalidatePos = 0
-					avm_restart_boundary()
+					avm_resume_after_candidate(c, false)
 					return
 				end
 				AVM.recent[c.signature] = GetTime() + AVM_UNKNOWN_HOLD
@@ -1055,7 +1472,12 @@ local function avm_revalidate_candidate()
 				}
 				AVM.candidate = nil
 				AVM.phase = "BUY_PENDING"
-				avm_print("BUY_SENT " .. c.count .. "x " .. c.name .. " " .. avm_money(c.buyout))
+				if c.mode == "vendor" then
+					avm_print("BUY_SENT " .. c.count .. "x " .. c.name .. " " .. avm_money(c.buyout) ..
+						" expectedVendorProfit=" .. avm_money(c.profit or 0))
+				else
+					avm_print("BUY_SENT " .. c.count .. "x " .. c.name .. " " .. avm_money(c.buyout))
+				end
 				return
 			end
 		end
@@ -1063,19 +1485,20 @@ local function avm_revalidate_candidate()
 
 	if AVM.revalidatePages and AVM.revalidatePos < table.getn(AVM.revalidatePages) then
 		AVM.revalidatePos = AVM.revalidatePos + 1
-		AVM.phase = "REVALIDATE"
+		if c.mode == "vendor" then AVM.vendor.phase = "REVALIDATE" else AVM.phase = "REVALIDATE" end
 		return
 	end
 
 	AVM.stats.failed = AVM.stats.failed + 1
-	AVM.stats.watchRaces = AVM.stats.watchRaces + 1
-	AVM.watchRaces = AVM.watchRaces + 1
 	AVM.recent[c.signature] = GetTime() + 2
-	avm_print("WATCH_RACE " .. c.name .. " - best offer moved/disappeared before revalidate")
-	AVM.candidate = nil
-	AVM.revalidatePages = nil
-	AVM.revalidatePos = 0
-	avm_restart_boundary()
+	if c.mode == "vendor" then
+		avm_print("VENDOR_RACE " .. c.name .. " - opportunity moved/disappeared before revalidate")
+	else
+		AVM.stats.watchRaces = AVM.stats.watchRaces + 1
+		AVM.watchRaces = AVM.watchRaces + 1
+		avm_print("WATCH_RACE " .. c.name .. " - best offer moved/disappeared before revalidate")
+	end
+	avm_resume_after_candidate(c, false)
 end
 
 local function avm_accept_result()
@@ -1092,7 +1515,8 @@ local function avm_accept_result()
 	local page = AVM.queryPage
 	local latency = GetTime() - AVM.querySentAt
 	local isMarket = string.find(kind, "MARKET_", 1, true) == 1
-	if not isMarket or kind ~= "MARKET_SCAN" then
+	local isVendor = string.find(kind, "VENDOR_", 1, true) == 1
+	if (not isMarket or kind ~= "MARKET_SCAN") and (not isVendor or kind ~= "VENDOR_SCAN") then
 		avm_print("RESULT q" .. AVM.querySeq .. " " .. kind .. " rule='" ..
 			tostring(AVM.queryName) .. "' page=" .. page ..
 			" rows=" .. rows .. "/" .. total .. " positive=" .. tostring(positive) ..
@@ -1100,6 +1524,10 @@ local function avm_accept_result()
 	end
 	if isMarket then
 		avm_market_accept(kind, page, total, positive)
+		return
+	end
+	if isVendor then
+		avm_vendor_accept(kind, page, total, positive)
 		return
 	end
 
@@ -1275,7 +1703,7 @@ end
 local function avm_handle_list_update()
 	local now = GetTime()
 	if not AVM.queryInFlight then
-		if AVM.open and (AVM_DB.enabled or AVM.market.active) and AVM.lastResultAt > 0 and
+		if AVM.open and (AVM_DB.enabled or AVM.market.active or AVM.vendor.active) and AVM.lastResultAt > 0 and
 		   now - AVM.lastResultAt <= AVM_EXTRA_EVENT_WINDOW then
 			AVM.stats.extraEvents = AVM.stats.extraEvents + 1
 		end
@@ -1299,7 +1727,12 @@ local function avm_tick_pending(now)
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
 			AVM.recent[p.candidate.signature] = now + 15
-			avm_print("CONFIRMED " .. p.candidate.name .. " " .. avm_money(p.candidate.buyout))
+			if p.candidate.mode == "vendor" then
+				avm_print("CONFIRMED " .. p.candidate.name .. " " .. avm_money(p.candidate.buyout) ..
+					" expectedVendorProfit=" .. avm_money(p.candidate.profit or 0))
+			else
+				avm_print("CONFIRMED " .. p.candidate.name .. " " .. avm_money(p.candidate.buyout))
+			end
 			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
 			if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 				AVM_DB.live = false
@@ -1307,7 +1740,7 @@ local function avm_tick_pending(now)
 					tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
 			end
 			AVM.pending = nil
-			avm_restart_boundary()
+			avm_resume_after_candidate(p.candidate, false)
 			return true
 		end
 
@@ -1334,7 +1767,12 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
-			avm_print("CONFIRMED_LATE " .. u.candidate.name .. " " .. avm_money(u.candidate.buyout))
+			if u.candidate.mode == "vendor" then
+				avm_print("CONFIRMED_LATE " .. u.candidate.name .. " " .. avm_money(u.candidate.buyout) ..
+					" expectedVendorProfit=" .. avm_money(u.candidate.profit or 0))
+			else
+				avm_print("CONFIRMED_LATE " .. u.candidate.name .. " " .. avm_money(u.candidate.buyout))
+			end
 			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
 			if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 				AVM_DB.live = false
@@ -1342,13 +1780,13 @@ local function avm_tick_pending(now)
 					tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
 			end
 			AVM.unknown = nil
-			avm_restart_boundary()
+			avm_resume_after_candidate(u.candidate, false)
 			return true
 		end
 		if now >= u.untilTime then
 			avm_print("UNKNOWN_RELEASE " .. u.candidate.name .. " - reservation expired; rescan")
 			AVM.unknown = nil
-			avm_restart_boundary()
+			avm_resume_after_candidate(u.candidate, false)
 			return true
 		end
 		return true
@@ -1372,12 +1810,19 @@ local function avm_tick()
 			AVM.stats.timeouts = AVM.stats.timeouts + 1
 			avm_print("QUERY_TIMEOUT q" .. AVM.querySeq .. " " .. AVM.queryKind)
 			local marketQuery = string.find(AVM.queryKind or "", "MARKET_", 1, true) == 1
+			local vendorQuery = string.find(AVM.queryKind or "", "VENDOR_", 1, true) == 1
 			AVM.queryInFlight = false
 			if marketQuery and AVM.market.active then
 				AVM.stats.marketTimeouts = AVM.stats.marketTimeouts + 1
 				AVM.market.consecutiveTimeouts = AVM.market.consecutiveTimeouts + 1
 				if AVM.market.consecutiveTimeouts >= 3 then
 					avm_market_finish(false, "3 consecutive query timeouts")
+				end
+			elseif vendorQuery and AVM.vendor.active then
+				AVM.stats.vendorTimeouts = AVM.stats.vendorTimeouts + 1
+				AVM.vendor.consecutiveTimeouts = AVM.vendor.consecutiveTimeouts + 1
+				if AVM.vendor.consecutiveTimeouts >= 3 then
+					avm_vendor_finish("3 consecutive query timeouts")
 				end
 			else
 				if AVM.queryKind == "REVALIDATE" then AVM.candidate = nil end
@@ -1392,6 +1837,14 @@ local function avm_tick()
 	end
 	if AVM.market.active then
 		avm_market_tick()
+		return
+	end
+
+	if AVM.vendor.requested and not AVM.vendor.active then
+		avm_vendor_begin()
+	end
+	if AVM.vendor.active then
+		avm_vendor_tick()
 		return
 	end
 
@@ -1470,7 +1923,11 @@ local function avm_status()
 		" unknown=" .. AVM.stats.unknown ..
 		" marketScans=" .. AVM.stats.marketScans ..
 		" marketPages=" .. AVM.stats.marketPages ..
-		" marketTimeouts=" .. AVM.stats.marketTimeouts)
+		" marketTimeouts=" .. AVM.stats.marketTimeouts ..
+		" vendorPages=" .. AVM.stats.vendorPages ..
+		" vendorBest=" .. AVM.stats.vendorBest ..
+		" vendorTimeouts=" .. AVM.stats.vendorTimeouts)
+	if AVM.vendor.active or AVM.vendor.requested then avm_vendor_status() end
 end
 
 local function avm_ensure_rule_slot(index)
@@ -1581,6 +2038,8 @@ local function avm_slash(msg)
 		AVM.phase = "IDLE"
 		AVM.market.requested = false
 		if AVM.market.active then AVM.market.stopRequested = true end
+		AVM.vendor.requested = false
+		if AVM.vendor.active then AVM.vendor.stopRequested = true end
 		avm_print("scanner/LIVE OFF")
 	elseif cmd == "live" then
 		if string.lower(avm_trim(rest)) == "on" then
@@ -1588,11 +2047,11 @@ local function avm_slash(msg)
 				avm_print("LIVE requires open Auction House")
 			elseif AVM.market.active or AVM.market.requested then
 				avm_print("LIVE blocked while MARKET owns/requests the AH scheduler")
-			elseif avm_rule_count() == 0 then
-				avm_print("LIVE requires at least one active rule with Item + maxUnit")
+			elseif not AVM.vendor.active and not AVM.vendor.requested and avm_rule_count() == 0 then
+				avm_print("LIVE requires an active WATCH rule or VENDOR scanner")
 			else
 				AVM_DB.live = true
-				avm_print("LIVE ON - only full-scan WATCH_BEST offers may be bought")
+				avm_print("LIVE ON - only revalidated WATCH/VENDOR offers may be bought")
 			end
 		else
 			AVM_DB.live = false
@@ -1630,6 +2089,8 @@ local function avm_slash(msg)
 		end
 	elseif cmd == "market" then
 		avm_market_slash(rest)
+	elseif cmd == "vendor" then
+		avm_vendor_slash(rest)
 	elseif cmd == "maxbuys" then
 		local n = tonumber(avm_trim(rest))
 		if n and n >= 1 and n <= 100 then
@@ -1639,8 +2100,8 @@ local function avm_slash(msg)
 			avm_print("maxbuys must be 1..100")
 		end
 	elseif cmd == "reset" then
-		if AVM.market.active or AVM.market.requested or AVM.pending or AVM.unknown then
-			avm_print("reset blocked while MARKET or purchase transaction is active")
+		if AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or AVM.pending or AVM.unknown then
+			avm_print("reset blocked while MARKET/VENDOR or purchase transaction is active")
 			return
 		end
 		AVM_DB.live = false
@@ -1663,6 +2124,7 @@ local function avm_slash(msg)
 	else
 		avm_print("/avm on|off | live on|off | status | gui | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
+		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|pages 10")
 		avm_print("/avm market start|stop|status|item NAME|auto MIN|retention N|clear")
 	end
 end
@@ -1735,7 +2197,8 @@ AVM_WATCH_API = {
 			AVM.uiGeneration = AVM.uiGeneration + 1
 			return true
 		end
-		if not AVM.open or AVM.market.active or AVM.market.requested or avm_rule_count() == 0 then
+		if not AVM.open or AVM.market.active or AVM.market.requested or
+		   ((not AVM.vendor.active and not AVM.vendor.requested) and avm_rule_count() == 0) then
 			AVM_DB.live = false
 			AVM.uiGeneration = AVM.uiGeneration + 1
 			return false
@@ -1798,6 +2261,13 @@ frame:SetScript("OnEvent", function()
 		if AVM_DB.enabled then avm_print("AH open; cached boundary verification armed") end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM_DB.live = false
+		if AVM.vendor.active or AVM.vendor.requested then
+			AVM.vendor.active = false
+			AVM.vendor.requested = false
+			AVM.vendor.stopRequested = false
+			AVM.vendor.best = nil
+			avm_print("VENDOR aborted: Auction House closed")
+		end
 		if AVM.market.active or AVM.market.requested then
 			AVM.market.active = false
 			AVM.market.requested = false
