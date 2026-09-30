@@ -734,6 +734,35 @@
       "tests": [],
       "package": null,
       "notes": "Adds an opt-in persistent GUI low-shard global pause with configurable 1-100 threshold. Below threshold all SummonScout automation/event processing is suspended, pending invite/summon/counter/trade work is cleared, native summon request is cancelled, GUI/status remain available, and automation resumes automatically after shard count recovers."
+    },
+    {
+      "id": "aux-watch-ui-rowbind-fix",
+      "branch": "parallel",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vmangos-watchlist-v21"
+      ],
+      "shared_resources": [
+        "AVM_DB SavedVariables watch rules",
+        "AuxVmangos WATCH GUI callbacks",
+        "WATCH scanner rule-generation invalidation"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "257b9554f8f72c5fcb30161e46fcb566e04ad187",
+      "verified_commit": "257b9554f8f72c5fcb30161e46fcb566e04ad187",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "257b9554f8f72c5fcb30161e46fcb566e04ad187",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36744144315 passed on exact UI hardening SHA 257b9554f8f72c5fcb30161e46fcb566e04ad187."
+        }
+      ],
+      "package": null,
+      "notes": "Gameplay screenshots on 2026-09-30 showed WATCH UI fields Max/unit=3g and Max total=3g while the scanner status displayed best≈3g98s90c/ea. Engine candidate filtering already enforces committed rule limits. This experiment hardens the UI-to-AVM_DB commit path with stable rowIndex captures, immediate guarded OnTextChanged commits, and committed limit values in scanner status. Gameplay retest pending; no claim that the exact root cause is proven until retest. Integrated to parallel from exact verified feature SHA; full candidate build pending."
     }
   ]
 }

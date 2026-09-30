@@ -1,4 +1,4 @@
-# AuxVmangos 0.8 unified market bot + WATCH sniper
+# AuxVmangos 0.8.1 unified market bot + WATCH sniper
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
@@ -150,3 +150,15 @@ Server reference used by the project:
 `vmangos/core` development commit `464179081673cfd240f7ffe7f0daf96bca0b5a70`.
 
 Current repository/runtime evidence and exact in-game tests remain authoritative over assumptions from other WoW versions.
+
+
+## WATCH UI commit hardening (0.8.1)
+
+Gameplay evidence showed the WATCH panel displaying a 3g Max/unit and 3g Max total while the running scanner status still carried a best candidate around 3g98s. The engine-side candidate filter already rejects unit/total prices above the committed rule, so the UI commit path is hardened:
+
+- each row callback captures an explicit stable rowIndex;
+- text edits commit immediately to AVM_DB instead of depending only on Enter/focus loss;
+- programmatic refresh is guarded so SetText does not recursively rewrite rules;
+- status displays the committed Max/unit and Max total currently used by the scanner.
+
+Any rule edit continues to disarm LIVE and invalidate/restart stale WATCH work.

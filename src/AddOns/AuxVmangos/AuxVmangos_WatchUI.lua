@@ -16,6 +16,7 @@ local statusText
 local scanButton
 local liveButton
 local lastStatusAt = 0
+local syncingRows = false
 
 local function compact_money(copper)
 	copper = tonumber(copper) or 0
@@ -54,6 +55,7 @@ local function row_from_db(index)
 	if not r then return end
 	local ui = rows[index]
 	if not ui then return end
+	syncingRows = true
 	ui.enabled:SetChecked(r.enabled == true)
 	ui.item:SetText(r.name or "")
 	ui.partial:SetChecked(r.partial == true)
@@ -61,9 +63,11 @@ local function row_from_db(index)
 	ui.total:SetText(compact_money(r.maxTotal or 0))
 	ui.minStack:SetText(tostring(r.minStack or 1))
 	ui.maxStack:SetText(tostring(r.maxStack or 0))
+	syncingRows = false
 end
 
-local function commit_row(index)
+local function commit_row(index, refreshUi)
+	if syncingRows then return end
 	local ui = rows[index]
 	local old = API.GetRule(index)
 	if not ui or not old then return end
@@ -85,7 +89,7 @@ local function commit_row(index)
 		minStack = minStack,
 		maxStack = maxStack,
 	})
-	row_from_db(index)
+	if refreshUi then row_from_db(index) end
 end
 
 local function refresh_rows()
@@ -111,6 +115,7 @@ local function refresh_status()
 		" " .. tostring(s.ruleName or "") ..
 		" | page=" .. tostring(s.scanPage) ..
 		" | scanned=" .. tostring(s.scannedPages) ..
+		" | limit=" .. compact_money(s.maxUnit or 0) .. "/ea,total=" .. compact_money(s.maxTotal or 0) ..
 		" | best=" .. best ..
 		" | buys=" .. tostring(s.sessionBuys) .. "/" .. tostring(s.maxSessionBuys) ..
 		" | spent=" .. compact_money(s.sessionSpend)
@@ -190,35 +195,42 @@ local function create_panel()
 	new_label(panel, "Max", 602, -52, 42)
 
 	for i = 1, SLOT_COUNT do
-		local y = -70 - ((i - 1) * 21)
+		local rowIndex = i
+		local y = -70 - ((rowIndex - 1) * 21)
 		local ui = {}
-		rows[i] = ui
+		rows[rowIndex] = ui
 
-		ui.number = new_label(panel, tostring(i), 14, y - 3, 20)
+		ui.number = new_label(panel, tostring(rowIndex), 14, y - 3, 20)
 
-		ui.enabled = CreateFrame("CheckButton", "AuxVmangosWatchEnabled" .. i, panel, "OptionsCheckButtonTemplate")
+		ui.enabled = CreateFrame("CheckButton", "AuxVmangosWatchEnabled" .. rowIndex, panel, "OptionsCheckButtonTemplate")
 		ui.enabled:SetWidth(22)
 		ui.enabled:SetHeight(22)
 		ui.enabled:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, y + 1)
 
-		ui.item = new_edit(panel, "AuxVmangosWatchItem" .. i, 72, y, 205)
+		ui.item = new_edit(panel, "AuxVmangosWatchItem" .. rowIndex, 72, y, 205)
 
-		ui.partial = CreateFrame("CheckButton", "AuxVmangosWatchPartial" .. i, panel, "OptionsCheckButtonTemplate")
+		ui.partial = CreateFrame("CheckButton", "AuxVmangosWatchPartial" .. rowIndex, panel, "OptionsCheckButtonTemplate")
 		ui.partial:SetWidth(22)
 		ui.partial:SetHeight(22)
 		ui.partial:SetPoint("TOPLEFT", panel, "TOPLEFT", 292, y + 1)
 
-		ui.unit = new_edit(panel, "AuxVmangosWatchUnit" .. i, 350, y, 78)
-		ui.total = new_edit(panel, "AuxVmangosWatchTotal" .. i, 444, y, 78)
-		ui.minStack = new_edit(panel, "AuxVmangosWatchMin" .. i, 540, y, 42)
-		ui.maxStack = new_edit(panel, "AuxVmangosWatchMax" .. i, 602, y, 42)
+		ui.unit = new_edit(panel, "AuxVmangosWatchUnit" .. rowIndex, 350, y, 78)
+		ui.total = new_edit(panel, "AuxVmangosWatchTotal" .. rowIndex, 444, y, 78)
+		ui.minStack = new_edit(panel, "AuxVmangosWatchMin" .. rowIndex, 540, y, 42)
+		ui.maxStack = new_edit(panel, "AuxVmangosWatchMax" .. rowIndex, 602, y, 42)
 
-		ui.enabled:SetScript("OnClick", function() commit_row(i) end)
-		ui.partial:SetScript("OnClick", function() commit_row(i) end)
+		ui.enabled:SetScript("OnClick", function() commit_row(rowIndex, true) end)
+		ui.partial:SetScript("OnClick", function() commit_row(rowIndex, true) end)
 
 		local function bind_edit(edit)
-			edit:SetScript("OnEnterPressed", function() this:ClearFocus(); commit_row(i) end)
-			edit:SetScript("OnEditFocusLost", function() commit_row(i) end)
+			edit:SetScript("OnEnterPressed", function()
+				commit_row(rowIndex, true)
+				this:ClearFocus()
+			end)
+			edit:SetScript("OnEditFocusLost", function() commit_row(rowIndex, true) end)
+			edit:SetScript("OnTextChanged", function()
+				if not syncingRows then commit_row(rowIndex, false) end
+			end)
 		end
 		bind_edit(ui.item)
 		bind_edit(ui.unit)
