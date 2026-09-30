@@ -528,9 +528,9 @@
         "vMaNGOS buyout-ordered auction browse flow",
         "parallel addon packager src/AddOns auto-discovery"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "a50974055166cd32c80e828f156e9f13c15884a4",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "5039543a7ec0a98932f4e6306cc21b840441055d",
+      "verified_commit": "5039543a7ec0a98932f4e6306cc21b840441055d",
       "tests": [
         {
           "kind": "ci",
@@ -538,10 +538,28 @@
           "commit": "4d04fb58f1feb017da4381560e3c01477fa1298b",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36674276940 and AI experiment registry run 36674276890 passed on exact feature SHA 4d04fb58f1feb017da4381560e3c01477fa1298b."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5039543a7ec0a98932f4e6306cc21b840441055d",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36674417086 passed on exact integrated parallel SHA, including FINAL_PACKAGE, repo-managed addon attestation and provenance checks."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "5039543a7ec0a98932f4e6306cc21b840441055d",
+          "date": "2026-09-30",
+          "evidence": "Verified aggregate candidate artifact 11079063741 (WoW112-WORK-CANDIDATE-5039543a7ec0a98932f4e6306cc21b840441055d) was produced by successful exact-SHA run 36674417086."
         }
       ],
-      "package": null,
-      "notes": "Integrated from verified feature/aux-vmangos exact SHA 4d04fb58f1feb017da4381560e3c01477fa1298b. V0.5 LIVE guard defaults to maxSessionBuys=1, revalidates exact auction signature, rechecks wallet immediately before PlaceAuctionBid, reserves duplicate signature before send, uses BUY_PENDING/UNKNOWN, and auto-disarms LIVE after first confirmed purchase. Prior gameplay evidence validated filtered boundary cache and dry-run candidate/revalidation on Black Lotus."
+      "package": {
+        "verified": true,
+        "commit": "5039543a7ec0a98932f4e6306cc21b840441055d",
+        "artifact_id": 11079063741
+      },
+      "notes": "Integrated from verified feature/aux-vmangos exact SHA 4d04fb58f1feb017da4381560e3c01477fa1298b. V0.5 LIVE guard defaults to maxSessionBuys=1, revalidates exact auction signature, rechecks wallet immediately before PlaceAuctionBid, reserves duplicate signature before send, uses BUY_PENDING/UNKNOWN, and auto-disarms LIVE after first confirmed purchase. Prior gameplay evidence validated filtered boundary cache and dry-run candidate/revalidation on Black Lotus. Integrated parallel candidate 5039543a passed full packaging and addon attestation; live gameplay confirmation remains pending."
     }
   ]
 }
