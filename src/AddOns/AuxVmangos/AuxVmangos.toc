@@ -2,6 +2,6 @@
 ## Title: AuxVmangos
 ## Notes: vMaNGOS-aware AH scanner/sniper for WoW 1.12.1; independent implementation.
 ## Author: github12wykrzyk/wow112
-## Version: 0.3-vmangos-cache
+## Version: 0.4-vmangos-dryrun-wallet
 ## SavedVariables: AVM_DB
 AuxVmangos.lua

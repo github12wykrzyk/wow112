@@ -18,7 +18,7 @@ Only one AUCTION_ITEM_LIST_UPDATE is consumed per query. A short post-result set
 
 ## Purchase safety
 
-Default is DRY-RUN. LIVE must be explicitly enabled with /avm live on.
+Default is DRY-RUN. LIVE must be explicitly enabled with /avm live on. DRY-RUN evaluates and revalidates qualifying auctions even when the character cannot currently afford them; the log reports affordable=false and the missing amount. LIVE always re-checks current money immediately before PlaceAuctionBid and blocks the purchase when funds are insufficient.
 
 Before a live purchase, the candidate is queried again by item name on its source page and adjacent filtered pages, then matched by an equivalent signature. The list index from the original result is never reused blindly.
 

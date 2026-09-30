@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.3-vmangos-cache"
+AVM_VERSION = "0.4-vmangos-dryrun-wallet"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -48,6 +48,7 @@ AVM = {
 		cacheVerifications = 0,
 		cacheHits = 0,
 		cacheMisses = 0,
+		walletBlocks = 0,
 		candidates = 0,
 		revalidations = 0,
 		buySent = 0,
@@ -195,7 +196,11 @@ local function avm_candidate_from_row(i)
 	if maxStack > 0 and count > maxStack then return nil end
 	if maxUnit > 0 and unit > maxUnit then return nil end
 	if maxTotal > 0 and buyout > maxTotal then return nil end
-	if buyout > GetMoney() then return nil end
+
+	local money = GetMoney()
+	local affordable = buyout <= money
+	local missing = 0
+	if not affordable then missing = buyout - money end
 
 	local sig = avm_signature(name, count, buyout, owner, quality, level)
 	if avm_recent(sig) then return nil end
@@ -208,6 +213,8 @@ local function avm_candidate_from_row(i)
 		buyout = buyout,
 		unit = unit,
 		owner = owner,
+		affordable = affordable,
+		missing = missing,
 		signature = sig,
 		ruleIndex = ruleIndex,
 		sourcePage = AVM.queryPage,
@@ -355,9 +362,13 @@ local function avm_revalidate_candidate()
 
 				if not AVM_DB.live then
 					AVM.recent[c.signature] = GetTime() + 3
+					local wallet = " affordable=true"
+					if not c.affordable then
+						wallet = " affordable=false missing=" .. avm_money(c.missing or 0)
+					end
 					avm_print("DRYRUN " .. c.count .. "x " .. c.name .. " total=" ..
 						avm_money(c.buyout) .. " unit=" .. avm_money(c.unit) ..
-						" seller=" .. tostring(c.owner))
+						" seller=" .. tostring(c.owner) .. wallet)
 					AVM.candidate = nil
 					AVM.scanOffset = AVM.scanOffset + 1
 					AVM.phase = "CHEAPEST_SCAN"
@@ -366,6 +377,17 @@ local function avm_revalidate_candidate()
 
 				if AVM.unknown then
 					AVM.phase = "UNKNOWN_HOLD"
+					return
+				end
+
+				if c.buyout > GetMoney() then
+					AVM.stats.walletBlocks = AVM.stats.walletBlocks + 1
+					AVM.recent[c.signature] = GetTime() + 3
+					avm_print("LIVE_BLOCKED no money for " .. c.name ..
+						" need=" .. avm_money(c.buyout) ..
+						" have=" .. avm_money(GetMoney()))
+					AVM.candidate = nil
+					AVM.phase = "CHEAPEST_SCAN"
 					return
 				end
 
@@ -677,6 +699,7 @@ local function avm_status()
 		" cacheV=" .. AVM.stats.cacheVerifications ..
 		" cacheHit=" .. AVM.stats.cacheHits ..
 		" cacheMiss=" .. AVM.stats.cacheMisses ..
+		" walletBlock=" .. AVM.stats.walletBlocks ..
 		" candidates=" .. AVM.stats.candidates ..
 		" revalidations=" .. AVM.stats.revalidations ..
 		" sent=" .. AVM.stats.buySent ..
