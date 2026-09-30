@@ -894,6 +894,30 @@
       ],
       "package": null,
       "notes": "Standalone AH throttle diagnostic. Does not modify AuxVmangos and never buys. Controlled query pairs test 5.2s, 2s, 1s, 500ms and 250ms intervals while logging CanSendAuctionQuery plus actual AUCTION_ITEM_LIST_UPDATE latency. Integrated candidate includes AHThrottleTest in the parallel addon package manifest; full parallel candidate verification is pending."
+    },
+    {
+      "id": "ah-native-throttle-diagnostic",
+      "branch": "feature/ah-native-throttle-test",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-throttle-diagnostic"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 ClientServices::Send entry 0x005AB630",
+        "existing Parallel outbound send-hook chain",
+        "CMSG_AUCTION_LIST_ITEMS opcode 0x0258",
+        "FrameScript_Execute 0x00704CD0",
+        "AUCTION_ITEM_LIST_UPDATE"
+      ],
+      "status": "in_progress",
+      "observed_head": "1eb5ffb59324863c728302236bb86f66d503aaa1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Diagnostic-only native companion. F5 asks AHThrottleTest to emit one stock browse query, captures the exact outbound 0x258 packet at the current ClientServices::Send chain, replays that exact packet once after 500 ms through the pre-existing chain, and lets the addon count response events. No bid/buy opcode is generated. Source uses exact-build addresses already evidenced in current canonical modules; external CMaNGOS Classic only corroborates opcode 0x258 and does not supply client offsets."
     }
   ]
 }
