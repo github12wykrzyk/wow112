@@ -290,11 +290,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python tools/build_characterswitchdiag_candidate.py \
-            --package dist/WoW112_WORK_CANDIDATE.zip \
-            --package-metadata dist/candidate_metadata.json \
-            --summary dist/candidate_summary.json \
-            --build-metadata dist/characterswitchdiag_build.json \
+          python tools/build_characterswitchdiag_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --build-metadata dist/characterswitchdiag_build.json `
             --output build/WoWCharacterSwitchDiag_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel CharacterSwitchDiag build/package failed" }
 
