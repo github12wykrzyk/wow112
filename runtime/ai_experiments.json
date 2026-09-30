@@ -734,6 +734,27 @@
       "tests": [],
       "package": null,
       "notes": "Adds an opt-in persistent GUI low-shard global pause with configurable 1-100 threshold. Below threshold all SummonScout automation/event processing is suspended, pending invite/summon/counter/trade work is cleared, native summon request is cancelled, GUI/status remain available, and automation resumes automatically after shard count recovers."
+    },
+    {
+      "id": "aux-watch-ui-rowbind-fix",
+      "branch": "feature/aux-watch-ui-rowbind-fix",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vmangos-watchlist-v21"
+      ],
+      "shared_resources": [
+        "AVM_DB SavedVariables watch rules",
+        "AuxVmangos WATCH GUI callbacks",
+        "WATCH scanner rule-generation invalidation"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "11510134c7a5a59322a4f31f23ae0adeedcf49dd",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay screenshots on 2026-09-30 showed WATCH UI fields Max/unit=3g and Max total=3g while the scanner status displayed best≈3g98s90c/ea. Engine candidate filtering already enforces committed rule limits. This experiment hardens the UI-to-AVM_DB commit path with stable rowIndex captures, immediate guarded OnTextChanged commits, and committed limit values in scanner status. Gameplay retest pending; no claim that the exact root cause is proven until retest."
     }
   ]
 }

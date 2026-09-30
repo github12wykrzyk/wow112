@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.8-vmangos-watchlist"
+AVM_VERSION = "0.8.1-vmangos-watch-ui"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1716,6 +1716,8 @@ AVM_WATCH_API = {
 			scanPage = (AVM.boundaryPage or 0) + (AVM.scanOffset or 0),
 			scannedPages = AVM.watchPagesScanned,
 			bestUnit = AVM.bestCandidate and AVM.bestCandidate.unit or (AVM.candidate and AVM.candidate.unit or 0),
+			maxUnit = rule and (tonumber(rule.maxUnit) or 0) or 0,
+			maxTotal = rule and (tonumber(rule.maxTotal) or 0) or 0,
 			sessionBuys = AVM.sessionBuys,
 			maxSessionBuys = AVM_DB.maxSessionBuys or 1,
 			sessionSpend = AVM.sessionSpend,
