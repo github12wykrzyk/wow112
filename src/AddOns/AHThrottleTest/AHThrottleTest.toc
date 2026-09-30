@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: AHThrottleTest
-## Notes: AH throughput benchmark with 75ms burst + 110ms selective-retry model.
+## Notes: Repeatability benchmark for 75ms burst versus 110ms reference.
 ## Author: github12wykrzyk/wow112
-## Version: 1.6-retry-model
+## Version: 1.7-repeatability
 ## SavedVariables: AHThrottleTestDB
 
 AHThrottleTest.lua

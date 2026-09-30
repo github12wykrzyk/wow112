@@ -1,5 +1,5 @@
--- AHThrottleTest v1.6 retry-model benchmark for WoW 1.12.1 build 5875.
--- Uses WoWAHThrottleNative_5875_v4_RANGE sender. Never bids or buys.
+-- AHThrottleTest v1.7 repeatability benchmark for WoW 1.12.1 build 5875.
+-- Uses WoWAHThrottleNative_5875_v5_REPEAT sender. Never bids or buys.
 AHThrottleTestDB = AHThrottleTestDB or {}
 
 local AHT={open=false,bench={running=false,stageActive=false,stage=0,intervalMs=0,expected=0,rawEvents=0,results={},browseWasDetached=false,startedAt=0}}
@@ -38,11 +38,12 @@ local function restoreBrowse()
         out("UI isolation OFF")
     end
 end
-local function saveReport()
+local function saveReport(summary)
     AHThrottleTestDB.last={
         timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
-        mode="retry-model-75-vs-110",
-        results=AHT.bench.results
+        mode="repeatability-75-vs-110",
+        results=AHT.bench.results,
+        summary=summary
     }
 end
 local function resetBench()
@@ -53,19 +54,20 @@ local function resetBench()
 end
 
 function AHThrottleTest_BenchNativeStart()
-    if not auctionOpen() then out("SOAK: otworz Auction House");return end
-    if auxBusy() then out("SOAK: AuxVmangos skanuje. Zatrzymaj go i nacisnij F5 ponownie.");return end
-    if canSend()~=true then out("SOAK: poczekaj az Search bedzie aktywny i nacisnij F5 ponownie.");return end
+    if not auctionOpen() then out("REPEAT: otworz Auction House");return end
+    if auxBusy() then out("REPEAT: AuxVmangos skanuje. Zatrzymaj go i nacisnij F5 ponownie.");return end
+    if canSend()~=true then out("REPEAT: poczekaj az Search bedzie aktywny i nacisnij F5 ponownie.");return end
     resetBench()
     AHT.bench.running=true;AHT.bench.startedAt=now();detachBrowse()
-    out("=== AH SOAK RANGE 75-150ms ===")
-    out("6 x 500 query. Nie klikaj AH; test potrwa ok. 6-7 min.")
+    out("=== AH REPEATABILITY 75ms vs 110ms ===")
+    out("10 etapow: 75/110 przeplatane, po 500 query. Nie klikaj AH.")
+    out("Test potrwa ok. 10-12 min.")
     local ok,err=pcall(QueryAuctionItems,"",nil,nil,0,0,0,0,false,0,false)
-    if not ok then out("SOAK baseline ERROR: "..tostring(err));resetBench() end
+    if not ok then out("REPEAT baseline ERROR: "..tostring(err));resetBench() end
 end
 
 function AHThrottleTest_BenchMarkCapture()
-    if AHT.bench.running then out("SOAK DLL: CMSG_AUCTION_LIST_ITEMS captured.") end
+    if AHT.bench.running then out("REPEAT DLL: CMSG_AUCTION_LIST_ITEMS captured.") end
 end
 
 function AHThrottleTest_BenchStageStart(stage,intervalMs,expected)
@@ -73,7 +75,8 @@ function AHThrottleTest_BenchStageStart(stage,intervalMs,expected)
     AHT.bench.stageActive=true;AHT.bench.stage=tonumber(stage) or 0
     AHT.bench.intervalMs=tonumber(intervalMs) or 0;AHT.bench.expected=tonumber(expected) or 500
     AHT.bench.rawEvents=0
-    out("SOAK START "..tostring(intervalMs).."ms sends="..tostring(expected))
+    local rep=math.floor((AHT.bench.stage+1)/2)
+    out("RUN "..tostring(rep).."/5 @ "..tostring(intervalMs).."ms sends="..tostring(expected))
 end
 
 function AHThrottleTest_BenchStageDone(stage,intervalMs,sent)
@@ -85,79 +88,83 @@ function AHThrottleTest_BenchStageDone(stage,intervalMs,sent)
     local extra=recv-expected;if extra<0 then extra=0 end
     local lossPct=expected>0 and miss*100/expected or 100
     local effective=(50000/(tonumber(intervalMs) or 1))*(math.min(recv,expected)/expected)
-    local r={intervalMs=tonumber(intervalMs) or 0,sent=expected,recv=recv,missing=miss,extra=extra,lossPct=lossPct,effective=effective}
+    local r={stage=tonumber(stage) or 0,intervalMs=tonumber(intervalMs) or 0,sent=expected,recv=recv,missing=miss,extra=extra,lossPct=lossPct,effective=effective}
     table.insert(AHT.bench.results,r)
-    out("SOAK RESULT "..tostring(intervalMs).."ms recv="..tostring(recv).."/"..tostring(expected)..
-        " miss="..tostring(miss).." ("..fmt(lossPct).."%) extra="..tostring(extra)..
-        " effective~"..fmt(effective).." auc/s")
+    out("RESULT "..tostring(intervalMs).."ms recv="..tostring(recv).."/"..tostring(expected)..
+        " miss="..fmt(lossPct).."% effective~"..fmt(effective).." auc/s")
+end
+
+local function summarize(interval)
+    local n=0,totalSent=0,totalRecv=0,totalMiss=0,sumLoss=0,sumSq=0,worst=-1,best=101,worstMissing=0,zeroRuns=0
+    local i,r
+    for i=1,table.getn(AHT.bench.results) do
+        r=AHT.bench.results[i]
+        if r.intervalMs==interval then
+            n=n+1;totalSent=totalSent+r.sent;totalRecv=totalRecv+r.recv;totalMiss=totalMiss+r.missing
+            sumLoss=sumLoss+r.lossPct;sumSq=sumSq+r.lossPct*r.lossPct
+            if r.lossPct>worst then worst=r.lossPct;worstMissing=r.missing end
+            if r.lossPct<best then best=r.lossPct end
+            if r.missing==0 then zeroRuns=zeroRuns+1 end
+        end
+    end
+    local mean=n>0 and sumLoss/n or 0
+    local var=n>0 and (sumSq/n-mean*mean) or 0;if var<0 then var=0 end
+    local sd=math.sqrt(var)
+    local aggregateLoss=totalSent>0 and totalMiss*100/totalSent or 100
+    return {intervalMs=interval,runs=n,totalSent=totalSent,totalRecv=totalRecv,totalMiss=totalMiss,meanLoss=mean,sdLoss=sd,worstLoss=worst,bestLoss=best,worstMissing=worstMissing,zeroRuns=zeroRuns,aggregateLoss=aggregateLoss}
 end
 
 function AHThrottleTest_BenchFinished()
     if not AHT.bench.running then return end
     AHT.bench.stageActive=false
-    out("=== AH SOAK FINAL ===")
-    local i,r,best=nil
-    for i=1,table.getn(AHT.bench.results) do
-        r=AHT.bench.results[i]
-        out(tostring(r.intervalMs).."ms: recv="..tostring(r.recv).."/"..tostring(r.sent)..
-            " miss="..fmt(r.lossPct).."% effective~"..fmt(r.effective).." auc/s")
-        if r.extra==0 and (not best or r.effective>best.effective) then best=r end
+    out("=== REPEATABILITY FINAL ===")
+    local s75=summarize(75)
+    local s110=summarize(110)
+    out("75ms: recv="..tostring(s75.totalRecv).."/"..tostring(s75.totalSent)..
+        " aggregate miss="..fmt(s75.aggregateLoss).."% mean="..fmt(s75.meanLoss)..
+        "% sd="..fmt(s75.sdLoss).."% worst="..fmt(s75.worstLoss)..
+        "% zero-loss runs="..tostring(s75.zeroRuns).."/"..tostring(s75.runs))
+    out("110ms: recv="..tostring(s110.totalRecv).."/"..tostring(s110.totalSent)..
+        " aggregate miss="..fmt(s110.aggregateLoss).."% mean="..fmt(s110.meanLoss)..
+        "% sd="..fmt(s110.sdLoss).."% worst="..fmt(s110.worstLoss)..
+        "% zero-loss runs="..tostring(s110.zeroRuns).."/"..tostring(s110.runs))
+
+    local avgRetryCount=s75.totalMiss/math.max(1,s75.runs)
+    local projected75=500*75 + avgRetryCount*110
+    local full110=500*110
+    local gain=full110-projected75
+    local gainPct=gain*100/full110
+
+    local worstProjected75=500*75 + s75.worstMissing*110
+    local worstGain=full110-worstProjected75
+    local worstGainPct=worstGain*100/full110
+
+    out("=== SELECTIVE RETRY PROJECTION ===")
+    out("AVG: 75ms burst + avg "..fmt(avgRetryCount).." retry @110ms = "..fmt(projected75/1000)..
+        "s vs 55.000s; gain="..fmt(gain/1000).."s ("..fmt(gainPct).."%)")
+    out("WORST OBSERVED: 75ms + "..tostring(s75.worstMissing).." retry = "..fmt(worstProjected75/1000)..
+        "s; gain="..fmt(worstGain/1000).."s ("..fmt(worstGainPct).."%)")
+
+    local decision
+    if s110.totalMiss==0 and worstGain>0 then
+        decision="75ms+selective retry remains faster even at observed worst 75ms run"
+    elseif s110.totalMiss==0 and gain>0 then
+        decision="75ms+selective retry faster on average, but worst-case margin is not proven"
+    elseif s110.totalMiss>0 then
+        decision="110ms is not a fully lossless retry floor; test a safer retry interval"
+    else
+        decision="full 110ms is competitive; do not prefer 75ms burst yet"
     end
-    if best then
-        out("BEST EFFECTIVE RAW = "..tostring(best.intervalMs).."ms ~= "..fmt(best.effective)..
-            " auc/s przy miss="..fmt(best.lossPct).."%")
-    end
-    local r75=nil
-    local r110=nil
-    for i=1,table.getn(AHT.bench.results) do
-        r=AHT.bench.results[i]
-        if r.intervalMs==75 then r75=r end
-        if r.intervalMs==110 then r110=r end
-    end
-    if r75 and r110 then
-        out("=== SELECTIVE RETRY MODEL ===")
-        local retryCount=r75.missing or 0
-        local burstSendMs=r75.sent*75
-        local retrySendMs=retryCount*110
-        local projectedSendMs=burstSendMs+retrySendMs
-        local baselineSendMs=r110.sent*110
-        local gainMs=baselineSendMs-projectedSendMs
-        local gainPct=baselineSendMs>0 and (gainMs*100/baselineSendMs) or 0
-        local retrySafe=(r110.missing==0)
-        out("75ms burst: missing="..tostring(retryCount).."/"..tostring(r75.sent)..
-            " ("..fmt(r75.lossPct).."%)")
-        out("110ms reference: missing="..tostring(r110.missing).."/"..tostring(r110.sent)..
-            " ("..fmt(r110.lossPct).."%)")
-        out("Projected request schedule: 75ms burst + "..tostring(retryCount)..
-            " retry @110ms = "..fmt(projectedSendMs/1000).."s")
-        out("Full 110ms request schedule = "..fmt(baselineSendMs/1000).."s")
-        out("Projected gain = "..fmt(gainMs/1000).."s ("..fmt(gainPct).."%)")
-        if retrySafe and gainMs>0 then
-            out("MODEL VERDICT: 75ms + selective retry is faster, assuming missing pages can be identified exactly.")
-        elseif not retrySafe then
-            out("MODEL VERDICT: 110ms was not lossless in this run; retry floor needs a safer interval.")
-        else
-            out("MODEL VERDICT: full 110ms is not slower in this run.")
-        end
-        AHThrottleTestDB.lastRetryModel={
-            timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
-            burstIntervalMs=75,
-            retryIntervalMs=110,
-            burstMissing=retryCount,
-            referenceMissing=r110.missing,
-            projectedSendMs=projectedSendMs,
-            baselineSendMs=baselineSendMs,
-            gainMs=gainMs,
-            gainPct=gainPct,
-            retrySafe=retrySafe
-        }
-    end
-    saveReport();restoreBrowse();AHT.bench.running=false
-    out("Wynik zapisany do AHThrottleTestDB.last + lastRetryModel")
+    out("DECISION: "..decision)
+    out("NOTE: retry timing is a projection until exact missing-page IDs are correlated.")
+
+    local summary={s75=s75,s110=s110,avgRetryCount=avgRetryCount,projected75ms=projected75,baseline110ms=full110,gainMs=gain,gainPct=gainPct,worstProjected75ms=worstProjected75,worstGainMs=worstGain,worstGainPct=worstGainPct,decision=decision}
+    saveReport(summary);restoreBrowse();AHT.bench.running=false
+    out("Wynik zapisany do AHThrottleTestDB.last")
 end
 
 function AHThrottleTest_BenchAbort(reason)
-    out("SOAK ABORT: "..tostring(reason));saveReport();resetBench()
+    out("REPEAT ABORT: "..tostring(reason));saveReport(nil);resetBench()
 end
 
 local frame=CreateFrame("Frame","AHThrottleTestFrame")
@@ -178,22 +185,20 @@ SLASH_AHTHROTTLETEST1="/ahtest"
 SlashCmdList["AHTHROTTLETEST"]=function(msg)
     msg=string.lower(msg or "");msg=string.gsub(msg,"^%s+","");msg=string.gsub(msg,"%s+$","")
     if msg=="" or msg=="status" then
-        out("soak="..tostring(AHT.bench.running).." stage="..tostring(AHT.bench.stage)..
+        out("repeat="..tostring(AHT.bench.running).." stage="..tostring(AHT.bench.stage)..
             " interval="..tostring(AHT.bench.intervalMs).." recv="..tostring(AHT.bench.rawEvents)..
             "/"..tostring(AHT.bench.expected).." CanSend="..tostring(canSend()))
-    elseif msg=="soak" or msg=="bench" or msg=="native" then
-        out("SOAK: otworz AH, zatrzymaj AUX, poczekaj na aktywny Search i nacisnij F5 raz.")
+    elseif msg=="repeat" or msg=="soak" or msg=="bench" or msg=="native" then
+        out("REPEAT: otworz AH, zatrzymaj AUX, poczekaj na aktywny Search i nacisnij F5 raz.")
     elseif msg=="last" then
-        if AHThrottleTestDB.last and AHThrottleTestDB.last.results then
+        if AHThrottleTestDB.last and AHThrottleTestDB.last.summary then
+            local s=AHThrottleTestDB.last.summary
             out("LAST "..tostring(AHThrottleTestDB.last.timestamp))
-            local i,r
-            for i=1,table.getn(AHThrottleTestDB.last.results) do
-                r=AHThrottleTestDB.last.results[i]
-                out(tostring(r.intervalMs).."ms recv="..tostring(r.recv).."/"..tostring(r.sent)..
-                    " miss="..fmt(r.lossPct).."% effective~"..fmt(r.effective).." auc/s")
-            end
-        else out("brak zapisanego wyniku") end
-    else out("/ahtest soak | status | last") end
+            out("75ms aggregate miss="..fmt(s.s75.aggregateLoss).."% worst="..fmt(s.s75.worstLoss).."%")
+            out("110ms aggregate miss="..fmt(s.s110.aggregateLoss).."% worst="..fmt(s.s110.worstLoss).."%")
+            out("avg projected gain="..fmt(s.gainPct).."% worst projected gain="..fmt(s.worstGainPct).."%")
+        else out("brak kompletnego zapisanego wyniku") end
+    else out("/ahtest repeat | status | last") end
 end
 
-out("loaded v1.6 RETRY MODEL. /ahtest soak -> F5.")
+out("loaded v1.7 REPEATABILITY 75/110. /ahtest repeat -> F5.")

@@ -1565,6 +1565,29 @@
       ],
       "package": null,
       "notes": "Addon-only decision benchmark. Reuses the already verified V4 native range sender unchanged. After the 500-query stages it compares measured 75ms miss count with the measured 110ms lossless reference and computes projected request-schedule time for 75ms burst plus selective retry of exactly the missing pages at 110ms versus a full 110ms scan. This is a projection until exact missing-page correlation is implemented. Integrated candidate based on current parallel c8d16845; full exact-parallel candidate verification pending."
+    },
+    {
+      "id": "ah-repeatability-75-110",
+      "branch": "feature/ah-repeatability-75-110",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-retry-model-75-vs-110"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "CMSG_AUCTION_LIST_ITEMS 0x0258",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event isolation"
+      ],
+      "status": "in_progress",
+      "observed_head": "27de67eca31f1a8e9c9f91f3353598c55ae65fc7",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation."
     }
   ]
 }
