@@ -1441,9 +1441,9 @@
         "AUCTION_ITEM_LIST_UPDATE",
         "AuctionFrameBrowse event isolation"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "dd67065fef0d1c3bf260064d28993293f0e8605b",
-      "verified_commit": "dd67065fef0d1c3bf260064d28993293f0e8605b",
+      "status": "awaiting_game_test",
+      "observed_head": "10dc711e215f457fce6ccd7e64b33844f815b761",
+      "verified_commit": "10dc711e215f457fce6ccd7e64b33844f815b761",
       "tests": [
         {
           "kind": "ci",
@@ -1458,10 +1458,28 @@
           "commit": "dd67065fef0d1c3bf260064d28993293f0e8605b",
           "date": "2026-10-01",
           "evidence": "Rebased soak feature preflight run 36787508544 and experiment registry run 36787508550 passed on exact SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "10dc711e215f457fce6ccd7e64b33844f815b761",
+          "date": "2026-10-01",
+          "evidence": "Build work candidate run 36787611662 passed on exact integrated parallel SHA, including soak native DLL build, FINAL_PACKAGE, addon packaging and provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "10dc711e215f457fce6ccd7e64b33844f815b761",
+          "date": "2026-10-01",
+          "evidence": "Verified candidate artifact 11129738688 (WoW112-WORK-CANDIDATE-10dc711e215f457fce6ccd7e64b33844f815b761)."
         }
       ],
-      "package": null,
-      "notes": "Long-run throughput soak after raw-event benchmark showed 75ms 25/25 and 50ms 20/25. Sends 500 distinct pages at 75ms and 500 at 50ms with 10s drain per stage; stock AuctionFrameBrowse is detached during counting. Measures long-run raw response yield and effective auctions/s before choosing SAFE/TURBO policy. Rebased onto current parallel a22588f3 after unrelated CharacterSwitchDiag changes. Integrated candidate based on current parallel a22588f3; full exact-parallel candidate verification pending."
+      "package": {
+        "verified": true,
+        "commit": "10dc711e215f457fce6ccd7e64b33844f815b761",
+        "artifact_id": 11129738688
+      },
+      "notes": "Long-run throughput soak after raw-event benchmark showed 75ms 25/25 and 50ms 20/25. Sends 500 distinct pages at 75ms and 500 at 50ms with 10s drain per stage; stock AuctionFrameBrowse is detached during counting. Measures long-run raw response yield and effective auctions/s before choosing SAFE/TURBO policy. Rebased onto current parallel a22588f3 after unrelated CharacterSwitchDiag changes. Integrated candidate based on current parallel a22588f3; full exact-parallel candidate verification pending. Integrated soak package is ready for in-game 500+500 query test."
     }
   ]
 }
