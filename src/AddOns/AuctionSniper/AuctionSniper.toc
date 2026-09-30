@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Auction|cff60ff00Sniper|r
 ## Author: EinBaum https://github.com/EinBaum
-## Version: 1.3.3-vmangos-cachefix
-## Notes: vMaNGOS cached-boundary transition fix; diagnostic/dry-run; purchases disabled.
+## Version: 2.0-vmangos-autobuy
+## Notes: vMaNGOS cached-boundary scanner with confirmed one-at-a-time AutoBuy LIVE.
 ## SavedVariables: B_AS_GS
 AuctionSniper.xml
 AuctionSniper_Settings.lua
