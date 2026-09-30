@@ -1337,6 +1337,27 @@
         "artifact_id": 11129172938
       },
       "notes": "Rebased money-first 0.11 onto verified parallel 64ce02657a66986689009a74d6d7e2a49c01151e after CharacterSwitchDiag build recovery. Gameplay on 0.10 proved HOT/SWEEP progression but page ~71 was still around ~2s buyout, so linear sweep was too slow. 0.11 keeps HOT and binary-seeks price targets bounded by maxBuyout, scanning only a small page radius at each located band. Existing vendor buy/revalidation path is preserved. Updater report gains bounded AuxVmangos SavedVariables diagnostics while retaining current CharacterSwitchDiag report/signature sections. SavedVariables snapshot freshness still requires WoW flush (/reload/logout/exit). Integrated onto verified current parallel a4939081f9497c3bedfbe88649a51318b60ac0d1 after confirming all affected AuxVmangos/updater files and parallel candidate manifest were byte-identical to the rebased verified base. Aggregate parallel candidate and parallel updater builds pending. Exact integrated 0.11 candidate passed full package gate. Updater artifact 11128774681 (WoW112ParallelUpdater-ac5a73fbba0fe5e16c5382444e0b31a093ecaf64) passed dedicated updater workflow. Gameplay FAST SEEK and report snapshot validation pending."
+    },
+    {
+      "id": "ah-throughput-event-isolation",
+      "branch": "feature/ah-throughput-event-isolation",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-native-max-throughput"
+      ],
+      "shared_resources": [
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event registration",
+        "existing WoWAHThrottleNative_5875_v2 sender"
+      ],
+      "status": "in_progress",
+      "observed_head": "3770294dc84e3ee1f20d8fc3bf36cfeb14050578",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Addon-only raw-response benchmark. Temporarily unregisters stock AuctionFrameBrowse from AUCTION_ITEM_LIST_UPDATE during the native V2 burst so UI refresh/sort side effects cannot inflate counts. Counts raw AUCTION_ITEM_LIST_UPDATE events per 25 sends, restores Browse registration afterward, and persists result in AHThrottleTestDB.last. No auction bid/buy behavior changed."
     }
   ]
 }
