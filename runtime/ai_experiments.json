@@ -661,6 +661,39 @@
         "artifact_id": 11081760178
       },
       "notes": "Static audit hardening from verified parallel 2f759dea. Fixes manifest-vs-packager root mismatch that could still ship AuctionSniper beside AuxVmangos, forces LIVE session-only, blocks LIVE while MarketScan owns the scheduler, adds AutoMarket failure backoff, compacts PriceDB history, refines random-property market identity, renames gone units to netDownUnits, and binds live revalidation to exact item-link identity when available. Integrated to parallel from exact verified feature SHA; full candidate packaging audit pending. Full artifact audit confirms manifest-driven addon roots and exact packaged AuxVmangos source. Gameplay validation remains pending."
+    },
+    {
+      "id": "aux-vmangos-watchlist-v21",
+      "branch": "feature/aux-watchlist-v21",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vmangos-audit-hardening"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "AUCTION_ITEM_LIST_UPDATE serialized query ownership",
+        "vMaNGOS filtered buyout boundary cache",
+        "AVM_DB SavedVariables watch rules",
+        "V2 guarded PlaceAuctionBid transaction state",
+        "AuxVmangos MarketScan scheduler arbitration",
+        "parallel addon packager"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9543486a441ec98fbcd56fb63ef880c3b6b58b91",
+      "verified_commit": "9543486a441ec98fbcd56fb63ef880c3b6b58b91",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "9543486a441ec98fbcd56fb63ef880c3b6b58b91",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36680507994 and Verify AI experiment registry run 36680508053 both passed on the exact 0.8 WATCH feature SHA."
+        }
+      ],
+      "package": null,
+      "notes": "0.8 WATCH feature exact SHA 9543486a passed registry and parallel feature preflight. AuxVmangos remains sole AH scheduler owner; full positive-page per-rule scan selects global best unit price, revalidates before buy, 16-slot persistent GUI edits disarm LIVE, disabled/invalid rules are skipped, and LIVE requires at least one valid rule. Integrated parallel full candidate/package verification pending."
     }
   ]
 }
