@@ -1,4 +1,4 @@
-# AuxVmangos 0.8.1 unified market bot + WATCH sniper
+# AuxVmangos 0.8.2 unified market bot + WATCH sniper
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
@@ -162,3 +162,10 @@ Gameplay evidence showed the WATCH panel displaying a 3g Max/unit and 3g Max tot
 - status displays the committed Max/unit and Max total currently used by the scanner.
 
 Any rule edit continues to disarm LIVE and invalidate/restart stale WATCH work.
+
+
+## LIVE no-op rule commit fix (0.8.2)
+
+A gameplay LIVE test produced DRYRUN_BEST after LIVE had been armed. The WATCH editor commits fields both while typing and again on focus loss. SetRule previously treated every commit as a real rule edit, even when every normalized field value was unchanged, and avm_rule_changed intentionally disarms LIVE.
+
+0.8.2 makes semantically identical SetRule calls a no-op. Real rule changes still disarm LIVE and restart/invalidate stale WATCH work. Clicking LIVE after finishing an edit therefore cannot be cancelled by a redundant focus-loss commit of the same values.
