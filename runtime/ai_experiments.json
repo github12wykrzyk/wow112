@@ -1105,9 +1105,9 @@
         "AVM_DB vendorMeta persistent sweep cursor",
         "Vendor Arbitrage V1 revalidation/BUY_PENDING/UNKNOWN transaction path"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "9fc5b135d98afd4d3de00f92a5ee79963d0b1be5",
-      "verified_commit": "9fc5b135d98afd4d3de00f92a5ee79963d0b1be5",
+      "status": "awaiting_game_test",
+      "observed_head": "1d33555cf8cc6f6dce84a342262790183a00598b",
+      "verified_commit": "1d33555cf8cc6f6dce84a342262790183a00598b",
       "tests": [
         {
           "kind": "ci",
@@ -1115,10 +1115,28 @@
           "commit": "9fc5b135d98afd4d3de00f92a5ee79963d0b1be5",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36756990638 and Verify AI experiment registry run 36756991045 passed on exact HOT+SWEEP feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "1d33555cf8cc6f6dce84a342262790183a00598b",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36757405958 and Verify AI experiment registry run 36757405881 passed on exact integrated parallel SHA. FINAL_PACKAGE, repo-managed addon packaging, AH native diagnostic build and provenance/attestation gates passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "1d33555cf8cc6f6dce84a342262790183a00598b",
+          "date": "2026-09-30",
+          "evidence": "Verified aggregate candidate artifact 11117496114 (WoW112-WORK-CANDIDATE-1d33555cf8cc6f6dce84a342262790183a00598b) was produced by successful exact-SHA run 36757405958."
         }
       ],
-      "package": null,
-      "notes": "Gameplay evidence on Vendor V1 showed boundary=13, lastPage~1109 and repeated VENDOR_NONE scannedPages=10 followed by cache verify of the same boundary, proving V1 repeatedly rescanned only the same cheapest 10 pages. V2 alternates HOT coverage with a persistent progressive SWEEP cursor, preserving the V1 buy/revalidation path and maxBuyout hard bound. Integrated onto current parallel after confirming AuxVmangos source/TOC/README and parallel candidate manifest were byte-identical to the verified feature base. Full aggregate candidate build pending."
+      "package": {
+        "verified": true,
+        "commit": "1d33555cf8cc6f6dce84a342262790183a00598b",
+        "artifact_id": 11117496114
+      },
+      "notes": "Gameplay evidence on Vendor V1 showed boundary=13, lastPage~1109 and repeated VENDOR_NONE scannedPages=10 followed by cache verify of the same boundary, proving V1 repeatedly rescanned only the same cheapest 10 pages. V2 alternates HOT coverage with a persistent progressive SWEEP cursor, preserving the V1 buy/revalidation path and maxBuyout hard bound. Integrated onto current parallel after confirming AuxVmangos source/TOC/README and parallel candidate manifest were byte-identical to the verified feature base. Full aggregate candidate build pending. Exact integrated HOT+SWEEP candidate passed full parallel package gate. Gameplay validation of alternating HOT/SWEEP progression and vendor opportunity detection remains pending."
     }
   ]
 }
