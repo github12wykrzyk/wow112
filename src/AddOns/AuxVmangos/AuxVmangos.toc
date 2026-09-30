@@ -2,7 +2,7 @@
 ## Title: AuxVmangos
 ## Notes: Unified vMaNGOS market bot + full-page best-unit watchlist sniper.
 ## Author: github12wykrzyk/wow112
-## Version: 0.10-vmangos-vendor-hot-sweep
+## Version: 0.11-vmangos-vendor-fast-seek
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

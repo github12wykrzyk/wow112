@@ -1237,6 +1237,31 @@
       "tests": [],
       "package": null,
       "notes": "Manual diagnostic FAST slot 1/2 path does not call Logout(). It asks client Glue DisconnectFromServer, requests same-process AutoLoginBridge relogin using retained DPAPI-protected credential material (plaintext always scrubbed), then selects/enters requested slot. Bounded CharacterSwitchDiag.log tail is included in updater issue reports."
+    },
+    {
+      "id": "aux-vendor-fast-seek-reporting-v3",
+      "branch": "feature/aux-vendor-fast-seek-reporting-rebase",
+      "modules": [
+        "AuxVmangos",
+        "Updater"
+      ],
+      "dependencies": [
+        "aux-vendor-hot-sweep-v2"
+      ],
+      "shared_resources": [
+        "AuxVmangos serialized QueryAuctionItems scheduler",
+        "vMaNGOS total-buyout page ordering",
+        "Vendor Arbitrage guarded revalidation/BUY_PENDING/UNKNOWN path",
+        "AVM_DB SavedVariables diagnostic ring",
+        "WoW112 updater GitHub issue reporter",
+        "CharacterSwitchDiag reporter section preserved from current parallel"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "64ce02657a66986689009a74d6d7e2a49c01151e",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Rebased money-first 0.11 onto verified parallel 64ce02657a66986689009a74d6d7e2a49c01151e after CharacterSwitchDiag build recovery. Gameplay on 0.10 proved HOT/SWEEP progression but page ~71 was still around ~2s buyout, so linear sweep was too slow. 0.11 keeps HOT and binary-seeks price targets bounded by maxBuyout, scanning only a small page radius at each located band. Existing vendor buy/revalidation path is preserved. Updater report gains bounded AuxVmangos SavedVariables diagnostics while retaining current CharacterSwitchDiag report/signature sections. SavedVariables snapshot freshness still requires WoW flush (/reload/logout/exit)."
     }
   ]
 }

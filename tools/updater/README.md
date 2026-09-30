@@ -190,3 +190,8 @@ Przycisk **Oczyść DLL** wyświetla DLL z głównego katalogu gry i poprzednio 
 ## Główny panel statusów GitHub (Updater 2.6-parallel.5)
 
 Statusy aktywnych kanałów work, parallel i main w górnym wierszu głównego okna bez osobnego dialogu. Zielony = SUCCESS, żółty = PENDING/RUNNING, czerwony = FAIL (również cancelled/timed_out), szary = UNKNOWN, brak tokenu lub błąd odczytu. Wyświetlany jest HEAD i czas ostatniego odczytu, a dymek zawiera workflow i run. Odświeżanie zaczyna się po otwarciu okna i ponawia co 10 sekund bez nakładania zapytań. Starszy udany run nie oznacza sukcesu nowszego HEAD. Status dotyczy CI i nie zastępuje weryfikacji paczki. Dialog Monitor GH nadal pokazuje dodatkowo gałęzie feature/* i promote/*, lecz są one wyłącznie podglądem, nie kanałami instalacji.
+
+
+## Updater 2.9-parallel.9 — AuxVmangos report snapshot
+
+GitHub diagnostic reports now include the newest AuxVmangos SavedVariables diagnostic snapshot from WTF/Account/*/SavedVariables/AuxVmangos.lua. AuxVmangos 0.11 keeps a bounded 80-event ring and compact vendor/query state for this purpose. The report does not expose the account-directory name; it labels only the addon file and modification time. SavedVariables are flushed by WoW on /reload, logout or client exit, so while the game is running the report may contain the latest flushed snapshot rather than the current in-memory state. The Aux snapshot is also part of the deterministic diagnostic signature.
