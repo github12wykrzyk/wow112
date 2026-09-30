@@ -1424,6 +1424,37 @@
       "tests": [],
       "package": null,
       "notes": "V4 bypasses the ineffective Glue wrapper and directly calls the exact-build ClientServices disconnect method. Fail-closed guards verify getter/disconnect machine-code signatures, require non-null ClientServices and current connection, then log connection pointer before/after. Existing relogin and slot automation remain unchanged."
+    },
+    {
+      "id": "ah-soak-75-50",
+      "branch": "feature/ah-soak-75-50-v2",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-throughput-event-isolation"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "CMSG_AUCTION_LIST_ITEMS 0x0258",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event isolation"
+      ],
+      "status": "in_progress",
+      "observed_head": "a22588f3a270e19564de28fed9cada4211e5f65c",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5d1f7d1d53a5d0a8ea3708838cbc22d48bc118f2",
+          "date": "2026-10-01",
+          "evidence": "Initial soak feature preflight run 36787375524 and experiment registry run 36787375562 passed, but parallel advanced before integration."
+        }
+      ],
+      "package": null,
+      "notes": "Long-run throughput soak after raw-event benchmark showed 75ms 25/25 and 50ms 20/25. Sends 500 distinct pages at 75ms and 500 at 50ms with 10s drain per stage; stock AuctionFrameBrowse is detached during counting. Measures long-run raw response yield and effective auctions/s before choosing SAFE/TURBO policy. Rebased onto current parallel a22588f3 after unrelated CharacterSwitchDiag changes."
     }
   ]
 }
