@@ -897,7 +897,7 @@
     },
     {
       "id": "summonscout-sure-invite",
-      "branch": "feature/summonscout-sure-invite",
+      "branch": "parallel",
       "modules": [
         "SummonScout"
       ],
@@ -908,11 +908,19 @@
         "SummonScout direct-whisper smart-invite parser"
       ],
       "status": "awaiting_ci",
-      "observed_head": "1eb5ffb59324863c728302236bb86f66d503aaa1",
+      "observed_head": "fe338a3364598f3b82d45f9c4496460f3d7908b1",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "fe338a3364598f3b82d45f9c4496460f3d7908b1",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36752553198 completed success for exact feature SHA fe338a3364598f3b82d45f9c4496460f3d7908b1."
+        }
+      ],
       "package": null,
-      "notes": "SummonScout 1.44 adds exact normalized direct whisper 'sure' as an explicit smart auto-invite code, alongside here/123/+. Match remains exact to avoid incidental conversational false positives."
+      "notes": "SummonScout 1.44 integrated to parallel after exact-SHA feature preflight PASS. Exact normalized direct whisper 'sure' is an explicit smart auto-invite code alongside here/123/+; longer conversational text containing sure remains non-triggering."
     }
   ]
 }
