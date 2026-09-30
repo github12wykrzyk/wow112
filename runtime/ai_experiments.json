@@ -778,9 +778,9 @@
         "AuxVmangos WATCH GUI focus callbacks",
         "LIVE session disarm contract"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "88376f960d9cf518083199b17fb260eec4767a64",
-      "verified_commit": "88376f960d9cf518083199b17fb260eec4767a64",
+      "status": "accepted",
+      "observed_head": "a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2",
+      "verified_commit": "a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2",
       "tests": [
         {
           "kind": "ci",
@@ -788,10 +788,28 @@
           "commit": "88376f960d9cf518083199b17fb260eec4767a64",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36746968850 and Verify AI experiment registry run 36746968750 passed on exact 0.8.2 feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36747112010 passed on exact integrated parallel SHA a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2 and produced artifact 11113331442."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2",
+          "date": "2026-09-30",
+          "evidence": "Verified artifact 11113331442 (WoW112-WORK-CANDIDATE-a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2) from successful run 36747112010."
         }
       ],
-      "package": null,
-      "notes": "Gameplay evidence showed DRYRUN_BEST for Runecloth after LIVE had been armed. Static audit found SetRule always called avm_rule_changed even when the focus-loss commit contained identical normalized values. This can disarm LIVE immediately after clicking the LIVE button. 0.8.2 makes identical SetRule calls no-ops while preserving LIVE disarm on real edits. Integrated to parallel from exact verified feature SHA; full candidate build pending."
+      "package": {
+        "verified": true,
+        "commit": "a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2",
+        "artifact_id": 11113331442
+      },
+      "notes": "Gameplay evidence showed DRYRUN_BEST for Runecloth after LIVE had been armed. Static audit found SetRule always called avm_rule_changed even when the focus-loss commit contained identical normalized values. This can disarm LIVE immediately after clicking the LIVE button. 0.8.2 makes identical SetRule calls no-ops while preserving LIVE disarm on real edits. Integrated to parallel from exact verified feature SHA; full candidate build pending. Gameplay PASS on exact tested SHA a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2: user screenshot showed BUY_SENT 1x Bolt of Woolen Cloth 4s4c, server auction-win and Bid accepted messages, CONFIRMED 4s4c, then LIVE_AUTO_OFF purchase limit reached (1/1). This accepts the LIVE no-op fix and single guarded purchase path only; it does not imply whole-branch promotion."
     },
     {
       "id": "summonscout-here-invite",
