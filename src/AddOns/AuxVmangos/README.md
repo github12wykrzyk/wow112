@@ -1,4 +1,4 @@
-# AuxVmangos 0.10 unified market bot + vendor HOT/SWEEP arbitrage
+# AuxVmangos 0.11 unified market bot + vendor FAST SEEK arbitrage
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
@@ -236,3 +236,23 @@ Diagnostics:
 - VENDOR_PRICE_CEILING ...
 - VENDOR_BEST segment=HOT|SWEEP ...
 - VENDOR_HOT_NONE / VENDOR_SWEEP_NONE
+
+
+## Vendor FAST SEEK + report diagnostics (0.11)
+
+0.10 proved that progressive linear SWEEP works, but gameplay evidence showed page ~71 still around ~2s total buyout. Walking hundreds of pages to reach tens of silver or gold is therefore too slow for a money-first workflow.
+
+0.11 keeps the HOT pages and replaces the active linear SWEEP path with FAST SEEK:
+- build a price ladder bounded by maxBuyout (5s, 10s, 25s, 50s, 1g, 2g, 5g, 10g as applicable);
+- binary-search the vMaNGOS total-buyout ordered page range for each target;
+- scan only a small radius around the located page (default +/-1 page);
+- re-use the unchanged Vendor V1 candidate, revalidation, budget, maxbuys and guarded LIVE transaction path;
+- return to HOT after the seek ladder completes.
+
+Diagnostics are retained in a bounded SavedVariables ring (80 AVM messages plus a compact current-state table). The updater report can include this snapshot. WoW writes SavedVariables on UI reload/logout/client exit, so a report sent while the game is still running may show the most recent flushed snapshot rather than the current in-memory tick.
+
+Commands:
+- /avm vendor seekradius 1
+- /avm vendor targets
+
+Legacy sweeppages/sweepreset commands remain harmless but report that FAST SEEK is active.
