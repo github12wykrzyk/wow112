@@ -867,6 +867,33 @@
       ],
       "package": null,
       "notes": "Optimize only the mathematically safe Max stack=1 case. Because vMaNGOS filtered browse pages are ordered by total buyout and unit price equals total buyout for single-item stacks, WATCH can stop after the first page containing a qualifying candidate. Full scans remain unchanged for Max=0 or Max>1. LIVE revalidation remains mandatory. Integrated to parallel from exact verified feature SHA; full candidate build pending."
+    },
+    {
+      "id": "ah-throttle-diagnostic",
+      "branch": "parallel",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "WoW 1.12.1 QueryAuctionItems",
+        "CanSendAuctionQuery",
+        "AUCTION_ITEM_LIST_UPDATE"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1795db05311dd4fddf8e4563273a2a26d292162d",
+      "verified_commit": "1795db05311dd4fddf8e4563273a2a26d292162d",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "1795db05311dd4fddf8e4563273a2a26d292162d",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36750575669 passed on exact feature SHA; Verify AI experiment registry run 36750575638 also passed."
+        }
+      ],
+      "package": null,
+      "notes": "Standalone AH throttle diagnostic. Does not modify AuxVmangos and never buys. Controlled query pairs test 5.2s, 2s, 1s, 500ms and 250ms intervals while logging CanSendAuctionQuery plus actual AUCTION_ITEM_LIST_UPDATE latency. Integrated candidate includes AHThrottleTest in the parallel addon package manifest; full parallel candidate verification is pending."
     }
   ]
 }

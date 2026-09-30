@@ -87,7 +87,8 @@
       "LazyRogue",
       "LazyScript",
       "LazyWarlock",
-      "SummonScout"
+      "SummonScout",
+      "AHThrottleTest"
     ]
   },
   "gates": [

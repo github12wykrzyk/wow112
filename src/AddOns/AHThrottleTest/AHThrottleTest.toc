@@ -1,0 +1,7 @@
+## Interface: 11200
+## Title: AHThrottleTest
+## Notes: Standalone Auction House query throttle diagnostic for WoW 1.12.1.
+## Author: github12wykrzyk/wow112
+## Version: 1.0
+
+AHThrottleTest.lua
