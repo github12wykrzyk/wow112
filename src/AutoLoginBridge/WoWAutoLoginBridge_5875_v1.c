@@ -67,6 +67,8 @@ static WNDPROC g_prev=NULL;
 static char g_account[ACCOUNT_CAP];
 static char g_blob[BLOB_CAP];
 static char g_handoff_nonce[HANDOFF_NONCE_CAP];
+static char g_handoff_path_buf[HANDOFF_PATH_CAP];
+static char g_handoff_file_buf[HANDOFF_FILE_CAP];
 static HWND g_best=NULL;
 static DWORD g_best_area=0u;
 
@@ -171,15 +173,16 @@ static int load_environment_profile(void)
 
 static int load_handoff_profile(void)
 {
-    char path[HANDOFF_PATH_CAP],buf[HANDOFF_FILE_CAP];
     HANDLE h;
     DWORD got=0u,i,line1=0u,line2=0u;
     int ok=0;
-    if(!g_handoff_nonce[0]||!handoff_path(path,sizeof(path))) return 0;
+    char *path=g_handoff_path_buf,*buf=g_handoff_file_buf;
+    ZeroMemory(path,HANDOFF_PATH_CAP);
+    ZeroMemory(buf,HANDOFF_FILE_CAP);
+    if(!g_handoff_nonce[0]||!handoff_path(path,HANDOFF_PATH_CAP)) return 0;
     h=CreateFileA(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
     if(h==INVALID_HANDLE_VALUE) return 0;
-    ZeroMemory(buf,sizeof(buf));
-    if(ReadFile(h,buf,sizeof(buf)-1u,&got,NULL) && got>3u && got<sizeof(buf)) {
+    if(ReadFile(h,buf,HANDOFF_FILE_CAP-1u,&got,NULL) && got>3u && got<HANDOFF_FILE_CAP) {
         buf[got]=0;
         for(i=0u;i<got;i++) if(buf[i]=='\n') { line1=i; break; }
         if(line1>0u && line1<ACCOUNT_CAP) {
@@ -202,8 +205,8 @@ static int load_handoff_profile(void)
     }
     CloseHandle(h);
     DeleteFileA(path);
-    wipe(buf,sizeof(buf));
-    wipe(path,sizeof(path));
+    wipe(buf,HANDOFF_FILE_CAP);
+    wipe(path,HANDOFF_PATH_CAP);
     return ok;
 }
 
@@ -432,6 +435,8 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
         wipe(g_blob,sizeof(g_blob));
         wipe(g_account,sizeof(g_account));
         wipe(g_handoff_nonce,sizeof(g_handoff_nonce));
+        wipe(g_handoff_path_buf,sizeof(g_handoff_path_buf));
+        wipe(g_handoff_file_buf,sizeof(g_handoff_file_buf));
     }
     return TRUE;
 }
