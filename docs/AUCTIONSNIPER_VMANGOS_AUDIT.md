@@ -235,3 +235,58 @@ Expected successful sequence after a boundary of 12 and scan through page 21:
 `[VM-CACHE] verify boundary=12`, then query page 11 followed by page 12.
 Auto-buy remains hard-disabled and the automation source still contains no
 `PlaceAuctionBid` call.
+
+
+## Realm evidence: cache-transition fix accepted for V2 base
+
+Exact tested integrated Parallel candidate:
+`df38d9aed3e4ca126f83850ac0ed9d4c8b4fa7f5`,
+Build work candidate run `36643204951`, artifact `11067900023`.
+
+The user's in-game screenshots showed the complete expected cached-boundary
+cycle with boundary 11:
+- the cheap window scanned through page 20;
+- `[VM-STATE] scan-end boundary=11 next=verify_prev`;
+- `[VM-CACHE] verify boundary=11`;
+- page 10 returned 50/50 rows with no buyout;
+- page 11 returned 29 no-buyout rows and 21 positive-buyout rows;
+- `[VM-BOUNDARY] cached boundary confirmed page=11 lastPage=1079`.
+
+There was no return to page-0 probe/full binary search. This exact candidate is
+therefore the gameplay-confirmed scanner base used for V2 AutoBuy development.
+
+## V2 AutoBuy transaction design
+
+V2 introduces a single real `PlaceAuctionBid("list", index, buyPrice)` call in
+the guarded transaction path.
+
+Safety/consistency rules:
+- AutoBuy is forced OFF on addon load to prevent a persisted V1 dry-run toggle
+  from silently becoming live after upgrade.
+- AutoBuy evaluates only real cheap-window scan pages in LowBuyout mode; binary
+  search and cached-boundary verification pages are never buy pages.
+- at most one buy is pending;
+- scanning pauses while a buy is pending;
+- an accepted buy is counted only after
+  `ERR_AUCTION_BID_PLACED` is observed from `CHAT_MSG_SYSTEM` or
+  `UI_INFO_MESSAGE`;
+- known `UI_ERROR_MESSAGE` failures include item-not-found, insufficient
+  money, own-auction, higher-bid, auction-database-error, min-bid and
+  bid-increment;
+- unresolved transactions time out after five seconds and hard-stop AutoBuy;
+- every completed/failed attempt forces an exact-page refresh before scan state
+  advances, preventing stale auction indexes;
+- default hard session guards are 50g confirmed spend and 20 confirmed buys;
+- existing per-quality price caps/watchlist rules remain additional guards.
+
+Blizzard WoW 1.12.1 GlobalStrings confirms:
+`ERR_AUCTION_BID_PLACED = "Bid accepted."`,
+`ERR_AUCTION_HIGHER_BID`,
+`ERR_AUCTION_BID_OWN`,
+`ERR_AUCTION_DATABASE_ERROR`,
+`ERR_ITEM_NOT_FOUND`,
+`ERR_NOT_ENOUGH_MONEY`,
+`ERR_AUCTION_BID_INCREMENT` and `ERR_AUCTION_MIN_BID`.
+
+V2 must still be tested in game before its transaction confirmation path is
+considered accepted on the target realm.

@@ -451,9 +451,9 @@
         "vMaNGOS cheap-buyout boundary state machine",
         "parallel addon packager src/AddOns auto-discovery"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "d171e4b77bbe047915f6f04ab57713569a28d511",
-      "verified_commit": "d171e4b77bbe047915f6f04ab57713569a28d511",
+      "status": "accepted",
+      "observed_head": "df38d9aed3e4ca126f83850ac0ed9d4c8b4fa7f5",
+      "verified_commit": "df38d9aed3e4ca126f83850ac0ed9d4c8b4fa7f5",
       "tests": [
         {
           "kind": "ci",
@@ -461,10 +461,58 @@
           "commit": "d171e4b77bbe047915f6f04ab57713569a28d511",
           "date": "2026-09-30",
           "evidence": "Verify AI experiment registry run 36643126700 and Parallel feature preflight run 36643126706 both passed on the exact cache-transition fix SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "df38d9aed3e4ca126f83850ac0ed9d4c8b4fa7f5",
+          "date": "2026-09-30",
+          "evidence": "Integrated Parallel Build work candidate run 36643204951 and Verify AI experiment registry run 36643204914 both passed on exact SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "df38d9aed3e4ca126f83850ac0ed9d4c8b4fa7f5",
+          "date": "2026-09-30",
+          "evidence": "Successful exact-SHA candidate run 36643204951 produced artifact 11067900023."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "df38d9aed3e4ca126f83850ac0ed9d4c8b4fa7f5",
+        "artifact_id": 11067900023
+      },
+      "notes": "Accepted scanner base for V2. User tested exact integrated candidate df38d9a and observed scan-end boundary=11 -> verify_prev, cached page 10/page 11 verification and cached-boundary confirmation without page-0/full-search fallback. Screenshot evidence is documented in docs/AUCTIONSNIPER_VMANGOS_AUDIT.md; registry currently prohibits kind=game events."
+    },
+    {
+      "id": "auction-sniper-autobuy-v2",
+      "branch": "feature/auction-sniper-autobuy-v2",
+      "modules": [
+        "AuctionSniper"
+      ],
+      "dependencies": [
+        "auction-sniper-cache-transition-fix"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS buyout transaction flow",
+        "CHAT_MSG_SYSTEM/UI_INFO_MESSAGE/UI_ERROR_MESSAGE auction result channels",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "c576aa2c06530a306c8e1cc1673880ac7171c6cf",
+      "verified_commit": "c576aa2c06530a306c8e1cc1673880ac7171c6cf",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "c576aa2c06530a306c8e1cc1673880ac7171c6cf",
+          "date": "2026-09-30",
+          "evidence": "Verify AI experiment registry run 36673054474 and Parallel feature preflight run 36673054470 both passed on the exact V2 feature SHA."
         }
       ],
       "package": null,
-      "notes": "Feature fix passed registry and parallel preflight on exact SHA d171e4b77bbe047915f6f04ab57713569a28d511. The fix makes scan-end cached verification deterministic, preserves an independent scan-window start for recovery, and prevents repeated LowBuyout value re-application from resetting the state. Integrated parallel full candidate/package verification is pending. Auto-buy remains hard-disabled."
+      "notes": "V2 live AutoBuy feature passed registry and parallel preflight on exact SHA c576aa2c06530a306c8e1cc1673880ac7171c6cf. One buy pending at a time, ERR_AUCTION_BID_PLACED confirmation, known UI error handling, exact-page post-buy rescan, 5s timeout hard-stop, AutoBuy forced OFF on addon load, default 50g/20-buy session guards. Integrated parallel full candidate/package verification pending."
     }
   ]
 }

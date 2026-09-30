@@ -1,4 +1,4 @@
-# AuctionSniper vMaNGOS diagnostic baseline
+# AuctionSniper vMaNGOS V2 AutoBuy
 
 Target: World of Warcraft 1.12.1 build 5875, Windows x86.
 
@@ -7,111 +7,97 @@ Upstream baseline:
 - commit d9d85807de9c82201e5e01c42ec5917c90257389
 - MIT license retained as LICENSE.txt
 
-Current project revision: V1.3 cached-boundary transition fix / dry-run.
+Current project revision: V2 confirmed one-at-a-time AutoBuy on the validated
+vMaNGOS cheap-buyout scanner.
 
-## Safety
+## Scanner
 
-This revision does not call PlaceAuctionBid anywhere in AuctionSniper.lua.
-It cannot spend gold through its own automation path. Blizzard's normal Auction
-House buttons remain untouched.
+- LowBuyout probes page 0, binary-searches the first page containing buyout > 0,
+  then scans a 10-page cheap-buyout window.
+- The boundary is cached. Normal refresh validates boundary-1 and boundary,
+  avoiding a full binary search every cycle.
+- One Auction House list query is considered in flight at a time.
+- Duplicate AUCTION_ITEM_LIST_UPDATE events are ignored.
+- Result diagnostics retain total/unit price ranges and order-violation counts.
 
-## vMaNGOS behavior
+## AutoBuy LIVE
 
-- LowBuyout is now a cheap-buyout search, not a page-0 lock.
-- It probes page 0, then binary-searches the first page containing buyout > 0.
-- After the boundary is found it scans a 10-page window starting at that page.
-- After each 10-page window it re-validates the cached boundary with the previous
-  and current page. In the normal unchanged case this costs only 2 queries.
-- The scan-end transition is now deterministic: it cannot fall back to page-0
-  probe merely because the cached boundary field is absent.
-- The start page of the active scan window is stored independently and can
-  reconstruct the boundary before verification if necessary.
-- Re-applying the same LowBuyout value no longer resets the state machine.
-- If the boundary moved by one page, the adjacent page is adopted directly.
-  Larger moves fall back to a narrowed binary search instead of a full reset.
-- With LowBuyout OFF and FixedPage OFF, pages are cycled using correct zero-based
-  pagination: floor((total - 1) / 50).
-- Only one query is considered in flight at a time.
-- A 200 ms post-result guard prevents duplicate AUCTION_ITEM_LIST_UPDATE events
-  from being attributed to the next query; duplicates received with no query
-  in flight are ignored and counted.
-- A 12 second watchdog records a timeout and releases the local state if the
-  expected list update never arrives.
-- Results record total buyout and buyout-per-unit ranges, no-buyout rows, query
-  latency and whether positive buyouts violate ascending order.
-- CHAT_MSG_SYSTEM, UI_INFO_MESSAGE and UI_ERROR_MESSAGE are logged while AH is
-  open so the exact 5875 transaction-result channel can be confirmed before V2.
+AutoBuy is now a real buyout path and calls PlaceAuctionBid only when:
+- AutoBuy LIVE is explicitly ON;
+- the current result is a real scan result, not a boundary-search/verification
+  page;
+- no previous buy is pending;
+- the item passes the existing AuctionSniper filters/watchlist;
+- the purchase fits the remaining session budget and purchase-count limit.
 
-## Existing GUI semantics in V1
+Only one buy can be pending at a time.
 
-- AutoScan: continuously submits diagnostic queries when CanSendAuctionQuery()
-  permits it.
-- LowBuyout: automatically locate the first positive-buyout page, then scan the
-  10 cheapest buyout pages.
-- FixedPage: selected page only.
-- LowBuyout OFF + FixedPage OFF: cycle all result pages.
-- AutoBuy: DRY RUN only; evaluates and logs every candidate in a fresh result.
-- SlowBuy: DRY RUN only; logs at most the first candidate in a fresh result.
-- Manual Buy: DRY RUN only.
+A successful transaction is confirmed from the Vanilla 1.12 client message
+ERR_AUCTION_BID_PLACED ("Bid accepted.") observed through CHAT_MSG_SYSTEM or
+UI_INFO_MESSAGE. Known UI_ERROR_MESSAGE auction failures are recorded as
+failed attempts.
 
-No candidate is submitted to the server.
+After success or failure the exact source page is queried again before the
+logical scanner advances, because vMaNGOS removes/changes auction indexes after
+a transaction.
+
+A five-second unresolved transaction timeout hard-stops AutoBuy instead of
+blindly submitting another purchase.
+
+## Migration safety
+
+AutoBuy LIVE is forced OFF on every addon load. A SavedVariables value left ON
+by an older dry-run build cannot silently become a live buyer after updating.
+
+The user must explicitly click AutoBuy LIVE = ON after loading V2.
+
+DryRun remains available through the old SlowBuy button, now labeled DryRun.
+Manual Buy with AutoBuy LIVE OFF is also dry-run only.
+
+## Session guards
+
+Defaults:
+- maximum confirmed spend: 50g
+- maximum confirmed purchases: 20
+
+Existing per-quality maximum-price filters remain active in addition to these
+session guards.
+
+Commands:
+- /asbuy status
+- /asbuy limits <gold> <count>
+- /asbuy reset
+- /asbuy off
+
+A limit value of 0 means unlimited. /asbuy reset clears session spend/count only
+when no buy is pending.
 
 ## Diagnostics
-
-Chat command:
 
 - /asdiag status
 - /asdiag reset
 - /asdiag verbose
 
-Verbose toggles per-auction result logging. Normal mode logs one compact summary
-per AH result.
+Important log markers:
+- [VM-RESULT], [VM-BOUNDARY], [VM-CACHE], [VM-STATE]
+- [BUY-SENT] one request submitted
+- [BUY-OK] server/client-confirmed accepted buy
+- [BUY-FAIL] known rejection or timeout
+- [BUY-RESCAN] post-transaction page refresh
+- [BUY-STOP] safety stop
 
-Persistent log markers:
-- [VM-RESULT] query/page/latency/ranges/order diagnostics
-- [VM-BOUNDARY] binary-search progress/found/updated buyout boundary
-- [VM-CACHE] cached-boundary verification/recovery
-- [VM-STATE] explicit scan-end -> cached-verification transition
-- [VM-DUP] ignored duplicate list-update event when verbose is enabled
-- [VM-ITEM] individual row when verbose is enabled
-- [DRYRUN] candidate matching current filters/watchlist
-- [VM-EVENT] raw AH-adjacent client message event
-- [VM-TIMEOUT] local query watchdog fired
+## Evidence
 
-## Watchlist
+Validated target-realm scanner evidence is maintained in:
+docs/AUCTIONSNIPER_VMANGOS_AUDIT.md
 
-The engine supports B_AS_VM_Watchlist in AuctionSniper_Settings.lua. It is empty
-by default for the first realm test. When populated by a later project commit,
-entries support:
-- name
-- partial
-- maxUnitPrice (copper)
-- minStack
-- maxTotalPrice (copper)
-- enabled
+Transaction-message compatibility references:
+- Blizzard WoW 1.12.1 GlobalStrings.lua:
+  ERR_AUCTION_BID_PLACED = "Bid accepted."
+  plus ERR_AUCTION_HIGHER_BID, ERR_AUCTION_BID_OWN,
+  ERR_AUCTION_DATABASE_ERROR, ERR_ITEM_NOT_FOUND and ERR_NOT_ENOUGH_MONEY.
+- Historical Auctioneer 3.9.0 for WoW 1.12.1 tracks accepted bids from
+  CHAT_MSG_SYSTEM == ERR_AUCTION_BID_PLACED and failures from UI_ERROR_MESSAGE.
 
-When a watchlist exists, queries rotate by item name and page through all
-matching results before moving to the next watch item.
-
-## Evidence used
-
-Server reference:
-- vmangos/core development
-- commit 464179081673cfd240f7ffe7f0daf96bca0b5a70
-
-Client UI reference:
-- MOUZU/Blizzard-WoW-Interface 1.12.1 default Auction UI
-- Blizzard default UI calls PlaceAuctionBid normally and updates browse results
-  from AUCTION_ITEM_LIST_UPDATE.
-
-Historical Vanilla addon reference:
-- Auctioneer 3.9.0 for WoW 1.12.1
-- BidManager treats CHAT_MSG_SYSTEM == ERR_AUCTION_BID_PLACED as accepted and
-  maps UI_ERROR_MESSAGE values such as ERR_ITEM_NOT_FOUND,
-  ERR_NOT_ENOUGH_MONEY, ERR_AUCTION_BID_OWN and ERR_AUCTION_HIGHER_BID to
-  failed pending bids.
-
-V1 still records the raw messages rather than trusting those historical
-assumptions for this realm.
-
-Detailed server audit: docs/AUCTIONSNIPER_VMANGOS_AUDIT.md
+V2 transaction behavior still requires an in-game test on the target realm
+before it is treated as gameplay-accepted.

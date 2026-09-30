@@ -1,5 +1,5 @@
 
-B_AS_VERSION = "1.3.3-vmangos-cachefix"
+B_AS_VERSION = "2.0-vmangos-autobuy"
 
 B_AS_RecipeNames = {
 	"Pattern", "Schematic", "Plans", "Recipe", "Manual", "Formula",
@@ -62,8 +62,8 @@ B_AS_S_CALLBACK		= 8		-- function(newValue) callback when value is changed
 B_AS_VarSettings = {
 	--			Type		Default		GUI Button			GUI Text		Value names		Value Array Range
 	["AutoScan"]		= {B_AS_T_BOOL,		false,	B_AS_Button_AutoScanToggle,		"AutoScan"							},
-	["AutoBuy"]		= {B_AS_T_BOOL,		false,	B_AS_Button_AutoBuyToggle,		"AutoBuy"							},
-	["AutoSlowBuy"]		= {B_AS_T_BOOL,		false,	B_AS_Button_AutoSlowBuyToggle,		"SlowBuy"							},
+	["AutoBuy"]		= {B_AS_T_BOOL,		false,	B_AS_Button_AutoBuyToggle,		"AutoBuy LIVE"							},
+	["AutoSlowBuy"]		= {B_AS_T_BOOL,		false,	B_AS_Button_AutoSlowBuyToggle,		"DryRun"							},
 	["PageLock"]  		= {B_AS_T_BOOL,		true,	B_AS_Button_PageLockToggle,		"LowBuyout"							},
 	["PageFixed"]  		= {B_AS_T_BOOL,		false,	B_AS_Button_PageFixedToggle,		"FixedPage"							},
 	["WhichPage"]  		= {B_AS_T_NUMBER,	0,	B_AS_Input_WhichPage,											},
@@ -88,6 +88,9 @@ B_AS_VarSettings = {
 	["OptionPriceQuality6"]	= {B_AS_T_NUMBER,	5000000,	B_AS_Input_OptionPriceQuality6,									},
 	["IgnoreLowGear"]	= {B_AS_T_BOOL,		true,		B_AS_Button_IgnoreLowGearToggle,	"IgnoreLowGear"						},
 	["LowGearLevel"]	= {B_AS_T_NUMBER,	50,		B_AS_Input_IgnoreLowGearLevel,									},
+
+	["BuyMaxSession"]	= {B_AS_T_NUMBER,	500000,		nil,											},
+	["BuyMaxCount"]		= {B_AS_T_NUMBER,	20,			nil,											},
 
 	["Items"] 		= {B_AS_T_MISC,		{},														},
 }
@@ -184,11 +187,13 @@ B_AS_TotalAuctions = 0
 -- Currently opened auction house page number
 B_AS_Page = 0
 
--- vMaNGOS diagnostic mode. This revision never calls PlaceAuctionBid.
-B_AS_VM_DIAGNOSTIC_ONLY = true
+-- vMaNGOS query + transaction state machine.
+B_AS_VM_LIVE_BUY = true
 B_AS_VM_QUERY_TIMEOUT = 12.0
 B_AS_VM_DUP_GUARD = 0.20
 B_AS_VM_CHEAP_WINDOW_PAGES = 10
+B_AS_VM_BUY_TIMEOUT = 5.0
+B_AS_VM_BUY_RESCAN_DELAY = 0.25
 B_AS_VM_LOG_LIMIT = 500
 
 B_AS_VM = {
@@ -223,6 +228,20 @@ B_AS_VM = {
 	cheapFallbacks = 0,
 	stateResets = 0,
 	pageLockValue = nil,
+	buyPending = false,
+	buySentAt = 0.0,
+	buySeq = 0,
+	buyCandidate = nil,
+	buyAttempts = 0,
+	buyConfirmed = 0,
+	buyFailed = 0,
+	buyTimeouts = 0,
+	sessionSpent = 0,
+	sessionPurchases = 0,
+	forcedQueryPage = nil,
+	forcedQueryName = nil,
+	suppressAdvanceOnce = false,
+	lastBuyResult = "none",
 }
 
 
@@ -403,6 +422,14 @@ function B_AS_VM_BeginCachedVerify()
 end
 
 function B_AS_VM_GetQuery()
+	if B_AS_VM.forcedQueryPage ~= nil then
+		local page = B_AS_VM.forcedQueryPage
+		local name = B_AS_VM.forcedQueryName or ""
+		B_AS_VM.forcedQueryPage = nil
+		B_AS_VM.forcedQueryName = nil
+		return name, page, nil
+	end
+
 	local count = B_AS_VM_WatchCount()
 	if count > 0 then
 		if B_AS_VM.watchIndex < 1 or B_AS_VM.watchIndex > count then
@@ -680,7 +707,12 @@ function B_AS_VM_AnalyzeResults()
 	end
 	B_AS_Log("[VM-RESULT] q"..B_AS_VM.querySeq.." name='"..B_AS_VM.queryName.."' page="..B_AS_VM.queryPage.." rows="..B_AS_CurrentPageAuctions.."/"..B_AS_TotalAuctions.." latency="..string.format("%.3f", B_AS_VM.lastLatency).."s zero="..zeroCount.." buyouts="..positiveCount.." totalRange="..rangeText.." unitRange="..unitText.." orderViol="..violations.." phase="..B_AS_VM.cheapPhase)
 
-	B_AS_VM_AdvanceQuery(B_AS_TotalAuctions, positiveCount)
+	if B_AS_VM.suppressAdvanceOnce then
+		B_AS_VM.suppressAdvanceOnce = false
+		B_AS_Log("[BUY-RESCAN] refreshed page="..B_AS_VM.queryPage.." without advancing scan state")
+	else
+		B_AS_VM_AdvanceQuery(B_AS_TotalAuctions, positiveCount)
+	end
 end
 
 function B_AS_VM_ResetStats()
@@ -699,6 +731,11 @@ function B_AS_VM_ResetStats()
 	B_AS_VM.cheapVerifications = 0
 	B_AS_VM.cheapFallbacks = 0
 	B_AS_VM.stateResets = 0
+	B_AS_VM.buyAttempts = 0
+	B_AS_VM.buyConfirmed = 0
+	B_AS_VM.buyFailed = 0
+	B_AS_VM.buyTimeouts = 0
+	B_AS_VM.lastBuyResult = "none"
 	B_AS_VM_ResetCheapSearch(true)
 	B_AS_Page = 0
 	B_AS_Log("[VM-DIAG] stats reset")
@@ -713,12 +750,154 @@ function B_AS_VM_Status()
 	if B_AS_VM.cheapWindowStart then
 		windowStart = tostring(B_AS_VM.cheapWindowStart)
 	end
-	DEFAULT_CHAT_FRAME:AddMessage("[AS VM] q="..B_AS_VM.querySeq.." inFlight="..tostring(B_AS_VM.queryInFlight).." seen="..B_AS_VM.seen.." positive="..B_AS_VM.positiveBuyouts.." zero="..B_AS_VM.zeroBuyouts.." candidates="..B_AS_VM.candidates.." orderViol="..B_AS_VM.orderViolations.." timeouts="..B_AS_VM.timeouts.." dup="..B_AS_VM.duplicateListEvents.." cheapPhase="..B_AS_VM.cheapPhase.." boundary="..boundary.." windowStart="..windowStart.." scanPage="..B_AS_VM.cheapScanPage.." cycles="..B_AS_VM.cheapCycles.." verifies="..B_AS_VM.cheapVerifications.." fallbacks="..B_AS_VM.cheapFallbacks.." resets="..B_AS_VM.stateResets, 0.37, 1, 0)
+	DEFAULT_CHAT_FRAME:AddMessage("[AS VM] q="..B_AS_VM.querySeq.." queryPending="..tostring(B_AS_VM.queryInFlight).." buyPending="..tostring(B_AS_VM.buyPending).." seen="..B_AS_VM.seen.." candidates="..B_AS_VM.candidates.." cheapPhase="..B_AS_VM.cheapPhase.." boundary="..boundary.." scanPage="..B_AS_VM.cheapScanPage.." buys="..B_AS_VM.buyConfirmed.."/"..B_AS_VM.buyAttempts.." failed="..B_AS_VM.buyFailed.." spent="..B_AS_MoneyToText(B_AS_VM.sessionSpent).." sessionCount="..B_AS_VM.sessionPurchases.." lastBuy="..B_AS_VM.lastBuyResult, 0.37, 1, 0)
 end
 
-function B_AS_VM_LogMessage(eventName, message)
+function B_AS_VM_IsBuyScanPhase()
+	if B_AS_VM_WatchCount() > 0 then
+		return true
+	end
+	if B_AS_GS["PageLock"] then
+		return B_AS_VM.cheapPhase == "scan"
+	end
+	return true
+end
+
+function B_AS_VM_MaxSessionSpend()
+	local value = tonumber(B_AS_GS["BuyMaxSession"]) or 500000
+	if value < 0 then value = 0 end
+	return value
+end
+
+function B_AS_VM_MaxSessionCount()
+	local value = tonumber(B_AS_GS["BuyMaxCount"]) or 20
+	if value < 0 then value = 0 end
+	return value
+end
+
+function B_AS_VM_StopLiveBuy(reason)
+	if B_AS_GS["AutoBuy"] == true then
+		B_AS_SetVar("AutoBuy", false)
+	end
+	B_AS_VM.lastBuyResult = "STOP:"..tostring(reason)
+	B_AS_Log("[BUY-STOP] "..tostring(reason))
+	DEFAULT_CHAT_FRAME:AddMessage("[AS] AutoBuy LIVE stopped: "..tostring(reason), 1, 0.25, 0.25)
+end
+
+function B_AS_VM_CheckSessionLimit()
+	local maxCount = B_AS_VM_MaxSessionCount()
+	local maxSpend = B_AS_VM_MaxSessionSpend()
+	if maxCount > 0 and B_AS_VM.sessionPurchases >= maxCount then
+		B_AS_VM_StopLiveBuy("session purchase limit "..maxCount.." reached")
+		return false
+	end
+	if maxSpend > 0 and B_AS_VM.sessionSpent >= maxSpend then
+		B_AS_VM_StopLiveBuy("session spend limit "..B_AS_MoneyToText(maxSpend).." reached")
+		return false
+	end
+	return true
+end
+
+function B_AS_VM_BuyFailureReason(message)
+	if not message then return nil end
+	if ERR_ITEM_NOT_FOUND and message == ERR_ITEM_NOT_FOUND then return "item_not_found" end
+	if ERR_NOT_ENOUGH_MONEY and message == ERR_NOT_ENOUGH_MONEY then return "not_enough_money" end
+	if ERR_AUCTION_BID_OWN and message == ERR_AUCTION_BID_OWN then return "own_auction" end
+	if ERR_AUCTION_HIGHER_BID and message == ERR_AUCTION_HIGHER_BID then return "higher_bid" end
+	if ERR_AUCTION_DATABASE_ERROR and message == ERR_AUCTION_DATABASE_ERROR then return "database_error" end
+	if ERR_AUCTION_BID_INCREMENT and message == ERR_AUCTION_BID_INCREMENT then return "bid_increment" end
+	if ERR_AUCTION_MIN_BID and message == ERR_AUCTION_MIN_BID then return "min_bid" end
+	return nil
+end
+
+function B_AS_VM_FinishBuy(success, reason, hardStop)
+	if not B_AS_VM.buyPending or not B_AS_VM.buyCandidate then
+		return false
+	end
+
+	local p = B_AS_VM.buyCandidate
+	B_AS_VM.buyPending = false
+	B_AS_VM.buyCandidate = nil
+
+	if success then
+		B_AS_VM.buyConfirmed = B_AS_VM.buyConfirmed + 1
+		B_AS_VM.sessionPurchases = B_AS_VM.sessionPurchases + 1
+		B_AS_VM.sessionSpent = B_AS_VM.sessionSpent + p.buyPrice
+		B_AS_VM.lastBuyResult = "OK:"..p.name
+		B_AS_Log("[BUY-OK] #"..p.buySeq.." "..p.count.."x "..p.desc.." total="..B_AS_MoneyToText(p.buyPrice).." seller="..tostring(p.owner).." spent="..B_AS_MoneyToText(B_AS_VM.sessionSpent).." count="..B_AS_VM.sessionPurchases)
+	else
+		B_AS_VM.buyFailed = B_AS_VM.buyFailed + 1
+		if reason == "timeout" then
+			B_AS_VM.buyTimeouts = B_AS_VM.buyTimeouts + 1
+		end
+		B_AS_VM.lastBuyResult = "FAIL:"..tostring(reason)
+		B_AS_Log("[BUY-FAIL] #"..p.buySeq.." "..p.count.."x "..p.desc.." total="..B_AS_MoneyToText(p.buyPrice).." reason="..tostring(reason))
+	end
+
+	B_AS_VM.forcedQueryPage = p.page
+	B_AS_VM.forcedQueryName = p.queryName or ""
+	B_AS_VM.suppressAdvanceOnce = true
+	B_AS_VM.nextQueryAt = GetTime() + B_AS_VM_BUY_RESCAN_DELAY
+
+	if hardStop then
+		B_AS_VM_StopLiveBuy(reason)
+	elseif success then
+		B_AS_VM_CheckSessionLimit()
+	end
+	return true
+end
+
+function B_AS_VM_HandleMessage(eventName, message)
+	local handled = false
+	if B_AS_VM.buyPending and message then
+		if (eventName == "CHAT_MSG_SYSTEM" or eventName == "UI_INFO_MESSAGE")
+			and ERR_AUCTION_BID_PLACED and message == ERR_AUCTION_BID_PLACED then
+			handled = B_AS_VM_FinishBuy(true, "bid_accepted", false)
+		elseif eventName == "UI_ERROR_MESSAGE" then
+			local reason = B_AS_VM_BuyFailureReason(message)
+			if reason then
+				local hardStop = (reason == "not_enough_money" or reason == "database_error")
+				handled = B_AS_VM_FinishBuy(false, reason, hardStop)
+			end
+		end
+	end
+
 	if B_AS_IsOpen and message and message ~= "" then
-		B_AS_Log("[VM-EVENT] "..eventName.." "..tostring(message))
+		if handled or B_AS_VM.verbose then
+			B_AS_Log("[VM-EVENT] "..eventName.." "..tostring(message))
+		end
+	end
+end
+
+function B_AS_VM_BuyStatus()
+	local maxSpend = B_AS_VM_MaxSessionSpend()
+	local maxCount = B_AS_VM_MaxSessionCount()
+	DEFAULT_CHAT_FRAME:AddMessage("[AS BUY] live="..tostring(B_AS_GS["AutoBuy"] == true).." pending="..tostring(B_AS_VM.buyPending).." confirmed="..B_AS_VM.buyConfirmed.." failed="..B_AS_VM.buyFailed.." spent="..B_AS_MoneyToText(B_AS_VM.sessionSpent).."/"..B_AS_MoneyToText(maxSpend).." count="..B_AS_VM.sessionPurchases.."/"..maxCount, 0.37, 1, 0)
+end
+
+function B_AS_VM_BuySlash(msg)
+	local text = string.lower(msg or "")
+	local _,_,spendGold,maxCount = string.find(text, "^%s*limits%s+(%d+)%s+(%d+)%s*$")
+	if spendGold and maxCount then
+		B_AS_SetVar("BuyMaxSession", tonumber(spendGold) * 10000)
+		B_AS_SetVar("BuyMaxCount", tonumber(maxCount))
+		B_AS_VM_BuyStatus()
+		return
+	end
+	if text == "reset" then
+		if B_AS_VM.buyPending then
+			DEFAULT_CHAT_FRAME:AddMessage("[AS BUY] Cannot reset while a buy is pending.", 1, 0.25, 0.25)
+			return
+		end
+		B_AS_VM.sessionSpent = 0
+		B_AS_VM.sessionPurchases = 0
+		B_AS_VM.lastBuyResult = "reset"
+		B_AS_VM_BuyStatus()
+	elseif text == "off" then
+		B_AS_VM_StopLiveBuy("manual stop")
+	else
+		B_AS_VM_BuyStatus()
+		DEFAULT_CHAT_FRAME:AddMessage("[AS BUY] /asbuy status | limits <gold> <count> | reset | off", 0.37, 1, 0)
 	end
 end
 
@@ -735,9 +914,43 @@ function B_AS_VM_Slash(msg)
 	end
 end
 
--- Diagnostic replacement for upstream buyout loop. No gold can be spent here.
+function B_AS_VM_AttemptBuy(candidate)
+	if B_AS_VM.buyPending then
+		return false
+	end
+	if not B_AS_VM_CheckSessionLimit() then
+		return false
+	end
+
+	local maxSpend = B_AS_VM_MaxSessionSpend()
+	if maxSpend > 0 and B_AS_VM.sessionSpent + candidate.buyPrice > maxSpend then
+		B_AS_VM_StopLiveBuy("candidate would exceed session spend limit")
+		return false
+	end
+	if candidate.buyPrice > GetMoney() then
+		B_AS_VM_StopLiveBuy("not enough money for candidate")
+		return false
+	end
+
+	B_AS_VM.buySeq = B_AS_VM.buySeq + 1
+	B_AS_VM.buyAttempts = B_AS_VM.buyAttempts + 1
+	candidate.buySeq = B_AS_VM.buySeq
+	candidate.page = B_AS_VM.queryPage
+	candidate.queryName = B_AS_VM.queryName
+	B_AS_VM.buyPending = true
+	B_AS_VM.buySentAt = GetTime()
+	B_AS_VM.buyCandidate = candidate
+	B_AS_VM.lastBuyResult = "PENDING:"..candidate.name
+
+	B_AS_Log("[BUY-SENT] #"..candidate.buySeq.." index="..candidate.index.." page="..candidate.page.." "..candidate.count.."x "..candidate.desc.." total="..B_AS_MoneyToText(candidate.buyPrice).." unit="..B_AS_MoneyToText(candidate.unitPrice).." seller="..tostring(candidate.owner))
+	PlaceAuctionBid("list", candidate.index, candidate.buyPrice)
+	return true
+end
+
+-- AutoBuy LIVE submits at most one buyout from a fresh list result.
+-- With AutoBuy OFF, Manual Buy / DryRun only log matching candidates.
 function B_AS_Buy(buyAll)
-	if B_AS_IsOpen == false then
+	if B_AS_IsOpen == false or B_AS_VM.buyPending then
 		return
 	end
 	if B_AS_VM.lastEvaluatedSeq == B_AS_VM.querySeq then
@@ -745,7 +958,19 @@ function B_AS_Buy(buyAll)
 	end
 	B_AS_VM.lastEvaluatedSeq = B_AS_VM.querySeq
 
+	if not B_AS_VM_IsBuyScanPhase() then
+		return
+	end
+
+	local live = (B_AS_GS["AutoBuy"] == true)
 	local found = 0
+	local best = nil
+	local maxSpend = B_AS_VM_MaxSessionSpend()
+	local remaining = 0
+	if maxSpend > 0 then
+		remaining = maxSpend - B_AS_VM.sessionSpent
+	end
+
 	for auctionIndex = 1, B_AS_CurrentPageAuctions do
 		local name,_,count,quality,_,level,_,_,buyPrice,_,_,owner = GetAuctionItemInfo("list", auctionIndex)
 		local link = GetAuctionItemLink("list", auctionIndex)
@@ -754,20 +979,46 @@ function B_AS_Buy(buyAll)
 			B_AS_VM.candidates = B_AS_VM.candidates + 1
 			local unitPrice = math.floor(buyPrice / count)
 			local desc = link or name
-			B_AS_Log("[DRYRUN] candidate "..count.."x "..desc.." total="..B_AS_MoneyToText(buyPrice).." unit="..B_AS_MoneyToText(unitPrice).." seller="..tostring(owner).." q="..B_AS_VM.querySeq.." page="..B_AS_VM.queryPage)
-			if not buyAll then
-				break
+			if not live then
+				B_AS_Log("[DRYRUN] candidate "..count.."x "..desc.." total="..B_AS_MoneyToText(buyPrice).." unit="..B_AS_MoneyToText(unitPrice).." seller="..tostring(owner).." q="..B_AS_VM.querySeq.." page="..B_AS_VM.queryPage)
+				if not buyAll then
+					break
+				end
+			else
+				local fitsSession = (maxSpend <= 0 or buyPrice <= remaining)
+				if fitsSession and (not best or buyPrice < best.buyPrice or (buyPrice == best.buyPrice and unitPrice < best.unitPrice)) then
+					best = {
+						index = auctionIndex,
+						name = name,
+						count = count,
+						quality = quality,
+						level = level,
+						buyPrice = buyPrice,
+						unitPrice = unitPrice,
+						owner = owner,
+						desc = desc,
+					}
+				end
 			end
 		end
 	end
-	B_AS_Print("Dry-run candidates on result: "..found)
+
+	if live then
+		if best then
+			B_AS_VM_AttemptBuy(best)
+		elseif found > 0 and maxSpend > 0 then
+			B_AS_VM_StopLiveBuy("matching candidates exceed remaining session budget")
+		end
+	else
+		B_AS_Print("Dry-run candidates on result: "..found)
+	end
 end
 
 --[[
 	Queries an auction house page using the user's defined settings.
 ]]
 function B_AS_Scan()
-	if B_AS_IsOpen == false then
+	if B_AS_IsOpen == false or B_AS_VM.buyPending then
 		return
 	end
 
@@ -1104,9 +1355,14 @@ function B_AS_OnEvent()
 		if (string.lower(arg1) == "auctionsniper") then
 			B_AS_InitializeSettings()
 			B_AS_InitializeItems()
+			-- Migration safety: old dry-run AutoBuy=ON never becomes live automatically.
+			B_AS_SetVar("AutoBuy", false)
+			B_AS_SetVar("AutoSlowBuy", false)
 			SLASH_AUCTIONSNIPERDIAG1 = "/asdiag"
 			SlashCmdList["AUCTIONSNIPERDIAG"] = B_AS_VM_Slash
-			DEFAULT_CHAT_FRAME:AddMessage("AuctionSniper " .. B_AS_VERSION .. " loaded - vMaNGOS DRY RUN (no purchases).", 0.37, 1, 0)
+			SLASH_AUCTIONSNIPERBUY1 = "/asbuy"
+			SlashCmdList["AUCTIONSNIPERBUY"] = B_AS_VM_BuySlash
+			DEFAULT_CHAT_FRAME:AddMessage("AuctionSniper " .. B_AS_VERSION .. " loaded - AutoBuy LIVE is OFF. Enable it explicitly to spend gold.", 0.37, 1, 0)
 		end
 
 	elseif (event == "AUCTION_HOUSE_SHOW") then
@@ -1117,13 +1373,21 @@ function B_AS_OnEvent()
 		B_AS_VM.watchIndex = 1
 		B_AS_VM.watchPage = 0
 		B_AS_VM_ResetCheapSearch(true)
+		B_AS_VM.buyPending = false
+		B_AS_VM.buyCandidate = nil
+		B_AS_VM.forcedQueryPage = nil
+		B_AS_VM.forcedQueryName = nil
+		B_AS_VM.suppressAdvanceOnce = false
 		B_AS_Page = 0
-		B_AS_Log("[VM-DIAG] auction house opened; purchases hard-disabled")
+		B_AS_Log("[VM] auction house opened; AutoBuy LIVE="..tostring(B_AS_GS["AutoBuy"] == true).." sessionLimit="..B_AS_MoneyToText(B_AS_VM_MaxSessionSpend()).." countLimit="..B_AS_VM_MaxSessionCount())
 
 	elseif (event == "AUCTION_HOUSE_CLOSED") then
 		B_AS_Frame:Hide()
 		B_AS_IsOpen = false
 		B_AS_VM.queryInFlight = false
+		if B_AS_VM.buyPending then
+			B_AS_VM_FinishBuy(false, "auction_house_closed", true)
+		end
 
 	elseif (event == "AUCTION_ITEM_LIST_UPDATE") then
 		if B_AS_VM.queryInFlight then
@@ -1141,12 +1405,12 @@ function B_AS_OnEvent()
 		end
 
 	elseif (event == "CHAT_MSG_SYSTEM" or event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") then
-		B_AS_VM_LogMessage(event, arg1)
+		B_AS_VM_HandleMessage(event, arg1)
 	end
 end
 
 function B_AS_SlowBuyTick(currTime)
-	-- In diagnostic mode candidates are evaluated only when a fresh result arrives.
+	-- DryRun candidates are evaluated only when a fresh result arrives.
 	return
 end
 function B_AS_SyncTime()
@@ -1170,6 +1434,10 @@ function B_AS_OnUpdate()
 	if (B_AS_IsOpen == true) then
 
 		local currTime = GetTime()
+
+		if B_AS_VM.buyPending and currTime - B_AS_VM.buySentAt >= B_AS_VM_BUY_TIMEOUT then
+			B_AS_VM_FinishBuy(false, "timeout", true)
+		end
 
 		if B_AS_GS["AutoSlowBuy"] == true then
 			B_AS_SlowBuyTick(currTime)
