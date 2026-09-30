@@ -989,9 +989,9 @@
         "FrameScript_Execute 0x00704CD0",
         "AUCTION_ITEM_LIST_UPDATE"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "c79286eb7ae69d89ddcbb63e948d2b238dce383c",
-      "verified_commit": "c79286eb7ae69d89ddcbb63e948d2b238dce383c",
+      "status": "awaiting_game_test",
+      "observed_head": "78a7ff85db486410b2f7edf9c51e92342b3b55ea",
+      "verified_commit": "78a7ff85db486410b2f7edf9c51e92342b3b55ea",
       "tests": [
         {
           "kind": "ci",
@@ -1020,10 +1020,28 @@
           "commit": "c79286eb7ae69d89ddcbb63e948d2b238dce383c",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36754138642 and Verify AI experiment registry run 36754138671 passed on exact feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "78a7ff85db486410b2f7edf9c51e92342b3b55ea",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36754267611 passed on exact integrated parallel SHA, including AH native throttle DLL build, FINAL_PACKAGE, addon packaging and provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "78a7ff85db486410b2f7edf9c51e92342b3b55ea",
+          "date": "2026-09-30",
+          "evidence": "Verified candidate artifact 11115732893 (WoW112-WORK-CANDIDATE-78a7ff85db486410b2f7edf9c51e92342b3b55ea)."
         }
       ],
-      "package": null,
-      "notes": "Diagnostic-only native companion. F5 asks AHThrottleTest to emit one stock browse query, captures exact outbound opcode 0x258 at the current ClientServices::Send chain, replays that exact packet once after 500 ms through the pre-existing chain, and lets the addon count response events. No bid/buy opcode is generated. Exact-build addresses come from canonical repo evidence; CMaNGOS Classic only corroborates opcode 0x258. Rebased onto current parallel f9f7954f; the only intervening change from previous base was runtime/ai_experiments.json evidence. Integrated candidate is based on current parallel f9f7954f; full exact-parallel candidate verification pending."
+      "package": {
+        "verified": true,
+        "commit": "78a7ff85db486410b2f7edf9c51e92342b3b55ea",
+        "artifact_id": 11115732893
+      },
+      "notes": "Diagnostic-only native companion. F5 asks AHThrottleTest to emit one stock browse query, captures exact outbound opcode 0x258 at the current ClientServices::Send chain, replays that exact packet once after 500 ms through the pre-existing chain, and lets the addon count response events. No bid/buy opcode is generated. Exact-build addresses come from canonical repo evidence; CMaNGOS Classic only corroborates opcode 0x258. Rebased onto current parallel f9f7954f; the only intervening change from previous base was runtime/ai_experiments.json evidence. Integrated candidate is based on current parallel f9f7954f; full exact-parallel candidate verification pending. Exact integrated package is ready for gameplay test; native result remains unconfirmed until F5 test at an open AH."
     }
   ]
 }
