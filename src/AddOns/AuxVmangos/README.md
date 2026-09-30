@@ -1,4 +1,4 @@
-# AuxVmangos 0.8.3 unified market bot + WATCH sniper
+# AuxVmangos 0.9 unified market bot + vendor arbitrage
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
@@ -180,3 +180,26 @@ For vMaNGOS filtered browse results, total buyout is ordered ascending. When a W
 Diagnostic:
 - WATCH_EARLY_STOP ... reason=maxStack1
 - /avm status counter watchEarly
+
+
+## Vendor Arbitrage V1 (0.9)
+
+Vendor Arbitrage is a single-scheduler mode inside AuxVmangos. It scans the cheapest global positive-buyout pages on vMaNGOS and compares each auction buyout to the Vanilla vendor sell value for the exact item id.
+
+Defaults:
+- DRY-RUN: LIVE is automatically disarmed when VENDOR starts.
+- minimum expected vendor profit: 5s
+- maximum auction buyout: 1g
+- pages per cycle: 10
+- existing session budget and maxbuys still apply.
+
+Commands:
+- /avm vendor start
+- /avm vendor stop
+- /avm vendor status
+- /avm vendor minprofit 5s
+- /avm vendor maxbuyout 1g
+- /avm vendor pages 10
+- /avm live on
+
+A qualifying opportunity is reported as VENDOR_BEST and then revalidated before VENDOR_DRYRUN or BUY_SENT. LIVE uses the same confirmed money-delta transaction state that already passed gameplay testing for WATCH. Expected vendor profit is based on the embedded Vanilla 1.12 vendor-value table; custom realm price overrides are not yet learned in V1.

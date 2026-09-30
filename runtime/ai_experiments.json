@@ -894,6 +894,30 @@
       ],
       "package": null,
       "notes": "Standalone AH throttle diagnostic. Does not modify AuxVmangos and never buys. Controlled query pairs test 5.2s, 2s, 1s, 500ms and 250ms intervals while logging CanSendAuctionQuery plus actual AUCTION_ITEM_LIST_UPDATE latency. Integrated candidate includes AHThrottleTest in the parallel addon package manifest; full parallel candidate verification is pending."
+    },
+    {
+      "id": "aux-vendor-arbitrage-v1",
+      "branch": "feature/aux-vendor-arbitrage-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-watch-max1-earlystop",
+        "aux-watch-live-noop-fix"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "AuxVmangos serialized QueryAuctionItems scheduler",
+        "vMaNGOS global total-buyout ordering",
+        "V2 guarded revalidation/BUY_PENDING/UNKNOWN transaction state",
+        "LibVendorValue-2.0 Vanilla vendor sell-value table (MIT)"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1eb5ffb59324863c728302236bb86f66d503aaa1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "First money-oriented iteration. Vendor Arbitrage V1 scans a configurable number of cheapest positive-buyout global pages, selects the highest absolute expected vendor profit using Vanilla item sell values, revalidates the exact auction signature, and reuses the gameplay-proven LIVE transaction guards. Defaults are dry-run, minProfit=5s, maxBuyout=1g, maxPages=10. Static vendor data may differ on custom realms; live purchase requires explicit LIVE arming."
     }
   ]
 }
