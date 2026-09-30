@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.9-vmangos-vendor-arbitrage"
+AVM_VERSION = "0.10-vmangos-vendor-hot-sweep"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -61,6 +61,11 @@ AVM = {
 		pagesScanned = 0,
 		startedAt = 0,
 		best = nil,
+		segment = "",
+		segmentStart = 0,
+		segmentEnd = 0,
+		resumeSegment = "HOT",
+		priceCeiling = false,
 		consecutiveTimeouts = 0,
 	},
 	market = {
@@ -108,6 +113,10 @@ AVM = {
 		vendorPages = 0,
 		vendorCandidates = 0,
 		vendorBest = 0,
+		vendorHotPages = 0,
+		vendorSweepPages = 0,
+		vendorSweepPasses = 0,
+		vendorPriceCeilings = 0,
 		vendorTimeouts = 0,
 	},
 	recent = {},
@@ -189,8 +198,11 @@ local function avm_defaults()
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 500 end
 	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 10000 end
-	if AVM_DB.vendorMaxPages == nil then AVM_DB.vendorMaxPages = 10 end
+	if AVM_DB.vendorMaxPages == nil then AVM_DB.vendorMaxPages = 10 end -- legacy alias for HOT pages
+	if AVM_DB.vendorHotPages == nil then AVM_DB.vendorHotPages = AVM_DB.vendorMaxPages end
+	if AVM_DB.vendorSweepPages == nil then AVM_DB.vendorSweepPages = 25 end
 	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
+	if AVM_DB.vendorMeta.sweepPass == nil then AVM_DB.vendorMeta.sweepPass = 0 end
 end
 
 local function avm_rule_valid(rule)
@@ -1039,6 +1051,119 @@ local function avm_vendor_pick_page_best()
 	return best
 end
 
+local avm_vendor_restart_cycle
+
+local function avm_vendor_hot_pages()
+	local n = tonumber(AVM_DB.vendorHotPages) or tonumber(AVM_DB.vendorMaxPages) or 10
+	if n < 1 then n = 1 end
+	if n > 100 then n = 100 end
+	return math.floor(n)
+end
+
+local function avm_vendor_sweep_pages()
+	local n = tonumber(AVM_DB.vendorSweepPages) or 25
+	if n < 1 then n = 1 end
+	if n > 100 then n = 100 end
+	return math.floor(n)
+end
+
+local function avm_vendor_first_sweep_page()
+	local v = AVM.vendor
+	if v.boundary == nil then return nil end
+	return v.boundary + avm_vendor_hot_pages()
+end
+
+local function avm_vendor_page_min_positive_buyout()
+	local n = GetNumAuctionItems("list") or 0
+	local best = nil
+	for i = 1, n do
+		local _,_,_,_,_,_,_,_,buyout = GetAuctionItemInfo("list", i)
+		if buyout and buyout > 0 and (not best or buyout < best) then best = buyout end
+	end
+	return best
+end
+
+local function avm_vendor_reset_sweep(boundary)
+	local first = (tonumber(boundary) or 0) + avm_vendor_hot_pages()
+	AVM_DB.vendorMeta.sweepCursor = first
+	AVM_DB.vendorMeta.sweepPass = 0
+end
+
+local function avm_vendor_start_segment(segment)
+	local v = AVM.vendor
+	if not v.active or v.boundary == nil then return false end
+
+	local startPage, endPage
+	if segment == "HOT" then
+		startPage = v.boundary
+		endPage = startPage + avm_vendor_hot_pages() - 1
+		if endPage > v.lastPage then endPage = v.lastPage end
+	else
+		local first = avm_vendor_first_sweep_page()
+		if not first or first > v.lastPage then return false end
+		local cursor = tonumber(AVM_DB.vendorMeta.sweepCursor)
+		if not cursor or cursor < first or cursor > v.lastPage then
+			cursor = first
+			AVM_DB.vendorMeta.sweepCursor = cursor
+		end
+		startPage = cursor
+		endPage = startPage + avm_vendor_sweep_pages() - 1
+		if endPage > v.lastPage then endPage = v.lastPage end
+	end
+
+	v.segment = segment
+	v.segmentStart = startPage
+	v.segmentEnd = endPage
+	v.page = startPage
+	v.pagesScanned = 0
+	v.best = nil
+	v.priceCeiling = false
+	v.phase = "SCAN"
+
+	if segment == "HOT" then
+		avm_print("VENDOR HOT pages=" .. tostring(startPage) .. "-" .. tostring(endPage))
+	else
+		avm_print("VENDOR SWEEP pages=" .. tostring(startPage) .. "-" .. tostring(endPage) ..
+			" pass=" .. tostring(AVM_DB.vendorMeta.sweepPass or 0))
+	end
+	return true
+end
+
+local function avm_vendor_advance_sweep(page, priceCeiling)
+	local v = AVM.vendor
+	local first = avm_vendor_first_sweep_page()
+	if not first or first > v.lastPage then return end
+	local nextPage = (tonumber(page) or first) + 1
+	if priceCeiling or nextPage > v.lastPage then
+		AVM_DB.vendorMeta.sweepCursor = first
+		AVM_DB.vendorMeta.sweepPass = (tonumber(AVM_DB.vendorMeta.sweepPass) or 0) + 1
+		AVM.stats.vendorSweepPasses = AVM.stats.vendorSweepPasses + 1
+	else
+		AVM_DB.vendorMeta.sweepCursor = nextPage
+	end
+end
+
+local function avm_vendor_continue_after_segment()
+	local v = AVM.vendor
+	if v.segment == "HOT" and not v.priceCeiling then
+		if avm_vendor_start_segment("SWEEP") then return end
+	end
+	-- A completed SWEEP (or HOT with no useful deeper range) begins a fresh
+	-- HOT cycle and re-verifies the cached positive-buyout boundary.
+	v.resumeSegment = "HOT"
+	avm_vendor_restart_cycle()
+end
+
+local function avm_vendor_resume_after_candidate()
+	local v = AVM.vendor
+	if not v.active then return end
+	if v.resumeSegment == "SWEEP" and not v.priceCeiling then
+		if avm_vendor_start_segment("SWEEP") then return end
+	end
+	v.resumeSegment = "HOT"
+	avm_vendor_restart_cycle()
+end
+
 local function avm_vendor_finish(reason)
 	local v = AVM.vendor
 	if AVM_DB.live then
@@ -1054,11 +1179,14 @@ local function avm_vendor_finish(reason)
 	v.stopRequested = false
 	v.phase = "IDLE"
 	v.best = nil
+	v.segment = ""
+	v.resumeSegment = "HOT"
+	v.priceCeiling = false
 	v.consecutiveTimeouts = 0
 	if AVM_DB.enabled then avm_restart_boundary(false) end
 end
 
-local function avm_vendor_restart_cycle()
+avm_vendor_restart_cycle = function()
 	local v = AVM.vendor
 	if not v.active then return end
 	if v.stopRequested then
@@ -1067,6 +1195,11 @@ local function avm_vendor_restart_cycle()
 	end
 	v.pagesScanned = 0
 	v.best = nil
+	v.segment = ""
+	v.segmentStart = 0
+	v.segmentEnd = 0
+	v.resumeSegment = "HOT"
+	v.priceCeiling = false
 	v.low = 0
 	v.high = 0
 	v.page = 0
@@ -1093,7 +1226,8 @@ local function avm_vendor_begin()
 	AVM.stats.vendorScans = AVM.stats.vendorScans + 1
 	avm_print("VENDOR start minProfit=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
 		" maxBuyout=" .. avm_money(AVM_DB.vendorMaxBuyout or 0) ..
-		" pages=" .. tostring(AVM_DB.vendorMaxPages or 10))
+		" HOT=" .. tostring(avm_vendor_hot_pages()) ..
+		" SWEEP=" .. tostring(avm_vendor_sweep_pages()))
 	avm_vendor_restart_cycle()
 end
 
@@ -1120,15 +1254,20 @@ end
 
 local function avm_vendor_enter_scan(boundary, lastPage)
 	local v = AVM.vendor
+	local oldBoundary = tonumber(AVM_DB.vendorMeta.boundary)
 	v.boundary = boundary
-	v.page = boundary
 	v.lastPage = lastPage
 	v.pagesScanned = 0
 	v.best = nil
-	v.phase = "SCAN"
+	v.resumeSegment = "HOT"
 	AVM_DB.vendorMeta.boundary = boundary
+	if oldBoundary == nil or oldBoundary ~= boundary then
+		avm_vendor_reset_sweep(boundary)
+	end
 	avm_print("VENDOR first positive-buyout page=" .. tostring(boundary) ..
-		" lastPage=" .. tostring(lastPage))
+		" lastPage=" .. tostring(lastPage) ..
+		" sweepCursor=" .. tostring(AVM_DB.vendorMeta.sweepCursor or "nil"))
+	avm_vendor_start_segment("HOT")
 end
 
 local function avm_vendor_accept(kind, page, total, positive)
@@ -1213,6 +1352,12 @@ local function avm_vendor_accept(kind, page, total, positive)
 	if kind == "VENDOR_SCAN" then
 		AVM.stats.vendorPages = AVM.stats.vendorPages + 1
 		v.pagesScanned = v.pagesScanned + 1
+		if v.segment == "HOT" then
+			AVM.stats.vendorHotPages = AVM.stats.vendorHotPages + 1
+		else
+			AVM.stats.vendorSweepPages = AVM.stats.vendorSweepPages + 1
+		end
+
 		local pageBest = avm_vendor_pick_page_best()
 		if pageBest then
 			AVM.stats.vendorCandidates = AVM.stats.vendorCandidates + 1
@@ -1222,18 +1367,41 @@ local function avm_vendor_accept(kind, page, total, positive)
 			end
 		end
 
-		local maxPages = tonumber(AVM_DB.vendorMaxPages) or 10
-		if maxPages < 1 then maxPages = 1 end
-		if maxPages > 100 then maxPages = 100 end
+		local priceCeiling = false
+		local maxBuyout = tonumber(AVM_DB.vendorMaxBuyout) or 0
+		local minPositive = avm_vendor_page_min_positive_buyout()
+		if maxBuyout > 0 and minPositive and minPositive > maxBuyout then
+			priceCeiling = true
+			v.priceCeiling = true
+			AVM.stats.vendorPriceCeilings = AVM.stats.vendorPriceCeilings + 1
+			avm_print("VENDOR_PRICE_CEILING segment=" .. tostring(v.segment) ..
+				" page=" .. tostring(page) ..
+				" minBuyout=" .. avm_money(minPositive) ..
+				" maxBuyout=" .. avm_money(maxBuyout))
+		end
+
+		if v.segment == "SWEEP" then
+			avm_vendor_advance_sweep(page, priceCeiling)
+		end
+
 		v.page = page + 1
-		local done = v.page > v.lastPage or v.pagesScanned >= maxPages
+		local done = priceCeiling or page >= v.segmentEnd or page >= v.lastPage
 		if not done then return end
 
+		local segment = v.segment
 		if v.best then
 			AVM.stats.vendorBest = AVM.stats.vendorBest + 1
 			AVM.candidate = v.best
 			v.best = nil
-			avm_print("VENDOR_BEST " .. AVM.candidate.count .. "x " .. AVM.candidate.name ..
+			AVM.candidate.vendorSegment = segment
+			if segment == "HOT" and not priceCeiling and
+			   avm_vendor_first_sweep_page() and avm_vendor_first_sweep_page() <= v.lastPage then
+				v.resumeSegment = "SWEEP"
+			else
+				v.resumeSegment = "HOT"
+			end
+			avm_print("VENDOR_BEST segment=" .. tostring(segment) ..
+				" " .. AVM.candidate.count .. "x " .. AVM.candidate.name ..
 				" buy=" .. avm_money(AVM.candidate.buyout) ..
 				" vendor=" .. avm_money(AVM.candidate.vendorTotal) ..
 				" profit=" .. avm_money(AVM.candidate.profit) ..
@@ -1242,8 +1410,10 @@ local function avm_vendor_accept(kind, page, total, positive)
 			avm_prepare_revalidate(AVM.candidate)
 			v.phase = "REVALIDATE"
 		else
-			avm_print("VENDOR_NONE scannedPages=" .. tostring(v.pagesScanned))
-			avm_vendor_restart_cycle()
+			avm_print("VENDOR_" .. tostring(segment) .. "_NONE scannedPages=" ..
+				tostring(v.pagesScanned) ..
+				" nextSweep=" .. tostring(AVM_DB.vendorMeta.sweepCursor or "nil"))
+			avm_vendor_continue_after_segment()
 		end
 		return
 	end
@@ -1289,13 +1459,19 @@ local function avm_vendor_status()
 		" requested=" .. tostring(v.requested) ..
 		" live=" .. tostring(AVM_DB.live) ..
 		" phase=" .. tostring(v.phase) ..
+		" segment=" .. tostring(v.segment) ..
 		" page=" .. tostring(v.page) .. "/" .. tostring(v.lastPage) ..
 		" scanned=" .. tostring(v.pagesScanned))
 	avm_print("VENDOR minProfit=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
 		" maxBuyout=" .. avm_money(AVM_DB.vendorMaxBuyout or 0) ..
-		" maxPages=" .. tostring(AVM_DB.vendorMaxPages or 10) ..
-		" buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
-		" spend=" .. avm_money(AVM.sessionSpend))
+		" HOT=" .. tostring(avm_vendor_hot_pages()) ..
+		" SWEEP=" .. tostring(avm_vendor_sweep_pages()) ..
+		" sweepCursor=" .. tostring(AVM_DB.vendorMeta.sweepCursor or "nil") ..
+		" pass=" .. tostring(AVM_DB.vendorMeta.sweepPass or 0))
+	avm_print("VENDOR buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
+		" spend=" .. avm_money(AVM.sessionSpend) ..
+		" hotPages=" .. tostring(AVM.stats.vendorHotPages) ..
+		" sweepPages=" .. tostring(AVM.stats.vendorSweepPages))
 end
 
 local function avm_vendor_slash(rest)
@@ -1331,16 +1507,30 @@ local function avm_vendor_slash(rest)
 		else
 			avm_print("invalid maxbuyout")
 		end
-	elseif sub == "pages" then
+	elseif sub == "pages" or sub == "hotpages" then
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 1 and n <= 100 then
-			AVM_DB.vendorMaxPages = math.floor(n)
-			avm_print("VENDOR maxPages=" .. tostring(AVM_DB.vendorMaxPages))
+			AVM_DB.vendorHotPages = math.floor(n)
+			AVM_DB.vendorMaxPages = AVM_DB.vendorHotPages
+			avm_vendor_reset_sweep(AVM.vendor.boundary or AVM_DB.vendorMeta.boundary or 0)
+			avm_print("VENDOR HOT pages=" .. tostring(AVM_DB.vendorHotPages))
 		else
-			avm_print("vendor pages must be 1..100")
+			avm_print("vendor HOT pages must be 1..100")
 		end
+	elseif sub == "sweeppages" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 100 then
+			AVM_DB.vendorSweepPages = math.floor(n)
+			avm_print("VENDOR SWEEP chunk=" .. tostring(AVM_DB.vendorSweepPages))
+		else
+			avm_print("vendor SWEEP pages must be 1..100")
+		end
+	elseif sub == "sweepreset" then
+		local boundary = AVM.vendor.boundary or AVM_DB.vendorMeta.boundary or 0
+		avm_vendor_reset_sweep(boundary)
+		avm_print("VENDOR SWEEP cursor reset to " .. tostring(AVM_DB.vendorMeta.sweepCursor))
 	else
-		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|pages 10")
+		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|hotpages 10|sweeppages 25|sweepreset")
 	end
 end
 
@@ -1349,7 +1539,7 @@ local function avm_resume_after_candidate(c, dryRun)
 		AVM.candidate = nil
 		AVM.revalidatePages = nil
 		AVM.revalidatePos = 0
-		avm_vendor_restart_cycle()
+		avm_vendor_resume_after_candidate()
 	elseif dryRun then
 		AVM.candidate = nil
 		AVM.revalidatePages = nil
@@ -1926,6 +2116,10 @@ local function avm_status()
 		" marketTimeouts=" .. AVM.stats.marketTimeouts ..
 		" vendorPages=" .. AVM.stats.vendorPages ..
 		" vendorBest=" .. AVM.stats.vendorBest ..
+		" vendorHot=" .. AVM.stats.vendorHotPages ..
+		" vendorSweep=" .. AVM.stats.vendorSweepPages ..
+		" vendorPasses=" .. AVM.stats.vendorSweepPasses ..
+		" vendorCeilings=" .. AVM.stats.vendorPriceCeilings ..
 		" vendorTimeouts=" .. AVM.stats.vendorTimeouts)
 	if AVM.vendor.active or AVM.vendor.requested then avm_vendor_status() end
 end
@@ -2124,7 +2318,7 @@ local function avm_slash(msg)
 	else
 		avm_print("/avm on|off | live on|off | status | gui | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
-		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|pages 10")
+		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|hotpages 10|sweeppages 25|sweepreset")
 		avm_print("/avm market start|stop|status|item NAME|auto MIN|retention N|clear")
 	end
 end

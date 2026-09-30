@@ -1060,6 +1060,28 @@
       "tests": [],
       "package": null,
       "notes": "Fixes false 'workflow not found' self-update failures caused by scanning only the newest 50 runs across all workflows. Self-update now queries build_updater.yml runs directly for parallel while retaining existing artifact/provenance/hash/x86 gates."
+    },
+    {
+      "id": "aux-vendor-hot-sweep-v2",
+      "branch": "feature/aux-vendor-hot-sweep",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vendor-arbitrage-v1"
+      ],
+      "shared_resources": [
+        "AuxVmangos serialized QueryAuctionItems scheduler",
+        "vMaNGOS total-buyout page ordering",
+        "AVM_DB vendorMeta persistent sweep cursor",
+        "Vendor Arbitrage V1 revalidation/BUY_PENDING/UNKNOWN transaction path"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9b7258d2db4a04d2a8322bf76a38d5828cde5fd8",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay evidence on Vendor V1 showed boundary=13, lastPage~1109 and repeated VENDOR_NONE scannedPages=10 followed by cache verify of the same boundary, proving V1 repeatedly rescanned only the same cheapest 10 pages. V2 alternates HOT coverage with a persistent progressive SWEEP cursor, preserving the V1 buy/revalidation path and maxBuyout hard bound."
     }
   ]
 }
