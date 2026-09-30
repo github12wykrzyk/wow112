@@ -1211,6 +1211,26 @@
         "artifact_id": 11127938220
       },
       "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos. Integrated candidate based on current parallel 7fc438d2; full exact-parallel candidate verification pending. Integrated exact-SHA package ready for gameplay benchmark. Final safe floor remains unknown until in-game 25/25 stage results are observed."
+    },
+    {
+      "id": "ah-throughput-debounce",
+      "branch": "feature/ah-throughput-debounce",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-native-max-throughput"
+      ],
+      "shared_resources": [
+        "AUCTION_ITEM_LIST_UPDATE",
+        "existing WoWAHThrottleNative_5875_v2 sender"
+      ],
+      "status": "in_progress",
+      "observed_head": "64f5a9d9c3b19c13b9d5f08b3f73bcf30aed3543",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Addon-only benchmark correction. Keeps the already verified native V2 sender unchanged. AUCTION_ITEM_LIST_UPDATE is debounced for 75ms and only then fingerprinted across all visible auction rows. Reports stable/expected, raw event count, overflow contamination, miss percentage and effective auctions/s. Intended to distinguish real query loss from multiple UI state updates that produced impossible 26/25 counts in V2."
     }
   ]
 }
