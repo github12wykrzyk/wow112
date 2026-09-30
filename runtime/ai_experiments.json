@@ -1155,7 +1155,7 @@
         "stock Logout() Lua path",
         "CharacterSelect_SelectCharacter / CharacterSelect_EnterWorld"
       ],
-      "status": "superseded",
+      "status": "accepted",
       "observed_head": "7b8acc5774d4061a8921e6f345ebdadad92ea87f",
       "verified_commit": null,
       "tests": [
