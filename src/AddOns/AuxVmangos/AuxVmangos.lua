@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.6-vmangos-unified"
+AVM_VERSION = "0.7-vmangos-audit"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -131,6 +131,14 @@ local function avm_trim(text)
 	return text
 end
 
+local function avm_item_link_key(i)
+	local link = GetAuctionItemLink("list", i)
+	if not link then return "" end
+	local _,_,itemKey = string.find(link, "|H(item:[^|]+)|h")
+	if itemKey then return itemKey end
+	return ""
+end
+
 local function avm_defaults()
 	if not AVM_DB then AVM_DB = {} end
 	if AVM_DB.enabled == nil then AVM_DB.enabled = false end
@@ -144,6 +152,7 @@ local function avm_defaults()
 	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
 	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 24 end
 	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
+	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 end
 
 local function avm_rule_matches(rule, name)
@@ -189,9 +198,10 @@ local function avm_invalidate_boundary(rule)
 	if key then AVM.boundaryCache[key] = nil end
 end
 
-local function avm_signature(name, count, buyout, owner, quality, level)
+local function avm_signature(name, count, buyout, owner, quality, level, itemKey)
 	return tostring(name) .. "|" .. tostring(count) .. "|" .. tostring(buyout) .. "|" ..
-		tostring(owner) .. "|" .. tostring(quality) .. "|" .. tostring(level)
+		tostring(owner) .. "|" .. tostring(quality) .. "|" .. tostring(level) .. "|" ..
+		tostring(itemKey or "")
 end
 
 local function avm_recent(sig)
@@ -228,7 +238,8 @@ local function avm_candidate_from_row(i)
 	local missing = 0
 	if not affordable then missing = buyout - money end
 
-	local sig = avm_signature(name, count, buyout, owner, quality, level)
+	local itemKey = avm_item_link_key(i)
+	local sig = avm_signature(name, count, buyout, owner, quality, level, itemKey)
 	if avm_recent(sig) then return nil end
 
 	return {
@@ -241,6 +252,7 @@ local function avm_candidate_from_row(i)
 		owner = owner,
 		affordable = affordable,
 		missing = missing,
+		itemKey = itemKey,
 		signature = sig,
 		ruleIndex = ruleIndex,
 		sourcePage = AVM.queryPage,
@@ -358,16 +370,18 @@ local function avm_page_has_positive()
 end
 
 
-local function avm_market_item_id(i)
-	local link = GetAuctionItemLink("list", i)
-	if not link then return nil end
-	local _,_,id = string.find(link, "item:(%d+)")
-	return tonumber(id)
-end
-
-local function avm_market_key(name, itemId)
-	if itemId then return tostring(itemId) end
-	return "n:" .. string.lower(name or "?")
+local function avm_market_identity(i, name)
+	local itemKey = avm_item_link_key(i)
+	if itemKey ~= "" then
+		local parts = avm_split(itemKey, ":")
+		local itemId = tonumber(parts[2])
+		local enchantId = tonumber(parts[3]) or 0
+		local suffixId = tonumber(parts[4]) or 0
+		if itemId then
+			return itemId, tostring(itemId) .. ":" .. tostring(enchantId) .. ":" .. tostring(suffixId)
+		end
+	end
+	return nil, "n:" .. string.lower(name or "?")
 end
 
 local function avm_market_percentile(prices, fraction)
@@ -379,9 +393,57 @@ local function avm_market_percentile(prices, fraction)
 	return prices[pos] or 0
 end
 
+local function avm_market_encode_history(row)
+	return table.concat({
+		tostring(row.t or 0),
+		tostring(row.auctions or 0),
+		tostring(row.units or 0),
+		tostring(row.min or 0),
+		tostring(row.p25 or 0),
+		tostring(row.median or 0),
+		tostring(row.p75 or 0),
+		tostring(row.max or 0),
+		tostring(row.avg or 0),
+		tostring(row.weighted or 0),
+		tostring(row.netDown or row.gone or 0),
+	}, ",")
+end
+
+local function avm_market_decode_history(value)
+	if type(value) == "table" then
+		return {
+			t = tonumber(value.t) or 0,
+			auctions = tonumber(value.auctions) or 0,
+			units = tonumber(value.units) or 0,
+			min = tonumber(value.min) or 0,
+			p25 = tonumber(value.p25) or 0,
+			median = tonumber(value.median) or 0,
+			p75 = tonumber(value.p75) or 0,
+			max = tonumber(value.max) or 0,
+			avg = tonumber(value.avg) or 0,
+			weighted = tonumber(value.weighted) or 0,
+			netDown = tonumber(value.netDown or value.gone) or 0,
+		}
+	end
+	local p = avm_split(tostring(value or ""), ",")
+	return {
+		t = tonumber(p[1]) or 0,
+		auctions = tonumber(p[2]) or 0,
+		units = tonumber(p[3]) or 0,
+		min = tonumber(p[4]) or 0,
+		p25 = tonumber(p[5]) or 0,
+		median = tonumber(p[6]) or 0,
+		p75 = tonumber(p[7]) or 0,
+		max = tonumber(p[8]) or 0,
+		avg = tonumber(p[9]) or 0,
+		weighted = tonumber(p[10]) or 0,
+		netDown = tonumber(p[11]) or 0,
+	}
+end
+
 local function avm_market_push_history(dbrow, row)
 	if not dbrow.history then dbrow.history = {} end
-	table.insert(dbrow.history, row)
+	table.insert(dbrow.history, avm_market_encode_history(row))
 	local keep = tonumber(AVM_DB.marketRetention) or 24
 	if keep < 1 then keep = 1 end
 	while table.getn(dbrow.history) > keep do
@@ -394,8 +456,7 @@ local function avm_market_aggregate_page()
 	for i = 1, n do
 		local name,_,count,quality,_,level,_,_,buyout = GetAuctionItemInfo("list", i)
 		if name and count and count > 0 and buyout and buyout > 0 then
-			local itemId = avm_market_item_id(i)
-			local key = avm_market_key(name, itemId)
+			local itemId, key = avm_market_identity(i, name)
 			local unit = math.floor(buyout / count)
 			local a = AVM.market.items[key]
 			if not a then
@@ -452,10 +513,10 @@ local function avm_market_finish(save, reason)
 			dbrow.itemId = a.itemId
 			local prev = nil
 			if dbrow.history and table.getn(dbrow.history) > 0 then
-				prev = dbrow.history[table.getn(dbrow.history)]
+				prev = avm_market_decode_history(dbrow.history[table.getn(dbrow.history)])
 			end
-			local gone = 0
-			if prev and prev.units and prev.units > a.units then gone = prev.units - a.units end
+			local netDown = 0
+			if prev and prev.units and prev.units > a.units then netDown = prev.units - a.units end
 			avm_market_push_history(dbrow, {
 				t = stamp,
 				auctions = a.auctions,
@@ -467,28 +528,29 @@ local function avm_market_finish(save, reason)
 				max = a.maxUnit or 0,
 				avg = avg,
 				weighted = weighted,
-				gone = gone,
+				netDown = netDown,
 			})
 			seen[key] = true
 			itemCount = itemCount + 1
 		end
 
 		-- Record a zero observation only when an item existed in the previous
-		-- snapshot and is now absent. "gone" is a turnover proxy, not a proven sale.
+		-- snapshot and is now absent. netDown is only a net supply-decrease proxy.
 		for key,dbrow in pairs(AVM_DB.marketDB) do
 			if not seen[key] and dbrow.history and table.getn(dbrow.history) > 0 then
-				local prev = dbrow.history[table.getn(dbrow.history)]
+				local prev = avm_market_decode_history(dbrow.history[table.getn(dbrow.history)])
 				if prev and prev.auctions and prev.auctions > 0 then
 					avm_market_push_history(dbrow, {
 						t = stamp, auctions = 0, units = 0,
 						min = 0, p25 = 0, median = 0, p75 = 0, max = 0,
-						avg = 0, weighted = 0, gone = prev.units or 0,
+						avg = 0, weighted = 0, netDown = prev.units or 0,
 					})
 				end
 			end
 		end
 
 		AVM_DB.marketMeta.lastScanAt = stamp
+		AVM_DB.marketMeta.retryAfter = 0
 		AVM_DB.marketMeta.boundary = m.boundary
 		AVM_DB.marketMeta.lastPage = m.lastPage
 		AVM_DB.marketMeta.items = itemCount
@@ -502,7 +564,11 @@ local function avm_market_finish(save, reason)
 			" pages=" .. tostring((m.lastPage or 0) - (m.boundary or 0) + 1) ..
 			" duration=" .. string.format("%.1f", AVM_DB.marketMeta.duration) .. "s")
 	else
-		avm_print("MARKET stopped: " .. tostring(reason or "cancelled"))
+		local retry = tonumber(AVM_DB.marketRetrySeconds) or 300
+		if retry < 30 then retry = 30 end
+		AVM_DB.marketMeta.retryAfter = time() + retry
+		avm_print("MARKET stopped: " .. tostring(reason or "cancelled") ..
+			"; auto retry backoff=" .. tostring(retry) .. "s")
 	end
 
 	m.active = false
@@ -698,8 +764,11 @@ local function avm_market_auto_due()
 	local mins = tonumber(AVM_DB.marketAutoMinutes) or 0
 	if mins <= 0 then return false end
 	if AVM.market.active or AVM.market.requested or AVM_DB.live or AVM.pending or AVM.unknown then return false end
+	local now = time()
+	local retryAfter = tonumber(AVM_DB.marketMeta.retryAfter) or 0
+	if retryAfter > now then return false end
 	local last = tonumber(AVM_DB.marketMeta.lastScanAt) or 0
-	return last == 0 or (time() - last) >= mins * 60
+	return last == 0 or (now - last) >= mins * 60
 end
 
 local function avm_market_show_status()
@@ -715,7 +784,8 @@ local function avm_market_show_status()
 		" auctions=" .. tostring(meta.auctions or 0) ..
 		" units=" .. tostring(meta.units or 0) ..
 		" retention=" .. tostring(AVM_DB.marketRetention or 24) ..
-		" lastScan=" .. tostring(meta.lastScanAt or 0))
+		" lastScan=" .. tostring(meta.lastScanAt or 0) ..
+		" retryAfter=" .. tostring(meta.retryAfter or 0))
 end
 
 local function avm_market_show_item(name)
@@ -738,7 +808,7 @@ local function avm_market_show_item(name)
 		return
 	end
 	local n = table.getn(found.history)
-	local row = found.history[n]
+	local row = avm_market_decode_history(found.history[n])
 	avm_print("MARKET " .. tostring(found.name) .. " snapshots=" .. n ..
 		" auctions=" .. tostring(row.auctions or 0) ..
 		" units=" .. tostring(row.units or 0) ..
@@ -747,16 +817,16 @@ local function avm_market_show_item(name)
 		" p25/p75=" .. avm_money(row.p25 or 0) .. "/" .. avm_money(row.p75 or 0))
 	avm_print("MARKET avg=" .. avm_money(row.avg or 0) ..
 		" weighted=" .. avm_money(row.weighted or 0) ..
-		" disappearedUnits=" .. tostring(row.gone or 0) ..
-		" (turnover proxy, not proven sales)")
+		" netDownUnits=" .. tostring(row.netDown or 0) ..
+		" (net supply decrease; not proven sales)")
 	local first = n - 3
 	if first < 1 then first = 1 end
 	for i = first, n - 1 do
-		local h = found.history[i]
+		local h = avm_market_decode_history(found.history[i])
 		avm_print("  prev t=" .. tostring(h.t or 0) ..
 			" median=" .. avm_money(h.median or 0) ..
 			" units=" .. tostring(h.units or 0) ..
-			" gone=" .. tostring(h.gone or 0))
+			" netDown=" .. tostring(h.netDown or 0))
 	end
 end
 
@@ -831,7 +901,8 @@ local function avm_revalidate_candidate()
 	for i = 1, n do
 		local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
 		if name and buyout and buyout > 0 then
-			local sig = avm_signature(name, count, buyout, owner, quality, level)
+			local itemKey = avm_item_link_key(i)
+			local sig = avm_signature(name, count, buyout, owner, quality, level, itemKey)
 			if sig == c.signature then
 				c.index = i
 				c.revalidatedAt = GetTime()
@@ -1309,13 +1380,22 @@ local function avm_slash(msg)
 		avm_print("scanner ON")
 	elseif cmd == "off" then
 		AVM_DB.enabled = false
+		AVM_DB.live = false
 		AVM.queryInFlight = false
 		AVM.phase = "IDLE"
-		avm_print("scanner OFF")
+		AVM.market.requested = false
+		if AVM.market.active then AVM.market.stopRequested = true end
+		avm_print("scanner/LIVE OFF")
 	elseif cmd == "live" then
 		if string.lower(avm_trim(rest)) == "on" then
-			AVM_DB.live = true
-			avm_print("LIVE ON - qualifying revalidated auctions may be bought")
+			if not AVM.open then
+				avm_print("LIVE requires open Auction House")
+			elseif AVM.market.active or AVM.market.requested then
+				avm_print("LIVE blocked while MARKET owns/requests the AH scheduler")
+			else
+				AVM_DB.live = true
+				avm_print("LIVE ON - qualifying revalidated auctions may be bought")
+			end
 		else
 			AVM_DB.live = false
 			avm_print("LIVE OFF - dry-run only")
@@ -1364,6 +1444,11 @@ local function avm_slash(msg)
 			avm_print("maxbuys must be 1..100")
 		end
 	elseif cmd == "reset" then
+		if AVM.market.active or AVM.market.requested or AVM.pending or AVM.unknown then
+			avm_print("reset blocked while MARKET or purchase transaction is active")
+			return
+		end
+		AVM_DB.live = false
 		AVM.sessionSpend = 0
 		AVM.sessionBuys = 0
 		AVM.recent = {}
@@ -1397,6 +1482,8 @@ frame:RegisterEvent("UI_ERROR_MESSAGE")
 frame:SetScript("OnEvent", function()
 	if event == "ADDON_LOADED" and arg1 == "AuxVmangos" then
 		avm_defaults()
+		-- LIVE is intentionally session-only; never carry an armed state across reload/login.
+		AVM_DB.live = false
 		SLASH_AUXVMANGOS1 = "/avm"
 		SlashCmdList["AUXVMANGOS"] = avm_slash
 		avm_print("loaded " .. AVM_VERSION .. " - DRY-RUN default")
@@ -1410,6 +1497,7 @@ frame:SetScript("OnEvent", function()
 		avm_restart_boundary(false)
 		if AVM_DB.enabled then avm_print("AH open; cached boundary verification armed") end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
+		AVM_DB.live = false
 		if AVM.market.active or AVM.market.requested then
 			AVM.market.active = false
 			AVM.market.requested = false

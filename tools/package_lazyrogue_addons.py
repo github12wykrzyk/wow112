@@ -2,12 +2,14 @@
 """Deterministic repo-managed addon ZIP for the parallel candidate."""
 import argparse
 import hashlib
+import json
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 LAZY_BASE = ROOT / "src/LazyScript/upstream/Addons"
 LOCAL_BASE = ROOT / "src/AddOns"
+MANIFEST = ROOT / "runtime/parallel_candidate.json"
 CORE_ADDONS = ("LazyScript", "LazyRogue", "LazyWarlock")
 ALLOWED_EXTENSIONS = {
     ".lua", ".toc", ".xml",
@@ -22,33 +24,52 @@ def has_root_toc(root):
     return any(path.is_file() and path.suffix.lower() == ".toc" for path in root.iterdir())
 
 
+def declared_addon_roots():
+    data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    addons = data.get("addons")
+    roots = addons.get("roots") if isinstance(addons, dict) else None
+    if not isinstance(roots, list) or not roots or not all(isinstance(x, str) and x for x in roots):
+        raise SystemExit("parallel candidate manifest has invalid addon roots")
+    lowered = [x.lower() for x in roots]
+    if len(lowered) != len(set(lowered)):
+        raise SystemExit("parallel candidate manifest has duplicate addon roots")
+    missing_core = [name for name in CORE_ADDONS if name.lower() not in set(lowered)]
+    if missing_core:
+        raise SystemExit("parallel candidate manifest omits required core addons: " + ",".join(missing_core))
+    return roots
+
+
 def discover_addons():
     sources = {}
     seen = set()
+    roots = declared_addon_roots()
 
-    def add(name, path, required):
+    for name in roots:
         key = name.lower()
         if key in seen:
             raise SystemExit("duplicate addon folder name: " + name)
-        if not path.is_dir():
-            if required:
-                raise SystemExit("required addon source missing: " + str(path))
-            return
+
+        candidates = []
+        lazy = LAZY_BASE / name
+        local = LOCAL_BASE / name
+        if lazy.is_dir():
+            candidates.append(lazy)
+        if local.is_dir():
+            candidates.append(local)
+        if len(candidates) != 1:
+            raise SystemExit(
+                "declared addon root must resolve to exactly one source directory: "
+                + name + " -> " + ",".join(str(x) for x in candidates)
+            )
+
+        path = candidates[0]
         if not has_root_toc(path):
-            if required:
-                raise SystemExit("required addon has no root .toc: " + str(path))
-            return
+            raise SystemExit("declared addon has no root .toc: " + str(path))
         seen.add(key)
         sources[name] = path
 
-    for name in CORE_ADDONS:
-        add(name, LAZY_BASE / name, True)
-
-    if LOCAL_BASE.is_dir():
-        for path in sorted(LOCAL_BASE.iterdir(), key=lambda p: p.name.lower()):
-            if path.is_dir():
-                add(path.name, path, False)
-
+    if set(name.lower() for name in sources) != set(name.lower() for name in roots):
+        raise SystemExit("packaged addon roots differ from parallel candidate manifest")
     return sources
 
 
