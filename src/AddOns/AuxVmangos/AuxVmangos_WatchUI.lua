@@ -66,7 +66,7 @@ local function row_from_db(index)
 	syncingRows = false
 end
 
-local function commit_row(index)
+local function commit_row(index, refreshUi)
 	if syncingRows then return end
 	local ui = rows[index]
 	local old = API.GetRule(index)
@@ -89,7 +89,7 @@ local function commit_row(index)
 		minStack = minStack,
 		maxStack = maxStack,
 	})
-	row_from_db(index)
+	if refreshUi then row_from_db(index) end
 end
 
 local function refresh_rows()
@@ -219,17 +219,17 @@ local function create_panel()
 		ui.minStack = new_edit(panel, "AuxVmangosWatchMin" .. rowIndex, 540, y, 42)
 		ui.maxStack = new_edit(panel, "AuxVmangosWatchMax" .. rowIndex, 602, y, 42)
 
-		ui.enabled:SetScript("OnClick", function() commit_row(rowIndex) end)
-		ui.partial:SetScript("OnClick", function() commit_row(rowIndex) end)
+		ui.enabled:SetScript("OnClick", function() commit_row(rowIndex, true) end)
+		ui.partial:SetScript("OnClick", function() commit_row(rowIndex, true) end)
 
 		local function bind_edit(edit)
 			edit:SetScript("OnEnterPressed", function()
-				commit_row(rowIndex)
+				commit_row(rowIndex, true)
 				this:ClearFocus()
 			end)
-			edit:SetScript("OnEditFocusLost", function() commit_row(rowIndex) end)
+			edit:SetScript("OnEditFocusLost", function() commit_row(rowIndex, true) end)
 			edit:SetScript("OnTextChanged", function()
-				if not syncingRows then commit_row(rowIndex) end
+				if not syncingRows then commit_row(rowIndex, false) end
 			end)
 		end
 		bind_edit(ui.item)
