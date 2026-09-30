@@ -1537,6 +1537,26 @@
       ],
       "package": null,
       "notes": "Long-range soak after 75ms showed 10.8% miss and 50ms 62.2% miss on 500-query stages. Sends 500 distinct pages each at 75,90,100,110,125,150ms with 10s drain and stock Browse UI detached, to locate best long-run interval and effective throughput. Integrated candidate based on current parallel 0594e866; full exact-parallel candidate verification pending."
+    },
+    {
+      "id": "ah-retry-model-75-vs-110",
+      "branch": "feature/ah-retry-model-75-vs-110",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-soak-range-75-150"
+      ],
+      "shared_resources": [
+        "AUCTION_ITEM_LIST_UPDATE",
+        "existing WoWAHThrottleNative_5875_v4_RANGE sender"
+      ],
+      "status": "in_progress",
+      "observed_head": "c8d168457c1a8e139c2138a89423250ef2ee9cd8",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Addon-only decision benchmark. Reuses the already verified V4 native range sender unchanged. After the 500-query stages it compares measured 75ms miss count with the measured 110ms lossless reference and computes projected request-schedule time for 75ms burst plus selective retry of exactly the missing pages at 110ms versus a full 110ms scan. This is a projection until exact missing-page correlation is implemented."
     }
   ]
 }

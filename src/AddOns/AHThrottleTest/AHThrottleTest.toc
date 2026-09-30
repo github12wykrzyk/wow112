@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: AHThrottleTest
-## Notes: Long-run native Auction House soak benchmark for WoW 1.12.1.
+## Notes: AH throughput benchmark with 75ms burst + 110ms selective-retry model.
 ## Author: github12wykrzyk/wow112
-## Version: 1.5-soak-range
+## Version: 1.6-retry-model
 ## SavedVariables: AHThrottleTestDB
 
 AHThrottleTest.lua

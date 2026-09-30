@@ -1,4 +1,4 @@
--- AHThrottleTest v1.5 range soak benchmark for WoW 1.12.1 build 5875.
+-- AHThrottleTest v1.6 retry-model benchmark for WoW 1.12.1 build 5875.
 -- Uses WoWAHThrottleNative_5875_v4_RANGE sender. Never bids or buys.
 AHThrottleTestDB = AHThrottleTestDB or {}
 
@@ -41,7 +41,7 @@ end
 local function saveReport()
     AHThrottleTestDB.last={
         timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
-        mode="soak-range-75-150",
+        mode="retry-model-75-vs-110",
         results=AHT.bench.results
     }
 end
@@ -107,8 +107,53 @@ function AHThrottleTest_BenchFinished()
         out("BEST EFFECTIVE RAW = "..tostring(best.intervalMs).."ms ~= "..fmt(best.effective)..
             " auc/s przy miss="..fmt(best.lossPct).."%")
     end
+    local r75=nil
+    local r110=nil
+    for i=1,table.getn(AHT.bench.results) do
+        r=AHT.bench.results[i]
+        if r.intervalMs==75 then r75=r end
+        if r.intervalMs==110 then r110=r end
+    end
+    if r75 and r110 then
+        out("=== SELECTIVE RETRY MODEL ===")
+        local retryCount=r75.missing or 0
+        local burstSendMs=r75.sent*75
+        local retrySendMs=retryCount*110
+        local projectedSendMs=burstSendMs+retrySendMs
+        local baselineSendMs=r110.sent*110
+        local gainMs=baselineSendMs-projectedSendMs
+        local gainPct=baselineSendMs>0 and (gainMs*100/baselineSendMs) or 0
+        local retrySafe=(r110.missing==0)
+        out("75ms burst: missing="..tostring(retryCount).."/"..tostring(r75.sent)..
+            " ("..fmt(r75.lossPct).."%)")
+        out("110ms reference: missing="..tostring(r110.missing).."/"..tostring(r110.sent)..
+            " ("..fmt(r110.lossPct).."%)")
+        out("Projected request schedule: 75ms burst + "..tostring(retryCount)..
+            " retry @110ms = "..fmt(projectedSendMs/1000).."s")
+        out("Full 110ms request schedule = "..fmt(baselineSendMs/1000).."s")
+        out("Projected gain = "..fmt(gainMs/1000).."s ("..fmt(gainPct).."%)")
+        if retrySafe and gainMs>0 then
+            out("MODEL VERDICT: 75ms + selective retry is faster, assuming missing pages can be identified exactly.")
+        elseif not retrySafe then
+            out("MODEL VERDICT: 110ms was not lossless in this run; retry floor needs a safer interval.")
+        else
+            out("MODEL VERDICT: full 110ms is not slower in this run.")
+        end
+        AHThrottleTestDB.lastRetryModel={
+            timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
+            burstIntervalMs=75,
+            retryIntervalMs=110,
+            burstMissing=retryCount,
+            referenceMissing=r110.missing,
+            projectedSendMs=projectedSendMs,
+            baselineSendMs=baselineSendMs,
+            gainMs=gainMs,
+            gainPct=gainPct,
+            retrySafe=retrySafe
+        }
+    end
     saveReport();restoreBrowse();AHT.bench.running=false
-    out("Wynik zapisany do AHThrottleTestDB.last")
+    out("Wynik zapisany do AHThrottleTestDB.last + lastRetryModel")
 end
 
 function AHThrottleTest_BenchAbort(reason)
@@ -151,4 +196,4 @@ SlashCmdList["AHTHROTTLETEST"]=function(msg)
     else out("/ahtest soak | status | last") end
 end
 
-out("loaded v1.5 SOAK RANGE 75/90/100/110/125/150. /ahtest soak -> F5.")
+out("loaded v1.6 RETRY MODEL. /ahtest soak -> F5.")
