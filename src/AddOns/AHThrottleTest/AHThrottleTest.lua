@@ -1,5 +1,5 @@
--- AHThrottleTest v1.4 soak benchmark for WoW 1.12.1 build 5875.
--- Uses WoWAHThrottleNative_5875_v3_SOAK sender. Never bids or buys.
+-- AHThrottleTest v1.5 range soak benchmark for WoW 1.12.1 build 5875.
+-- Uses WoWAHThrottleNative_5875_v4_RANGE sender. Never bids or buys.
 AHThrottleTestDB = AHThrottleTestDB or {}
 
 local AHT={open=false,bench={running=false,stageActive=false,stage=0,intervalMs=0,expected=0,rawEvents=0,results={},browseWasDetached=false,startedAt=0}}
@@ -41,7 +41,7 @@ end
 local function saveReport()
     AHThrottleTestDB.last={
         timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
-        mode="soak-75-50",
+        mode="soak-range-75-150",
         results=AHT.bench.results
     }
 end
@@ -58,8 +58,8 @@ function AHThrottleTest_BenchNativeStart()
     if canSend()~=true then out("SOAK: poczekaj az Search bedzie aktywny i nacisnij F5 ponownie.");return end
     resetBench()
     AHT.bench.running=true;AHT.bench.startedAt=now();detachBrowse()
-    out("=== AH SOAK 75ms vs 50ms ===")
-    out("2 x 500 query. Nie klikaj AH; test potrwa ok. 80-100 s.")
+    out("=== AH SOAK RANGE 75-150ms ===")
+    out("6 x 500 query. Nie klikaj AH; test potrwa ok. 6-7 min.")
     local ok,err=pcall(QueryAuctionItems,"",nil,nil,0,0,0,0,false,0,false)
     if not ok then out("SOAK baseline ERROR: "..tostring(err));resetBench() end
 end
@@ -151,4 +151,4 @@ SlashCmdList["AHTHROTTLETEST"]=function(msg)
     else out("/ahtest soak | status | last") end
 end
 
-out("loaded v1.4 SOAK 75/50. /ahtest soak -> F5.")
+out("loaded v1.5 SOAK RANGE 75/90/100/110/125/150. /ahtest soak -> F5.")
