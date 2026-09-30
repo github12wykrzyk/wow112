@@ -23,6 +23,12 @@ The sections below describe the shared engine; their older TEST/STABLE labels re
 
 ---
 
+## Updater 2.9-parallel.8 — AddOn hot update
+
+- Zwykła aktualizacja najpierw weryfikuje i porównuje paczkę. Jeżeli EXE oraz wszystkie aktywne DLL są już zgodne, a zmieniają się wyłącznie pliki pod `Interface/AddOns/`, działające instancje WoW pozostają uruchomione.
+- Jeżeli rzeczywisty plan zapisu obejmuje EXE, DLL, `dlls.txt` albo inny plik runtime, dotychczasowy wymóg zamknięcia WoW pozostaje bez zmian. Bezpośrednio przed zapisem działa drugi guard oparty na faktycznie zmienianych/usuwanych ścieżkach.
+- `UPDATE + PLAY` po hot-update AddOnów nie uruchamia drugiej instancji WoW, jeśli istniejąca instancja nadal działa. Zmiany Lua na dysku wymagają `/reload` lub ponownego wejścia do gry, aby klient je wczytał.
+
 # WoW112Updater
 
 Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository.

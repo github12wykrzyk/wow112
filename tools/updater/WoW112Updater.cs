@@ -294,8 +294,6 @@ namespace WoW112Updater
             {
                 ValidateInputs();
                 var updateRoot = gameDir.Text.Trim();
-                if (!ConfirmCloseRunningGameForUpdate(updateRoot))
-                    return;
 
                 SaveConfig(false);
                 SetBusy(true, "Pobieranie najnowszej paczki...");
@@ -304,6 +302,19 @@ namespace WoW112Updater
                 var innerBytes = await GetVerifiedPackageBytesAsync(lastRemote);
                 InspectDllPackage(innerBytes, gameDir.Text.Trim());
                 ShowRemoteDllSummary();
+
+                var runtimeNeedsUpdate = lastExeInspection == null || lastExeInspection.HasChange
+                    || LastEnabledDllChangeCount > 0;
+                if (runtimeNeedsUpdate)
+                {
+                    if (!ConfirmCloseRunningGameForUpdate(updateRoot))
+                        return;
+                }
+                else if (IsGameRunning(updateRoot))
+                {
+                    Log("HOT UPDATE: zmiany dotyczą wyłącznie AddOnów; pozostawiam uruchomione instancje WoW.");
+                }
+
                 // A newer push can happen during download or while comparing local DLLs.
                 // Recheck immediately before applying any changes or writing a backup.
                 await EnsureCurrentParallelHeadAsync(lastRemote);
@@ -337,11 +348,17 @@ namespace WoW112Updater
 
         private async Task UpdateAndPlayAsync()
         {
-            // Do not silently keep stale Interface/AddOns files when WoW is
-            // already running. UpdateAsync owns the close-game confirmation.
+            var root = gameDir.Text.Trim();
+            var gameWasRunning = Directory.Exists(root) && IsGameRunning(root);
             await UpdateAsync();
             if (!status.Text.StartsWith("Aktualizacja nie powiodła", StringComparison.OrdinalIgnoreCase))
             {
+                if (gameWasRunning && IsGameRunning(root))
+                {
+                    status.Text = "Gotowe. AddOny zaktualizowane bez zamykania WoW.";
+                    Log("UPDATE + PLAY: istniejąca instancja WoW pozostała uruchomiona; nie uruchamiam drugiej.");
+                    return;
+                }
                 status.Text = "Gotowe. Uruchamiam WoW...";
                 LaunchGame();
             }
@@ -617,7 +634,6 @@ namespace WoW112Updater
 
         private ApplyResult ApplyPackage(byte[] packageBytes, RemotePackageInfo remote, string root, IList<UpdaterAddonAsset> addonFiles)
         {
-            if (IsGameRunning(root)) throw new InvalidOperationException("Gra działa. Zamknij WoW przed instalacją.");
             var files = new List<PackageFile>();
             var packageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using (var ms = new MemoryStream(packageBytes, false))
@@ -723,10 +739,17 @@ namespace WoW112Updater
                 && File.Exists(SafeDestination(root, name))
                 && (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || IsDllInstallDisabled(name) || IsDllUpdateEnabled(name))).ToList();
 
+            var touchedNames = changed.Select(f => f.Name).Concat(stale).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var runtimeChanges = touchedNames.Any(name => !UpdaterAddons.IsAddonPath(name));
+            if (runtimeChanges && IsGameRunning(root))
+                throw new InvalidOperationException("Gra działa, a aktualizacja obejmuje EXE/DLL lub pliki runtime. Zamknij WoW przed instalacją.");
+            if (!runtimeChanges && touchedNames.Count > 0 && IsGameRunning(root))
+                Log("HOT UPDATE: zapisuję wyłącznie Interface/AddOns przy uruchomionym WoW.");
+
             var backupDir = string.Empty;
-            if (changed.Count > 0 || stale.Count > 0)
+            if (touchedNames.Count > 0)
             {
-                backupDir = CreateBackup(root, changed.Select(f => f.Name).Concat(stale).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), oldState, remote);
+                backupDir = CreateBackup(root, touchedNames, oldState, remote);
             }
 
             try

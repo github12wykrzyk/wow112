@@ -894,6 +894,25 @@
       ],
       "package": null,
       "notes": "Standalone AH throttle diagnostic. Does not modify AuxVmangos and never buys. Controlled query pairs test 5.2s, 2s, 1s, 500ms and 250ms intervals while logging CanSendAuctionQuery plus actual AUCTION_ITEM_LIST_UPDATE latency. Integrated candidate includes AHThrottleTest in the parallel addon package manifest; full parallel candidate verification is pending."
+    },
+    {
+      "id": "updater-addon-hot-update",
+      "branch": "feature/updater-addon-hot-update",
+      "modules": [
+        "Updater"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "Parallel updater install planner",
+        "Interface/AddOns hot-update path",
+        "running WoW process guard"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1eb5ffb59324863c728302236bb86f66d503aaa1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Updater 2.9-parallel.8 allows installation while WoW is running only when the actual touched paths are exclusively Interface/AddOns. EXE/DLL/dlls.txt/other runtime changes retain the close-game guard. UPDATE + PLAY does not launch a duplicate client after an addon-only hot update. Gameplay/UI validation pending."
     }
   ]
 }
