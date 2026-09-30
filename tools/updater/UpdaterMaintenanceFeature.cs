@@ -35,6 +35,7 @@ namespace WoW112Updater
             private const string Repo = "wow112";
             private const string ApiRoot = "https://api.github.com/repos/" + Owner + "/" + Repo;
             private const string UpdaterWorkflowName = "Build WoW112 updater";
+            private const string UpdaterWorkflowFile = "build_updater.yml";
             private const string UpdaterArtifactPrefix = "WoW112ParallelUpdater-";
             private const int AddedHeight = 62;
             private const int MaxBackups = 10;
@@ -359,7 +360,13 @@ namespace WoW112Updater
                 var branch = "parallel";
                 using (var client = CreateClient())
                 {
-                    var runs = AsArray(GetValue(AsDictionary(json.DeserializeObject(await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50"))), "workflow_runs"));
+                    // Query updater runs directly. The generic /actions/runs feed is shared
+                    // by every workflow and can push updater runs out of a small result window
+                    // on busy Parallel development days.
+                    var runsUrl = ApiRoot + "/actions/workflows/" + UpdaterWorkflowFile
+                        + "/runs?branch=" + branch + "&per_page=20";
+                    var runs = AsArray(GetValue(AsDictionary(json.DeserializeObject(
+                        await GetStringAsync(client, runsUrl))), "workflow_runs"));
                     var chosen = UpdaterSafety.RequireLatestSuccessfulRun(runs, UpdaterWorkflowName, branch);
 
                     var runId = GetLong(chosen, "id");

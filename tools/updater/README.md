@@ -23,6 +23,11 @@ The sections below describe the shared engine; their older TEST/STABLE labels re
 
 ---
 
+## Updater 2.9-parallel.8 — self-update workflow lookup fix
+
+- Self-update no longer scans the shared `/actions/runs` feed for `Build WoW112 updater`. On active development days unrelated workflows can occupy the first 50 rows and make the updater falsely report that its workflow does not exist.
+- The updater now queries `.github/workflows/build_updater.yml` directly for `parallel` runs, then keeps the existing exact-run status, artifact name, provenance, SHA256 and x86 validation gates.
+
 # WoW112Updater
 
 Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository.
