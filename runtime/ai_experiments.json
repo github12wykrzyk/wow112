@@ -1158,17 +1158,9 @@
       "status": "accepted",
       "observed_head": "7b8acc5774d4061a8921e6f345ebdadad92ea87f",
       "verified_commit": null,
-      "tests": [
-        {
-          "kind": "game",
-          "result": "passed",
-          "commit": "7fc438d263cc22a2876f16db33c8328f5958e2b7",
-          "date": "2026-09-30",
-          "evidence": "User tested Stock logout, Switch slot 1 and Switch slot 2. All reached the normal server 'Please wait 20 seconds' logout path; slot automation itself worked after logout."
-        }
-      ],
+      "tests": [],
       "package": null,
-      "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. Depends on the verified AutoLoginBridge character-select path. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence. Gameplay confirms all V1 buttons use stock Logout() and therefore cannot bypass the server-enforced wait."
+      "notes": "Diagnostic-only V1. On exact tested parallel SHA 7fc438d263cc22a2876f16db33c8328f5958e2b7 the user tested Stock logout, Switch slot 1 and Switch slot 2; all three reached the normal server 'Please wait 20 seconds' logout path, while slot automation worked after logout. Therefore V1 established that stock Logout() cannot bypass the server wait and is superseded functionally by V2 research."
     },
     {
       "id": "ah-native-max-throughput",
