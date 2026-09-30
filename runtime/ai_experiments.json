@@ -1161,6 +1161,30 @@
       "tests": [],
       "package": null,
       "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. Depends on the verified AutoLoginBridge character-select path. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence."
+    },
+    {
+      "id": "ah-native-max-throughput",
+      "branch": "feature/ah-native-max-throughput",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-native-throttle-diagnostic"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 ClientServices::Send entry 0x005AB630",
+        "existing Parallel outbound send-hook chain",
+        "CMSG_AUCTION_LIST_ITEMS opcode 0x0258",
+        "Vanilla listfrom payload field at raw+12 after 4-byte opcode",
+        "AUCTION_ITEM_LIST_UPDATE"
+      ],
+      "status": "in_progress",
+      "observed_head": "7fc438d263cc22a2876f16db33c8328f5958e2b7",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos."
     }
   ]
 }

@@ -80,10 +80,10 @@
       "profile": "clangcl_i686_crtless"
     },
     {
-      "runtime_name": "WoWAHThrottleNative_5875_v1.dll",
+      "runtime_name": "WoWAHThrottleNative_5875_v2.dll",
       "builder": "tools/build_ahthrottle_native_candidate.py",
       "sources": [
-        "src/AHThrottleNative/WoWAHThrottleNative_5875_v1.c"
+        "src/AHThrottleNative/WoWAHThrottleNative_5875_v2.c"
       ],
       "profile": "clangcl_i686_crtless"
     },
