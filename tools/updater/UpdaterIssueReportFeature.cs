@@ -248,12 +248,6 @@ namespace WoW112Updater
                 else sb.AppendLine("No PositionalSpoof cast log found in game directory.");
                 sb.AppendLine();
                 sb.AppendLine("### PP fixed-point diagnostic (bounded tail)");
-                foreach (var auxFile in GetAuxVmangosSavedVariablesFiles(root))
-                {
-                    sb.AppendLine("AuxVmangos.lua");
-                    sb.AppendLine(File.GetLastWriteTimeUtc(auxFile).Ticks.ToString());
-                    sb.AppendLine(Sanitize(ExtractAuxVmangosDiagnostics(auxFile, 18000), root, 18000));
-                }
                 var ppFixedLog = Path.Combine(root, "PPFixedPoint_debug.log");
                 if (File.Exists(ppFixedLog))
                 {
@@ -345,6 +339,12 @@ namespace WoW112Updater
                         sb.AppendLine(Path.GetFileName(file));
                         sb.AppendLine(Sanitize(TailFile(file, 12000), root, 12000));
                     }
+                }
+                foreach (var auxFile in GetAuxVmangosSavedVariablesFiles(root))
+                {
+                    sb.AppendLine("AuxVmangos.lua");
+                    sb.AppendLine(File.GetLastWriteTimeUtc(auxFile).Ticks.ToString());
+                    sb.AppendLine(Sanitize(ExtractAuxVmangosDiagnostics(auxFile, 18000), root, 18000));
                 }
                 var ppFixedLog = Path.Combine(root, "PPFixedPoint_debug.log");
                 if (File.Exists(ppFixedLog))
