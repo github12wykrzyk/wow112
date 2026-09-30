@@ -680,9 +680,9 @@
         "AuxVmangos MarketScan scheduler arbitration",
         "parallel addon packager"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "9543486a441ec98fbcd56fb63ef880c3b6b58b91",
-      "verified_commit": "9543486a441ec98fbcd56fb63ef880c3b6b58b91",
+      "status": "awaiting_game_test",
+      "observed_head": "bb474200d75fc2594821a1713eb22b8ce3f53a8a",
+      "verified_commit": "bb474200d75fc2594821a1713eb22b8ce3f53a8a",
       "tests": [
         {
           "kind": "ci",
@@ -690,10 +690,28 @@
           "commit": "9543486a441ec98fbcd56fb63ef880c3b6b58b91",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36680507994 and Verify AI experiment registry run 36680508053 both passed on the exact 0.8 WATCH feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "bb474200d75fc2594821a1713eb22b8ce3f53a8a",
+          "date": "2026-09-30",
+          "evidence": "Integrated Parallel Build work candidate run 36680606391 and Verify AI experiment registry run 36680606334 both passed on exact SHA; FINAL_PACKAGE/addon/provenance gates completed successfully."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "bb474200d75fc2594821a1713eb22b8ce3f53a8a",
+          "date": "2026-09-30",
+          "evidence": "Successful exact-SHA candidate run 36680606391 produced artifact 11081009379 (WoW112-WORK-CANDIDATE-bb474200d75fc2594821a1713eb22b8ce3f53a8a)."
         }
       ],
-      "package": null,
-      "notes": "0.8 WATCH feature exact SHA 9543486a passed registry and parallel feature preflight. AuxVmangos remains sole AH scheduler owner; full positive-page per-rule scan selects global best unit price, revalidates before buy, 16-slot persistent GUI edits disarm LIVE, disabled/invalid rules are skipped, and LIVE requires at least one valid rule. Integrated parallel full candidate/package verification pending."
+      "package": {
+        "verified": true,
+        "commit": "bb474200d75fc2594821a1713eb22b8ce3f53a8a",
+        "artifact_id": 11081009379
+      },
+      "notes": "Integrated AuxVmangos 0.8 WATCH candidate passed full Parallel candidate/package gates at bb474200. AuxVmangos remains sole AH scheduler owner. Each active rule scans all positive filtered pages up to the 100-page cap, selects global best unit price, revalidates before buy, and exposes a 16-slot persistent WATCH GUI. Rule edits disarm LIVE; LIVE requires at least one valid rule. Gameplay validation pending."
     }
   ]
 }
