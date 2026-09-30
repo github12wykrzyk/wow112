@@ -34,3 +34,15 @@ AuxVmangos is the single active AH automation engine. Watchlist sniper, candidat
 Whole-market scans use the same vMaNGOS ordering evidence as the sniper: locate/cache the first page containing positive buyouts, skip the bid-only prefix, then scan through the final page. A cached global boundary is verified before a subsequent full scan and falls back to a fresh binary search when stale.
 
 AuctionSniper source remains in the repository as diagnostic/recovery evidence but is removed from the active parallel addon candidate for this experiment to avoid two addons competing for AUCTION_ITEM_LIST_UPDATE / QueryAuctionItems.
+
+
+## Audit hardening 0.7
+
+Static audit after unified 0.6 found three integration/safety issues and two data-quality issues:
+- the addon packager auto-discovered every src/AddOns directory instead of honoring parallel_candidate.json addon roots, so AuctionSniper could still be shipped beside AuxVmangos;
+- LIVE persisted in AVM_DB and could remain armed across reload/login;
+- AutoMarket failures had no retry backoff and could immediately requeue;
+- PriceDB keyed random-property items too coarsely by base item id;
+- historical "gone" units represented only a net supply decrease, not actual sales.
+
+0.7 fixes all five. Market snapshots remain rolling/non-atomic because the live AH can change during a full multi-page scan.

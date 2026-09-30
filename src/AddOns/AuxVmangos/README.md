@@ -1,4 +1,4 @@
-# AuxVmangos 0.6 unified market bot
+# AuxVmangos 0.7 unified market bot
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 (5875), designed around the observed upstream vMaNGOS auction implementation.
 
@@ -66,3 +66,13 @@ Commands:
 - /avm market clear
 
 AutoMarket runs only while the Auction House is open. A market scan automatically disarms LIVE before taking ownership of the AH query scheduler.
+
+
+## Audit hardening (0.7)
+
+- LIVE is session-only. Addon load/reload, closing the Auction House, /avm off and /avm reset disarm LIVE. /avm live on requires an open AH and is blocked while MarketScan owns or requests the scheduler.
+- AutoMarket failures set a retry backoff (default 300 seconds) so repeated query timeouts cannot create an immediate restart loop.
+- PriceDB history rows are stored as compact CSV-like strings instead of key-heavy Lua tables. Older table rows remain readable.
+- Market item grouping uses item id + enchant id + random-suffix id when available, preventing random-property gear from being merged only by base item id.
+- PriceDB reports netDownUnits (net decrease in listed units), not "disappeared sales". It is not proof of executed trades.
+- Candidate revalidation includes the exact auction item-link key when available, reducing the risk of buying a different random-suffix/enchant variant with otherwise identical row fields.
