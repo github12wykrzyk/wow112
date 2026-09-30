@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.40"
+local ADDON_VERSION = "1.41"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -50,6 +50,9 @@ SS.lastSummonRequestAt = -100000
 SS.lastSummonRequestName = nil
 SS.lastSummonError = ""
 SS.summonRequestSeq = 0
+SS.shardGuardPaused = false
+SS.shardGuardLastCount = -1
+SS.shardGuardNextCheckAt = 0
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -916,6 +919,23 @@ local function countSoulShards()
     return total
 end
 
+local function shardGuardThreshold()
+    local threshold = tonumber(SummonScoutDB.shardGuardMin) or 5
+    threshold = math.floor(threshold)
+    if threshold < 1 then threshold = 1 end
+    if threshold > 100 then threshold = 100 end
+    return threshold
+end
+
+local function shardGuardBlocked()
+    local shards = countSoulShards()
+    local threshold = shardGuardThreshold()
+    if not SummonScoutDB.shardGuardEnabled or shards < 0 then
+        return false, shards, threshold
+    end
+    return shards < threshold, shards, threshold
+end
+
 local function nativeSummonBridgeRequest(name)
     name = trim(name)
     if name == "" then return nil end
@@ -1486,6 +1506,9 @@ local function setDefaults()
         SummonScoutDB.paymentCount = 0
         SummonScoutDB.paymentLedgerVersion = 2
     end
+    if SummonScoutDB.shardGuardEnabled == nil then SummonScoutDB.shardGuardEnabled = false end
+    if SummonScoutDB.shardGuardMin == nil then SummonScoutDB.shardGuardMin = 5 end
+    SummonScoutDB.shardGuardMin = shardGuardThreshold()
     if SummonScoutDB.lastAdvertNormalized == nil then SummonScoutDB.lastAdvertNormalized = "" end
     if SummonScoutDB.lastAdvertWall == nil then SummonScoutDB.lastAdvertWall = 0 end
     ensureStats()
@@ -1512,6 +1535,9 @@ local function status()
         .. ", partySummon=" .. (SummonScoutDB.partyAutoSummon and "ON" or "OFF")
         .. ", summonWhisper=" .. (SummonScoutDB.summonWhisperEnabled and "ON" or "OFF")
         .. ", revenue=" .. formatMoney(SummonScoutDB.revenueCopper or 0)
+        .. ", shardGuard=" .. (SummonScoutDB.shardGuardEnabled and ("ON<" .. tostring(shardGuardThreshold())) or "OFF")
+        .. "/shards=" .. tostring(countSoulShards())
+        .. (SS.shardGuardPaused and "[PAUSED]" or "")
         .. ", queue=" .. tostring(table.getn(SS.queue)))
 end
 
@@ -1742,6 +1768,20 @@ local function guiSaveMaster()
     if guiRefresh then guiRefresh() end
 end
 
+local function guiSaveShardGuardMin()
+    local value = tonumber(trim(GUI.shardGuardMinEdit and GUI.shardGuardMinEdit:GetText() or ""))
+    if not value or value < 1 or value > 100 then
+        chat("Soul Shard threshold must be 1-100")
+        if GUI.shardGuardMinEdit then
+            GUI.shardGuardMinEdit:SetText(tostring(shardGuardThreshold()))
+        end
+        return
+    end
+    SummonScoutDB.shardGuardMin = math.floor(value)
+    chat("low-shard pause threshold -> " .. tostring(SummonScoutDB.shardGuardMin))
+    if guiRefresh then guiRefresh() end
+end
+
 local function guiSaveSummonWhisperCd()
     local seconds = tonumber(trim(GUI.summonWhisperCdEdit and GUI.summonWhisperCdEdit:GetText() or ""))
     if not seconds or seconds < 1 or seconds > 120 then
@@ -1844,15 +1884,22 @@ local function createGui()
             SummonScoutDB.counterScope = v and "all" or "same"
             clearCounterPending()
         end)
+    GUI.shardGuardCheck = guiCheck(f, 26, -302, "Low-shard global pause",
+        function() return SummonScoutDB.shardGuardEnabled end,
+        function(v) SummonScoutDB.shardGuardEnabled = v end)
+    guiText(f, "Below:", 190, -306, true)
+    GUI.shardGuardMinEdit = guiEdit(f, 232, -301, 38, tostring(shardGuardThreshold()))
+    GUI.shardGuardMinEdit:SetMaxLetters(3)
+    guiButton(f, 274, -301, 36, "Set", guiSaveShardGuardMin)
 
-    guiHeader(f, "Service / advert", 28, -314)
-    guiText(f, "Serve:", 28, -338, true)
-    GUI.serviceEdit = guiEdit(f, 80, -331, 155, SummonScoutDB.service or "all")
-    guiButton(f, 244, -331, 66, "Apply", guiApplyService)
+    guiHeader(f, "Service / advert", 28, -334)
+    guiText(f, "Serve:", 28, -358, true)
+    GUI.serviceEdit = guiEdit(f, 80, -351, 155, SummonScoutDB.service or "all")
+    guiButton(f, 244, -351, 66, "Apply", guiApplyService)
 
-    guiText(f, "World text:", 28, -370, true)
-    GUI.advertEdit = guiEdit(f, 100, -363, 210, SummonScoutDB.spamMessage or "")
-    guiButton(f, 244, -394, 66, "Save", guiSaveAdvert)
+    guiText(f, "World text:", 28, -390, true)
+    GUI.advertEdit = guiEdit(f, 100, -383, 210, SummonScoutDB.spamMessage or "")
+    guiButton(f, 244, -414, 66, "Save", guiSaveAdvert)
 
     guiHeader(f, "Master reporting", 370, -46)
     GUI.masterEnabledCheck = guiCheck(f, 368, -68, "Report to master character",
@@ -1887,6 +1934,7 @@ local function createGui()
     GUI.currentGoldText = guiText(f, "Current gold: 0c", 370, -374, true)
     GUI.counterText = guiText(f, "Counter: -", 370, -398, true)
     GUI.summonStateText = guiText(f, "Summon: idle", 370, -422, true)
+    GUI.shardGuardText = guiText(f, "Shard guard: OFF", 370, -446, true)
     guiButton(f, 586, -342, 92, "Reset total", function() clearPayments() end)
     GUI.stateText = guiText(f, "State: -", 28, -450, true)
     GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -524, true)
@@ -1902,7 +1950,7 @@ guiRefresh = function()
     local checks = {
         GUI.enabledCheck, GUI.inviteCheck, GUI.whisperInviteCheck,
         GUI.partySummonCheck, GUI.summonWhisperCheck, GUI.logCheck,
-        GUI.counterCheck, GUI.spamCheck, GUI.scopeCheck, GUI.masterEnabledCheck,
+        GUI.counterCheck, GUI.spamCheck, GUI.scopeCheck, GUI.shardGuardCheck, GUI.masterEnabledCheck,
         GUI.masterInviteCheck, GUI.masterPaymentCheck, GUI.masterLifecycleCheck, GUI.paymentChatCheck
     }
     local i
@@ -1913,6 +1961,9 @@ guiRefresh = function()
 
     if GUI.summonWhisperCdEdit and not GUI.summonWhisperCdEdit.ssFocused then
         GUI.summonWhisperCdEdit:SetText(tostring(SummonScoutDB.summonWhisperCooldown or 10))
+    end
+    if GUI.shardGuardMinEdit and not GUI.shardGuardMinEdit.ssFocused then
+        GUI.shardGuardMinEdit:SetText(tostring(shardGuardThreshold()))
     end
 
     if GUI.lastInviteText then
@@ -1946,6 +1997,13 @@ guiRefresh = function()
         GUI.summonStateText:SetText("Summon: " .. pendingName
             .. " | " .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "idle")
             .. (SS.lastSummonError ~= "" and (" | " .. SS.lastSummonError) or ""))
+    end
+    if GUI.shardGuardText then
+        local blocked, shards, threshold = shardGuardBlocked()
+        local guardState = SummonScoutDB.shardGuardEnabled and (blocked and "PAUSED" or "READY") or "OFF"
+        GUI.shardGuardText:SetText("Shard guard: " .. guardState
+            .. " | shards " .. tostring(shards)
+            .. " | min " .. tostring(threshold))
     end
     if GUI.stateText then
         GUI.stateText:SetText("Serve: " .. servedLocationLabel()
@@ -2143,6 +2201,29 @@ local function slash(msg)
             SummonScoutDB.summonWhisperCooldown = math.floor(seconds)
             chat("summon whisper cooldown -> " .. tostring(SummonScoutDB.summonWhisperCooldown) .. "s")
         end
+    elseif cmd == "shardguard" then
+        rest = lower(trim(rest))
+        if rest == "on" then
+            SummonScoutDB.shardGuardEnabled = true
+            chat("low-shard global pause -> ON")
+        elseif rest == "off" then
+            SummonScoutDB.shardGuardEnabled = false
+            chat("low-shard global pause -> OFF")
+        else
+            chat("use /ssi shardguard on|off")
+        end
+        status()
+        guiRefreshSafe()
+    elseif cmd == "shardmin" then
+        local value = tonumber(trim(rest))
+        if not value or value < 1 or value > 100 then
+            chat("Soul Shard threshold must be 1-100")
+        else
+            SummonScoutDB.shardGuardMin = math.floor(value)
+            chat("low-shard pause threshold -> " .. tostring(SummonScoutDB.shardGuardMin))
+            status()
+            guiRefreshSafe()
+        end
     elseif cmd == "paymentchat" then
         rest = lower(trim(rest))
         if rest == "on" then SummonScoutDB.paymentChatEnabled = true end
@@ -2198,10 +2279,57 @@ local function slash(msg)
         chat("/ssi countertest <message> | gui")
         chat("/ssi master <name>|on|off | masterevents on|off | reporttest")
         chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | summonwhispercd <1-120>")
-        chat("/ssi paymentchat on|off")
+        chat("/ssi shardguard on|off | shardmin <1-100> | paymentchat on|off")
         chat("/ssi clearpayments confirm | summoncheck | version")
         chat("/ssi serve <place[,place]|all> | places | channel <name> | debug on/off | test <message> | clearstats confirm")
     end
+end
+
+local function clearOperationalStateForShardGuard()
+    SS.queue = {}
+    SS.queued = {}
+    SS.nextInviteAt = 0
+    SS.summonPending = {}
+    SS.pendingManualInvites = {}
+    clearActiveSummon()
+    clearCounterPending()
+    SS.nextSpamAt = 0
+    SS.pendingTrade = nil
+    SS.tradeRequestedBy = nil
+    SS.tradePartner = nil
+    SS.tradeMoneyBefore = 0
+    SS.tradeTargetMoney = 0
+    SS.tradeBothAccepted = false
+    SS.tradeActive = false
+    SS.partySyncAt = 0
+end
+
+local function refreshShardGuardState(silent)
+    local blocked, shards, threshold = shardGuardBlocked()
+    SS.shardGuardLastCount = shards
+
+    if blocked ~= SS.shardGuardPaused then
+        SS.shardGuardPaused = blocked
+        if blocked then
+            clearOperationalStateForShardGuard()
+            if not silent then
+                chat("ALL automation paused: Soul Shards " .. tostring(shards)
+                    .. " < " .. tostring(threshold))
+            end
+        else
+            syncPartyRoster(true)
+            if SummonScoutDB.spamEnabled then
+                SS.nextSpamAt = now() + (SummonScoutDB.spamInterval or 120)
+            end
+            if not silent then
+                chat("automation resumed: Soul Shards " .. tostring(shards)
+                    .. " >= " .. tostring(threshold))
+            end
+        end
+        guiRefreshSafe()
+    end
+
+    return blocked
 end
 
 local function handleChannelMessage(message, sender, channelBaseName, channelFullName)
@@ -2259,6 +2387,7 @@ end
 local frame = CreateFrame("Frame", "SummonScoutFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
+frame:RegisterEvent("BAG_UPDATE")
 frame:RegisterEvent("TRADE_REQUEST")
 frame:RegisterEvent("TRADE_SHOW")
 frame:RegisterEvent("TRADE_MONEY_CHANGED")
@@ -2288,9 +2417,18 @@ frame:SetScript("OnEvent", function()
         W112_AUTOSUMMON_NATIVE_SLOT = ""
         syncPartyRoster(true)
         SS.nextRosterPollAt = now() + 0.75
+        refreshShardGuardState(true)
         chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
+        return
+    end
+
+    if refreshShardGuardState(false) then
+        return
+    end
+
+    if event == "BAG_UPDATE" then
         return
     end
 
@@ -2435,6 +2573,17 @@ frame:SetScript("OnEvent", function()
 end)
 frame:SetScript("OnUpdate", function()
     local t = now()
+    if t >= (SS.shardGuardNextCheckAt or 0) then
+        SS.shardGuardNextCheckAt = t + 0.50
+        refreshShardGuardState(false)
+    end
+    if SS.shardGuardPaused then
+        if SS.gui and SS.gui:IsShown() and guiRefresh and t >= (SS.nextGuiRefreshAt or 0) then
+            SS.nextGuiRefreshAt = t + 0.5
+            guiRefresh()
+        end
+        return
+    end
     if SS.partySyncAt and SS.partySyncAt > 0 and t >= SS.partySyncAt then
         SS.partySyncAt = 0
         syncPartyRoster(false)

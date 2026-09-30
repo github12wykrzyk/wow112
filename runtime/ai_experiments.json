@@ -712,6 +712,28 @@
         "artifact_id": 11081009379
       },
       "notes": "Integrated AuxVmangos 0.8 WATCH candidate passed full Parallel candidate/package gates at bb474200. AuxVmangos remains sole AH scheduler owner. Each active rule scans all positive filtered pages up to the 100-page cap, selects global best unit price, revalidates before buy, and exposes a 16-slot persistent WATCH GUI. Rule edits disarm LIVE; LIVE requires at least one valid rule. Gameplay validation pending."
+    },
+    {
+      "id": "summonscout-shard-guard",
+      "branch": "feature/summonscout-shard-guard",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "SummonScoutDB SavedVariables",
+        "Soul Shard item 6265 inventory scan",
+        "SummonScout invite/summon/advert/trade automation state",
+        "W112_AUTOSUMMON_REQUEST native bridge"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "69752e30953f007dabd10ed8c8359a4e4df427ec",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Adds an opt-in persistent GUI low-shard global pause with configurable 1-100 threshold. Below threshold all SummonScout automation/event processing is suspended, pending invite/summon/counter/trade work is cleared, native summon request is cancelled, GUI/status remain available, and automation resumes automatically after shard count recovers."
     }
   ]
 }
