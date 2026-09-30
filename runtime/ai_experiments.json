@@ -1362,6 +1362,42 @@
       "tests": [],
       "package": null,
       "notes": "V3 replaces the failed in-world Lua lookup with a direct call to the exact 5875 Glue binding at 0x0046D340. Public exact-build registration evidence identifies that VA as DisconnectFromServer; reconstructed vanilla client semantics show it disconnects ClientServices and logs off the login connection. FAST remains a manual diagnostic and existing AutoLoginBridge relogin/slot automation is unchanged."
+    },
+    {
+      "id": "ah-throughput-event-isolation",
+      "branch": "parallel",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-native-max-throughput"
+      ],
+      "shared_resources": [
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event registration",
+        "existing WoWAHThrottleNative_5875_v2 sender"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "e5a3c79fd8c3133d9b5c783d554c93fa4a5b65be",
+      "verified_commit": "e5a3c79fd8c3133d9b5c783d554c93fa4a5b65be",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "69c9df2bc92bd48dabe7645524da3d02c35a35e3",
+          "date": "2026-09-30",
+          "evidence": "Initial event-isolation feature preflight 36786104665 and registry 36786104659 passed, but parallel advanced before integration."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "e5a3c79fd8c3133d9b5c783d554c93fa4a5b65be",
+          "date": "2026-09-30",
+          "evidence": "Event-isolation feature preflight run 36786198728 and registry run 36786198828 passed on exact rebased SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Addon-only raw-response benchmark. Temporarily unregisters stock AuctionFrameBrowse from AUCTION_ITEM_LIST_UPDATE during native V2 burst so UI refresh/sort side effects cannot inflate counts. Counts raw event responses per 25 sends, restores Browse registration afterward, and persists AHThrottleTestDB.last."
     }
   ]
 }
