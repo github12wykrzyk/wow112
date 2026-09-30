@@ -579,9 +579,9 @@
         "AVM_DB SavedVariables PriceDB",
         "parallel addon packager"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "3753d14844467fe2d4237a3e3d23753572177af9",
-      "verified_commit": "3753d14844467fe2d4237a3e3d23753572177af9",
+      "status": "awaiting_game_test",
+      "observed_head": "71176acd4a3a1a7f6dc0b9f80313d3db8bee157e",
+      "verified_commit": "71176acd4a3a1a7f6dc0b9f80313d3db8bee157e",
       "tests": [
         {
           "kind": "ci",
@@ -589,10 +589,28 @@
           "commit": "3753d14844467fe2d4237a3e3d23753572177af9",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36676321073 and AI experiment registry run 36676321441 passed on exact unified feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "71176acd4a3a1a7f6dc0b9f80313d3db8bee157e",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36676509681 passed on exact integrated parallel SHA, including FINAL_PACKAGE, repo-managed addon package attestation and provenance checks."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "71176acd4a3a1a7f6dc0b9f80313d3db8bee157e",
+          "date": "2026-09-30",
+          "evidence": "Verified candidate artifact 11080451711 (WoW112-WORK-CANDIDATE-71176acd4a3a1a7f6dc0b9f80313d3db8bee157e) was produced by successful exact-SHA run 36676509681."
         }
       ],
-      "package": null,
-      "notes": "Unified 0.6 experiment from verified parallel fb602fe0. Consolidates watchlist scan, cached vMaNGOS boundary handling, guarded LIVE BUY, whole-market positive-buyout scan, retained PriceDB snapshots and AutoMarket scheduling. AuctionSniper is intentionally removed from candidate addon roots on this feature to avoid competing AH query schedulers; source remains for rollback/evidence. Integrated to parallel from exact verified feature SHA; full parallel candidate verification pending."
+      "package": {
+        "verified": true,
+        "commit": "71176acd4a3a1a7f6dc0b9f80313d3db8bee157e",
+        "artifact_id": 11080451711
+      },
+      "notes": "Unified 0.6 experiment from verified parallel fb602fe0. Consolidates watchlist scan, cached vMaNGOS boundary handling, guarded LIVE BUY, whole-market positive-buyout scan, retained PriceDB snapshots and AutoMarket scheduling. AuctionSniper is intentionally removed from candidate addon roots on this feature to avoid competing AH query schedulers; source remains for rollback/evidence. Integrated to parallel from exact verified feature SHA; full parallel candidate verification pending. Integrated unified candidate passed full parallel package gate. Gameplay validation of whole-market scan, PriceDB persistence and scheduler arbitration remains pending."
     }
   ]
 }
