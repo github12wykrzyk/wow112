@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.8.1-vmangos-watch-ui"
+AVM_VERSION = "0.8.2-vmangos-watch-live-noop"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1661,14 +1661,36 @@ AVM_WATCH_API = {
 		avm_defaults()
 		if index < 1 or index > AVM_WATCH_SLOTS then return false end
 		local r = avm_ensure_rule_slot(index)
+
+		local newEnabled = data.enabled and true or false
+		local newName = avm_trim(data.name or "")
+		local newPartial = data.partial and true or false
+		local newMaxUnit = tonumber(data.maxUnit) or 0
+		local newMaxTotal = tonumber(data.maxTotal) or 0
+		local newMinStack = math.max(1, math.floor(tonumber(data.minStack) or 1))
+		local newMaxStack = math.max(0, math.floor(tonumber(data.maxStack) or 0))
+
+		local changed =
+			(r.enabled == true) ~= newEnabled or
+			(r.name or "") ~= newName or
+			(r.partial == true) ~= newPartial or
+			(tonumber(r.maxUnit) or 0) ~= newMaxUnit or
+			(tonumber(r.maxTotal) or 0) ~= newMaxTotal or
+			(tonumber(r.minStack) or 1) ~= newMinStack or
+			(tonumber(r.maxStack) or 0) ~= newMaxStack
+
+		if not changed then
+			return true
+		end
+
 		local oldName = r.name
-		r.enabled = data.enabled and true or false
-		r.name = avm_trim(data.name or "")
-		r.partial = data.partial and true or false
-		r.maxUnit = tonumber(data.maxUnit) or 0
-		r.maxTotal = tonumber(data.maxTotal) or 0
-		r.minStack = math.max(1, math.floor(tonumber(data.minStack) or 1))
-		r.maxStack = math.max(0, math.floor(tonumber(data.maxStack) or 0))
+		r.enabled = newEnabled
+		r.name = newName
+		r.partial = newPartial
+		r.maxUnit = newMaxUnit
+		r.maxTotal = newMaxTotal
+		r.minStack = newMinStack
+		r.maxStack = newMaxStack
 		if oldName ~= r.name then AVM.boundaryCache = {} end
 		avm_rule_changed(index)
 		return true

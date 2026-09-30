@@ -763,6 +763,27 @@
       ],
       "package": null,
       "notes": "Gameplay screenshots on 2026-09-30 showed WATCH UI fields Max/unit=3g and Max total=3g while the scanner status displayed best≈3g98s90c/ea. Engine candidate filtering already enforces committed rule limits. This experiment hardens the UI-to-AVM_DB commit path with stable rowIndex captures, immediate guarded OnTextChanged commits, and committed limit values in scanner status. Gameplay retest pending; no claim that the exact root cause is proven until retest. Integrated to parallel from exact verified feature SHA; full candidate build pending."
+    },
+    {
+      "id": "aux-watch-live-noop-fix",
+      "branch": "feature/aux-watch-live-noop-fix",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-watch-ui-rowbind-fix"
+      ],
+      "shared_resources": [
+        "AVM_DB SavedVariables watch rules",
+        "AuxVmangos WATCH GUI focus callbacks",
+        "LIVE session disarm contract"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "5f119770248f1e8efc1c4f1787fa980e35953fb3",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay evidence showed DRYRUN_BEST for Runecloth after LIVE had been armed. Static audit found SetRule always called avm_rule_changed even when the focus-loss commit contained identical normalized values. This can disarm LIVE immediately after clicking the LIVE button. 0.8.2 makes identical SetRule calls no-ops while preserving LIVE disarm on real edits."
     }
   ]
 }
