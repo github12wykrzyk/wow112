@@ -661,6 +661,31 @@
         "artifact_id": 11081760178
       },
       "notes": "Static audit hardening from verified parallel 2f759dea. Fixes manifest-vs-packager root mismatch that could still ship AuctionSniper beside AuxVmangos, forces LIVE session-only, blocks LIVE while MarketScan owns the scheduler, adds AutoMarket failure backoff, compacts PriceDB history, refines random-property market identity, renames gone units to netDownUnits, and binds live revalidation to exact item-link identity when available. Integrated to parallel from exact verified feature SHA; full candidate packaging audit pending. Full artifact audit confirms manifest-driven addon roots and exact packaged AuxVmangos source. Gameplay validation remains pending."
+    },
+    {
+      "id": "aux-vmangos-watchlist-v21",
+      "branch": "feature/aux-watchlist-v21",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vmangos-audit-hardening"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "AUCTION_ITEM_LIST_UPDATE serialized query ownership",
+        "vMaNGOS filtered buyout boundary cache",
+        "AVM_DB SavedVariables watch rules",
+        "V2 guarded PlaceAuctionBid transaction state",
+        "AuxVmangos MarketScan scheduler arbitration",
+        "parallel addon packager"
+      ],
+      "status": "in_progress",
+      "observed_head": "60a8894bb90d1ec292162aa194446838132d342d",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "0.8 WATCH experiment from verified parallel 60a8894b. Keeps AuxVmangos as the sole AH scheduler owner; scans all positive filtered pages (up to 100) before selecting global best unit price, revalidates before buy, adds 16-slot persistent WATCH GUI, skips disabled/invalid rules, disarms LIVE on rule edits and blocks LIVE without a valid rule. Feature CI/gameplay unverified."
     }
   ]
 }

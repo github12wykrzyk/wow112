@@ -2,13 +2,15 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.7-vmangos-audit"
+AVM_VERSION = "0.8-vmangos-watchlist"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
 AVM_EVENT_SETTLE = 0.35
 AVM_EXTRA_EVENT_WINDOW = 1.0
 AVM_TICK = 0.05
+AVM_WATCH_SLOTS = 16
+AVM_WATCH_MAX_PAGES = 100
 
 AVM = {
 	open = false,
@@ -32,6 +34,12 @@ AVM = {
 	boundaryHigh = 0,
 	boundaryPage = nil,
 	scanOffset = 0,
+	bestCandidate = nil,
+	watchPagesScanned = 0,
+	watchCycles = 0,
+	watchRaces = 0,
+	rulesDirty = false,
+	uiGeneration = 0,
 	candidate = nil,
 	revalidatePages = nil,
 	revalidatePos = 0,
@@ -67,6 +75,10 @@ AVM = {
 		cacheMisses = 0,
 		walletBlocks = 0,
 		candidates = 0,
+		watchPages = 0,
+		watchBest = 0,
+		watchCaps = 0,
+		watchRaces = 0,
 		revalidations = 0,
 		buySent = 0,
 		confirmed = 0,
@@ -143,7 +155,8 @@ local function avm_defaults()
 	if not AVM_DB then AVM_DB = {} end
 	if AVM_DB.enabled == nil then AVM_DB.enabled = false end
 	if AVM_DB.live == nil then AVM_DB.live = false end
-	if AVM_DB.cheapPages == nil then AVM_DB.cheapPages = 4 end
+	if AVM_DB.cheapPages == nil then AVM_DB.cheapPages = 4 end -- legacy, retained for SavedVariables compatibility
+	if AVM_DB.watchMaxPages == nil then AVM_DB.watchMaxPages = AVM_WATCH_MAX_PAGES end
 	if AVM_DB.boundaryRefresh == nil then AVM_DB.boundaryRefresh = 20 end
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 1 end
@@ -155,23 +168,53 @@ local function avm_defaults()
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 end
 
+local function avm_rule_valid(rule)
+	if not rule then return false end
+	if rule.enabled == false then return false end
+	if not rule.name or avm_trim(rule.name) == "" then return false end
+	if (tonumber(rule.maxUnit) or 0) <= 0 then return false end
+	return true
+end
+
 local function avm_rule_matches(rule, name)
-	if not rule or rule.enabled == false or not name then return false end
+	if not avm_rule_valid(rule) or not name then return false end
 	if rule.partial then
 		return string.find(string.lower(name), string.lower(rule.name), 1, true) ~= nil
 	end
 	return string.lower(name) == string.lower(rule.name)
 end
 
-local function avm_rule_count()
+local function avm_rule_slots()
 	return table.getn(AVM_DB.rules)
 end
 
+local function avm_rule_count()
+	local n = 0
+	for i = 1, avm_rule_slots() do
+		if avm_rule_valid(AVM_DB.rules[i]) then n = n + 1 end
+	end
+	return n
+end
+
+local function avm_find_rule(startIndex)
+	local slots = avm_rule_slots()
+	if slots == 0 then return nil, nil end
+	local start = tonumber(startIndex) or 1
+	if start < 1 then start = 1 end
+	if start > slots then start = 1 end
+	for offset = 0, slots - 1 do
+		local i = start + offset
+		while i > slots do i = i - slots end
+		local rule = AVM_DB.rules[i]
+		if avm_rule_valid(rule) then return rule, i end
+	end
+	return nil, nil
+end
+
 local function avm_active_rule()
-	local n = avm_rule_count()
-	if n == 0 then return nil, nil end
-	if AVM.ruleIndex < 1 or AVM.ruleIndex > n then AVM.ruleIndex = 1 end
-	return AVM_DB.rules[AVM.ruleIndex], AVM.ruleIndex
+	local rule, index = avm_find_rule(AVM.ruleIndex)
+	if rule then AVM.ruleIndex = index end
+	return rule, index
 end
 
 local function avm_rule_cache_key(rule)
@@ -230,7 +273,7 @@ local function avm_candidate_from_row(i)
 
 	if count < minStack then return nil end
 	if maxStack > 0 and count > maxStack then return nil end
-	if maxUnit > 0 and unit > maxUnit then return nil end
+	if maxUnit <= 0 or unit > maxUnit then return nil end
 	if maxTotal > 0 and buyout > maxTotal then return nil end
 
 	local money = GetMoney()
@@ -288,6 +331,8 @@ local function avm_restart_boundary(forceFull)
 	AVM.boundaryHigh = 0
 	AVM.boundaryPage = nil
 	AVM.scanOffset = 0
+	AVM.bestCandidate = nil
+	AVM.watchPagesScanned = 0
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
 	AVM.revalidatePos = 0
@@ -322,14 +367,23 @@ local function avm_restart_boundary(forceFull)
 end
 
 local function avm_advance_rule()
-	local n = avm_rule_count()
-	if n == 0 then
+	local current = AVM.ruleIndex
+	local slots = avm_rule_slots()
+	if slots == 0 or avm_rule_count() == 0 then
 		AVM.ruleIndex = 1
 		avm_restart_boundary(true)
 		return
 	end
-	AVM.ruleIndex = AVM.ruleIndex + 1
-	if AVM.ruleIndex > n then AVM.ruleIndex = 1 end
+	local start = current + 1
+	if start > slots then start = 1 end
+	local rule, nextIndex = avm_find_rule(start)
+	if not rule then
+		AVM.ruleIndex = 1
+		avm_restart_boundary(true)
+		return
+	end
+	if nextIndex <= current then AVM.watchCycles = AVM.watchCycles + 1 end
+	AVM.ruleIndex = nextIndex
 	avm_restart_boundary()
 end
 
@@ -339,9 +393,11 @@ local function avm_start_scan(boundary)
 	AVM.boundaryPage = boundary
 	AVM.cacheBoundary = boundary
 	AVM.scanOffset = 0
+	AVM.bestCandidate = nil
+	AVM.watchPagesScanned = 0
 	AVM.phase = "CHEAPEST_SCAN"
-	avm_print("rule='" .. tostring(AVM.activeRuleName) .. "' first buyout page=" ..
-		tostring(boundary) .. "; scanning cheapest matching buyouts")
+	avm_print("WATCH rule='" .. tostring(AVM.activeRuleName) .. "' first buyout page=" ..
+		tostring(boundary) .. "; scanning all positive pages for best unit price")
 end
 
 local function avm_prepare_revalidate(c)
@@ -880,14 +936,27 @@ end
 
 local function avm_pick_candidate()
 	local n = GetNumAuctionItems("list")
+	local best = nil
+	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
 	for i = 1, n do
-		local c = avm_candidate_from_row(i)
-		if c then
-			c.index = i
-			return c
+		local candidate = avm_candidate_from_row(i)
+		if candidate then
+			local liveEligible = true
+			if AVM_DB.live then
+				if not candidate.affordable then liveEligible = false end
+				if maxSpend > 0 and AVM.sessionSpend + candidate.buyout > maxSpend then
+					liveEligible = false
+				end
+			end
+			if liveEligible and (not best or
+				candidate.unit < best.unit or
+				(candidate.unit == best.unit and candidate.buyout < best.buyout)) then
+				candidate.index = i
+				best = candidate
+			end
 		end
 	end
-	return nil
+	return best
 end
 
 local function avm_revalidate_candidate()
@@ -914,12 +983,13 @@ local function avm_revalidate_candidate()
 					if not c.affordable then
 						wallet = " affordable=false missing=" .. avm_money(c.missing or 0)
 					end
-					avm_print("DRYRUN " .. c.count .. "x " .. c.name .. " total=" ..
+					avm_print("DRYRUN_BEST " .. c.count .. "x " .. c.name .. " total=" ..
 						avm_money(c.buyout) .. " unit=" .. avm_money(c.unit) ..
 						" seller=" .. tostring(c.owner) .. wallet)
 					AVM.candidate = nil
-					AVM.scanOffset = AVM.scanOffset + 1
-					AVM.phase = "CHEAPEST_SCAN"
+					AVM.revalidatePages = nil
+					AVM.revalidatePos = 0
+					avm_advance_rule()
 					return
 				end
 
@@ -935,7 +1005,9 @@ local function avm_revalidate_candidate()
 						" need=" .. avm_money(c.buyout) ..
 						" have=" .. avm_money(GetMoney()))
 					AVM.candidate = nil
-					AVM.phase = "CHEAPEST_SCAN"
+					AVM.revalidatePages = nil
+					AVM.revalidatePos = 0
+					avm_restart_boundary()
 					return
 				end
 
@@ -945,7 +1017,9 @@ local function avm_revalidate_candidate()
 					avm_print("LIVE_AUTO_OFF purchase limit reached (" ..
 						tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
 					AVM.candidate = nil
-					AVM.phase = "CHEAPEST_SCAN"
+					AVM.revalidatePages = nil
+					AVM.revalidatePos = 0
+					avm_restart_boundary()
 					return
 				end
 
@@ -954,7 +1028,9 @@ local function avm_revalidate_candidate()
 					avm_print("session spend limit blocks " .. c.name)
 					AVM.recent[c.signature] = GetTime() + 10
 					AVM.candidate = nil
-					AVM.phase = "CHEAPEST_SCAN"
+					AVM.revalidatePages = nil
+					AVM.revalidatePos = 0
+					avm_restart_boundary()
 					return
 				end
 
@@ -963,7 +1039,9 @@ local function avm_revalidate_candidate()
 					AVM.stats.walletBlocks = AVM.stats.walletBlocks + 1
 					avm_print("LIVE_BLOCKED wallet changed before buy " .. c.name)
 					AVM.candidate = nil
-					AVM.phase = "CHEAPEST_SCAN"
+					AVM.revalidatePages = nil
+					AVM.revalidatePos = 0
+					avm_restart_boundary()
 					return
 				end
 				AVM.recent[c.signature] = GetTime() + AVM_UNKNOWN_HOLD
@@ -989,8 +1067,10 @@ local function avm_revalidate_candidate()
 	end
 
 	AVM.stats.failed = AVM.stats.failed + 1
+	AVM.stats.watchRaces = AVM.stats.watchRaces + 1
+	AVM.watchRaces = AVM.watchRaces + 1
 	AVM.recent[c.signature] = GetTime() + 2
-	avm_print("revalidate miss: " .. c.name .. " - stale/raced candidate")
+	avm_print("WATCH_RACE " .. c.name .. " - best offer moved/disappeared before revalidate")
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
 	AVM.revalidatePos = 0
@@ -1019,6 +1099,13 @@ local function avm_accept_result()
 	end
 	if isMarket then
 		avm_market_accept(kind, page, total, positive)
+		return
+	end
+
+	if AVM.rulesDirty then
+		AVM.rulesDirty = false
+		avm_print("WATCH_RULES_CHANGED stale scanner result ignored")
+		avm_restart_boundary(true)
 		return
 	end
 
@@ -1110,21 +1197,51 @@ local function avm_accept_result()
 	end
 
 	if kind == "CHEAPEST_SCAN" then
-		local candidate = avm_pick_candidate()
-		if candidate then
-			AVM.stats.candidates = AVM.stats.candidates + 1
-			AVM.candidate = candidate
-			avm_prepare_revalidate(candidate)
-			AVM.phase = "REVALIDATE"
+		local pageBest = avm_pick_candidate()
+		AVM.watchPagesScanned = AVM.watchPagesScanned + 1
+		AVM.stats.watchPages = AVM.stats.watchPages + 1
+		if pageBest then
+			local best = AVM.bestCandidate
+			if not best or pageBest.unit < best.unit or
+			   (pageBest.unit == best.unit and pageBest.buyout < best.buyout) then
+				AVM.bestCandidate = pageBest
+			end
+		end
+
+		local cap = tonumber(AVM_DB.watchMaxPages) or AVM_WATCH_MAX_PAGES
+		if cap < 1 then cap = 1 end
+		if cap > AVM_WATCH_MAX_PAGES then cap = AVM_WATCH_MAX_PAGES end
+		local nextPage = AVM.boundaryPage + AVM.scanOffset + 1
+		local canContinue = nextPage <= AVM.lastPage and AVM.watchPagesScanned < cap
+		if canContinue then
+			AVM.scanOffset = AVM.scanOffset + 1
+			AVM.phase = "CHEAPEST_SCAN"
 			return
 		end
 
-		AVM.scanOffset = AVM.scanOffset + 1
-		if AVM.scanOffset >= (tonumber(AVM_DB.cheapPages) or 4) or
-		   AVM.boundaryPage + AVM.scanOffset > AVM.lastPage then
-			avm_advance_rule()
+		if nextPage <= AVM.lastPage and AVM.watchPagesScanned >= cap then
+			AVM.stats.watchCaps = AVM.stats.watchCaps + 1
+			avm_print("WATCH_CAP rule='" .. tostring(AVM.activeRuleName) ..
+				"' scanned=" .. tostring(AVM.watchPagesScanned) ..
+				" remainingPages=" .. tostring(AVM.lastPage - (nextPage - 1)))
+		end
+
+		if AVM.bestCandidate then
+			AVM.stats.candidates = AVM.stats.candidates + 1
+			AVM.stats.watchBest = AVM.stats.watchBest + 1
+			AVM.candidate = AVM.bestCandidate
+			AVM.bestCandidate = nil
+			avm_print("WATCH_BEST " .. AVM.candidate.count .. "x " .. AVM.candidate.name ..
+				" unit=" .. avm_money(AVM.candidate.unit) ..
+				" total=" .. avm_money(AVM.candidate.buyout) ..
+				" page=" .. tostring(AVM.candidate.sourcePage) ..
+				" scannedPages=" .. tostring(AVM.watchPagesScanned))
+			avm_prepare_revalidate(AVM.candidate)
+			AVM.phase = "REVALIDATE"
 		else
-			AVM.phase = "CHEAPEST_SCAN"
+			avm_print("WATCH_NONE rule='" .. tostring(AVM.activeRuleName) ..
+				"' scannedPages=" .. tostring(AVM.watchPagesScanned))
+			avm_advance_rule()
 		end
 		return
 	end
@@ -1258,6 +1375,11 @@ local function avm_tick()
 		return
 	end
 
+	if AVM.rulesDirty and not AVM.queryInFlight and not AVM.pending and not AVM.unknown then
+		AVM.rulesDirty = false
+		avm_restart_boundary(true)
+	end
+
 	if not AVM_DB.enabled then return end
 
 	if AVM.phase == "IDLE" or AVM.phase == "WAIT_RULE" then
@@ -1298,9 +1420,12 @@ local function avm_status()
 		" enabled=" .. tostring(AVM_DB.enabled) ..
 		" live=" .. tostring(AVM_DB.live) ..
 		" phase=" .. AVM.phase ..
-		" rule=" .. tostring(AVM.ruleIndex) .. "/" .. tostring(avm_rule_count()) ..
+		" slot=" .. tostring(AVM.ruleIndex) ..
+		" activeRules=" .. tostring(avm_rule_count()) ..
 		" '" .. tostring(rule and rule.name or "") .. "'" ..
 		" boundary=" .. tostring(AVM.boundaryPage) ..
+		" scanPage=" .. tostring((AVM.boundaryPage or 0) + (AVM.scanOffset or 0)) ..
+		" scanned=" .. tostring(AVM.watchPagesScanned) ..
 		" cache=" .. tostring(avm_cached_boundary(rule)) ..
 		" buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
 		" spend=" .. avm_money(AVM.sessionSpend))
@@ -1313,6 +1438,10 @@ local function avm_status()
 		" cacheMiss=" .. AVM.stats.cacheMisses ..
 		" walletBlock=" .. AVM.stats.walletBlocks ..
 		" candidates=" .. AVM.stats.candidates ..
+		" watchPages=" .. AVM.stats.watchPages ..
+		" watchBest=" .. AVM.stats.watchBest ..
+		" watchCaps=" .. AVM.stats.watchCaps ..
+		" watchRaces=" .. AVM.stats.watchRaces ..
 		" revalidations=" .. AVM.stats.revalidations ..
 		" sent=" .. AVM.stats.buySent ..
 		" confirmed=" .. AVM.stats.confirmed ..
@@ -1323,17 +1452,50 @@ local function avm_status()
 		" marketTimeouts=" .. AVM.stats.marketTimeouts)
 end
 
+local function avm_ensure_rule_slot(index)
+	while table.getn(AVM_DB.rules) < index do
+		table.insert(AVM_DB.rules, {
+			name = "",
+			partial = false,
+			maxUnit = 0,
+			maxTotal = 0,
+			minStack = 1,
+			maxStack = 0,
+			enabled = false,
+		})
+	end
+	return AVM_DB.rules[index]
+end
+
 local function avm_list_rules()
-	if table.getn(AVM_DB.rules) == 0 then
-		avm_print("watchlist empty")
-		return
+	if avm_rule_count() == 0 then
+		avm_print("watchlist has no active rules")
 	end
 	for i = 1, table.getn(AVM_DB.rules) do
 		local r = AVM_DB.rules[i]
-		avm_print(i .. ": " .. (r.partial and "partial " or "exact ") .. r.name ..
-			" maxUnit=" .. avm_money(r.maxUnit or 0) ..
-			" maxTotal=" .. avm_money(r.maxTotal or 0) ..
-			" stack=" .. tostring(r.minStack or 1) .. "-" .. tostring(r.maxStack or 0))
+		if r and (r.name ~= "" or r.enabled) then
+			avm_print(i .. ": " .. (r.enabled == false and "OFF " or "ON ") ..
+				(r.partial and "partial " or "exact ") .. tostring(r.name or "") ..
+				" maxUnit=" .. avm_money(r.maxUnit or 0) ..
+				" maxTotal=" .. avm_money(r.maxTotal or 0) ..
+				" stack=" .. tostring(r.minStack or 1) .. "-" .. tostring(r.maxStack or 0))
+		end
+	end
+end
+
+local function avm_rule_changed(index)
+	AVM_DB.live = false
+	AVM.rulesDirty = true
+	AVM.uiGeneration = AVM.uiGeneration + 1
+	local rule = AVM_DB.rules[index]
+	if rule then avm_invalidate_boundary(rule) end
+	if not AVM.queryInFlight and not AVM.pending and not AVM.unknown and not AVM.market.active then
+		AVM.rulesDirty = false
+		if not avm_rule_valid(AVM_DB.rules[AVM.ruleIndex]) then
+			local _, nextIndex = avm_find_rule(1)
+			AVM.ruleIndex = nextIndex or 1
+		end
+		avm_restart_boundary(true)
 	end
 end
 
@@ -1351,20 +1513,33 @@ local function avm_add_rule(args)
 	local minStack = tonumber(avm_trim(p[5] or "1")) or 1
 	local maxStack = tonumber(avm_trim(p[6] or "0")) or 0
 	if name == "" or not maxUnit or maxUnit <= 0 then
-		avm_print("invalid rule")
+		avm_print("invalid rule: Item + maxUnit > 0 are required")
 		return
 	end
-	table.insert(AVM_DB.rules, {
-		name = name,
-		partial = (matchType == "partial"),
-		maxUnit = maxUnit,
-		maxTotal = maxTotal,
-		minStack = minStack,
-		maxStack = maxStack,
-		enabled = true,
-	})
-	avm_print("rule added: " .. name .. " <= " .. avm_money(maxUnit) .. "/unit")
-	avm_restart_boundary()
+
+	local slot = nil
+	for i = 1, AVM_WATCH_SLOTS do
+		local r = AVM_DB.rules[i]
+		if not r or ((r.name or "") == "" and r.enabled == false) then
+			slot = i
+			break
+		end
+	end
+	if not slot then
+		avm_print("watchlist full (" .. tostring(AVM_WATCH_SLOTS) .. " slots)")
+		return
+	end
+
+	local r = avm_ensure_rule_slot(slot)
+	r.name = name
+	r.partial = (matchType == "partial")
+	r.maxUnit = maxUnit
+	r.maxTotal = maxTotal
+	r.minStack = math.max(1, math.floor(minStack))
+	r.maxStack = math.max(0, math.floor(maxStack))
+	r.enabled = true
+	avm_print("rule " .. slot .. " added: " .. name .. " <= " .. avm_money(maxUnit) .. "/unit")
+	avm_rule_changed(slot)
 end
 
 local function avm_slash(msg)
@@ -1392,9 +1567,11 @@ local function avm_slash(msg)
 				avm_print("LIVE requires open Auction House")
 			elseif AVM.market.active or AVM.market.requested then
 				avm_print("LIVE blocked while MARKET owns/requests the AH scheduler")
+			elseif avm_rule_count() == 0 then
+				avm_print("LIVE requires at least one active rule with Item + maxUnit")
 			else
 				AVM_DB.live = true
-				avm_print("LIVE ON - qualifying revalidated auctions may be bought")
+				avm_print("LIVE ON - only full-scan WATCH_BEST offers may be bought")
 			end
 		else
 			AVM_DB.live = false
@@ -1404,26 +1581,23 @@ local function avm_slash(msg)
 		avm_add_rule(rest)
 	elseif cmd == "del" then
 		local n = tonumber(avm_trim(rest))
-		if n and AVM_DB.rules[n] then
-			local oldRule = AVM_DB.rules[n]
-			local old = oldRule.name
-			avm_invalidate_boundary(oldRule)
-			table.remove(AVM_DB.rules, n)
-			if AVM.ruleIndex > table.getn(AVM_DB.rules) then AVM.ruleIndex = 1 end
-			avm_print("rule removed: " .. old)
-			avm_restart_boundary()
+		if n and n >= 1 and n <= AVM_WATCH_SLOTS and AVM_DB.rules[n] then
+			local old = AVM_DB.rules[n].name or ""
+			AVM_DB.rules[n] = {name="",partial=false,maxUnit=0,maxTotal=0,minStack=1,maxStack=0,enabled=false}
+			avm_print("rule slot " .. n .. " cleared: " .. old)
+			avm_rule_changed(n)
 		else
-			avm_print("invalid rule index")
+			avm_print("invalid rule slot")
 		end
 	elseif cmd == "list" then
 		avm_list_rules()
 	elseif cmd == "pages" then
 		local n = tonumber(avm_trim(rest))
-		if n and n >= 1 and n <= 50 then
-			AVM_DB.cheapPages = n
-			avm_print("cheap pages=" .. n)
+		if n and n >= 1 and n <= AVM_WATCH_MAX_PAGES then
+			AVM_DB.watchMaxPages = n
+			avm_print("watch page cap=" .. n)
 		else
-			avm_print("pages must be 1..50")
+			avm_print("pages must be 1.." .. tostring(AVM_WATCH_MAX_PAGES))
 		end
 	elseif cmd == "budget" then
 		local n = avm_parse_money(avm_trim(rest))
@@ -1463,12 +1637,92 @@ local function avm_slash(msg)
 		avm_print("session state reset")
 	elseif cmd == "status" then
 		avm_status()
+	elseif cmd == "gui" then
+		if AVM_WATCH_UI and AVM_WATCH_UI.Toggle then AVM_WATCH_UI.Toggle() else avm_print("WATCH GUI unavailable") end
 	else
-		avm_print("/avm on|off | live on|off | status | list | del N | pages N | budget 100g | maxbuys N")
+		avm_print("/avm on|off | live on|off | status | gui | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
 		avm_print("/avm market start|stop|status|item NAME|auto MIN|retention N|clear")
 	end
 end
+
+AVM_WATCH_API = {
+	Init = function()
+		avm_defaults()
+		for i = 1, AVM_WATCH_SLOTS do avm_ensure_rule_slot(i) end
+		return AVM_WATCH_SLOTS
+	end,
+	GetRule = function(index)
+		avm_defaults()
+		if index < 1 or index > AVM_WATCH_SLOTS then return nil end
+		return avm_ensure_rule_slot(index)
+	end,
+	SetRule = function(index, data)
+		avm_defaults()
+		if index < 1 or index > AVM_WATCH_SLOTS then return false end
+		local r = avm_ensure_rule_slot(index)
+		local oldName = r.name
+		r.enabled = data.enabled and true or false
+		r.name = avm_trim(data.name or "")
+		r.partial = data.partial and true or false
+		r.maxUnit = tonumber(data.maxUnit) or 0
+		r.maxTotal = tonumber(data.maxTotal) or 0
+		r.minStack = math.max(1, math.floor(tonumber(data.minStack) or 1))
+		r.maxStack = math.max(0, math.floor(tonumber(data.maxStack) or 0))
+		if oldName ~= r.name then AVM.boundaryCache = {} end
+		avm_rule_changed(index)
+		return true
+	end,
+	ParseMoney = avm_parse_money,
+	Money = avm_money,
+	SetScanner = function(on)
+		AVM_DB.enabled = on and true or false
+		if not AVM_DB.enabled then
+			AVM_DB.live = false
+			AVM.phase = "IDLE"
+		else
+			avm_restart_boundary()
+		end
+		AVM.uiGeneration = AVM.uiGeneration + 1
+		return AVM_DB.enabled
+	end,
+	SetLive = function(on)
+		if not on then
+			AVM_DB.live = false
+			AVM.uiGeneration = AVM.uiGeneration + 1
+			return true
+		end
+		if not AVM.open or AVM.market.active or AVM.market.requested or avm_rule_count() == 0 then
+			AVM_DB.live = false
+			AVM.uiGeneration = AVM.uiGeneration + 1
+			return false
+		end
+		AVM_DB.live = true
+		AVM.uiGeneration = AVM.uiGeneration + 1
+		return true
+	end,
+	GetState = function()
+		local rule = avm_active_rule()
+		return {
+			version = AVM_VERSION,
+			open = AVM.open,
+			enabled = AVM_DB.enabled,
+			live = AVM_DB.live,
+			phase = AVM.phase,
+			activeRules = avm_rule_count(),
+			ruleIndex = AVM.ruleIndex,
+			ruleName = rule and rule.name or "",
+			boundary = AVM.boundaryPage,
+			scanPage = (AVM.boundaryPage or 0) + (AVM.scanOffset or 0),
+			scannedPages = AVM.watchPagesScanned,
+			bestUnit = AVM.bestCandidate and AVM.bestCandidate.unit or (AVM.candidate and AVM.candidate.unit or 0),
+			sessionBuys = AVM.sessionBuys,
+			maxSessionBuys = AVM_DB.maxSessionBuys or 1,
+			sessionSpend = AVM.sessionSpend,
+			generation = AVM.uiGeneration,
+		}
+	end,
+}
 
 local frame = CreateFrame("Frame", "AuxVmangosFrame")
 frame:RegisterEvent("ADDON_LOADED")
@@ -1482,6 +1736,7 @@ frame:RegisterEvent("UI_ERROR_MESSAGE")
 frame:SetScript("OnEvent", function()
 	if event == "ADDON_LOADED" and arg1 == "AuxVmangos" then
 		avm_defaults()
+		for i = 1, AVM_WATCH_SLOTS do avm_ensure_rule_slot(i) end
 		-- LIVE is intentionally session-only; never carry an armed state across reload/login.
 		AVM_DB.live = false
 		SLASH_AUXVMANGOS1 = "/avm"

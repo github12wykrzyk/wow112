@@ -1,7 +1,8 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: vMaNGOS-aware AH scanner/sniper for WoW 1.12.1; independent implementation.
+## Notes: Unified vMaNGOS market bot + full-page best-unit watchlist sniper.
 ## Author: github12wykrzyk/wow112
-## Version: 0.7-vmangos-audit
+## Version: 0.8-vmangos-watchlist
 ## SavedVariables: AVM_DB
 AuxVmangos.lua
+AuxVmangos_WatchUI.lua

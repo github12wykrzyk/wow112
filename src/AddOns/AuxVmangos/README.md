@@ -1,78 +1,152 @@
-# AuxVmangos 0.7 unified market bot
+# AuxVmangos 0.8 unified market bot + WATCH sniper
 
-Independent Auction House scanner/sniper for World of Warcraft 1.12.1 (5875), designed around the observed upstream vMaNGOS auction implementation.
+Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
-## Why this is separate from AUX
+AuxVmangos is the **single AH query owner** in the Parallel candidate. AuctionSniper remains in repository history/source for rollback evidence but is intentionally not packaged beside AuxVmangos, because two independent consumers of `AUCTION_ITEM_LIST_UPDATE` would race each other.
 
-AUX was audited as a behavioral reference, but its published project is marked All Rights Reserved and its Vanilla GitHub tree does not provide a permissive source license. This module therefore does not vendor AUX source.
+## Why WATCH mode changed in 0.8
 
-## vMaNGOS-specific behavior
+vMaNGOS browse results are ordered by **total buyout**, not by price per item. A fixed window of the first few positive-buyout pages is therefore not sufficient to find the best unit-price stack: a larger stack can have a higher total buyout while still being much cheaper per unit.
 
-Reference: vmangos/core development commit 464179081673cfd240f7ffe7f0daf96bca0b5a70.
+0.8 keeps the validated filtered buyout-boundary cache, but after the first positive-buyout page is known it scans **every positive page for that rule**, up to a hard configurable cap. It remembers the best qualifying offer by:
+1. lowest buyout / stack count;
+2. lower total buyout as tie-breaker.
 
-The reference core keeps browse auctions in a buyout-keyed ordered multimap. On the tested realm, page 0 was observed to contain bid-only auctions (buyout = 0), so page 0 is not a useful "cheapest buyout" page.
+Only after the full rule scan completes does the addon revalidate the selected auction and, in LIVE mode, consider buying it.
 
-AuxVmangos schedules each watchlist rule independently. It sends the rule name to QueryAuctionItems first, locates the buyout=0 to buyout>0 transition inside that filtered result set, then scans a configurable number of the cheapest matching pages. The discovered boundary is cached per rule. On the next cycle the addon verifies boundary-1 is still bid-only and boundary is still positive; a valid cache skips the full binary search, while a failed verification invalidates the cache and falls back to a full search.
+Default hard cap: 100 pages per rule (5000 rows). `/avm pages N` now controls this WATCH page cap.
 
-Only one AUCTION_ITEM_LIST_UPDATE is consumed per query. A short post-result settle window absorbs delayed duplicate events before the next query is sent. Extra events are counted only when they occur near a result from our enabled scanner, so unrelated AH traffic no longer pollutes the counter.
+## Persistent WATCH GUI
+
+Open the Auction House and press **AVM WATCH**, or use:
+
+`/avm gui`
+
+The panel exposes 16 persistent rule slots:
+
+- **ON** — rule enabled.
+- **Item** — server query text.
+- **Partial** — OFF means exact local item-name match; ON means substring match.
+- **Max/unit** — required maximum copper/silver/gold price per item.
+- **Max total** — optional whole-auction ceiling; 0 means unlimited.
+- **Min** — minimum stack size.
+- **Max** — maximum stack size; 0 means unlimited.
+
+Money fields accept values such as `4g50s`, `18s`, `25c`, or a plain integer in copper.
+
+Editing any rule immediately disarms LIVE. If an AH result was already in flight, that result is consumed but ignored as stale before scanning restarts with the new rule set.
+
+Existing slash commands remain supported and use the same persistent rule table.
+
+## Rule routing
+
+Empty/disabled/invalid slots are skipped. A rule is scan-active only when:
+- ON is enabled;
+- Item is non-empty;
+- Max/unit is greater than zero.
+
+LIVE cannot be armed without at least one active rule.
+
+The GUI and slash commands share the same SavedVariables table `AVM_DB.rules`.
 
 ## Purchase safety
 
-Default is DRY-RUN. LIVE must be explicitly enabled with /avm live on. DRY-RUN evaluates and revalidates qualifying auctions even when the character cannot currently afford them; the log reports affordable=false and the missing amount. LIVE always re-checks current money immediately before PlaceAuctionBid and blocks the purchase when funds are insufficient.
+Default mode is DRY-RUN. LIVE is session-only and is forced OFF on addon load/reload, AH close, `/avm off`, rule edits, and reset.
 
-Before a live purchase, the candidate is queried again by item name on its source page and adjacent filtered pages, then matched by an equivalent signature. The list index from the original result is never reused blindly.
+For each rule:
+1. find or verify the first positive-buyout page;
+2. scan all positive pages (bounded by WATCH page cap);
+3. remember global best unit-price candidate;
+4. emit `WATCH_BEST`;
+5. re-query the source page plus adjacent filtered pages;
+6. require the same exact auction signature, including item-link key when available;
+7. only then may the single guarded `PlaceAuctionBid` path run.
 
-A sent buyout enters BUY_PENDING. Exact money delta is used as positive confirmation evidence. Timeout is UNKNOWN, never success. During UNKNOWN_HOLD, new live purchases are paused to avoid duplicate purchases after delayed server/client state. LIVE has a session purchase limit (default 1); once the limit is confirmed, LIVE auto-disarms and scanning continues in dry-run.
+If the best offer moved/disappeared before revalidation, `WATCH_RACE` is logged and no buy is sent.
+
+DRY-RUN revalidates the best candidate, emits `DRYRUN_BEST`, then rotates to the next active rule.
+
+LIVE additionally:
+- excludes candidates that currently exceed wallet or remaining session budget during best-offer selection;
+- rechecks wallet immediately before purchase;
+- allows only one buy transaction pending;
+- uses exact money delta as positive confirmation evidence;
+- treats timeout as UNKNOWN, never success;
+- pauses further live purchases during UNKNOWN_HOLD;
+- respects session spend and purchase-count limits;
+- auto-disarms when the confirmed purchase-count limit is reached.
+
+## MarketScan / PriceDB
+
+The same serialized scheduler owns whole-market scans. MarketScan pauses WATCH scanning while it owns the AH query channel.
+
+Whole-market snapshots keep per-item:
+- auction count;
+- unit count;
+- min / p25 / median / p75 / max unit price;
+- listing-average and quantity-weighted unit price;
+- net decrease in listed units versus prior snapshot.
+
+Net decrease is a turnover proxy, not proof of executed sales; listings may also expire or be cancelled.
+
+AutoMarket has retry backoff after failures and LIVE is blocked while MarketScan owns or requests the scheduler.
 
 ## Commands
 
-- /avm on
-- /avm off
-- /avm live on
-- /avm live off
-- /avm status
-- /avm list
-- /avm del N
-- /avm pages N
-- /avm budget 100g
-- /avm maxbuys 1
-- /avm add exact;Black Lotus;60g;120g;1;20
-- /avm add partial;Lotus;60g;120g;1;20
+Scanner / WATCH:
+- `/avm on`
+- `/avm off`
+- `/avm live on`
+- `/avm live off`
+- `/avm status`
+- `/avm gui`
+- `/avm list`
+- `/avm del N`
+- `/avm pages N` (WATCH full-scan page cap, 1..100)
+- `/avm budget 100g`
+- `/avm maxbuys 1`
+- `/avm add exact;Black Lotus;60g;120g;1;20`
+- `/avm add partial;Lotus;60g;120g;1;20`
 
-Rule fields are: match type; item name; max unit price; max total price; min stack; max stack. maxTotal=0, maxStack=0 and budget=0 mean unlimited.
+Market data:
+- `/avm market start`
+- `/avm market stop`
+- `/avm market status`
+- `/avm market item Black Lotus`
+- `/avm market auto 60`
+- `/avm market retention 24`
+- `/avm market clear`
 
-## Test order
+## 0.8 diagnostics
+
+New counters/status fields:
+- `watchPages`
+- `watchBest`
+- `watchCaps`
+- `watchRaces`
+- active rule count, slot, current scan page and pages scanned.
+
+Important log markers:
+- `WATCH rule=...` — full positive-page scan starts.
+- `WATCH_BEST` — best unit-price candidate after the full rule scan.
+- `DRYRUN_BEST` — revalidated dry-run result.
+- `WATCH_RACE` — candidate changed before revalidation; no buy sent.
+- `WATCH_CAP` — query exceeded configured page cap.
+- `BUY_SENT`, `CONFIRMED`, `UNKNOWN` — guarded V2 transaction state.
+
+## Recommended test order
 
 1. Leave LIVE OFF.
-2. Add one narrow rule.
-3. Open AH and run /avm on.
-4. Verify binary boundary convergence, extra-event count and DRYRUN candidates.
-5. Only after diagnostic evidence is clean should LIVE be enabled.
+2. Open WATCH and configure exactly one narrow rule.
+3. Use a known item such as Black Lotus with a conservative Max/unit.
+4. Enable Scanner.
+5. Confirm pages progress across the entire filtered result set and one `WATCH_BEST` appears only after the final page.
+6. Confirm `DRYRUN_BEST` matches the best unit-price offer.
+7. Only then set `/avm maxbuys 1`, a small budget, and arm LIVE for one controlled purchase.
 
+## vMaNGOS reference
 
-## Unified MarketScan + PriceDB
+Server reference used by the project:
+`vmangos/core` development commit `464179081673cfd240f7ffe7f0daf96bca0b5a70`.
 
-The same serialized vMaNGOS query scheduler now owns both the watchlist/live-buy bot and whole-market buyout snapshots. MarketScan first finds or verifies the global buyout=0 -> buyout>0 boundary, then scans every positive-buyout page through the last page. Watchlist scanning is paused while MarketScan owns the scheduler.
-
-PriceDB is stored in AVM_DB. Per item and per retained snapshot it records auction count, unit count, minimum, p25, median, p75, maximum, listing-average unit price, quantity-weighted unit price, and disappeared units relative to the prior snapshot. Disappeared units are explicitly a turnover proxy: an auction can disappear because it sold, expired, or was cancelled.
-
-Commands:
-- /avm market start
-- /avm market stop
-- /avm market status
-- /avm market item Black Lotus
-- /avm market auto 60
-- /avm market retention 24
-- /avm market clear
-
-AutoMarket runs only while the Auction House is open. A market scan automatically disarms LIVE before taking ownership of the AH query scheduler.
-
-
-## Audit hardening (0.7)
-
-- LIVE is session-only. Addon load/reload, closing the Auction House, /avm off and /avm reset disarm LIVE. /avm live on requires an open AH and is blocked while MarketScan owns or requests the scheduler.
-- AutoMarket failures set a retry backoff (default 300 seconds) so repeated query timeouts cannot create an immediate restart loop.
-- PriceDB history rows are stored as compact CSV-like strings instead of key-heavy Lua tables. Older table rows remain readable.
-- Market item grouping uses item id + enchant id + random-suffix id when available, preventing random-property gear from being merged only by base item id.
-- PriceDB reports netDownUnits (net decrease in listed units), not "disappeared sales". It is not proof of executed trades.
-- Candidate revalidation includes the exact auction item-link key when available, reducing the risk of buying a different random-suffix/enchant variant with otherwise identical row fields.
+Current repository/runtime evidence and exact in-game tests remain authoritative over assumptions from other WoW versions.
