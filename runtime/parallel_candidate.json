@@ -86,6 +86,14 @@
         "src/AHThrottleNative/WoWAHThrottleNative_5875_v1.c"
       ],
       "profile": "clangcl_i686_crtless"
+    },
+    {
+      "runtime_name": "WoWCharacterSwitchDiag_5875_v1.dll",
+      "builder": "tools/build_characterswitchdiag_candidate.py",
+      "sources": [
+        "src/CharacterSwitchDiag/WoWCharacterSwitchDiag_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_crtless"
     }
   ],
   "addons": {

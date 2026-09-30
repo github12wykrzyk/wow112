@@ -285,6 +285,19 @@ jobs:
             --output build/WoWAHThrottleNative_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel AH native throttle diagnostic build/package failed" }
 
+      - name: Build and append Parallel Character Switch diagnostic
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_characterswitchdiag_candidate.py \
+            --package dist/WoW112_WORK_CANDIDATE.zip \
+            --package-metadata dist/candidate_metadata.json \
+            --summary dist/candidate_summary.json \
+            --build-metadata dist/characterswitchdiag_build.json \
+            --output build/WoWCharacterSwitchDiag_5875_v1.dll
+          if ($LASTEXITCODE -ne 0) { throw "Parallel CharacterSwitchDiag build/package failed" }
+
       - name: Patch Parallel TEST EXE farclip ceiling 777 to 1554
         if: github.ref_name == 'parallel'
         shell: pwsh

@@ -1137,6 +1137,30 @@
         "artifact_id": 11117496114
       },
       "notes": "Gameplay evidence on Vendor V1 showed boundary=13, lastPage~1109 and repeated VENDOR_NONE scannedPages=10 followed by cache verify of the same boundary, proving V1 repeatedly rescanned only the same cheapest 10 pages. V2 alternates HOT coverage with a persistent progressive SWEEP cursor, preserving the V1 buy/revalidation path and maxBuyout hard bound. Integrated onto current parallel after confirming AuxVmangos source/TOC/README and parallel candidate manifest were byte-identical to the verified feature base. Full aggregate candidate build pending. Exact integrated HOT+SWEEP candidate passed full parallel package gate. Gameplay validation of alternating HOT/SWEEP progression and vendor opportunity detection remains pending."
+    },
+    {
+      "id": "character-switch-diagnostic-v1",
+      "branch": "feature/character-switch-diagnostic",
+      "modules": [
+        "CharacterSwitchDiag",
+        "AutoLoginBridge"
+      ],
+      "dependencies": [
+        "parallel AutoLoginBridge glue/character-select evidence"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 FrameScript_Execute 0x00704CD0",
+        "FrameScript_GetText 0x00703BF0",
+        "WOW_OBJMGR 0x00B41414",
+        "stock Logout() Lua path",
+        "CharacterSelect_SelectCharacter / CharacterSelect_EnterWorld"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "7b8acc5774d4061a8921e6f345ebdadad92ea87f",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence."
     }
   ]
 }
