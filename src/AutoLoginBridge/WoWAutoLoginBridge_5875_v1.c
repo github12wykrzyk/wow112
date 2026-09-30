@@ -2,14 +2,20 @@
  * WoWAutoLoginBridge 5875 v1
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
- * A Multibox-launched WoW process inherits:
+ * Native-profile launch inherits:
  *   WOW112_AUTOLOGIN_ACCOUNT - account name
  *   WOW112_AUTOLOGIN_BLOB    - DPAPI-protected password (base64)
- *   WOW112_AUTOCHAR_FIRST     - optional "1": select list index 1 and enter world
+ *   WOW112_AUTOCHAR_FIRST    - optional "1": select list index 1 and enter world
  *
- * The bridge removes both variables immediately, waits for Glue readiness,
- * dispatches on the game window thread, calls native login 0x0046AFB0 and
- * scrubs plaintext buffers. No SendInput, focus switching or edit-box timing.
+ * V5 also supports a relogin-only one-time handoff:
+ *   WOW112_AUTOLOGIN_HANDOFF - random per-process nonce.
+ * The updater writes login + already-DPAPI-protected blob under its APPDATA
+ * directory after CreateProcess. Ordinary "Uruchom" therefore stays manual at
+ * startup, while CharacterSwitchDiag can reuse the selected profile after its
+ * native world disconnect. The handoff file is deleted immediately after read.
+ *
+ * Plaintext password exists only inside native_login() and is scrubbed before
+ * return. No SendInput, focus switching or edit-box timing is used.
  *
  * Exact current PARALLEL binary evidence:
  * candidate 5328812bebb5bdfdd0d554ed95c4e243ae918c7c
@@ -41,6 +47,9 @@
 #define WM_RELOGIN          (WM_APP + 0x2A9u)
 #define ACCOUNT_CAP    64u
 #define BLOB_CAP       2048u
+#define HANDOFF_NONCE_CAP 80u
+#define HANDOFF_PATH_CAP  1024u
+#define HANDOFF_FILE_CAP  2304u
 
 typedef void (__fastcall *GlueLoginFn)(const char*, char*);
 typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
@@ -57,6 +66,7 @@ static HWND g_hwnd=NULL;
 static WNDPROC g_prev=NULL;
 static char g_account[ACCOUNT_CAP];
 static char g_blob[BLOB_CAP];
+static char g_handoff_nonce[HANDOFF_NONCE_CAP];
 static HWND g_best=NULL;
 static DWORD g_best_area=0u;
 
@@ -109,7 +119,35 @@ static int glue_ready(void)
            *(volatile DWORD*)(DWORD)GLUE_STATE==0u;
 }
 
-static int load_profile(void)
+static int append_text(char *dst,DWORD cap,DWORD *used,const char *src)
+{
+    DWORD i=0u;
+    if(!dst||!used||!src) return 0;
+    while(src[i]) {
+        if(*used+1u>=cap) return 0;
+        dst[(*used)++]=src[i++];
+    }
+    dst[*used]=0;
+    return 1;
+}
+
+static int handoff_path(char *path,DWORD cap)
+{
+    char appdata[768];
+    DWORD n,used=0u;
+    if(!path||cap<32u||!g_handoff_nonce[0]) return 0;
+    ZeroMemory(appdata,sizeof(appdata));
+    n=GetEnvironmentVariableA("APPDATA",appdata,(DWORD)sizeof(appdata));
+    if(n==0u||n>=(DWORD)sizeof(appdata)) return 0;
+    path[0]=0;
+    if(!append_text(path,cap,&used,appdata)) return 0;
+    if(!append_text(path,cap,&used,"\\WoW112ParallelUpdater\\autologin_handoff\\")) return 0;
+    if(!append_text(path,cap,&used,g_handoff_nonce)) return 0;
+    if(!append_text(path,cap,&used,".txt")) return 0;
+    return 1;
+}
+
+static int load_environment_profile(void)
 {
     char autoChar[8];
     DWORD a=GetEnvironmentVariableA("WOW112_AUTOLOGIN_ACCOUNT",g_account,ACCOUNT_CAP);
@@ -125,11 +163,64 @@ static int load_profile(void)
     if(a==0u || a>=ACCOUNT_CAP || b==0u || b>=BLOB_CAP) {
         wipe(g_account,sizeof(g_account));
         wipe(g_blob,sizeof(g_blob));
-        g_profile_loaded=0;
         return 0;
     }
     g_profile_loaded=1;
     return 1;
+}
+
+static int load_handoff_profile(void)
+{
+    char path[HANDOFF_PATH_CAP],buf[HANDOFF_FILE_CAP];
+    HANDLE h;
+    DWORD got=0u,i,line1=0u,line2=0u;
+    int ok=0;
+    if(!g_handoff_nonce[0]||!handoff_path(path,sizeof(path))) return 0;
+    h=CreateFileA(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(h==INVALID_HANDLE_VALUE) return 0;
+    ZeroMemory(buf,sizeof(buf));
+    if(ReadFile(h,buf,sizeof(buf)-1u,&got,NULL) && got>3u && got<sizeof(buf)) {
+        buf[got]=0;
+        for(i=0u;i<got;i++) if(buf[i]=='\n') { line1=i; break; }
+        if(line1>0u && line1<ACCOUNT_CAP) {
+            for(i=line1+1u;i<got;i++) if(buf[i]=='\n') { line2=i; break; }
+            if(line2>line1+1u && line2-line1-1u<BLOB_CAP) {
+                DWORD aLen=line1,bLen=line2-line1-1u,j;
+                if(aLen&&buf[aLen-1u]=='\r') aLen--;
+                if(bLen&&buf[line1+bLen]=='\r') bLen--;
+                if(aLen>0u&&aLen<ACCOUNT_CAP&&bLen>0u&&bLen<BLOB_CAP) {
+                    for(j=0u;j<aLen;j++) g_account[j]=buf[j];
+                    g_account[aLen]=0;
+                    for(j=0u;j<bLen;j++) g_blob[j]=buf[line1+1u+j];
+                    g_blob[bLen]=0;
+                    g_autochar=0;
+                    g_profile_loaded=1;
+                    ok=1;
+                }
+            }
+        }
+    }
+    CloseHandle(h);
+    DeleteFileA(path);
+    wipe(buf,sizeof(buf));
+    wipe(path,sizeof(path));
+    return ok;
+}
+
+static int load_profile(int *initialLogin)
+{
+    DWORD n;
+    if(initialLogin) *initialLogin=0;
+    ZeroMemory(g_handoff_nonce,sizeof(g_handoff_nonce));
+    n=GetEnvironmentVariableA("WOW112_AUTOLOGIN_HANDOFF",g_handoff_nonce,HANDOFF_NONCE_CAP);
+    SetEnvironmentVariableA("WOW112_AUTOLOGIN_HANDOFF",NULL);
+    if(n>=HANDOFF_NONCE_CAP) g_handoff_nonce[0]=0;
+
+    if(load_environment_profile()) {
+        if(initialLogin) *initialLogin=1;
+        return 1;
+    }
+    return 0;
 }
 
 static int native_login(void)
@@ -262,23 +353,34 @@ static void release_hook(void)
 static DWORD WINAPI worker(LPVOID unused)
 {
     DWORD start,autoStart;
+    int initialLogin=0;
     (void)unused;
-    if(!load_profile()) return 0u; /* ordinary launch: bridge stays inert */
+    g_pid=GetCurrentProcessId();
+
+    if(!load_profile(&initialLogin) && g_handoff_nonce[0]) {
+        start=GetTickCount();
+        while(!g_stop && !g_profile_loaded && (DWORD)(GetTickCount()-start)<15000u) {
+            if(load_handoff_profile()) break;
+            Sleep(50u);
+        }
+    }
+    if(!g_profile_loaded) return 0u;
     if(!guard_ok()) { g_done=-1; wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); return 0u; }
 
-    g_pid=GetCurrentProcessId();
-    start=GetTickCount();
-    while(!g_stop && !g_done && (DWORD)(GetTickCount()-start)<40000u) {
-        if(ensure_hook()) PostMessageA(g_hwnd,WM_AUTOLOGIN,0,0);
-        Sleep(50u);
+    if(initialLogin) {
+        start=GetTickCount();
+        while(!g_stop && !g_done && (DWORD)(GetTickCount()-start)<40000u) {
+            if(ensure_hook()) PostMessageA(g_hwnd,WM_AUTOLOGIN,0,0);
+            Sleep(50u);
+        }
+        if(!g_done) { wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); }
     }
-    if(!g_done) { wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); }
 
     /* AUTO POSTAĆ 1 remains entirely inside this process. CharacterSelectUI is
      * the actual GlueXML screen; CharacterSelect is the model/state frame.
      * Select slot 1 first, then wait for UPDATE_SELECTED_CHARACTER to publish
      * selectedIndex==1 before EnterWorld. This avoids a slow-render/LOW race. */
-    if(g_done==1 && g_autochar) {
+    if(initialLogin && g_done==1 && g_autochar) {
         autoStart=GetTickCount();
         while(!g_stop && (DWORD)(GetTickCount()-autoStart)<120000u) {
             if(*(volatile DWORD*)(DWORD)WOW_OBJMGR!=0u) break;
@@ -286,7 +388,9 @@ static DWORD WINAPI worker(LPVOID unused)
             Sleep(100u);
         }
     }
-    /* Keep the dispatcher available for CharacterSwitchDiag fast recycle. */
+
+    /* Handoff-loaded profiles are relogin-only: no startup login side effect.
+       Keep dispatcher alive until CharacterSwitchDiag requests the recycle. */
     while(!g_stop) {
         if(g_relogin_state==1 && ensure_hook())
             PostMessageA(g_hwnd,WM_RELOGIN,0,0);
@@ -303,7 +407,7 @@ static DWORD WINAPI worker(LPVOID unused)
 
 __declspec(dllexport) int __stdcall W112_AutoLoginBridge_RequestRelogin(void)
 {
-    if(!g_profile_loaded || g_done!=1 || g_relogin_state==1 || g_relogin_state==2) return 0;
+    if(!g_profile_loaded || g_relogin_state==1 || g_relogin_state==2) return 0;
     g_relogin_state=1;
     return 1;
 }
@@ -318,7 +422,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
     HANDLE th;
     (void)reserved;
     if(reason==DLL_PROCESS_ATTACH) {
-        g_stop=0; g_done=0; g_autochar=0; g_profile_loaded=0; g_relogin_state=0;
+        g_stop=0; g_done=0; g_autochar=0; g_profile_loaded=0; g_relogin_state=0; g_handoff_nonce[0]=0;
         DisableThreadLibraryCalls(module);
         th=CreateThread(NULL,0u,worker,NULL,0u,NULL);
         if(th) CloseHandle(th);
@@ -327,6 +431,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
         release_hook();
         wipe(g_blob,sizeof(g_blob));
         wipe(g_account,sizeof(g_account));
+        wipe(g_handoff_nonce,sizeof(g_handoff_nonce));
     }
     return TRUE;
 }

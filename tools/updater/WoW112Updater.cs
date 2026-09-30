@@ -1123,6 +1123,8 @@ namespace WoW112Updater
 
             var startInfo = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = true };
             ConfigureAutoLoginEnvironment(startInfo, autoLoginAccount, autoFirstCharacter);
+            var reloginOnlyAccount = autoLoginAccount == null && accountVault != null ? accountVault.Selected : null;
+            var reloginHandoff = ConfigureReloginHandoffEnvironment(startInfo, reloginOnlyAccount);
             string lowConfig = null;
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
@@ -1133,6 +1135,7 @@ namespace WoW112Updater
                 ? Process.Start(startInfo)
                 : Process.Start(startInfo, lowConfig, backgroundSound);
             if (game == null) throw new InvalidOperationException("Windows nie zwrócił procesu uruchomionej gry.");
+            PublishReloginHandoff(reloginHandoff, reloginOnlyAccount);
             if (autoLoginAccount != null && autoLoginAccount.LowSpec)
             {
                 try { game.PriorityClass = ProcessPriorityClass.BelowNormal; }

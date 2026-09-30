@@ -1418,12 +1418,12 @@
         "CharacterSelect_SelectCharacter / CharacterSelect_EnterWorld",
         "CharacterSwitchDiag.log"
       ],
-      "status": "awaiting_ci",
+      "status": "accepted",
       "observed_head": "e21d00b6c9da7caca0a30db6be123f455422ff54",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "V4 bypasses the ineffective Glue wrapper and directly calls the exact-build ClientServices disconnect method. Fail-closed guards verify getter/disconnect machine-code signatures, require non-null ClientServices and current connection, then log connection pointer before/after. Existing relogin and slot automation remain unchanged."
+      "notes": "V4 exact tested SHA a22588f3a270e19564de28fed9cada4211e5f65c. Report #40 proved direct ClientServices::Disconnect: CONNECTION_BEFORE=1, CONNECTION_AFTER=0 and WORLD_CLEARED in 672-781 ms. Server allowed immediate entry on another character after manual relogin. Remaining failure was RELOGIN_REQUEST_REJECTED with bridge_state=0 because the tested client had no retained autologin profile."
     },
     {
       "id": "ah-soak-75-50",
@@ -1480,6 +1480,32 @@
         "artifact_id": 11129738688
       },
       "notes": "Long-run throughput soak after raw-event benchmark showed 75ms 25/25 and 50ms 20/25. Sends 500 distinct pages at 75ms and 500 at 50ms with 10s drain per stage; stock AuctionFrameBrowse is detached during counting. Measures long-run raw response yield and effective auctions/s before choosing SAFE/TURBO policy. Rebased onto current parallel a22588f3 after unrelated CharacterSwitchDiag changes. Integrated candidate based on current parallel a22588f3; full exact-parallel candidate verification pending. Integrated soak package is ready for in-game 500+500 query test."
+    },
+    {
+      "id": "character-switch-relogin-handoff-v5",
+      "branch": "feature/character-switch-relogin-handoff-v5",
+      "modules": [
+        "AutoLoginBridge",
+        "Updater",
+        "CharacterSwitchDiag"
+      ],
+      "dependencies": [
+        "character-switch-clientservices-v4",
+        "multibox-auto-first-character-parallel"
+      ],
+      "shared_resources": [
+        "WOW112_AUTOLOGIN_HANDOFF per-process nonce",
+        "%APPDATA%/WoW112ParallelUpdater/autologin_handoff",
+        "DPAPI-protected WoW account vault blob",
+        "AutoLoginBridge native Glue login 0x0046AFB0",
+        "V4 ClientServices::Disconnect 0x005AB1A0"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "20ded00910f8205dff81cfb1b1058d4cf6cfe79a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "V5 preserves V4 disconnect unchanged. Ordinary updater LaunchGame with a selected account passes only a random handoff nonce at CreateProcess time; after process creation the updater publishes login + existing DPAPI-protected password blob to a one-time APPDATA file. AutoLoginBridge polls it, deletes it immediately after reading and retains the encrypted profile as relogin-only without changing manual startup behavior. Native profile/multibox launch keeps existing environment autologin."
     }
   ]
 }

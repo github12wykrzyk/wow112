@@ -110,6 +110,47 @@ namespace WoW112Updater
         private readonly List<WowAccountSession> accountSessions = new List<WowAccountSession>();
         private bool multiboxRunning;
 
+        private string ConfigureReloginHandoffEnvironment(ProcessStartInfo startInfo, WowAccount account)
+        {
+            if (startInfo == null) throw new ArgumentNullException("startInfo");
+            if (account == null) return null;
+            if (string.IsNullOrWhiteSpace(account.Login) || Encoding.UTF8.GetByteCount(account.Login) >= 64)
+                throw new InvalidDataException("Wybrany profil ma nieprawidłowy login.");
+            if (string.IsNullOrWhiteSpace(account.ProtectedPassword) || account.ProtectedPassword.Length >= 2048)
+                throw new InvalidDataException("Wybrany profil ma nieprawidłowy zaszyfrowany credential blob.");
+
+            var nonce = Guid.NewGuid().ToString("N");
+            startInfo.UseShellExecute = false;
+            startInfo.EnvironmentVariables["WOW112_AUTOLOGIN_HANDOFF"] = nonce;
+            return nonce;
+        }
+
+        private void PublishReloginHandoff(string nonce, WowAccount account)
+        {
+            if (string.IsNullOrWhiteSpace(nonce) || account == null) return;
+            if (nonce.Length != 32 || nonce.Any(ch => !Uri.IsHexDigit(ch)))
+                throw new InvalidDataException("Nieprawidłowy nonce handoff.");
+            if (account.Login.IndexOfAny(new[] { '\r', '\n' }) >= 0 ||
+                account.ProtectedPassword.IndexOfAny(new[] { '\r', '\n' }) >= 0)
+                throw new InvalidDataException("Profil zawiera niedozwolony znak nowej linii.");
+
+            var dir = Path.Combine(configDir, "autologin_handoff");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, nonce + ".txt");
+            var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            var payload = account.Login + "\n" + account.ProtectedPassword + "\n";
+            try
+            {
+                File.WriteAllBytes(temp, Encoding.ASCII.GetBytes(payload));
+                File.Move(temp, path);
+                Log("Przekazano jednorazowy profil relogin-only do klienta WoW.");
+            }
+            finally
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+            }
+        }
+
         internal void AttachAccounts()
         {
             accountsButton.Click += delegate { ShowAccounts(); };
@@ -688,6 +729,13 @@ namespace WoW112Updater
                 throw new Exception("Account smoke: account deletion/default persistence failed");
             if (!featureControls.ContainsKey("accounts") || !featureControls.ContainsKey("multibox"))
                 throw new Exception("Account smoke: accounts/multibox UI not registered");
+            var handoffStart = new ProcessStartInfo("WoW.exe") { UseShellExecute = true };
+            var handoffNonce = ConfigureReloginHandoffEnvironment(handoffStart, loaded.Selected);
+            if (string.IsNullOrWhiteSpace(handoffNonce) || handoffNonce.Length != 32 ||
+                handoffStart.UseShellExecute ||
+                !handoffStart.EnvironmentVariables.ContainsKey("WOW112_AUTOLOGIN_HANDOFF"))
+                throw new Exception("Account smoke: relogin-only handoff environment failed");
+
             var nativeStart = new ProcessStartInfo("WoW.exe") { UseShellExecute = true };
             ConfigureAutoLoginEnvironment(nativeStart, loaded.Selected);
             if (nativeStart.UseShellExecute ||
