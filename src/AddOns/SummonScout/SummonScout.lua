@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.41"
+local ADDON_VERSION = "1.43"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -219,6 +219,7 @@ local WHISPER_PRICE_CUES = {
 
 local WHISPER_EXACT_CODES = {
     ["123"] = true,
+    ["here"] = true,
     ["+"] = true
 }
 
@@ -237,11 +238,71 @@ local SELLER_CUES = {
     "portal service", "pst", "whisper me", "dm me"
 }
 
+-- Recruitment chatter can contain both a buyer-looking token ("LF"/"need")
+-- and "summon" even though the sender is explicitly saying that THEIR group
+-- can provide the summon. Keep this separate from seller detection so a farm/
+-- group recruitment post never triggers an invite or a competitive counter.
+local RECRUITMENT_ROLE_CUES = {
+    "warrior", "mage", "rogue", "priest", "warlock", "hunter", "druid",
+    "paladin", "shaman", "tank", "healer", "heals", "heal", "dps",
+    "melee", "ranged", "caster"
+}
+
+local OWN_SUMMON_CUES = {
+    "can summon", "can summ", "we can summon", "we can summ",
+    "i can summon", "i can summ", "have summon", "have a summon",
+    "got summon", "got a summon", "summon available"
+}
+
+local DIRECT_SUMMON_REQUEST_CUES = {
+    "lf summon", "lf summ", "need summon", "need summ",
+    "wtb summon", "wtb summ", "want summon", "want summ",
+    "looking for summon", "looking for summ",
+    "summon me", "sum me", "who can summon", "who can summ",
+    "anyone can summon", "anybody can summon",
+    "can someone summon", "can somebody summon",
+    "can you summon", "could you summon", "can u summon", "could u summon"
+}
+
 local function hasCue(s, cues)
     local j
     for j = 1, table.getn(cues) do
         if phraseHas(s, cues[j]) then return true end
     end
+    return false
+end
+
+local function isRecruitmentWithOwnSummon(message)
+    local s = normalizeMessage(message)
+    local recruitmentLead
+
+    if s == "" or not hasCue(s, OWN_SUMMON_CUES) then return false end
+
+    -- Never suppress genuine requests merely because they contain the words
+    -- "can summon", e.g. "who can summon me" or "can you summon".
+    if hasCue(s, DIRECT_SUMMON_REQUEST_CUES) then return false end
+
+    recruitmentLead = phraseHas(s, "lf")
+        or phraseHas(s, "lfm")
+        or has(s, "lf1m")
+        or has(s, "lf2m")
+        or has(s, "lf3m")
+        or phraseHas(s, "looking for")
+        or phraseHas(s, "need")
+        or phraseHas(s, "needed")
+
+    if not recruitmentLead then return false end
+
+    -- A role/class target is the strongest signal. Farm/run/group vocabulary
+    -- covers posts such as "LF Mage for ... farm. Can summon."
+    if hasCue(s, RECRUITMENT_ROLE_CUES)
+        or phraseHas(s, "farm")
+        or phraseHas(s, "run")
+        or phraseHas(s, "group")
+        or phraseHas(s, "grp") then
+        return true
+    end
+
     return false
 end
 
@@ -286,7 +347,8 @@ end
 
 local function looksLikeSummonRequest(message)
     local s = normalizeMessage(message)
-    if s == "" or isSellerMessage(s) or not hasSummonToken(s) then
+    if s == "" or isRecruitmentWithOwnSummon(s)
+        or isSellerMessage(s) or not hasSummonToken(s) then
         return false
     end
 
@@ -412,8 +474,9 @@ local function whisperInviteDecision(message)
     local loc, ambiguous = findLocation(message)
     local service = SummonScoutDB.service or "all"
     local score = 0
-    -- 123 is a service code, not natural language. Accept it as a whole token
-    -- in short whispers so common variants like "123 pls" and "pls 123" work.
+    -- Explicit one-word service codes such as "123" and "here" are accepted
+    -- immediately. 123 also remains tolerant as a whole token in short
+    -- whispers so normal politeness variants like "123 pls" still work.
     local exactCode = WHISPER_EXACT_CODES[s]
         or raw == "+"
         or (string.len(s) <= 32 and phraseHas(s, "123"))
@@ -1648,6 +1711,10 @@ end
 local function describeTest(message)
     local request = looksLikeSummonRequest(message)
     local loc, ambiguous = findLocation(message)
+    if isRecruitmentWithOwnSummon(message) then
+        chat("test: NOT A SUMMON REQUEST [recruitment + own summon]")
+        return
+    end
     if not request then
         chat("test: NOT A SUMMON REQUEST")
         return
@@ -2348,6 +2415,16 @@ local function handleChannelMessage(message, sender, channelBaseName, channelFul
     if samePlayer(sender, UnitName("player")) then return end
 
     local loc, ambiguous = findLocation(message)
+
+    -- Recruitment posts such as "LF Mage for farm ... Can summon" advertise
+    -- the sender's own group activity, not a summon request. Ignore them
+    -- before seller/counter logic so they do not pollute demand statistics.
+    if isRecruitmentWithOwnSummon(message) then
+        if SummonScoutDB.debug then
+            chat("ignore: " .. sender .. " [recruitment + own summon]")
+        end
+        return
+    end
 
     -- Seller detection is independent from buyer detection. Competitor ads
     -- never enter demand statistics or the invite queue.

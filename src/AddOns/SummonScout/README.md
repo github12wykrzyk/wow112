@@ -444,3 +444,28 @@ Examples:
 - `summon please`
 
 These still respect the global `Whisper smart auto invite` toggle and destination filtering when a different explicit location is named.
+
+
+## 1.42 exact `here` whisper invite
+
+- A direct whisper whose normalized text is exactly `here` is now treated as an explicit smart auto-invite request, alongside `123` and `+`.
+- The match is deliberately exact. Phrases that merely contain the word, such as `I am here already`, do not become invite triggers.
+- Existing service selection, duplicate protection, party checks and auto-summon flow are unchanged.
+
+
+## 1.43 recruitment / own-summon false-positive guard
+
+World-chat recruitment posts are no longer interpreted as summon demand merely because they contain both a broad request word and `summon`.
+
+The classifier now recognizes **recruitment + own summon capability**:
+- recruitment lead such as `LF`, `LFM`, `looking for`, `need` / `needed`;
+- a class/role or group activity signal such as `mage`, `priest`, `tank`, `healer`, `dps`, `farm`, `run`, `group`;
+- plus an own-capability phrase such as `can summon`, `have a summon`, `got summon`.
+
+Example now ignored:
+`LF Mage for Dustwallow Dragonkin farm ... Can summon. Need ~4k DPS`
+
+Explicit summon requests are protected from this exclusion, including:
+`LF summon`, `need summon`, `who can summon me`, `can you summon`, and `summon me`.
+
+`/ssi test <message>` reports `NOT A SUMMON REQUEST [recruitment + own summon]` for the new exclusion path.

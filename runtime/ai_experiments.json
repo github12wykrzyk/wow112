@@ -792,6 +792,34 @@
       ],
       "package": null,
       "notes": "Gameplay evidence showed DRYRUN_BEST for Runecloth after LIVE had been armed. Static audit found SetRule always called avm_rule_changed even when the focus-loss commit contained identical normalized values. This can disarm LIVE immediately after clicking the LIVE button. 0.8.2 makes identical SetRule calls no-ops while preserving LIVE disarm on real edits. Integrated to parallel from exact verified feature SHA; full candidate build pending."
+    },
+    {
+      "id": "summonscout-here-invite",
+      "branch": "parallel",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart-invite parser",
+        "SummonScout World summon-request classifier"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "a3f7f77e3a4d2e9bc60d1596c53d96566c2aecc2",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "9f4dac41bedaf3096d886dab07aef934e9cf81d4",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36747438825 completed success for exact feature SHA 9f4dac41bedaf3096d886dab07aef934e9cf81d4."
+        }
+      ],
+      "package": null,
+      "notes": "Integrated candidate for SummonScout 1.43: exact normalized whisper 'here' triggers smart auto-invite; World recruitment posts that advertise their own summon capability are ignored before invite/counter/logging. Explicit summon requests remain exempt from the recruitment guard."
     }
   ]
 }
