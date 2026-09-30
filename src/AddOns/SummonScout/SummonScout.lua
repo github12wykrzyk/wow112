@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.44"
+local ADDON_VERSION = "1.45"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -125,7 +125,7 @@ local LOCATIONS = {
     { id="felwood", label="Felwood", aliases={"felwood"} },
     { id="feralas", label="Feralas", aliases={"feralas"} },
     { id="desolace", label="Desolace", aliases={"desolace"} },
-    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "hydraxian waterlords"}, roots={"hydrax"} },
+    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "azsh", "hydraxian waterlords"}, roots={"hydrax"} },
     { id="ashenvale", label="Ashenvale", aliases={"ashenvale"} },
     { id="barrens", label="The Barrens", aliases={"the barrens", "barrens"} },
     { id="dustwallow", label="Dustwallow Marsh", aliases={"dustwallow marsh", "dustwallow"} },
@@ -333,15 +333,74 @@ local function hasGoldPrice(s)
     return string.find(s, "%d+%s*g") ~= nil
 end
 
-local function isSellerMessage(s)
-    s = normalizeMessage(s)
+local function findLocationsInMessage(message)
+    local s = normalizeMessage(message)
+    local found = {}
+    local seen = {}
+    local j, k
+
+    for j = 1, table.getn(LOCATIONS) do
+        local loc = LOCATIONS[j]
+        local matched = false
+        for k = 1, table.getn(loc.aliases) do
+            if phraseHas(s, loc.aliases[k]) then
+                matched = true
+                break
+            end
+        end
+        if not matched and loc.roots then
+            for k = 1, table.getn(loc.roots) do
+                if tokenHasRoot(s, loc.roots[k]) then
+                    matched = true
+                    break
+                end
+            end
+        end
+        if matched and not seen[loc.id] then
+            seen[loc.id] = true
+            found[table.getn(found) + 1] = loc
+        end
+    end
+
+    return found
+end
+
+local function locationListLabel(locations)
+    local labels = {}
+    local j
+    for j = 1, table.getn(locations or {}) do
+        labels[table.getn(labels) + 1] = locations[j].label
+    end
+    if table.getn(labels) == 0 then return "UNKNOWN" end
+    return table.concat(labels, " + ")
+end
+
+local function isSellerMessage(message)
+    local raw = lower(message or "")
+    local s = normalizeMessage(message)
+    local locations
+    local locationCount
+
     if s == "" or not hasSummonToken(s) then return false end
     if hasBuyerIntentCue(s) then return false end
     if hasSellerCue(s) or hasGoldPrice(s) then return true end
 
-    -- Common seller format: "<name> Summons: place1, place2, place3...".
-    -- Keep the fallback long-only so a short buyer line like "summons hyjal?"
-    -- still falls through to the request classifier instead of becoming an ad.
+    locations = findLocationsInMessage(s)
+    locationCount = table.getn(locations)
+
+    -- Multiple known destinations plus a summon token is a strong offer
+    -- signal even when the seller omits WTS, price or the word "service".
+    if locationCount >= 2 then return true end
+
+    -- One known destination with active/plural seller wording is also enough,
+    -- but keep explicit questions out of this fallback.
+    if locationCount >= 1 and not string.find(raw, "?", 1, true) then
+        if phraseHas(s, "summons") or phraseHas(s, "summoning")
+            or phraseHas(s, "summon service") or phraseHas(s, "summon to") then
+            return true
+        end
+    end
+
     if phraseHas(s, "summons") and string.len(s) >= 40 then return true end
     return false
 end
@@ -349,7 +408,7 @@ end
 local function looksLikeSummonRequest(message)
     local s = normalizeMessage(message)
     if s == "" or isRecruitmentWithOwnSummon(s)
-        or isSellerMessage(s) or not hasSummonToken(s) then
+        or isSellerMessage(message) or not hasSummonToken(s) then
         return false
     end
 
@@ -363,26 +422,11 @@ end
 
 local function findLocation(message)
     local s = normalizeMessage(message)
-    local j, k
-    local plainDm = phraseHas(s, "dm")
-
-    for j = 1, table.getn(LOCATIONS) do
-        local loc = LOCATIONS[j]
-        for k = 1, table.getn(loc.aliases) do
-            if phraseHas(s, loc.aliases[k]) then
-                return loc, nil
-            end
-        end
-        if loc.roots then
-            for k = 1, table.getn(loc.roots) do
-                if tokenHasRoot(s, loc.roots[k]) then
-                    return loc, nil
-                end
-            end
-        end
+    local locations = findLocationsInMessage(s)
+    if table.getn(locations) > 0 then
+        return locations[1], nil
     end
-
-    if plainDm then
+    if phraseHas(s, "dm") then
         return nil, "dm"
     end
     return nil, nil
@@ -491,7 +535,7 @@ local function whisperInviteDecision(message)
             or phraseHas(s, "summon pls")
             or phraseHas(s, "summon please"))
 
-    if (s == "" and not exactCode) or (s ~= "" and isSellerMessage(s)) then
+    if (s == "" and not exactCode) or (s ~= "" and isSellerMessage(message)) then
         return false, nil, "not-request"
     end
     if ambiguous then return false, nil, "ambiguous-location" end
@@ -825,6 +869,77 @@ local function groupUnitByName(name)
     return nil
 end
 
+local function ensureInviteBlacklist()
+    if type(SummonScoutDB.inviteBlacklist) ~= "table" then
+        SummonScoutDB.inviteBlacklist = {}
+    end
+    return SummonScoutDB.inviteBlacklist
+end
+
+local function inviteBlacklistKey(name)
+    return lower(trim(name or ""))
+end
+
+local function invitePlayerBlacklisted(name)
+    local key = inviteBlacklistKey(name)
+    if key == "" then return false end
+    return ensureInviteBlacklist()[key] ~= nil
+end
+
+local function inviteBlacklistNames()
+    local names = {}
+    local key, value
+    for key, value in pairs(ensureInviteBlacklist()) do
+        names[table.getn(names) + 1] = type(value) == "string" and value or key
+    end
+    table.sort(names)
+    return names
+end
+
+local function inviteBlacklistSummary()
+    local names = inviteBlacklistNames()
+    if table.getn(names) == 0 then return "empty" end
+    local shown = {}
+    local j
+    for j = 1, table.getn(names) do
+        if j > 5 then break end
+        shown[table.getn(shown) + 1] = names[j]
+    end
+    local suffix = table.getn(names) > 5 and (" +" .. tostring(table.getn(names) - 5)) or ""
+    return table.concat(shown, ", ") .. suffix
+end
+
+local function purgeQueuedInvite(name)
+    local key = inviteBlacklistKey(name)
+    local j
+    if key == "" then return end
+    for j = table.getn(SS.queue), 1, -1 do
+        if inviteBlacklistKey(SS.queue[j].name) == key then
+            table.remove(SS.queue, j)
+        end
+    end
+    SS.queued[key] = nil
+    SS.pendingManualInvites[key] = nil
+    SS.summonPending[key] = nil
+end
+
+local function addInviteBlacklist(name)
+    name = trim(name or "")
+    local key = inviteBlacklistKey(name)
+    if key == "" then return false, "empty" end
+    ensureInviteBlacklist()[key] = name
+    purgeQueuedInvite(name)
+    return true, name
+end
+
+local function removeInviteBlacklist(name)
+    local key = inviteBlacklistKey(name)
+    if key == "" then return false, "empty" end
+    if not ensureInviteBlacklist()[key] then return false, "missing" end
+    ensureInviteBlacklist()[key] = nil
+    return true, trim(name)
+end
+
 local SUMMON_PLAYER_BLACKLIST = {
     ["hydraone"] = true,
     ["hydratwo"] = true,
@@ -832,7 +947,8 @@ local SUMMON_PLAYER_BLACKLIST = {
 }
 
 local function summonPlayerBlacklisted(name)
-    return SUMMON_PLAYER_BLACKLIST[lower(trim(name or ""))] == true
+    local key = lower(trim(name or ""))
+    return SUMMON_PLAYER_BLACKLIST[key] == true or invitePlayerBlacklisted(name)
 end
 
 local function pendingSummonCount()
@@ -1261,6 +1377,10 @@ end
 local function queueInvite(name, message, loc)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) then return end
+    if invitePlayerBlacklisted(name) then
+        if SummonScoutDB.debug then chat("invite blacklist skip -> " .. name) end
+        return
+    end
     if isInGroup(name) or recentlyHandled(name) or SS.queued[lower(name)] then return end
 
     SS.queue[table.getn(SS.queue) + 1] = {
@@ -1287,6 +1407,10 @@ end
 local function tryImmediateInvite(name, loc)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) then return false end
+    if invitePlayerBlacklisted(name) then
+        if SummonScoutDB.debug then chat("invite blacklist skip -> " .. name) end
+        return false
+    end
     if table.getn(SS.queue) ~= 0 then return false end
     if now() < SS.nextInviteAt then return false end
     if isInGroup(name) or recentlyHandled(name) or SS.queued[lower(name)] then return false end
@@ -1308,6 +1432,9 @@ local function tryWhisperInvite(name, loc)
     name = trim(name)
     if name == "" or samePlayer(name, UnitName("player")) or isInGroup(name) then
         return false, "invalid"
+    end
+    if invitePlayerBlacklisted(name) then
+        return false, "blacklisted"
     end
 
     local key = lower(name)
@@ -1350,13 +1477,24 @@ local function counterDelay(sender, message)
     return minDelay + (math.mod(seed, tenths + 1) / 10)
 end
 
-local function counterLocationAllowed(loc, ambiguous)
+local function counterLocationAllowed(message, loc, ambiguous)
     local scope = SummonScoutDB.counterScope or "all"
-    if scope == "all" then return true end
-
-    if ambiguous or not loc then return false end
     local service = SummonScoutDB.service or "all"
-    return service == "all" or serviceContains(loc.id)
+    local locations
+    local j
+
+    if scope == "all" then return true, loc end
+    if service == "all" then return true, loc end
+
+    locations = findLocationsInMessage(message)
+    for j = 1, table.getn(locations) do
+        if serviceContains(locations[j].id) then
+            return true, locations[j]
+        end
+    end
+
+    if ambiguous then return false, nil end
+    return false, nil
 end
 
 local function clearCounterPending()
@@ -1366,9 +1504,11 @@ local function clearCounterPending()
 end
 
 local function scheduleCounter(sender, message, loc, ambiguous)
+    local allowed, matchedLoc
     if not SummonScoutDB.counterEnabled then return end
     if trim(SummonScoutDB.spamMessage or "") == "" then return end
-    if not counterLocationAllowed(loc, ambiguous) then return end
+    allowed, matchedLoc = counterLocationAllowed(message, loc, ambiguous)
+    if not allowed then return end
     if SS.counterAt and SS.counterAt > 0 then return end
 
     local cooldown = tonumber(SummonScoutDB.counterCooldown) or 60
@@ -1390,7 +1530,7 @@ local function scheduleCounter(sender, message, loc, ambiguous)
     local delay = counterDelay(sender, message)
     SS.counterAt = t + delay
     SS.counterSender = trim(sender)
-    SS.counterLocationLabel = loc and loc.label or "?"
+    SS.counterLocationLabel = matchedLoc and matchedLoc.label or (loc and loc.label or "?")
     if SummonScoutDB.debug then
         chat("competitor " .. SS.counterSender .. " [" .. SS.counterLocationLabel
             .. "] -> counter in " .. tostring(delay) .. "s")
@@ -1509,6 +1649,10 @@ local function processQueue()
 
     local item = popInvite()
     if not item then return end
+    if invitePlayerBlacklisted(item.name) then
+        if SummonScoutDB.debug then chat("queued invite blacklist skip -> " .. item.name) end
+        return
+    end
     if isInGroup(item.name) or recentlyHandled(item.name) then return end
 
     SS.recent[lower(item.name)] = now()
@@ -1529,6 +1673,7 @@ local function setDefaults()
     if SummonScoutDB.logDedupeSeconds == nil then SummonScoutDB.logDedupeSeconds = 60 end
     if SummonScoutDB.maxLogEntries == nil then SummonScoutDB.maxLogEntries = 200 end
     if SummonScoutDB.debug == nil then SummonScoutDB.debug = false end
+    if type(SummonScoutDB.inviteBlacklist) ~= "table" then SummonScoutDB.inviteBlacklist = {} end
     if SummonScoutDB.service == nil then SummonScoutDB.service = "all" end
     local canonicalService = resolveServiceSpec(SummonScoutDB.service)
     if canonicalService then SummonScoutDB.service = canonicalService else SummonScoutDB.service = "all" end
@@ -1732,13 +1877,15 @@ local function describeTest(message)
 end
 
 local function describeCounterTest(message)
-    local s = normalizeMessage(message)
     local loc, ambiguous = findLocation(message)
-    local seller = isSellerMessage(s)
-    local allowed = seller and counterLocationAllowed(loc, ambiguous)
+    local locations = findLocationsInMessage(message)
+    local seller = isSellerMessage(message)
+    local allowed, matchedLoc = false, nil
     if seller then
-        chat("countertest: OFFER, location="
-            .. (ambiguous and "AMBIGUOUS DM" or (loc and loc.label or "UNKNOWN"))
+        allowed, matchedLoc = counterLocationAllowed(message, loc, ambiguous)
+        chat("countertest: OFFER, locations="
+            .. (ambiguous and "AMBIGUOUS DM" or locationListLabel(locations))
+            .. ", matched=" .. (matchedLoc and matchedLoc.label or "-")
             .. ", decision=" .. (allowed and "COUNTER" or "IGNORE"))
     else
         chat("countertest: NOT A SUMMON OFFER")
@@ -1861,6 +2008,30 @@ local function guiSaveSummonWhisperCd()
     end
     SummonScoutDB.summonWhisperCooldown = math.floor(seconds)
     chat("summon whisper cooldown -> " .. tostring(SummonScoutDB.summonWhisperCooldown) .. "s")
+    if guiRefresh then guiRefresh() end
+end
+
+local function guiBlacklistAdd()
+    local value = trim(GUI.blacklistEdit and GUI.blacklistEdit:GetText() or "")
+    local ok, detail = addInviteBlacklist(value)
+    if ok then
+        chat("blacklist ADD -> " .. detail)
+        if GUI.blacklistEdit then GUI.blacklistEdit:SetText("") end
+    else
+        chat("blacklist add failed: enter a player name")
+    end
+    if guiRefresh then guiRefresh() end
+end
+
+local function guiBlacklistRemove()
+    local value = trim(GUI.blacklistEdit and GUI.blacklistEdit:GetText() or "")
+    local ok, detail = removeInviteBlacklist(value)
+    if ok then
+        chat("blacklist REMOVE -> " .. detail)
+        if GUI.blacklistEdit then GUI.blacklistEdit:SetText("") end
+    else
+        chat("blacklist remove: name not found")
+    end
     if guiRefresh then guiRefresh() end
 end
 
@@ -2005,7 +2176,13 @@ local function createGui()
     GUI.shardGuardText = guiText(f, "Shard guard: OFF", 370, -446, true)
     guiButton(f, 586, -342, 92, "Reset total", function() clearPayments() end)
     GUI.stateText = guiText(f, "State: -", 28, -450, true)
-    GUI.helpText = guiText(f, "/ssi gui toggles this panel. Settings persist in SummonScoutDB.", 28, -524, true)
+    guiText(f, "Invite blacklist:", 28, -478, true)
+    GUI.blacklistEdit = guiEdit(f, 112, -471, 110, "")
+    GUI.blacklistEdit:SetMaxLetters(32)
+    guiButton(f, 230, -471, 42, "Add", guiBlacklistAdd)
+    guiButton(f, 278, -471, 58, "Remove", guiBlacklistRemove)
+    GUI.blacklistText = guiText(f, "Blacklist: empty", 28, -502, true)
+    GUI.helpText = guiText(f, "/ssi gui | /ssi blacklist add|del|list <name>. Settings persist.", 28, -532, true)
 
     f:Hide()
     GUI.frame = f
@@ -2065,6 +2242,9 @@ guiRefresh = function()
         GUI.summonStateText:SetText("Summon: " .. pendingName
             .. " | " .. tostring(W112_AUTOSUMMON_NATIVE_STATUS or "idle")
             .. (SS.lastSummonError ~= "" and (" | " .. SS.lastSummonError) or ""))
+    end
+    if GUI.blacklistText then
+        GUI.blacklistText:SetText("Blacklist: " .. inviteBlacklistSummary())
     end
     if GUI.shardGuardText then
         local blocked, shards, threshold = shardGuardBlocked()
@@ -2214,6 +2394,22 @@ local function slash(msg)
         end
     elseif cmd == "countertest" and trim(rest) ~= "" then
         describeCounterTest(rest)
+    elseif cmd == "blacklist" then
+        local _, _, sub, name = string.find(trim(rest), "^(%S+)%s*(.-)$")
+        sub = lower(sub or "")
+        name = trim(name or "")
+        if sub == "add" and name ~= "" then
+            local ok, detail = addInviteBlacklist(name)
+            chat(ok and ("blacklist ADD -> " .. detail) or "blacklist add failed")
+        elseif (sub == "del" or sub == "remove") and name ~= "" then
+            local ok, detail = removeInviteBlacklist(name)
+            chat(ok and ("blacklist REMOVE -> " .. detail) or "blacklist remove: name not found")
+        elseif sub == "list" or sub == "" then
+            chat("blacklist: " .. inviteBlacklistSummary())
+        else
+            chat("use /ssi blacklist add <name> | del <name> | list")
+        end
+        guiRefreshSafe()
     elseif cmd == "gui" or cmd == "options" then
         toggleGui()
     elseif cmd == "master" then
@@ -2344,7 +2540,7 @@ local function slash(msg)
         chat("/ssi on|off|status | observe | invite on/off | log on/off | stats | recent [n] | unknown [n]")
         chat("/ssi spam on|off | spammsg <text> | spamsec <30-3600> | spamnow")
         chat("/ssi counter on|off | counterscope all|same | counterdelay <min> <max> | countercool <15-3600>")
-        chat("/ssi countertest <message> | gui")
+        chat("/ssi countertest <message> | blacklist add <name> | blacklist del <name> | blacklist list | gui")
         chat("/ssi master <name>|on|off | masterevents on|off | reporttest")
         chat("/ssi whisperinvite on|off | partysummon on|off | summonwhisper on|off | summonwhispercd <1-120>")
         chat("/ssi shardguard on|off | shardmin <1-100> | paymentchat on|off")
@@ -2431,6 +2627,11 @@ local function handleChannelMessage(message, sender, channelBaseName, channelFul
     -- never enter demand statistics or the invite queue.
     if isSellerMessage(message) then
         scheduleCounter(sender, message, loc, ambiguous)
+        return
+    end
+
+    if invitePlayerBlacklisted(sender) then
+        if SummonScoutDB.debug then chat("ignore blacklisted requester -> " .. sender) end
         return
     end
 
