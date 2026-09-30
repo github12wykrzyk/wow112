@@ -915,6 +915,8 @@ local function avm_market_show_item(name)
 	end
 end
 
+local avm_revalidate_candidate
+
 local function avm_market_slash(rest)
 	rest = avm_trim(rest or "")
 	local _,_,sub,arg = string.find(rest, "^(%S+)%s*(.*)$")
@@ -1039,6 +1041,13 @@ end
 
 local function avm_vendor_finish(reason)
 	local v = AVM.vendor
+	if AVM_DB.live then
+		AVM_DB.live = false
+		avm_print("LIVE OFF - VENDOR stopped")
+	end
+	if AVM.candidate and AVM.candidate.mode == "vendor" then AVM.candidate = nil end
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
 	avm_print("VENDOR stopped: " .. tostring(reason or "stopped"))
 	v.active = false
 	v.requested = false
@@ -1376,10 +1385,10 @@ local function avm_pick_candidate()
 	return best
 end
 
-local function avm_revalidate_candidate()
+avm_revalidate_candidate = function()
 	local c = AVM.candidate
 	if not c then
-		avm_restart_boundary()
+		if AVM.vendor.active then avm_vendor_restart_cycle() else avm_restart_boundary() end
 		return
 	end
 
@@ -1481,10 +1490,14 @@ local function avm_revalidate_candidate()
 	end
 
 	AVM.stats.failed = AVM.stats.failed + 1
-	AVM.stats.watchRaces = AVM.stats.watchRaces + 1
-	AVM.watchRaces = AVM.watchRaces + 1
 	AVM.recent[c.signature] = GetTime() + 2
-	avm_print("WATCH_RACE " .. c.name .. " - best offer moved/disappeared before revalidate")
+	if c.mode == "vendor" then
+		avm_print("VENDOR_RACE " .. c.name .. " - opportunity moved/disappeared before revalidate")
+	else
+		AVM.stats.watchRaces = AVM.stats.watchRaces + 1
+		AVM.watchRaces = AVM.watchRaces + 1
+		avm_print("WATCH_RACE " .. c.name .. " - best offer moved/disappeared before revalidate")
+	end
 	avm_resume_after_candidate(c, false)
 end
 
@@ -2038,7 +2051,7 @@ local function avm_slash(msg)
 				avm_print("LIVE requires an active WATCH rule or VENDOR scanner")
 			else
 				AVM_DB.live = true
-				avm_print("LIVE ON - only full-scan WATCH_BEST offers may be bought")
+				avm_print("LIVE ON - only revalidated WATCH/VENDOR offers may be bought")
 			end
 		else
 			AVM_DB.live = false
