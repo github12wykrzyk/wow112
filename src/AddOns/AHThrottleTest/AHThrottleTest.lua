@@ -1,5 +1,6 @@
 -- AHThrottleTest for World of Warcraft 1.12.1 (build 5875)
--- Standalone diagnostics. Does not modify AuxVmangos and never buys auctions.
+-- V1.2.1: debounced result snapshots on top of the existing native V2 sender.
+-- Standalone diagnostic. Never bids or buys auctions.
 
 local AHT = {
     open = false,
@@ -12,11 +13,18 @@ local AHT = {
         expected = 0,
         rawEvents = 0,
         uniqueCount = 0,
+        overflow = 0,
         signatures = {},
         results = {},
         startedAt = 0,
+        stageStartedAt = 0,
+        pendingSnapshot = false,
+        snapshotAt = 0,
+        lastEventAt = 0,
     },
 }
+
+local SNAPSHOT_DEBOUNCE = 0.075
 
 local function out(msg)
     if DEFAULT_CHAT_FRAME then
@@ -42,9 +50,7 @@ local function canSend()
 end
 
 local function auctionOpen()
-    if AuctionFrame and AuctionFrame.IsVisible and AuctionFrame:IsVisible() then
-        return true
-    end
+    if AuctionFrame and AuctionFrame.IsVisible and AuctionFrame:IsVisible() then return true end
     return AHT.open
 end
 
@@ -58,7 +64,7 @@ local function pageInfo()
     return tonumber(rows) or 0, tonumber(total) or 0
 end
 
-local function auctionRowSignature(index)
+local function rowSig(index)
     local name, texture, count, quality, canUse, level, minBid, minInc, buyout, bid, highBidder, owner =
         GetAuctionItemInfo("list", index)
     if not name then return "nil" end
@@ -69,23 +75,30 @@ local function auctionRowSignature(index)
         tostring(minBid or 0) .. ":" ..
         tostring(minInc or 0) .. ":" ..
         tostring(buyout or 0) .. ":" ..
-        tostring(bid or 0)
+        tostring(bid or 0) .. ":" ..
+        tostring(owner or "")
 end
 
 local function pageSignature()
     local rows, total = pageInfo()
     local parts = { tostring(rows), tostring(total) }
-    if rows > 0 then
-        local probes = { 1, 2, 7, 13, 25, 37, 50 }
-        local i, idx
-        for i = 1, table.getn(probes) do
-            idx = probes[i]
-            if idx <= rows then
-                table.insert(parts, auctionRowSignature(idx))
-            end
-        end
+    local i
+    for i = 1, rows do
+        table.insert(parts, rowSig(i))
     end
     return table.concat(parts, "|"), rows, total
+end
+
+local function consumeStableSnapshot()
+    if not AHT.bench.running or not AHT.bench.stageActive then return end
+    local sig = pageSignature()
+    if not AHT.bench.signatures[sig] then
+        AHT.bench.signatures[sig] = true
+        AHT.bench.uniqueCount = AHT.bench.uniqueCount + 1
+        if AHT.bench.uniqueCount > AHT.bench.expected then
+            AHT.bench.overflow = AHT.bench.uniqueCount - AHT.bench.expected
+        end
+    end
 end
 
 local function resetBench()
@@ -97,31 +110,26 @@ local function resetBench()
     AHT.bench.expected = 0
     AHT.bench.rawEvents = 0
     AHT.bench.uniqueCount = 0
+    AHT.bench.overflow = 0
     AHT.bench.signatures = {}
     AHT.bench.results = {}
     AHT.bench.startedAt = 0
+    AHT.bench.stageStartedAt = 0
+    AHT.bench.pendingSnapshot = false
+    AHT.bench.snapshotAt = 0
+    AHT.bench.lastEventAt = 0
 end
 
 function AHThrottleTest_BenchNativeStart()
-    if not auctionOpen() then
-        out("BENCH: otworz Auction House")
-        return
-    end
-    if auxBusy() then
-        out("BENCH: AuxVmangos skanuje. Zatrzymaj skan i nacisnij F5 ponownie.")
-        return
-    end
-    if canSend() ~= true then
-        out("BENCH: poczekaj az Search/CanSend bedzie aktywny i nacisnij F5 ponownie.")
-        return
-    end
+    if not auctionOpen() then out("BENCH: otworz Auction House"); return end
+    if auxBusy() then out("BENCH: AuxVmangos skanuje. Zatrzymaj go i nacisnij F5 ponownie."); return end
+    if canSend() ~= true then out("BENCH: poczekaj az Search bedzie aktywny i nacisnij F5 ponownie."); return end
 
     resetBench()
     AHT.bench.running = true
     AHT.bench.startedAt = now()
-    out("=== MAX THROUGHPUT BENCH START ===")
-    out("Nie klikaj AH i nie uruchamiaj AUX. Test potrwa ok. 60-75 s.")
-    out("Baseline QueryAuctionItems page=0; DLL przechwyci exact packet.")
+    out("=== MAX THROUGHPUT BENCH V1.2.1 ===")
+    out("Snapshot debounce=75ms; nie klikaj AH i nie uruchamiaj AUX.")
     local ok, err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, 0, false, 0, false)
     if not ok then
         out("BENCH baseline ERROR: " .. tostring(err))
@@ -132,17 +140,20 @@ end
 function AHThrottleTest_BenchMarkCapture()
     if not AHT.bench.running then return end
     AHT.bench.captured = true
-    out("BENCH DLL: packet 0x258 captured; listfrom=0 validated.")
+    out("BENCH DLL: exact CMSG_AUCTION_LIST_ITEMS captured.")
 end
 
 function AHThrottleTest_BenchStageStart(stage, intervalMs, expected)
     if not AHT.bench.running then return end
     AHT.bench.stage = tonumber(stage) or 0
     AHT.bench.intervalMs = tonumber(intervalMs) or 0
-    AHT.bench.expected = tonumber(expected) or 0
+    AHT.bench.expected = tonumber(expected) or 25
     AHT.bench.rawEvents = 0
     AHT.bench.uniqueCount = 0
+    AHT.bench.overflow = 0
     AHT.bench.signatures = {}
+    AHT.bench.pendingSnapshot = false
+    AHT.bench.stageStartedAt = now()
     AHT.bench.stageActive = true
     out("STAGE " .. tostring(stage) ..
         " interval=" .. tostring(intervalMs) .. "ms" ..
@@ -152,55 +163,83 @@ end
 
 function AHThrottleTest_BenchStageDone(stage, intervalMs, sent)
     if not AHT.bench.running then return end
+    if AHT.bench.pendingSnapshot then
+        consumeStableSnapshot()
+        AHT.bench.pendingSnapshot = false
+    end
     AHT.bench.stageActive = false
-    local unique = AHT.bench.uniqueCount
+
     local expected = tonumber(sent) or AHT.bench.expected
-    local loss = expected - unique
-    if loss < 0 then loss = 0 end
-    local lossless = (unique == expected)
+    local unique = AHT.bench.uniqueCount
+    local capped = unique
+    if capped > expected then capped = expected end
+    local missing = expected - capped
+    if missing < 0 then missing = 0 end
+    local lossPct = expected > 0 and (missing * 100 / expected) or 100
+    local overflow = unique > expected and (unique - expected) or 0
+    local valid = overflow == 0
+    local lossless = valid and missing == 0
+
+    local theoretical = 50000 / (tonumber(intervalMs) or 1)
+    local effective = theoretical * (capped / expected)
+
     local r = {
-        stage = tonumber(stage) or 0,
         intervalMs = tonumber(intervalMs) or 0,
         sent = expected,
         unique = unique,
+        capped = capped,
+        missing = missing,
+        lossPct = lossPct,
+        overflow = overflow,
         rawEvents = AHT.bench.rawEvents,
-        loss = loss,
+        valid = valid,
         lossless = lossless,
+        effective = effective,
     }
     table.insert(AHT.bench.results, r)
-    out("RESULT " .. tostring(intervalMs) .. "ms: sent=" .. tostring(expected) ..
-        " unique=" .. tostring(unique) ..
-        " loss=" .. tostring(loss) ..
+
+    out("RESULT " .. tostring(intervalMs) .. "ms: stable=" .. tostring(capped) ..
+        "/" .. tostring(expected) ..
+        " miss=" .. tostring(missing) ..
+        " (" .. fmt(lossPct) .. "%)" ..
         " rawEvents=" .. tostring(AHT.bench.rawEvents) ..
-        " => " .. (lossless and "LOSSLESS" or "LOSS/INVALID"))
+        " overflow=" .. tostring(overflow) ..
+        " => " .. (lossless and "LOSSLESS" or (valid and "LOSS" or "CONTAMINATED")))
 end
 
 function AHThrottleTest_BenchFinished()
     if not AHT.bench.running then return end
     AHT.bench.stageActive = false
-    out("=== MAX THROUGHPUT RESULT ===")
+    out("=== MAX THROUGHPUT RESULT V1.2.1 ===")
     local fastest = nil
+    local bestEffective = nil
     local i, r
     for i = 1, table.getn(AHT.bench.results) do
         r = AHT.bench.results[i]
         out(tostring(r.intervalMs) .. "ms: " ..
-            tostring(r.unique) .. "/" .. tostring(r.sent) ..
-            " unique, loss=" .. tostring(r.loss) ..
-            " [" .. (r.lossless and "PASS" or "FAIL") .. "]")
-        if r.lossless and (not fastest or r.intervalMs < fastest.intervalMs) then
-            fastest = r
+            tostring(r.capped) .. "/" .. tostring(r.sent) ..
+            " miss=" .. fmt(r.lossPct) .. "%" ..
+            " overflow=" .. tostring(r.overflow) ..
+            " effective~" .. fmt(r.effective) .. " auc/s" ..
+            " [" .. (r.lossless and "PASS" or (r.valid and "FAIL" or "INVALID")) .. "]")
+        if r.lossless and (not fastest or r.intervalMs < fastest.intervalMs) then fastest = r end
+        if r.valid and (not bestEffective or r.effective > bestEffective.effective) then
+            bestEffective = r
         end
     end
     if fastest then
-        local qps = 1000 / fastest.intervalMs
-        local aps = qps * 50
-        out("FASTEST LOSSLESS = " .. tostring(fastest.intervalMs) .. "ms" ..
-            " = " .. fmt(qps) .. " query/s" ..
-            " ~= " .. fmt(aps) .. " auctions/s")
-        out("To jest punkt do dalszej walidacji dlugim soak testem przed AUX.")
+        out("FASTEST LOSSLESS = " .. tostring(fastest.intervalMs) .. "ms = " ..
+            fmt(1000 / fastest.intervalMs) .. " query/s ~= " ..
+            fmt(50000 / fastest.intervalMs) .. " auctions/s")
     else
-        out("Brak etapu 25/25. Potrzebny wolniejszy lub dluzszy test diagnostyczny.")
+        out("FASTEST LOSSLESS = brak")
     end
+    if bestEffective then
+        out("BEST EFFECTIVE = " .. tostring(bestEffective.intervalMs) .. "ms ~= " ..
+            fmt(bestEffective.effective) .. " auctions/s przy miss=" ..
+            fmt(bestEffective.lossPct) .. "%")
+    end
+    out("overflow>0 nadal oznacza kontaminacje i taki etap nie jest podstawa do wyboru predkosci.")
     AHT.bench.running = false
 end
 
@@ -219,18 +258,20 @@ frame:SetScript("OnEvent", function()
         AHT.open = true
     elseif event == "AUCTION_HOUSE_CLOSED" then
         AHT.open = false
-        if AHT.bench.running then
-            out("BENCH ABORT: Auction House closed")
-            resetBench()
-        end
-    elseif event == "AUCTION_ITEM_LIST_UPDATE" then
-        if AHT.bench.running and AHT.bench.stageActive then
-            AHT.bench.rawEvents = AHT.bench.rawEvents + 1
-            local sig = pageSignature()
-            if not AHT.bench.signatures[sig] then
-                AHT.bench.signatures[sig] = true
-                AHT.bench.uniqueCount = AHT.bench.uniqueCount + 1
-            end
+        if AHT.bench.running then out("BENCH ABORT: Auction House closed"); resetBench() end
+    elseif event == "AUCTION_ITEM_LIST_UPDATE" and AHT.bench.running and AHT.bench.stageActive then
+        AHT.bench.rawEvents = AHT.bench.rawEvents + 1
+        AHT.bench.lastEventAt = now()
+        AHT.bench.snapshotAt = AHT.bench.lastEventAt + SNAPSHOT_DEBOUNCE
+        AHT.bench.pendingSnapshot = true
+    end
+end)
+
+frame:SetScript("OnUpdate", function()
+    if AHT.bench.running and AHT.bench.stageActive and AHT.bench.pendingSnapshot then
+        if now() >= AHT.bench.snapshotAt then
+            AHT.bench.pendingSnapshot = false
+            consumeStableSnapshot()
         end
     end
 end)
@@ -243,16 +284,18 @@ SlashCmdList["AHTHROTTLETEST"] = function(msg)
     if msg == "" or msg == "status" then
         out("bench=" .. tostring(AHT.bench.running) ..
             " stage=" .. tostring(AHT.bench.stage) ..
-            " unique=" .. tostring(AHT.bench.uniqueCount) ..
+            " interval=" .. tostring(AHT.bench.intervalMs) .. "ms" ..
+            " stable=" .. tostring(AHT.bench.uniqueCount) ..
             "/" .. tostring(AHT.bench.expected) ..
+            " raw=" .. tostring(AHT.bench.rawEvents) ..
             " CanSend=" .. tostring(canSend()))
     elseif msg == "bench" or msg == "native" then
-        out("MAX BENCH: otworz AH, zatrzymaj AUX, poczekaj az Search aktywny, potem nacisnij F5 jeden raz.")
+        out("BENCH: otworz AH, zatrzymaj AUX, poczekaj az Search aktywny i nacisnij F5 jeden raz.")
     elseif msg == "help" then
-        out("/ahtest bench | status  (bench uruchamiasz F5)")
+        out("/ahtest bench | status")
     else
         out("nieznana komenda; /ahtest help")
     end
 end
 
-out("loaded v1.2 MAXBENCH. /ahtest bench -> F5.")
+out("loaded v1.2.1 DEBOUNCED BENCH. /ahtest bench -> F5.")

@@ -1237,6 +1237,41 @@
       "tests": [],
       "package": null,
       "notes": "Manual diagnostic FAST slot 1/2 path does not call Logout(). It asks client Glue DisconnectFromServer, requests same-process AutoLoginBridge relogin using retained DPAPI-protected credential material (plaintext always scrubbed), then selects/enters requested slot. Bounded CharacterSwitchDiag.log tail is included in updater issue reports."
+    },
+    {
+      "id": "ah-throughput-debounce",
+      "branch": "parallel",
+      "modules": [
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-native-max-throughput"
+      ],
+      "shared_resources": [
+        "AUCTION_ITEM_LIST_UPDATE",
+        "existing WoWAHThrottleNative_5875_v2 sender"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "4ad7e35b5af7ad09fd6e51ad7bdd9083a457ccd2",
+      "verified_commit": "4ad7e35b5af7ad09fd6e51ad7bdd9083a457ccd2",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "95e1aed77b5d24bc7ef0a1cb85299a68784fbc6c",
+          "date": "2026-09-30",
+          "evidence": "Initial debounce feature preflight 36784247147 and registry 36784247368 passed, but parallel advanced before integration."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "4ad7e35b5af7ad09fd6e51ad7bdd9083a457ccd2",
+          "date": "2026-09-30",
+          "evidence": "Rebased debounce feature preflight 36784347900 and registry 36784347938 passed on exact SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Addon-only benchmark correction rebased onto current parallel. Keeps verified native V2 sender unchanged. AUCTION_ITEM_LIST_UPDATE is debounced 75ms before full-row fingerprinting. Reports stable/expected, raw events, overflow contamination, miss percentage and effective auctions/s. Integrated candidate will use unchanged verified WoWAHThrottleNative_5875_v2 sender; only addon-side result accounting changed."
     }
   ]
 }
