@@ -1398,6 +1398,29 @@
       ],
       "package": null,
       "notes": "Addon-only raw-response benchmark. Temporarily unregisters stock AuctionFrameBrowse from AUCTION_ITEM_LIST_UPDATE during native V2 burst so UI refresh/sort side effects cannot inflate counts. Counts raw event responses per 25 sends, restores Browse registration afterward, and persists AHThrottleTestDB.last."
+    },
+    {
+      "id": "ah-soak-75-50",
+      "branch": "feature/ah-soak-75-50",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-throughput-event-isolation"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "CMSG_AUCTION_LIST_ITEMS 0x0258",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event isolation"
+      ],
+      "status": "in_progress",
+      "observed_head": "e21d00b6c9da7caca0a30db6be123f455422ff54",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Long-run throughput soak after raw-event benchmark showed 75ms 25/25 and 50ms 20/25. Sends 500 distinct pages at 75ms and 500 at 50ms with 10s drain per stage; stock AuctionFrameBrowse is detached during counting. Measures long-run raw response yield and effective auctions/s before choosing SAFE/TURBO policy."
     }
   ]
 }
