@@ -1060,6 +1060,27 @@
       "tests": [],
       "package": null,
       "notes": "Fixes false 'workflow not found' self-update failures caused by scanning only the newest 50 runs across all workflows. Self-update now queries build_updater.yml runs directly for parallel while retaining existing artifact/provenance/hash/x86 gates."
+    },
+    {
+      "id": "updater-addon-hot-update-v2",
+      "branch": "feature/updater-addon-hot-update-v2",
+      "modules": [
+        "Updater"
+      ],
+      "dependencies": [
+        "updater-selfupdate-workflow-scope"
+      ],
+      "shared_resources": [
+        "Parallel updater install planner",
+        "Interface/AddOns hot-update path",
+        "running WoW process guard"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9b7258d2db4a04d2a8322bf76a38d5828cde5fd8",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Rebased AddOn-only hot update onto current Parallel updater with the self-update workflow-scope fix retained. Allows writes with WoW running only when actual touched paths are exclusively Interface/AddOns; runtime files still require closed game."
     }
   ]
 }

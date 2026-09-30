@@ -28,6 +28,12 @@ The sections below describe the shared engine; their older TEST/STABLE labels re
 - Self-update no longer scans the shared `/actions/runs` feed for `Build WoW112 updater`. On active development days unrelated workflows can occupy the first 50 rows and make the updater falsely report that its workflow does not exist.
 - The updater now queries `.github/workflows/build_updater.yml` directly for `parallel` runs, then keeps the existing exact-run status, artifact name, provenance, SHA256 and x86 validation gates.
 
+## Updater 2.9-parallel.9 — AddOn-only hot update
+
+- Zwykłe **Aktualizuj** najpierw weryfikuje i porównuje paczkę. Jeżeli EXE oraz wszystkie aktywne DLL są już zgodne, a rzeczywiste zmiany dotyczą wyłącznie `Interface/AddOns/`, działające instancje WoW pozostają uruchomione.
+- Jeżeli plan zapisu obejmuje EXE, DLL, `dlls.txt` albo inny plik runtime, dotychczasowy wymóg zamknięcia WoW pozostaje bez zmian. Bezpośrednio przed zapisem działa drugi guard oparty na faktycznie zmienianych/usuwanych ścieżkach.
+- **Aktualizuj i uruchom** po hot-update AddOnów nie uruchamia drugiego klienta, jeśli WoW już działa. Po zmianie Lua wykonaj `/reload`, aby działający klient wczytał nowe pliki.
+
 # WoW112Updater
 
 Windows GUI updater/launcher for the private `github12wykrzyk/wow112` repository.
