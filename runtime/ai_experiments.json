@@ -894,6 +894,25 @@
       ],
       "package": null,
       "notes": "Standalone AH throttle diagnostic. Does not modify AuxVmangos and never buys. Controlled query pairs test 5.2s, 2s, 1s, 500ms and 250ms intervals while logging CanSendAuctionQuery plus actual AUCTION_ITEM_LIST_UPDATE latency. Integrated candidate includes AHThrottleTest in the parallel addon package manifest; full parallel candidate verification is pending."
+    },
+    {
+      "id": "summonscout-sure-invite",
+      "branch": "feature/summonscout-sure-invite",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart-invite parser"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1eb5ffb59324863c728302236bb86f66d503aaa1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.44 adds exact normalized direct whisper 'sure' as an explicit smart auto-invite code, alongside here/123/+. Match remains exact to avoid incidental conversational false positives."
     }
   ]
 }

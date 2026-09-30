@@ -469,3 +469,10 @@ Explicit summon requests are protected from this exclusion, including:
 `LF summon`, `need summon`, `who can summon me`, `can you summon`, and `summon me`.
 
 `/ssi test <message>` reports `NOT A SUMMON REQUEST [recruitment + own summon]` for the new exclusion path.
+
+
+## 1.44 exact `sure` whisper invite
+
+- A direct whisper whose normalized text is exactly `sure` is now treated as an explicit smart auto-invite request, alongside `here`, `123` and `+`.
+- The trigger is deliberately exact so ordinary longer conversation containing `sure` does not cause an invite.
+- Existing service filtering, duplicate protection and post-invite auto-summon behavior are unchanged.
