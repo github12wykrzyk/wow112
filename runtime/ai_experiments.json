@@ -1179,9 +1179,9 @@
         "Vanilla listfrom payload field at raw+12 after 4-byte opcode",
         "AUCTION_ITEM_LIST_UPDATE"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "30fe28f80aa7e5e2338c945d87f001db5aa3e012",
-      "verified_commit": "30fe28f80aa7e5e2338c945d87f001db5aa3e012",
+      "status": "awaiting_game_test",
+      "observed_head": "136e61ed1791659e5932b0895580ef66d9b57739",
+      "verified_commit": "136e61ed1791659e5932b0895580ef66d9b57739",
       "tests": [
         {
           "kind": "ci",
@@ -1189,10 +1189,28 @@
           "commit": "30fe28f80aa7e5e2338c945d87f001db5aa3e012",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36782466744 and Verify AI experiment registry run 36782466711 passed on exact feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "136e61ed1791659e5932b0895580ef66d9b57739",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36782570935 passed on exact integrated parallel SHA, including AH native V2 build, FINAL_PACKAGE, addon packaging and provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "136e61ed1791659e5932b0895580ef66d9b57739",
+          "date": "2026-09-30",
+          "evidence": "Verified candidate artifact 11127938220 (WoW112-WORK-CANDIDATE-136e61ed1791659e5932b0895580ef66d9b57739)."
         }
       ],
-      "package": null,
-      "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos. Integrated candidate based on current parallel 7fc438d2; full exact-parallel candidate verification pending."
+      "package": {
+        "verified": true,
+        "commit": "136e61ed1791659e5932b0895580ef66d9b57739",
+        "artifact_id": 11127938220
+      },
+      "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos. Integrated candidate based on current parallel 7fc438d2; full exact-parallel candidate verification pending. Integrated exact-SHA package ready for gameplay benchmark. Final safe floor remains unknown until in-game 25/25 stage results are observed."
     }
   ]
 }
