@@ -25,3 +25,12 @@ AuctionSniper remains the first diagnostic probe and is not overwritten. AuxVman
 ## Relationship to AUX
 
 AUX informed the behavioral audit (scanning, auction signatures, price-per-unit concepts), but its source is not vendored into this repository because no permissive source license was established.
+
+
+## Unified market-bot architecture (0.6)
+
+AuxVmangos is the single active AH automation engine. Watchlist sniper, candidate revalidation, guarded LIVE buy and full-market PriceDB snapshots share one query-in-flight gate and one CanSendAuctionQuery scheduler.
+
+Whole-market scans use the same vMaNGOS ordering evidence as the sniper: locate/cache the first page containing positive buyouts, skip the bid-only prefix, then scan through the final page. A cached global boundary is verified before a subsequent full scan and falls back to a fresh binary search when stale.
+
+AuctionSniper source remains in the repository as diagnostic/recovery evidence but is removed from the active parallel addon candidate for this experiment to avoid two addons competing for AUCTION_ITEM_LIST_UPDATE / QueryAuctionItems.

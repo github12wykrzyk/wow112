@@ -1,4 +1,4 @@
-# AuxVmangos
+# AuxVmangos 0.6 unified market bot
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 (5875), designed around the observed upstream vMaNGOS auction implementation.
 
@@ -48,3 +48,21 @@ Rule fields are: match type; item name; max unit price; max total price; min sta
 3. Open AH and run /avm on.
 4. Verify binary boundary convergence, extra-event count and DRYRUN candidates.
 5. Only after diagnostic evidence is clean should LIVE be enabled.
+
+
+## Unified MarketScan + PriceDB
+
+The same serialized vMaNGOS query scheduler now owns both the watchlist/live-buy bot and whole-market buyout snapshots. MarketScan first finds or verifies the global buyout=0 -> buyout>0 boundary, then scans every positive-buyout page through the last page. Watchlist scanning is paused while MarketScan owns the scheduler.
+
+PriceDB is stored in AVM_DB. Per item and per retained snapshot it records auction count, unit count, minimum, p25, median, p75, maximum, listing-average unit price, quantity-weighted unit price, and disappeared units relative to the prior snapshot. Disappeared units are explicitly a turnover proxy: an auction can disappear because it sold, expired, or was cancelled.
+
+Commands:
+- /avm market start
+- /avm market stop
+- /avm market status
+- /avm market item Black Lotus
+- /avm market auto 60
+- /avm market retention 24
+- /avm market clear
+
+AutoMarket runs only while the Auction House is open. A market scan automatically disarms LIVE before taking ownership of the AH query scheduler.
