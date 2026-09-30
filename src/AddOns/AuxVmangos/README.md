@@ -1,4 +1,4 @@
-# AuxVmangos 0.8.2 unified market bot + WATCH sniper
+# AuxVmangos 0.8.3 unified market bot + WATCH sniper
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
@@ -169,3 +169,14 @@ Any rule edit continues to disarm LIVE and invalidate/restart stale WATCH work.
 A gameplay LIVE test produced DRYRUN_BEST after LIVE had been armed. The WATCH editor commits fields both while typing and again on focus loss. SetRule previously treated every commit as a real rule edit, even when every normalized field value was unchanged, and avm_rule_changed intentionally disarms LIVE.
 
 0.8.2 makes semantically identical SetRule calls a no-op. Real rule changes still disarm LIVE and restart/invalidate stale WATCH work. Clicking LIVE after finishing an edit therefore cannot be cancelled by a redundant focus-loss commit of the same values.
+
+
+## Max-stack=1 early stop (0.8.3)
+
+For vMaNGOS filtered browse results, total buyout is ordered ascending. When a WATCH rule has Max stack exactly 1, every qualifying auction has unit price equal to total buyout. Once a qualifying candidate has been found on a scanned page, no later page can contain a cheaper qualifying unit-price offer.
+
+0.8.3 therefore finalizes WATCH_BEST immediately after the first page containing a qualifying candidate for Max=1 rules. It still revalidates the selected auction before DRY-RUN/LIVE BUY. Rules allowing stacks larger than 1 keep the full positive-page scan because a higher-total larger stack can still have a lower unit price.
+
+Diagnostic:
+- WATCH_EARLY_STOP ... reason=maxStack1
+- /avm status counter watchEarly

@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.8.2-vmangos-watch-live-noop"
+AVM_VERSION = "0.8.3-vmangos-max1-earlystop"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -78,6 +78,7 @@ AVM = {
 		watchPages = 0,
 		watchBest = 0,
 		watchCaps = 0,
+		watchEarlyStops = 0,
 		watchRaces = 0,
 		revalidations = 0,
 		buySent = 0,
@@ -1212,14 +1213,33 @@ local function avm_accept_result()
 		if cap < 1 then cap = 1 end
 		if cap > AVM_WATCH_MAX_PAGES then cap = AVM_WATCH_MAX_PAGES end
 		local nextPage = AVM.boundaryPage + AVM.scanOffset + 1
-		local canContinue = nextPage <= AVM.lastPage and AVM.watchPagesScanned < cap
+
+		-- vMaNGOS orders filtered browse results by total buyout ascending.
+		-- With Max stack = 1, unit price equals total buyout. Therefore the
+		-- first scanned page that contains a qualifying candidate already
+		-- contains the globally cheapest qualifying unit-price candidate:
+		-- every later page has total buyout >= the current page range.
+		local earlyStop = false
+		local activeRule = avm_active_rule()
+		if AVM.bestCandidate and activeRule and
+		   (tonumber(activeRule.maxStack) or 0) == 1 and
+		   nextPage <= AVM.lastPage then
+			earlyStop = true
+			AVM.stats.watchEarlyStops = AVM.stats.watchEarlyStops + 1
+			avm_print("WATCH_EARLY_STOP rule='" .. tostring(AVM.activeRuleName) ..
+				"' reason=maxStack1 page=" .. tostring(AVM.queryPage) ..
+				" skippedPages=" .. tostring(AVM.lastPage - AVM.queryPage))
+		end
+
+		local canContinue = not earlyStop and
+			nextPage <= AVM.lastPage and AVM.watchPagesScanned < cap
 		if canContinue then
 			AVM.scanOffset = AVM.scanOffset + 1
 			AVM.phase = "CHEAPEST_SCAN"
 			return
 		end
 
-		if nextPage <= AVM.lastPage and AVM.watchPagesScanned >= cap then
+		if not earlyStop and nextPage <= AVM.lastPage and AVM.watchPagesScanned >= cap then
 			AVM.stats.watchCaps = AVM.stats.watchCaps + 1
 			avm_print("WATCH_CAP rule='" .. tostring(AVM.activeRuleName) ..
 				"' scanned=" .. tostring(AVM.watchPagesScanned) ..
@@ -1441,6 +1461,7 @@ local function avm_status()
 		" watchPages=" .. AVM.stats.watchPages ..
 		" watchBest=" .. AVM.stats.watchBest ..
 		" watchCaps=" .. AVM.stats.watchCaps ..
+		" watchEarly=" .. AVM.stats.watchEarlyStops ..
 		" watchRaces=" .. AVM.stats.watchRaces ..
 		" revalidations=" .. AVM.stats.revalidations ..
 		" sent=" .. AVM.stats.buySent ..
