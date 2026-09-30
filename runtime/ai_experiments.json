@@ -777,11 +777,11 @@
         "SummonScout direct-whisper smart-invite parser"
       ],
       "status": "awaiting_ci",
-      "observed_head": "5f119770248f1e8efc1c4f1787fa980e35953fb3",
+      "observed_head": "b54eb5b6f363021e271d1ba6ea215d0d85f27e69",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Add exact normalized direct-whisper code 'here' as an explicit smart auto-invite trigger. Deliberately do not add 'here' to generic phrase cues, preventing incidental text such as 'I am here already' from triggering an invite."
+      "notes": "SummonScout 1.43: exact normalized direct whisper 'here' remains an explicit smart auto-invite code. Also add a World-chat semantic guard for recruitment posts where the sender advertises its own summon capability (e.g. 'LF Mage for ... farm. Can summon'). The guard requires recruitment context plus own-summon language and explicitly exempts genuine summon-request forms such as LF/need summon, who can summon me, can you summon, and summon me. Recruitment messages are ignored before seller/counter logic and demand logging."
     }
   ]
 }
