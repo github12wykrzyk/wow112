@@ -17,6 +17,14 @@ local AHT = {
     sends = 0,
     events = 0,
     lastTick = 0,
+    native = {
+        running = false,
+        startedAt = 0,
+        deadline = 0,
+        events = 0,
+        replayMarked = false,
+        captured = false,
+    },
 }
 
 local function out(msg)
@@ -184,7 +192,78 @@ local function status()
         " case=" .. tostring(AHT.index) .. "/" .. tostring(table.getn(AHT.tests)) ..
         " sends=" .. tostring(AHT.sends) ..
         " events=" .. tostring(AHT.events) ..
+        " native=" .. tostring(AHT.native.running) ..
+        " nativeEvents=" .. tostring(AHT.native.events) ..
         " CanSend=" .. tostring(canSend()))
+end
+
+
+local function nativeFinish()
+    if not AHT.native.running then return end
+    local events = AHT.native.events
+    out("=== NATIVE RESULT ===")
+    out("events=" .. tostring(events) ..
+        " captured=" .. tostring(AHT.native.captured) ..
+        " replay500=" .. tostring(AHT.native.replayMarked))
+    if not AHT.native.captured then
+        out("WNIOSEK NATIVE: brak przechwyconego CMSG_AUCTION_LIST_ITEMS - test niewazny.")
+    elseif not AHT.native.replayMarked then
+        out("WNIOSEK NATIVE: packet przechwycony, ale replay 500ms nie zostal potwierdzony - test niewazny.")
+    elseif events >= 2 then
+        out("WNIOSEK NATIVE: drugi wynik przyszedl <5s. Serwer akceptuje bezposredni replay; 5s siedzi po stronie klienta/API.")
+    elseif events == 1 then
+        out("WNIOSEK NATIVE: baseline odpowiedzial, replay 500ms nie dal drugiego wyniku. Throttle jest po stronie serwera albo sciezki odbioru po native send.")
+    else
+        out("WNIOSEK NATIVE: brak nawet odpowiedzi baseline - test niewazny.")
+    end
+    AHT.native.running = false
+end
+
+function AHThrottleTest_NativeStart()
+    if AHT.running then
+        out("NATIVE: zwykly test AHT jest aktywny - najpierw /ahtest stop")
+        return
+    end
+    if not auctionOpen() then
+        out("NATIVE: otworz Auction House")
+        return
+    end
+    if AVM and (AVM.queryInFlight or AVM.phase ~= "IDLE" or (AVM.market and AVM.market.active)) then
+        out("NATIVE: AuxVmangos skanuje - zatrzymaj go przed testem")
+        return
+    end
+    if canSend() ~= true then
+        out("NATIVE: Search jeszcze zablokowany. Poczekaj az CanSend=true i nacisnij F5 ponownie.")
+        return
+    end
+
+    AHT.native.running = true
+    AHT.native.startedAt = now()
+    AHT.native.deadline = AHT.native.startedAt + 6.25
+    AHT.native.events = 0
+    AHT.native.replayMarked = false
+    AHT.native.captured = false
+    out("NATIVE START: baseline QueryAuctionItems page=0; DLL sprobuje exact replay po 500ms.")
+    local ok, err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, 0, false, 0, false)
+    if not ok then
+        out("NATIVE baseline ERROR: " .. tostring(err))
+        AHT.native.running = false
+    end
+end
+
+function AHThrottleTest_NativeMark(kind)
+    if kind == "CAPTURE" then
+        AHT.native.captured = true
+        out("NATIVE DLL: exact CMSG_AUCTION_LIST_ITEMS captured")
+    elseif kind == "REPLAY500" then
+        AHT.native.replayMarked = true
+        out("NATIVE DLL: exact packet replay sent at +500ms")
+    elseif kind == "NO_CAPTURE" then
+        out("NATIVE DLL: NO_CAPTURE - F5 baseline nie dotarl do ClientServices::Send")
+        AHT.native.running = false
+    else
+        out("NATIVE DLL: " .. tostring(kind))
+    end
 end
 
 local frame = CreateFrame("Frame", "AHThrottleTestFrame")
@@ -202,6 +281,14 @@ frame:SetScript("OnEvent", function()
             stop()
         end
     elseif event == "AUCTION_ITEM_LIST_UPDATE" then
+        if AHT.native.running then
+            AHT.native.events = AHT.native.events + 1
+            local nr, nt = pageInfo()
+            out("NATIVE RECV #" .. tostring(AHT.native.events) ..
+                " dt=" .. fmt(now() - AHT.native.startedAt) .. "s" ..
+                " rows=" .. tostring(nr) .. " total=" .. tostring(nt) ..
+                " CanSend=" .. tostring(canSend()))
+        end
         if not AHT.running or not AHT.awaiting then return end
 
         AHT.events = AHT.events + 1
@@ -238,8 +325,11 @@ frame:SetScript("OnEvent", function()
 end)
 
 frame:SetScript("OnUpdate", function()
-    if not AHT.running then return end
     local t = now()
+    if AHT.native.running and t >= AHT.native.deadline then
+        nativeFinish()
+    end
+    if not AHT.running then return end
     if t - AHT.lastTick < 0.05 then return end
     AHT.lastTick = t
 
@@ -322,11 +412,13 @@ SlashCmdList["AHTHROTTLETEST"] = function(msg)
         start()
     elseif msg == "stop" then
         stop()
+    elseif msg == "native" then
+        out("NATIVE: otworz AH, zatrzymaj AUX, poczekaj az Search aktywny i nacisnij F5.")
     elseif msg == "help" then
-        out("/ahtest start | stop | status")
+        out("/ahtest start | stop | status | native")
     else
         out("nieznana komenda; /ahtest help")
     end
 end
 
-out("loaded. Otworz AH i wpisz /ahtest start")
+out("loaded v1.1. Lua test: /ahtest start. Native packet test: /ahtest native, potem F5.")
