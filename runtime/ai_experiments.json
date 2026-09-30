@@ -1160,7 +1160,7 @@
       "verified_commit": null,
       "tests": [
         {
-          "kind": "gameplay",
+          "kind": "game",
           "result": "passed",
           "commit": "7fc438d263cc22a2876f16db33c8328f5958e2b7",
           "date": "2026-09-30",
