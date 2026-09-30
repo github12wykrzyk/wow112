@@ -38,6 +38,7 @@
 #define GLUE_STATE           0x00B41DA0u
 #define WM_AUTOLOGIN        (WM_APP + 0x2A7u)
 #define WM_AUTOCHAR         (WM_APP + 0x2A8u)
+#define WM_RELOGIN          (WM_APP + 0x2A9u)
 #define ACCOUNT_CAP    64u
 #define BLOB_CAP       2048u
 
@@ -49,6 +50,8 @@ typedef BOOL (WINAPI *CryptUnprotectDataFn)(DATA_BLOB*,LPWSTR*,DATA_BLOB*,PVOID,
 static volatile LONG g_stop=0;
 static volatile LONG g_done=0;
 static volatile LONG g_autochar=0;
+static volatile LONG g_profile_loaded=0;
+static volatile LONG g_relogin_state=0;
 static DWORD g_pid=0;
 static HWND g_hwnd=NULL;
 static WNDPROC g_prev=NULL;
@@ -122,8 +125,10 @@ static int load_profile(void)
     if(a==0u || a>=ACCOUNT_CAP || b==0u || b>=BLOB_CAP) {
         wipe(g_account,sizeof(g_account));
         wipe(g_blob,sizeof(g_blob));
+        g_profile_loaded=0;
         return 0;
     }
+    g_profile_loaded=1;
     return 1;
 }
 
@@ -171,8 +176,8 @@ done:
     if(password) { wipe(password,outBlob.cbData+1u); LocalFree(password); }
     if(outBlob.pbData) { wipe(outBlob.pbData,outBlob.cbData); LocalFree(outBlob.pbData); }
     if(protectedBytes) { wipe(protectedBytes,protectedSize); LocalFree(protectedBytes); }
-    wipe(g_blob,sizeof(g_blob));
-    wipe(g_account,sizeof(g_account));
+    /* Keep only account + DPAPI-protected blob for an explicit same-process
+       relogin request. Plaintext password and decoded bytes were scrubbed. */
     if(crypt) FreeLibrary(crypt);
     return ok;
 }
@@ -193,6 +198,13 @@ static LRESULT WINAPI login_wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp)
         if(!guard_ok()) { g_done=-1; return 0; }
         if(!glue_ready()) return 0;
         g_done=native_login()?1:-2;
+        return 0;
+    }
+    if(msg==WM_RELOGIN && g_relogin_state==1) {
+        if(!guard_ok()) { g_relogin_state=-1; return 0; }
+        if(!glue_ready()) return 0;
+        g_relogin_state=2;
+        g_relogin_state=native_login()?3:-2;
         return 0;
     }
     if(msg==WM_AUTOCHAR && g_done==1 && g_autochar) {
@@ -274,8 +286,31 @@ static DWORD WINAPI worker(LPVOID unused)
             Sleep(100u);
         }
     }
+    /* Keep the dispatcher available for CharacterSwitchDiag fast recycle. */
+    while(!g_stop) {
+        if(g_relogin_state==1 && ensure_hook())
+            PostMessageA(g_hwnd,WM_RELOGIN,0,0);
+        Sleep(100u);
+    }
     release_hook();
     return 0u;
+}
+
+#if defined(_MSC_VER)
+#pragma comment(linker, "/EXPORT:W112_AutoLoginBridge_RequestRelogin=_W112_AutoLoginBridge_RequestRelogin@0")
+#pragma comment(linker, "/EXPORT:W112_AutoLoginBridge_GetReloginState=_W112_AutoLoginBridge_GetReloginState@0")
+#endif
+
+__declspec(dllexport) int __stdcall W112_AutoLoginBridge_RequestRelogin(void)
+{
+    if(!g_profile_loaded || g_done!=1 || g_relogin_state==1 || g_relogin_state==2) return 0;
+    g_relogin_state=1;
+    return 1;
+}
+
+__declspec(dllexport) int __stdcall W112_AutoLoginBridge_GetReloginState(void)
+{
+    return (int)g_relogin_state;
 }
 
 BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
@@ -283,7 +318,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
     HANDLE th;
     (void)reserved;
     if(reason==DLL_PROCESS_ATTACH) {
-        g_stop=0; g_done=0; g_autochar=0;
+        g_stop=0; g_done=0; g_autochar=0; g_profile_loaded=0; g_relogin_state=0;
         DisableThreadLibraryCalls(module);
         th=CreateThread(NULL,0u,worker,NULL,0u,NULL);
         if(th) CloseHandle(th);

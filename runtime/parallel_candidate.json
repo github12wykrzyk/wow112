@@ -93,7 +93,7 @@
       "sources": [
         "src/CharacterSwitchDiag/WoWCharacterSwitchDiag_5875_v1.c"
       ],
-      "profile": "clangcl_i686_crtless"
+      "profile": "clangcl_i686_win32imports"
     }
   ],
   "addons": {
