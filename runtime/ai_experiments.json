@@ -1060,6 +1060,35 @@
       "tests": [],
       "package": null,
       "notes": "Fixes false 'workflow not found' self-update failures caused by scanning only the newest 50 runs across all workflows. Self-update now queries build_updater.yml runs directly for parallel while retaining existing artifact/provenance/hash/x86 gates."
+    },
+    {
+      "id": "summonscout-blacklist-multiloc",
+      "branch": "parallel",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "SummonScout competitor classifier",
+        "SummonScout auto-invite queue",
+        "SummonScoutDB SavedVariables"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9b7258d2db4a04d2a8322bf76a38d5828cde5fd8",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "135032b40749f94ab5f34361a055b83bfb1e75d2",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36756935858 completed success for exact feature SHA 135032b40749f94ab5f34361a055b83bfb1e75d2."
+        }
+      ],
+      "package": null,
+      "notes": "SummonScout 1.45 integrated candidate: same-scope competitor matching scans every recognized destination in an advert, so Hyjal + Azshara can match Hyjal and Hydraxian independently; concise multi-destination summon offers are recognized without weakening buyer/recruitment exclusions. Persistent SummonScoutDB invite blacklist is available in GUI and via /ssi blacklist add|del|list, enforced across all addon auto-invite paths and addon-driven auto-summon."
     }
   ]
 }

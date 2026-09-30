@@ -476,3 +476,23 @@ Explicit summon requests are protected from this exclusion, including:
 - A direct whisper whose normalized text is exactly `sure` is now treated as an explicit smart auto-invite request, alongside `here`, `123` and `+`.
 - The trigger is deliberately exact so ordinary longer conversation containing `sure` does not cause an invite.
 - Existing service filtering, duplicate protection and post-invite auto-summon behavior are unchanged.
+
+
+## 1.45 multi-location competition + persistent invite blacklist
+
+Competitive detection:
+- Azshara and azsh map to the existing Hydraxian Waterlords (Azshara) service.
+- Competitive same scope now scans all recognized locations in one seller advert instead of only the first match.
+- An advert containing both Hyjal and Azshara can trigger the Hyjal summoner and the Hydraxian summoner independently.
+- Short multi-destination formats such as Hyjal + Azshara summon are recognized even without WTS, price, or service.
+- Buyer intent and the LFM ... can summon recruitment guard remain higher priority.
+- /ssi countertest <message> prints all detected destinations and the service match.
+
+Persistent auto-invite blacklist:
+- /ssi blacklist add <name>
+- /ssi blacklist del <name>
+- /ssi blacklist list
+- GUI: Invite blacklist field with Add/Remove buttons and a live summary.
+- Stored in SummonScoutDB and survives /reload and restart.
+- Enforced on immediate World invite, queued World invite, whisper invite and queue execution.
+- Addon-driven auto-summon also respects the user blacklist.
