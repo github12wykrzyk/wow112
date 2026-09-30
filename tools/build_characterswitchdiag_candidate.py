@@ -54,7 +54,7 @@ def main():
             "sha256":sha256_file(out),"size":out.stat().st_size,"pe_machine":pe.get("machine_hex"),
             "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
             "module_id":"characterswitchdiag","diagnostic_only":True,
-            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","FAST DisconnectFromServer/relogin slot 1/2","CharacterSwitchDiag.log"],
+            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","FAST direct ClientServices disconnect/relogin slot 1/2","CharacterSwitchDiag.log"],
             "safety":["no logout timer patch","no crafted packet injection","FAST path is explicit manual diagnostic only"],
             "timings_ms":timing}
     if a.compile_only:
@@ -77,8 +77,8 @@ def main():
         obj["loader_manifest"]={"name":DLL_LIST,"generated_from_candidate_zip":True,"dll_count":len(actual),"dlls":actual,
                                 "contains_characterswitchdiag":True}
         obj["characterswitchdiag_pilot"]={"module":DLL_NAME,"branch":"parallel","game_runtime_tested":False,
-            "test":"World -> FAST DisconnectFromServer -> AutoLoginBridge relogin -> slot 1/2 -> World",
-            "purpose":"measure whether same-process connection recycle bypasses server logout wait without patching the timer"}
+            "test":"World -> direct ClientServices::Disconnect -> AutoLoginBridge relogin -> slot 1/2 -> World",
+            "purpose":"measure whether exact-build world connection teardown enables same-process character recycle without stock logout wait"}
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
     summary["result"]="PASS" if summary["ready_for_test"] else "FAIL"
     pm.write_text(json.dumps(meta,indent=2)+"\n",encoding="utf-8")

@@ -1356,12 +1356,12 @@
         "WOW_OBJMGR 0x00B41414",
         "CharacterSwitchDiag.log"
       ],
-      "status": "awaiting_ci",
+      "status": "rejected",
       "observed_head": "3770294dc84e3ee1f20d8fc3bf36cfeb14050578",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "V3 replaces the failed in-world Lua lookup with a direct call to the exact 5875 Glue binding at 0x0046D340. Public exact-build registration evidence identifies that VA as DisconnectFromServer; reconstructed vanilla client semantics show it disconnects ClientServices and logs off the login connection. FAST remains a manual diagnostic and existing AutoLoginBridge relogin/slot automation is unchanged."
+      "notes": "V3 exact tested SHA f14ec7c1df07880b824e0ff1d84f4555b49418d0. User report #37 captured repeated FAST_V3_BEGIN -> FAST_NATIVE_CALL(0x0046D340) -> FAST_NATIVE_RETURN with no WORLD_CLEARED or RELOGIN_REQUESTED. The Glue wrapper is callable but does not tear down the active world from this context."
     },
     {
       "id": "ah-throughput-event-isolation",
@@ -1398,6 +1398,32 @@
       ],
       "package": null,
       "notes": "Addon-only raw-response benchmark. Temporarily unregisters stock AuctionFrameBrowse from AUCTION_ITEM_LIST_UPDATE during native V2 burst so UI refresh/sort side effects cannot inflate counts. Counts raw event responses per 25 sends, restores Browse registration afterward, and persists AHThrottleTestDB.last."
+    },
+    {
+      "id": "character-switch-clientservices-v4",
+      "branch": "feature/character-switch-clientservices-v4",
+      "modules": [
+        "CharacterSwitchDiag",
+        "AutoLoginBridge"
+      ],
+      "dependencies": [
+        "character-switch-native-disconnect-v3",
+        "multibox-auto-first-character-parallel"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 ClientServices getter 0x005AB490",
+        "WoW 1.12.1 ClientServices::Disconnect 0x005AB1A0",
+        "ClientServices current connection offset +0x1B00",
+        "AutoLoginBridge native Glue login 0x0046AFB0",
+        "CharacterSelect_SelectCharacter / CharacterSelect_EnterWorld",
+        "CharacterSwitchDiag.log"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "e21d00b6c9da7caca0a30db6be123f455422ff54",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "V4 bypasses the ineffective Glue wrapper and directly calls the exact-build ClientServices disconnect method. Fail-closed guards verify getter/disconnect machine-code signatures, require non-null ClientServices and current connection, then log connection pointer before/after. Existing relogin and slot automation remain unchanged."
     }
   ]
 }

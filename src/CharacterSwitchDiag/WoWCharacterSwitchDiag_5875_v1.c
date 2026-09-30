@@ -1,14 +1,17 @@
 /*
- * WoWCharacterSwitchDiag 5875 v3
- * FAST diagnostic: native Glue DisconnectFromServer binding 0x0046D340
- * -> AutoLoginBridge relogin -> slot -> world.
+ * WoWCharacterSwitchDiag 5875 v4
+ * FAST diagnostic: direct ClientServices disconnect -> AutoLoginBridge relogin
+ * -> slot -> world.
  *
- * 5875 evidence:
- * - ClassicAPI raw Glue global table: DisconnectFromServer = 0x0046D340.
- * - reconstructed vanilla GlueScript implementation does not dereference lua_State;
- *   it disconnects ClientServices and logs off the login connection.
- * V3 calls that native binding directly because Glue globals are not registered
- * in the in-world Lua state (V2 gameplay report #34 proved the Lua lookup fails).
+ * Exact 5875 disassembly evidence:
+ *   0x005AB490: mov eax,[0x00C28128] ; ret              (ClientServices getter)
+ *   0x005AB1A0: thiscall ClientServices::Disconnect
+ *               calls 0x00537910, clears [this+0x1B00], performs cleanup.
+ *   0x0046D340 Glue wrapper calls those same two functions.
+ *
+ * V3 gameplay report #37 proved the Glue wrapper returns without clearing the
+ * active world from in-world context. V4 calls ClientServices::Disconnect
+ * directly, with byte signatures and pointer checks before transfer.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error WoWCharacterSwitchDiag requires x86.
@@ -19,7 +22,9 @@
 #define WOW_OBJMGR              0x00B41414u
 #define WOW_FRAMESCRIPT_GETTEXT 0x00703BF0u
 #define WOW_FRAMESCRIPT_EXECUTE 0x00704CD0u
-#define WOW_NATIVE_DISCONNECT    0x0046D340u
+#define WOW_CLIENTSERVICES_GET   0x005AB490u
+#define WOW_CLIENTSERVICES_DISC  0x005AB1A0u
+#define WOW_CONNECTION_OFFSET    0x00001B00u
 #define TIMER_MS 50u
 #define UI_REFRESH_MS 250u
 #define SELECT_SETTLE_MS 350u
@@ -30,7 +35,8 @@ typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
 typedef const char* (__fastcall *FrameScriptGetTextFn)(const char*,int,DWORD);
 typedef int (__stdcall *BridgeRequestFn)(void);
 typedef int (__stdcall *BridgeStateFn)(void);
-typedef int (__cdecl *NativeDisconnectFn)(void*);
+typedef void* (__cdecl *GetClientServicesFn)(void);
+typedef int (__thiscall *ClientServicesDisconnectFn)(void*);
 
 enum {
     PHASE_IDLE=0, PHASE_WAIT_LOGOUT=1, PHASE_CHAR_SELECT=2, PHASE_ENTERING=3,
@@ -73,7 +79,7 @@ static void ensure_ui(void)
       "if not W112CSDFrame and UIParent and type(CreateFrame)=='function' then "
       "local f=CreateFrame('Frame','W112CSDFrame',UIParent);f:SetWidth(440);f:SetHeight(182);f:SetPoint('CENTER',UIParent,'CENTER',0,175);"
       "if f.SetBackdrop then f:SetBackdrop({bgFile='Interface\\\\Tooltips\\\\UI-Tooltip-Background',edgeFile='Interface\\\\Tooltips\\\\UI-Tooltip-Border',tile=true,tileSize=16,edgeSize=16,insets={left=4,right=4,top=4,bottom=4}});f:SetBackdropColor(0,0,0,.88) end;"
-      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V3');"
+      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V4');"
       "local st=f:CreateFontString('W112CSDStatus','OVERLAY','GameFontNormalSmall');st:SetPoint('TOPLEFT',f,'TOPLEFT',12,-36);st:SetWidth(416);st:SetJustifyH('LEFT');st:SetText('idle');"
       "local function B(n,x,y,w,txt,cmd)local b=CreateFrame('Button',n,f,'UIPanelButtonTemplate');b:SetWidth(w);b:SetHeight(24);b:SetPoint('BOTTOMLEFT',f,'BOTTOMLEFT',x,y);b:SetText(txt);b:SetScript('OnClick',function()W112_CSD_CMD=cmd end)end;"
       "B('W112CSDStock',12,42,92,'Stock logout','stock');B('W112CSDSlot1',112,42,92,'Switch slot 1','slot1');B('W112CSDSlot2',212,42,92,'Switch slot 2','slot2');"
@@ -88,7 +94,7 @@ static void update_ui(DWORD now)
     p=app(p," target=");p=appu(p,g_targetSlot);p=app(p," fast=");p=appu(p,g_fast);
     p=app(p," world=");p=appu(p,g_world);p=app(p," glue=");p=appu(p,g_glueVisible);
     p=app(p,"\\nworld_to_select_ms=");p=appu(p,g_elapsedToGlue);p=app(p," total_ms=");p=appu(p,g_elapsedTotal);
-    p=app(p," err=");p=appu(p,g_lastError);p=app(p,"\\nFAST=native 0x46D340; wynik zapisuje CharacterSwitchDiag.log') end");*p=0;execs(b);
+    p=app(p," err=");p=appu(p,g_lastError);p=app(p,"\\nFAST=ClientServices 0x5AB1A0; wynik zapisuje CharacterSwitchDiag.log') end");*p=0;execs(b);
 }
 static void probe_glue(void)
 {
@@ -120,27 +126,67 @@ static void begin_stock(DWORD now,DWORD slot)
     reset_run();g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_WAIT_LOGOUT;log_line("STOCK_BEGIN",now,slot);
     execs("if type(Logout)=='function' then Logout() end");
 }
-static int native_disconnect_guard(void)
+static int bytes_equal(DWORD addr,const BYTE *sig,DWORD n)
 {
-    const BYTE *p=(const BYTE*)(DWORD)WOW_NATIVE_DISCONNECT;
-    /* Minimal exact-address fail-closed sanity: executable code at the verified
-       5875 VA must not be empty/int3/ret before we transfer control. */
-    if(!p) return 0;
-    if(p[0]==0x00 || p[0]==0xCC || p[0]==0xC3) return 0;
+    DWORD i;const BYTE *p=(const BYTE*)addr;
+    if(!p||!sig||!n) return 0;
+    for(i=0;i<n;i++) if(p[i]!=sig[i]) return 0;
     return 1;
+}
+static int clientservices_guard(void)
+{
+    static const BYTE getterSig[]={0xA1,0x28,0x81,0xC2,0x00,0xC3};
+    static const BYTE discSig[]={
+        0x56,0x8B,0xF1,0xE8,0x68,0xC7,0xF8,0xFF,
+        0xC7,0x86,0x00,0x1B,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    return bytes_equal(WOW_CLIENTSERVICES_GET,getterSig,sizeof(getterSig)) &&
+           bytes_equal(WOW_CLIENTSERVICES_DISC,discSig,sizeof(discSig));
 }
 static void begin_fast(DWORD now,DWORD slot)
 {
-    NativeDisconnectFn fn;
+    GetClientServicesFn getServices;
+    ClientServicesDisconnectFn disconnectFn;
+    void *services;
+    DWORD before,after;
+    int rc;
+
     reset_run();g_fast=1;g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_FAST_DISCONNECT;
-    log_line("FAST_V3_BEGIN",now,slot);
-    if(!native_disconnect_guard()){
-        g_lastError=11;g_phase=PHASE_FAILED;log_line("FAST_NATIVE_GUARD_FAIL",now,WOW_NATIVE_DISCONNECT);return;
+    log_line("FAST_V4_BEGIN",now,slot);
+
+    if(!clientservices_guard()){
+        g_lastError=11;g_phase=PHASE_FAILED;
+        log_line("CLIENTSERVICES_GUARD_FAIL",now,WOW_CLIENTSERVICES_DISC);
+        return;
     }
-    fn=(NativeDisconnectFn)(DWORD)WOW_NATIVE_DISCONNECT;
-    log_line("FAST_NATIVE_CALL",now,WOW_NATIVE_DISCONNECT);
-    fn(NULL);
-    log_line("FAST_NATIVE_RETURN",GetTickCount(),slot);
+
+    getServices=(GetClientServicesFn)(DWORD)WOW_CLIENTSERVICES_GET;
+    services=getServices();
+    if(!services){
+        g_lastError=12;g_phase=PHASE_FAILED;
+        log_line("CLIENTSERVICES_NULL",now,0);
+        return;
+    }
+
+    before=*(volatile DWORD*)((BYTE*)services+WOW_CONNECTION_OFFSET);
+    log_line("CLIENTSERVICES_PTR",now,(DWORD)services);
+    log_line("CONNECTION_BEFORE",now,before);
+    if(!before){
+        g_lastError=13;g_phase=PHASE_FAILED;
+        log_line("NO_WORLD_CONNECTION",now,0);
+        return;
+    }
+
+    disconnectFn=(ClientServicesDisconnectFn)(DWORD)WOW_CLIENTSERVICES_DISC;
+    log_line("CLIENTSERVICES_DISCONNECT_CALL",now,WOW_CLIENTSERVICES_DISC);
+    rc=disconnectFn(services);
+    after=*(volatile DWORD*)((BYTE*)services+WOW_CONNECTION_OFFSET);
+    log_line("CLIENTSERVICES_DISCONNECT_RETURN",GetTickCount(),(DWORD)rc);
+    log_line("CONNECTION_AFTER",GetTickCount(),after);
+    if(after!=0u){
+        g_lastError=14;
+        log_line("CONNECTION_NOT_CLEARED",GetTickCount(),after);
+    }
 }
 static void poll_cmd(DWORD now)
 {
@@ -154,6 +200,9 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
     if(world){
         g_glueVisible=0;ensure_ui();poll_cmd(now);
         if(g_phase==PHASE_ENTERING && !g_lastWorld){g_elapsedTotal=g_startedAt?now-g_startedAt:0;g_phase=PHASE_COMPLETE;log_line("WORLD_ENTERED",now,g_elapsedTotal);}
+        if(g_phase==PHASE_FAST_DISCONNECT && g_startedAt && now-g_startedAt>5000u){
+            g_lastError=15;g_phase=PHASE_FAILED;log_line("WORLD_STILL_PRESENT_TIMEOUT",now,rd32(WOW_OBJMGR));
+        }
         update_ui(now);
     }else{
         probe_glue();
@@ -192,6 +241,6 @@ static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlMo
 __declspec(dllexport) const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_settings();return &mod;}
 BOOL WINAPI DllMain(HMODULE h,DWORD r,LPVOID x)
 {
-    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;log_line("LOAD_V3",GetTickCount(),WOW_NATIVE_DISCONNECT);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
+    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;log_line("LOAD_V4",GetTickCount(),WOW_CLIENTSERVICES_DISC);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
     else if(r==DLL_PROCESS_DETACH&&g_timer)KillTimer(NULL,g_timer);return TRUE;
 }
