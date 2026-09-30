@@ -629,9 +629,9 @@
         "tools/package_lazyrogue_addons.py",
         "parallel updater managed addon files"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "50238e51d77e122e96ce45fda07993b60545daf6",
-      "verified_commit": "50238e51d77e122e96ce45fda07993b60545daf6",
+      "status": "awaiting_game_test",
+      "observed_head": "0a9a2cf492fd33b44e2f374def701709dcdeeb8f",
+      "verified_commit": "0a9a2cf492fd33b44e2f374def701709dcdeeb8f",
       "tests": [
         {
           "kind": "ci",
@@ -639,10 +639,28 @@
           "commit": "50238e51d77e122e96ce45fda07993b60545daf6",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36678961090 and AI experiment registry run 36678961092 passed on exact audit-hardening feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "0a9a2cf492fd33b44e2f374def701709dcdeeb8f",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36679179215 and AI experiment registry run 36679179158 passed on exact integrated parallel SHA. Full candidate package, addon packaging and provenance gates completed successfully."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "0a9a2cf492fd33b44e2f374def701709dcdeeb8f",
+          "date": "2026-09-30",
+          "evidence": "Verified candidate artifact 11081760178 (WoW112-WORK-CANDIDATE-0a9a2cf492fd33b44e2f374def701709dcdeeb8f). Manual artifact audit confirmed addon roots exactly AuxVmangos, LazyRogue, LazyScript, LazyWarlock, SummonScout; AuctionSniper absent; addon_metadata SHA/file_count matched; packaged AuxVmangos source normalized to exact Git blobs."
         }
       ],
-      "package": null,
-      "notes": "Static audit hardening from verified parallel 2f759dea. Fixes manifest-vs-packager root mismatch that could still ship AuctionSniper beside AuxVmangos, forces LIVE session-only, blocks LIVE while MarketScan owns the scheduler, adds AutoMarket failure backoff, compacts PriceDB history, refines random-property market identity, renames gone units to netDownUnits, and binds live revalidation to exact item-link identity when available. Integrated to parallel from exact verified feature SHA; full candidate packaging audit pending."
+      "package": {
+        "verified": true,
+        "commit": "0a9a2cf492fd33b44e2f374def701709dcdeeb8f",
+        "artifact_id": 11081760178
+      },
+      "notes": "Static audit hardening from verified parallel 2f759dea. Fixes manifest-vs-packager root mismatch that could still ship AuctionSniper beside AuxVmangos, forces LIVE session-only, blocks LIVE while MarketScan owns the scheduler, adds AutoMarket failure backoff, compacts PriceDB history, refines random-property market identity, renames gone units to netDownUnits, and binds live revalidation to exact item-link identity when available. Integrated to parallel from exact verified feature SHA; full candidate packaging audit pending. Full artifact audit confirms manifest-driven addon roots and exact packaged AuxVmangos source. Gameplay validation remains pending."
     }
   ]
 }
