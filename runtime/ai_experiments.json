@@ -1161,6 +1161,38 @@
       "tests": [],
       "package": null,
       "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. Depends on the verified AutoLoginBridge character-select path. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence."
+    },
+    {
+      "id": "ah-native-max-throughput",
+      "branch": "parallel",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-native-throttle-diagnostic"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 ClientServices::Send entry 0x005AB630",
+        "existing Parallel outbound send-hook chain",
+        "CMSG_AUCTION_LIST_ITEMS opcode 0x0258",
+        "Vanilla listfrom payload field at raw+12 after 4-byte opcode",
+        "AUCTION_ITEM_LIST_UPDATE"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "30fe28f80aa7e5e2338c945d87f001db5aa3e012",
+      "verified_commit": "30fe28f80aa7e5e2338c945d87f001db5aa3e012",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "30fe28f80aa7e5e2338c945d87f001db5aa3e012",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36782466744 and Verify AI experiment registry run 36782466711 passed on exact feature SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos. Integrated candidate based on current parallel 7fc438d2; full exact-parallel candidate verification pending."
     }
   ]
 }

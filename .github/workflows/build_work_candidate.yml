@@ -282,7 +282,7 @@ jobs:
             --package-metadata dist/candidate_metadata.json `
             --summary dist/candidate_summary.json `
             --build-metadata dist/ahthrottle_native_build.json `
-            --output build/WoWAHThrottleNative_5875_v1.dll
+            --output build/WoWAHThrottleNative_5875_v2.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel AH native throttle diagnostic build/package failed" }
 
       - name: Build and append Parallel Character Switch diagnostic

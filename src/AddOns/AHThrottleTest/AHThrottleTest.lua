@@ -1,29 +1,20 @@
 -- AHThrottleTest for World of Warcraft 1.12.1 (build 5875)
--- Standalone diagnostic. It does not modify AuxVmangos and never buys auctions.
+-- Standalone diagnostics. Does not modify AuxVmangos and never buys auctions.
 
 local AHT = {
-    running = false,
     open = false,
-    phase = "IDLE",
-    tests = { 5.20, 2.00, 1.00, 0.50, 0.25 },
-    index = 0,
-    page = 0,
-    awaiting = nil,
-    sentAt = 0,
-    controlRtt = nil,
-    challengeAt = 0,
-    deadline = 0,
-    results = {},
-    sends = 0,
-    events = 0,
-    lastTick = 0,
-    native = {
+    bench = {
         running = false,
-        startedAt = 0,
-        deadline = 0,
-        events = 0,
-        replayMarked = false,
         captured = false,
+        stageActive = false,
+        stage = 0,
+        intervalMs = 0,
+        expected = 0,
+        rawEvents = 0,
+        uniqueCount = 0,
+        signatures = {},
+        results = {},
+        startedAt = 0,
     },
 }
 
@@ -57,213 +48,165 @@ local function auctionOpen()
     return AHT.open
 end
 
+local function auxBusy()
+    return AVM and (AVM.queryInFlight or AVM.phase ~= "IDLE" or (AVM.market and AVM.market.active))
+end
+
 local function pageInfo()
     if not GetNumAuctionItems then return 0, 0 end
     local rows, total = GetNumAuctionItems("list")
     return tonumber(rows) or 0, tonumber(total) or 0
 end
 
-local function sendQuery(kind)
-    AHT.page = AHT.page + 1
-    if AHT.page > 50 then AHT.page = 0 end
-
-    local before = canSend()
-    local t = now()
-    local ok, err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, AHT.page, false, 0, false)
-    AHT.sends = AHT.sends + 1
-    AHT.awaiting = kind
-    AHT.sentAt = t
-
-    out("SEND " .. kind ..
-        " page=" .. tostring(AHT.page) ..
-        " t=" .. fmt(t) ..
-        " CanSend=" .. tostring(before) ..
-        " pcall=" .. tostring(ok))
-
-    if not ok then
-        out("ERROR QueryAuctionItems: " .. tostring(err))
-        AHT.running = false
-        AHT.phase = "IDLE"
-        AHT.awaiting = nil
-        return false
-    end
-    return true
+local function auctionRowSignature(index)
+    local name, texture, count, quality, canUse, level, minBid, minInc, buyout, bid, highBidder, owner =
+        GetAuctionItemInfo("list", index)
+    if not name then return "nil" end
+    return tostring(name) .. ":" ..
+        tostring(count or 0) .. ":" ..
+        tostring(quality or 0) .. ":" ..
+        tostring(level or 0) .. ":" ..
+        tostring(minBid or 0) .. ":" ..
+        tostring(minInc or 0) .. ":" ..
+        tostring(buyout or 0) .. ":" ..
+        tostring(bid or 0)
 end
 
-local function finish()
-    AHT.running = false
-    AHT.phase = "IDLE"
-    AHT.awaiting = nil
-
-    out("=== RESULT ===")
-    local fastest = nil
-    local fastBelowFour = false
-    local delayedBelowFour = false
-    local i
-    for i = 1, table.getn(AHT.results) do
-        local r = AHT.results[i]
-        local status
-        if not r.response then
-            status = "NO_RESPONSE"
-        elseif r.latency <= r.fastLimit then
-            status = "FAST"
-            if not fastest or r.interval < fastest then fastest = r.interval end
-            if r.interval < 4.0 then fastBelowFour = true end
-        else
-            status = "DELAYED"
-            if r.interval < 4.0 then delayedBelowFour = true end
+local function pageSignature()
+    local rows, total = pageInfo()
+    local parts = { tostring(rows), tostring(total) }
+    if rows > 0 then
+        local probes = { 1, 2, 7, 13, 25, 37, 50 }
+        local i, idx
+        for i = 1, table.getn(probes) do
+            idx = probes[i]
+            if idx <= rows then
+                table.insert(parts, auctionRowSignature(idx))
+            end
         end
-        out("interval=" .. fmt(r.interval) .. "s" ..
-            " CanSend=" .. tostring(r.canSendAtSend) ..
-            " status=" .. status ..
-            " recv=" .. fmt(r.latency) .. "s" ..
-            " rows=" .. tostring(r.rows or 0) ..
-            " total=" .. tostring(r.total or 0))
     end
-
-    if fastBelowFour then
-        out("WNIOSEK: query ponizej 4s dostalo szybka odpowiedz. UI ~5s nie jest twardym limitem dla QueryAuctionItems.")
-    elseif delayedBelowFour then
-        out("WNIOSEK: query ponizej 4s dostaje odpowiedz dopiero z opoznieniem. Wyglada na kolejke/throttle poza samym przyciskiem UI.")
-    else
-        out("WNIOSEK: brak szybkich odpowiedzi ponizej 4s. Prawdopodobny twardy throttle w natywnym API lub po stronie serwera.")
-    end
-
-    if fastest then
-        out("Najszybszy potwierdzony FAST interval: " .. fmt(fastest) .. "s")
-    end
-    out("sends=" .. tostring(AHT.sends) .. " events=" .. tostring(AHT.events))
+    return table.concat(parts, "|"), rows, total
 end
 
-local function nextCase()
-    AHT.index = AHT.index + 1
-    if AHT.index > table.getn(AHT.tests) then
-        finish()
-        return
-    end
-    AHT.phase = "WAIT_READY"
-    AHT.awaiting = nil
-    AHT.controlRtt = nil
-    out("CASE " .. tostring(AHT.index) .. "/" .. tostring(table.getn(AHT.tests)) ..
-        " interval=" .. fmt(AHT.tests[AHT.index]) .. "s")
+local function resetBench()
+    AHT.bench.running = false
+    AHT.bench.captured = false
+    AHT.bench.stageActive = false
+    AHT.bench.stage = 0
+    AHT.bench.intervalMs = 0
+    AHT.bench.expected = 0
+    AHT.bench.rawEvents = 0
+    AHT.bench.uniqueCount = 0
+    AHT.bench.signatures = {}
+    AHT.bench.results = {}
+    AHT.bench.startedAt = 0
 end
 
-local function start()
-    if AHT.running then
-        out("test juz trwa; /ahtest status")
-        return
-    end
+function AHThrottleTest_BenchNativeStart()
     if not auctionOpen() then
-        out("otworz Auction House i uruchom /ahtest start")
+        out("BENCH: otworz Auction House")
         return
     end
-    if AVM and (AVM.queryInFlight or AVM.phase ~= "IDLE" or (AVM.market and AVM.market.active)) then
-        out("AuxVmangos aktualnie skanuje. Zatrzymaj skan przed testem, zeby eventy sie nie mieszaly.")
-        return
-    end
-
-    AHT.running = true
-    AHT.phase = "WAIT_READY"
-    AHT.index = 0
-    AHT.page = 0
-    AHT.awaiting = nil
-    AHT.results = {}
-    AHT.sends = 0
-    AHT.events = 0
-    AHT.lastTick = 0
-    out("START. Nie klikaj Search/Next i nie uruchamiaj innego skanera do konca testu.")
-    nextCase()
-end
-
-local function stop()
-    if not AHT.running then
-        out("test nie jest aktywny")
-        return
-    end
-    AHT.running = false
-    AHT.phase = "IDLE"
-    AHT.awaiting = nil
-    out("STOP")
-end
-
-local function status()
-    out("running=" .. tostring(AHT.running) ..
-        " phase=" .. tostring(AHT.phase) ..
-        " case=" .. tostring(AHT.index) .. "/" .. tostring(table.getn(AHT.tests)) ..
-        " sends=" .. tostring(AHT.sends) ..
-        " events=" .. tostring(AHT.events) ..
-        " native=" .. tostring(AHT.native.running) ..
-        " nativeEvents=" .. tostring(AHT.native.events) ..
-        " CanSend=" .. tostring(canSend()))
-end
-
-
-local function nativeFinish()
-    if not AHT.native.running then return end
-    local events = AHT.native.events
-    out("=== NATIVE RESULT ===")
-    out("events=" .. tostring(events) ..
-        " captured=" .. tostring(AHT.native.captured) ..
-        " replay500=" .. tostring(AHT.native.replayMarked))
-    if not AHT.native.captured then
-        out("WNIOSEK NATIVE: brak przechwyconego CMSG_AUCTION_LIST_ITEMS - test niewazny.")
-    elseif not AHT.native.replayMarked then
-        out("WNIOSEK NATIVE: packet przechwycony, ale replay 500ms nie zostal potwierdzony - test niewazny.")
-    elseif events >= 2 then
-        out("WNIOSEK NATIVE: drugi wynik przyszedl <5s. Serwer akceptuje bezposredni replay; 5s siedzi po stronie klienta/API.")
-    elseif events == 1 then
-        out("WNIOSEK NATIVE: baseline odpowiedzial, replay 500ms nie dal drugiego wyniku. Throttle jest po stronie serwera albo sciezki odbioru po native send.")
-    else
-        out("WNIOSEK NATIVE: brak nawet odpowiedzi baseline - test niewazny.")
-    end
-    AHT.native.running = false
-end
-
-function AHThrottleTest_NativeStart()
-    if AHT.running then
-        out("NATIVE: zwykly test AHT jest aktywny - najpierw /ahtest stop")
-        return
-    end
-    if not auctionOpen() then
-        out("NATIVE: otworz Auction House")
-        return
-    end
-    if AVM and (AVM.queryInFlight or AVM.phase ~= "IDLE" or (AVM.market and AVM.market.active)) then
-        out("NATIVE: AuxVmangos skanuje - zatrzymaj go przed testem")
+    if auxBusy() then
+        out("BENCH: AuxVmangos skanuje. Zatrzymaj skan i nacisnij F5 ponownie.")
         return
     end
     if canSend() ~= true then
-        out("NATIVE: Search jeszcze zablokowany. Poczekaj az CanSend=true i nacisnij F5 ponownie.")
+        out("BENCH: poczekaj az Search/CanSend bedzie aktywny i nacisnij F5 ponownie.")
         return
     end
 
-    AHT.native.running = true
-    AHT.native.startedAt = now()
-    AHT.native.deadline = AHT.native.startedAt + 6.25
-    AHT.native.events = 0
-    AHT.native.replayMarked = false
-    AHT.native.captured = false
-    out("NATIVE START: baseline QueryAuctionItems page=0; DLL sprobuje exact replay po 500ms.")
+    resetBench()
+    AHT.bench.running = true
+    AHT.bench.startedAt = now()
+    out("=== MAX THROUGHPUT BENCH START ===")
+    out("Nie klikaj AH i nie uruchamiaj AUX. Test potrwa ok. 60-75 s.")
+    out("Baseline QueryAuctionItems page=0; DLL przechwyci exact packet.")
     local ok, err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, 0, false, 0, false)
     if not ok then
-        out("NATIVE baseline ERROR: " .. tostring(err))
-        AHT.native.running = false
+        out("BENCH baseline ERROR: " .. tostring(err))
+        resetBench()
     end
 end
 
-function AHThrottleTest_NativeMark(kind)
-    if kind == "CAPTURE" then
-        AHT.native.captured = true
-        out("NATIVE DLL: exact CMSG_AUCTION_LIST_ITEMS captured")
-    elseif kind == "REPLAY500" then
-        AHT.native.replayMarked = true
-        out("NATIVE DLL: exact packet replay sent at +500ms")
-    elseif kind == "NO_CAPTURE" then
-        out("NATIVE DLL: NO_CAPTURE - F5 baseline nie dotarl do ClientServices::Send")
-        AHT.native.running = false
-    else
-        out("NATIVE DLL: " .. tostring(kind))
+function AHThrottleTest_BenchMarkCapture()
+    if not AHT.bench.running then return end
+    AHT.bench.captured = true
+    out("BENCH DLL: packet 0x258 captured; listfrom=0 validated.")
+end
+
+function AHThrottleTest_BenchStageStart(stage, intervalMs, expected)
+    if not AHT.bench.running then return end
+    AHT.bench.stage = tonumber(stage) or 0
+    AHT.bench.intervalMs = tonumber(intervalMs) or 0
+    AHT.bench.expected = tonumber(expected) or 0
+    AHT.bench.rawEvents = 0
+    AHT.bench.uniqueCount = 0
+    AHT.bench.signatures = {}
+    AHT.bench.stageActive = true
+    out("STAGE " .. tostring(stage) ..
+        " interval=" .. tostring(intervalMs) .. "ms" ..
+        " sends=" .. tostring(expected) ..
+        " (~" .. tostring(math.floor(50000 / intervalMs + 0.5)) .. " auctions/s)")
+end
+
+function AHThrottleTest_BenchStageDone(stage, intervalMs, sent)
+    if not AHT.bench.running then return end
+    AHT.bench.stageActive = false
+    local unique = AHT.bench.uniqueCount
+    local expected = tonumber(sent) or AHT.bench.expected
+    local loss = expected - unique
+    if loss < 0 then loss = 0 end
+    local lossless = (unique == expected)
+    local r = {
+        stage = tonumber(stage) or 0,
+        intervalMs = tonumber(intervalMs) or 0,
+        sent = expected,
+        unique = unique,
+        rawEvents = AHT.bench.rawEvents,
+        loss = loss,
+        lossless = lossless,
+    }
+    table.insert(AHT.bench.results, r)
+    out("RESULT " .. tostring(intervalMs) .. "ms: sent=" .. tostring(expected) ..
+        " unique=" .. tostring(unique) ..
+        " loss=" .. tostring(loss) ..
+        " rawEvents=" .. tostring(AHT.bench.rawEvents) ..
+        " => " .. (lossless and "LOSSLESS" or "LOSS/INVALID"))
+end
+
+function AHThrottleTest_BenchFinished()
+    if not AHT.bench.running then return end
+    AHT.bench.stageActive = false
+    out("=== MAX THROUGHPUT RESULT ===")
+    local fastest = nil
+    local i, r
+    for i = 1, table.getn(AHT.bench.results) do
+        r = AHT.bench.results[i]
+        out(tostring(r.intervalMs) .. "ms: " ..
+            tostring(r.unique) .. "/" .. tostring(r.sent) ..
+            " unique, loss=" .. tostring(r.loss) ..
+            " [" .. (r.lossless and "PASS" or "FAIL") .. "]")
+        if r.lossless and (not fastest or r.intervalMs < fastest.intervalMs) then
+            fastest = r
+        end
     end
+    if fastest then
+        local qps = 1000 / fastest.intervalMs
+        local aps = qps * 50
+        out("FASTEST LOSSLESS = " .. tostring(fastest.intervalMs) .. "ms" ..
+            " = " .. fmt(qps) .. " query/s" ..
+            " ~= " .. fmt(aps) .. " auctions/s")
+        out("To jest punkt do dalszej walidacji dlugim soak testem przed AUX.")
+    else
+        out("Brak etapu 25/25. Potrzebny wolniejszy lub dluzszy test diagnostyczny.")
+    end
+    AHT.bench.running = false
+end
+
+function AHThrottleTest_BenchAbort(reason)
+    out("BENCH ABORT: " .. tostring(reason))
+    resetBench()
 end
 
 local frame = CreateFrame("Frame", "AHThrottleTestFrame")
@@ -276,127 +219,18 @@ frame:SetScript("OnEvent", function()
         AHT.open = true
     elseif event == "AUCTION_HOUSE_CLOSED" then
         AHT.open = false
-        if AHT.running then
-            out("AH zamkniety - test przerwany")
-            stop()
+        if AHT.bench.running then
+            out("BENCH ABORT: Auction House closed")
+            resetBench()
         end
     elseif event == "AUCTION_ITEM_LIST_UPDATE" then
-        if AHT.native.running then
-            AHT.native.events = AHT.native.events + 1
-            local nr, nt = pageInfo()
-            out("NATIVE RECV #" .. tostring(AHT.native.events) ..
-                " dt=" .. fmt(now() - AHT.native.startedAt) .. "s" ..
-                " rows=" .. tostring(nr) .. " total=" .. tostring(nt) ..
-                " CanSend=" .. tostring(canSend()))
-        end
-        if not AHT.running or not AHT.awaiting then return end
-
-        AHT.events = AHT.events + 1
-        local t = now()
-        local latency = t - AHT.sentAt
-        local rows, total = pageInfo()
-        local kind = AHT.awaiting
-        AHT.awaiting = nil
-
-        out("RECV " .. kind ..
-            " dt=" .. fmt(latency) .. "s" ..
-            " rows=" .. tostring(rows) ..
-            " total=" .. tostring(total) ..
-            " CanSend=" .. tostring(canSend()))
-
-        if kind == "control" then
-            AHT.controlRtt = latency
-            local interval = AHT.tests[AHT.index]
-            AHT.challengeAt = AHT.sentAt + interval
-            if AHT.challengeAt < t + 0.05 then AHT.challengeAt = t + 0.05 end
-            AHT.phase = "WAIT_CHALLENGE"
-        elseif kind == "challenge" then
-            local r = AHT.results[AHT.index]
-            if r then
-                r.response = true
-                r.latency = latency
-                r.rows = rows
-                r.total = total
+        if AHT.bench.running and AHT.bench.stageActive then
+            AHT.bench.rawEvents = AHT.bench.rawEvents + 1
+            local sig = pageSignature()
+            if not AHT.bench.signatures[sig] then
+                AHT.bench.signatures[sig] = true
+                AHT.bench.uniqueCount = AHT.bench.uniqueCount + 1
             end
-            AHT.phase = "WAIT_RECOVERY"
-            AHT.deadline = t + 0.25
-        end
-    end
-end)
-
-frame:SetScript("OnUpdate", function()
-    local t = now()
-    if AHT.native.running and t >= AHT.native.deadline then
-        nativeFinish()
-    end
-    if not AHT.running then return end
-    if t - AHT.lastTick < 0.05 then return end
-    AHT.lastTick = t
-
-    if not auctionOpen() then
-        out("AH nie jest otwarty - test przerwany")
-        stop()
-        return
-    end
-
-    if AHT.phase == "WAIT_READY" then
-        if canSend() == true then
-            if sendQuery("control") then
-                AHT.phase = "WAIT_CONTROL"
-                AHT.deadline = t + 6.50
-            end
-        end
-    elseif AHT.phase == "WAIT_CONTROL" then
-        if not AHT.awaiting then
-            return
-        end
-        if t >= AHT.deadline then
-            out("CONTROL_TIMEOUT - nie mozna wiarygodnie kontynuowac")
-            stop()
-        end
-    elseif AHT.phase == "WAIT_CHALLENGE" then
-        if t >= AHT.challengeAt then
-            local interval = AHT.tests[AHT.index]
-            local controlRtt = AHT.controlRtt or 0.25
-            local fastLimit = controlRtt * 4 + 0.25
-            if fastLimit < 1.25 then fastLimit = 1.25 end
-            if fastLimit > 2.00 then fastLimit = 2.00 end
-
-            AHT.results[AHT.index] = {
-                interval = interval,
-                canSendAtSend = canSend(),
-                response = false,
-                latency = nil,
-                rows = 0,
-                total = 0,
-                fastLimit = fastLimit,
-            }
-
-            if sendQuery("challenge") then
-                AHT.phase = "WAIT_CHALLENGE_RESULT"
-                AHT.deadline = t + 6.50
-            end
-        end
-    elseif AHT.phase == "WAIT_CHALLENGE_RESULT" then
-        if not AHT.awaiting then
-            return
-        end
-        if t >= AHT.deadline then
-            local r = AHT.results[AHT.index]
-            if r then
-                r.response = false
-                r.latency = nil
-            end
-            AHT.awaiting = nil
-            out("NO_RESPONSE challenge interval=" .. fmt(AHT.tests[AHT.index]) .. "s")
-            AHT.phase = "WAIT_RECOVERY"
-            AHT.deadline = t + 0.25
-        end
-    elseif AHT.phase == "WAIT_RECOVERY" then
-        -- Start the next controlled pair only after the stock client gate is open
-        -- again. This prevents one failed challenge from contaminating the next case.
-        if t >= AHT.deadline and canSend() == true then
-            nextCase()
         end
     end
 end)
@@ -407,18 +241,18 @@ SlashCmdList["AHTHROTTLETEST"] = function(msg)
     msg = string.gsub(msg, "^%s+", "")
     msg = string.gsub(msg, "%s+$", "")
     if msg == "" or msg == "status" then
-        status()
-    elseif msg == "start" or msg == "quick" then
-        start()
-    elseif msg == "stop" then
-        stop()
-    elseif msg == "native" then
-        out("NATIVE: otworz AH, zatrzymaj AUX, poczekaj az Search aktywny i nacisnij F5.")
+        out("bench=" .. tostring(AHT.bench.running) ..
+            " stage=" .. tostring(AHT.bench.stage) ..
+            " unique=" .. tostring(AHT.bench.uniqueCount) ..
+            "/" .. tostring(AHT.bench.expected) ..
+            " CanSend=" .. tostring(canSend()))
+    elseif msg == "bench" or msg == "native" then
+        out("MAX BENCH: otworz AH, zatrzymaj AUX, poczekaj az Search aktywny, potem nacisnij F5 jeden raz.")
     elseif msg == "help" then
-        out("/ahtest start | stop | status | native")
+        out("/ahtest bench | status  (bench uruchamiasz F5)")
     else
         out("nieznana komenda; /ahtest help")
     end
 end
 
-out("loaded v1.1. Lua test: /ahtest start. Native packet test: /ahtest native, potem F5.")
+out("loaded v1.2 MAXBENCH. /ahtest bench -> F5.")
