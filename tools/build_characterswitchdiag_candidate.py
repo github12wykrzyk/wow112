@@ -47,8 +47,8 @@ def main():
     t0=time.perf_counter();out=(ROOT/a.output).resolve();out.parent.mkdir(parents=True,exist_ok=True)
     bm=(ROOT/a.build_metadata).resolve();bm.parent.mkdir(parents=True,exist_ok=True)
     timing,pe=build_one(PROFILE,SOURCE,out.with_suffix(".obj"),out)
-    if pe.get("machine_hex")!="0x014C" or not pe.get("entrypoint_rva") or pe.get("has_import_directory"):
-        raise SystemExit("CharacterSwitchDiag PE32/x86/crtless gate failed")
+    if pe.get("machine_hex")!="0x014C" or not pe.get("entrypoint_rva") or not pe.get("has_import_directory"):
+        raise SystemExit("CharacterSwitchDiag PE32/x86/win32imports gate failed")
     module={"name":DLL_NAME,"source_path":str(SOURCE.relative_to(ROOT)).replace("\\","/"),
             "source_sha256":sha256_file(SOURCE),"build_profile":PROFILE,"toolchain_mode":timing.get("mode"),
             "sha256":sha256_file(out),"size":out.stat().st_size,"pe_machine":pe.get("machine_hex"),
