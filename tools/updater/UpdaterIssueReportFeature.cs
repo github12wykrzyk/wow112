@@ -238,6 +238,17 @@ namespace WoW112Updater
                 else sb.AppendLine("PPFixedPoint_debug.log not found (launch game with the fixed-point candidate first).");
 
                 sb.AppendLine();
+                sb.AppendLine("### Character switch diagnostic");
+                var charSwitchLog = Path.Combine(root, "CharacterSwitchDiag.log");
+                if (File.Exists(charSwitchLog))
+                {
+                    sb.AppendLine("```text");
+                    sb.AppendLine(Sanitize(TailFile(charSwitchLog, 16000), root, 16000));
+                    sb.AppendLine("```");
+                }
+                else sb.AppendLine("CharacterSwitchDiag.log not found.");
+
+                sb.AppendLine();
                 sb.AppendLine("### TaxiFlight hotkey / flight telemetry (CSV)");
                 var taxiFiles = GetRecentTaxiFiles(root);
                 if (taxiFiles.Length == 0)
@@ -323,6 +334,9 @@ namespace WoW112Updater
                 var ppFixedLog = Path.Combine(root, "PPFixedPoint_debug.log");
                 if (File.Exists(ppFixedLog))
                     sb.AppendLine(Sanitize(TailFile(ppFixedLog, 16000), root, 16000));
+                var charSwitchLog = Path.Combine(root, "CharacterSwitchDiag.log");
+                if (File.Exists(charSwitchLog))
+                    sb.AppendLine(Sanitize(TailFile(charSwitchLog, 16000), root, 16000));
                 foreach (var taxiFile in GetRecentTaxiFiles(root))
                 {
                     sb.AppendLine(Path.GetFileName(taxiFile));

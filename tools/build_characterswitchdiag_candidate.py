@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 SOURCE=ROOT/"src/CharacterSwitchDiag/WoWCharacterSwitchDiag_5875_v1.c"
 DLL_NAME="WoWCharacterSwitchDiag_5875_v1.dll"
 DLL_LIST="dlls.txt"
-PROFILE="clangcl_i686_crtless"
+PROFILE="clangcl_i686_win32imports"
 
 def repack(package,dll):
     with zipfile.ZipFile(package,"r") as src:
@@ -54,8 +54,8 @@ def main():
             "sha256":sha256_file(out),"size":out.stat().st_size,"pe_machine":pe.get("machine_hex"),
             "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
             "module_id":"characterswitchdiag","diagnostic_only":True,
-            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","World/Glue/World state timing"],
-            "safety":["no packet injection","no socket disconnect","no logout timer patch","no WndProc hook"],
+            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","FAST DisconnectFromServer/relogin slot 1/2","CharacterSwitchDiag.log"],
+            "safety":["no logout timer patch","no crafted packet injection","FAST path is explicit manual diagnostic only"],
             "timings_ms":timing}
     if a.compile_only:
         module["process_total_ms"]=(time.perf_counter()-t0)*1000.0
@@ -77,8 +77,8 @@ def main():
         obj["loader_manifest"]={"name":DLL_LIST,"generated_from_candidate_zip":True,"dll_count":len(actual),"dlls":actual,
                                 "contains_characterswitchdiag":True}
         obj["characterswitchdiag_pilot"]={"module":DLL_NAME,"branch":"parallel","game_runtime_tested":False,
-            "test":"World -> stock Logout() -> Character Select -> optional slot 1/2 -> World",
-            "purpose":"establish exact baseline and session-preserving process path before instant-switch experiments"}
+            "test":"World -> FAST DisconnectFromServer -> AutoLoginBridge relogin -> slot 1/2 -> World",
+            "purpose":"measure whether same-process connection recycle bypasses server logout wait without patching the timer"}
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
     summary["result"]="PASS" if summary["ready_for_test"] else "FAIL"
     pm.write_text(json.dumps(meta,indent=2)+"\n",encoding="utf-8")

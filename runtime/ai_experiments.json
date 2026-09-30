@@ -1155,12 +1155,20 @@
         "stock Logout() Lua path",
         "CharacterSelect_SelectCharacter / CharacterSelect_EnterWorld"
       ],
-      "status": "awaiting_ci",
+      "status": "superseded",
       "observed_head": "7b8acc5774d4061a8921e6f345ebdadad92ea87f",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "gameplay",
+          "result": "passed",
+          "commit": "7fc438d263cc22a2876f16db33c8328f5958e2b7",
+          "date": "2026-09-30",
+          "evidence": "User tested Stock logout, Switch slot 1 and Switch slot 2. All reached the normal server 'Please wait 20 seconds' logout path; slot automation itself worked after logout."
+        }
+      ],
       "package": null,
-      "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. Depends on the verified AutoLoginBridge character-select path. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence."
+      "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. Depends on the verified AutoLoginBridge character-select path. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence. Gameplay confirms all V1 buttons use stock Logout() and therefore cannot bypass the server-enforced wait."
     },
     {
       "id": "ah-native-max-throughput",
@@ -1193,6 +1201,32 @@
       ],
       "package": null,
       "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos. Integrated candidate based on current parallel 7fc438d2; full exact-parallel candidate verification pending."
+    },
+    {
+      "id": "character-switch-fast-recycle-v2",
+      "branch": "feature/character-switch-fast-recycle",
+      "modules": [
+        "CharacterSwitchDiag",
+        "AutoLoginBridge",
+        "Updater"
+      ],
+      "dependencies": [
+        "character-switch-diagnostic-v1",
+        "multibox-auto-first-character-parallel"
+      ],
+      "shared_resources": [
+        "FrameScript DisconnectFromServer",
+        "AutoLoginBridge native Glue login 0x0046AFB0",
+        "CharacterSelect_SelectCharacter / CharacterSelect_EnterWorld",
+        "CharacterSwitchDiag.log",
+        "Updater GitHub issue report"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "136e61ed1791659e5932b0895580ef66d9b57739",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Manual diagnostic FAST slot 1/2 path does not call Logout(). It asks client Glue DisconnectFromServer, requests same-process AutoLoginBridge relogin using retained DPAPI-protected credential material (plaintext always scrubbed), then selects/enters requested slot. Bounded CharacterSwitchDiag.log tail is included in updater issue reports."
     }
   ]
 }
