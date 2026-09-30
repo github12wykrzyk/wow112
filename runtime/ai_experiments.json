@@ -1089,6 +1089,36 @@
       ],
       "package": null,
       "notes": "SummonScout 1.45 integrated candidate: same-scope competitor matching scans every recognized destination in an advert, so Hyjal + Azshara can match Hyjal and Hydraxian independently; concise multi-destination summon offers are recognized without weakening buyer/recruitment exclusions. Persistent SummonScoutDB invite blacklist is available in GUI and via /ssi blacklist add|del|list, enforced across all addon auto-invite paths and addon-driven auto-summon."
+    },
+    {
+      "id": "aux-vendor-hot-sweep-v2",
+      "branch": "parallel",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vendor-arbitrage-v1"
+      ],
+      "shared_resources": [
+        "AuxVmangos serialized QueryAuctionItems scheduler",
+        "vMaNGOS total-buyout page ordering",
+        "AVM_DB vendorMeta persistent sweep cursor",
+        "Vendor Arbitrage V1 revalidation/BUY_PENDING/UNKNOWN transaction path"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9fc5b135d98afd4d3de00f92a5ee79963d0b1be5",
+      "verified_commit": "9fc5b135d98afd4d3de00f92a5ee79963d0b1be5",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "9fc5b135d98afd4d3de00f92a5ee79963d0b1be5",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36756990638 and Verify AI experiment registry run 36756991045 passed on exact HOT+SWEEP feature SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Gameplay evidence on Vendor V1 showed boundary=13, lastPage~1109 and repeated VENDOR_NONE scannedPages=10 followed by cache verify of the same boundary, proving V1 repeatedly rescanned only the same cheapest 10 pages. V2 alternates HOT coverage with a persistent progressive SWEEP cursor, preserving the V1 buy/revalidation path and maxBuyout hard bound. Integrated onto current parallel after confirming AuxVmangos source/TOC/README and parallel candidate manifest were byte-identical to the verified feature base. Full aggregate candidate build pending."
     }
   ]
 }

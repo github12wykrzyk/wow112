@@ -1,4 +1,4 @@
-# AuxVmangos 0.9 unified market bot + vendor arbitrage
+# AuxVmangos 0.10 unified market bot + vendor HOT/SWEEP arbitrage
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.
 
@@ -203,3 +203,36 @@ Commands:
 - /avm live on
 
 A qualifying opportunity is reported as VENDOR_BEST and then revalidated before VENDOR_DRYRUN or BUY_SENT. LIVE uses the same confirmed money-delta transaction state that already passed gameplay testing for WATCH. Expected vendor profit is based on the embedded Vanilla 1.12 vendor-value table; custom realm price overrides are not yet learned in V1.
+
+
+## Vendor HOT + SWEEP (0.10)
+
+Vendor Arbitrage no longer rechecks only the same cheapest pages forever.
+
+Each verified boundary cycle now has two segments:
+- HOT: the first 10 positive-buyout pages by default. This revisits the freshest/cheapest market area every cycle.
+- SWEEP: a persistent 25-page chunk after HOT. The SWEEP cursor is stored in SavedVariables and advances between cycles instead of returning to the first page.
+
+After a SWEEP chunk, the bot returns to HOT, re-verifies the cached positive-buyout boundary, then resumes the next SWEEP chunk. This gives frequent cheap-page coverage while progressively exploring the deeper AH.
+
+The existing maxBuyout is still a hard risk bound. Because vMaNGOS pages are ordered by total buyout, if the minimum positive buyout on a page is already above maxBuyout, VENDOR_PRICE_CEILING stops deeper work for that pass: later pages cannot qualify.
+
+Defaults:
+- HOT pages: 10
+- SWEEP chunk: 25
+- minimum vendor profit: 5s
+- max buyout: 1g
+- LIVE still starts OFF and reuses the guarded revalidation/purchase transaction.
+
+Commands:
+- /avm vendor hotpages 10
+- /avm vendor sweeppages 25
+- /avm vendor sweepreset
+- /avm vendor status
+
+Diagnostics:
+- VENDOR HOT pages=A-B
+- VENDOR SWEEP pages=A-B pass=N
+- VENDOR_PRICE_CEILING ...
+- VENDOR_BEST segment=HOT|SWEEP ...
+- VENDOR_HOT_NONE / VENDOR_SWEEP_NONE
