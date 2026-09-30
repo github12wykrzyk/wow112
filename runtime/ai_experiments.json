@@ -1506,6 +1506,37 @@
       "tests": [],
       "package": null,
       "notes": "V5 preserves V4 disconnect unchanged. Ordinary updater LaunchGame with a selected account passes only a random handoff nonce at CreateProcess time; after process creation the updater publishes login + existing DPAPI-protected password blob to a one-time APPDATA file. AutoLoginBridge polls it, deletes it immediately after reading and retains the encrypted profile as relogin-only without changing manual startup behavior. Native profile/multibox launch keeps existing environment autologin."
+    },
+    {
+      "id": "ah-soak-range-75-150",
+      "branch": "parallel",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-soak-75-50"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "CMSG_AUCTION_LIST_ITEMS 0x0258",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event isolation"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "8c7e99b57c9bbcb7b568bd7d17a4d39ae903fb7b",
+      "verified_commit": "8c7e99b57c9bbcb7b568bd7d17a4d39ae903fb7b",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "8c7e99b57c9bbcb7b568bd7d17a4d39ae903fb7b",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36789073008 and registry run 36789073105 passed on exact feature SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Long-range soak after 75ms showed 10.8% miss and 50ms 62.2% miss on 500-query stages. Sends 500 distinct pages each at 75,90,100,110,125,150ms with 10s drain and stock Browse UI detached, to locate best long-run interval and effective throughput. Integrated candidate based on current parallel 0594e866; full exact-parallel candidate verification pending."
     }
   ]
 }
