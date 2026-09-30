@@ -1146,7 +1146,7 @@
         "AutoLoginBridge"
       ],
       "dependencies": [
-        "parallel AutoLoginBridge glue/character-select evidence"
+        "multibox-auto-first-character-parallel"
       ],
       "shared_resources": [
         "WoW 1.12.1 FrameScript_Execute 0x00704CD0",
@@ -1160,7 +1160,7 @@
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence."
+      "notes": "Diagnostic-only first iteration. Dynamically creates its own in-game panel without AddOn or WndProc hook. Measures stock Logout() -> Character Select and optionally re-enters slot 1/2 in the same WoW process. Depends on the verified AutoLoginBridge character-select path. No timer bypass, packet injection or forced socket disconnect is attempted before baseline gameplay evidence."
     }
   ]
 }
