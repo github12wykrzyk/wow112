@@ -763,6 +763,25 @@
       ],
       "package": null,
       "notes": "Gameplay screenshots on 2026-09-30 showed WATCH UI fields Max/unit=3g and Max total=3g while the scanner status displayed best≈3g98s90c/ea. Engine candidate filtering already enforces committed rule limits. This experiment hardens the UI-to-AVM_DB commit path with stable rowIndex captures, immediate guarded OnTextChanged commits, and committed limit values in scanner status. Gameplay retest pending; no claim that the exact root cause is proven until retest. Integrated to parallel from exact verified feature SHA; full candidate build pending."
+    },
+    {
+      "id": "summonscout-here-invite",
+      "branch": "feature/summonscout-here-invite",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart-invite parser"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "5f119770248f1e8efc1c4f1787fa980e35953fb3",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Add exact normalized direct-whisper code 'here' as an explicit smart auto-invite trigger. Deliberately do not add 'here' to generic phrase cues, preventing incidental text such as 'I am here already' from triggering an invite."
     }
   ]
 }

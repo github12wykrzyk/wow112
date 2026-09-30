@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.41"
+local ADDON_VERSION = "1.42"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -219,6 +219,7 @@ local WHISPER_PRICE_CUES = {
 
 local WHISPER_EXACT_CODES = {
     ["123"] = true,
+    ["here"] = true,
     ["+"] = true
 }
 
@@ -412,8 +413,9 @@ local function whisperInviteDecision(message)
     local loc, ambiguous = findLocation(message)
     local service = SummonScoutDB.service or "all"
     local score = 0
-    -- 123 is a service code, not natural language. Accept it as a whole token
-    -- in short whispers so common variants like "123 pls" and "pls 123" work.
+    -- Explicit one-word service codes such as "123" and "here" are accepted
+    -- immediately. 123 also remains tolerant as a whole token in short
+    -- whispers so normal politeness variants like "123 pls" still work.
     local exactCode = WHISPER_EXACT_CODES[s]
         or raw == "+"
         or (string.len(s) <= 32 and phraseHas(s, "123"))

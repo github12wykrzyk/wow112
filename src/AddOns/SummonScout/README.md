@@ -444,3 +444,10 @@ Examples:
 - `summon please`
 
 These still respect the global `Whisper smart auto invite` toggle and destination filtering when a different explicit location is named.
+
+
+## 1.42 exact `here` whisper invite
+
+- A direct whisper whose normalized text is exactly `here` is now treated as an explicit smart auto-invite request, alongside `123` and `+`.
+- The match is deliberately exact. Phrases that merely contain the word, such as `I am here already`, do not become invite triggers.
+- Existing service selection, duplicate protection, party checks and auto-summon flow are unchanged.
