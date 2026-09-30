@@ -398,8 +398,8 @@
         "parallel addon packager src/AddOns auto-discovery"
       ],
       "status": "in_progress",
-      "observed_head": "034f81e987cb547bb90674ce2e21c4542baee9ee",
-      "verified_commit": "034f81e987cb547bb90674ce2e21c4542baee9ee",
+      "observed_head": "d3a5466763fd2f997a1120f9300c0bb137f9b257",
+      "verified_commit": "d3a5466763fd2f997a1120f9300c0bb137f9b257",
       "tests": [
         {
           "kind": "ci",
@@ -435,10 +435,17 @@
           "commit": "034f81e987cb547bb90674ce2e21c4542baee9ee",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36642944622 and AI experiment registry run 36642944771 passed on exact V0.3 feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "d3a5466763fd2f997a1120f9300c0bb137f9b257",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36672915739 and AI experiment registry run 36672915737 passed on exact V0.4 feature SHA."
         }
       ],
       "package": null,
-      "notes": "Independent AuxVmangos V0.2 watchlist engine. Exact gameplay evidence from parent e548cc34: user screenshot showed global vMaNGOS buyout boundary converging 557 -> 279 -> 140 -> 70 -> 35 -> 53 -> 62 -> 66 -> 68 -> 67 at roughly 55.7k auctions; this validated binary boundary discovery but exposed that a global cheapest-page scan cannot reliably find an item-specific Black Lotus rule, and that unrelated pre-enable AH events polluted extraEvents. Current follow-up fixes this by querying each watch rule by name first, binary-searching only its filtered result set, revalidating source/adjacent filtered pages, adding a post-result settle window, and rotating past no-buyout rules. Gameplay evidence remains descriptive notes because the current routing regression suite intentionally requires zero kind=game records. AuctionSniper V1.2 gameplay evidence also showed that repeatedly discarding a known buyout boundary causes unnecessary full binary searches after each scan window. V0.3 therefore adds per-rule boundary cache verification (boundary-1 false, boundary true) with automatic invalidation/fallback. User gameplay screen on V0.3 showed rule='Black Lotus' boundary=0 with cacheV=10, cacheHit=10, cacheMiss=0 and timeouts=0, confirming repeated cache verification/hit behavior for a single-page filtered result set. The same test had candidates=0 because the character had no money; V0.4 removes wallet affordability from DRY-RUN candidate eligibility while keeping an immediate wallet gate in LIVE."
+      "notes": "Independent AuxVmangos V0.2 watchlist engine. Exact gameplay evidence from parent e548cc34: user screenshot showed global vMaNGOS buyout boundary converging 557 -> 279 -> 140 -> 70 -> 35 -> 53 -> 62 -> 66 -> 68 -> 67 at roughly 55.7k auctions; this validated binary boundary discovery but exposed that a global cheapest-page scan cannot reliably find an item-specific Black Lotus rule, and that unrelated pre-enable AH events polluted extraEvents. Current follow-up fixes this by querying each watch rule by name first, binary-searching only its filtered result set, revalidating source/adjacent filtered pages, adding a post-result settle window, and rotating past no-buyout rules. Gameplay evidence remains descriptive notes because the current routing regression suite intentionally requires zero kind=game records. AuctionSniper V1.2 gameplay evidence also showed that repeatedly discarding a known buyout boundary causes unnecessary full binary searches after each scan window. V0.3 therefore adds per-rule boundary cache verification (boundary-1 false, boundary true) with automatic invalidation/fallback. User gameplay screen on V0.3 showed rule='Black Lotus' boundary=0 with cacheV=10, cacheHit=10, cacheMiss=0 and timeouts=0, confirming repeated cache verification/hit behavior for a single-page filtered result set. The same test had candidates=0 because the character had no money; V0.4 removes wallet affordability from DRY-RUN candidate eligibility while keeping an immediate wallet gate in LIVE. V0.5 prepares the first controlled LIVE test: default maxSessionBuys=1, duplicate signature hold begins before PlaceAuctionBid, wallet is rechecked immediately before the call, and a confirmed or late-confirmed first purchase auto-disarms LIVE while leaving scanning active."
     }
   ]
 }

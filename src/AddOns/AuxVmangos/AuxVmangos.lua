@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.4-vmangos-dryrun-wallet"
+AVM_VERSION = "0.5-vmangos-liveguard"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -39,6 +39,7 @@ AVM = {
 	unknown = nil,
 	nextTick = 0,
 	sessionSpend = 0,
+	sessionBuys = 0,
 	stats = {
 		queries = 0,
 		results = 0,
@@ -117,6 +118,7 @@ local function avm_defaults()
 	if AVM_DB.cheapPages == nil then AVM_DB.cheapPages = 4 end
 	if AVM_DB.boundaryRefresh == nil then AVM_DB.boundaryRefresh = 20 end
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
+	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 1 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
 end
 
@@ -391,6 +393,16 @@ local function avm_revalidate_candidate()
 					return
 				end
 
+				local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+				if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+					AVM_DB.live = false
+					avm_print("LIVE_AUTO_OFF purchase limit reached (" ..
+						tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
+					AVM.candidate = nil
+					AVM.phase = "CHEAPEST_SCAN"
+					return
+				end
+
 				local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
 				if maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend then
 					avm_print("session spend limit blocks " .. c.name)
@@ -401,6 +413,14 @@ local function avm_revalidate_candidate()
 				end
 
 				local before = GetMoney()
+				if c.buyout > before then
+					AVM.stats.walletBlocks = AVM.stats.walletBlocks + 1
+					avm_print("LIVE_BLOCKED wallet changed before buy " .. c.name)
+					AVM.candidate = nil
+					AVM.phase = "CHEAPEST_SCAN"
+					return
+				end
+				AVM.recent[c.signature] = GetTime() + AVM_UNKNOWN_HOLD
 				PlaceAuctionBid("list", i, c.buyout)
 				AVM.stats.buySent = AVM.stats.buySent + 1
 				AVM.pending = {
@@ -587,8 +607,15 @@ local function avm_tick_pending(now)
 		if delta == p.candidate.buyout then
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
+			AVM.sessionBuys = AVM.sessionBuys + 1
 			AVM.recent[p.candidate.signature] = now + 15
 			avm_print("CONFIRMED " .. p.candidate.name .. " " .. avm_money(p.candidate.buyout))
+			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+			if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+				AVM_DB.live = false
+				avm_print("LIVE_AUTO_OFF purchase limit reached (" ..
+					tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
+			end
 			AVM.pending = nil
 			avm_restart_boundary()
 			return true
@@ -616,7 +643,14 @@ local function avm_tick_pending(now)
 		if delta == u.candidate.buyout then
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
+			AVM.sessionBuys = AVM.sessionBuys + 1
 			avm_print("CONFIRMED_LATE " .. u.candidate.name .. " " .. avm_money(u.candidate.buyout))
+			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+			if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+				AVM_DB.live = false
+				avm_print("LIVE_AUTO_OFF purchase limit reached (" ..
+					tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
+			end
 			AVM.unknown = nil
 			avm_restart_boundary()
 			return true
@@ -691,6 +725,7 @@ local function avm_status()
 		" '" .. tostring(rule and rule.name or "") .. "'" ..
 		" boundary=" .. tostring(AVM.boundaryPage) ..
 		" cache=" .. tostring(avm_cached_boundary(rule)) ..
+		" buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
 		" spend=" .. avm_money(AVM.sessionSpend))
 	avm_print("queries=" .. AVM.stats.queries ..
 		" results=" .. AVM.stats.results ..
@@ -809,8 +844,17 @@ local function avm_slash(msg)
 		else
 			avm_print("invalid money value")
 		end
+	elseif cmd == "maxbuys" then
+		local n = tonumber(avm_trim(rest))
+		if n and n >= 1 and n <= 100 then
+			AVM_DB.maxSessionBuys = n
+			avm_print("session live purchase limit=" .. tostring(n))
+		else
+			avm_print("maxbuys must be 1..100")
+		end
 	elseif cmd == "reset" then
 		AVM.sessionSpend = 0
+		AVM.sessionBuys = 0
 		AVM.recent = {}
 		AVM.boundaryCache = {}
 		for k in AVM.stats do AVM.stats[k] = 0 end
@@ -824,7 +868,7 @@ local function avm_slash(msg)
 	elseif cmd == "status" then
 		avm_status()
 	else
-		avm_print("/avm on|off | live on|off | status | list | del N | pages N | budget 100g")
+		avm_print("/avm on|off | live on|off | status | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
 	end
 end

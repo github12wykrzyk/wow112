@@ -22,7 +22,7 @@ Default is DRY-RUN. LIVE must be explicitly enabled with /avm live on. DRY-RUN e
 
 Before a live purchase, the candidate is queried again by item name on its source page and adjacent filtered pages, then matched by an equivalent signature. The list index from the original result is never reused blindly.
 
-A sent buyout enters BUY_PENDING. Exact money delta is used as positive confirmation evidence. Timeout is UNKNOWN, never success. During UNKNOWN_HOLD, new live purchases are paused to avoid duplicate purchases after delayed server/client state.
+A sent buyout enters BUY_PENDING. Exact money delta is used as positive confirmation evidence. Timeout is UNKNOWN, never success. During UNKNOWN_HOLD, new live purchases are paused to avoid duplicate purchases after delayed server/client state. LIVE has a session purchase limit (default 1); once the limit is confirmed, LIVE auto-disarms and scanning continues in dry-run.
 
 ## Commands
 
@@ -35,6 +35,7 @@ A sent buyout enters BUY_PENDING. Exact money delta is used as positive confirma
 - /avm del N
 - /avm pages N
 - /avm budget 100g
+- /avm maxbuys 1
 - /avm add exact;Black Lotus;60g;120g;1;20
 - /avm add partial;Lotus;60g;120g;1;20
 
