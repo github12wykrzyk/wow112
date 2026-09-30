@@ -1193,6 +1193,30 @@
       ],
       "package": null,
       "notes": "Maximum-throughput diagnostic after gameplay evidence that a 500ms direct replay is accepted while CanSendAuctionQuery=false. V2 sends 25 distinct listfrom pages per stage at 500,350,250,200,150,125,100,75,50ms. Addon deduplicates response states with a multi-row page signature and reports the fastest 25/25 stage. No bid/buy packet is generated; only captured CMSG_AUCTION_LIST_ITEMS listfrom is mutated. A later long soak is required before using any measured floor in AuxVmangos. Integrated candidate based on current parallel 7fc438d2; full exact-parallel candidate verification pending."
+    },
+    {
+      "id": "aux-vendor-fast-seek-reporting-v3",
+      "branch": "feature/aux-vendor-fast-seek-reporting",
+      "modules": [
+        "AuxVmangos",
+        "Updater"
+      ],
+      "dependencies": [
+        "aux-vendor-hot-sweep-v2"
+      ],
+      "shared_resources": [
+        "AuxVmangos serialized QueryAuctionItems scheduler",
+        "vMaNGOS total-buyout page ordering",
+        "Vendor Arbitrage guarded revalidation/BUY_PENDING/UNKNOWN path",
+        "AVM_DB SavedVariables diagnostic ring",
+        "WoW112 updater GitHub issue reporter"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "136e61ed1791659e5932b0895580ef66d9b57739",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay evidence on 0.10 showed correct HOT/SWEEP progression but page ~71 still around ~2s buyout, making linear progression too slow for a money-first workflow. 0.11 keeps HOT but uses binary FAST SEEK over price targets bounded by maxBuyout, then scans a small radius around each located page. Existing buy/revalidation logic is preserved. Updater 2.9-parallel.9 adds bounded AuxVmangos SavedVariables diagnostics to GitHub reports; snapshots are only as fresh as the latest WoW SavedVariables flush."
     }
   ]
 }

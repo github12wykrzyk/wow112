@@ -214,6 +214,26 @@ namespace WoW112Updater
 
 
                 sb.AppendLine();
+                sb.AppendLine("### AuxVmangos diagnostics (SavedVariables snapshot)");
+                sb.AppendLine("Note: WoW flushes SavedVariables on /reload, logout or client exit. If WoW is still running, this can be the latest flushed snapshot rather than the current in-memory state.");
+                var auxFiles = GetAuxVmangosSavedVariablesFiles(root);
+                if (auxFiles.Length == 0)
+                {
+                    sb.AppendLine("No AuxVmangos SavedVariables file found.");
+                }
+                else
+                {
+                    foreach (var file in auxFiles)
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine("#### AuxVmangos.lua (UTC " + File.GetLastWriteTimeUtc(file).ToString("o") + ")");
+                        sb.AppendLine("```text");
+                        sb.AppendLine(Sanitize(ExtractAuxVmangosDiagnostics(file, 18000), root, 18000));
+                        sb.AppendLine("```");
+                    }
+                }
+
+                sb.AppendLine();
                 // PositionalSpoof writes a plain-text log in the game directory.
                 // Include only a bounded tail; the default WoWDiagHub JSONL report
                 // does not contain cast attempts or client-side positional failures.
@@ -228,6 +248,12 @@ namespace WoW112Updater
                 else sb.AppendLine("No PositionalSpoof cast log found in game directory.");
                 sb.AppendLine();
                 sb.AppendLine("### PP fixed-point diagnostic (bounded tail)");
+                foreach (var auxFile in GetAuxVmangosSavedVariablesFiles(root))
+                {
+                    sb.AppendLine("AuxVmangos.lua");
+                    sb.AppendLine(File.GetLastWriteTimeUtc(auxFile).Ticks.ToString());
+                    sb.AppendLine(Sanitize(ExtractAuxVmangosDiagnostics(auxFile, 18000), root, 18000));
+                }
                 var ppFixedLog = Path.Combine(root, "PPFixedPoint_debug.log");
                 if (File.Exists(ppFixedLog))
                 {
@@ -409,6 +435,43 @@ namespace WoW112Updater
                     result.Add("Windows Application log unavailable: " + ex.GetType().Name);
                 }
                 return result.ToArray();
+            }
+
+            private static string[] GetAuxVmangosSavedVariablesFiles(string root)
+            {
+                try
+                {
+                    var accountRoot = Path.Combine(root, "WTF", "Account");
+                    if (!Directory.Exists(accountRoot)) return new string[0];
+                    return Directory.GetFiles(accountRoot, "AuxVmangos.lua", SearchOption.AllDirectories)
+                        .Where(p => p.IndexOf(Path.DirectorySeparatorChar + "SavedVariables" + Path.DirectorySeparatorChar,
+                            StringComparison.OrdinalIgnoreCase) >= 0)
+                        .OrderByDescending(File.GetLastWriteTimeUtc)
+                        .Take(2)
+                        .ToArray();
+                }
+                catch { return new string[0]; }
+            }
+
+            private static string ExtractAuxVmangosDiagnostics(string path, int maxChars)
+            {
+                try
+                {
+                    var text = File.ReadAllText(path, Encoding.UTF8);
+                    if (string.IsNullOrEmpty(text)) return "<empty AuxVmangos SavedVariables>";
+                    var marker = "[\"diag\"]";
+                    var index = text.IndexOf(marker, StringComparison.Ordinal);
+                    if (index < 0)
+                        return "AuxVmangos SavedVariables found, but no 0.11 diagnostic ring has been flushed yet.\n" +
+                            TailText(text, Math.Min(maxChars, 4000));
+                    var start = Math.Max(0, index - 120);
+                    var count = Math.Min(maxChars, text.Length - start);
+                    return text.Substring(start, count);
+                }
+                catch (Exception ex)
+                {
+                    return "<AuxVmangos diagnostics read error: " + ex.Message + ">";
+                }
             }
 
             private static string[] GetRecentDiagFiles(string root)
