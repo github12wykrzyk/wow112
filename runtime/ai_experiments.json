@@ -939,9 +939,9 @@
         "V2 guarded revalidation/BUY_PENDING/UNKNOWN transaction state",
         "LibVendorValue-2.0 Vanilla vendor sell-value table (MIT)"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "770d4d5efda4521a4885d1b8e79b2eaa8e3491cc",
-      "verified_commit": "770d4d5efda4521a4885d1b8e79b2eaa8e3491cc",
+      "status": "awaiting_game_test",
+      "observed_head": "f984771718668944b4a502dd210877ca667f0149",
+      "verified_commit": "f984771718668944b4a502dd210877ca667f0149",
       "tests": [
         {
           "kind": "ci",
@@ -949,10 +949,28 @@
           "commit": "770d4d5efda4521a4885d1b8e79b2eaa8e3491cc",
           "date": "2026-09-30",
           "evidence": "Parallel feature preflight run 36753437599 passed on exact Vendor Arbitrage V1 feature SHA 770d4d5efda4521a4885d1b8e79b2eaa8e3491cc."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "f984771718668944b4a502dd210877ca667f0149",
+          "date": "2026-09-30",
+          "evidence": "Build work candidate run 36753625674 passed on exact integrated parallel SHA, including FINAL_PACKAGE, repo-managed addon packaging, provenance and attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "f984771718668944b4a502dd210877ca667f0149",
+          "date": "2026-09-30",
+          "evidence": "Verified aggregate candidate artifact 11116430355 (WoW112-WORK-CANDIDATE-f984771718668944b4a502dd210877ca667f0149) was produced by successful exact-SHA run 36753625674."
         }
       ],
-      "package": null,
-      "notes": "First money-oriented iteration. Vendor Arbitrage V1 scans a configurable number of cheapest positive-buyout global pages, selects the highest absolute expected vendor profit using Vanilla item sell values, revalidates the exact auction signature, and reuses the gameplay-proven LIVE transaction guards. Defaults are dry-run, minProfit=5s, maxBuyout=1g, maxPages=10. Static vendor data may differ on custom realms; live purchase requires explicit LIVE arming. Integrated onto current parallel after confirming AuxVmangos source, TOC, README and parallel addon manifest were byte-identical to the verified feature base; full aggregate candidate build pending."
+      "package": {
+        "verified": true,
+        "commit": "f984771718668944b4a502dd210877ca667f0149",
+        "artifact_id": 11116430355
+      },
+      "notes": "First money-oriented iteration. Vendor Arbitrage V1 scans a configurable number of cheapest positive-buyout global pages, selects the highest absolute expected vendor profit using Vanilla item sell values, revalidates the exact auction signature, and reuses the gameplay-proven LIVE transaction guards. Defaults are dry-run, minProfit=5s, maxBuyout=1g, maxPages=10. Static vendor data may differ on custom realms; live purchase requires explicit LIVE arming. Integrated onto current parallel after confirming AuxVmangos source, TOC, README and parallel addon manifest were byte-identical to the verified feature base; full aggregate candidate build pending. Exact integrated candidate passed full parallel package gate. Gameplay validation of vendor opportunity detection, dry-run economics and guarded live purchase remains pending."
     }
   ]
 }
