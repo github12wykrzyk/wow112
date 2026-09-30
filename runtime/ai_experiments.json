@@ -1568,7 +1568,7 @@
     },
     {
       "id": "ah-repeatability-75-110",
-      "branch": "feature/ah-repeatability-75-110",
+      "branch": "parallel",
       "modules": [
         "AHThrottleTest",
         "AHThrottleNative"
@@ -1582,12 +1582,20 @@
         "AUCTION_ITEM_LIST_UPDATE",
         "AuctionFrameBrowse event isolation"
       ],
-      "status": "in_progress",
-      "observed_head": "27de67eca31f1a8e9c9f91f3353598c55ae65fc7",
+      "status": "building_candidate",
+      "observed_head": "63a84c1870d6219d3af48a47e18f5af271532e53",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "63a84c1870d6219d3af48a47e18f5af271532e53",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36792574350 completed success on exact feature SHA before integration; Verify AI experiment registry run 36792574395 also passed."
+        }
+      ],
       "package": null,
-      "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation."
+      "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation. Integrated to parallel after exact-SHA preflight PASS; aggregate parallel candidate build pending."
     }
   ]
 }
