@@ -513,6 +513,35 @@
       ],
       "package": null,
       "notes": "V2 live AutoBuy feature passed registry and parallel preflight on exact SHA c576aa2c06530a306c8e1cc1673880ac7171c6cf. One buy pending at a time, ERR_AUCTION_BID_PLACED confirmation, known UI error handling, exact-page post-buy rescan, 5s timeout hard-stop, AutoBuy forced OFF on addon load, default 50g/20-buy session guards. Integrated parallel full candidate/package verification pending."
+    },
+    {
+      "id": "aux-vmangos",
+      "branch": "parallel",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "auction-sniper-vmangos"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "vMaNGOS buyout-ordered auction browse flow",
+        "parallel addon packager src/AddOns auto-discovery"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "a50974055166cd32c80e828f156e9f13c15884a4",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "4d04fb58f1feb017da4381560e3c01477fa1298b",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36674276940 and AI experiment registry run 36674276890 passed on exact feature SHA 4d04fb58f1feb017da4381560e3c01477fa1298b."
+        }
+      ],
+      "package": null,
+      "notes": "Integrated from verified feature/aux-vmangos exact SHA 4d04fb58f1feb017da4381560e3c01477fa1298b. V0.5 LIVE guard defaults to maxSessionBuys=1, revalidates exact auction signature, rechecks wallet immediately before PlaceAuctionBid, reserves duplicate signature before send, uses BUY_PENDING/UNKNOWN, and auto-disarms LIVE after first confirmed purchase. Prior gameplay evidence validated filtered boundary cache and dry-run candidate/revalidation on Black Lotus."
     }
   ]
 }
