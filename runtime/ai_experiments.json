@@ -559,7 +559,40 @@
         "commit": "5039543a7ec0a98932f4e6306cc21b840441055d",
         "artifact_id": 11079063741
       },
-      "notes": "Integrated from verified feature/aux-vmangos exact SHA 4d04fb58f1feb017da4381560e3c01477fa1298b. V0.5 LIVE guard defaults to maxSessionBuys=1, revalidates exact auction signature, rechecks wallet immediately before PlaceAuctionBid, reserves duplicate signature before send, uses BUY_PENDING/UNKNOWN, and auto-disarms LIVE after first confirmed purchase. Prior gameplay evidence validated filtered boundary cache and dry-run candidate/revalidation on Black Lotus. Integrated parallel candidate 5039543a passed full packaging and addon attestation; live gameplay confirmation remains pending."
+      "notes": "Integrated from verified feature/aux-vmangos exact SHA 4d04fb58f1feb017da4381560e3c01477fa1298b. V0.5 LIVE guard defaults to maxSessionBuys=1, revalidates exact auction signature, rechecks wallet immediately before PlaceAuctionBid, reserves duplicate signature before send, uses BUY_PENDING/UNKNOWN, and auto-disarms LIVE after first confirmed purchase. Prior gameplay evidence validated filtered boundary cache and dry-run candidate/revalidation on Black Lotus. Integrated parallel candidate 5039543a passed full packaging and addon attestation; live gameplay confirmation remains pending. Superseded for new AH tests by aux-vmangos-unified-marketbot; previous 0.5 evidence retained for rollback."
+    },
+    {
+      "id": "aux-vmangos-unified-marketbot",
+      "branch": "parallel",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "aux-vmangos",
+        "auction-sniper-cache-transition-fix",
+        "auction-sniper-autobuy-v2"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 Auction House Lua API",
+        "AUCTION_ITEM_LIST_UPDATE serialized query ownership",
+        "vMaNGOS buyout-ordered browse results",
+        "AVM_DB SavedVariables PriceDB",
+        "parallel addon packager"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "3753d14844467fe2d4237a3e3d23753572177af9",
+      "verified_commit": "3753d14844467fe2d4237a3e3d23753572177af9",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "3753d14844467fe2d4237a3e3d23753572177af9",
+          "date": "2026-09-30",
+          "evidence": "Parallel feature preflight run 36676321073 and AI experiment registry run 36676321441 passed on exact unified feature SHA."
+        }
+      ],
+      "package": null,
+      "notes": "Unified 0.6 experiment from verified parallel fb602fe0. Consolidates watchlist scan, cached vMaNGOS boundary handling, guarded LIVE BUY, whole-market positive-buyout scan, retained PriceDB snapshots and AutoMarket scheduling. AuctionSniper is intentionally removed from candidate addon roots on this feature to avoid competing AH query schedulers; source remains for rollback/evidence. Integrated to parallel from exact verified feature SHA; full parallel candidate verification pending."
     }
   ]
 }

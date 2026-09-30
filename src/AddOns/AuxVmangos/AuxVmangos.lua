@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.5-vmangos-liveguard"
+AVM_VERSION = "0.6-vmangos-unified"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -40,6 +40,22 @@ AVM = {
 	nextTick = 0,
 	sessionSpend = 0,
 	sessionBuys = 0,
+	market = {
+		active = false,
+		requested = false,
+		stopRequested = false,
+		phase = "IDLE",
+		boundary = nil,
+		low = 0,
+		high = 0,
+		page = 0,
+		lastPage = 0,
+		startedAt = 0,
+		items = {},
+		auctions = 0,
+		units = 0,
+		consecutiveTimeouts = 0,
+	},
 	stats = {
 		queries = 0,
 		results = 0,
@@ -56,6 +72,10 @@ AVM = {
 		confirmed = 0,
 		failed = 0,
 		unknown = 0,
+		marketScans = 0,
+		marketPages = 0,
+		marketRows = 0,
+		marketTimeouts = 0,
 	},
 	recent = {},
 }
@@ -120,6 +140,10 @@ local function avm_defaults()
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 1 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
+	if AVM_DB.marketDB == nil then AVM_DB.marketDB = {} end
+	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
+	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 24 end
+	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
 end
 
 local function avm_rule_matches(rule, name)
@@ -333,6 +357,457 @@ local function avm_page_has_positive()
 	return false
 end
 
+
+local function avm_market_item_id(i)
+	local link = GetAuctionItemLink("list", i)
+	if not link then return nil end
+	local _,_,id = string.find(link, "item:(%d+)")
+	return tonumber(id)
+end
+
+local function avm_market_key(name, itemId)
+	if itemId then return tostring(itemId) end
+	return "n:" .. string.lower(name or "?")
+end
+
+local function avm_market_percentile(prices, fraction)
+	local n = table.getn(prices)
+	if n == 0 then return 0 end
+	local pos = math.ceil(n * fraction)
+	if pos < 1 then pos = 1 end
+	if pos > n then pos = n end
+	return prices[pos] or 0
+end
+
+local function avm_market_push_history(dbrow, row)
+	if not dbrow.history then dbrow.history = {} end
+	table.insert(dbrow.history, row)
+	local keep = tonumber(AVM_DB.marketRetention) or 24
+	if keep < 1 then keep = 1 end
+	while table.getn(dbrow.history) > keep do
+		table.remove(dbrow.history, 1)
+	end
+end
+
+local function avm_market_aggregate_page()
+	local n = GetNumAuctionItems("list") or 0
+	for i = 1, n do
+		local name,_,count,quality,_,level,_,_,buyout = GetAuctionItemInfo("list", i)
+		if name and count and count > 0 and buyout and buyout > 0 then
+			local itemId = avm_market_item_id(i)
+			local key = avm_market_key(name, itemId)
+			local unit = math.floor(buyout / count)
+			local a = AVM.market.items[key]
+			if not a then
+				a = {
+					name = name,
+					itemId = itemId,
+					quality = quality,
+					level = level,
+					auctions = 0,
+					units = 0,
+					value = 0,
+					sumUnit = 0,
+					minUnit = nil,
+					maxUnit = nil,
+					prices = {},
+				}
+				AVM.market.items[key] = a
+			end
+			a.auctions = a.auctions + 1
+			a.units = a.units + count
+			a.value = a.value + buyout
+			a.sumUnit = a.sumUnit + unit
+			if not a.minUnit or unit < a.minUnit then a.minUnit = unit end
+			if not a.maxUnit or unit > a.maxUnit then a.maxUnit = unit end
+			table.insert(a.prices, unit)
+			AVM.market.auctions = AVM.market.auctions + 1
+			AVM.market.units = AVM.market.units + count
+		end
+	end
+	AVM.stats.marketPages = AVM.stats.marketPages + 1
+	AVM.stats.marketRows = AVM.stats.marketRows + n
+end
+
+local function avm_market_finish(save, reason)
+	local m = AVM.market
+	if save then
+		local stamp = time()
+		local seen = {}
+		local itemCount = 0
+		for key,a in pairs(m.items) do
+			table.sort(a.prices)
+			local n = table.getn(a.prices)
+			local avg = 0
+			local weighted = 0
+			if a.auctions > 0 then avg = math.floor(a.sumUnit / a.auctions) end
+			if a.units > 0 then weighted = math.floor(a.value / a.units) end
+
+			local dbrow = AVM_DB.marketDB[key]
+			if not dbrow then
+				dbrow = { name = a.name, itemId = a.itemId, history = {} }
+				AVM_DB.marketDB[key] = dbrow
+			end
+			dbrow.name = a.name
+			dbrow.itemId = a.itemId
+			local prev = nil
+			if dbrow.history and table.getn(dbrow.history) > 0 then
+				prev = dbrow.history[table.getn(dbrow.history)]
+			end
+			local gone = 0
+			if prev and prev.units and prev.units > a.units then gone = prev.units - a.units end
+			avm_market_push_history(dbrow, {
+				t = stamp,
+				auctions = a.auctions,
+				units = a.units,
+				min = a.minUnit or 0,
+				p25 = avm_market_percentile(a.prices, 0.25),
+				median = avm_market_percentile(a.prices, 0.50),
+				p75 = avm_market_percentile(a.prices, 0.75),
+				max = a.maxUnit or 0,
+				avg = avg,
+				weighted = weighted,
+				gone = gone,
+			})
+			seen[key] = true
+			itemCount = itemCount + 1
+		end
+
+		-- Record a zero observation only when an item existed in the previous
+		-- snapshot and is now absent. "gone" is a turnover proxy, not a proven sale.
+		for key,dbrow in pairs(AVM_DB.marketDB) do
+			if not seen[key] and dbrow.history and table.getn(dbrow.history) > 0 then
+				local prev = dbrow.history[table.getn(dbrow.history)]
+				if prev and prev.auctions and prev.auctions > 0 then
+					avm_market_push_history(dbrow, {
+						t = stamp, auctions = 0, units = 0,
+						min = 0, p25 = 0, median = 0, p75 = 0, max = 0,
+						avg = 0, weighted = 0, gone = prev.units or 0,
+					})
+				end
+			end
+		end
+
+		AVM_DB.marketMeta.lastScanAt = stamp
+		AVM_DB.marketMeta.boundary = m.boundary
+		AVM_DB.marketMeta.lastPage = m.lastPage
+		AVM_DB.marketMeta.items = itemCount
+		AVM_DB.marketMeta.auctions = m.auctions
+		AVM_DB.marketMeta.units = m.units
+		AVM_DB.marketMeta.duration = GetTime() - m.startedAt
+		AVM.stats.marketScans = AVM.stats.marketScans + 1
+		avm_print("MARKET done items=" .. itemCount ..
+			" auctions=" .. m.auctions .. " units=" .. m.units ..
+			" boundary=" .. tostring(m.boundary) ..
+			" pages=" .. tostring((m.lastPage or 0) - (m.boundary or 0) + 1) ..
+			" duration=" .. string.format("%.1f", AVM_DB.marketMeta.duration) .. "s")
+	else
+		avm_print("MARKET stopped: " .. tostring(reason or "cancelled"))
+	end
+
+	m.active = false
+	m.requested = false
+	m.stopRequested = false
+	m.phase = "IDLE"
+	m.items = {}
+	m.consecutiveTimeouts = 0
+	if AVM_DB.enabled then avm_restart_boundary(false) end
+end
+
+local function avm_market_enter_scan(boundary, lastPage)
+	local m = AVM.market
+	m.boundary = boundary
+	m.page = boundary
+	m.lastPage = lastPage
+	m.phase = "SCAN"
+	AVM_DB.marketMeta.boundary = boundary
+	avm_print("MARKET first positive-buyout page=" .. tostring(boundary) ..
+		" lastPage=" .. tostring(lastPage) .. "; full buyout scan")
+end
+
+local function avm_market_begin()
+	local m = AVM.market
+	if m.active then return end
+	if AVM.pending or AVM.unknown then return end
+	m.active = true
+	m.requested = false
+	m.stopRequested = false
+	m.low = 0
+	m.high = 0
+	m.page = 0
+	m.lastPage = 0
+	m.startedAt = GetTime()
+	m.items = {}
+	m.auctions = 0
+	m.units = 0
+	m.consecutiveTimeouts = 0
+	local cached = tonumber(AVM_DB.marketMeta.boundary)
+	if cached and cached >= 0 then
+		m.boundary = cached
+		if cached > 0 then m.phase = "VERIFY_PREV" else m.phase = "VERIFY_BOUNDARY" end
+		avm_print("MARKET cache verify boundary=" .. tostring(cached))
+	else
+		m.boundary = nil
+		m.phase = "PROBE"
+		avm_print("MARKET start: locating vMaNGOS positive-buyout boundary")
+	end
+end
+
+local function avm_market_request_start()
+	if not AVM.open then
+		avm_print("MARKET requires open Auction House")
+		return
+	end
+	if AVM.pending or AVM.unknown then
+		avm_print("MARKET waits: purchase transaction is pending/unknown")
+		return
+	end
+	if AVM_DB.live then
+		AVM_DB.live = false
+		avm_print("LIVE OFF - MARKET scan owns the AH query scheduler")
+	end
+	AVM.market.requested = true
+	avm_print("MARKET scan queued")
+end
+
+local function avm_market_accept(kind, page, total, positive)
+	local m = AVM.market
+	m.consecutiveTimeouts = 0
+	local lastPage = 0
+	if total and total > 0 then lastPage = math.floor((total - 1) / 50) end
+	if lastPage > m.lastPage then m.lastPage = lastPage end
+
+	if m.stopRequested then
+		avm_market_finish(false, "manual stop")
+		return
+	end
+
+	if kind == "MARKET_VERIFY_PREV" then
+		if positive then
+			AVM_DB.marketMeta.boundary = nil
+			m.boundary = nil
+			m.phase = "PROBE"
+			avm_print("MARKET cache miss: previous page is now positive; full boundary search")
+		else
+			m.phase = "VERIFY_BOUNDARY"
+		end
+		return
+	end
+
+	if kind == "MARKET_VERIFY_BOUNDARY" then
+		if positive then
+			avm_print("MARKET cache hit boundary=" .. tostring(m.boundary))
+			avm_market_enter_scan(m.boundary or 0, lastPage)
+		else
+			AVM_DB.marketMeta.boundary = nil
+			m.boundary = nil
+			m.phase = "PROBE"
+			avm_print("MARKET cache miss: cached boundary is no longer positive; full boundary search")
+		end
+		return
+	end
+
+	if kind == "MARKET_PROBE" then
+		if not total or total <= 0 then
+			avm_market_finish(false, "no auction results")
+			return
+		end
+		if positive then
+			avm_market_enter_scan(0, lastPage)
+			return
+		end
+		if lastPage <= 0 then
+			AVM_DB.marketMeta.boundary = nil
+			avm_market_finish(false, "no positive buyouts")
+			return
+		end
+		m.low = 1
+		m.high = lastPage
+		m.phase = "SEARCH"
+		return
+	end
+
+	if kind == "MARKET_SEARCH" then
+		if positive then m.high = page else m.low = page + 1 end
+		if m.low > m.high then
+			AVM_DB.marketMeta.boundary = nil
+			avm_market_finish(false, "no positive buyouts")
+			return
+		end
+		if m.low == m.high then
+			m.boundary = m.low
+			m.phase = "FINAL"
+		else
+			m.phase = "SEARCH"
+		end
+		return
+	end
+
+	if kind == "MARKET_FINAL" then
+		if positive then
+			avm_market_enter_scan(page, lastPage)
+		else
+			AVM_DB.marketMeta.boundary = nil
+			avm_market_finish(false, "boundary verification failed")
+		end
+		return
+	end
+
+	if kind == "MARKET_SCAN" then
+		avm_market_aggregate_page()
+		if page == m.boundary or mod(page - (m.boundary or 0), 25) == 0 or page >= m.lastPage then
+			local denom = (m.lastPage or page) - (m.boundary or page) + 1
+			local done = page - (m.boundary or page) + 1
+			local pct = 100
+			if denom > 0 then pct = math.floor(done * 100 / denom) end
+			avm_print("MARKET progress page=" .. page .. "/" .. m.lastPage ..
+				" " .. pct .. "% auctions=" .. m.auctions)
+		end
+		m.page = page + 1
+		if m.page > m.lastPage then
+			avm_market_finish(true, "complete")
+		end
+		return
+	end
+end
+
+local function avm_market_tick()
+	local m = AVM.market
+	if not m.active then return end
+	if m.stopRequested and not AVM.queryInFlight then
+		avm_market_finish(false, "manual stop")
+		return
+	end
+	if m.phase == "VERIFY_PREV" then
+		avm_send_query("MARKET_VERIFY_PREV", (m.boundary or 0) - 1, "")
+	elseif m.phase == "VERIFY_BOUNDARY" then
+		avm_send_query("MARKET_VERIFY_BOUNDARY", m.boundary or 0, "")
+	elseif m.phase == "PROBE" then
+		avm_send_query("MARKET_PROBE", 0, "")
+	elseif m.phase == "SEARCH" then
+		local mid = math.floor((m.low + m.high) / 2)
+		avm_send_query("MARKET_SEARCH", mid, "")
+	elseif m.phase == "FINAL" then
+		avm_send_query("MARKET_FINAL", m.boundary or m.low or 0, "")
+	elseif m.phase == "SCAN" then
+		avm_send_query("MARKET_SCAN", m.page, "")
+	end
+end
+
+local function avm_market_auto_due()
+	local mins = tonumber(AVM_DB.marketAutoMinutes) or 0
+	if mins <= 0 then return false end
+	if AVM.market.active or AVM.market.requested or AVM_DB.live or AVM.pending or AVM.unknown then return false end
+	local last = tonumber(AVM_DB.marketMeta.lastScanAt) or 0
+	return last == 0 or (time() - last) >= mins * 60
+end
+
+local function avm_market_show_status()
+	local m = AVM.market
+	local meta = AVM_DB.marketMeta or {}
+	avm_print("MARKET active=" .. tostring(m.active) ..
+		" requested=" .. tostring(m.requested) ..
+		" phase=" .. tostring(m.phase) ..
+		" page=" .. tostring(m.page) .. "/" .. tostring(m.lastPage) ..
+		" boundary=" .. tostring(m.boundary) ..
+		" auto=" .. tostring(AVM_DB.marketAutoMinutes or 0) .. "m")
+	avm_print("MARKET DB items=" .. tostring(meta.items or 0) ..
+		" auctions=" .. tostring(meta.auctions or 0) ..
+		" units=" .. tostring(meta.units or 0) ..
+		" retention=" .. tostring(AVM_DB.marketRetention or 24) ..
+		" lastScan=" .. tostring(meta.lastScanAt or 0))
+end
+
+local function avm_market_show_item(name)
+	name = string.lower(avm_trim(name or ""))
+	if name == "" then
+		avm_print("usage: /avm market item Black Lotus")
+		return
+	end
+	local found = nil
+	for _,row in pairs(AVM_DB.marketDB) do
+		if row.name and string.lower(row.name) == name then found = row break end
+	end
+	if not found then
+		for _,row in pairs(AVM_DB.marketDB) do
+			if row.name and string.find(string.lower(row.name), name, 1, true) then found = row break end
+		end
+	end
+	if not found or not found.history or table.getn(found.history) == 0 then
+		avm_print("MARKET no PriceDB history for '" .. name .. "'")
+		return
+	end
+	local n = table.getn(found.history)
+	local row = found.history[n]
+	avm_print("MARKET " .. tostring(found.name) .. " snapshots=" .. n ..
+		" auctions=" .. tostring(row.auctions or 0) ..
+		" units=" .. tostring(row.units or 0) ..
+		" min=" .. avm_money(row.min or 0) ..
+		" median=" .. avm_money(row.median or 0) ..
+		" p25/p75=" .. avm_money(row.p25 or 0) .. "/" .. avm_money(row.p75 or 0))
+	avm_print("MARKET avg=" .. avm_money(row.avg or 0) ..
+		" weighted=" .. avm_money(row.weighted or 0) ..
+		" disappearedUnits=" .. tostring(row.gone or 0) ..
+		" (turnover proxy, not proven sales)")
+	local first = n - 3
+	if first < 1 then first = 1 end
+	for i = first, n - 1 do
+		local h = found.history[i]
+		avm_print("  prev t=" .. tostring(h.t or 0) ..
+			" median=" .. avm_money(h.median or 0) ..
+			" units=" .. tostring(h.units or 0) ..
+			" gone=" .. tostring(h.gone or 0))
+	end
+end
+
+local function avm_market_slash(rest)
+	rest = avm_trim(rest or "")
+	local _,_,sub,arg = string.find(rest, "^(%S+)%s*(.*)$")
+	sub = string.lower(sub or "status")
+	arg = arg or ""
+	if sub == "start" then
+		avm_market_request_start()
+	elseif sub == "stop" then
+		AVM.market.requested = false
+		if AVM.market.active then
+			AVM.market.stopRequested = true
+			avm_print("MARKET stop requested")
+		else
+			avm_print("MARKET not running")
+		end
+	elseif sub == "status" then
+		avm_market_show_status()
+	elseif sub == "item" or sub == "price" then
+		avm_market_show_item(arg)
+	elseif sub == "auto" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 0 and n <= 1440 then
+			AVM_DB.marketAutoMinutes = n
+			avm_print("MARKET auto interval=" .. n .. " minutes (0=off)")
+		else
+			avm_print("market auto must be 0..1440 minutes")
+		end
+	elseif sub == "retention" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 96 then
+			AVM_DB.marketRetention = n
+			avm_print("MARKET history retention=" .. n .. " snapshots/item")
+		else
+			avm_print("market retention must be 1..96")
+		end
+	elseif sub == "clear" then
+		if AVM.market.active then
+			avm_print("MARKET cannot clear DB while scan is running")
+		else
+			AVM_DB.marketDB = {}
+			AVM_DB.marketMeta = {}
+			avm_print("MARKET PriceDB cleared")
+		end
+	else
+		avm_print("/avm market start|stop|status|item NAME|auto MIN|retention N|clear")
+	end
+end
+
 local function avm_pick_candidate()
 	local n = GetNumAuctionItems("list")
 	for i = 1, n do
@@ -464,10 +939,17 @@ local function avm_accept_result()
 	local kind = AVM.queryKind
 	local page = AVM.queryPage
 	local latency = GetTime() - AVM.querySentAt
-	avm_print("RESULT q" .. AVM.querySeq .. " " .. kind .. " rule='" ..
-		tostring(AVM.queryName) .. "' page=" .. page ..
-		" rows=" .. rows .. "/" .. total .. " positive=" .. tostring(positive) ..
-		" latency=" .. string.format("%.3f", latency) .. "s")
+	local isMarket = string.find(kind, "MARKET_", 1, true) == 1
+	if not isMarket or kind ~= "MARKET_SCAN" then
+		avm_print("RESULT q" .. AVM.querySeq .. " " .. kind .. " rule='" ..
+			tostring(AVM.queryName) .. "' page=" .. page ..
+			" rows=" .. rows .. "/" .. total .. " positive=" .. tostring(positive) ..
+			" latency=" .. string.format("%.3f", latency) .. "s")
+	end
+	if isMarket then
+		avm_market_accept(kind, page, total, positive)
+		return
+	end
 
 	if kind == "CACHE_VERIFY_PREV" then
 		if positive then
@@ -585,7 +1067,7 @@ end
 local function avm_handle_list_update()
 	local now = GetTime()
 	if not AVM.queryInFlight then
-		if AVM.open and AVM_DB.enabled and AVM.lastResultAt > 0 and
+		if AVM.open and (AVM_DB.enabled or AVM.market.active) and AVM.lastResultAt > 0 and
 		   now - AVM.lastResultAt <= AVM_EXTRA_EVENT_WINDOW then
 			AVM.stats.extraEvents = AVM.stats.extraEvents + 1
 		end
@@ -667,8 +1149,13 @@ local function avm_tick_pending(now)
 end
 
 local function avm_tick()
-	if not AVM.open or not AVM_DB.enabled then return end
+	if not AVM.open then return end
 	local now = GetTime()
+
+	if avm_market_auto_due() then
+		AVM.market.requested = true
+		avm_print("MARKET auto scan due")
+	end
 
 	if avm_tick_pending(now) then return end
 
@@ -676,12 +1163,31 @@ local function avm_tick()
 		if now - AVM.querySentAt >= AVM_QUERY_TIMEOUT then
 			AVM.stats.timeouts = AVM.stats.timeouts + 1
 			avm_print("QUERY_TIMEOUT q" .. AVM.querySeq .. " " .. AVM.queryKind)
+			local marketQuery = string.find(AVM.queryKind or "", "MARKET_", 1, true) == 1
 			AVM.queryInFlight = false
-			if AVM.queryKind == "REVALIDATE" then AVM.candidate = nil end
-			avm_restart_boundary()
+			if marketQuery and AVM.market.active then
+				AVM.stats.marketTimeouts = AVM.stats.marketTimeouts + 1
+				AVM.market.consecutiveTimeouts = AVM.market.consecutiveTimeouts + 1
+				if AVM.market.consecutiveTimeouts >= 3 then
+					avm_market_finish(false, "3 consecutive query timeouts")
+				end
+			else
+				if AVM.queryKind == "REVALIDATE" then AVM.candidate = nil end
+				avm_restart_boundary()
+			end
 		end
 		return
 	end
+
+	if AVM.market.requested and not AVM.market.active then
+		avm_market_begin()
+	end
+	if AVM.market.active then
+		avm_market_tick()
+		return
+	end
+
+	if not AVM_DB.enabled then return end
 
 	if AVM.phase == "IDLE" or AVM.phase == "WAIT_RULE" then
 		avm_restart_boundary()
@@ -740,7 +1246,10 @@ local function avm_status()
 		" sent=" .. AVM.stats.buySent ..
 		" confirmed=" .. AVM.stats.confirmed ..
 		" failed=" .. AVM.stats.failed ..
-		" unknown=" .. AVM.stats.unknown)
+		" unknown=" .. AVM.stats.unknown ..
+		" marketScans=" .. AVM.stats.marketScans ..
+		" marketPages=" .. AVM.stats.marketPages ..
+		" marketTimeouts=" .. AVM.stats.marketTimeouts)
 end
 
 local function avm_list_rules()
@@ -844,6 +1353,8 @@ local function avm_slash(msg)
 		else
 			avm_print("invalid money value")
 		end
+	elseif cmd == "market" then
+		avm_market_slash(rest)
 	elseif cmd == "maxbuys" then
 		local n = tonumber(avm_trim(rest))
 		if n and n >= 1 and n <= 100 then
@@ -870,6 +1381,7 @@ local function avm_slash(msg)
 	else
 		avm_print("/avm on|off | live on|off | status | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
+		avm_print("/avm market start|stop|status|item NAME|auto MIN|retention N|clear")
 	end
 end
 
@@ -898,6 +1410,13 @@ frame:SetScript("OnEvent", function()
 		avm_restart_boundary(false)
 		if AVM_DB.enabled then avm_print("AH open; cached boundary verification armed") end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
+		if AVM.market.active or AVM.market.requested then
+			AVM.market.active = false
+			AVM.market.requested = false
+			AVM.market.stopRequested = false
+			AVM.market.items = {}
+			avm_print("MARKET aborted: Auction House closed")
+		end
 		AVM.open = false
 		AVM.queryInFlight = false
 		AVM.lastResultAt = 0
