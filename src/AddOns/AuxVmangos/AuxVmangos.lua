@@ -1440,6 +1440,12 @@ local function avm_market_begin()
 	end
 	if m.active then return end
 	if AVM.pending or AVM.unknown then return end
+	-- Manual MARKET owns the AH scheduler only after the current original AUX Search
+	-- has fully released it. Keep the manual token/request queued until then.
+	if AUXFAST_IsBusy then
+		local ok, busy = pcall(AUXFAST_IsBusy)
+		if ok and busy then return end
+	end
 	m.active = true
 	m.requested = false
 	m.manualRequested = false
