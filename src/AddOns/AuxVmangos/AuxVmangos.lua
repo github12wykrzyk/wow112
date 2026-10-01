@@ -534,6 +534,8 @@ local function avm_start_scan(boundary)
 		tostring(boundary) .. "; scanning all positive pages for best unit price")
 end
 
+local avm_is_auxarb_candidate
+
 local function avm_prepare_revalidate(c)
 	local pages = {}
 	local seen = {}
@@ -1285,7 +1287,7 @@ avm_vendor_candidate_from_row = function(i)
 	}
 end
 
-local function avm_is_auxarb_candidate(c)
+avm_is_auxarb_candidate = function(c)
 	return c and (c.mode == "auxarb_vendor" or c.mode == "auxarb_de")
 end
 

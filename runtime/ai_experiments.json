@@ -2027,8 +2027,7 @@
         "AHThrottleNative"
       ],
       "dependencies": [
-        "ah-fast-vendor-revalidate-fix",
-        "ah-query-cooldown25"
+        "ah-fast-vendor-revalidate-fix"
       ],
       "shared_resources": [
         "Original AUX Search scan state machine and continuation",
@@ -2039,7 +2038,7 @@
         "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "0b552b0475bc389c43d1cc8b51294b1a55663a04",
+      "observed_head": "1960daa71d751ec7c84b7a6c7ea5ee1b13f218ec",
       "verified_commit": null,
       "tests": [
         {
@@ -2121,7 +2120,7 @@
         }
       ],
       "package": null,
-      "notes": "Report #55 freezes the transport baseline. This feature adds only the economic loop: every unfiltered original AUX page is valued for vendor profit and AUX-history-based disenchant profit; LIVE selects the best qualifying page candidate, pauses at the next safe submit boundary, re-queries the exact unfiltered source page, revalidates identity/profit/wallet/session limits, uses the existing guarded PlaceAuctionBid + money-delta confirmation, then resumes the original AUX Search continuation. LIVE is session-only and defaults OFF."
+      "notes": "Report #55 freezes the transport baseline. This feature adds only the economic loop: every unfiltered original AUX page is valued for vendor profit and AUX-history-based disenchant profit; LIVE selects the best qualifying page candidate, pauses at the next safe submit boundary, re-queries the exact unfiltered source page, revalidates identity/profit/wallet/session limits, uses the existing guarded PlaceAuctionBid + money-delta confirmation, then resumes the original AUX Search continuation. LIVE is session-only and defaults OFF. Follow-up fixes ledger dependency routing and forward-declares the AUX arbitrage candidate helper used by revalidation."
     },
     {
       "id": "map-tele-keep-open",
