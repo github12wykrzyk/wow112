@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.50"
+local ADDON_VERSION = "1.51"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -57,6 +57,10 @@ SS.loginRecoveryArmed = false
 SS.loginRecoveryUntil = 0
 SS.nextLoginRecoveryAt = 0
 SS.loginRecoveryPasses = 0
+SS.loginRecoveryCampingSeen = false
+SS.loginRecoveryJumped = false
+SS.loginRecoveryAcked = false
+SS.loginRecoveryReported = false
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -1754,51 +1758,106 @@ local function setDefaults()
     ensureStats()
 end
 
+local function loginRecoveryActive()
+    if not SummonScoutDB.loginRecoveryEnabled then return false end
+    if not SS.loginRecoveryUntil or SS.loginRecoveryUntil <= 0 then return false end
+    return now() <= SS.loginRecoveryUntil
+end
+
+local function stopLoginRecovery(acked)
+    SS.loginRecoveryAcked = acked and true or false
+    SS.loginRecoveryUntil = 0
+    SS.nextLoginRecoveryAt = 0
+end
+
 local function startLoginRecovery()
     if not SummonScoutDB.loginRecoveryEnabled then
-        SS.loginRecoveryUntil = 0
-        SS.nextLoginRecoveryAt = 0
+        stopLoginRecovery(false)
         SS.loginRecoveryPasses = 0
+        SS.loginRecoveryCampingSeen = false
+        SS.loginRecoveryJumped = false
+        SS.loginRecoveryReported = false
         return
     end
 
-    SS.loginRecoveryUntil = now() + 8.0
-    SS.nextLoginRecoveryAt = now()
+    -- Do not spam CancelLogout on every normal login. Keep a short armed
+    -- window and react when the real Vanilla CAMP state/event appears.
+    SS.loginRecoveryUntil = now() + 12.0
+    SS.nextLoginRecoveryAt = now() + 0.10
     SS.loginRecoveryPasses = 0
+    SS.loginRecoveryCampingSeen = false
+    SS.loginRecoveryJumped = false
+    SS.loginRecoveryAcked = false
+    SS.loginRecoveryReported = false
+end
+
+local function cancelStartupLogout(reason)
+    local campVisible
+
+    if not loginRecoveryActive() then return false end
+    SS.loginRecoveryCampingSeen = true
+
+    -- Canonical Vanilla cancel path. The stock 1.12.1 CAMP popup calls
+    -- CancelLogout() when its Cancel button is accepted or the popup hides.
+    if CancelLogout then
+        CancelLogout()
+    end
+
+    -- If the stock popup is already visible, close that exact CAMP dialog too.
+    -- Its Blizzard OnHide handler issues another CancelLogout(), matching a
+    -- real user cancellation instead of merely changing our own state.
+    campVisible = StaticPopup_Visible and StaticPopup_Visible("CAMP")
+    if campVisible and StaticPopup_Hide then
+        StaticPopup_Hide("CAMP")
+    end
+
+    -- Independent movement-side escape. Vanilla 1.12 binds SPACE directly to
+    -- Jump(); use it once only after CAMP was actually observed so normal
+    -- summoner logins never jump.
+    if not SS.loginRecoveryJumped and Jump then
+        SS.loginRecoveryJumped = true
+        Jump()
+    end
+
+    SS.loginRecoveryPasses = (SS.loginRecoveryPasses or 0) + 1
+    SS.nextLoginRecoveryAt = now() + 0.25
+
+    if SummonScoutDB.debug and not SS.loginRecoveryReported then
+        SS.loginRecoveryReported = true
+        chat("startup logout detected -> CancelLogout + CAMP hide + movement escape")
+    end
+    return true
 end
 
 local function processLoginRecovery()
     local t = now()
-    local pass
+    local campVisible
 
     if not SummonScoutDB.loginRecoveryEnabled then return end
     if not SS.loginRecoveryUntil or SS.loginRecoveryUntil <= 0 then return end
     if t > SS.loginRecoveryUntil then
-        SS.loginRecoveryUntil = 0
-        SS.nextLoginRecoveryAt = 0
+        if SummonScoutDB.debug and SS.loginRecoveryCampingSeen and not SS.loginRecoveryAcked then
+            chat("startup logout recovery expired without LOGOUT_CANCEL ACK")
+        end
+        stopLoginRecovery(false)
         return
     end
     if t < (SS.nextLoginRecoveryAt or 0) then return end
 
-    pass = SS.loginRecoveryPasses or 0
+    campVisible = StaticPopup_Visible and StaticPopup_Visible("CAMP")
+    if campVisible or SS.loginRecoveryCampingSeen then
+        cancelStartupLogout(campVisible and "CAMP_VISIBLE" or "RETRY")
 
-    -- Vanilla 1.12.1 build 5875 exposes CancelLogout and DoEmote in the
-    -- in-world FrameScript API. Cancel repeatedly during the short login
-    -- recovery window because the inherited countdown can become visible
-    -- slightly after PLAYER_ENTERING_WORLD. STAND is deterministic and does
-    -- not toggle an already-standing character back to sitting.
-    if CancelLogout then
-        CancelLogout()
-    end
-    if DoEmote and (pass == 0 or pass == 2 or pass == 4) then
-        DoEmote("STAND")
-    end
-
-    SS.loginRecoveryPasses = pass + 1
-    SS.nextLoginRecoveryAt = t + 1.0
-
-    if SummonScoutDB.debug and pass == 0 then
-        chat("login recovery -> CancelLogout + STAND guard active for 8s")
+        -- If canonical cancel + Jump did not yield LOGOUT_CANCEL promptly,
+        -- emit one zero-duration forward start/stop movement pulse. These are
+        -- the exact functions used by Vanilla 1.12 MOVEFORWARD bindings.
+        if (SS.loginRecoveryPasses or 0) == 3 and MoveForwardStart and MoveForwardStop then
+            MoveForwardStart()
+            MoveForwardStop()
+        end
+    else
+        -- Nothing to cancel yet; poll quickly without producing chat/emote spam.
+        SS.nextLoginRecoveryAt = t + 0.10
     end
 end
 
@@ -2745,6 +2804,8 @@ end
 local frame = CreateFrame("Frame", "SummonScoutFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("PLAYER_CAMPING")
+frame:RegisterEvent("LOGOUT_CANCEL")
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
 frame:RegisterEvent("BAG_UPDATE")
 frame:RegisterEvent("TRADE_REQUEST")
@@ -2789,6 +2850,30 @@ frame:SetScript("OnEvent", function()
             SS.loginRecoveryArmed = false
             startLoginRecovery()
             processLoginRecovery()
+        end
+        return
+    end
+
+    if event == "PLAYER_CAMPING" then
+        -- The stock UI raises this event when the 20s logout/CAMP state begins.
+        -- During the initial login recovery window, cancel from the event
+        -- itself and then let OnUpdate verify/close the stock popup.
+        if SS.loginRecoveryArmed then
+            SS.loginRecoveryArmed = false
+            startLoginRecovery()
+        end
+        if loginRecoveryActive() then
+            cancelStartupLogout("PLAYER_CAMPING")
+            return
+        end
+    end
+
+    if event == "LOGOUT_CANCEL" then
+        if loginRecoveryActive() or SS.loginRecoveryCampingSeen then
+            stopLoginRecovery(true)
+            if SummonScoutDB.debug and SS.loginRecoveryCampingSeen then
+                chat("startup logout cancel ACK")
+            end
         end
         return
     end

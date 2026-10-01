@@ -527,3 +527,16 @@ Exact-build API evidence: the recovered Vanilla 1.12.1 build-5875 FrameScript re
 https://github.com/brues-code/ClassicAPI/blob/master/docs/BlizzardScriptAPI.md
 
 Updater note: current `CloseGameProcesses` already uses immediate `process.Kill()` and explicitly avoids `WM_CLOSE` because the latter can start WoW's normal logout countdown. This login guard is therefore a defensive recovery for residual/inherited logout state rather than a replacement for the updater close path.
+
+
+## 1.51 event-driven startup logout cancellation
+
+The 1.50 timer-only guard was not sufficient in the observed reconnect case: the client could remain in the logout countdown despite repeated `CancelLogout()`, while repeated `DoEmote("STAND")` only produced visible spam.
+
+1.51 changes the recovery path to follow the actual Vanilla 1.12 logout UI lifecycle:
+- registers `PLAYER_CAMPING` and cancels immediately from the event that starts the stock 20-second CAMP countdown,
+- watches the real `CAMP` StaticPopup and hides it; Blizzard's own 1.12.1 `CAMP` `OnHide` calls `CancelLogout()` again,
+- waits for the authoritative `LOGOUT_CANCEL` event/ACK and stops recovery as soon as it arrives,
+- uses one `Jump()` and, only after repeated failure, one zero-duration `MoveForwardStart()/MoveForwardStop()` pulse as an independent movement-side escape,
+- removes the repeated `DoEmote("STAND")` path, so recovery no longer spams stand emotes,
+- recovery is limited to the first 12 seconds after initial world entry and does not interfere with ordinary later manual logout.
