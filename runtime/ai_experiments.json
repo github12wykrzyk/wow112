@@ -3069,12 +3069,38 @@
         "Shoot wand auto-repeat action-slot state",
         "native LazyScript player movement observer"
       ],
-      "status": "in_progress",
-      "observed_head": "42753c46668eea205bf18263d5d77eddf1f085c1",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Adds self-contained Warlock melee weaving with no SP_SwingTimer dependency. meleeWeave waits for a confirmed wand shot before cutting Shoot, arms exactly one melee swing when UnitAttackSpeed says the white-swing timer is ready, confirms hit/miss from 1.12 self combat events, then returns to wand. A 0.45s melee lease plus 0.55s retry backoff prevents 100 ms form spam, range/facing failures or server latency from trapping the client in melee mode. Wand is never started while the native movement observer reports moving/stale. Requires Attack and Shoot on action bars. In-game timing still requires exact-SHA gameplay validation."
+      "status": "rejected",
+      "observed_head": "7abaafc2a55f3f5e953d3108bdb0d23ae1cde306",
+      "verified_commit": "7abaafc2a55f3f5e953d3108bdb0d23ae1cde306",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "7abaafc2a55f3f5e953d3108bdb0d23ae1cde306",
+          "date": "2026-10-01",
+          "evidence": "Parallel Build work candidate run 36916639602 passed on exact SHA 7abaafc2a55f3f5e953d3108bdb0d23ae1cde306, including FINAL_PACKAGE, addon attestation and provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "7abaafc2a55f3f5e953d3108bdb0d23ae1cde306",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11190265820 was produced for exact parallel SHA 7abaafc2a55f3f5e953d3108bdb0d23ae1cde306."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "7abaafc2a55f3f5e953d3108bdb0d23ae1cde306",
+          "date": "2026-10-01",
+          "evidence": "User tested the exact parallel candidate and reported that meleeWeave did not attempt melee at all."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "7abaafc2a55f3f5e953d3108bdb0d23ae1cde306",
+        "artifact_id": 11190265820
+      },
+      "notes": "Initial meleeWeave implementation was CI/package-valid but rejected by gameplay: it never attempted melee. Root-cause hardening moves away from Attack-slot numeric range assumptions and locale-dependent Shoot combat-log text; superseded by lazyscript-warlock-melee-weave-retry."
     },
     {
       "id": "updater-reload-before-kill",
@@ -3125,6 +3151,40 @@
         "artifact_id": 11191260535
       },
       "notes": "Fail-closed pre-kill persistence pass. Updater requires every target WoW PID to expose a fresh CharacterSwitch worker, sends reserved worker command 0xFFFFFFFE, waits for per-PID ACK after native ReloadUI() returns, settles 1s, then kills only the acknowledged PID set. Any missing/stale/busy/not-in-world worker, error, timeout, unexpected exit, or newly launched PID aborts killing remaining clients."
+    },
+    {
+      "id": "lazyscript-warlock-melee-weave-retry",
+      "branch": "feature/lazyscript-warlock-melee-weave-retry",
+      "modules": [
+        "LazyScript",
+        "LazyWarlock"
+      ],
+      "dependencies": [
+        "lazyscript-warlock-melee-weave",
+        "lazyscript-warlock-wand-drainsoul"
+      ],
+      "shared_resources": [
+        "WoW 1.12 CHAT_MSG_COMBAT_SELF_HITS / CHAT_MSG_COMBAT_SELF_MISSES",
+        "WoW 1.12 CHAT_MSG_SPELL_SELF_DAMAGE while Shoot auto-repeat is active",
+        "Attack action-slot state and UnitAttackSpeed",
+        "UnitRangedDamage ranged-speed timing fallback",
+        "CheckInteractDistance target coarse near-range prefilter",
+        "Shoot wand auto-repeat action-slot state"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "6c5016143075f10075015badd44783c876408896",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "609e83673bae5783796d456d5c4bf96beb8ff74a",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36918356068 passed on exact feature SHA 609e83673bae5783796d456d5c4bf96beb8ff74a."
+        }
+      ],
+      "package": null,
+      "notes": "Retry after exact-SHA gameplay failure. Wand-shot tracking no longer parses localized Shoot text; any direct self-spell damage while Shoot is actively auto-repeating confirms the shot. A UnitRangedDamage full-cycle fallback prevents a missing combat-log event from blocking weaving forever. Attack no longer relies on IsActionInRange as an exact melee test; CheckInteractDistance(3) is only a 9.9 yd coarse prefilter and the authoritative hit/miss event plus 0.45s lease decides whether the melee attempt succeeded. StopAttack is used when available to avoid toggle races."
     }
   ]
 }
