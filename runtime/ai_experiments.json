@@ -1907,17 +1907,9 @@
       "status": "in_progress",
       "observed_head": "65c383fbaefbe11a121bdce54b8942f1b84a8da2",
       "verified_commit": null,
-      "tests": [
-        {
-          "kind": "gameplay",
-          "result": "failed",
-          "commit": "56cbb83f8da3644085916ff29278986a6165fee4",
-          "date": "2026-10-01",
-          "evidence": "Report 51 / screenshot: full FAST MARKET completed, found FAST VENDOR BEST 2x Serrated Petal on page 671, then stopped after 'FAST VENDOR LIVE: revalidate exact auction before one purchase' with no BUY_SENT. Audit found fast scan stored AVM.market.lastPage but avm_prepare_revalidate bounded against stale AVM.lastPage, and fastvendor revalidation incorrectly queried candidate.name while reusing an unfiltered full-market sourcePage."
-        }
-      ],
+      "tests": [],
       "package": null,
-      "notes": "First practical <vendor purchase bridge. F2 full scan still builds PriceDB, while each page also evaluates vendor value candidates. Keeps only the single best qualifying opportunity by absolute profit. Explicit /avm vendor fastlive on arms a one-shot purchase: after full scan, exact auction signature is re-queried/revalidated through the existing guarded purchase path before PlaceAuctionBid. Scan itself keeps LIVE off. One best candidate means at most one purchase per F2 cycle; normal max buyout, min profit, wallet and session spend guards remain active. Gameplay validation pending."
+      "notes": "First practical <vendor purchase bridge. F2 full scan still builds PriceDB, while each page also evaluates vendor value candidates. Keeps only the single best qualifying opportunity by absolute profit. Explicit /avm vendor fastlive on arms a one-shot purchase: after full scan, exact auction signature is re-queried/revalidated through the existing guarded purchase path before PlaceAuctionBid. Scan itself keeps LIVE off. One best candidate means at most one purchase per F2 cycle; normal max buyout, min profit, wallet and session spend guards remain active. Gameplay validation pending. Gameplay report 51 on exact parallel SHA 56cbb83f8da3644085916ff29278986a6165fee4: full FAST MARKET completed, found 2x Serrated Petal on page 671, then stalled after FAST VENDOR LIVE revalidation handoff with no BUY_SENT. Root cause isolated to stale AVM.lastPage bounds plus filtered-name requery against an unfiltered full-AH sourcePage; follow-up feature ah-fast-vendor-revalidate-fix addresses both."
     },
     {
       "id": "ah-fast-vendor-revalidate-fix",
