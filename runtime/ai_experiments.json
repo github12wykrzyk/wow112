@@ -3513,6 +3513,27 @@
       "tests": [],
       "package": null,
       "notes": "User reports that when launching 8 multibox clients, usually 1-2 reach a bad-password result although stored credentials normally work. Exact installed gameplay SHA is not independently established, so no game result is recorded. Audit found per-process credential transport is isolated, but RunMultiboxAsync starts clients only 180 ms apart and AutoLoginBridge had no cross-process gate around the native Glue login call. Candidate serializes actual native login submissions with a Local named mutex, requires 350 ms stable Glue readiness, keeps a 1400 ms post-dispatch gap, and increases process-start staggering to 600 ms to reduce startup contention."
+    },
+    {
+      "id": "auxfast-restart-filter-guard",
+      "branch": "feature/auxfast-restart-filter-guard",
+      "modules": [
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "auxfast-repeat-scan-fps",
+        "ah-live-de-midscan-v2"
+      ],
+      "shared_resources": [
+        "pinned aux.tabs.search execute(true) resume/restart path",
+        "completed AUX Search UI snapshot used by headless repeat loop"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "6a3632dccf86cc11a14dbd7c337dc9c49868c5b1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Runtime screenshot reports AUX FAST restart failure at pinned upstream tabs/search/results.lua:302: EditBox:SetText receives a non-string filter during bridge-driven execute(true). Exact installed gameplay SHA is not independently established, so no game result is recorded. Upstream creates the first Search with filter_string=nil; v2.8 normalizes the internal current_search().filter_string from search_box (or empty string) before both resume and restart, preserving execute(true), continuation semantics and the v2.7 headless UI snapshot rather than resetting the results table."
     }
   ]
 }
