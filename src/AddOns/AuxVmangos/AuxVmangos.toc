@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Zero-config AUX vendor/DE/flip live loop; automatic MARKET off; unlimited session purchases by default.
+## Notes: Zero-config AUX vendor/DE/flip live loop; global hard-stop; full MARKET manual-only; unlimited session purchases.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.23-zero-config-live
+## Version: 0.24-hardstop-manual-market
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

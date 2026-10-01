@@ -1,4 +1,4 @@
--- AuxFastBridge v2.4
+-- AuxFastBridge v2.5 hard-stop aware
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -34,6 +34,8 @@ local gateBlockedChecks = 0
 local pauseRequested = false
 local pausePage = -1
 local resumeRequested = false
+local hardStopRequested = false
+local abortActiveScan = nil
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -67,6 +69,10 @@ local function native_stock_sent()
 	local n = nativeStockSentTotal - nativeStockSentBase
 	if n < 0 then return 0 end
 	return n
+end
+
+local function avm_hard_stopped()
+	return AVM and AVM.hardStop and true or false
 end
 
 local function avm_busy()
@@ -136,6 +142,10 @@ end
 -- exact request, rather than treating duplicate UI events as page completion.
 QueryAuctionItems = function(...)
 	local a = arg or {}
+	if busy > 0 and (hardStopRequested or avm_hard_stopped()) then
+		out("QUERY_SUPPRESSED reason=hard-stop page=" .. tostring(tonumber(a[7]) or -1))
+		return
+	end
 	if busy > 0 and not avm_busy() then
 		queryCount = queryCount + 1
 		awaitNativeSeq = nativeSeq
@@ -229,6 +239,7 @@ local function install_scan_hook()
 			released = true
 			if busy > 0 then busy = busy - 1 end
 			if busy == 0 then
+				hardStopRequested = false
 				AuxFastBridgeDB.lastUiEvents = uiEvents
 				AuxFastBridgeDB.lastQueries = queryCount
 				AuxFastBridgeDB.lastNativeResults = nativeResults
@@ -330,7 +341,20 @@ local function install_scan_hook()
 	-- has been scanned. Abort at the next submit boundary so upstream Search can
 	-- save a correct continuation without invalidating the current scan stack.
 	local originalSubmitQuery = submit_query
+	abortActiveScan = function()
+		local state = get_state()
+		if state and state.id then
+			abort(state.id)
+			return true
+		end
+		return false
+	end
 	submit_query = function()
+		if hardStopRequested or avm_hard_stopped() then
+			local state = get_state()
+			if state and state.id then abort(state.id) end
+			return
+		end
 		if pauseRequested then
 			local state = get_state()
 			if state and state.id then abort(state.id) end
@@ -347,7 +371,25 @@ if not install_scan_hook() then
 	out("ERROR: aux.core.scan unavailable; fast transport disabled")
 end
 
+function AUXFAST_HardStop()
+	hardStopRequested = true
+	resumeRequested = false
+	pauseRequested = false
+	pausePage = -1
+	local aborted = false
+	if abortActiveScan then
+		local ok, value = pcall(abortActiveScan)
+		aborted = ok and value and true or false
+	end
+	out("AH_HARD_STOP bridge busy=" .. tostring(busy > 0) .. " aborted=" .. tostring(aborted))
+	return true
+end
+
 function AUXFAST_ResumeSearch()
+	if avm_hard_stopped() then
+		out("RESUME_SUPPRESSED reason=hard-stop source=resume")
+		return false
+	end
 	if busy > 0 then
 		out("resume deferred: original AUX scan is still busy")
 		return false
@@ -368,6 +410,10 @@ function AUXFAST_ResumeSearch()
 end
 
 function AUXFAST_RestartSearch()
+	if avm_hard_stopped() then
+		out("RESUME_SUPPRESSED reason=hard-stop source=restart")
+		return false
+	end
 	if busy > 0 then
 		out("restart deferred: original AUX scan is still busy")
 		return false
@@ -436,4 +482,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v2.4 loaded: midscan DE pause/resume + postscan transaction lock + Filter Builder/AUX_ARB continuous Search; hook=" .. tostring(hookInstalled))
+out("v2.5 loaded: hard-stop aware AUX Search + midscan DE pause/resume + continuous Search; hook=" .. tostring(hookInstalled))
