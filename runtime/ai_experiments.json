@@ -3286,7 +3286,7 @@
         "full MARKET scheduler/manual entry",
         "AUCTION_ITEM_LIST_UPDATE callback lifecycle"
       ],
-      "status": "awaiting_parallel_ci",
+      "status": "awaiting_ci",
       "observed_head": "6d4eb07485c58421296bf9976dba559ce868523e",
       "verified_commit": "5f97dddcfa249eaf4221d0a9f62b074a409931bb",
       "tests": [
@@ -3300,7 +3300,7 @@
         }
       ],
       "package": null,
-      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged."
+      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged. Registry status corrected to the repository-supported awaiting_ci state after verifier run 36924820961 rejected the non-schema label awaiting_parallel_ci."
     }
   ]
 }
