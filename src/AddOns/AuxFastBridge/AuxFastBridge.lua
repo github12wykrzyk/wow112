@@ -1,4 +1,4 @@
--- AuxFastBridge v2.2
+-- AuxFastBridge v2.4
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -74,7 +74,7 @@ local function avm_busy()
 	local arb = AVM.auxArb or {}
 	local phase = AVM.phase or "IDLE"
 	return AVM.queryInFlight or AVM.pending or AVM.unknown or AVM.candidate or
-		arb.deVerify or arb.flipVerify or arb.paused or arb.pausePending or
+		arb.deVerify or arb.flipVerify or arb.postscanCandidate or arb.paused or arb.pausePending or
 		phase == "DE_MAT_REVALIDATE" or phase == "FLIP_MARKET_REVALIDATE" or
 		phase == "REVALIDATE" or phase == "BUY_PENDING" or phase == "UNKNOWN_HOLD" or
 		(AVM.market and (AVM.market.active or AVM.market.requested)) or
@@ -436,4 +436,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v2.3 loaded: postscan transaction lock + Filter Builder/AUX_ARB continuous Search; hook=" .. tostring(hookInstalled))
+out("v2.4 loaded: midscan DE pause/resume + postscan transaction lock + Filter Builder/AUX_ARB continuous Search; hook=" .. tostring(hookInstalled))

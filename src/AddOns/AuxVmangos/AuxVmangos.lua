@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.21.1-postscan-live-fallback"
+AVM_VERSION = "0.22-midscan-de-smooth-market"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -77,6 +77,7 @@ AVM = {
 		deCandidates = 0,
 		deNoValue = 0,
 		deRawCandidates = {},
+		dePageRawCandidates = {},
 		deMaterialBook = {},
 		deBest = nil,
 		deVerify = nil,
@@ -89,6 +90,7 @@ AVM = {
 		flipSellerRejects = 0,
 		flipExposureRejects = 0,
 		postscanCandidate = nil,
+		deMidScanHits = 0,
 	},
 	candidate = nil,
 	revalidatePages = nil,
@@ -143,6 +145,11 @@ AVM = {
 		units = 0,
 		consecutiveTimeouts = 0,
 		browseDetached = false,
+		processing = false,
+		processIndex = 1,
+		processRows = 0,
+		processPage = 0,
+		processTotal = 0,
 	},
 	stats = {
 		queries = 0,
@@ -256,6 +263,8 @@ local function avm_diag_record(msg)
 		auxLoopCycles = AVM.auxLoop and AVM.auxLoop.cycles or 0,
 		auxLoopMarketCycles = AVM.auxLoop and AVM.auxLoop.marketCycles or 0,
 		marketPageDelay = AVM_DB.marketPageDelay or 1.0,
+		marketRowsPerTick = AVM_DB.marketRowsPerTick or 4,
+		marketProcessing = AVM.market and AVM.market.processing or false,
 		marketPackedChars = string.len(AVM_DB.marketPacked or ""),
 		marketRuntimeItems = AVM_DB.marketPackedItems or 0,
 	}
@@ -336,6 +345,7 @@ local function avm_defaults()
 	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 8 end
 	if AVM_DB.marketHistorySchema == nil then AVM_DB.marketHistorySchema = 2 end
 	if AVM_DB.marketPageDelay == nil then AVM_DB.marketPageDelay = 1.0 end
+	if AVM_DB.marketRowsPerTick == nil then AVM_DB.marketRowsPerTick = 4 end
 	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 	if AVM_DB.marketStorageSchema == nil then AVM_DB.marketStorageSchema = 0 end
@@ -1051,53 +1061,55 @@ local function avm_market_level_metrics(a)
 	return p25, p50, p75, depth5, depth10, depth20
 end
 
+local function avm_market_aggregate_row(i)
+	local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
+	if name and count and count > 0 and buyout and buyout > 0 then
+		local itemId, key = avm_market_identity(i, name)
+		local unit = math.floor(buyout / count)
+		local a = AVM.market.items[key]
+		if not a then
+			a = {
+				name = name,
+				itemId = itemId,
+				quality = quality,
+				level = level,
+				auctions = 0,
+				units = 0,
+				value = 0,
+				sumUnit = 0,
+				minUnit = nil,
+				maxUnit = nil,
+				levels = {},
+				sellers = {},
+				sellerCount = 0,
+			}
+			AVM.market.items[key] = a
+		end
+		a.auctions = a.auctions + 1
+		a.units = a.units + count
+		a.value = a.value + buyout
+		a.sumUnit = a.sumUnit + unit
+		if not a.minUnit or unit < a.minUnit then a.minUnit = unit end
+		if not a.maxUnit or unit > a.maxUnit then a.maxUnit = unit end
+		local levelRow = a.levels[unit]
+		if not levelRow then
+			levelRow = { auctions = 0, units = 0 }
+			a.levels[unit] = levelRow
+		end
+		levelRow.auctions = levelRow.auctions + 1
+		levelRow.units = levelRow.units + count
+		if owner and owner ~= "" and not a.sellers[owner] then
+			a.sellers[owner] = true
+			a.sellerCount = a.sellerCount + 1
+		end
+		AVM.market.auctions = AVM.market.auctions + 1
+		AVM.market.units = AVM.market.units + count
+	end
+end
+
 local function avm_market_aggregate_page()
 	local n = GetNumAuctionItems("list") or 0
-	for i = 1, n do
-		local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
-		if name and count and count > 0 and buyout and buyout > 0 then
-			local itemId, key = avm_market_identity(i, name)
-			local unit = math.floor(buyout / count)
-			local a = AVM.market.items[key]
-			if not a then
-				a = {
-					name = name,
-					itemId = itemId,
-					quality = quality,
-					level = level,
-					auctions = 0,
-					units = 0,
-					value = 0,
-					sumUnit = 0,
-					minUnit = nil,
-					maxUnit = nil,
-					levels = {},
-					sellers = {},
-					sellerCount = 0,
-				}
-				AVM.market.items[key] = a
-			end
-			a.auctions = a.auctions + 1
-			a.units = a.units + count
-			a.value = a.value + buyout
-			a.sumUnit = a.sumUnit + unit
-			if not a.minUnit or unit < a.minUnit then a.minUnit = unit end
-			if not a.maxUnit or unit > a.maxUnit then a.maxUnit = unit end
-			local levelRow = a.levels[unit]
-			if not levelRow then
-				levelRow = { auctions = 0, units = 0 }
-				a.levels[unit] = levelRow
-			end
-			levelRow.auctions = levelRow.auctions + 1
-			levelRow.units = levelRow.units + count
-			if owner and owner ~= "" and not a.sellers[owner] then
-				a.sellers[owner] = true
-				a.sellerCount = a.sellerCount + 1
-			end
-			AVM.market.auctions = AVM.market.auctions + 1
-			AVM.market.units = AVM.market.units + count
-		end
-	end
+	for i = 1, n do avm_market_aggregate_row(i) end
 	AVM.stats.marketPages = AVM.stats.marketPages + 1
 	AVM.stats.marketRows = AVM.stats.marketRows + n
 end
@@ -1199,9 +1211,58 @@ local function avm_market_finish(save, reason)
 	m.stopRequested = false
 	m.phase = "IDLE"
 	m.items = {}
+	m.processing = false
+	m.processIndex = 1
+	m.processRows = 0
+	m.processPage = 0
+	m.processTotal = 0
 	m.consecutiveTimeouts = 0
 	avm_loop_after_market(save, reason)
 	if AVM_DB.enabled then avm_restart_boundary(false) end
+end
+
+local function avm_market_start_page_processing(page, total)
+	local m = AVM.market
+	m.processing = true
+	m.processIndex = 1
+	m.processRows = GetNumAuctionItems("list") or 0
+	m.processPage = tonumber(page) or 0
+	m.processTotal = tonumber(total) or 0
+end
+
+local function avm_market_process_chunk()
+	local m = AVM.market
+	if not m.processing then return false end
+	local chunk = tonumber(AVM_DB.marketRowsPerTick) or 4
+	if chunk < 1 then chunk = 1 elseif chunk > 50 then chunk = 50 end
+	local first = tonumber(m.processIndex) or 1
+	local last = first + chunk - 1
+	if last > (tonumber(m.processRows) or 0) then last = tonumber(m.processRows) or 0 end
+	for i = first, last do avm_market_aggregate_row(i) end
+	m.processIndex = last + 1
+	if m.processIndex <= (tonumber(m.processRows) or 0) then return true end
+
+	AVM.stats.marketPages = AVM.stats.marketPages + 1
+	AVM.stats.marketRows = AVM.stats.marketRows + (tonumber(m.processRows) or 0)
+	local page = tonumber(m.processPage) or 0
+	if page == m.boundary or mod(page - (m.boundary or 0), 25) == 0 or page >= m.lastPage then
+		local denom = (m.lastPage or page) - (m.boundary or page) + 1
+		local done = page - (m.boundary or page) + 1
+		local pct = 100
+		if denom > 0 then pct = math.floor(done * 100 / denom) end
+		avm_print("MARKET progress page=" .. tostring(page) .. "/" .. tostring(m.lastPage) ..
+			" " .. tostring(pct) .. "% auctions=" .. tostring(m.auctions) ..
+			" chunk=" .. tostring(chunk))
+	end
+
+	m.processing = false
+	m.processIndex = 1
+	m.processRows = 0
+	m.page = page + 1
+	if m.page > m.lastPage then
+		avm_market_finish(true, "complete")
+	end
+	return true
 end
 
 local avm_vendor_candidate_from_row
@@ -1373,6 +1434,11 @@ local function avm_market_begin()
 	m.items = {}
 	m.auctions = 0
 	m.units = 0
+	m.processing = false
+	m.processIndex = 1
+	m.processRows = 0
+	m.processPage = 0
+	m.processTotal = 0
 	m.consecutiveTimeouts = 0
 	local cached = tonumber(AVM_DB.marketMeta.boundary)
 	if cached and cached >= 0 then
@@ -1491,19 +1557,7 @@ local function avm_market_accept(kind, page, total, positive)
 	end
 
 	if kind == "MARKET_SCAN" then
-		avm_market_aggregate_page()
-		if page == m.boundary or mod(page - (m.boundary or 0), 25) == 0 or page >= m.lastPage then
-			local denom = (m.lastPage or page) - (m.boundary or page) + 1
-			local done = page - (m.boundary or page) + 1
-			local pct = 100
-			if denom > 0 then pct = math.floor(done * 100 / denom) end
-			avm_print("MARKET progress page=" .. page .. "/" .. m.lastPage ..
-				" " .. pct .. "% auctions=" .. m.auctions)
-		end
-		m.page = page + 1
-		if m.page > m.lastPage then
-			avm_market_finish(true, "complete")
-		end
+		avm_market_start_page_processing(page, total)
 		return
 	end
 end
@@ -1513,6 +1567,10 @@ local function avm_market_tick()
 	if not m.active then return end
 	if m.stopRequested and not AVM.queryInFlight then
 		avm_market_finish(false, "manual stop")
+		return
+	end
+	if m.processing then
+		avm_market_process_chunk()
 		return
 	end
 	if m.phase == "VERIFY_PREV" then
@@ -1562,6 +1620,7 @@ local function avm_market_show_status()
 		" units=" .. tostring(meta.units or 0) ..
 		" retention=" .. tostring(AVM_DB.marketRetention or 8) ..
 		" delay=" .. tostring(AVM_DB.marketPageDelay or 1.0) .. "s" ..
+		" chunk=" .. tostring(AVM_DB.marketRowsPerTick or 4) .. " rows/tick" ..
 		" packedChars=" .. tostring(string.len(AVM_DB.marketPacked or "")) ..
 		" lastScan=" .. tostring(meta.lastScanAt or 0) ..
 		" retryAfter=" .. tostring(meta.retryAfter or 0))
@@ -1651,6 +1710,14 @@ local function avm_market_slash(rest)
 		else
 			avm_print("market delay must be 0.35..3 seconds")
 		end
+	elseif sub == "chunk" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 50 then
+			AVM_DB.marketRowsPerTick = math.floor(n)
+			avm_print("MARKET rows per 50ms tick=" .. tostring(AVM_DB.marketRowsPerTick))
+		else
+			avm_print("market chunk must be 1..50 rows/tick")
+		end
 	elseif sub == "retention" then
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 1 and n <= 24 then
@@ -1675,7 +1742,7 @@ local function avm_market_slash(rest)
 			avm_print("MARKET PriceDB cleared")
 		end
 	else
-		avm_print("/avm market start|stop|status|item NAME|auto MIN|delay SEC|retention N|clear")
+		avm_print("/avm market start|stop|status|item NAME|auto MIN|delay SEC|chunk N|retention N|clear")
 		avm_print("/avm loop on|off|status|marketmin 15|delay 2")
 	end
 end
@@ -2308,6 +2375,8 @@ local function avm_auxarb_candidate_from_record(record, requiredMode)
 	return nil
 end
 
+local avm_auxarb_resume_search
+
 local function avm_de_fail_postscan(candidate, reason)
 	local a = AVM.auxArb
 	if candidate and candidate.signature then AVM.recent[candidate.signature] = GetTime() + 2 end
@@ -2318,8 +2387,13 @@ local function avm_de_fail_postscan(candidate, reason)
 	AVM.revalidatePos = 0
 	AVM.phase = "IDLE"
 	avm_print("AUX_ARB_DE_REJECT " .. tostring(candidate and candidate.name or "?") ..
-		" reason=" .. tostring(reason or "unknown"))
-	avm_loop_after_arb("DE verify rejected")
+		" reason=" .. tostring(reason or "unknown") ..
+		" midScan=" .. tostring(candidate and candidate.midScan and true or false))
+	if candidate and candidate.midScan and avm_auxarb_resume_search then
+		avm_auxarb_resume_search("DE verify rejected")
+	else
+		avm_loop_after_arb("DE verify rejected")
+	end
 end
 
 local function avm_de_begin_live_verify(candidate)
@@ -2390,7 +2464,8 @@ local function avm_de_live_verify_accept(page, total)
 		avm_de_fail_postscan(v.candidate, "live-" .. tostring(reason or "valuation"))
 		return
 	end
-	fresh.scanComplete = true
+	fresh.midScan = v.candidate.midScan and true or false
+	fresh.scanComplete = v.candidate.scanComplete and true or false
 	fresh.deVerifiedBook = v.book
 	-- Full-AH sourcePage is stale by the time a long scan plus material verification
 	-- finishes. Re-find the exact auction in a fresh item-filtered result set.
@@ -2416,7 +2491,7 @@ local function avm_de_live_verify_accept(page, total)
 		" requery='" .. tostring(fresh.revalidateName or "") .. "'")
 end
 
-local function avm_auxarb_resume_search(reason)
+avm_auxarb_resume_search = function(reason)
 	local a = AVM.auxArb
 	a.active = false
 	a.paused = false
@@ -2452,6 +2527,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 	a.pausePending = false
 	a.resumePending = false
 	a.pageBest = nil
+	a.dePageRawCandidates = {}
 	a.candidate = nil
 	a.deVerify = nil
 	if not keepScanBook then
@@ -2464,6 +2540,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.deCandidates = 0
 		a.deNoValue = 0
 		a.deRawCandidates = {}
+		a.dePageRawCandidates = {}
 		a.deMaterialBook = {}
 		a.deBest = nil
 		a.flipBook = {}
@@ -2475,6 +2552,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipSellerRejects = 0
 		a.flipExposureRejects = 0
 		a.postscanCandidate = nil
+		a.deMidScanHits = 0
 	end
 	if a.active then
 		avm_print((keepScanBook and "AUX_ARB_SCAN resume" or "AUX_ARB_SCAN start") ..
@@ -2503,7 +2581,10 @@ function AVM_AuxArbAuction(record)
 	avm_de_book_add(a.deMaterialBook, record.item_id, record.name,
 		record.count or record.aux_quantity, record.buyout_price)
 	local rawDe = avm_de_raw_candidate(record)
-	if rawDe then table.insert(a.deRawCandidates, rawDe) end
+	if rawDe then
+		table.insert(a.deRawCandidates, rawDe)
+		table.insert(a.dePageRawCandidates, rawDe)
+	end
 	avm_flip_book_add(a.flipBook, record)
 
 	local c = avm_auxarb_candidate_from_record(record, "auxarb_vendor")
@@ -2521,15 +2602,28 @@ function AVM_AuxArbPageDone(page, lastPage)
 	a.pages = a.pages + 1
 	a.lastPage = tonumber(lastPage) or a.lastPage or 0
 	AVM.stats.auxArbPages = AVM.stats.auxArbPages + 1
-	local c = a.pageBest
-	a.pageBest = nil
-	if not c then return false end
 
-	avm_print("AUX_ARB_PAGE page=" .. tostring(page) ..
-		" route=vendor " .. tostring(c.name) ..
-		" buy=" .. avm_money(c.buyout) ..
-		" value=" .. avm_money(c.valuationTotal or 0) ..
-		" profit=" .. avm_money(c.profit or 0))
+	local vendor = a.pageBest
+	a.pageBest = nil
+	if vendor then
+		avm_print("AUX_ARB_PAGE page=" .. tostring(page) ..
+			" route=vendor " .. tostring(vendor.name) ..
+			" buy=" .. avm_money(vendor.buyout) ..
+			" value=" .. avm_money(vendor.valuationTotal or 0) ..
+			" profit=" .. avm_money(vendor.profit or 0))
+	end
+
+	local pageDe = nil
+	if AVM_DB.auxArbLive then
+		for i = 1, table.getn(a.dePageRawCandidates or {}) do
+			local de = avm_de_candidate_from_record(a.dePageRawCandidates[i], a.deMaterialBook)
+			if de then
+				local liveOk = avm_auxarb_live_purchase_ok(de)
+				if liveOk and avm_auxarb_candidate_better(de, pageDe) then pageDe = de end
+			end
+		end
+	end
+	a.dePageRawCandidates = {}
 
 	if not AVM_DB.auxArbLive then return false end
 	if AVM.pending or AVM.unknown or AVM.queryInFlight then return false end
@@ -2539,14 +2633,35 @@ function AVM_AuxArbPageDone(page, lastPage)
 		avm_print("AUX_ARB LIVE OFF purchase limit reached (" .. tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
 		return false
 	end
-	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
-	if not c.affordable or (maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend) then return false end
+
+	-- Vendor remains first priority because those opportunities disappear fastest.
+	local selected = nil
+	if vendor then
+		local vendorOk = avm_auxarb_live_purchase_ok(vendor)
+		if vendorOk then selected = vendor end
+	end
+	if not selected and pageDe then
+		pageDe.midScan = true
+		pageDe.scanComplete = false
+		selected = pageDe
+	end
+	if not selected then return false end
+
 	a.pausePending = true
 	a.resumePending = true
-	a.candidate = c
+	a.candidate = selected
 	AVM.stats.auxArbPauses = AVM.stats.auxArbPauses + 1
-	avm_print("AUX_ARB_VENDOR_HIT page=" .. tostring(c.sourcePage) ..
-		" profit=" .. avm_money(c.profit or 0) .. " -> interrupt after current page/revalidate/buy")
+	if selected.mode == "auxarb_de" then
+		a.deMidScanHits = (a.deMidScanHits or 0) + 1
+		avm_print("AUX_ARB_DE_HIT page=" .. tostring(selected.sourcePage) ..
+			" " .. tostring(selected.name) ..
+			" buy=" .. avm_money(selected.buyout or 0) ..
+			" profit=" .. avm_money(selected.profit or 0) ..
+			" -> interrupt after current page/live material verify")
+	else
+		avm_print("AUX_ARB_VENDOR_HIT page=" .. tostring(selected.sourcePage) ..
+			" profit=" .. avm_money(selected.profit or 0) .. " -> interrupt after current page/revalidate/buy")
+	end
 	return true
 end
 
@@ -2558,6 +2673,12 @@ function AVM_AuxArbPaused(page)
 	a.pausePending = false
 	AVM.candidate = a.candidate
 	AVM.lastPage = a.lastPage or math.max(tonumber(page) or 0, AVM.candidate.sourcePage or 0)
+	if AVM.candidate.mode == "auxarb_de" then
+		avm_print("AUX_ARB_PAUSED page=" .. tostring(page) ..
+			" route=disenchant -> live material verify")
+		avm_de_begin_live_verify(AVM.candidate)
+		return
+	end
 	avm_prepare_revalidate(AVM.candidate)
 	AVM.phase = "REVALIDATE"
 	AVM.nextQueryAt = GetTime() + 0.05
@@ -4317,7 +4438,8 @@ local function avm_auxarb_slash(rest)
 		avm_print("AUX_ARB candidates vendor/de/flip=" .. tostring(a.vendorCandidates or 0) .. "/" .. tostring(a.deCandidates or 0) .. "/" .. tostring(a.flipCandidates or 0) ..
 			" deNoDepth=" .. tostring(a.deNoValue or 0) ..
 			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
-			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})))
+			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})) ..
+		" midScanDE=" .. tostring(a.deMidScanHits or 0))
 		avm_print("AUX_ARB FLIP enabled=" .. tostring(AVM_DB.flipEnabled) ..
 			" min/max=" .. avm_money(AVM_DB.flipMinProfit or 0) .. "/" .. avm_money(AVM_DB.flipMaxBuyout or 0) ..
 			" depth=" .. tostring(AVM_DB.flipDepthUnits or 10) ..

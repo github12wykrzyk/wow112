@@ -2904,6 +2904,38 @@
         "artifact_id": 11186259103
       },
       "notes": "Feature starts from verified parallel@6b18ae8f. Goal: allow UPDATE while WoW instances remain open. AddOns apply immediately; EXE/DLL/dlls.txt and stale root-runtime removals are staged with SHA checks and auto-finalized only after the last WoW process exits. No gameplay acceptance claimed."
+    },
+    {
+      "id": "ah-midscan-de-smooth-market",
+      "branch": "feature/ah-midscan-de-smooth-market-r2",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-postscan-live-fallback",
+        "ah-market-safe-persist-tooltips",
+        "ah-de-filtered-exact-revalidate"
+      ],
+      "shared_resources": [
+        "Original AUX page-end pause/resume ownership",
+        "AUX_ARB DE material live verification",
+        "AuxVmangos full MARKET Lua aggregation scheduler"
+      ],
+      "status": "in_progress",
+      "observed_head": "5422c63f811283d83736d946ab986ee7fca24ac7",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "4bb010a09429a07147a35a6290df0be59c37713a",
+          "date": "2026-10-01",
+          "evidence": "User reports MARKET still causes severe client slowdown and DE opportunities are not purchased during the long original AUX scan. Source confirms MARKET_SCAN aggregates all 50 auction rows synchronously inside one list-result event, while DE raw candidates are only valued at ScanDone except vendor page-end pause."
+        }
+      ],
+      "package": null,
+      "notes": "Rebased onto current parallel after unrelated updater integration. Process normal MARKET_SCAN pages in small configurable chunks (default 4 rows per 50ms AVM tick) so one AUCTION_ITEM_LIST_UPDATE no longer performs all 50 item/link/history allocations in one frame. Keep page delay and history semantics unchanged. Evaluate DE raw candidates from the just-finished AUX page against the accumulated material book; when LIVE and eligible, pause original AUX after that page, exact-revalidate every DE material, requery the exact auction, buy, then resume the original Search continuation. Vendor keeps first priority at page-end."
     }
   ]
 }
