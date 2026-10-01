@@ -2107,12 +2107,31 @@
         "MovementCore Tele E map request state",
         "native map high-launch S backstep"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "2c547707e7ef1d25f025c97c8f6cf4d50688fbf0",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Point change from current parallel: map teleport no longer calls HideUIPanel(WorldMapFrame) after sending the teleport pulse. The map remains visible so repeated E/click map teleports can be issued without reopening it. Existing validation, F7 abort and optional native S backstep are unchanged; in-game behavior remains unverified."
+      "status": "awaiting_game_test",
+      "observed_head": "1431f9cb58274008edd8556b0a5ef858a65a332f",
+      "verified_commit": "1431f9cb58274008edd8556b0a5ef858a65a332f",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "1431f9cb58274008edd8556b0a5ef858a65a332f",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36855962747 passed on the rebased feature SHA. Integrated Build work candidate run 36856088203 then passed on exact parallel SHA, including MovementCore build, FINAL_PACKAGE and candidate attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "1431f9cb58274008edd8556b0a5ef858a65a332f",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11157873378 (WoW112-WORK-CANDIDATE-1431f9cb58274008edd8556b0a5ef858a65a332f) was uploaded by successful exact-SHA run 36856088203."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "1431f9cb58274008edd8556b0a5ef858a65a332f",
+        "artifact_id": 11157873378
+      },
+      "notes": "Integrated to parallel. Map teleport no longer calls HideUIPanel(WorldMapFrame) after sending the teleport pulse, so the world map remains visible for repeated E/click map teleports. Existing validation, F7 abort and optional native S backstep are unchanged. CI/package passed; gameplay behavior awaits user test."
     }
   ]
 }
