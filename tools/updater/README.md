@@ -195,3 +195,8 @@ Statusy aktywnych kanałów work, parallel i main w górnym wierszu głównego o
 ## Updater 2.9-parallel.9 — AuxVmangos report snapshot
 
 GitHub diagnostic reports now include the newest AuxVmangos SavedVariables diagnostic snapshot from WTF/Account/*/SavedVariables/AuxVmangos.lua. AuxVmangos 0.11 keeps a bounded 80-event ring and compact vendor/query state for this purpose. The report does not expose the account-directory name; it labels only the addon file and modification time. SavedVariables are flushed by WoW on /reload, logout or client exit, so while the game is running the report may contain the latest flushed snapshot rather than the current in-memory state. The Aux snapshot is also part of the deterministic diagnostic signature.
+
+## Updater 2.9-parallel.10 — dwie belki statusu GitHub
+
+Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsza pokazuje równolegle `PARALLEL`, `WORK` i `MAIN` z krótkim SHA; `SUCCESS` na development jest prezentowany jako `READY`, a `MAIN` zachowuje zielony `STABLE` z ostatniego autorytatywnego `Build stable candidate`, gdy późniejszy commit main nie uruchamia stable workflow. Druga belka pokazuje najważniejszy bieżący exact-HEAD gate `feature/*` lub `promote/*` (PREFLIGHT / PRE-PROMOTE), a `| +N` sygnalizuje dodatkowe aktualne gate'y. Historyczne branche bez exact-HEAD gate w 100 najnowszych runach nie zaśmiecają nagłówka; pełna lista dopasowanych gate'ów pozostaje w tooltipie i Monitor GH. Feature/promote pozostają wyłącznie podglądem i nigdy nie są instalowane jako Parallel.
+

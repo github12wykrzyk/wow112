@@ -17,28 +17,46 @@ namespace WoW112Updater
         private RichTextBox githubMonitorText;
         private bool githubMonitorInFlight;
         private string githubMonitorReport = "Monitor GitHub: jeszcze nie sprawdzono.";
-        private static readonly string[] MonitoredBranches = { "work", "parallel", "main" };
+        private static readonly string[] MonitoredBranches = { "parallel", "work", "main" };
         private readonly Dictionary<string, Label> githubMonitorBadges = new Dictionary<string, Label>
         {
-            { "work", new Label() }, { "parallel", new Label() }, { "main", new Label() }
+            { "parallel", new Label() }, { "work", new Label() }, { "main", new Label() }
         };
+        private readonly Label githubPipelineBadge = new Label();
 
         private TableLayoutPanel BuildGitHubMonitorHeader()
         {
-            var grid = Grid(1, MonitoredBranches.Length);
+            var grid = Grid(1, 2);
             grid.RowStyles.Clear();
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+
+            var branches = Grid(MonitoredBranches.Length, 1);
+            branches.ColumnStyles.Clear();
             for (int i = 0; i < MonitoredBranches.Length; i++)
             {
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / MonitoredBranches.Length));
+                branches.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / MonitoredBranches.Length));
                 var branch = MonitoredBranches[i];
                 var badge = githubMonitorBadges[branch];
                 PrepareLabel(badge);
-                badge.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-                badge.Margin = new Padding(3, 1, 3, 1);
-                badge.Padding = new Padding(6, 0, 3, 0);
+                badge.Font = new Font("Segoe UI", 8.1F, FontStyle.Bold);
+                badge.Margin = new Padding(i == 0 ? 3 : 1, 1, i == MonitoredBranches.Length - 1 ? 3 : 1, 1);
+                badge.Padding = new Padding(3, 0, 2, 0);
+                badge.TextAlign = ContentAlignment.MiddleCenter;
+                badge.AutoEllipsis = true;
                 SetGitHubMonitorBadge(branch, "UNKNOWN", "", "Oczekiwanie na pierwszy odczyt GitHub.");
-                grid.Controls.Add(badge, 0, i);
+                branches.Controls.Add(badge, i, 0);
             }
+            grid.Controls.Add(branches, 0, 0);
+
+            PrepareLabel(githubPipelineBadge);
+            githubPipelineBadge.Font = new Font("Segoe UI", 8.4F, FontStyle.Bold);
+            githubPipelineBadge.Margin = new Padding(3, 1, 3, 1);
+            githubPipelineBadge.Padding = new Padding(6, 0, 3, 0);
+            githubPipelineBadge.TextAlign = ContentAlignment.MiddleLeft;
+            githubPipelineBadge.AutoEllipsis = true;
+            SetGitHubPipelineBadge("IDLE", "PIPELINE   IDLE", "Brak ostatniej aktywności feature/promote z exact-HEAD gate.");
+            grid.Controls.Add(githubPipelineBadge, 0, 1);
             return grid;
         }
 
@@ -49,7 +67,26 @@ namespace WoW112Updater
             public string Detail;
         }
 
-        // Only runs on the exact branch HEAD may result in a green badge.
+        private sealed class PipelineRunState
+        {
+            public string Branch;
+            public string Head;
+            public string Status;
+            public string Workflow;
+            public long RunId;
+            public int Order;
+        }
+
+        private sealed class PipelineBadgeState
+        {
+            public string Status;
+            public string Text;
+            public string Detail;
+        }
+
+        // Work/parallel require an authoritative run on the exact HEAD. Main keeps the
+        // newest stable workflow as its stable-runtime signal when later HEAD commits do
+        // not trigger Build stable candidate (for example updater/Guardian-only changes).
         private static MonitorBadgeState MonitorBranchBadge(string branch, string branchJson, string runsJson)
         {
             var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
@@ -59,46 +96,164 @@ namespace WoW112Updater
             var runs = AsDictionary(serializer.DeserializeObject(runsJson));
             var expectedWorkflow = string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase)
                 ? StableWorkflowName : TestWorkflowName;
-            Dictionary<string, object> active = null, failed = null, passed = null;
+            Dictionary<string, object> active = null, failed = null, passed = null, latestExpected = null;
             var seenExpectedWorkflow = false;
             foreach (var item in AsArray(GetValue(runs, "workflow_runs")))
             {
                 var run = item as Dictionary<string, object>;
-                if (run == null || !string.Equals(GetString(run, "head_sha"), head, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.Equals(GetString(run, "name"), expectedWorkflow, StringComparison.Ordinal)) continue;
-                if (seenExpectedWorkflow) continue; // API is newest-first: only the latest run of the branch's authoritative workflow counts.
+                if (run == null || !string.Equals(GetString(run, "name"), expectedWorkflow, StringComparison.Ordinal)) continue;
+                if (latestExpected == null) latestExpected = run;
+                if (!string.Equals(GetString(run, "head_sha"), head, StringComparison.OrdinalIgnoreCase)) continue;
+                if (seenExpectedWorkflow) continue;
                 seenExpectedWorkflow = true;
                 var status = GetString(run, "status");
                 var conclusion = GetString(run, "conclusion");
                 if (!string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (active == null) active = run;
-                }
-                else if (string.Equals(conclusion, "failure", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(conclusion, "cancelled", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(conclusion, "timed_out", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(conclusion, "action_required", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (failed == null) failed = run;
-                }
+                    active = run;
+                else if (IsFailedConclusion(conclusion))
+                    failed = run;
                 else if (string.Equals(conclusion, "success", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (passed == null) passed = run;
-                }
+                    passed = run;
             }
             var selected = active ?? failed ?? passed;
+            if (selected == null && string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase) && latestExpected != null)
+            {
+                var stableStatus = GetString(latestExpected, "status");
+                var stableConclusion = GetString(latestExpected, "conclusion");
+                var state = !string.Equals(stableStatus, "completed", StringComparison.OrdinalIgnoreCase)
+                    ? (string.Equals(stableStatus, "in_progress", StringComparison.OrdinalIgnoreCase) ? "RUNNING" : "PENDING")
+                    : IsFailedConclusion(stableConclusion) ? "FAIL"
+                    : string.Equals(stableConclusion, "success", StringComparison.OrdinalIgnoreCase) ? "SUCCESS" : "UNKNOWN";
+                return new MonitorBadgeState
+                {
+                    Status = state,
+                    Head = head,
+                    Detail = "main / HEAD " + head +
+                        "\nAktualny HEAD nie ma własnego Build stable candidate." +
+                        "\nOstatni stable workflow: " + MonitorShort(GetString(latestExpected, "head_sha"), 12) +
+                        " / run " + GetLong(latestExpected, "id") +
+                        " / " + stableStatus + " / " + stableConclusion +
+                        "\nBelka STABLE opisuje ostatni zweryfikowany stable runtime; bieżący HEAD repo pozostaje pokazany osobno."
+                };
+            }
             if (selected == null)
-                return new MonitorBadgeState { Status = "UNKNOWN", Head = head,
+                return new MonitorBadgeState
+                {
+                    Status = "UNKNOWN",
+                    Head = head,
                     Detail = branch + " / HEAD " + head + ": brak workflow " + expectedWorkflow +
-                        " na aktualnym SHA. Inne workflow (np. Guardian) nie wpływają na badge brancha." };
-            var state = active != null
+                        " na aktualnym SHA. Inne workflow (np. Guardian) nie wpływają na badge brancha."
+                };
+            var selectedState = active != null
                 ? (string.Equals(GetString(selected, "status"), "in_progress", StringComparison.OrdinalIgnoreCase) ? "RUNNING" : "PENDING")
                 : failed != null ? "FAIL" : "SUCCESS";
-            return new MonitorBadgeState { Status = state, Head = head,
+            return new MonitorBadgeState
+            {
+                Status = selectedState,
+                Head = head,
                 Detail = branch + " / HEAD " + head + "\nWorkflow: " + GetString(selected, "name") +
-                "\nRun: " + GetLong(selected, "id") + "\nStatus: " + GetString(selected, "status") +
-                " / " + GetString(selected, "conclusion") +
-                "\nTo status CI, nie potwierdzenie kompletnej paczki." };
+                    "\nRun: " + GetLong(selected, "id") + "\nStatus: " + GetString(selected, "status") +
+                    " / " + GetString(selected, "conclusion") +
+                    "\nWork/Parallel: success dotyczy dokładnego HEAD i autorytatywnego workflow kandydata."
+            };
+        }
+
+        private static bool IsFailedConclusion(string conclusion)
+        {
+            return string.Equals(conclusion, "failure", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(conclusion, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(conclusion, "timed_out", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(conclusion, "action_required", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int PipelinePriority(string state)
+        {
+            if (state == "FAIL") return 0;
+            if (state == "RUNNING" || state == "PENDING") return 1;
+            if (state == "PASS") return 2;
+            return 3;
+        }
+
+        private static PipelineBadgeState MonitorPipelineBadge(string branchesJson, string runsJson)
+        {
+            var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+            var branchRows = AsArray(serializer.DeserializeObject(branchesJson));
+            var runsRoot = AsDictionary(serializer.DeserializeObject(runsJson));
+            var runs = AsArray(GetValue(runsRoot, "workflow_runs"));
+            var items = new List<PipelineRunState>();
+
+            foreach (var item in branchRows)
+            {
+                var row = AsDictionary(item);
+                var pipelineBranch = GetString(row, "name");
+                var isFeature = pipelineBranch.StartsWith("feature/", StringComparison.OrdinalIgnoreCase);
+                var isPromote = pipelineBranch.StartsWith("promote/", StringComparison.OrdinalIgnoreCase);
+                if (!isFeature && !isPromote) continue;
+                var head = GetString(AsDictionary(GetValue(row, "commit")), "sha");
+                if (string.IsNullOrWhiteSpace(head)) continue;
+                var expected = isPromote ? "Pre-promote stable" : "Parallel feature preflight";
+                Dictionary<string, object> matched = null;
+                var order = int.MaxValue;
+                for (var i = 0; i < runs.Length; i++)
+                {
+                    var run = runs[i] as Dictionary<string, object>;
+                    if (run == null) continue;
+                    if (!string.Equals(GetString(run, "head_branch"), pipelineBranch, StringComparison.Ordinal)) continue;
+                    if (!string.Equals(GetString(run, "head_sha"), head, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(GetString(run, "name"), expected, StringComparison.Ordinal)) continue;
+                    matched = run;
+                    order = i;
+                    break;
+                }
+                if (matched == null) continue;
+
+                var runStatus = GetString(matched, "status");
+                var conclusion = GetString(matched, "conclusion");
+                var state = !string.Equals(runStatus, "completed", StringComparison.OrdinalIgnoreCase)
+                    ? (string.Equals(runStatus, "in_progress", StringComparison.OrdinalIgnoreCase) ? "RUNNING" : "PENDING")
+                    : IsFailedConclusion(conclusion) ? "FAIL"
+                    : string.Equals(conclusion, "success", StringComparison.OrdinalIgnoreCase) ? "PASS" : "UNKNOWN";
+                items.Add(new PipelineRunState
+                {
+                    Branch = pipelineBranch,
+                    Head = head,
+                    Status = state,
+                    Workflow = expected,
+                    RunId = GetLong(matched, "id"),
+                    Order = order
+                });
+            }
+
+            if (items.Count == 0)
+                return new PipelineBadgeState
+                {
+                    Status = "IDLE",
+                    Text = "PIPELINE   IDLE",
+                    Detail = "Brak feature/promote z exact-HEAD gate w 100 najnowszych workflow runach. Historyczne branche nie zaśmiecają belki."
+                };
+
+            items.Sort(delegate(PipelineRunState a, PipelineRunState b)
+            {
+                var priority = PipelinePriority(a.Status).CompareTo(PipelinePriority(b.Status));
+                return priority != 0 ? priority : a.Order.CompareTo(b.Order);
+            });
+            var focus = items[0];
+            var anyFail = items.Exists(x => x.Status == "FAIL");
+            var anyActive = items.Exists(x => x.Status == "RUNNING" || x.Status == "PENDING");
+            var overall = anyFail ? "FAIL" : anyActive ? "RUNNING" : "PASS";
+            var isFocusPromote = focus.Branch.StartsWith("promote/", StringComparison.OrdinalIgnoreCase);
+            var leaf = focus.Branch.Substring(focus.Branch.IndexOf('/') + 1);
+            var text = (isFocusPromote ? "PROMOTE " : "FEATURE ") + MonitorShort(leaf, 24) + "   " +
+                (isFocusPromote ? "PRE-PROMOTE " : "PREFLIGHT ") + focus.Status + "   " + MonitorShort(focus.Head, 8);
+            if (items.Count > 1) text += "   | +" + (items.Count - 1);
+
+            var detail = new StringBuilder();
+            detail.AppendLine("FEATURE / PROMOTE — exact HEAD gates:");
+            foreach (var x in items)
+                detail.AppendLine(x.Branch + "  " + x.Status + "  " + MonitorShort(x.Head, 12) +
+                    "  run " + x.RunId + "  [" + x.Workflow + "]");
+            detail.Append("Feature/promote są tylko podglądem; updater instaluje wyłącznie zweryfikowany Parallel.");
+            return new PipelineBadgeState { Status = overall, Text = text, Detail = detail.ToString() };
         }
 
         private void SetGitHubMonitorBadge(string branch, string state, string head, string detail)
@@ -112,10 +267,28 @@ namespace WoW112Updater
             badge.ForeColor = green ? Color.FromArgb(164, 245, 181)
                 : yellow ? Color.FromArgb(255, 217, 128)
                 : red ? Color.FromArgb(255, 166, 166) : Muted;
-            badge.Text = branch.ToUpperInvariant() + "   " + state + "   " +
-                (string.IsNullOrEmpty(head) ? "HEAD ?" : MonitorShort(head, 8)) +
-                "   " + (string.IsNullOrEmpty(head) ? "—" : DateTime.Now.ToString("HH:mm:ss"));
+            var displayState = state == "SUCCESS"
+                ? (string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase) ? "STABLE" : "READY")
+                : state == "RUNNING" ? "RUN"
+                : state == "PENDING" ? "WAIT"
+                : state == "UNKNOWN" ? "NO BUILD" : state;
+            badge.Text = branch.ToUpperInvariant() + "  " + displayState + "  " +
+                (string.IsNullOrEmpty(head) ? "?" : MonitorShort(head, 8));
             detailsTip.SetToolTip(badge, detail + "\nOdczyt: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        }
+
+        private void SetGitHubPipelineBadge(string state, string text, string detail)
+        {
+            if (githubPipelineBadge.IsDisposed) return;
+            bool green = state == "PASS", yellow = state == "PENDING" || state == "RUNNING", red = state == "FAIL";
+            githubPipelineBadge.BackColor = green ? Color.FromArgb(32, 77, 50)
+                : yellow ? Color.FromArgb(96, 74, 31)
+                : red ? Color.FromArgb(96, 39, 43) : Color.FromArgb(45, 49, 58);
+            githubPipelineBadge.ForeColor = green ? Color.FromArgb(164, 245, 181)
+                : yellow ? Color.FromArgb(255, 217, 128)
+                : red ? Color.FromArgb(255, 166, 166) : Muted;
+            githubPipelineBadge.Text = text;
+            detailsTip.SetToolTip(githubPipelineBadge, detail + "\nOdczyt: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         }
 
         private void StartGitHubMonitor()
@@ -234,6 +407,7 @@ namespace WoW112Updater
                 {
                     githubMonitorReport = "Monitor wymaga zapisanego tokenu GitHub (Contents: Read, Actions: Read).";
                     foreach (var monitored in MonitoredBranches) SetGitHubMonitorBadge(monitored, "UNKNOWN", "", "Brak tokenu GitHub.");
+                    SetGitHubPipelineBadge("IDLE", "PIPELINE   BRAK TOKENU", "Brak tokenu GitHub.");
                     githubMonitorButton.Text = "GH: brak tokenu";
                     return;
                 }
@@ -267,31 +441,23 @@ namespace WoW112Updater
                         if (githubMonitorText != null && !githubMonitorText.IsDisposed)
                             githubMonitorText.Text = githubMonitorReport;
                     }
-                    // Feature and promotion refs are visible for experiment routing only.
-                    // Never interpret their HEAD as an installable Parallel candidate.
+                    // Second compact bar: recent exact-HEAD feature/promote gates only.
+                    // Historical refs remain hidden from the header so two rows stay useful.
                     try
                     {
-                        var branchRows = AsArray(json.DeserializeObject(await GetStringAsync(client,
-                            ApiRoot + "/branches?per_page=100")));
-                        var experimentRefs = new List<string>();
-                        foreach (var item in branchRows)
-                        {
-                            var row = AsDictionary(item);
-                            var name = GetString(row, "name");
-                            if (!name.StartsWith("feature/", StringComparison.OrdinalIgnoreCase) &&
-                                !name.StartsWith("promote/", StringComparison.OrdinalIgnoreCase)) continue;
-                            var commit = AsDictionary(GetValue(row, "commit"));
-                            experimentRefs.Add(name + "  HEAD " + MonitorShort(GetString(commit, "sha"), 8));
-                        }
-                        experimentRefs.Sort(StringComparer.OrdinalIgnoreCase);
-                        result.AppendLine("EKSPERYMENTY / PROMOCJE (podgląd, nie są instalowane):");
-                        if (experimentRefs.Count == 0) result.AppendLine("  Brak widocznych branchy feature/* i promote/*.");
-                        foreach (var line in experimentRefs) result.AppendLine("  " + line);
-                        if (branchRows.Length == 100) result.AppendLine("  Lista może być niepełna: GitHub zwrócił limit 100 branchy.");
+                        var branchesJson = await GetStringAsync(client, ApiRoot + "/branches?per_page=100");
+                        var allRunsJson = await GetStringAsync(client, ApiRoot + "/actions/runs?per_page=100");
+                        var pipeline = MonitorPipelineBadge(branchesJson, allRunsJson);
+                        SetGitHubPipelineBadge(pipeline.Status, pipeline.Text, pipeline.Detail);
+                        result.AppendLine();
+                        result.AppendLine(pipeline.Detail);
+                        if (AsArray(json.DeserializeObject(branchesJson)).Length == 100)
+                            result.AppendLine("Lista branchy może być niepełna: GitHub zwrócił limit 100.");
                     }
                     catch (Exception ex)
                     {
                         failed = true;
+                        SetGitHubPipelineBadge("IDLE", "PIPELINE   BŁĄD ODCZYTU", "Błąd odczytu feature/promote: " + MonitorShort(ex.Message, 180));
                         result.AppendLine("Eksperymenty: błąd odczytu GitHub: " + MonitorShort(ex.Message, 180));
                     }
                     githubMonitorReport = result.ToString();
@@ -305,6 +471,7 @@ namespace WoW112Updater
             {
                 githubMonitorReport = "Monitor: błąd połączenia z GitHub: " + MonitorShort(ex.Message, 180);
                 foreach (var monitored in MonitoredBranches) SetGitHubMonitorBadge(monitored, "UNKNOWN", "", githubMonitorReport);
+                SetGitHubPipelineBadge("IDLE", "PIPELINE   BŁĄD ODCZYTU", githubMonitorReport);
                 githubMonitorButton.Text = "GH: błąd";
                 if (githubMonitorText != null && !githubMonitorText.IsDisposed)
                     githubMonitorText.Text = githubMonitorReport;
