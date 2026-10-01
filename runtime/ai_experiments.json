@@ -3556,6 +3556,33 @@
       "tests": [],
       "package": null,
       "notes": "Successor to rejected autologin-multibox-serial-gate. Restores AutoLoginBridge exactly to the pre-gate implementation from parallel@2b923741 so native login readiness/dispatch stays on the previously working path. Keeps only launcher-side mitigation for the original 8-client burst: process starts are staggered 1500 ms apart instead of 180 ms/600 ms. This intentionally avoids cross-process mutexes or worker-thread Glue readiness gating."
+    },
+    {
+      "id": "ah-reload-after-scan-safe-ui",
+      "branch": "feature/ah-reload-after-scan",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "auxfast-restart-filter-guard",
+        "auxfast-repeat-scan-fps",
+        "ah-live-de-midscan-v2",
+        "ah-hard-stop-manual-market"
+      ],
+      "shared_resources": [
+        "AUX full-scan completion / continuous loop ownership",
+        "Aux frame OnHide -> CloseAuctionHouse lifecycle",
+        "ReloadUI SavedVariables checkpoint",
+        "session buy/spend and flip exposure safety state",
+        "AUX Search filter and visible results lifecycle"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "f03ca4b7e73edf935956ab702d936503be148225",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User confirmed manual reload prevents cumulative slowdown but observed that reload closes the AUX GUI. Candidate makes reload-per-full-scan the default continuous-loop path, only after AH transaction state is idle. It snapshots session safety state, temporarily detaches AUX frame OnHide so teardown does not deliberately CloseAuctionHouse, then after reload reopens the visible Search, restores the filter and starts a normal fresh scan (not execute(true)/headless) so every pass behaves like scan #1 and repopulates the GUI. Legacy in-process repeat remains available via /avm reloadscan off. Runtime AH-session persistence still requires gameplay verification; failure retries are bounded and fail closed."
     }
   ]
 }

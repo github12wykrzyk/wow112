@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Fast AUX bridge with guarded resume/restart state, hard-stop, resumable AVM scans and headless repeat-loop UI isolation.
+## Notes: Fast AUX bridge with safe UI reload/reopen, fresh-scan restart, hard-stop and legacy headless fallback.
 ## Author: github12wykrzyk/wow112
-## Version: 2.8
+## Version: 2.9
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB

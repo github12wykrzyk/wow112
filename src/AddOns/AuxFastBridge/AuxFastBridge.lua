@@ -1,4 +1,4 @@
--- AuxFastBridge v2.8 restart-filter guard + low-FPS repeat-scan isolation
+-- AuxFastBridge v2.9 safe UI reload + restart-filter guard
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -38,6 +38,7 @@ local gateBlockedChecks = 0
 local pauseRequested = false
 local pausePage = -1
 local resumeRequested = false
+local reloadFrameOnHide = nil
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -411,6 +412,67 @@ if not install_scan_hook() then
 	out("ERROR: aux.core.scan unavailable; fast transport disabled")
 end
 
+-- Controlled /reload support for continuous AH scans. AUX's own frame OnHide
+-- calls CloseAuctionHouse(), which would destroy the server-side AH interaction.
+-- Temporarily detach only that handler immediately before ReloadUI; the reloaded
+-- addon recreates the normal handler automatically.
+function AUXFAST_PrepareUiReload()
+	if auxCore and auxCore.frame and auxCore.frame.GetScript and auxCore.frame.SetScript then
+		reloadFrameOnHide = auxCore.frame:GetScript("OnHide")
+		auxCore.frame:SetScript("OnHide", nil)
+		return true
+	end
+	return false
+end
+
+function AUXFAST_CancelUiReload()
+	if reloadFrameOnHide and auxCore and auxCore.frame and auxCore.frame.SetScript then
+		auxCore.frame:SetScript("OnHide", reloadFrameOnHide)
+	end
+	reloadFrameOnHide = nil
+end
+
+-- After a controlled UI reload, start a genuinely fresh normal AUX Search.
+-- This deliberately does NOT use execute(true) or the headless repeat flag:
+-- every post-reload pass behaves like scan #1 and repopulates the visible AUX GUI.
+function AUXFAST_StartFreshSearch(filterString)
+	if avm_hard_stopped() then
+		out("fresh search suppressed: hard-stop")
+		return false
+	end
+	if busy > 0 or avm_busy() then
+		return false
+	end
+	if not okSearchTab or not searchTab or not searchTab.execute or not searchTab.set_filter then
+		out("fresh search failed: aux.tabs.search unavailable")
+		return false
+	end
+	filterString = tostring(filterString or "")
+	if auxCore and auxCore.frame then
+		if auxCore.set_tab then pcall(auxCore.set_tab, 1) end
+		auxCore.frame:Show()
+	end
+	local okSet, setErr = pcall(searchTab.set_filter, filterString)
+	if not okSet then
+		out("fresh search failed to restore filter: " .. tostring(setErr))
+		return false
+	end
+	resumeRequested = false
+	AUXFAST_REPEAT_PENDING = false
+	AUXFAST_HEADLESS_LOOP_ACTIVE = false
+	local ok, err = pcall(searchTab.execute, false, false)
+	if not ok then
+		out("fresh search failed: " .. tostring(err))
+		return false
+	end
+	if busy <= 0 then
+		out("fresh search did not start (check restored AUX filter/AH session)")
+		return false
+	end
+	out("fresh normal AUX search started after UI reload; GUI results repopulating")
+	return true
+end
+
 function AUXFAST_HardStop()
 	AUXFAST_REPEAT_PENDING = false
 	AUXFAST_HEADLESS_LOOP_ACTIVE = false
@@ -545,4 +607,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AUXFAST_HEADLESS_RECORDS or 0))
 end
 
-out("v2.8 loaded: restart/resume filter state guarded; repeat scans keep first AUX UI snapshot and run later AVM cycles headless; hook=" .. tostring(hookInstalled))
+out("v2.9 loaded: safe reload/reopen + fresh scan support; legacy headless repeat fallback retained; hook=" .. tostring(hookInstalled))

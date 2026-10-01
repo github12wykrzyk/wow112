@@ -1,3 +1,9 @@
+# AuxVmangos 0.26 — controlled reload after every full scan
+
+Continuous AUX automation now defaults to a controlled `ReloadUI()` after each completed full scan, but only after all pending/unknown/revalidation/purchase state is fully idle. Before reload, session purchase/spend counters, per-item flip exposure, recent-auction guards, diagnostics counters, loop count, and the active AUX filter are snapshotted in `AVM_DB`. AuxFastBridge 2.9 temporarily detaches AUX's frame OnHide handler so the reload does not intentionally call `CloseAuctionHouse()`.
+
+After the UI reload the AUX Search window is reopened automatically, the saved filter is restored, and a **normal fresh** Search starts. It is intentionally not a headless `execute(true)` repeat: every cycle behaves like a clean first scan and repopulates the visible AUX GUI, avoiding cumulative Search/UI/GC state while keeping the window usable. If the AH session cannot be resumed, retries fail closed and the addon asks for the Auction House to be reopened manually. `/avm reloadscan off` restores the existing in-process repeat fallback; `/avm reloadscan on` re-enables the default.
+
 # AuxVmangos 0.17 — live market flip
 
 Adds a conservative commodity flip route on top of the validated original AUX full-market scan.

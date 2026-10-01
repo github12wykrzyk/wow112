@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.25-live-de-midscan"
+AVM_VERSION = "0.26-reload-cycle"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -63,6 +63,15 @@ AVM = {
 		cycles = 0,
 		marketCycles = 0,
 		lastAction = "",
+	},
+	reloadCycle = {
+		pending = false,
+		requestedAt = 0,
+		reason = "",
+		restorePending = false,
+		freshStartAt = 0,
+		filterString = "",
+		retries = 0,
 	},
 	auxArb = {
 		active = false,
@@ -361,6 +370,7 @@ local function avm_defaults()
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 	if AVM_DB.marketStorageSchema == nil then AVM_DB.marketStorageSchema = 0 end
 	if AVM_DB.auxLoopEnabled == nil then AVM_DB.auxLoopEnabled = true end
+	if AVM_DB.reloadAfterScan == nil then AVM_DB.reloadAfterScan = true end
 	if AVM_DB.auxLoopMarketMinutes == nil then AVM_DB.auxLoopMarketMinutes = 60 end
 	if AVM_DB.auxLoopMarketEnabled == nil then AVM_DB.auxLoopMarketEnabled = false end
 	if AVM_DB.auxLoopMarketPolicySchema == nil then
@@ -447,6 +457,124 @@ local function avm_defaults()
 	end
 end
 
+local function avm_restore_reload_snapshot()
+	local snap = AVM_DB and AVM_DB.reloadCycle
+	if not snap or not snap.pending then return false end
+	local wallNow = time and time() or 0
+	local wallThen = tonumber(snap.wallTime) or 0
+	-- Crash/stale-start guard: only a very recent controlled ReloadUI may auto-resume.
+	if wallNow > 0 and wallThen > 0 and wallNow - wallThen > 120 then
+		AVM_DB.reloadCycle = nil
+		return false
+	end
+	AVM.sessionSpend = tonumber(snap.sessionSpend) or 0
+	AVM.sessionBuys = tonumber(snap.sessionBuys) or 0
+	AVM.itemExposure = type(snap.itemExposure) == "table" and snap.itemExposure or {}
+	AVM.recent = type(snap.recent) == "table" and snap.recent or {}
+	if type(snap.stats) == "table" then
+		for k,v in pairs(snap.stats) do
+			if AVM.stats[k] ~= nil and tonumber(v) then AVM.stats[k] = tonumber(v) end
+		end
+	end
+	AVM.auxLoop.cycles = tonumber(snap.loopCycles) or 0
+	AVM.reloadCycle.restorePending = true
+	AVM.reloadCycle.filterString = tostring(snap.filterString or "")
+	AVM.reloadCycle.freshStartAt = 0
+	AVM.reloadCycle.retries = 0
+	AVM_DB.reloadCycle.pending = false
+	return true
+end
+
+local function avm_snapshot_for_reload(reason)
+	AVM_DB.reloadCycle = {
+		pending = true,
+		wallTime = time and time() or 0,
+		reason = tostring(reason or "scan complete"),
+		filterString = tostring(AVM.auxArb.filterString or ""),
+		sessionSpend = tonumber(AVM.sessionSpend) or 0,
+		sessionBuys = tonumber(AVM.sessionBuys) or 0,
+		itemExposure = AVM.itemExposure or {},
+		recent = AVM.recent or {},
+		stats = AVM.stats or {},
+		loopCycles = tonumber(AVM.auxLoop.cycles) or 0,
+	}
+end
+
+local function avm_reload_is_idle()
+	local a = AVM.auxArb or {}
+	if AVM.pending or AVM.unknown or AVM.queryInFlight or AVM.candidate then return false end
+	if AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested then return false end
+	if a.active or a.paused or a.pausePending or a.resumePending or a.candidate or
+	   a.deVerify or a.flipVerify or a.postscanCandidate then return false end
+	return AVM.phase == "IDLE"
+end
+
+local function avm_queue_reload_after_scan(reason)
+	if not AVM_DB.reloadAfterScan or not AVM_DB.auxLoopEnabled then return false end
+	AVM.auxLoop.nextAt = 0
+	AVM.auxLoop.waitingForMarket = false
+	AVM.reloadCycle.pending = true
+	AVM.reloadCycle.requestedAt = GetTime()
+	AVM.reloadCycle.reason = tostring(reason or "scan complete")
+	AVM.reloadCycle.filterString = tostring(AVM.auxArb.filterString or "")
+	avm_print("RELOAD_AFTER_SCAN queued reason=" .. AVM.reloadCycle.reason)
+	return true
+end
+
+local function avm_reload_cycle_tick(now)
+	if not AVM.reloadCycle.pending then return false end
+	if now - (tonumber(AVM.reloadCycle.requestedAt) or now) < 0.25 then return true end
+	if not avm_reload_is_idle() then return true end
+	local reason = AVM.reloadCycle.reason
+	avm_snapshot_for_reload(reason)
+	avm_print("RELOAD_AFTER_SCAN now; preserving AH session + session safety counters")
+	if AUXFAST_PrepareUiReload then pcall(AUXFAST_PrepareUiReload) end
+	local ok, err = pcall(ReloadUI)
+	-- Normally ReloadUI never returns because the Lua state is destroyed. If it
+	-- does fail/return, restore AUX's normal close handler and fall back to loop.
+	if AUXFAST_CancelUiReload then pcall(AUXFAST_CancelUiReload) end
+	if not ok then
+		AVM_DB.reloadCycle = nil
+		AVM.reloadCycle.pending = false
+		avm_print("RELOAD_AFTER_SCAN failed: " .. tostring(err))
+		avm_loop_schedule_arb("reload failed")
+	end
+	return true
+end
+
+local function avm_reload_fresh_start_tick(now)
+	local r = AVM.reloadCycle
+	if not r.restorePending then return false end
+	if (tonumber(r.freshStartAt) or 0) <= 0 or now < r.freshStartAt then return true end
+	if not AUXFAST_StartFreshSearch then
+		r.retries = (tonumber(r.retries) or 0) + 1
+		r.freshStartAt = now + 0.5
+		if r.retries <= 10 then return true end
+		r.restorePending = false
+		AVM.open = false
+		AVM_DB.reloadCycle = nil
+		avm_print("RELOAD_RESUME failed: AuxFastBridge unavailable; reopen Auction House manually")
+		return true
+	end
+	local ok, started = pcall(AUXFAST_StartFreshSearch, r.filterString or "")
+	if ok and started then
+		r.restorePending = false
+		AVM_DB.reloadCycle = nil
+		avm_print("RELOAD_RESUME fresh visible AUX scan started")
+		return true
+	end
+	r.retries = (tonumber(r.retries) or 0) + 1
+	if r.retries >= 10 then
+		r.restorePending = false
+		AVM.open = false
+		AVM_DB.reloadCycle = nil
+		avm_print("RELOAD_RESUME failed after retries; reopen Auction House manually")
+	else
+		r.freshStartAt = now + 0.5
+	end
+	return true
+end
+
 local function avm_loop_market_due()
 	-- Compatibility stub. Automatic full MARKET is intentionally impossible.
 	return false
@@ -472,7 +600,9 @@ local function avm_loop_after_arb(reason)
 		return
 	end
 	if not AVM_DB.auxLoopEnabled then return end
-	-- Continuous automation repeats AUX only. Full MARKET has no automatic call-site.
+	-- Preferred stability path: every completed full scan gets a controlled UI
+	-- reload, then a fresh normal AUX pass. Legacy in-process restart stays fallback.
+	if avm_queue_reload_after_scan(reason or "scan complete") then return end
 	avm_loop_schedule_arb(reason or "scan complete")
 end
 
@@ -496,6 +626,7 @@ end
 
 local function avm_loop_tick(now)
 	if AVM.hardStop then return false end
+	if AVM.reloadCycle.pending or AVM.reloadCycle.restorePending then return false end
 	if not AVM_DB.auxLoopEnabled then return false end
 	local nextAt = tonumber(AVM.auxLoop.nextAt) or 0
 	if nextAt <= 0 or now < nextAt then return false end
@@ -534,6 +665,7 @@ local function avm_loop_status()
 	end
 	avm_print("LOOP enabled=" .. tostring(AVM_DB.auxLoopEnabled) ..
 		" autoMarket=" .. tostring(AVM_DB.auxLoopMarketEnabled) ..
+		" reloadEachScan=" .. tostring(AVM_DB.reloadAfterScan and true or false) ..
 		" marketEvery=" .. tostring(AVM_DB.auxLoopMarketMinutes or 60) .. "m" ..
 		" gap=" .. tostring(AVM_DB.auxLoopDelaySeconds or 2) .. "s" ..
 		" nextIn=" .. string.format("%.1f", nextIn) .. "s" ..
@@ -4194,6 +4326,7 @@ local function avm_tick()
 
 	if avm_tick_pending(now) then return end
 	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
+	if AVM.reloadCycle.restorePending and avm_reload_fresh_start_tick(now) then return end
 	if avm_loop_tick(now) then return end
 
 	if AVM.queryInFlight then
@@ -4233,6 +4366,11 @@ local function avm_tick()
 				avm_restart_boundary()
 			end
 		end
+		return
+	end
+
+	if AVM.reloadCycle.pending then
+		avm_reload_cycle_tick(now)
 		return
 	end
 
@@ -4648,6 +4786,10 @@ local function avm_hard_stop(reason)
 	AVM.auxLoop.waitingForMarket = false
 	AVM.auxLoop.lastAction = "hard-stop"
 
+	AVM.reloadCycle.pending = false
+	AVM.reloadCycle.restorePending = false
+	AVM_DB.reloadCycle = nil
+
 	AVM.market.requested = false
 	AVM.market.manualRequested = false
 	AVM.market.requestSource = ""
@@ -4780,6 +4922,22 @@ local function avm_slash(msg)
 		avm_market_slash(rest)
 	elseif cmd == "loop" then
 		avm_loop_slash(rest)
+	elseif cmd == "reloadscan" then
+		local mode = string.lower(avm_trim(rest))
+		if mode == "off" then
+			AVM_DB.reloadAfterScan = false
+			AVM.reloadCycle.pending = false
+			AVM.reloadCycle.restorePending = false
+			AVM_DB.reloadCycle = nil
+			avm_print("RELOAD_AFTER_SCAN OFF - legacy in-process repeat fallback")
+		elseif mode == "on" then
+			AVM_DB.reloadAfterScan = true
+			avm_print("RELOAD_AFTER_SCAN ON - controlled reload after each completed full scan")
+		else
+			avm_print("RELOAD_AFTER_SCAN enabled=" .. tostring(AVM_DB.reloadAfterScan and true or false) ..
+				" pending=" .. tostring(AVM.reloadCycle.pending and true or false) ..
+				" restore=" .. tostring(AVM.reloadCycle.restorePending and true or false))
+		end
 	elseif cmd == "vendor" then
 		avm_vendor_slash(rest)
 	elseif cmd == "auxarb" then
@@ -4817,7 +4975,7 @@ local function avm_slash(msg)
 	elseif cmd == "gui" then
 		if AVM_WATCH_UI and AVM_WATCH_UI.Toggle then AVM_WATCH_UI.Toggle() else avm_print("WATCH GUI unavailable") end
 	else
-		avm_print("/avm on|off | live on|off | status | gui | list | del N | pages N | budget 100g | maxbuys N")
+		avm_print("/avm on|off | live on|off | reloadscan on|off|status | status | gui | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
 		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|hotpages 10|seekradius 1|targets")
 		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g")
@@ -4943,6 +5101,7 @@ frame:SetScript("OnEvent", function()
 		avm_defaults()
 		avm_market_storage_init()
 		for i = 1, AVM_WATCH_SLOTS do avm_ensure_rule_slot(i) end
+		local restoredReload = avm_restore_reload_snapshot()
 		-- Zero-config AH profile: legacy scanner stays off; AUX_ARB is armed automatically when AH opens.
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = true
@@ -4952,6 +5111,19 @@ frame:SetScript("OnEvent", function()
 		avm_print("loaded " .. AVM_VERSION .. " - DRY-RUN default")
 	elseif event == "PLAYER_LOGIN" then
 		avm_aux_tooltip_defaults()
+		if AVM.reloadCycle.restorePending then
+			-- Controlled ReloadUI preserved the AH session by suppressing AUX's
+			-- CloseAuctionHouse OnHide. Reopen the visible AUX Search and start a
+			-- normal fresh pass after all addon PLAYER_LOGIN handlers settle.
+			AVM.open = true
+			AVM.hardStop = false
+			AVM_DB.auxArbEnabled = true
+			AVM_DB.auxArbLive = true
+			AVM_DB.auxLoopEnabled = true
+			AVM.auxLoop.nextAt = 0
+			AVM.reloadCycle.freshStartAt = GetTime() + 0.5
+			avm_print("RELOAD_RESUME armed; reopening AUX Search with fresh scan")
+		end
 	elseif event == "AUCTION_HOUSE_SHOW" then
 		AVM.open = true
 		AVM.queryInFlight = false
@@ -4962,8 +5134,13 @@ frame:SetScript("OnEvent", function()
 		AVM.auxLoop.nextAt = 0
 		AVM.auxLoop.waitingForMarket = false
 		avm_restart_boundary(false)
-		avm_start_zero_config("AH-open")
+		if not AVM.reloadCycle.restorePending then
+			avm_start_zero_config("AH-open")
+		end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
+		AVM.reloadCycle.pending = false
+		AVM.reloadCycle.restorePending = false
+		AVM_DB.reloadCycle = nil
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = false
 		if AVM.vendor.active or AVM.vendor.requested then
