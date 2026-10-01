@@ -3307,10 +3307,18 @@
           "date": "2026-10-01",
           "run_id": 36925317402,
           "evidence": "Exact native follow-up feature passed Parallel feature preflight including changed x86 module compilation. F2 no longer arms g_fastActive/g_fastArmed and no longer calls AVM_FastMarketNativeStart."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "1fc75f42f6b547c52924e4afe31ac431ef4e2830",
+          "date": "2026-10-01",
+          "run_id": 36925961633,
+          "evidence": "Exact manual-MARKET scheduler handoff feature passed Parallel feature preflight. avm_market_begin now keeps the sole manual request token queued while original AUX Search reports busy, then starts only after the scheduler is released."
         }
       ],
       "package": null,
-      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged. Registry status corrected to the repository-supported awaiting_ci state after verifier run 36924820961 rejected the non-schema label awaiting_parallel_ci. Native F2 entry was additionally cut at the DLL layer because arming g_fastActive before the Lua no-op could otherwise capture a later AUX query."
+      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged. Registry status corrected to the repository-supported awaiting_ci state after verifier run 36924820961 rejected the non-schema label awaiting_parallel_ci. Native F2 entry was additionally cut at the DLL layer because arming g_fastActive before the Lua no-op could otherwise capture a later AUX query. Manual /avm market start now waits for AUXFAST_IsBusy=false before taking the AH scheduler, avoiding overlap with an active original AUX Search while preserving the continuous AUX loop after MARKET."
     }
   ]
 }
