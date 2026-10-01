@@ -1,3 +1,43 @@
+# AuxVmangos 0.15 — Original AUX fast arbitrage loop
+
+The validated original AUX Search path is now the primary full-market transport. On WoW 1.12.1 build 5875 the exact client query cooldown is reduced to 25 ms by the native companion, while original AUX remains response-correlated one request at a time.
+
+## Original AUX arbitrage loop
+
+For an ordinary unfiltered AUX Search, AuxVmangos evaluates every auction after original AUX has processed it into history:
+
+1. vendor profit uses original AUX learned merchant-sell values first, then the embedded Vanilla 1.12 vendor table;
+2. disenchant profit uses original AUX `aux.core.disenchant.value`, pricing expected materials from AUX history/market values;
+3. the best qualifying opportunity on the current page becomes a candidate;
+4. LIVE pauses original AUX only at the page boundary;
+5. the exact auction is re-queried on the unfiltered source page (plus adjacent pages if required);
+6. identity, profitability, wallet, purchase-count and session-budget limits are revalidated immediately before buy;
+7. money-delta confirmation remains authoritative; UNKNOWN still fail-closes further purchases;
+8. after confirmation, race, block or timeout, AUX resumes from its saved Search continuation.
+
+The v1 loop buys at most the best qualifying candidate from a scanned page before resuming at the next page. Seller names are intentionally ignored.
+
+Defaults:
+- AUX arbitrage valuation ON;
+- AUX arbitrage LIVE OFF on every login/reload/AH close;
+- vendor min profit 5s, max buyout 1g;
+- disenchant min profit 5s, max buyout 1g;
+- session purchase limit 1 unless changed with `/avm maxbuys N`;
+- session budget unlimited unless set with `/avm budget ...`.
+
+Commands:
+- `/avm auxarb status`
+- `/avm auxarb on|off`
+- `/avm auxarb live on|off`
+- `/avm auxarb demin 5s`
+- `/avm auxarb demax 1g`
+- vendor thresholds: `/avm vendor minprofit 5s`, `/avm vendor maxbuyout 1g`
+- shared guards: `/avm maxbuys N`, `/avm budget 100g`
+
+Disenchant valuation requires AUX history for the resulting dust/essence/shard. If AUX has no value for one of the possible materials, the auction is skipped rather than guessed.
+
+---
+
 # AuxVmangos 0.11 unified market bot + vendor FAST SEEK arbitrage
 
 Independent Auction House scanner/sniper for World of Warcraft 1.12.1 build 5875, designed for the observed vMaNGOS auction behavior.

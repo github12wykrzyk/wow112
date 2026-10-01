@@ -1,4 +1,4 @@
--- AuxFastBridge v1.6
+-- AuxFastBridge v1.7
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -7,6 +7,7 @@ AuxFastBridgeDB = AuxFastBridgeDB or {}
 local originalCanSendAuctionQuery = CanSendAuctionQuery
 local originalQueryAuctionItems = QueryAuctionItems
 local okScan, scan = pcall(require, "aux.core.scan")
+local okSearchTab, searchTab = pcall(require, "aux.tabs.search")
 local auxCore = require "aux"
 
 local busy = 0
@@ -30,6 +31,8 @@ local browseDetached = false
 local nativeCooldownMs = -1
 local nativeCooldownPatched = false
 local gateBlockedChecks = 0
+local pauseRequested = false
+local pausePage = -1
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -115,6 +118,8 @@ function AUXFAST_Status()
 		nativeCooldownMs = nativeCooldownMs,
 		nativeCooldownPatched = nativeCooldownPatched,
 		gateBlockedChecks = gateBlockedChecks,
+		pauseRequested = pauseRequested,
+		pausePage = pausePage,
 		queryPage = queryPage,
 		startedAt = startedAt,
 		hookInstalled = hookInstalled,
@@ -153,9 +158,40 @@ local function install_scan_hook()
 		if uiIsolation then
 			params.ignore_owner = true
 		end
+		local oldScanStart = params.on_scan_start
+		local oldAuction = params.on_auction
+		local oldPageScanned = params.on_page_scanned
 		local oldComplete = params.on_complete
 		local oldAbort = params.on_abort
 		local released = false
+
+		params.on_scan_start = function()
+			if oldScanStart then oldScanStart() end
+			if uiIsolation and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart) end
+		end
+
+		params.on_auction = function(record)
+			if oldAuction then oldAuction(record) end
+			if uiIsolation and AVM_AuxArbAuction then pcall(AVM_AuxArbAuction, record) end
+		end
+
+		params.on_page_scanned = function()
+			if oldPageScanned then oldPageScanned() end
+			if uiIsolation and AVM_AuxArbPageDone then
+				local state = get_state()
+				local page = state and state.page or queryPage
+				local last = page
+				if state and state.total_auctions then
+					local okLast, value = pcall(last_page, state.total_auctions)
+					if okLast and value then last = value end
+				end
+				local okPause, wantPause = pcall(AVM_AuxArbPageDone, page, last)
+				if okPause and wantPause then
+					pauseRequested = true
+					pausePage = page or -1
+				end
+			end
+		end
 
 		local function release()
 			if released then return end
@@ -178,14 +214,29 @@ local function install_scan_hook()
 
 		params.on_complete = function()
 			release()
-			if oldComplete then return oldComplete() end
+			local result
+			if oldComplete then result = oldComplete() end
+			if uiIsolation and AVM_AuxArbScanDone then pcall(AVM_AuxArbScanDone) end
+			pauseRequested = false
+			pausePage = -1
+			return result
 		end
 		params.on_abort = function()
+			local arbPause = pauseRequested
 			release()
-			if oldAbort then return oldAbort() end
+			local result
+			if oldAbort then result = oldAbort() end
+			pauseRequested = false
+			if arbPause and uiIsolation and AVM_AuxArbPaused then
+				pcall(AVM_AuxArbPaused, pausePage)
+			end
+			pausePage = -1
+			return result
 		end
 
 		if busy == 0 then
+			pauseRequested = false
+			pausePage = -1
 			uiEvents = 0
 			bypassChecks = 0
 			gateBlockedChecks = 0
@@ -244,12 +295,43 @@ local function install_scan_hook()
 		end)
 	end
 
+	-- A live arbitrage candidate is selected only after the whole current page
+	-- has been scanned. Abort at the next submit boundary so upstream Search can
+	-- save a correct continuation without invalidating the current scan stack.
+	local originalSubmitQuery = submit_query
+	submit_query = function()
+		if pauseRequested then
+			local state = get_state()
+			if state and state.id then M.abort(state.id) end
+			return
+		end
+		return originalSubmitQuery()
+	end
+
 	hookInstalled = true
 	return true
 end
 
 if not install_scan_hook() then
 	out("ERROR: aux.core.scan unavailable; fast transport disabled")
+end
+
+function AUXFAST_ResumeSearch()
+	if busy > 0 then
+		out("resume deferred: original AUX scan is still busy")
+		return false
+	end
+	if not okSearchTab or not searchTab or not searchTab.execute then
+		out("resume failed: aux.tabs.search unavailable")
+		return false
+	end
+	local ok, err = pcall(searchTab.execute, true)
+	if not ok then
+		out("resume failed: " .. tostring(err))
+		return false
+	end
+	out("resumed original AUX search continuation")
+	return true
 end
 
 CanSendAuctionQuery = function(...)
@@ -294,4 +376,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.6 loaded: stock gate + native 25ms QueryAuctionItems cooldown; hook=" .. tostring(hookInstalled))
+out("v1.7 loaded: fast stock gate + pause/revalidate/resume bridge; hook=" .. tostring(hookInstalled))

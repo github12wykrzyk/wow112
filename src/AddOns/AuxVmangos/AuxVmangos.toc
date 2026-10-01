@@ -1,8 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: vMaNGOS automation companion for original Aux + response-paced FAST MARKET + guarded vendor revalidation.
+## Notes: Original AUX fast-scan arbitrage companion: vendor + disenchant valuation, guarded revalidation, buy and resume.
 ## Author: github12wykrzyk/wow112
-## Version: 0.14-original-aux-bridge
+## Dependencies: aux-addon
+## Version: 0.15-original-aux-arbitrage
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
