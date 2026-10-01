@@ -104,7 +104,17 @@
       "LazyScript",
       "LazyWarlock",
       "SummonScout",
-      "AHThrottleTest"
+      "AHThrottleTest",
+      "AuxFastBridge"
+    ],
+    "external": [
+      {
+        "name": "aux-addon",
+        "repository": "shirsig/aux-addon-vanilla",
+        "commit": "6b56d0fec36eb2c4465b73727223aeaf547da6d7",
+        "destination": "aux-addon",
+        "purpose": "Original Aux 1.12 GUI/economics frontend pinned by exact upstream SHA; source is fetched during packaging, not vendored."
+      }
     ]
   },
   "gates": [

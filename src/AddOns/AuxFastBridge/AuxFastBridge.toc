@@ -1,0 +1,9 @@
+## Interface: 11200
+## Title: Aux FAST Bridge
+## Notes: Response-paced transport bridge for original Aux on WoW 1.12.1 / vMaNGOS.
+## Author: github12wykrzyk/wow112
+## Version: 1.0
+## Dependencies: aux-addon
+## OptionalDeps: AuxVmangos
+## SavedVariables: AuxFastBridgeDB
+AuxFastBridge.lua

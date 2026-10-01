@@ -2016,6 +2016,39 @@
       ],
       "package": null,
       "notes": "SummonScout 1.49 integrated candidate: the mistakenly inferred readiness cues were removed and the actual direct-whisper phrase 'i need one' is a high-confidence smart auto-invite cue."
+    },
+    {
+      "id": "ah-original-aux-fast-v1",
+      "branch": "feature/ah-original-aux-fast-v1",
+      "modules": [
+        "OriginalAux",
+        "AuxFastBridge",
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-fast-vendor-revalidate-fix"
+      ],
+      "shared_resources": [
+        "QueryAuctionItems / CanSendAuctionQuery",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "original Aux scan state machine and GUI",
+        "Aux merchant_sell learned vendor cache",
+        "AuxVmangos guarded vendor revalidation"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1ca845453f20ebd5ff596bac1c8123926070fc61",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "87bf1182324c08613bd8852f1ad58bc159b8a8d0",
+          "date": "2026-10-01",
+          "evidence": "Initial Parallel feature preflight run 36850449252 and Verify AI experiment registry run 36850449267 passed on exact SHA before parallel advanced with unrelated summon/ledger changes."
+        }
+      ],
+      "package": null,
+      "notes": "Restore original Aux frontend at pinned upstream commit 6b56d0f and keep its Search/Post/Auctions/Bids/history/tooltip/disenchant systems intact. AuxFastBridge removes only CanSendAuctionQuery waiting while an original Aux scan is active, preserving response-paced one-query-at-a-time state transitions. AuxVmangos vendor valuation now prefers original Aux learned merchant_sell data and falls back to the existing static table. F2 FAST MARKET is blocked while an original Aux scan is active. Rebased/merged onto latest parallel without overwriting unrelated summon work; exact rebased SHA still requires preflight."
     }
   ]
 }

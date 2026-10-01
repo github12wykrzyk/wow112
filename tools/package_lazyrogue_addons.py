@@ -3,6 +3,8 @@
 import argparse
 import hashlib
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -22,6 +24,58 @@ ALLOWED_EXTENSIONS = {
 
 def has_root_toc(root):
     return any(path.is_file() and path.suffix.lower() == ".toc" for path in root.iterdir())
+
+
+def declared_external_addons():
+    data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    addons = data.get("addons")
+    external = addons.get("external", []) if isinstance(addons, dict) else []
+    if not isinstance(external, list):
+        raise SystemExit("parallel candidate manifest has invalid external addons")
+    out = []
+    seen = set()
+    for item in external:
+        if not isinstance(item, dict):
+            raise SystemExit("external addon entry must be an object")
+        name = item.get("name")
+        repo = item.get("repository")
+        commit = item.get("commit")
+        destination = item.get("destination")
+        if not all(isinstance(x, str) and x for x in (name, repo, commit, destination)):
+            raise SystemExit("external addon entry missing name/repository/commit/destination")
+        if len(commit) != 40 or any(c not in "0123456789abcdefABCDEF" for c in commit):
+            raise SystemExit("external addon commit must be full SHA: " + name)
+        key = destination.lower()
+        if key in seen:
+            raise SystemExit("duplicate external addon destination: " + destination)
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def checkout_external_addons():
+    sources = {}
+    base = ROOT / "build/third_party_addons"
+    for item in declared_external_addons():
+        destination = item["destination"]
+        repo = item["repository"]
+        commit = item["commit"].lower()
+        path = base / destination
+        if path.exists():
+            shutil.rmtree(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--quiet", "--no-checkout", "https://github.com/" + repo + ".git", str(path)],
+            cwd=ROOT, check=True
+        )
+        subprocess.run(["git", "-C", str(path), "checkout", "--quiet", "--detach", commit], cwd=ROOT, check=True)
+        actual = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip().lower()
+        if actual != commit:
+            raise SystemExit("external addon SHA mismatch: " + destination)
+        if not has_root_toc(path):
+            raise SystemExit("external addon has no root .toc: " + destination)
+        sources[destination] = path
+    return sources
 
 
 def declared_addon_roots():
@@ -70,6 +124,13 @@ def discover_addons():
 
     if set(name.lower() for name in sources) != set(name.lower() for name in roots):
         raise SystemExit("packaged addon roots differ from parallel candidate manifest")
+
+    for folder, path in checkout_external_addons().items():
+        key = folder.lower()
+        if key in seen:
+            raise SystemExit("external addon collides with declared addon root: " + folder)
+        seen.add(key)
+        sources[folder] = path
     return sources
 
 
@@ -84,6 +145,9 @@ def main():
     for folder, root in sources.items():
         for path in sorted(root.rglob("*")):
             if not path.is_file():
+                continue
+            rel = path.relative_to(root)
+            if ".git" in rel.parts or path.name.startswith("."):
                 continue
             if path.suffix.lower() not in ALLOWED_EXTENSIONS:
                 raise SystemExit("unsupported addon file type: " + str(path.relative_to(ROOT)))

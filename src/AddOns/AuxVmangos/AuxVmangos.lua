@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.13-vmangos-fast-vendor-live"
+AVM_VERSION = "0.14-original-aux-bridge"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -744,6 +744,10 @@ local avm_vendor_candidate_from_row
 -- CMSG_AUCTION_LIST_ITEMS request in flight and calls these functions only
 -- after the exact 0x025C handler has populated the normal client auction list.
 function AVM_FastMarketNativeStart()
+	if AUXFAST_IsBusy and AUXFAST_IsBusy() then
+		avm_print("FAST MARKET blocked: original Aux scan is active")
+		return
+	end
 	if not AVM.open then
 		avm_print("FAST MARKET requires open Auction House")
 		return
@@ -1193,8 +1197,16 @@ avm_vendor_candidate_from_row = function(i)
 	if not name or not count or count <= 0 or not buyout or buyout <= 0 then return nil end
 
 	local itemId = avm_vendor_item_id(i)
-	if not itemId or not AVM_VENDOR_VALUES then return nil end
-	local vendorUnit = tonumber(AVM_VENDOR_VALUES[itemId]) or 0
+	if not itemId then return nil end
+	local vendorSource = "static"
+	local vendorUnit = 0
+	if aux and aux.account_data and aux.account_data.merchant_sell then
+		vendorUnit = tonumber(aux.account_data.merchant_sell[itemId]) or 0
+		if vendorUnit > 0 then vendorSource = "aux-learned" end
+	end
+	if vendorUnit <= 0 and AVM_VENDOR_VALUES then
+		vendorUnit = tonumber(AVM_VENDOR_VALUES[itemId]) or 0
+	end
 	if vendorUnit <= 0 then return nil end
 
 	local vendorTotal = vendorUnit * count
@@ -1219,6 +1231,7 @@ avm_vendor_candidate_from_row = function(i)
 		buyout = buyout,
 		unit = math.floor(buyout / count),
 		vendorUnit = vendorUnit,
+		vendorSource = vendorSource,
 		vendorTotal = vendorTotal,
 		profit = profit,
 		owner = owner,
