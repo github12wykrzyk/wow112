@@ -207,9 +207,15 @@ def main():
         'return m->set_value(1u,&value)?TRUE:FALSE;',
         'SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,enabled.u32?0u:1u,0);',
         'SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,enabled.u32?1u:0u,0);',
-        'static const DWORD g_ui_profile_summon_ids[]={1u,21u};',
-        '{PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,2u,FALSE',
+        'static const DWORD g_ui_profile_summon_ids[]={1u};',
+        '{PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,1u,FALSE',
         'g_ui_summon_master_profile=NULL;g_ui_summon_slave_profile=NULL;',
+        'autosummonassist_char_',
+        'static void ui_profile_sync_antiafk(void)',
+        'ui_profile_read(section,key,&bits)',
+        'ui_profile_write(section,key,value.u32)',
+        'ui_profile_sync_antiafk();',
+        '(saved per character)',
     ):
         if token not in text:
             print("ERROR: AutoSummon dedicated debug tab regression:", token)

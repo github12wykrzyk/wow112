@@ -3534,6 +3534,28 @@
       "tests": [],
       "package": null,
       "notes": "Runtime screenshot reports AUX FAST restart failure at pinned upstream tabs/search/results.lua:302: EditBox:SetText receives a non-string filter during bridge-driven execute(true). Exact installed gameplay SHA is not independently established, so no game result is recorded. Upstream creates the first Search with filter_string=nil; v2.8 normalizes the internal current_search().filter_string from search_box (or empty string) before both resume and restart, preserving execute(true), continuation semantics and the v2.7 headless UI snapshot rather than resetting the results table."
+    },
+    {
+      "id": "autosummon-antiafk-per-character",
+      "branch": "feature/antiafk-per-character",
+      "modules": [
+        "WoWPlayerESP",
+        "AutoSummonAssist"
+      ],
+      "dependencies": [
+        "autosummon-antiafk-independent"
+      ],
+      "shared_resources": [
+        "wow112_parallel_gui.ini per-character Anti-AFK state",
+        "WoW 5875 live local-player GUID",
+        "AutoSummonAssist W112_CONTROL_API_V1 setting 21"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "820b518ae726a05f1a8fcb52845846faa439753d",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Anti-AFK setting 21 is removed from global AutoSummon profile persistence and stored under a character-GUID-specific INI section. Character switches reset the binding and restore the new character's own value once the live world/GUID guard is ready. A character with no saved value starts from the provider default and persists that value. AutoSummon role setting 1 and unrelated GUI settings keep their existing persistence."
     }
   ]
 }

@@ -1158,7 +1158,7 @@ static DWORD g_ui_profile_next_frame=0u;
 static const DWORD g_ui_profile_core_ids[]={1u,2u,3u,8u,9u,10u,11u,12u,13u,14u,15u,16u,17u,18u,19u,20u,21u,22u,25u,26u,27u,29u,30u,31u,32u,33u,34u,35u,36u,43u,46u,49u,60u,66u,70u,75u,76u,77u,78u,79u,80u};
 static const DWORD g_ui_profile_floor_ids[]={1u,2u,3u};
 static const DWORD g_ui_profile_single_ids[]={1u};
-static const DWORD g_ui_profile_summon_ids[]={1u,21u};
+static const DWORD g_ui_profile_summon_ids[]={1u};
 struct UiProfileModule {
     const char *dll;
     DWORD minimum;
@@ -1173,16 +1173,38 @@ static struct UiProfileModule g_ui_profile_modules[]={
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
-    {PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,2u,FALSE,{0},{0}}
+    {PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,1u,FALSE,{0},{0}}
 };
 static volatile DWORD *const g_ui_profile_esp_flags[]={
     &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile,&g_quest_enabled
 };
 static DWORD g_ui_profile_esp_last[5];
+static DWORD g_ui_profile_antiafk_guid_lo=0u;
+static DWORD g_ui_profile_antiafk_guid_hi=0u;
+static DWORD g_ui_profile_antiafk_last=0u;
+static BOOL g_ui_profile_antiafk_seen=FALSE;
+static BOOL g_ui_profile_antiafk_restored=FALSE;
 
 static void ui_profile_key(char key[16],DWORD id) {
     char *end=app_u32(key,id);
     *end=0;
+}
+static char *ui_profile_hex32(char *p,DWORD value) {
+    static const char hex[]="0123456789ABCDEF";
+    int shift;
+    for(shift=28;shift>=0;shift-=4)*p++=hex[(value>>shift)&15u];
+    return p;
+}
+static BOOL ui_profile_antiafk_section(char section[48]) {
+    char *p=section;
+    if(!g_challenge_world_ready)return FALSE;
+    if(!g_challenge_world_guid_lo&&!g_challenge_world_guid_hi)return FALSE;
+    p=app_str(p,"autosummonassist_char_");
+    p=ui_profile_hex32(p,g_challenge_world_guid_hi);
+    *p++='_';
+    p=ui_profile_hex32(p,g_challenge_world_guid_lo);
+    *p=0;
+    return TRUE;
 }
 static BOOL ui_profile_read(const char *section,const char *key,DWORD *out) {
     static const char hex[]="0123456789ABCDEF";
@@ -1228,6 +1250,58 @@ static const W112_ControlSettingV1 *ui_profile_descriptor(const W112_ControlModu
         if(m->settings[i].setting_id==id&&m->settings[i].struct_size>=sizeof(W112_ControlSettingV1))
             return &m->settings[i];
     return NULL;
+}
+static void ui_profile_sync_antiafk(void) {
+    const W112_ControlModuleV1 *m;
+    const W112_ControlSettingV1 *s;
+    W112_ControlValueV1 value,saved;
+    char section[48],key[16];
+    DWORD bits,lo,hi;
+    BOOL loaded=FALSE;
+
+    if(!ui_profile_antiafk_section(section)) {
+        g_ui_profile_antiafk_guid_lo=0u;
+        g_ui_profile_antiafk_guid_hi=0u;
+        g_ui_profile_antiafk_seen=FALSE;
+        g_ui_profile_antiafk_restored=FALSE;
+        return;
+    }
+
+    lo=g_challenge_world_guid_lo;
+    hi=g_challenge_world_guid_hi;
+    if(lo!=g_ui_profile_antiafk_guid_lo||hi!=g_ui_profile_antiafk_guid_hi) {
+        g_ui_profile_antiafk_guid_lo=lo;
+        g_ui_profile_antiafk_guid_hi=hi;
+        g_ui_profile_antiafk_seen=FALSE;
+        g_ui_profile_antiafk_restored=FALSE;
+    }
+
+    m=ui_work_pp_module(PAR_SUMMON_DLL,31u);
+    if(!m||!m->module_id||!m->settings)return;
+    s=ui_profile_descriptor(m,21u);
+    if(!s||(s->flags&W112_CTL_READ_ONLY)||!m->get_value(21u,&value))return;
+    ui_profile_key(key,21u);
+
+    if(!g_ui_profile_antiafk_restored) {
+        if(ui_profile_read(section,key,&bits)) {
+            saved.u32=bits;
+            if(ui_profile_value_valid(s,saved)) {
+                if(!m->set_value(21u,&saved)||!m->get_value(21u,&value))return;
+                loaded=TRUE;
+            }
+        }
+        if(!loaded&&!ui_profile_write(section,key,value.u32))return;
+        g_ui_profile_antiafk_last=value.u32;
+        g_ui_profile_antiafk_seen=TRUE;
+        g_ui_profile_antiafk_restored=TRUE;
+        return;
+    }
+
+    if(g_ui_profile_antiafk_seen&&g_ui_profile_antiafk_last==value.u32)return;
+    if(ui_profile_write(section,key,value.u32)) {
+        g_ui_profile_antiafk_last=value.u32;
+        g_ui_profile_antiafk_seen=TRUE;
+    }
 }
 static void ui_filters_changed(void); /* callback defined below; required by x86 C99 compiler */
 static void ui_profile_bootstrap(void) {
@@ -1311,6 +1385,7 @@ static void ui_profile_sync(void) {
             }
         }
     }
+    ui_profile_sync_antiafk();
 }
 
 /* Switching tabs changes only HWND visibility; ESP cache rescans are
@@ -1903,7 +1978,7 @@ static BOOL ui_create(HWND game) {
     g_ui_summon_nearest=ui_label(g_parallel_ui_hwnd,"",46,465,665,34,FALSE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_nearest);
     g_ui_summon_antiafk_check=ui_button(g_parallel_ui_hwnd,
-        "ANTI-AFK - SPACE to this WoW every random 100-120s",
+        "ANTI-AFK - SPACE to this WoW every random 100-120s (saved per character)",
         46,507,665,36,230u,TRUE);
     ui_add_to_page(UI_TAB_SUMMON,g_ui_summon_antiafk_check);
     g_ui_summon_antiafk_state=ui_label(g_parallel_ui_hwnd,"",46,550,665,58,FALSE);
