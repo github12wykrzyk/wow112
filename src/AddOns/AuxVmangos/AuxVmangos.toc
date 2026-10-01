@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with mid-scan DE live purchase, chunked smooth MARKET processing, live fallback selection and guarded purchases.
+## Notes: AUX vendor/DE/flip loop with automatic MARKET disabled by default; full MARKET remains manual opt-in only.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.22-midscan-de-smooth-market
+## Version: 0.22.1-loop-no-auto-market
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

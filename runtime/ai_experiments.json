@@ -3013,6 +3013,44 @@
         "artifact_id": 11189630497
       },
       "notes": "Replace the unused local Diagnostics ZIP dashboard action with a guarded Kill All WoW action. It targets only WoW.exe/WoW_*.exe processes whose executable path is inside the selected game directory, requires confirmation, and immediately attempts pending LIVE UPDATE finalization after the last client exits. GitHub issue report and AH dump actions remain."
+    },
+    {
+      "id": "ah-loop-no-auto-market",
+      "branch": "feature/ah-loop-no-auto-market",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-midscan-de-smooth-market",
+        "ah-postscan-live-fallback"
+      ],
+      "shared_resources": [
+        "AUX_ARB continuous loop scheduler",
+        "full MARKET scheduler ownership",
+        "manual MARKET snapshot path"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "110eee1ea2b429d18e63b27bcf7a4dd12cf07773",
+      "verified_commit": "3dcde810ae1a7c257dd9de5faa256a16a86df1e0",
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "110eee1ea2b429d18e63b27bcf7a4dd12cf07773",
+          "date": "2026-10-01",
+          "evidence": "User reports DE still did not buy and loop immediately entered full MARKET again; requested automatic MARKET be disabled to isolate purchase flow."
+        },
+        {
+          "kind": "parallel_feature_preflight",
+          "result": "pass",
+          "commit": "3dcde810ae1a7c257dd9de5faa256a16a86df1e0",
+          "date": "2026-10-01",
+          "run_id": 36914154878,
+          "evidence": "Exact feature SHA passed Parallel feature preflight."
+        }
+      ],
+      "package": null,
+      "notes": "Automatic full MARKET snapshots are disabled by default in continuous AUX loop and existing users migrate to autoMarket=false. /avm loop on explicitly keeps automatic MARKET off. Manual /avm market start remains available; /avm loop market on is explicit diagnostic opt-in. Vendor/DE/flip scan cadence is unchanged."
     }
   ]
 }

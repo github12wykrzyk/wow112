@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.22-midscan-de-smooth-market"
+AVM_VERSION = "0.22.1-loop-no-auto-market"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -258,6 +258,7 @@ local function avm_diag_record(msg)
 		flipSafetyMarginPct = AVM_DB.flipSafetyMarginPct or 25,
 		auxLoopEnabled = AVM_DB.auxLoopEnabled and true or false,
 		auxLoopMarketMinutes = AVM_DB.auxLoopMarketMinutes or 60,
+		auxLoopMarketEnabled = AVM_DB.auxLoopMarketEnabled and true or false,
 		auxLoopNextAt = AVM.auxLoop and AVM.auxLoop.nextAt or 0,
 		auxLoopWaitingMarket = AVM.auxLoop and AVM.auxLoop.waitingForMarket and true or false,
 		auxLoopCycles = AVM.auxLoop and AVM.auxLoop.cycles or 0,
@@ -351,6 +352,11 @@ local function avm_defaults()
 	if AVM_DB.marketStorageSchema == nil then AVM_DB.marketStorageSchema = 0 end
 	if AVM_DB.auxLoopEnabled == nil then AVM_DB.auxLoopEnabled = false end
 	if AVM_DB.auxLoopMarketMinutes == nil then AVM_DB.auxLoopMarketMinutes = 60 end
+	if AVM_DB.auxLoopMarketEnabled == nil then AVM_DB.auxLoopMarketEnabled = false end
+	if AVM_DB.auxLoopMarketPolicySchema == nil then
+		AVM_DB.auxLoopMarketEnabled = false
+		AVM_DB.auxLoopMarketPolicySchema = 1
+	end
 	if AVM_DB.marketPacingSchema == nil then
 		if tonumber(AVM_DB.auxLoopMarketMinutes) == 15 then AVM_DB.auxLoopMarketMinutes = 60 end
 		AVM_DB.marketPacingSchema = 1
@@ -395,7 +401,7 @@ local function avm_defaults()
 end
 
 local function avm_loop_market_due()
-	if not AVM_DB.auxLoopEnabled then return false end
+	if not AVM_DB.auxLoopEnabled or not AVM_DB.auxLoopMarketEnabled then return false end
 	local mins = tonumber(AVM_DB.auxLoopMarketMinutes) or 60
 	if mins <= 0 then return false end
 	local now = time()
@@ -484,6 +490,7 @@ local function avm_loop_status()
 		nextIn = AVM.auxLoop.nextAt - GetTime()
 	end
 	avm_print("LOOP enabled=" .. tostring(AVM_DB.auxLoopEnabled) ..
+		" autoMarket=" .. tostring(AVM_DB.auxLoopMarketEnabled) ..
 		" marketEvery=" .. tostring(AVM_DB.auxLoopMarketMinutes or 60) .. "m" ..
 		" gap=" .. tostring(AVM_DB.auxLoopDelaySeconds or 2) .. "s" ..
 		" nextIn=" .. string.format("%.1f", nextIn) .. "s" ..
@@ -508,20 +515,34 @@ local function avm_loop_slash(rest)
 		AVM_DB.auxArbEnabled = true
 		AVM_DB.marketAutoMinutes = 0
 		AVM_DB.enabled = false
+		AVM_DB.auxLoopMarketEnabled = false
+		AVM.market.requested = false
 		AVM.auxLoop.waitingForMarket = false
 		avm_loop_schedule_arb("loop enabled")
-		avm_print("LOOP ON - AUX_ARB repeats continuously; MARKET snapshot every " ..
-			tostring(AVM_DB.auxLoopMarketMinutes or 60) .. "m")
+		avm_print("LOOP ON - AUX_ARB repeats continuously; automatic MARKET is OFF")
 	elseif sub == "off" then
 		AVM_DB.auxLoopEnabled = false
 		AVM.auxLoop.nextAt = 0
 		AVM.auxLoop.waitingForMarket = false
 		avm_print("LOOP OFF - current scan/transaction may finish; no automatic restart")
+	elseif sub == "market" then
+		local v = string.lower(avm_trim(arg))
+		if v == "on" then
+			AVM_DB.auxLoopMarketEnabled = true
+			avm_print("LOOP automatic MARKET ON - manual opt-in")
+		elseif v == "off" then
+			AVM_DB.auxLoopMarketEnabled = false
+			AVM.market.requested = false
+			AVM.auxLoop.waitingForMarket = false
+			avm_print("LOOP automatic MARKET OFF")
+		else
+			avm_print("loop market on|off")
+		end
 	elseif sub == "marketmin" then
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 1 and n <= 1440 then
 			AVM_DB.auxLoopMarketMinutes = n
-			avm_print("LOOP MARKET interval=" .. tostring(n) .. " minutes")
+			avm_print("LOOP MARKET interval=" .. tostring(n) .. " minutes (autoMarket=" .. tostring(AVM_DB.auxLoopMarketEnabled) .. ")")
 		else
 			avm_print("loop marketmin must be 1..1440")
 		end
@@ -536,7 +557,7 @@ local function avm_loop_slash(rest)
 	elseif sub == "status" then
 		avm_loop_status()
 	else
-		avm_print("/avm loop on|off|status|marketmin 15|delay 2")
+		avm_print("/avm loop on|off|status|market on|off|marketmin 60|delay 2")
 	end
 end
 
