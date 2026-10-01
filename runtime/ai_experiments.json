@@ -2815,11 +2815,26 @@
         "PlayerESP wow112_parallel_gui*.ini persistence"
       ],
       "status": "awaiting_ci",
-      "observed_head": "83c5e338d470921f31b311f8bc5c3d329c08ecb2",
-      "verified_commit": null,
-      "tests": [],
+      "observed_head": "3ef85e4e2bdabac3eda04766959535b8ff25d480",
+      "verified_commit": "3ef85e4e2bdabac3eda04766959535b8ff25d480",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "3ef85e4e2bdabac3eda04766959535b8ff25d480",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36904695619 passed on exact SHA 3ef85e4e2bdabac3eda04766959535b8ff25d480, compiling/verifying the PlayerESP per-account profile change."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "3ef85e4e2bdabac3eda04766959535b8ff25d480",
+          "date": "2026-10-01",
+          "evidence": "Verify AI experiment registry run 36904695254 passed on exact SHA 3ef85e4e2bdabac3eda04766959535b8ff25d480."
+        }
+      ],
       "package": null,
-      "notes": "Split PlayerESP GUI persistence per MULTIBOX account. Launcher-managed clients derive a deterministic account-specific INI filename from WOW112_AUTOLOGIN_ACCOUNT; ordinary/manual launches keep the legacy wow112_parallel_gui.ini. This prevents settings configured on one account from being restored by every simultaneously launched client."
+      "notes": "Split PlayerESP GUI persistence per MULTIBOX account. Launcher-managed clients derive a deterministic account-specific INI filename from WOW112_AUTOLOGIN_ACCOUNT; ordinary/manual launches keep the legacy wow112_parallel_gui.ini. New/no-profile clients now start with ESP OFF; an existing saved per-account ESP value still restores explicitly. This prevents settings configured on one account from being restored by every simultaneously launched client."
     }
   ]
 }

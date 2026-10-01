@@ -449,7 +449,7 @@ static volatile DWORD g_bg_score_mode = 0u; /* Latched until world reset once sc
 /* The cached local-player pointer belongs to one Object Manager generation. */
 static DWORD g_render_manager = 0u;
 
-static volatile DWORD g_esp_enabled = 1u;
+static volatile DWORD g_esp_enabled = 0u; /* Safe default: saved per-account profile may explicitly restore ON. */
 static volatile DWORD g_parallel_show_horde=0u;
 static volatile DWORD g_parallel_show_alliance=0u;
 static volatile DWORD g_parallel_show_hostile=1u;
