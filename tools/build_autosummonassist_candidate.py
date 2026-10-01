@@ -199,6 +199,14 @@ def main():
             "shared_state_with_gui": True
         },
         "native_summon_cast_bridge": True,
+        "summon_coordinator": {
+            "shared_map": "Local\\\\WoW112_SummonAssist_<PID>",
+            "version": 1,
+            "destinations": {"hyjal": 1, "hydraxian": 2},
+            "gate": "for configured shared-pair destinations Ritual is not issued until updater writes ready_seq for the exact request sequence",
+            "portal_click_telemetry": "cumulative native PRE/POST interaction counters and current ritual GUID are published per process",
+            "fallback": "non-shared destinations retain the existing direct summon bridge"
+        },
         "native_summon_busy_gate": "no pre-issue level gate; every sequenced request is consumed once and CastSpell is allowed to prove readiness, so stale cast/channel state cannot pin later customers",
         "native_summon_busy_source": "SummonScout SPELLCAST_START is authoritative for the exact request sequence; the native 1600ms watchdog reports no-start only when that sequence was not marked started",
         "native_summon_module_enabled_dependency": False,

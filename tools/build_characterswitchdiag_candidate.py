@@ -54,8 +54,8 @@ def main():
             "sha256":sha256_file(out),"size":out.stat().st_size,"pe_machine":pe.get("machine_hex"),
             "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
             "module_id":"characterswitchdiag","diagnostic_only":False,
-            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","FAST direct ClientServices disconnect/relogin slot 1/2","Local\\\\WoW112_SummonWorker_<PID> coordinator worker map","combat-gated external PREPARE slot command","CharacterSwitchDiag.log and SummonWorker_<PID>.log"],
-            "safety":["no logout timer patch","no crafted packet injection","coordinator switch waits while UnitAffectingCombat(player) is true","shared worker command validates slot 1-10 and publishes heartbeat/ack/state"],
+            "capabilities":["headless FAST direct ClientServices disconnect/relogin slot switching","Local\\\\WoW112_SummonWorker_<PID> coordinator worker map","combat-gated external PREPARE slot command","CharacterSwitchDiag.log and SummonWorker_<PID>.log"],
+            "safety":["no standalone in-game diagnostic overlay","no logout timer patch","no crafted packet injection","coordinator switch waits while UnitAffectingCombat(player) is true","shared worker command validates slot 1-10 and publishes heartbeat/ack/state"],
             "timings_ms":timing}
     if a.compile_only:
         module["process_total_ms"]=(time.perf_counter()-t0)*1000.0
@@ -78,7 +78,7 @@ def main():
                                 "contains_characterswitchdiag":True}
         obj["characterswitchdiag_pilot"]={"module":DLL_NAME,"branch":"parallel","game_runtime_tested":False,
             "test":"World -> direct ClientServices::Disconnect -> AutoLoginBridge relogin -> slot 1/2 -> World",
-            "purpose":"measure whether exact-build world connection teardown enables same-process character recycle without stock logout wait"}
+            "purpose":"headless coordinator worker: exact-build world connection teardown enables same-process character recycle without a persistent in-game diagnostic panel"}
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
     summary["result"]="PASS" if summary["ready_for_test"] else "FAIL"
     pm.write_text(json.dumps(meta,indent=2)+"\n",encoding="utf-8")

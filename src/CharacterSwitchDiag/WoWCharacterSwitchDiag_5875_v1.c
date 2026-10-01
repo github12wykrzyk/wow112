@@ -1,5 +1,5 @@
 /*
- * WoWCharacterSwitchDiag 5875 v4
+ * WoWCharacterSwitchDiag 5875 v6 - headless summon switch worker
  * FAST diagnostic: direct ClientServices disconnect -> AutoLoginBridge relogin
  * -> slot -> world.
  *
@@ -339,7 +339,7 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
 {
     DWORD world=rd32(WOW_OBJMGR)?1:0;(void)h;(void)m;(void)id;g_world=world;
     if(world){
-        g_glueVisible=0;probe_combat(now);ensure_ui();poll_worker_cmd(now);poll_cmd(now);
+        g_glueVisible=0;probe_combat(now);poll_worker_cmd(now);
         if(g_phase==PHASE_ENTERING && !g_lastWorld){
             g_elapsedTotal=g_startedAt?now-g_startedAt:0;g_phase=PHASE_COMPLETE;g_currentSlot=g_targetSlot;g_workerState=WORKER_READY;
             log_line("WORLD_ENTERED",now,g_elapsedTotal);worker_log_event("COORD_READY",now);
@@ -347,7 +347,6 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
         if(g_phase==PHASE_FAST_DISCONNECT && g_startedAt && now-g_startedAt>5000u){
             g_lastError=15;g_phase=PHASE_FAILED;log_line("WORLD_STILL_PRESENT_TIMEOUT",now,rd32(WOW_OBJMGR));
         }
-        update_ui(now);
     }else{
         probe_glue();
         if(g_phase==PHASE_FAST_DISCONNECT){
@@ -383,10 +382,10 @@ static int W112_CTL_STDCALL getv(w112_u32 id,W112_ControlValueV1*v)
     else if(id==5)v->u32=g_glueVisible;else if(id==6)v->u32=g_elapsedToGlue;else if(id==7)v->u32=g_elapsedTotal;else return 0;return 1;
 }
 static int W112_CTL_STDCALL setv(w112_u32 id,const W112_ControlValueV1*v){(void)id;(void)v;return 0;}
-static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlModuleV1),"characterswitchdiag","Character Switch Diag",0x00020000u,7,g_settings,getv,setv};
+static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlModuleV1),"characterswitchdiag","Summon Switch Worker",0x00030000u,7,g_settings,getv,setv};
 __declspec(dllexport) const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_settings();return &mod;}
 BOOL WINAPI DllMain(HMODULE h,DWORD r,LPVOID x)
 {
-    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V5_COORD",GetTickCount(),WOW_CLIENTSERVICES_DISC);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
+    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V6_COORD_HEADLESS",GetTickCount(),WOW_CLIENTSERVICES_DISC);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
     else if(r==DLL_PROCESS_DETACH){if(g_timer)KillTimer(NULL,g_timer);shutdown_worker_map();}return TRUE;
 }

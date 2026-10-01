@@ -1691,7 +1691,7 @@
     },
     {
       "id": "slave-coordinator-v1",
-      "branch": "feature/slave-coordinator-v1-r2",
+      "branch": "parallel",
       "modules": [
         "UpdaterSummonCoordinator",
         "CharacterSwitchDiag"
@@ -1707,12 +1707,62 @@
         "AutoLoginBridge relogin handoff",
         "SummonCoordinator.log / SummonWorker_<PID>.log"
       ],
+      "status": "awaiting_game_test",
+      "observed_head": "65f8d932ae472948d6ec62604c6458de38f5dad7",
+      "verified_commit": "65f8d932ae472948d6ec62604c6458de38f5dad7",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "65f8d932ae472948d6ec62604c6458de38f5dad7",
+          "date": "2026-10-01",
+          "evidence": "Rebased feature preflight run 36833485157 and updater run 36833485206 passed before integration; exact integrated parallel Build work candidate run 36833612921 and updater run 36833612910 passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "65f8d932ae472948d6ec62604c6458de38f5dad7",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11148555225 and updater artifact 11147684244 were produced for exact integrated parallel SHA; FINAL_PACKAGE and candidate attestation passed."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "65f8d932ae472948d6ec62604c6458de38f5dad7",
+        "artifact_id": 11148555225
+      },
+      "notes": "Integrated V1 manual PREPARE pilot for two shared slave workers. Exact parallel candidate/updater passed; gameplay behavior remains unverified. This baseline is superseded for further development by summon-coordinator-auto-v2."
+    },
+    {
+      "id": "summon-coordinator-auto-v2",
+      "branch": "feature/summon-coordinator-auto-v2",
+      "modules": [
+        "UpdaterSummonCoordinator",
+        "CharacterSwitchDiag",
+        "AutoSummonAssist",
+        "SummonScout"
+      ],
+      "dependencies": [
+        "slave-coordinator-v1",
+        "summon-coordinator-debug-report-v1",
+        "autosummon-assist-parallel",
+        "character-switch-relogin-handoff-v5"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonWorker_<PID> shared worker map",
+        "Local\\\\WoW112_SummonAssist_<PID> request/click telemetry map",
+        "updater accountSessions PID/account binding",
+        "SummonScout W112_AUTOSUMMON_DESTINATION + exact request sequence",
+        "ClientServices::Disconnect 0x005AB1A0",
+        "AutoLoginBridge relogin handoff",
+        "SummonCoordinator.log / SummonWorker_<PID>.log"
+      ],
       "status": "awaiting_ci",
-      "observed_head": "39c9563f2db15f9e4f3526ff35b9d02b9a4c969f",
+      "observed_head": "65f8d932ae472948d6ec62604c6458de38f5dad7",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "V1 manual PREPARE pilot for exactly two shared slave workers. Updater selects two distinct account-bound WoW processes, maps HYJAL/HYDRAXIAN to configurable character slots, sends one semantic pair request, and waits for READY 2/2. CharacterSwitchDiag exposes a per-PID shared worker map, blocks FAST switching during combat, reports heartbeat/ack/state/phase/error/current slot, and writes per-worker diagnostics. V1 intentionally does not automate Ritual or SummonScout yet."
+      "notes": "V2 removes the persistent in-game Character Switch Diagnostic overlay while preserving its headless switch worker/backend. SummonScout publishes the configured single destination. AutoSummonAssist gates HYJAL/HYDRAXIAN Ritual requests on exact coordinator READY and publishes per-process request/cast/portal-click telemetry. The updater automatically arbitrates the two shared slave accounts without preemption or a global FIFO: oldest live pending request acquires the pair, both workers switch with combat hard-block, Ritual is released only after READY 2/2, and the lease is released after both slave native portal-click PRE counters advance or a controlled timeout. Other summon destinations retain the legacy direct bridge."
     }
   ]
 }

@@ -18,15 +18,23 @@ namespace WoW112Updater
         public string WorkerBId { get; set; }
         public int HyjalSlot { get; set; }
         public int HydraxianSlot { get; set; }
+        public bool AutoEnabled { get; set; }
     }
 
     internal sealed partial class MainForm
     {
         private const uint SummonWorkerMagic = 0x53323157u;
         private const uint SummonWorkerVersion = 1u;
+        private const uint SummonAssistMagic = 0x41323157u;
+        private const uint SummonAssistVersion = 1u;
         private const int SummonWorkerMapSize = 64;
-        private const int SummonPrepareTimeoutMs = 45000;
+        private const int SummonAssistMapSize = 64;
+        private const int SummonPrepareTimeoutMs = 30000;
+        private const int SummonClickTimeoutMs = 10000;
         private bool summonCoordinatorBusy;
+        private bool summonCoordinatorAutoTick;
+        private System.Windows.Forms.Timer summonCoordinatorTimer;
+        private SummonCoordinatorConfig summonCoordinatorConfig;
 
         private sealed class SummonWorkerSnapshot
         {
@@ -107,17 +115,110 @@ namespace WoW112Updater
             private static extern bool CloseHandle(IntPtr handle);
         }
 
+        private sealed class SummonAssistSnapshot
+        {
+            public uint Pid, Heartbeat, RequestSeq, Destination, State, ReadySeq, FailSeq, ActiveSeq;
+            public uint PortalPreCalls, PortalPostReturns, PortalGuidLo, PortalGuidHi, RequestTick, LastEventTick;
+        }
+
+        private sealed class SummonAssistChannel : IDisposable
+        {
+            private const uint FileMapAllAccess = 0x000F001Fu;
+            private readonly IntPtr mapping;
+            private readonly IntPtr view;
+            internal readonly int Pid;
+
+            private SummonAssistChannel(int pid, IntPtr mappingHandle, IntPtr mappedView)
+            {
+                Pid = pid; mapping = mappingHandle; view = mappedView;
+            }
+
+            internal static SummonAssistChannel TryOpen(int pid)
+            {
+                var name = "Local\\WoW112_SummonAssist_" + pid;
+                var mapping = OpenFileMapping(FileMapAllAccess, false, name);
+                if (mapping == IntPtr.Zero) return null;
+                var view = MapViewOfFile(mapping, FileMapAllAccess, 0, 0, (UIntPtr)SummonAssistMapSize);
+                if (view == IntPtr.Zero)
+                {
+                    CloseHandle(mapping);
+                    return null;
+                }
+                var channel = new SummonAssistChannel(pid, mapping, view);
+                if (channel.Read32(0) != SummonAssistMagic ||
+                    channel.Read32(4) != SummonAssistVersion ||
+                    channel.Read32(8) != (uint)pid)
+                {
+                    channel.Dispose();
+                    return null;
+                }
+                return channel;
+            }
+
+            internal SummonAssistSnapshot Read()
+            {
+                return new SummonAssistSnapshot {
+                    Pid = Read32(8), Heartbeat = Read32(12), RequestSeq = Read32(16), Destination = Read32(20),
+                    State = Read32(24), ReadySeq = Read32(28), FailSeq = Read32(32), ActiveSeq = Read32(36),
+                    PortalPreCalls = Read32(40), PortalPostReturns = Read32(44), PortalGuidLo = Read32(48),
+                    PortalGuidHi = Read32(52), RequestTick = Read32(56), LastEventTick = Read32(60)
+                };
+            }
+
+            internal void SetReady(uint seq)
+            {
+                Write32(28, seq);
+            }
+
+            internal void SetFail(uint seq)
+            {
+                Write32(32, seq);
+            }
+
+            private uint Read32(int offset) { return unchecked((uint)Marshal.ReadInt32(view, offset)); }
+            private void Write32(int offset, uint value) { Marshal.WriteInt32(view, offset, unchecked((int)value)); }
+
+            public void Dispose()
+            {
+                if (view != IntPtr.Zero) UnmapViewOfFile(view);
+                if (mapping != IntPtr.Zero) CloseHandle(mapping);
+            }
+
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            private static extern IntPtr OpenFileMapping(uint desiredAccess, bool inheritHandle, string name);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            private static extern IntPtr MapViewOfFile(IntPtr mapping, uint desiredAccess, uint offsetHigh, uint offsetLow, UIntPtr bytesToMap);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool UnmapViewOfFile(IntPtr address);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool CloseHandle(IntPtr handle);
+        }
+
+        private sealed class PendingSummonRequest
+        {
+            public int Pid;
+            public SummonAssistSnapshot Snapshot;
+        }
+
         private SummonCoordinatorConfig LoadSummonCoordinatorConfig()
         {
-            var fallback = new SummonCoordinatorConfig { Version = 1, WorkerAId = "", WorkerBId = "", HyjalSlot = 1, HydraxianSlot = 2 };
+            var fallback = new SummonCoordinatorConfig { Version = 2, WorkerAId = "", WorkerBId = "", HyjalSlot = 1, HydraxianSlot = 2, AutoEnabled = true };
             try
             {
                 var path = Path.Combine(configDir, "summon_coordinator.json");
                 if (!File.Exists(path)) return fallback;
                 if (new FileInfo(path).Length > 65536) return fallback;
                 var cfg = new JavaScriptSerializer().Deserialize<SummonCoordinatorConfig>(File.ReadAllText(path, Encoding.UTF8));
-                if (cfg == null || cfg.Version != 1 || cfg.HyjalSlot < 1 || cfg.HyjalSlot > 10 || cfg.HydraxianSlot < 1 || cfg.HydraxianSlot > 10)
+                if (cfg == null || (cfg.Version != 1 && cfg.Version != 2)
+                    || cfg.HyjalSlot < 1 || cfg.HyjalSlot > 10 || cfg.HydraxianSlot < 1 || cfg.HydraxianSlot > 10)
                     return fallback;
+                if (cfg.Version == 1)
+                {
+                    cfg.Version = 2;
+                    cfg.AutoEnabled = true;
+                }
                 return cfg;
             }
             catch { return fallback; }
@@ -126,11 +227,12 @@ namespace WoW112Updater
         private void SaveSummonCoordinatorConfig(SummonCoordinatorConfig cfg)
         {
             if (cfg == null) return;
-            cfg.Version = 1;
+            cfg.Version = 2;
             if (cfg.HyjalSlot < 1 || cfg.HyjalSlot > 10 || cfg.HydraxianSlot < 1 || cfg.HydraxianSlot > 10)
                 throw new InvalidDataException("Slot coordinatora musi być w zakresie 1-10.");
             var path = Path.Combine(configDir, "summon_coordinator.json");
             UpdaterSafety.WriteUtf8Atomic(path, new JavaScriptSerializer().Serialize(cfg), ".tmp", ".previous");
+            summonCoordinatorConfig = cfg;
         }
 
         private static uint NewSummonRequestSeq()
@@ -182,6 +284,248 @@ namespace WoW112Updater
                     sw.WriteLine(DateTime.UtcNow.ToString("o") + " " + line);
             }
             catch { }
+        }
+
+        internal void AttachSummonCoordinator()
+        {
+            if (summonCoordinatorTimer != null) return;
+            summonCoordinatorConfig = LoadSummonCoordinatorConfig();
+            summonCoordinatorTimer = new System.Windows.Forms.Timer { Interval = 250 };
+            summonCoordinatorTimer.Tick += SummonCoordinatorAutoTimerTick;
+            summonCoordinatorTimer.Start();
+            CoordinatorLog("state=AUTO_MONITOR_STARTED interval_ms=250");
+        }
+
+        private static bool AssistHeartbeatFresh(SummonAssistSnapshot s)
+        {
+            if (s == null || s.Heartbeat == 0) return false;
+            var now = unchecked((uint)Environment.TickCount);
+            return unchecked(now - s.Heartbeat) <= 3000u;
+        }
+
+        private static string AssistStateName(uint state)
+        {
+            switch (state)
+            {
+                case 0: return "IDLE";
+                case 1: return "REQUESTED";
+                case 2: return "READY";
+                case 3: return "CAST_ISSUED";
+                case 4: return "STARTED";
+                case 5: return "FAILED";
+                case 6: return "CANCELLED";
+                default: return "STATE_" + state;
+            }
+        }
+
+        private WowAccountSession FindLiveAccountSession(string accountId)
+        {
+            if (string.IsNullOrWhiteSpace(accountId)) return null;
+            accountSessions.RemoveAll(s => {
+                try { return s.Game == null || s.Game.HasExited; }
+                catch { return true; }
+            });
+            return accountSessions.LastOrDefault(s => s.AccountId == accountId);
+        }
+
+        private PendingSummonRequest FindOldestPendingSummonRequest()
+        {
+            var root = gameDir.Text.Trim();
+            if (!Directory.Exists(root)) return null;
+            root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            PendingSummonRequest best = null;
+            uint bestAge = 0;
+            var now = unchecked((uint)Environment.TickCount);
+
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    if (process.HasExited) continue;
+                    var fullPath = Path.GetFullPath(process.MainModule.FileName);
+                    var name = Path.GetFileName(fullPath);
+                    if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                        || !name.StartsWith("WoW", StringComparison.OrdinalIgnoreCase)
+                        || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    using (var channel = SummonAssistChannel.TryOpen(process.Id))
+                    {
+                        if (channel == null) continue;
+                        var s = channel.Read();
+                        if (!AssistHeartbeatFresh(s) || s.State != 1 || s.RequestSeq == 0 || (s.Destination != 1 && s.Destination != 2))
+                            continue;
+                        var age = unchecked(now - s.RequestTick);
+                        if (best == null || age > bestAge)
+                        {
+                            best = new PendingSummonRequest { Pid = process.Id, Snapshot = s };
+                            bestAge = age;
+                        }
+                    }
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { }
+                finally { process.Dispose(); }
+            }
+            return best;
+        }
+
+        private async void SummonCoordinatorAutoTimerTick(object sender, EventArgs e)
+        {
+            if (summonCoordinatorAutoTick || summonCoordinatorBusy || accountVault == null) return;
+            var cfg = summonCoordinatorConfig ?? LoadSummonCoordinatorConfig();
+            if (cfg == null || !cfg.AutoEnabled || string.IsNullOrWhiteSpace(cfg.WorkerAId) || string.IsNullOrWhiteSpace(cfg.WorkerBId)
+                || cfg.WorkerAId == cfg.WorkerBId) return;
+
+            var pending = FindOldestPendingSummonRequest();
+            if (pending == null) return;
+
+            summonCoordinatorAutoTick = true;
+            try
+            {
+                await ProcessAutomaticSummonRequestAsync(pending, cfg);
+            }
+            catch (Exception ex)
+            {
+                CoordinatorLog("state=AUTO_ERROR reason=" + SafeCoordinatorToken(ex.Message));
+            }
+            finally
+            {
+                summonCoordinatorAutoTick = false;
+            }
+        }
+
+        private async Task ProcessAutomaticSummonRequestAsync(PendingSummonRequest pending, SummonCoordinatorConfig cfg)
+        {
+            if (pending == null || pending.Snapshot == null || summonCoordinatorBusy) return;
+            summonCoordinatorBusy = true;
+            var requestSeq = pending.Snapshot.RequestSeq;
+            var destination = pending.Snapshot.Destination == 1 ? "HYJAL" : "HYDRAXIAN";
+            var slot = pending.Snapshot.Destination == 1 ? cfg.HyjalSlot : cfg.HydraxianSlot;
+            var requestId = "W" + pending.Pid + "-" + requestSeq;
+
+            try
+            {
+                using (var warlock = SummonAssistChannel.TryOpen(pending.Pid))
+                {
+                    if (warlock == null) return;
+                    var current = warlock.Read();
+                    if (!AssistHeartbeatFresh(current) || current.State != 1 || current.RequestSeq != requestSeq) return;
+
+                    var sa = FindLiveAccountSession(cfg.WorkerAId);
+                    var sb = FindLiveAccountSession(cfg.WorkerBId);
+                    if (sa == null || sb == null || sa.Game.Id == sb.Game.Id)
+                    {
+                        warlock.SetFail(requestSeq);
+                        CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=FAIL reason=worker-session-missing");
+                        return;
+                    }
+
+                    using (var workerA = await OpenCoordinatorWorkerAsync(sa))
+                    using (var workerB = await OpenCoordinatorWorkerAsync(sb))
+                    using (var assistA = SummonAssistChannel.TryOpen(sa.Game.Id))
+                    using (var assistB = SummonAssistChannel.TryOpen(sb.Game.Id))
+                    {
+                        if (workerA == null || workerB == null || assistA == null || assistB == null)
+                        {
+                            warlock.SetFail(requestSeq);
+                            CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=FAIL reason=worker-map-missing");
+                            return;
+                        }
+
+                        var clickBaseA = assistA.Read().PortalPreCalls;
+                        var clickBaseB = assistB.Read().PortalPreCalls;
+                        var workerRequestSeq = NewSummonRequestSeq();
+
+                        CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=RESERVED lease=PAIR slot=" + slot
+                            + " warlock_pid=" + pending.Pid + " workerA_pid=" + sa.Game.Id + " workerB_pid=" + sb.Game.Id);
+                        workerA.Send(workerRequestSeq, slot);
+                        workerB.Send(workerRequestSeq, slot);
+
+                        var started = Environment.TickCount;
+                        while (unchecked(Environment.TickCount - started) < SummonPrepareTimeoutMs)
+                        {
+                            current = warlock.Read();
+                            if (!AssistHeartbeatFresh(current) || current.RequestSeq != requestSeq || current.State != 1)
+                            {
+                                CoordinatorLog("request_id=" + requestId + " state=CANCELLED reason=warlock-request-gone");
+                                return;
+                            }
+
+                            var a = workerA.Read();
+                            var b = workerB.Read();
+                            if (!HeartbeatFresh(a) || !HeartbeatFresh(b))
+                            {
+                                warlock.SetFail(requestSeq);
+                                CoordinatorLog("request_id=" + requestId + " state=FAIL reason=worker-heartbeat");
+                                return;
+                            }
+                            if ((a.AckSeq == workerRequestSeq && a.State == 5) || (b.AckSeq == workerRequestSeq && b.State == 5))
+                            {
+                                warlock.SetFail(requestSeq);
+                                CoordinatorLog("request_id=" + requestId + " state=FAIL reason=worker-switch-failed"
+                                    + " a_state=" + WorkerStateName(a.State) + " b_state=" + WorkerStateName(b.State));
+                                return;
+                            }
+
+                            var readyA = a.AckSeq == workerRequestSeq && a.State == 4 && a.InWorld == 1 && a.CurrentSlot == (uint)slot;
+                            var readyB = b.AckSeq == workerRequestSeq && b.State == 4 && b.InWorld == 1 && b.CurrentSlot == (uint)slot;
+                            if (readyA && readyB)
+                            {
+                                warlock.SetReady(requestSeq);
+                                CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=READY ready=2/2 lease=PAIR slot=" + slot);
+                                break;
+                            }
+                            await Task.Delay(100);
+                        }
+
+                        current = warlock.Read();
+                        if (current.ReadySeq != requestSeq)
+                        {
+                            warlock.SetFail(requestSeq);
+                            CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=TIMEOUT phase=PREPARE timeout_ms=" + SummonPrepareTimeoutMs);
+                            return;
+                        }
+
+                        var clickStarted = Environment.TickCount;
+                        bool clickedA = false, clickedB = false;
+                        while (unchecked(Environment.TickCount - clickStarted) < SummonClickTimeoutMs)
+                        {
+                            current = warlock.Read();
+                            if (!AssistHeartbeatFresh(current) || current.RequestSeq != requestSeq)
+                            {
+                                CoordinatorLog("request_id=" + requestId + " state=LEASE_RELEASE reason=warlock-gone");
+                                return;
+                            }
+
+                            var ta = assistA.Read();
+                            var tb = assistB.Read();
+                            clickedA = ta.PortalPreCalls > clickBaseA;
+                            clickedB = tb.PortalPreCalls > clickBaseB;
+                            if (clickedA && clickedB)
+                            {
+                                CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=CLICKS clicks=2/2 lease=RELEASE"
+                                    + " cast_state=" + AssistStateName(current.State));
+                                return;
+                            }
+                            if (current.State == 5 || current.State == 6)
+                            {
+                                CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=LEASE_RELEASE reason=warlock-" + AssistStateName(current.State));
+                                return;
+                            }
+                            await Task.Delay(100);
+                        }
+
+                        CoordinatorLog("request_id=" + requestId + " destination=" + destination + " state=LEASE_TIMEOUT clicks="
+                            + (clickedA ? "1" : "0") + "/" + (clickedB ? "1" : "0")
+                            + " timeout_ms=" + SummonClickTimeoutMs + " lease=RELEASE");
+                    }
+                }
+            }
+            finally
+            {
+                summonCoordinatorBusy = false;
+            }
         }
 
         private WowAccount SelectedCoordinatorAccount(ComboBox box)
@@ -336,7 +680,7 @@ namespace WoW112Updater
 
             var cfg = LoadSummonCoordinatorConfig();
             using (var dialog = new Form {
-                Text = "SLAVE COORDINATOR V1 — 2 shared workers",
+                Text = "SLAVE COORDINATOR V2 — 2 shared workers",
                 ClientSize = new System.Drawing.Size(760, 390),
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false, MinimizeBox = false,
@@ -365,9 +709,10 @@ namespace WoW112Updater
                 var prepareHyjal = new Button { Text = "PREPARE HYJAL", Left = 20, Top = 137, Width = 335, Height = 38 };
                 var prepareHydrax = new Button { Text = "PREPARE HYDRAXIAN", Left = 405, Top = 137, Width = 335, Height = 38 };
                 var refresh = new Button { Text = "ODŚWIEŻ WORKERY", Left = 20, Top = 188, Width = 180, Height = 32 };
+                var auto = new CheckBox { Text = "AUTO: SummonScout → READY 2/2 → Ritual", Left = 220, Top = 193, Width = 360, Checked = cfg.AutoEnabled };
                 var close = new Button { Text = "Zamknij", Left = 620, Top = 188, Width = 120, Height = 32 };
                 var output = new TextBox { Left = 20, Top = 232, Width = 720, Height = 125, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
-                var controls = new Control[] { workerA, workerB, hyjal, hydrax, prepareHyjal, prepareHydrax, refresh, close };
+                var controls = new Control[] { workerA, workerB, hyjal, hydrax, prepareHyjal, prepareHydrax, refresh, auto, close };
 
                 dialog.Controls.AddRange(new Control[] {
                     new Label { Text = "Worker A — konto slave", Left = 20, Top = 20, Width = 250 },
@@ -375,8 +720,8 @@ namespace WoW112Updater
                     workerA, workerB,
                     new Label { Text = "HYJAL slot:", Left = 20, Top = 101, Width = 110 }, hyjal,
                     new Label { Text = "HYDRAXIAN slot:", Left = 405, Top = 101, Width = 115 }, hydrax,
-                    prepareHyjal, prepareHydrax, refresh, close, output,
-                    new Label { Text = "V1: ręczny PREPARE. Combat blokuje switch. READY oznacza WORLD_ENTERED obu workerów. Ritual/SummonScout dołączymy w następnym kroku.", Left = 20, Top = 365, Width = 720 }
+                    prepareHyjal, prepareHydrax, refresh, auto, close, output,
+                    new Label { Text = "V2: AUTO arbitruje wspólną parę bez globalnej kolejki. Combat blokuje switch; Ritual jest odblokowany dopiero po READY 2/2.", Left = 20, Top = 365, Width = 720 }
                 });
 
                 Action save = delegate {
@@ -386,6 +731,7 @@ namespace WoW112Updater
                     cfg.WorkerBId = b == null ? "" : b.Id;
                     cfg.HyjalSlot = (int)hyjal.Value;
                     cfg.HydraxianSlot = (int)hydrax.Value;
+                    cfg.AutoEnabled = auto.Checked;
                     SaveSummonCoordinatorConfig(cfg);
                 };
 

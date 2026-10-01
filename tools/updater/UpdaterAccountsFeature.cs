@@ -168,6 +168,7 @@ namespace WoW112Updater
                 accountVault = null;
                 Log("Magazyn kont niedostępny (dane zachowane): " + ex.GetType().Name);
             }
+            AttachSummonCoordinator();
         }
 
         private void RememberGameSession(System.Diagnostics.Process game)

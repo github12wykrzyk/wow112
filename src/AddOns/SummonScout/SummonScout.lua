@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.45"
+local ADDON_VERSION = "1.46"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -1122,6 +1122,7 @@ local function nativeSummonBridgeRequest(name)
 
     SS.summonRequestSeq = (SS.summonRequestSeq or 0) + 1
     local seq = tostring(SS.summonRequestSeq)
+    local destination = singleServiceLocation()
 
     W112_AUTOSUMMON_ACK = ""
     W112_AUTOSUMMON_ACK_SEQ = ""
@@ -1129,6 +1130,7 @@ local function nativeSummonBridgeRequest(name)
     W112_AUTOSUMMON_NATIVE_STATUS = "queued"
     W112_AUTOSUMMON_NATIVE_TARGET = ""
     W112_AUTOSUMMON_NATIVE_SLOT = ""
+    W112_AUTOSUMMON_DESTINATION = destination and destination.id or ""
     W112_AUTOSUMMON_REQUEST_SEQ = seq
     W112_AUTOSUMMON_REQUEST = name
 
@@ -1187,6 +1189,7 @@ local function clearActiveSummon()
     SS.summonActiveStartReported = false
     W112_AUTOSUMMON_REQUEST = ""
     W112_AUTOSUMMON_REQUEST_SEQ = ""
+    W112_AUTOSUMMON_DESTINATION = ""
 end
 
 local function finishActiveSummon(name)
@@ -1203,6 +1206,7 @@ local function retryActiveSummon(delay)
     SS.summonActiveNextAt = now() + (delay or 0.50)
     W112_AUTOSUMMON_REQUEST = ""
     W112_AUTOSUMMON_REQUEST_SEQ = ""
+    W112_AUTOSUMMON_DESTINATION = ""
 end
 
 local function markActiveSummonStarted(source)
@@ -1322,7 +1326,8 @@ local function processPartySummon()
                 or nativeStatus == "no-spell"
                 or nativeStatus == "no-cast-api-or-spell"
                 or nativeStatus == "no-start"
-                or nativeStatus == "blocked-busy") then
+                or nativeStatus == "blocked-busy"
+                or nativeStatus == "coord-failed") then
             SS.lastSummonError = nativeStatus
             retryActiveSummon(nativeStatus == "blocked-busy" and 0.20 or 0.35)
             return

@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v20 - independent spellbook summon bridge + payer-first gold trade + per-client SPACE Anti-AFK.
+ * WoWAutoSummonAssist 5875 v21 - coordinator-gated summon bridge + portal click telemetry + payer-first trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -50,11 +50,17 @@ typedef unsigned int u32;
 typedef unsigned long long u64;
 typedef u32 ptr32;
 typedef void *HWND32;
+typedef void *HANDLE32;
 typedef u32 UINT32;
 typedef u32 UINT_PTR32;
 typedef int BOOL32;
 
 __declspec(dllimport) BOOL32 STDCALL PostMessageA(HWND32,u32,u32,u32);
+__declspec(dllimport) u32 STDCALL GetCurrentProcessId(void);
+__declspec(dllimport) HANDLE32 STDCALL CreateFileMappingA(HANDLE32,void*,u32,u32,u32,const char*);
+__declspec(dllimport) void* STDCALL MapViewOfFile(HANDLE32,u32,u32,u32,u32);
+__declspec(dllimport) BOOL32 STDCALL UnmapViewOfFile(const void*);
+__declspec(dllimport) BOOL32 STDCALL CloseHandle(HANDLE32);
 
 typedef void (STDCALL *TimerProc32)(HWND32,UINT32,UINT_PTR32,u32);
 typedef UINT_PTR32 (STDCALL *SetTimerFn)(HWND32,UINT_PTR32,UINT32,TimerProc32);
@@ -122,6 +128,42 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define SUMMON_BRIDGE_POLL_MS         50u
 #define SUMMON_START_WATCH_MS        1600u
 
+#define SUMMON_COORD_MAGIC           0x41323157u
+#define SUMMON_COORD_VERSION         1u
+#define PAGE_READWRITE_VALUE         0x00000004u
+#define FILE_MAP_ALL_ACCESS_VALUE    0x000F001Fu
+
+#define COORD_IDLE                   0u
+#define COORD_REQUESTED              1u
+#define COORD_READY                  2u
+#define COORD_CAST_ISSUED            3u
+#define COORD_STARTED                4u
+#define COORD_FAILED                 5u
+#define COORD_CANCELLED              6u
+
+#define COORD_DEST_NONE              0u
+#define COORD_DEST_HYJAL             1u
+#define COORD_DEST_HYDRAXIAN         2u
+
+typedef struct SummonCoordMapV1 {
+    u32 magic;
+    u32 version;
+    u32 pid;
+    volatile u32 heartbeat_tick;
+    volatile u32 request_seq;
+    volatile u32 destination;
+    volatile u32 state;
+    volatile u32 ready_seq;
+    volatile u32 fail_seq;
+    volatile u32 active_seq;
+    volatile u32 portal_pre_calls;
+    volatile u32 portal_post_returns;
+    volatile u32 portal_guid_lo;
+    volatile u32 portal_guid_hi;
+    volatile u32 request_tick;
+    volatile u32 last_event_tick;
+} SummonCoordMapV1;
+
 #define STATUS_DETACHED             0u
 #define STATUS_WAIT_WORLD           1u
 #define STATUS_WORLD_GRACE          2u
@@ -186,6 +228,14 @@ static u32 g_lastSummonBridgePoll = 0u;
 static u32 g_summonIssuedAt = 0u;
 static u32 g_summonAwaitingStart = 0u;
 
+static HANDLE32 g_coordMapHandle = 0;
+static SummonCoordMapV1 *g_coordMap = 0;
+static u32 g_coordRequestSeq = 0u;
+static u32 g_coordActiveSeq = 0u;
+static u32 g_coordDestination = COORD_DEST_NONE;
+static u32 g_coordState = COORD_IDLE;
+static u32 g_coordLastPublishedState = 0xFFFFFFFFu;
+
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
@@ -210,6 +260,108 @@ static u32 parseDecimalU32(const char *s)
         ++s;
     }
     return value;
+}
+
+static int asciiEq(const char *a,const char *b)
+{
+    if(!a||!b) return 0;
+    while(*a&&*b) { if(*a++!=*b++) return 0; }
+    return *a==0&&*b==0;
+}
+
+static char *appendAscii(char *p,const char *s)
+{
+    while(s&&*s) *p++=*s++;
+    return p;
+}
+
+static char *appendU32Dec(char *p,u32 value)
+{
+    char tmp[16];
+    u32 n=0u;
+    if(!value){*p++='0';return p;}
+    while(value&&n<15u){tmp[n++]=(char)('0'+(value%10u));value/=10u;}
+    while(n) *p++=tmp[--n];
+    return p;
+}
+
+static u32 coordinatorDestinationCode(const char *s)
+{
+    if(asciiEq(s,"hyjal")) return COORD_DEST_HYJAL;
+    if(asciiEq(s,"hydraxian")) return COORD_DEST_HYDRAXIAN;
+    return COORD_DEST_NONE;
+}
+
+static void coordinatorSetState(u32 state,u32 now)
+{
+    if(g_coordState==state) return;
+    g_coordState=state;
+    if(g_coordMap) g_coordMap->last_event_tick=now;
+}
+
+static void coordinatorPublish(u32 now)
+{
+    if(!g_coordMap) return;
+    g_coordMap->heartbeat_tick=now;
+    g_coordMap->state=g_coordState;
+    g_coordMap->active_seq=g_coordActiveSeq;
+    g_coordMap->portal_pre_calls=g_attemptCount;
+    g_coordMap->portal_post_returns=g_postCallCount;
+    g_coordMap->portal_guid_lo=g_portalLo;
+    g_coordMap->portal_guid_hi=g_portalHi;
+    if(g_coordLastPublishedState!=g_coordState){
+        g_coordLastPublishedState=g_coordState;
+        g_coordMap->last_event_tick=now;
+    }
+}
+
+static void coordinatorInitMap(void)
+{
+    char name[96],*p=name;
+    u32 pid=GetCurrentProcessId();
+    HANDLE32 invalid=(HANDLE32)(ptr32)0xFFFFFFFFu;
+    p=appendAscii(p,"Local\\WoW112_SummonAssist_");p=appendU32Dec(p,pid);*p=0;
+    g_coordMapHandle=CreateFileMappingA(invalid,0,PAGE_READWRITE_VALUE,0u,(u32)sizeof(SummonCoordMapV1),name);
+    if(!g_coordMapHandle) return;
+    g_coordMap=(SummonCoordMapV1*)MapViewOfFile(g_coordMapHandle,FILE_MAP_ALL_ACCESS_VALUE,0u,0u,(u32)sizeof(SummonCoordMapV1));
+    if(!g_coordMap){CloseHandle(g_coordMapHandle);g_coordMapHandle=0;return;}
+    g_coordMap->magic=SUMMON_COORD_MAGIC;
+    g_coordMap->version=SUMMON_COORD_VERSION;
+    g_coordMap->pid=pid;
+    g_coordMap->heartbeat_tick=0u;
+    g_coordMap->request_seq=0u;
+    g_coordMap->destination=COORD_DEST_NONE;
+    g_coordMap->state=COORD_IDLE;
+    g_coordMap->ready_seq=0u;
+    g_coordMap->fail_seq=0u;
+    g_coordMap->active_seq=0u;
+    g_coordMap->portal_pre_calls=0u;
+    g_coordMap->portal_post_returns=0u;
+    g_coordMap->portal_guid_lo=0u;
+    g_coordMap->portal_guid_hi=0u;
+    g_coordMap->request_tick=0u;
+    g_coordMap->last_event_tick=0u;
+}
+
+static void coordinatorShutdownMap(void)
+{
+    if(g_coordMap){
+        g_coordMap->state=COORD_CANCELLED;
+        g_coordMap->heartbeat_tick=0u;
+        UnmapViewOfFile(g_coordMap);
+        g_coordMap=0;
+    }
+    if(g_coordMapHandle){CloseHandle(g_coordMapHandle);g_coordMapHandle=0;}
+}
+
+static void coordinatorRefreshStarted(u32 now)
+{
+    const char *started;
+    u32 seq;
+    if(g_coordState!=COORD_CAST_ISSUED||!g_coordActiveSeq) return;
+    started=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_STARTED_SEQ",-1,0u);
+    seq=parseDecimalU32(started);
+    if(seq==g_coordActiveSeq) coordinatorSetState(COORD_STARTED,now);
 }
 
 static int finiteCoord(float v)
@@ -563,14 +715,21 @@ static void pollNativeSummonBridge(u32 player,u32 now)
         "end "
         "end";
     static const char clearIssuedScript[]="W112_AUTOSUMMON_NATIVE_ISSUED='0'";
-    const char *req;
-    const char *issued;
+    static const char waitScript[]="W112_AUTOSUMMON_NATIVE_STATUS='coord-wait'";
+    static const char rejectScript[]=
+        "local n=W112_AUTOSUMMON_REQUEST or '';local seq=tostring(W112_AUTOSUMMON_REQUEST_SEQ or '');"
+        "W112_AUTOSUMMON_REQUEST='';W112_AUTOSUMMON_ACK=n;W112_AUTOSUMMON_ACK_SEQ=seq;"
+        "W112_AUTOSUMMON_NATIVE_STATUS='coord-failed'";
+    const char *req,*seqText,*destText,*issued;
+    u32 seq,dest;
 
     (void)player;
+    coordinatorRefreshStarted(now);
 
     if(g_summonAwaitingStart) {
         if((u32)(now-g_summonIssuedAt)>=SUMMON_START_WATCH_MS) {
             publishSummonNoStart();
+            if(g_coordState!=COORD_STARTED) coordinatorSetState(COORD_FAILED,now);
             g_summonAwaitingStart=0u;
             g_summonIssuedAt=0u;
         } else {
@@ -581,18 +740,60 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     if(g_lastSummonBridgePoll && (u32)(now-g_lastSummonBridgePoll)<SUMMON_BRIDGE_POLL_MS) return;
     g_lastSummonBridgePoll=now;
     req=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST",-1,0u);
-    if(!req||!req[0]) return;
+    if(!req||!req[0]) {
+        if(g_coordState==COORD_REQUESTED||g_coordState==COORD_READY) coordinatorSetState(COORD_CANCELLED,now);
+        return;
+    }
 
-    /* Do not pre-gate on CastingBarFrame/raw channel state. A stale level
-     * signal after Ritual used to leave W112_AUTOSUMMON_REQUEST unconsumed,
-     * reproducing the exact "first summon works, later summons stop" failure.
-     * Consume each sequence once and let CastSpell + SPELLCAST_START decide. */
+    seqText=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST_SEQ",-1,0u);
+    destText=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_DESTINATION",-1,0u);
+    seq=parseDecimalU32(seqText);
+    dest=coordinatorDestinationCode(destText);
+
+    /* Only the shared-pair destinations are coordinator-gated. Other existing
+     * summon destinations retain the legacy direct bridge behavior. */
+    if(dest!=COORD_DEST_NONE && seq!=0u) {
+        if(g_coordRequestSeq!=seq) {
+            g_coordRequestSeq=seq;
+            g_coordActiveSeq=0u;
+            g_coordDestination=dest;
+            if(g_coordMap) {
+                g_coordMap->ready_seq=0u;
+                g_coordMap->fail_seq=0u;
+                g_coordMap->destination=dest;
+                g_coordMap->request_tick=now;
+                g_coordMap->request_seq=seq;
+            }
+            coordinatorSetState(COORD_REQUESTED,now);
+            ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(waitScript,"AutoSummonAssist");
+            return;
+        }
+        if(g_coordMap && g_coordMap->fail_seq==seq) {
+            ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(rejectScript,"AutoSummonAssist");
+            coordinatorSetState(COORD_FAILED,now);
+            return;
+        }
+        if(!g_coordMap || g_coordMap->ready_seq!=seq) {
+            ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(waitScript,"AutoSummonAssist");
+            return;
+        }
+        coordinatorSetState(COORD_READY,now);
+    }
+
+    /* Do not pre-gate on CastingBarFrame/raw channel state. Consume each exact
+     * sequence once after the coordinator (when applicable) has READY 2/2. */
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(consumeScript,"AutoSummonAssist");
     issued=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_NATIVE_ISSUED",-1,0u);
     if(issued && issued[0]=='1' && issued[1]==0) {
         ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(clearIssuedScript,"AutoSummonAssist");
         g_summonIssuedAt=now;
         g_summonAwaitingStart=1u;
+        if(dest!=COORD_DEST_NONE && seq!=0u) {
+            g_coordActiveSeq=seq;
+            coordinatorSetState(COORD_CAST_ISSUED,now);
+        }
+    } else if(dest!=COORD_DEST_NONE && seq!=0u) {
+        coordinatorSetState(COORD_FAILED,now);
     }
 }
 
@@ -790,6 +991,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
     (void)id;
 
     ++g_heartbeat;
+    coordinatorPublish(now);
 
     if(!buildGuard()) {
         g_status=STATUS_BUILD_MISMATCH;
@@ -828,6 +1030,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
 
     g_status=busy ? STATUS_CAST_OR_CHANNEL:STATUS_ACTIVE;
     scanAndMaybeClick(player,now);
+    coordinatorPublish(now);
 }
 
 static void initSettings(void)
@@ -992,6 +1195,12 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         g_lastSummonBridgePoll=0u;
         g_summonIssuedAt=0u;
         g_summonAwaitingStart=0u;
+        g_coordRequestSeq=0u;
+        g_coordActiveSeq=0u;
+        g_coordDestination=COORD_DEST_NONE;
+        g_coordState=COORD_IDLE;
+        g_coordLastPublishedState=0xFFFFFFFFu;
+        coordinatorInitMap();
         g_tradeOpen=0u;
         g_tradeOfferCopper=0u;
         g_tradeAcceptAttempts=0u;
@@ -1014,6 +1223,7 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
         KillTimerFn killTimer=(KillTimerFn)(ptr32)read32(WOW_IAT_KILLTIMER);
         if(killTimer && g_timer) killTimer(0,g_timer);
         g_timer=0u;
+        coordinatorShutdownMap();
         resetWorld();
         g_status=STATUS_DETACHED;
     }
