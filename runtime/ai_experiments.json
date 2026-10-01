@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-original-aux-fast-v1",
+      "branch": "feature/ah-original-aux-fast-hookfix",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2036,7 +2036,7 @@
         "AuxVmangos guarded vendor revalidation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "1ca845453f20ebd5ff596bac1c8123926070fc61",
+      "observed_head": "0ff7e7fad79812d27c42773568d4822bec8b0f7b",
       "verified_commit": null,
       "tests": [
         {
@@ -2045,10 +2045,17 @@
           "commit": "87bf1182324c08613bd8852f1ad58bc159b8a8d0",
           "date": "2026-10-01",
           "evidence": "Initial Parallel feature preflight run 36850449252 and Verify AI experiment registry run 36850449267 passed on exact SHA before parallel advanced with unrelated summon/ledger changes."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "0ff7e7fad79812d27c42773568d4822bec8b0f7b",
+          "date": "2026-10-01",
+          "evidence": "Original AUX GUI and Search load correctly, but /auxfast during an active AUX scan reported hook absent in practice: busy=false pages=0 bypass=0 while the AUX status bar was scanning Page 2/180. Root cause: aux libs/package.lua returns a read-only module interface, so the v1.0 direct assignment scan.start=... was silently ignored."
         }
       ],
       "package": null,
-      "notes": "Restore original Aux frontend at pinned upstream commit 6b56d0f and keep its Search/Post/Auctions/Bids/history/tooltip/disenchant systems intact. AuxFastBridge removes only CanSendAuctionQuery waiting while an original Aux scan is active, preserving response-paced one-query-at-a-time state transitions. AuxVmangos vendor valuation now prefers original Aux learned merchant_sell data and falls back to the existing static table. F2 FAST MARKET is blocked while an original Aux scan is active. Rebased/merged onto latest parallel without overwriting unrelated summon work; exact rebased SHA still requires preflight."
+      "notes": "Hookfix v1.1: patch aux.core.scan through its real module environment (module 'aux.core.scan' + M.start) instead of assigning to the read-only require() interface. Preserve original AUX GUI/state machine and response-paced one-query-at-a-time behavior; /auxfast now exposes hook=true/false for direct validation. Prior integrated SHA 0ff7e7f restored the GUI but game test proved the fast-scan wrapper was not actually installed."
     }
   ]
 }
