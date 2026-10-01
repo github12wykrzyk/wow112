@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "parallel",
+      "branch": "feature/ah-aux-accountdata-fix",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2036,9 +2036,9 @@
         "Aux merchant_sell learned vendor cache",
         "AuxVmangos guarded vendor revalidation"
       ],
-      "status": "awaiting_game_test",
-      "observed_head": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
-      "verified_commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
+      "status": "awaiting_ci",
+      "observed_head": "d94fe48fad0e53af100367966def24130ddc4499",
+      "verified_commit": null,
       "tests": [
         {
           "kind": "ci",
@@ -2090,12 +2090,8 @@
           "evidence": "Verified aggregate candidate artifact 11158575954 (WoW112-WORK-CANDIDATE-a4c6453c0d339d0f55586b8e10763a44b50da1b5) was produced by successful integrated parallel run 36854967698."
         }
       ],
-      "package": {
-        "verified": true,
-        "commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
-        "artifact_id": 11158575954
-      },
-      "notes": "Report #53 diagnosed the remaining 5s cadence: on hookfix v1.1, one real query produced many AUCTION_ITEM_LIST_UPDATE events (e.g. ui-event counter 103 with only about 8 query/gate checks), so bypassing CanSendAuctionQuery let stale duplicate UI events masquerade as subsequent page responses. Integrated v1.2 now correlates original AUX pages to the verified native SMSG_AUCTION_LIST_RESULT (0x025C) handler after the stock client has populated the auction list. UI events are diagnostic only. /auxfast reports queries/native/matched/timeouts/uiEvents; healthy scans should keep queries, native and matched together with timeouts=0. Exact code SHA a4c6453c passed preflight and full parallel package gates; gameplay validation pending."
+      "package": null,
+      "notes": "Runtime crash on integrated SHA d94fe48fad0e53af100367966def24130ddc4499: AuxFastBridge.lua:148 attempted to index aux.account_data but the replacement wait_for_list_results function was created after module 'aux.core.scan' changed the chunk environment, so global aux resolved incorrectly. v1.3 captures the exported aux interface as local auxCore before entering the module environment and uses auxCore.account_data / auxCore.when inside the replacement wait function. Native 0x025C response correlation remains unchanged."
     },
     {
       "id": "map-tele-keep-open",
@@ -2112,7 +2108,7 @@
         "native map high-launch S backstep"
       ],
       "status": "awaiting_ci",
-      "observed_head": "d94fe48fad0e53af100367966def24130ddc4499",
+      "observed_head": "2c547707e7ef1d25f025c97c8f6cf4d50688fbf0",
       "verified_commit": null,
       "tests": [],
       "package": null,
