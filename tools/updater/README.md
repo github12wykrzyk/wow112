@@ -225,3 +225,11 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - Otwarty updater sprawdza stan procesu co 2 sekundy. Po naturalnym zamknięciu ostatniej instancji WoW automatycznie tworzy backup, podmienia oczekujący runtime, zapisuje `installed.json` i usuwa transakcję. Jeżeli updater był zamknięty, finalizacja nastąpi przy jego następnym uruchomieniu.
 - Aktywne procesy nadal działają na już załadowanych bajtach; nowy runtime obowiązuje dopiero dla kolejnych uruchomień po finalizacji. **UPDATE + PLAY** nie uruchamia nowej instancji, jeśli runtime nadal oczekuje, żeby nie startować klienta na starym zestawie.
 - Rollback pozostaje fail-closed i nadal wymaga zamkniętej gry.
+
+
+## Updater 2.9-parallel.14 — kill-all control
+
+- W sekcji **NARZĘDZIA** przycisk **Diagnostyka ZIP** został usunięty i zastąpiony przez **Zabij wszystkie WoW**.
+- Akcja wykrywa wyłącznie `WoW.exe` / `WoW_*.exe` uruchomione z aktualnie wybranego katalogu gry, pokazuje liczbę procesów i wymaga potwierdzenia przed wymuszonym zakończeniem.
+- Po zamknięciu wszystkich instancji updater natychmiast próbuje sfinalizować oczekujący LIVE UPDATE, bez czekania na następny 2-sekundowy tick.
+- GitHub Issue **Wyślij raport** oraz **Wyślij AH dump** pozostają bez zmian; usunięty został tylko lokalny eksport Diagnostyka ZIP z GUI.

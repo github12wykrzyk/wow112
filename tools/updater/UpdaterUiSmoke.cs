@@ -58,7 +58,10 @@ namespace WoW112Updater
                 AssertDashboardLayout();
             }
             SetBusy(false, "Gotowy");
-            if (!featureControls["verify"].Enabled || !featureControls["report"].Enabled) throw new Exception("Busy state did not restore actions");
+            if (!featureControls["verify"].Enabled || !featureControls["report"].Enabled || !featureControls["killAll"].Enabled)
+                throw new Exception("Busy state did not restore actions");
+            if (featureControls.ContainsKey("diagnostics"))
+                throw new Exception("Removed diagnostics ZIP action is still registered");
             foreach (var dimensions in new[] { new Size(960, 620), new Size(1040, 680) })
             {
                 MinimumSize = Size.Empty;

@@ -56,6 +56,7 @@ namespace WoW112Updater
         private readonly Button updatePlayButton = new Button();
         private readonly Button rollbackButton = new Button();
         private readonly Button launchButton = new Button();
+        private readonly Button killAllButton = new Button();
         private readonly Button browseButton = new Button();
         private readonly Button saveButton = new Button();
         private readonly JavaScriptSerializer json = new JavaScriptSerializer();
@@ -103,6 +104,7 @@ namespace WoW112Updater
             updateButton.Click += async delegate { await UpdateAsync(); };
             updatePlayButton.Click += async delegate { await UpdateAndPlayAsync(); };
             launchButton.Click += delegate { LaunchGame(); };
+            killAllButton.Click += delegate { KillAllGameInstances(); };
             rollbackButton.Click += delegate { Rollback(); };
             saveButton.Click += delegate { SaveConfig(true); };
             status.Text = "Gotowy";
@@ -138,6 +140,7 @@ namespace WoW112Updater
             rollbackButton.Enabled = !value && rollbackChoice.Items.Count > 0;
             rollbackChoice.Enabled = !value && rollbackChoice.Items.Count > 0;
             launchButton.Enabled = !value;
+            killAllButton.Enabled = !value;
             browseButton.Enabled = !value;
             saveButton.Enabled = !value;
             channel.Enabled = !value;
@@ -1433,6 +1436,131 @@ namespace WoW112Updater
                 Log("BŁĄD: " + ex.Message);
                 MessageBox.Show(this, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void KillAllGameInstances()
+        {
+            if (busy) return;
+            var root = gameDir.Text.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                MessageBox.Show(this, "Wybierz istniejący katalog gry.", "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            root = Path.GetFullPath(root);
+            var running = CountGameProcesses(root);
+            if (running == 0)
+            {
+                status.Text = "Brak uruchomionych instancji WoW z tego katalogu.";
+                Log(status.Text);
+                return;
+            }
+
+            var answer = MessageBox.Show(
+                this,
+                "Natychmiast zakończyć wszystkie instancje WoW z wybranego katalogu?\n\n"
+                    + "Procesy: " + running + "\n"
+                    + "To jest wymuszone zakończenie bez normalnego logoutu. Najnowsze niezapisane SavedVariables mogą zostać utracone.",
+                "WoW112 Updater — ZABIJ WSZYSTKIE WoW",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes)
+            {
+                status.Text = "Zabicie instancji anulowane.";
+                return;
+            }
+
+            var finalStatus = "Gotowy";
+            var enteredBusy = false;
+            try
+            {
+                SetBusy(true, "Zamykanie wszystkich instancji WoW...");
+                enteredBusy = true;
+                int failed;
+                var killed = KillGameProcesses(root, out failed);
+                if (failed != 0 || IsGameRunning(root))
+                    throw new InvalidOperationException("Nie udało się zakończyć wszystkich instancji WoW. Zakończono: " + killed + ", błędy: " + failed + ".");
+
+                finalStatus = "Zakończono wszystkie instancje WoW (" + killed + ").";
+                Log(finalStatus);
+            }
+            catch (Exception ex)
+            {
+                finalStatus = "Zabijanie instancji nie powiodło się";
+                Log("BŁĄD ZABIJ WSZYSTKIE: " + ex.Message);
+                MessageBox.Show(this, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (enteredBusy) SetBusy(false, finalStatus);
+            }
+
+            if (!IsGameRunning(root))
+                TryFinalizePendingUpdate();
+        }
+
+        private static int CountGameProcesses(string root)
+        {
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var count = 0;
+            foreach (var process in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    var module = process.MainModule;
+                    var file = module == null ? null : module.FileName;
+                    if (IsGameProcessPath(file, fullRoot)) ++count;
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
+            return count;
+        }
+
+        private static int KillGameProcesses(string root, out int failed)
+        {
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var killed = 0;
+            failed = 0;
+            foreach (var process in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    var module = process.MainModule;
+                    var file = module == null ? null : module.FileName;
+                    if (!IsGameProcessPath(file, fullRoot)) continue;
+
+                    process.Kill();
+                    if (!process.WaitForExit(5000))
+                    {
+                        ++failed;
+                        continue;
+                    }
+                    ++killed;
+                }
+                catch
+                {
+                    ++failed;
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+            return killed;
+        }
+
+        private static bool IsGameProcessPath(string file, string fullRoot)
+        {
+            if (string.IsNullOrWhiteSpace(file)) return false;
+            var fullPath = Path.GetFullPath(file);
+            var name = Path.GetFileName(fullPath);
+            var isWow = string.Equals(name, "WoW.exe", StringComparison.OrdinalIgnoreCase)
+                || (name.StartsWith("WoW_", StringComparison.OrdinalIgnoreCase)
+                    && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+            return isWow && fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsGameRunning(string root)

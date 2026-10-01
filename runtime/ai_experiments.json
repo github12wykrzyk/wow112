@@ -2904,6 +2904,28 @@
         "artifact_id": 11186259103
       },
       "notes": "Feature starts from verified parallel@6b18ae8f. Goal: allow UPDATE while WoW instances remain open. AddOns apply immediately; EXE/DLL/dlls.txt and stale root-runtime removals are staged with SHA checks and auto-finalized only after the last WoW process exits. No gameplay acceptance claimed."
+    },
+    {
+      "id": "updater-kill-all-control",
+      "branch": "feature/updater-kill-all",
+      "modules": [
+        "ParallelUpdater",
+        "UpdaterUI"
+      ],
+      "dependencies": [
+        "updater-live-update-parallel"
+      ],
+      "shared_resources": [
+        "WoW process lifetime detection",
+        "Parallel updater tools dashboard",
+        ".wow112_parallel_updater pending live-update finalization"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "5422c63f811283d83736d946ab986ee7fca24ac7",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Replace the unused local Diagnostics ZIP dashboard action with a guarded Kill All WoW action. It targets only WoW.exe/WoW_*.exe processes whose executable path is inside the selected game directory, requires confirmation, and immediately attempts pending LIVE UPDATE finalization after the last client exits. GitHub issue report and AH dump actions remain."
     }
   ]
 }
