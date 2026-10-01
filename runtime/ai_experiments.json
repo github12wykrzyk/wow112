@@ -2038,7 +2038,7 @@
         "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "1960daa71d751ec7c84b7a6c7ea5ee1b13f218ec",
+      "observed_head": "6b01e3ffffaa1476181d7dac0992823df7266364",
       "verified_commit": null,
       "tests": [
         {
@@ -2110,17 +2110,10 @@
           "commit": "ae4b9ed139e2129004fa3ec3e7f2ccd23586d958",
           "date": "2026-10-01",
           "evidence": "Exact verified Parallel candidate artifact 11159882284 disassembly: QueryAuctionItems at 0x004CE980 checks deadline 0x00B72638 before send; after ClientServices::Send at 0x004CEC3D it calls the tick function, executes bytes 05 88 13 00 00 at 0x004CEC47 (add eax,5000), then A3 38 26 B7 00 stores the deadline. CanSendAuctionQuery at 0x004CFBB0 reads the same deadline."
-        },
-        {
-          "kind": "game",
-          "result": "passed",
-          "commit": "0b552b0475bc389c43d1cc8b51294b1a55663a04",
-          "date": "2026-10-01",
-          "evidence": "User gameplay report #55 on exact parallel SHA 0b552b0475bc389c43d1cc8b51294b1a55663a04: original AUX full scan completed 1107 pages in 157.2s with queries=1107, stockSent=1107, native=1107, matched=1107, timeouts=0, cdPatch=true, cdMs=25."
         }
       ],
       "package": null,
-      "notes": "Report #55 freezes the transport baseline. This feature adds only the economic loop: every unfiltered original AUX page is valued for vendor profit and AUX-history-based disenchant profit; LIVE selects the best qualifying page candidate, pauses at the next safe submit boundary, re-queries the exact unfiltered source page, revalidates identity/profit/wallet/session limits, uses the existing guarded PlaceAuctionBid + money-delta confirmation, then resumes the original AUX Search continuation. LIVE is session-only and defaults OFF. Follow-up fixes ledger dependency routing and forward-declares the AUX arbitrage candidate helper used by revalidation."
+      "notes": "Report #55 (user gameplay on parallel SHA 0b552b0475bc389c43d1cc8b51294b1a55663a04) established the frozen transport baseline: 1107/1107 queries reached ClientServices::Send, 1107/1107 native responses matched, 0 timeouts, 157.2s total, cdPatch=true cdMs=25. This feature adds only the economic loop: every unfiltered original AUX page is valued for vendor profit and AUX-history-based disenchant profit; LIVE selects the best qualifying page candidate, pauses at the next safe submit boundary, re-queries the exact unfiltered source page, revalidates identity/profit/wallet/session limits, uses the existing guarded PlaceAuctionBid + money-delta confirmation, then resumes the original AUX Search continuation. LIVE is session-only and defaults OFF. Game report remains descriptive in notes because repository regression policy currently forbids kind=game ledger entries."
     },
     {
       "id": "map-tele-keep-open",
