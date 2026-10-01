@@ -1638,6 +1638,37 @@
       "tests": [],
       "package": null,
       "notes": "Adds bounded loader-report collection for the upcoming 2-warlock/2-slave shared-pair coordinator. Report contract covers request/lease/worker/slot/combat/READY/switch/ritual/click/retry fields while explicitly excluding credentials. This change only adds diagnostic plumbing; it does not claim coordinator runtime behavior."
+    },
+    {
+      "id": "ah-repeatability-75-125",
+      "branch": "feature/ah-repeatability-75-125-v2",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-repeatability-75-110"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "CMSG_AUCTION_LIST_ITEMS 0x0258",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event isolation"
+      ],
+      "status": "in_progress",
+      "observed_head": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "f487ce8d177ceb517c43de438298328514f29a82",
+          "date": "2026-10-01",
+          "evidence": "Initial feature preflight 36830998138 and registry 36830998069 passed, but parallel advanced before integration."
+        }
+      ],
+      "package": null,
+      "notes": "Repeatability follow-up after interrupted 75/110 run showed 110ms still losing responses. Alternates 75ms and 125ms, five 500-query runs each (5000 total), with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule using 125ms as recovery/reference. Rebased onto current parallel after unrelated updater/report metadata changes."
     }
   ]
 }
