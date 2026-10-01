@@ -3216,6 +3216,56 @@
       ],
       "package": null,
       "notes": "User requested zero manual configuration. One-time migration plus AH-open activation sets AUX_ARB live=true, loop=true, automatic MARKET=false, maxSessionBuys=0 unlimited, maxSessionSpend=0 unlimited. Defaults: vendor min 10s/max 5g; DE min 10s/max 5g/depth3/cut5%/margin25%; flip min 10s/max 10g/depth10/cut5%/margin25%. Legacy scanner remains off. Existing economic tooltip default-on behavior is preserved."
+    },
+    {
+      "id": "updater-reload-worker-protocol-v2",
+      "branch": "feature/reload-worker-protocol-v2",
+      "modules": [
+        "ParallelUpdater",
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "updater-reload-before-kill"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonWorker_<PID> shared worker map",
+        "CharacterSwitchDiag worker protocol version",
+        "ReloadUI reserved command 0xFFFFFFFE",
+        "Parallel updater kill-all fail-closed gate"
+      ],
+      "status": "awaiting_game_test",
+      "observed_head": "5ef93bdc94cc04c66115c0ba18e160f839deb5d5",
+      "verified_commit": "5ef93bdc94cc04c66115c0ba18e160f839deb5d5",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5ef93bdc94cc04c66115c0ba18e160f839deb5d5",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36921330964 passed on exact feature SHA, including CharacterSwitchDiag x86 compilation and parallel repository/runtime gates."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5ef93bdc94cc04c66115c0ba18e160f839deb5d5",
+          "date": "2026-10-01",
+          "evidence": "Build WoW112 updater run 36921331136 passed on exact feature SHA, including updater x86 compilation, WinForms UI smoke, PE/hash verification and artifact upload."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "5ef93bdc94cc04c66115c0ba18e160f839deb5d5",
+          "date": "2026-10-01",
+          "evidence": "Updater artifact 11192680369 (WoW112ParallelUpdater-5ef93bdc94cc04c66115c0ba18e160f839deb5d5) was produced by the successful exact-SHA updater workflow."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "5ef93bdc94cc04c66115c0ba18e160f839deb5d5",
+        "artifact_id": 11192680369
+      },
+      "notes": "Protocol hardening after observed reload-before-kill failure state=5,error=41. Root cause in current source: ReloadUI support was added while WORKER_VERSION remained 1, so an already-running pre-feature worker v1 passed updater compatibility checks and interpreted 0xFFFFFFFE as a bad slot (>10). Exact tested candidate SHA from the screenshot is not independently established, so no gameplay result is recorded. This iteration bumps worker protocol to v2 on both native and updater sides and probes incompatible maps to emit a clear restart-required error before sending any command."
     }
   ]
 }

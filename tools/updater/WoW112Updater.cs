@@ -1541,8 +1541,16 @@ namespace WoW112Updater
 
                     var channel = SummonWorkerChannel.TryOpen(pid);
                     if (channel == null)
+                    {
+                        var foundProtocol = SummonWorkerChannel.ProbeProtocolVersion(pid);
+                        if (foundProtocol != 0 && foundProtocol != SummonWorkerVersion)
+                            throw new InvalidOperationException("PID " + pid + ": stary CharacterSwitch worker (protokół v"
+                                + foundProtocol + ", wymagany v" + SummonWorkerVersion
+                                + "). Zaktualizuj runtime i uruchom tę instancję ponownie; żadna instancja nie została zabita.");
                         throw new InvalidOperationException("PID " + pid
-                            + ": brak zgodnego CharacterSwitch worker. Zaktualizuj runtime i uruchom tę instancję ponownie; kill został anulowany.");
+                            + ": brak zgodnego CharacterSwitch worker v" + SummonWorkerVersion
+                            + ". Zaktualizuj runtime i uruchom tę instancję ponownie; żadna instancja nie została zabita.");
+                    }
 
                     var snapshot = channel.Read();
                     if (!HeartbeatFresh(snapshot))

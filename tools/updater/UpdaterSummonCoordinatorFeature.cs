@@ -24,7 +24,7 @@ namespace WoW112Updater
     internal sealed partial class MainForm
     {
         private const uint SummonWorkerMagic = 0x53323157u;
-        private const uint SummonWorkerVersion = 1u;
+        private const uint SummonWorkerVersion = 2u;
         private const uint SummonAssistMagic = 0x41323157u;
         private const uint SummonAssistVersion = 1u;
         private const int SummonWorkerMapSize = 64;
@@ -75,6 +75,31 @@ namespace WoW112Updater
                     return null;
                 }
                 return channel;
+            }
+
+            internal static uint ProbeProtocolVersion(int pid)
+            {
+                var name = "Local\\WoW112_SummonWorker_" + pid;
+                var mapping = OpenFileMapping(FileMapAllAccess, false, name);
+                if (mapping == IntPtr.Zero) return 0;
+                var view = MapViewOfFile(mapping, FileMapAllAccess, 0, 0, (UIntPtr)SummonWorkerMapSize);
+                if (view == IntPtr.Zero)
+                {
+                    CloseHandle(mapping);
+                    return 0;
+                }
+                try
+                {
+                    var magic = unchecked((uint)Marshal.ReadInt32(view, 0));
+                    var version = unchecked((uint)Marshal.ReadInt32(view, 4));
+                    var mappedPid = unchecked((uint)Marshal.ReadInt32(view, 8));
+                    return magic == SummonWorkerMagic && mappedPid == (uint)pid ? version : 0;
+                }
+                finally
+                {
+                    UnmapViewOfFile(view);
+                    CloseHandle(mapping);
+                }
             }
 
             internal SummonWorkerSnapshot Read()
