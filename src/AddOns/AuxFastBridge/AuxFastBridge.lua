@@ -1,4 +1,4 @@
--- AuxFastBridge v1.2
+-- AuxFastBridge v1.3
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -7,6 +7,7 @@ AuxFastBridgeDB = AuxFastBridgeDB or {}
 local originalCanSendAuctionQuery = CanSendAuctionQuery
 local originalQueryAuctionItems = QueryAuctionItems
 local okScan, scan = pcall(require, "aux.core.scan")
+local auxCore = require "aux"
 
 local busy = 0
 local startedAt = 0
@@ -145,9 +146,9 @@ local function install_scan_hook()
 	wait_for_list_results = function()
 		local expectedSeq = awaitNativeSeq
 		local sentAt = querySentAt
-		local ignoreOwner = get_state().params.ignore_owner or aux.account_data.ignore_owner
+		local ignoreOwner = get_state().params.ignore_owner or auxCore.account_data.ignore_owner
 
-		return aux.when(function()
+		return auxCore.when(function()
 			if nativeSeq > expectedSeq then
 				if ignoreOwner or owner_data_complete() then
 					return true
@@ -217,4 +218,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.2 loaded: original AUX + native response correlation; hook=" .. tostring(hookInstalled))
+out("v1.3 loaded: original AUX + native response correlation; hook=" .. tostring(hookInstalled))
