@@ -2965,6 +2965,36 @@
       ],
       "package": null,
       "notes": "Integrate only after exact-SHA preflight. Normal MARKET_SCAN pages are processed in small configurable chunks (default 4 rows per 50ms AVM tick) so one list update no longer performs all 50 item/link/history allocations in one frame. Page delay/history semantics stay unchanged. DE candidates from the just-finished AUX page are evaluated against accumulated material depth; when LIVE and eligible, original AUX pauses after the page, exact material markets are revalidated, the exact auction is requeried/bought, then Search continuation resumes. Vendor retains first priority."
+    },
+    {
+      "id": "ah-loop-no-auto-market",
+      "branch": "feature/ah-loop-no-auto-market",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-midscan-de-smooth-market",
+        "ah-postscan-live-fallback"
+      ],
+      "shared_resources": [
+        "AUX_ARB continuous loop scheduler",
+        "full MARKET scheduler ownership",
+        "manual MARKET snapshot path"
+      ],
+      "status": "in_progress",
+      "observed_head": "110eee1ea2b429d18e63b27bcf7a4dd12cf07773",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "110eee1ea2b429d18e63b27bcf7a4dd12cf07773",
+          "date": "2026-10-01",
+          "evidence": "User reports DE still did not buy and loop immediately entered full MARKET again. User requested automatic MARKET be disabled to isolate purchase flow."
+        }
+      ],
+      "package": null,
+      "notes": "Disable automatic full MARKET snapshots in continuous AUX loop by default and migrate existing users to autoMarket=false. /avm loop on explicitly keeps automatic MARKET off. Manual /avm market start remains available, and /avm loop market on is an explicit diagnostic opt-in. Vendor/DE/flip scan cadence is unchanged."
     }
   ]
 }
