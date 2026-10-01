@@ -1,5 +1,7 @@
 # Aux FAST Bridge
 
+Version 2.0 preserves the full-scan arbitrage cache when AuxVmangos pauses original AUX for a guarded vendor transaction and later resumes the same Search continuation. The bridge marks programmatic resume and passes that fact into `AVM_AuxArbScanStart(resume)`, so current-scan enchanting-material depth data and raw DE candidates survive pause/revalidate/buy/resume cycles instead of being rebuilt from only the tail of the scan.
+
 Version 1.9 fixes the live pause crash after selecting an arbitrage candidate. The upstream module environment exposes abort directly; reading it back through M returned nil. The pause path now calls abort directly.
 
 Version 1.8 fixes report #56. Original AUX Search always creates auto-buy and auto-bid validator functions, even when no saved automatic rule is enabled. Version 1.7 incorrectly used the presence of those functions to decide that the scan was not an ordinary Search, so AuxVmangos never received scan/page/auction callbacks and reported pages=0/0 and candidates=0/0 after a completed scan. v1.8 detects normal full Search by its actual callback shape: on_scan_start + on_start_query + on_page_scanned + on_auction. When AUX arbitrage is enabled, the bridge suppresses the original AUX automatic bid validators for that Search so the guarded AuxVmangos revalidation path remains the only automated transaction path.

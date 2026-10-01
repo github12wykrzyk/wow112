@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX fast-scan arbitrage companion: vendor + disenchant valuation, guarded revalidation, buy and resume.
+## Notes: Original AUX arbitrage with grey-safe vendor path and live depth-3 disenchant EV/revalidation.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.15.2-original-aux-arbitrage-grayfilter
+## Version: 0.16-live-de-depth3
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

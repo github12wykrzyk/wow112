@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-gray-vendor-abortfix-r2",
+      "branch": "feature/ah-aux-de-live-depth3",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2030,15 +2030,15 @@
         "ah-fast-vendor-revalidate-fix"
       ],
       "shared_resources": [
-        "Original AUX Search scan state machine and continuation",
+        "Original AUX full Search scan state machine and continuation",
         "QueryAuctionItems / CanSendAuctionQuery with verified 25 ms 5875 cooldown",
         "native SMSG_AUCTION_LIST_RESULT 0x025C response correlation",
-        "Aux merchant_sell learned vendor values + embedded Vanilla vendor table",
-        "Aux core/disenchant expected-value model + history market values",
-        "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
+        "current-scan enchanting-material order book and depth-3 unit floors",
+        "Aux core/disenchant drop probability and quantity distributions",
+        "AuxVmangos exact material requery + exact item revalidation + PlaceAuctionBid + money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "1204eee80dde0167c3c4595f3079cbccf2af8626",
+      "observed_head": "0d0391cc4c52a20275476843c8c8219aa2bff98f",
       "verified_commit": null,
       "tests": [
         {
@@ -2113,7 +2113,7 @@
         }
       ],
       "package": null,
-      "notes": "Live vendor test exposed two issues. AuxFastBridge pause used M.abort even though the module's readable function is abort, causing the nil-call crash. Also Serrated Petal item 18223 demonstrated that embedded Vanilla vendor values can diverge from current realm vendor payouts. This iteration calls abort directly and excludes quality=0 grey items from both vendor candidate paths. Disenchant logic is unchanged."
+      "notes": "Implements the selected DE model on top of the verified 0d0391c parallel baseline. Original AUX full Search now builds a current-scan enchanting-material order book. DE candidates are evaluated after the full scan using default depth=3, 5% AH cut and 25% safety margin; every possible material must have sufficient current depth. LIVE DE then re-queries every possible material by name across all result pages, rebuilds the depth floors, recomputes net EV/margin, and finally revalidates the exact item before purchase. AuxFastBridge v2.0 preserves this current-scan DE cache across programmatic vendor pause/resume continuations. Grey vendor filtering and the v1.9 pause crash fix remain unchanged."
     },
     {
       "id": "map-tele-keep-open",

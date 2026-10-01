@@ -1,4 +1,24 @@
-# AuxVmangos 0.15.2 — Original AUX fast arbitrage loop
+# AuxVmangos 0.16 — live depth-3 disenchant arbitrage
+
+Disenchant purchases no longer depend on AUX historical material prices. A completed original AUX full Search builds a current-scan order book for every Vanilla enchanting material. A material price is the third-cheapest unit level by default: the lowest BO/unit level at which cumulative visible supply reaches at least 3 units.
+
+DE valuation is:
+
+`net material price = live depth floor × (1 - AH cut)`
+
+`DE net EV = Σ(probability × average drop quantity × net material price)`
+
+A DE candidate must pass all gates: every possible material has the configured live depth, `net EV - buyout >= deMinProfit`, `buyout <= deMaxBuyout` when configured, and `buyout <= 75% of net EV` with the default 25% safety margin.
+
+Before any LIVE DE purchase, AuxVmangos re-queries each possible resulting material by name, scans all result pages, rebuilds its depth floors from the fresh results, recomputes EV and the safety margin, then revalidates the exact item auction immediately before `PlaceAuctionBid`. Missing depth, timeout, changed profitability, a moved item, wallet/session limits, or UNKNOWN purchase confirmation all fail closed.
+
+Defaults: `dedepth=3`, `decut=5`, `demargin=25`. Commands:
+- `/avm auxarb dedepth 3`
+- `/avm auxarb decut 5`
+- `/avm auxarb demargin 25`
+- existing `/avm auxarb demin ...` and `demax ...` remain active.
+
+Vendor arbitrage is otherwise unchanged; quality-0 grey items remain excluded.
 
 Poor-quality (grey) items are excluded from vendor arbitrage. Serrated Petal (item 18223) showed a large mismatch between embedded Vanilla vendor data and the current realm's actual vendor payout, so grey junk is no longer considered for vendor-profit purchases.
 
