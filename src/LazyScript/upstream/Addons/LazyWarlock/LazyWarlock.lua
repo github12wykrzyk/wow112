@@ -29,10 +29,24 @@ function lazyWarlockLoad.OnLoad()
 	this:RegisterEvent("PLAYER_LOGIN")
 	
 	this:RegisterEvent("BAG_UPDATE")
+	-- Internal wand/melee weave tracking; no external swing-timer addon required.
+	this:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
+	this:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+	this:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+	this:RegisterEvent("PLAYER_TARGET_CHANGED")
+	this:RegisterEvent("PLAYER_ENTERING_WORLD")
 end
 
 function lazyWarlockLoad.OnEvent()
-	if (event == "BAG_UPDATE") then
+	if (event == "CHAT_MSG_COMBAT_SELF_HITS" or event == "CHAT_MSG_COMBAT_SELF_MISSES") then
+		if lazyWarlock.OnMeleeWeaveSwing then lazyWarlock.OnMeleeWeaveSwing() end
+	elseif (event == "CHAT_MSG_SPELL_SELF_DAMAGE") then
+		if lazyWarlock.OnMeleeWeaveSpellDamage then lazyWarlock.OnMeleeWeaveSpellDamage(arg1) end
+	elseif (event == "PLAYER_TARGET_CHANGED") then
+		if lazyWarlock.OnMeleeWeaveTargetChanged then lazyWarlock.OnMeleeWeaveTargetChanged() end
+	elseif (event == "PLAYER_ENTERING_WORLD") then
+		if lazyWarlock.ResetMeleeWeave then lazyWarlock.ResetMeleeWeave() end
+	elseif (event == "BAG_UPDATE") then
 		lazyWarlock.CheckStones()
 		elseif (event == "VARIABLES_LOADED") then
 		-- Nothing yet

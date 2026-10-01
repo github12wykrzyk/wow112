@@ -3051,6 +3051,30 @@
       ],
       "package": null,
       "notes": "Automatic full MARKET snapshots are disabled by default in continuous AUX loop and existing users migrate to autoMarket=false. /avm loop on explicitly keeps automatic MARKET off. Manual /avm market start remains available; /avm loop market on is explicit diagnostic opt-in. Vendor/DE/flip scan cadence is unchanged."
+    },
+    {
+      "id": "lazyscript-warlock-melee-weave",
+      "branch": "feature/lazyscript-warlock-melee-weave",
+      "modules": [
+        "LazyScript",
+        "LazyWarlock"
+      ],
+      "dependencies": [
+        "lazyscript-warlock-wand-drainsoul"
+      ],
+      "shared_resources": [
+        "WoW 1.12 CHAT_MSG_COMBAT_SELF_HITS / CHAT_MSG_COMBAT_SELF_MISSES",
+        "WoW 1.12 CHAT_MSG_SPELL_SELF_DAMAGE wand Shoot confirmation",
+        "Attack action-slot state and UnitAttackSpeed",
+        "Shoot wand auto-repeat action-slot state",
+        "native LazyScript player movement observer"
+      ],
+      "status": "in_progress",
+      "observed_head": "42753c46668eea205bf18263d5d77eddf1f085c1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Adds self-contained Warlock melee weaving with no SP_SwingTimer dependency. meleeWeave waits for a confirmed wand shot before cutting Shoot, arms exactly one melee swing when UnitAttackSpeed says the white-swing timer is ready, confirms hit/miss from 1.12 self combat events, then returns to wand. A 0.45s melee lease plus 0.55s retry backoff prevents 100 ms form spam, range/facing failures or server latency from trapping the client in melee mode. Wand is never started while the native movement observer reports moving/stale. Requires Attack and Shoot on action bars. In-game timing still requires exact-SHA gameplay validation."
     }
   ]
 }

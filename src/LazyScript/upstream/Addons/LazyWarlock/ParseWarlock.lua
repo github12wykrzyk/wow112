@@ -144,6 +144,202 @@ function lazyWarlockLoad.LoadParseWarlock()
 	-- e.g. lazyWarlock.comboActions.<actionName> or lazyWarlock.items.<itemName>, otherwise an entry in
 	-- the list above should be sufficient.
 
+	-- Native LazyWarlock wand/melee weave. This replaces the historical dependency
+	-- on SP_SwingTimer: melee swings are confirmed from the 1.12 self combat-log
+	-- events and wand shots are confirmed from CHAT_MSG_SPELL_SELF_DAMAGE.
+	lazyWarlock.meleeWeave = lazyWarlock.meleeWeave or {
+		lastMeleeSwingAt = nil,
+		lastWandShotAt = nil,
+		pendingAt = nil,
+		pendingBaseline = nil,
+		pendingTarget = nil,
+		retryAt = nil,
+		warnedAttack = false,
+		warnedShoot = false,
+	}
+
+	function lazyWarlock.ResetMeleeWeave()
+		local s = lazyWarlock.meleeWeave
+		s.lastMeleeSwingAt = nil
+		s.lastWandShotAt = nil
+		s.pendingAt = nil
+		s.pendingBaseline = nil
+		s.pendingTarget = nil
+		s.retryAt = nil
+	end
+
+	function lazyWarlock.OnMeleeWeaveTargetChanged()
+		local s = lazyWarlock.meleeWeave
+		s.pendingAt = nil
+		s.pendingBaseline = nil
+		s.pendingTarget = nil
+		s.retryAt = nil
+		-- Keep lastMeleeSwingAt: the player swing timer is not target-specific.
+	end
+
+	function lazyWarlock.OnMeleeWeaveSwing()
+		local s = lazyWarlock.meleeWeave
+		s.lastMeleeSwingAt = GetTime()
+	end
+
+	function lazyWarlock.GetMeleeWeaveAttackSlot(sayNothing)
+		if lazyScript.attackSlot and IsAttackAction(lazyScript.attackSlot) then
+			return lazyScript.attackSlot
+		end
+		for i = 1, 120 do
+			if IsAttackAction(i) then
+				lazyScript.attackSlot = i
+				return i
+			end
+		end
+		if not sayNothing and not lazyWarlock.meleeWeave.warnedAttack then
+			lazyWarlock.p("meleeWeave: place Attack on an action bar.")
+			lazyWarlock.meleeWeave.warnedAttack = true
+		end
+		return nil
+	end
+
+	function lazyWarlock.GetMeleeWeaveTargetKey()
+		if not UnitExists("target") then return nil end
+		if UnitGUID then
+			local guid = UnitGUID("target")
+			if guid then return "guid:"..guid end
+		end
+		return "unit:"..(UnitName("target") or "").."|"..tostring(UnitLevel("target") or 0).."|"..tostring(UnitHealthMax("target") or 0)
+	end
+
+	function lazyWarlock.MeleeWeavePlayerMoving()
+		local t = lazyScript.nativePlayerMovingAt
+		if not t or lazyScript.nativePlayerMoving == nil then return true end
+		local age = GetTime() - t
+		if age < 0 or age > 0.35 then return true end
+		return lazyScript.nativePlayerMoving == 1
+	end
+
+	function lazyWarlock.MeleeWeaveTargetAttackable()
+		return UnitExists("target") and UnitCanAttack("player", "target") and not UnitIsDead("target")
+	end
+
+	function lazyWarlock.MeleeWeaveTargetInRange(sayNothing)
+		local slot = lazyWarlock.GetMeleeWeaveAttackSlot(sayNothing)
+		if not slot then return false end
+		local inRange = IsActionInRange(slot)
+		return inRange == 1
+	end
+
+	function lazyWarlock.MeleeWeaveSwingReady()
+		local speed = UnitAttackSpeed("player")
+		if not speed or speed <= 0 then return false end
+		local last = lazyWarlock.meleeWeave.lastMeleeSwingAt
+		if not last then return true end
+		return GetTime() >= (last + speed - 0.08)
+	end
+
+	function lazyWarlock.OnMeleeWeaveSpellDamage(msg)
+		if not msg then return end
+		local slot = lazyScript.GetShootSlot(true)
+		if not slot or IsAutoRepeatAction(slot) ~= 1 then return end
+		local shootName = lazyScript.GetActionNameFromTooltip(slot)
+		if shootName and string.find(msg, shootName, 1, true) then
+			lazyWarlock.meleeWeave.lastWandShotAt = GetTime()
+		end
+	end
+
+	function lazyWarlock.MeleeWeaveSetAttack(enabled, attackSlot)
+		if not attackSlot then return end
+		local active = IsCurrentAction(attackSlot) == 1
+		if active ~= enabled then AttackTarget() end
+	end
+
+	function lazyWarlock.MeleeWeaveSetWand(enabled, sayNothing)
+		local slot = lazyScript.GetShootSlot(true)
+		if not slot then
+			if not sayNothing and not lazyWarlock.meleeWeave.warnedShoot then
+				lazyWarlock.p("meleeWeave: place Shoot (wand) on an action bar.")
+				lazyWarlock.meleeWeave.warnedShoot = true
+			end
+			return false
+		end
+		local active = IsAutoRepeatAction(slot) == 1
+		if active ~= enabled then UseAction(slot) end
+		return true
+	end
+
+	lazyWarlock.pseudoActions.meleeWeave = lazyWarlock.PseudoAction:New("meleeWeave", "Warlock Wand/Melee Weave", false)
+
+	function lazyWarlock.pseudoActions.meleeWeave:IsUsable(sayNothing)
+		if not lazyWarlock.MeleeWeaveTargetAttackable() then return false end
+		if not lazyWarlock.GetMeleeWeaveAttackSlot(sayNothing) then return false end
+		if not lazyScript.GetShootSlot(true) then
+			if not sayNothing and not lazyWarlock.meleeWeave.warnedShoot then
+				lazyWarlock.p("meleeWeave: place Shoot (wand) on an action bar.")
+				lazyWarlock.meleeWeave.warnedShoot = true
+			end
+			return false
+		end
+		return true
+	end
+
+	function lazyWarlock.pseudoActions.meleeWeave:Use()
+		local s = lazyWarlock.meleeWeave
+		local now = GetTime()
+		local attackSlot = lazyWarlock.GetMeleeWeaveAttackSlot(true)
+		local targetKey = lazyWarlock.GetMeleeWeaveTargetKey()
+		local inRange = lazyWarlock.MeleeWeaveTargetInRange(true)
+		local moving = lazyWarlock.MeleeWeavePlayerMoving()
+
+		-- A pending melee window owns the attack mode until one white swing is
+		-- confirmed. Never restart wand in the middle of that short window.
+		if s.pendingAt then
+			local confirmed = s.lastMeleeSwingAt and s.pendingBaseline and s.lastMeleeSwingAt > s.pendingBaseline
+			if confirmed then
+				lazyWarlock.MeleeWeaveSetAttack(false, attackSlot)
+				s.pendingAt = nil
+				s.pendingBaseline = nil
+				s.pendingTarget = nil
+				s.retryAt = nil
+				if not moving then lazyWarlock.MeleeWeaveSetWand(true, true) end
+			elseif targetKey ~= s.pendingTarget or not inRange or now - s.pendingAt > 0.45 then
+				-- Out of range/facing/server-lag safety: do not sacrifice the wand
+				-- indefinitely waiting for a melee event that may never arrive.
+				lazyWarlock.MeleeWeaveSetAttack(false, attackSlot)
+				s.pendingAt = nil
+				s.pendingBaseline = nil
+				s.pendingTarget = nil
+				s.retryAt = now + 0.55
+				if not moving then lazyWarlock.MeleeWeaveSetWand(true, true) end
+			else
+				lazyWarlock.MeleeWeaveSetWand(false, true)
+				lazyWarlock.MeleeWeaveSetAttack(true, attackSlot)
+			end
+		else
+			local canTry = (not s.retryAt or now >= s.retryAt) and inRange and lazyWarlock.MeleeWeaveSwingReady()
+			-- When wanding, cut over only immediately after a confirmed wand shot;
+			-- this avoids clipping a Shoot wind-up just because the melee timer is ready.
+			local recentWandShot = s.lastWandShotAt and (now - s.lastWandShotAt >= 0) and (now - s.lastWandShotAt <= 0.22)
+			if canTry and (moving or recentWandShot or IsAutoRepeatAction(lazyScript.GetShootSlot(true)) ~= 1) then
+				lazyWarlock.MeleeWeaveSetWand(false, true)
+				lazyWarlock.MeleeWeaveSetAttack(true, attackSlot)
+				s.pendingAt = now
+				s.pendingBaseline = s.lastMeleeSwingAt or 0
+				s.pendingTarget = targetKey
+			else
+				lazyWarlock.MeleeWeaveSetAttack(false, attackSlot)
+				if not moving then lazyWarlock.MeleeWeaveSetWand(true, true) else lazyWarlock.MeleeWeaveSetWand(false, true) end
+			end
+		end
+
+		lazyWarlock.recordAction(self.code)
+		self.everyTimer = now
+		self.nowAndEveryTimer = now
+	end
+
+	function lazyWarlock.bitParsers.meleeWeave(bit, actions, masks)
+		if not lazyWarlock.rebit(bit, lazyWarlock.pseudoActions.meleeWeave.codePattern) then return false end
+		table.insert(actions, lazyWarlock.pseudoActions.meleeWeave)
+		return true
+	end
+
 	function lazyWarlock.bitParsers.immolate(bit, actions, masks)
 		if (not lazyWarlock.rebit(bit, lazyWarlock.actions.immolate.codePattern)) then
 			return false
@@ -484,17 +680,9 @@ function lazyWarlockLoad.LoadParseWarlock()
 	-- "return function() ... end" inside the mask function, everything else will be evaluated at
 	-- the time that the mask is parsed.
 
-	-- 通过SP_SwingTimer插件判断平砍时间
+	-- Internal swing criterion; no SP_SwingTimer dependency.
 	function lazyWarlock.masks.isSwinged()
-		if not st_timer then
-			lazyWarlock.p("need SP_SwingTimer.")
-			return false
-		end
-		if st_timer + 1 > UnitAttackSpeed("player") then
-			return true
-		else
-			return false
-		end
+		return lazyWarlock.MeleeWeaveSwingReady()
 	end
 
 	function lazyScript.bitParsers.ifSwinged(bit, actions, masks)
@@ -798,6 +986,7 @@ function lazyWarlockLoad.LoadParseWarlock()
 			<P>-if[Not]LastConflagrateChance</P>
 			<P>-if[{&lt;,=,&gt;}]XShards</P>
 			<P>-if[Not]TargetShardable</P>
+			<P>meleeWeave - smart wand/melee single-swing weaving; requires Attack and Shoot on action bars.</P>
 		]]
 	end
 
