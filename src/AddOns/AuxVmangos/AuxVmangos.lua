@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.19.1-live-arm-market"
+AVM_VERSION = "0.20-history-anchor-riskguard"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -14,6 +14,7 @@ AVM_WATCH_MAX_PAGES = 100
 
 local AVM_AUX_INFO_OK, AVM_AUX_INFO = pcall(require, "aux.util.info")
 local AVM_AUX_DE_OK, AVM_AUX_DE = pcall(require, "aux.core.disenchant")
+local AVM_AUX_HISTORY_OK, AVM_AUX_HISTORY = pcall(require, "aux.core.history")
 
 local AVM_DE_MATERIAL_IDS = {
 	[10940]=true,[10938]=true,[10939]=true,[10978]=true,[10998]=true,
@@ -84,6 +85,9 @@ AVM = {
 		flipVerify = nil,
 		flipCandidates = 0,
 		flipNoDepth = 0,
+		flipHistoryRejects = 0,
+		flipSellerRejects = 0,
+		flipExposureRejects = 0,
 	},
 	candidate = nil,
 	revalidatePages = nil,
@@ -93,6 +97,7 @@ AVM = {
 	nextTick = 0,
 	sessionSpend = 0,
 	sessionBuys = 0,
+	itemExposure = {},
 	vendor = {
 		active = false,
 		requested = false,
@@ -238,7 +243,7 @@ local function avm_diag_record(msg)
 		flipCandidates = AVM.auxArb and AVM.auxArb.flipCandidates or 0,
 		flipNoDepth = AVM.auxArb and AVM.auxArb.flipNoDepth or 0,
 		flipVerify = AVM.auxArb and AVM.auxArb.flipVerify and true or false,
-		flipDepthUnits = AVM_DB.flipDepthUnits or 5,
+		flipDepthUnits = AVM_DB.flipDepthUnits or 10,
 		flipAhCutPct = AVM_DB.flipAhCutPct or 5,
 		flipSafetyMarginPct = AVM_DB.flipSafetyMarginPct or 25,
 		auxLoopEnabled = AVM_DB.auxLoopEnabled and true or false,
@@ -348,12 +353,23 @@ local function avm_defaults()
 	if AVM_DB.deDepthUnits == nil then AVM_DB.deDepthUnits = 3 end
 	if AVM_DB.deAhCutPct == nil then AVM_DB.deAhCutPct = 5 end
 	if AVM_DB.deSafetyMarginPct == nil then AVM_DB.deSafetyMarginPct = 25 end
+	if AVM_DB.flipRiskSchema == nil then
+		-- 0.20 replaces depth-only valuation with historical anchoring. Migrate only the old default.
+		if AVM_DB.flipDepthUnits == nil or AVM_DB.flipDepthUnits == 5 then AVM_DB.flipDepthUnits = 10 end
+		AVM_DB.flipRiskSchema = 1
+	end
 	if AVM_DB.flipEnabled == nil then AVM_DB.flipEnabled = true end
 	if AVM_DB.flipMinProfit == nil then AVM_DB.flipMinProfit = 1000 end
 	if AVM_DB.flipMaxBuyout == nil then AVM_DB.flipMaxBuyout = 50000 end
-	if AVM_DB.flipDepthUnits == nil then AVM_DB.flipDepthUnits = 5 end
+	if AVM_DB.flipDepthUnits == nil then AVM_DB.flipDepthUnits = 10 end
 	if AVM_DB.flipAhCutPct == nil then AVM_DB.flipAhCutPct = 5 end
 	if AVM_DB.flipSafetyMarginPct == nil then AVM_DB.flipSafetyMarginPct = 25 end
+	if AVM_DB.flipHistMaxPct == nil then AVM_DB.flipHistMaxPct = 70 end
+	if AVM_DB.flipMinHistoryDays == nil then AVM_DB.flipMinHistoryDays = 2 end
+	if AVM_DB.flipMinSellers == nil then AVM_DB.flipMinSellers = 3 end
+	if AVM_DB.flipMaxItemSpend == nil then AVM_DB.flipMaxItemSpend = 200000 end -- 20g/session/item
+	if AVM_DB.flipMaxItemBuys == nil then AVM_DB.flipMaxItemBuys = 3 end
+	if AVM_DB.vendorTrustedOnly == nil then AVM_DB.vendorTrustedOnly = true end
 	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
 	if AVM_DB.diag == nil then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
 	if AVM_DB.vendorMeta.sweepPass == nil then AVM_DB.vendorMeta.sweepPass = 0 end
@@ -1485,6 +1501,18 @@ local function avm_vendor_item_id(i)
 	return tonumber(id)
 end
 
+local function avm_vendor_value(itemId)
+	local learned = 0
+	if aux and aux.account_data and aux.account_data.merchant_sell then
+		learned = tonumber(aux.account_data.merchant_sell[itemId]) or 0
+	end
+	if learned > 0 then return learned, "aux-learned" end
+	if AVM_DB.vendorTrustedOnly then return 0, "trusted-missing" end
+	local static = AVM_VENDOR_VALUES and tonumber(AVM_VENDOR_VALUES[itemId]) or 0
+	if static > 0 then return static, "static" end
+	return 0, "none"
+end
+
 avm_vendor_candidate_from_row = function(i)
 	local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
 	if not name or not count or count <= 0 or not buyout or buyout <= 0 then return nil end
@@ -1492,15 +1520,7 @@ avm_vendor_candidate_from_row = function(i)
 
 	local itemId = avm_vendor_item_id(i)
 	if not itemId then return nil end
-	local vendorSource = "static"
-	local vendorUnit = 0
-	if aux and aux.account_data and aux.account_data.merchant_sell then
-		vendorUnit = tonumber(aux.account_data.merchant_sell[itemId]) or 0
-		if vendorUnit > 0 then vendorSource = "aux-learned" end
-	end
-	if vendorUnit <= 0 and AVM_VENDOR_VALUES then
-		vendorUnit = tonumber(AVM_VENDOR_VALUES[itemId]) or 0
-	end
+	local vendorUnit, vendorSource = avm_vendor_value(itemId)
 	if vendorUnit <= 0 then return nil end
 
 	local vendorTotal = vendorUnit * count
@@ -1590,10 +1610,30 @@ local function avm_de_depth_price(book, itemId, depth)
 end
 
 local function avm_de_record_key(record, itemId)
-	local itemKey = record and record.itemKey or ""
-	if (not itemKey or itemKey == "") and record and record.index then itemKey = avm_item_link_key(record.index) end
+	local itemKey = ""
+	if record and record.index then itemKey = avm_item_link_key(record.index) end
+	if (not itemKey or itemKey == "") and record then itemKey = record.itemKey or record.item_key or "" end
 	if not itemKey or itemKey == "" then itemKey = "item:" .. tostring(itemId or 0) end
 	return itemKey
+end
+
+local function avm_flip_history_key(record, itemId)
+	if record and record.item_key and record.item_key ~= "" then return tostring(record.item_key) end
+	local suffixId = tonumber(record and (record.suffix_id or record.suffixId)) or 0
+	return tostring(itemId or 0) .. ":" .. tostring(suffixId)
+end
+
+local function avm_flip_history_value(record, itemId)
+	local key = avm_flip_history_key(record, itemId)
+	if not AVM_AUX_HISTORY_OK or not AVM_AUX_HISTORY or not AVM_AUX_HISTORY.value then return nil, 0, key end
+	local ok, value = pcall(AVM_AUX_HISTORY.value, key)
+	if not ok then return nil, 0, key end
+	local days = 0
+	if AVM_AUX_HISTORY.data_points then
+		local okPoints, points = pcall(AVM_AUX_HISTORY.data_points, key)
+		if okPoints and type(points) == "table" then days = table.getn(points) end
+	end
+	return tonumber(value), days, key
 end
 
 local function avm_auxarb_signature_from_record(record)
@@ -1712,41 +1752,45 @@ end
 local function avm_flip_record_candidate(record)
 	if not AVM_DB.flipEnabled or not record then return nil end
 	local itemId = tonumber(record.item_id or record.itemId)
-	local count = tonumber(record.count or record.aux_quantity) or 0
+	local count = tonumber(record.aux_quantity or record.count) or 0
 	local buyout = tonumber(record.buyout_price or record.buyout) or 0
 	local maxStack = tonumber(record.max_stack or record.maxStack) or 0
 	local quality = tonumber(record.quality)
 	if not itemId or count <= 0 or buyout <= 0 then return nil end
-	if quality == 0 or maxStack <= 1 then return nil end
+	if quality == 0 then return nil end
 	if record.owner and record.owner == UnitName("player") then return nil end
 	local itemKey = avm_de_record_key(record, itemId)
+	local histValue, histDays, historyKey = avm_flip_history_value(record, itemId)
 	local sig = avm_signature_no_owner(record.name, count, buyout, quality, record.level, itemKey)
 	return {
 		name = record.name, item_id = itemId, itemId = itemId,
 		count = count, aux_quantity = count, buyout_price = buyout, buyout = buyout,
 		quality = quality, level = record.level, max_stack = maxStack, maxStack = maxStack,
 		owner = record.owner, itemKey = itemKey, signature = sig,
+		historyKey = historyKey, bookKey = historyKey, histValue = histValue, histDays = histDays,
 		page = tonumber(record.page) or AVM.queryPage or 0,
 		sourcePage = tonumber(record.page) or AVM.queryPage or 0,
-		unitExact = buyout / count,
+		unitExact = tonumber(record.unit_buyout_price) or (buyout / count),
 	}
 end
 
 local function avm_flip_book_add(book, record)
 	local raw = avm_flip_record_candidate(record)
 	if not raw then return nil end
-	local row = book[raw.itemId]
+	local bookKey = raw.bookKey or tostring(raw.itemId)
+	local row = book[bookKey]
 	if not row then
 		row = {
-			name = raw.name, itemId = raw.itemId, maxStack = raw.maxStack,
-			levels = {}, units = 0, auctions = 0, cheapest = nil,
+			name = raw.name, itemId = raw.itemId, bookKey = bookKey, maxStack = raw.maxStack,
+			levels = {}, units = 0, auctions = 0, cheapest = nil, sellers = {},
 		}
-		book[raw.itemId] = row
+		book[bookKey] = row
 	end
 	local key = raw.unitExact
 	row.levels[key] = (tonumber(row.levels[key]) or 0) + raw.count
 	row.units = (row.units or 0) + raw.count
 	row.auctions = (row.auctions or 0) + 1
+	if raw.owner and raw.owner ~= "" then row.sellers[raw.owner] = true end
 	local old = row.cheapest
 	if not old or raw.unitExact < old.unitExact or
 	   (raw.unitExact == old.unitExact and raw.buyout < old.buyout) then
@@ -1779,13 +1823,59 @@ local function avm_flip_reference_floor(row, candidate)
 	return nil, required
 end
 
+local function avm_flip_seller_count(row)
+	local n = 0
+	for _ in pairs(row and row.sellers or {}) do n = n + 1 end
+	return n
+end
+
+local function avm_flip_exposure_allows(raw)
+	local key = raw.bookKey or raw.historyKey or raw.itemKey or tostring(raw.itemId or 0)
+	local exposure = AVM.itemExposure[key] or { spend = 0, buys = 0, units = 0 }
+	local maxSpend = tonumber(AVM_DB.flipMaxItemSpend) or 0
+	local maxBuys = tonumber(AVM_DB.flipMaxItemBuys) or 0
+	if maxSpend > 0 and (tonumber(exposure.spend) or 0) + raw.buyout > maxSpend then return false, "item-budget" end
+	if maxBuys > 0 and (tonumber(exposure.buys) or 0) + 1 > maxBuys then return false, "item-buy-cap" end
+	return true, key
+end
+
+local function avm_record_item_exposure(candidate)
+	if not candidate or candidate.route ~= "flip" then return end
+	local key = candidate.exposureKey or candidate.bookKey or candidate.historyKey or candidate.itemKey or tostring(candidate.itemId or 0)
+	local exposure = AVM.itemExposure[key]
+	if not exposure then
+		exposure = { spend = 0, buys = 0, units = 0 }
+		AVM.itemExposure[key] = exposure
+	end
+	exposure.spend = (tonumber(exposure.spend) or 0) + (tonumber(candidate.buyout) or 0)
+	exposure.buys = (tonumber(exposure.buys) or 0) + 1
+	exposure.units = (tonumber(exposure.units) or 0) + (tonumber(candidate.count) or 0)
+end
+
 local function avm_flip_candidate_from_raw(raw, book)
 	if not raw or not book then return nil, "no-book" end
-	local row = book[tonumber(raw.itemId or raw.item_id)]
+	local row = book[raw.bookKey or tostring(raw.itemId or raw.item_id)]
 	if not row then return nil, "no-item-book" end
 	local maxBuyout = tonumber(AVM_DB.flipMaxBuyout) or 0
 	if maxBuyout > 0 and raw.buyout > maxBuyout then return nil, "max-buyout" end
 	if raw.signature and avm_recent(raw.signature) then return nil, "recent" end
+
+	local histValue = tonumber(raw.histValue) or 0
+	local histDays = tonumber(raw.histDays) or 0
+	local minHistoryDays = tonumber(AVM_DB.flipMinHistoryDays) or 2
+	if histValue <= 0 then return nil, "no-history" end
+	if histDays < minHistoryDays then return nil, "history-days" end
+	local histMaxPct = tonumber(AVM_DB.flipHistMaxPct) or 70
+	if histMaxPct < 1 then histMaxPct = 1 elseif histMaxPct > 100 then histMaxPct = 100 end
+	if raw.unitExact * 100 > histValue * histMaxPct then return nil, "history-entry" end
+
+	local sellerCount = avm_flip_seller_count(row)
+	local minSellers = tonumber(AVM_DB.flipMinSellers) or 3
+	if sellerCount < minSellers then return nil, "seller-depth" end
+
+	local exposureOK, exposureKey = avm_flip_exposure_allows(raw)
+	if not exposureOK then return nil, exposureKey end
+
 	local floor, required = avm_flip_reference_floor(row, raw)
 	if not floor or floor <= 0 then return nil, "no-depth" end
 	local cutPct = tonumber(AVM_DB.flipAhCutPct) or 5
@@ -1794,6 +1884,10 @@ local function avm_flip_candidate_from_raw(raw, book)
 	if marginPct < 0 then marginPct = 0 elseif marginPct > 90 then marginPct = 90 end
 	local grossExitUnit = floor
 	if grossExitUnit > 1 then grossExitUnit = grossExitUnit - 1 end
+	local histCap = math.floor(histValue)
+	if histCap > 0 and grossExitUnit > histCap then grossExitUnit = histCap end
+	if grossExitUnit <= raw.unitExact then return nil, "no-upside" end
+
 	local netUnit = math.floor(grossExitUnit * (100 - cutPct) / 100)
 	local netExit = netUnit * raw.count
 	local profit = netExit - raw.buyout
@@ -1804,15 +1898,19 @@ local function avm_flip_candidate_from_raw(raw, book)
 	local money = GetMoney()
 	local missing = raw.buyout - money
 	if missing < 0 then missing = 0 end
+	local histPct = math.floor((raw.unitExact * 10000 / histValue) + 0.5) / 100
 	return {
 		mode = "auxarb_flip", route = "flip", name = raw.name,
 		itemId = raw.itemId, count = raw.count, buyout = raw.buyout,
 		unit = math.floor(raw.buyout / raw.count), unitExact = raw.unitExact,
 		quality = raw.quality, level = raw.level, maxStack = raw.maxStack,
 		owner = raw.owner, itemKey = raw.itemKey, signature = raw.signature,
+		historyKey = raw.historyKey, bookKey = raw.bookKey, exposureKey = exposureKey,
 		ignoreOwnerSignature = true, sourcePage = raw.sourcePage or 0,
 		affordable = raw.buyout <= money, missing = missing,
 		flipFloor = math.floor(floor), flipGrossExitUnit = math.floor(grossExitUnit), flipNetUnit = netUnit,
+		flipHistoryValue = math.floor(histValue), flipHistoryDays = histDays, flipHistoryPct = histPct,
+		flipSellerCount = sellerCount,
 		valuationTotal = netExit, profit = profit, flipRequiredDepth = required,
 		flipCutPct = cutPct, flipMarginPct = marginPct, flipMaxEntry = maxEntry,
 	}, nil
@@ -1830,6 +1928,12 @@ local function avm_flip_best_from_book(book)
 				if avm_auxarb_candidate_better(fc, best) then best = fc end
 			elseif reason == "no-depth" then
 				noDepth = noDepth + 1
+			elseif reason == "no-history" or reason == "history-days" or reason == "history-entry" then
+				AVM.auxArb.flipHistoryRejects = (AVM.auxArb.flipHistoryRejects or 0) + 1
+			elseif reason == "seller-depth" then
+				AVM.auxArb.flipSellerRejects = (AVM.auxArb.flipSellerRejects or 0) + 1
+			elseif reason == "item-budget" or reason == "item-buy-cap" then
+				AVM.auxArb.flipExposureRejects = (AVM.auxArb.flipExposureRejects or 0) + 1
 			end
 		end
 	end
@@ -1863,7 +1967,7 @@ local function avm_flip_begin_live_verify(candidate)
 	AVM.stats.auxArbFlipVerifies = AVM.stats.auxArbFlipVerifies + 1
 	avm_print("AUX_ARB_FLIP_VERIFY start " .. tostring(candidate.name) ..
 		" buy=" .. avm_money(candidate.buyout) ..
-		" depth=" .. tostring(candidate.flipRequiredDepth or AVM_DB.flipDepthUnits or 5) ..
+		" depth=" .. tostring(candidate.flipRequiredDepth or AVM_DB.flipDepthUnits or 10) ..
 		" cut=" .. tostring(AVM_DB.flipAhCutPct or 5) .. "%" ..
 		" margin=" .. tostring(AVM_DB.flipSafetyMarginPct or 25) .. "%")
 	return true
@@ -1957,13 +2061,7 @@ local function avm_auxarb_candidate_from_record(record, requiredMode)
 	if requiredMode == "auxarb_de" then return nil end
 
 	if (not requiredMode or requiredMode == "auxarb_vendor") and record.quality ~= 0 then
-		local vendorSource = "static"
-		local vendorUnit = 0
-		if aux and aux.account_data and aux.account_data.merchant_sell then
-			vendorUnit = tonumber(aux.account_data.merchant_sell[itemId]) or 0
-			if vendorUnit > 0 then vendorSource = "aux-learned" end
-		end
-		if vendorUnit <= 0 and AVM_VENDOR_VALUES then vendorUnit = tonumber(AVM_VENDOR_VALUES[itemId]) or 0 end
+		local vendorUnit, vendorSource = avm_vendor_value(itemId)
 		if vendorUnit > 0 then
 			local total = vendorUnit * count
 			local profit = total - buyout
@@ -2138,6 +2236,9 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipVerify = nil
 		a.flipCandidates = 0
 		a.flipNoDepth = 0
+		a.flipHistoryRejects = 0
+		a.flipSellerRejects = 0
+		a.flipExposureRejects = 0
 	end
 	if a.active then
 		avm_print((keepScanBook and "AUX_ARB_SCAN resume" or "AUX_ARB_SCAN start") ..
@@ -2148,7 +2249,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 			" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
 			" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%" ..
 			" flip=" .. tostring(AVM_DB.flipEnabled) ..
-			" flipDepth=" .. tostring(AVM_DB.flipDepthUnits or 5) ..
+			" flipDepth=" .. tostring(AVM_DB.flipDepthUnits or 10) ..
 			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})) ..
 			" filter='" .. string.sub(tostring(a.filterString or ""), 1, 180) .. "'")
 	end
@@ -2586,7 +2687,8 @@ local function avm_vendor_begin()
 	avm_print("VENDOR start minProfit=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
 		" maxBuyout=" .. avm_money(AVM_DB.vendorMaxBuyout or 0) ..
 		" HOT=" .. tostring(avm_vendor_hot_pages()) ..
-		" FAST_SEEK radius=" .. tostring(avm_vendor_seek_radius()))
+		" FAST_SEEK radius=" .. tostring(avm_vendor_seek_radius()) ..
+		" trustedOnly=" .. tostring(AVM_DB.vendorTrustedOnly))
 	avm_vendor_restart_cycle()
 end
 
@@ -3381,6 +3483,7 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
+			avm_record_item_exposure(p.candidate)
 			AVM.recent[p.candidate.signature] = now + 15
 			if avm_is_auxarb_candidate(p.candidate) then
 				avm_print("CONFIRMED AUX_ARB route=" .. tostring(p.candidate.route) .. " " .. p.candidate.name ..
@@ -3425,6 +3528,7 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
+			avm_record_item_exposure(u.candidate)
 			if avm_is_auxarb_candidate(u.candidate) then
 				avm_print("CONFIRMED_LATE AUX_ARB route=" .. tostring(u.candidate.route) .. " " .. u.candidate.name ..
 					" " .. avm_money(u.candidate.buyout) .. " expectedProfit=" .. avm_money(u.candidate.profit or 0))
@@ -3837,6 +3941,26 @@ local function avm_auxarb_slash(rest)
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 0 and n <= 90 then AVM_DB.flipSafetyMarginPct = n avm_print("AUX_ARB FLIP safety margin=" .. tostring(n) .. "%")
 		else avm_print("flipmargin must be 0..90") end
+	elseif sub == "fliphistpct" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 100 then AVM_DB.flipHistMaxPct = math.floor(n) avm_print("AUX_ARB FLIP max history entry=" .. tostring(AVM_DB.flipHistMaxPct) .. "%")
+		else avm_print("fliphistpct must be 1..100") end
+	elseif sub == "fliphistdays" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 0 and n <= 11 then AVM_DB.flipMinHistoryDays = math.floor(n) avm_print("AUX_ARB FLIP min history days=" .. tostring(AVM_DB.flipMinHistoryDays))
+		else avm_print("fliphistdays must be 0..11") end
+	elseif sub == "flipsellers" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 50 then AVM_DB.flipMinSellers = math.floor(n) avm_print("AUX_ARB FLIP min sellers=" .. tostring(AVM_DB.flipMinSellers))
+		else avm_print("flipsellers must be 1..50") end
+	elseif sub == "flipitembudget" then
+		local n = avm_parse_money(avm_trim(arg))
+		if n and n >= 0 then AVM_DB.flipMaxItemSpend = n avm_print("AUX_ARB FLIP item session budget=" .. avm_money(n) .. " (0 = unlimited)")
+		else avm_print("invalid flipitembudget") end
+	elseif sub == "flipitembuys" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 0 and n <= 100 then AVM_DB.flipMaxItemBuys = math.floor(n) avm_print("AUX_ARB FLIP item session buys=" .. tostring(AVM_DB.flipMaxItemBuys) .. " (0 = unlimited)")
+		else avm_print("flipitembuys must be 0..100") end
 	elseif sub == "status" then
 		local a = AVM.auxArb
 		avm_print("AUX_ARB enabled=" .. tostring(AVM_DB.auxArbEnabled) ..
@@ -3855,11 +3979,20 @@ local function avm_auxarb_slash(rest)
 			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})))
 		avm_print("AUX_ARB FLIP enabled=" .. tostring(AVM_DB.flipEnabled) ..
 			" min/max=" .. avm_money(AVM_DB.flipMinProfit or 0) .. "/" .. avm_money(AVM_DB.flipMaxBuyout or 0) ..
-			" depth=" .. tostring(AVM_DB.flipDepthUnits or 5) ..
+			" depth=" .. tostring(AVM_DB.flipDepthUnits or 10) ..
 			" cut=" .. tostring(AVM_DB.flipAhCutPct or 5) .. "%" ..
-			" margin=" .. tostring(AVM_DB.flipSafetyMarginPct or 25) .. "%")
+			" margin=" .. tostring(AVM_DB.flipSafetyMarginPct or 25) .. "%" ..
+			" hist<=" .. tostring(AVM_DB.flipHistMaxPct or 70) .. "%" ..
+			" histDays>=" .. tostring(AVM_DB.flipMinHistoryDays or 2) ..
+			" sellers>=" .. tostring(AVM_DB.flipMinSellers or 3) ..
+			" itemBudget=" .. avm_money(AVM_DB.flipMaxItemSpend or 0) ..
+			" itemBuys=" .. tostring(AVM_DB.flipMaxItemBuys or 0))
+		avm_print("AUX_ARB FLIP rejects hist/sellers/exposure=" ..
+			tostring(a.flipHistoryRejects or 0) .. "/" ..
+			tostring(a.flipSellerRejects or 0) .. "/" ..
+			tostring(a.flipExposureRejects or 0))
 	else
-		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g|dedepth 3|decut 5|demargin 25|flip on|off|flipmin 10s|flipmax 5g|flipdepth 5|flipcut 5|flipmargin 25")
+		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g|dedepth 3|decut 5|demargin 25|flip on|off|flipmin 10s|flipmax 5g|flipdepth 10|flipcut 5|flipmargin 25|fliphistpct 70|fliphistdays 2|flipsellers 3|flipitembudget 20g|flipitembuys 3")
 	end
 end
 
@@ -3958,6 +4091,7 @@ local function avm_slash(msg)
 		AVM_DB.auxArbLive = false
 		AVM.sessionSpend = 0
 		AVM.sessionBuys = 0
+		AVM.itemExposure = {}
 		AVM.recent = {}
 		AVM.boundaryCache = {}
 		for k in AVM.stats do AVM.stats[k] = 0 end

@@ -2627,6 +2627,44 @@
       "tests": [],
       "package": null,
       "notes": "Warlock ifGlobalCooldown previously used demonSkin as the class GCD probe. Switch only the WARLOCK probe in ParseGeneral.lua to demonArmor; keep Demon Skin actions/buff parsing unchanged. Feature starts from exact current parallel HEAD 77303027."
+    },
+    {
+      "id": "ah-flip-history-anchor-v20",
+      "branch": "parallel",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-live-arm-during-market",
+        "ah-continuous-arb-market-loop"
+      ],
+      "shared_resources": [
+        "Original AUX history.value(item_key) weighted daily market history",
+        "Original AUX item_key/suffix identity and aux_quantity unit pricing",
+        "AUX_ARB full-scan flip book and guarded PlaceAuctionBid state",
+        "realm-learned aux.account_data.merchant_sell vendor values"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "fcca9d0b5f0282acab155ee4bbdf96d2791a9e41",
+      "verified_commit": "fcca9d0b5f0282acab155ee4bbdf96d2791a9e41",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "fcca9d0b5f0282acab155ee4bbdf96d2791a9e41",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36894863067 passed on exact feature SHA fcca9d0b5f0282acab155ee4bbdf96d2791a9e41."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "fcca9d0b5f0282acab155ee4bbdf96d2791a9e41",
+          "date": "2026-10-01",
+          "evidence": "Verify AI experiment registry run 36894863095 passed on exact feature SHA fcca9d0b5f0282acab155ee4bbdf96d2791a9e41."
+        }
+      ],
+      "package": null,
+      "notes": "0.20 risk hardening integrated from verified feature/aux-flip-history-anchor. Screenshots showed depth-only valuation could treat normal 100%-of-history floors as flips against 180-250%-of-history tails. LIVE flip now requires entry <=70% of AUX weighted history with >=2 completed history days, >=3 sellers and depth 10; exit is capped at historical value; identity is suffix-aware and pricing uses AUX aux_quantity/unit price. Per-item session exposure defaults to 20g/3 buys. Vendor LIVE defaults to realm-learned AUX merchant_sell only. Integrated parallel exact-SHA candidate build pending."
     }
   ]
 }
