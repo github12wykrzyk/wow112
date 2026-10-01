@@ -216,4 +216,4 @@ SlashCmdList["AHTHROTTLETEST"]=function(msg)
     else out("/ahtest repeat | status | last") end
 end
 
-out("loaded v2.0 RXPROBE/V8. /ahtest repeat -> F5; FAST MARKET -> F6.")
+out("loaded v2.0 RXPROBE/V8. /ahtest repeat -> F5; FAST MARKET -> F2.")

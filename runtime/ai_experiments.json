@@ -1857,6 +1857,37 @@
         "artifact_id": 11151163601
       },
       "notes": "Two-row GitHub status header accepted for integration: row 1 shows Parallel/Work/Main; row 2 shows the most relevant exact-HEAD feature/promote gate. Resulting parallel SHA still requires its own aggregate Build work candidate and updater build."
+    },
+    {
+      "id": "ah-fast-market-hotfix-f2",
+      "branch": "feature/ah-fast-market-hotfix-f2-v2",
+      "modules": [
+        "AHThrottleNative",
+        "AuxVmangos",
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-fast-market-responsepaced"
+      ],
+      "shared_resources": [
+        "AH native send replay",
+        "SMSG_AUCTION_LIST_RESULT receive hook",
+        "FAST MARKET hotkey F2"
+      ],
+      "status": "in_progress",
+      "observed_head": "aac978505259c7d5ff3490d956c2c3a21a159b20",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "076d2d22fab819d0f81bb7adf9a1cf26ad8e493c",
+          "date": "2026-10-01",
+          "evidence": "Original hotfix exact SHA passed Parallel feature preflight run 36842392445 and Verify AI experiment registry run 36842392342; rebased because parallel advanced with unrelated updater/monitor changes."
+        }
+      ],
+      "package": null,
+      "notes": "Gameplay test on exact parallel dca7a8cd showed native page 0 then PAGE_TIMEOUT. Static audit found send_test_page wrongly required diagnostic g_captured although FAST mode sets g_fastCaptured, so page 1 was never sent. Fix permits replay for either capture mode. F6 is occupied by teleport; FAST MARKET trigger moved to F2. Rebased onto current parallel HEAD without overwriting updater changes."
     }
   ]
 }

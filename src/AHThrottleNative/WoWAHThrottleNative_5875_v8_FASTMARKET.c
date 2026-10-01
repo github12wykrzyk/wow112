@@ -11,7 +11,7 @@
  * then replays mutated copies using distinct listfrom values.
  *
  * Repeatability stages: alternating 75 ms and 125 ms, five runs each.
- * V8 additionally provides F6 FAST MARKET: exactly one auction query is in flight.
+ * V8 additionally provides F2 FAST MARKET: exactly one auction query is in flight.
  * After the native 0x025C handler finishes, Lua consumes that exact page, then the
  * next page is sent after a short 25 ms settle. This avoids page-correlation drift.
  * Each stage sends 500 distinct pages and allows 10 seconds to drain responses.
@@ -111,7 +111,7 @@ typedef int (FASTCALL *InboundHandlerFn)(void*,u32,void*,InboundStore5875*);
 #define OPCODE_AH_LIST   0x0258u
 #define OPCODE_AH_RESULT 0x025Cu
 #define VK_F5_KEY        0x74
-#define VK_F6_KEY        0x75
+#define VK_F2_KEY        0x71
 #define TIMER_MS         25u
 #define CAPTURE_TIMEOUT_MS 1800u
 #define BASELINE_DRAIN_MS 1500u
@@ -136,7 +136,7 @@ static volatile u32 g_busy=0u;
 static u32 g_nextSend=0u;
 static TIMER32 g_timer=0u;
 static u32 g_keyF5=0u;
-static u32 g_keyF6=0u;
+static u32 g_keyF2=0u;
 
 static u32 g_active=0u;
 static u32 g_armed=0u;
@@ -374,7 +374,7 @@ static void capture_if_needed(DataStore5875 *packet){
 }
 static void send_test_page(u32 page){
     DataStore5875 p;u8 local[MAX_PACKET_COPY];u32 i;
-    if(!g_captured||!g_packetLen||!g_nextSend||g_packetLen<16u)return;
+    if((!g_captured&&!g_fastCaptured)||!g_packetLen||!g_nextSend||g_packetLen<16u)return;
     for(i=0u;i<g_packetLen;i++)local[i]=g_packet[i];
     *(u32*)(local+12u)=page*50u; /* Vanilla server listfrom is auction row offset. */
     p.owner=g_packetOwner;p.data=local;p.cursor=0u;p.capacity=MAX_PACKET_COPY;
@@ -421,14 +421,14 @@ NAKED static void SendWrapper(void){
 }
 
 static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
-    u32 now,key,key6,interval,page;
+    u32 now,key,key2,interval,page;
     GetAsyncKeyStateFn keyfn=(GetAsyncKeyStateFn)iat(IAT_KEY);
     (void)hwnd;(void)msg;(void)timer;(void)ignored;
     if(!g_installed||g_busy||!keyfn)return;
     g_busy=1u;now=tick_now();
     try_receive_hook();
     key=(keyfn(VK_F5_KEY)&(short)0x8000)?1u:0u;
-    key6=(keyfn(VK_F6_KEY)&(short)0x8000)?1u:0u;
+    key2=(keyfn(VK_F2_KEY)&(short)0x8000)?1u:0u;
 
     if(key&&!g_keyF5&&!g_active){
         if(!g_rxHooked){
@@ -441,7 +441,7 @@ static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
     }
     g_keyF5=key;
 
-    if(key6&&!g_keyF6&&!g_active&&!g_fastActive){
+    if(key2&&!g_keyF2&&!g_active&&!g_fastActive){
         if(!g_rxHooked){
             lua_exec("if AVM_FastMarketNativeDone then AVM_FastMarketNativeDone('RX_HOOK_NOT_READY') end","AVMFastMarketNoRx");
         }else{
@@ -450,7 +450,7 @@ static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
             lua_exec("if AVM_FastMarketNativeStart then AVM_FastMarketNativeStart() end","AVMFastMarketStart");
         }
     }
-    g_keyF6=key6;
+    g_keyF2=key2;
 
     if(g_fastActive&&!g_fastCaptured&&(u32)(now-g_fastStartedAt)>=CAPTURE_TIMEOUT_MS){
         fast_finish("NO_CAPTURE");
