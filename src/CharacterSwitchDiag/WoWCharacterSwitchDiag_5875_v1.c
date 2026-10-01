@@ -1,5 +1,5 @@
 /*
- * WoWCharacterSwitchDiag 5875 v7 - headless summon switch/reload worker
+ * WoWCharacterSwitchDiag 5875 v8 - headless summon switch/reload worker
  * FAST diagnostic: direct ClientServices disconnect -> AutoLoginBridge relogin
  * -> slot -> world.
  *
@@ -32,7 +32,7 @@
 #define FAST_TIMEOUT_MS 45000u
 #define COMBAT_POLL_MS 250u
 #define WORKER_MAGIC 0x53323157u
-#define WORKER_VERSION 1u
+#define WORKER_VERSION 2u
 #define WORKER_COMMAND_RELOAD 0xFFFFFFFEu
 
 enum {

@@ -242,3 +242,11 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - Updater wysyła specjalną komendę IPC do wszystkich PID-ów równolegle. Native worker wykonuje `ReloadUI()` przez zweryfikowany dla 5875 `FrameScript_Execute 0x00704CD0` i zapisuje ACK dopiero po powrocie z reloadu.
 - Updater czeka maksymalnie 15 s na ACK każdego klienta, następnie 1 s przed twardym zakończeniem. Błąd/timeout/wyjście klienta przed ACK lub nowa instancja uruchomiona w trakcie powoduje anulowanie kill dla pozostałych.
 - Po udanym reloadzie zabijane są tylko PID-y należące do potwierdzonego zestawu. Następnie, jak wcześniej, finalizowany jest oczekujący LIVE UPDATE.
+
+
+## Updater 2.9-parallel.16 — wersjonowany protokół ReloadUI
+
+- Kanał `Local\\WoW112_SummonWorker_<PID>` dla CharacterSwitchDiag ma teraz **protocol v2**. To celowo odróżnia runtime obsługujący reserved command `0xFFFFFFFE = ReloadUI` od wcześniejszego workera v1.
+- Updater odrzuca stary worker **przed wysłaniem komendy** i pokazuje jednoznaczny komunikat `stary CharacterSwitch worker (protokół v1, wymagany v2)`.
+- Naprawia przypadek, w którym updater 2.9-parallel.15 widział v1 jako zgodny, wysyłał reserved command, a stary worker interpretował ją jako nieprawidłowy slot i zwracał `state=5, error=41`.
+- Kill nadal jest fail-closed: przy starej/niezgodnej instancji nie zabija żadnego klienta.

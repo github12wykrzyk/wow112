@@ -3216,6 +3216,30 @@
       ],
       "package": null,
       "notes": "User requested zero manual configuration. One-time migration plus AH-open activation sets AUX_ARB live=true, loop=true, automatic MARKET=false, maxSessionBuys=0 unlimited, maxSessionSpend=0 unlimited. Defaults: vendor min 10s/max 5g; DE min 10s/max 5g/depth3/cut5%/margin25%; flip min 10s/max 10g/depth10/cut5%/margin25%. Legacy scanner remains off. Existing economic tooltip default-on behavior is preserved."
+    },
+    {
+      "id": "updater-reload-worker-protocol-v2",
+      "branch": "feature/reload-worker-protocol-v2",
+      "modules": [
+        "ParallelUpdater",
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "updater-reload-before-kill"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonWorker_<PID> shared worker map",
+        "CharacterSwitchDiag worker protocol version",
+        "ReloadUI reserved command 0xFFFFFFFE",
+        "Parallel updater kill-all fail-closed gate"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "970b35965838f7bfec74633e9eeb2b54567561e9",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Protocol hardening after observed reload-before-kill failure state=5,error=41. Root cause in current source: ReloadUI support was added while WORKER_VERSION remained 1, so an already-running pre-feature worker v1 passed updater compatibility checks and interpreted 0xFFFFFFFE as a bad slot (>10). Exact tested candidate SHA from the screenshot is not independently established, so no gameplay result is recorded. This iteration bumps worker protocol to v2 on both native and updater sides and probes incompatible maps to emit a clear restart-required error before sending any command."
     }
   ]
 }
