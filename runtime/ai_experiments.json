@@ -2726,6 +2726,26 @@
       ],
       "package": null,
       "notes": "Fixes report #62 scheduler ownership race. Continuous LOOP now treats DE/flip postscan verification, exact revalidation and candidate ownership as hard busy states; beginning DE/flip verification cancels stale loop wakeups. AuxFastBridge restart gate mirrors the same ownership so a restart cannot clear postscan state. Also clamps hardened flip depth to >=10 and rejects /avm auxarb flipdepth below 10, repairing stale pre-0.20 SavedVariables/macros observed in report #62. Integrated to parallel after exact-SHA preflight; aggregate candidate build pending."
+    },
+    {
+      "id": "summonscout-taxi-competitor",
+      "branch": "feature/summonscout-taxi-competitor",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "SummonScout World-chat seller/counter parser",
+        "Hydraxian/Hyjal destination routing"
+      ],
+      "status": "in_progress",
+      "observed_head": "4229ea608c41f3bb1d7f630e4ecc1ac8e786b770",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Recognize paid taxi-style multi-destination competitor adverts without an explicit summon token; treat Waterlords/Waterlord as Hydraxian Waterlords aliases. Gameplay evidence pending."
     }
   ]
 }

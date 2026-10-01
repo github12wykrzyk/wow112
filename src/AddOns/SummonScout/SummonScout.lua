@@ -137,7 +137,7 @@ local LOCATIONS = {
     { id="felwood", label="Felwood", aliases={"felwood"} },
     { id="feralas", label="Feralas", aliases={"feralas"} },
     { id="desolace", label="Desolace", aliases={"desolace"} },
-    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "azsh", "hydraxian waterlords"}, roots={"hydrax"} },
+    { id="hydraxian", label="Hydraxian Waterlords (Azshara)", aliases={"azshara", "azsh", "hydraxian waterlords", "waterlords", "waterlord"}, roots={"hydrax"} },
     { id="ashenvale", label="Ashenvale", aliases={"ashenvale"} },
     { id="barrens", label="The Barrens", aliases={"the barrens", "barrens"} },
     { id="dustwallow", label="Dustwallow Marsh", aliases={"dustwallow marsh", "dustwallow"} },
@@ -265,6 +265,12 @@ local SELLER_CUES = {
     "portal service", "pst", "whisper me", "dm me"
 }
 
+-- Some competitors advertise a paid "taxi" route without saying "summon".
+-- Keep this narrow and combine it with known destinations / price evidence.
+local TRAVEL_SELLER_CUES = {
+    "taxi", "t a x i", "travel service"
+}
+
 -- Recruitment chatter can contain both a buyer-looking token ("LF"/"need")
 -- and "summon" even though the sender is explicitly saying that THEIR group
 -- can provide the summon. Keep this separate from seller detection so a farm/
@@ -363,6 +369,10 @@ local function hasSellerCue(s)
     return hasCue(s, SELLER_CUES)
 end
 
+local function hasTravelSellerCue(s)
+    return hasCue(s, TRAVEL_SELLER_CUES)
+end
+
 local function hasSummonToken(s)
     return phraseHas(s, "summon")
         or phraseHas(s, "summons")
@@ -430,13 +440,28 @@ local function isSellerMessage(message)
     local s = normalizeMessage(message)
     local locations
     local locationCount
+    local summonOffer
 
-    if s == "" or not hasSummonToken(s) then return false end
+    if s == "" then return false end
     if hasBuyerIntentCue(s) then return false end
-    if hasSellerCue(s) or hasGoldPrice(s) then return true end
 
     locations = findLocationsInMessage(s)
     locationCount = table.getn(locations)
+    summonOffer = hasSummonToken(s)
+
+    -- Paid multi-destination travel ads are summon competitors even when they
+    -- avoid the word "summon", e.g. "T A X I 4Gold: Hyjal + Waterlords + ...".
+    if hasGoldPrice(s) and locationCount >= 2 then return true end
+
+    -- Explicit taxi/travel-service wording with a known destination is also
+    -- sufficient, but questions stay on the buyer/request path.
+    if locationCount >= 1 and not string.find(raw, "?", 1, true)
+        and hasTravelSellerCue(s) then
+        return true
+    end
+
+    if not summonOffer then return false end
+    if hasSellerCue(s) or hasGoldPrice(s) then return true end
 
     -- Multiple known destinations plus a summon token is a strong offer
     -- signal even when the seller omits WTS, price or the word "service".
