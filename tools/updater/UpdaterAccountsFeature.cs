@@ -109,7 +109,7 @@ namespace WoW112Updater
         private WowAccountVault accountVault;
         private readonly List<WowAccountSession> accountSessions = new List<WowAccountSession>();
         private bool multiboxRunning;
-        private const int MultiboxProcessStaggerMs = 1500;
+        private const int MultiboxProcessStaggerMs = 3000;
 
         private string ConfigureReloginHandoffEnvironment(ProcessStartInfo startInfo, WowAccount account)
         {
