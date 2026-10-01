@@ -2586,6 +2586,29 @@
       "tests": [],
       "package": null,
       "notes": "SummonScout 1.56 rebuilds direct-whisper request intent around explicit markers instead of literal phrase-only matching. Any literal '+' anywhere in a direct whisper is a strong request marker, and token forms inv/invi/invit/invite are equivalent. Existing seller, ambiguity, blacklist/group and wrong-destination safety gates remain; explicit plus/invite markers are allowed to override seller-text heuristics in direct whispers."
+    },
+    {
+      "id": "ah-flip-history-anchor-v20",
+      "branch": "feature/aux-flip-history-anchor",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-live-arm-during-market",
+        "ah-continuous-arb-market-loop"
+      ],
+      "shared_resources": [
+        "Original AUX history.value(item_key) weighted daily market history",
+        "Original AUX item_key/suffix identity and aux_quantity unit pricing",
+        "AUX_ARB full-scan flip book and guarded PlaceAuctionBid state",
+        "realm-learned aux.account_data.merchant_sell vendor values"
+      ],
+      "status": "in_progress",
+      "observed_head": null,
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "0.20 risk hardening from verified parallel d4c31882. Gameplay screenshots on 2026-10-01 showed the depth-only model could value normal ~100%-of-history floors against listings at 180-250% of AUX historical value. New logic fails closed unless entry is <=70% of AUX weighted history with >=2 completed history days, requires >=3 sellers and depth 10, caps exit at historical value, groups by suffix-aware item_key, uses AUX aux_quantity/unit price, adds 20g/3-buy per-item session exposure guards, and makes vendor LIVE use only realm-learned merchant_sell by default. Awaiting exact-SHA preflight/game test."
     }
   ]
 }

@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Continuous original AUX arbitrage loop with periodic full-market history snapshots and guarded vendor/DE/flip.
+## Notes: Original AUX arbitrage with history-anchored flips, trusted realm vendor values, DE and periodic market snapshots.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.19.1-live-arm-market
+## Version: 0.20-history-anchor-riskguard
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
