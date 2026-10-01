@@ -1582,9 +1582,9 @@
         "AUCTION_ITEM_LIST_UPDATE",
         "AuctionFrameBrowse event isolation"
       ],
-      "status": "building_candidate",
-      "observed_head": "63a84c1870d6219d3af48a47e18f5af271532e53",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "1a8f682f72243866ecbc7e5c16eb481a986157a2",
+      "verified_commit": "1a8f682f72243866ecbc7e5c16eb481a986157a2",
       "tests": [
         {
           "kind": "ci",
@@ -1592,10 +1592,28 @@
           "commit": "63a84c1870d6219d3af48a47e18f5af271532e53",
           "date": "2026-10-01",
           "evidence": "Parallel feature preflight run 36792574350 completed success on exact feature SHA before integration; Verify AI experiment registry run 36792574395 also passed."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "1a8f682f72243866ecbc7e5c16eb481a986157a2",
+          "date": "2026-10-01",
+          "evidence": "Build work candidate run 36792679610 passed on exact integrated parallel SHA, including changed AH native build, FINAL_PACKAGE, repo-managed addon packaging and exact branch/package provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "1a8f682f72243866ecbc7e5c16eb481a986157a2",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11133070182 (WoW112-WORK-CANDIDATE-1a8f682f72243866ecbc7e5c16eb481a986157a2)."
         }
       ],
-      "package": null,
-      "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation. Integrated to parallel after exact-SHA preflight PASS; aggregate parallel candidate build pending."
+      "package": {
+        "verified": true,
+        "commit": "1a8f682f72243866ecbc7e5c16eb481a986157a2",
+        "artifact_id": 11133070182
+      },
+      "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation. Integrated to parallel after exact-SHA preflight PASS; aggregate parallel candidate build passed; ready for gameplay repeatability test."
     }
   ]
 }
