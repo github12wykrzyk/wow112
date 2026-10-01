@@ -2435,6 +2435,35 @@
       "tests": [],
       "package": null,
       "notes": "SummonScout 1.55 removes the spam-prone /afk, autoClearAFK, Jump() and StaticPopup_Hide recovery path. PLAYER_CAMPING/CAMP/IDLE_MESSAGE now requests a one-shot native per-client SPACE pulse from AutoSummonAssist, then sends bounded CancelLogout with at most two passes during a startup-only window. Manual later /logout is outside the guard."
+    },
+    {
+      "id": "ah-live-market-flip-signature-fix",
+      "branch": "feature/ah-flip-signature-fix",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-live-market-flip-revalidate-racefix"
+      ],
+      "shared_resources": [
+        "Original AUX auction record normalization",
+        "AuxVmangos exact auction signature revalidation",
+        "PlaceAuctionBid guarded live path"
+      ],
+      "status": "in_progress",
+      "observed_head": null,
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "6f3b172c4e1ca5fd8804456ad0602817260cf94d",
+          "date": "2026-10-01",
+          "evidence": "Automatic diagnostic report #58 on verified run 36878972006: live full Search selected Primal Tiger Leather, FLIP_MARKET_REVALIDATE passed, racefix reused the current verified page, but generic exact revalidation immediately emitted AUX_ARB_RACE on the same unchanged list. This isolates an identity mismatch between AUX-normalized auction fields and raw GetAuctionItemInfo signature construction rather than a network/query race."
+        }
+      ],
+      "package": null,
+      "notes": "Use the same AUX-normalized record fields and item identity to construct signatures during AUX_ARB exact revalidation. This removes the cross-API signature mismatch while preserving existing fail-closed economics, wallet, session-limit and PlaceAuctionBid guards."
     }
   ]
 }

@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.17.1-live-market-flip-racefix"
+AVM_VERSION = "0.17.2-live-market-flip-signaturefix"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1387,6 +1387,16 @@ local function avm_de_record_key(record, itemId)
 	return itemKey
 end
 
+local function avm_auxarb_signature_from_record(record)
+	if not record then return nil end
+	local itemId = tonumber(record.item_id or record.itemId)
+	local count = tonumber(record.count or record.aux_quantity) or 0
+	local buyout = tonumber(record.buyout_price or record.buyout) or 0
+	if not itemId or not record.name or count <= 0 or buyout <= 0 then return nil end
+	local itemKey = avm_de_record_key(record, itemId)
+	return avm_signature_no_owner(record.name, count, buyout, record.quality, record.level, itemKey)
+end
+
 local function avm_de_raw_candidate(record)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
 	if not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil end
@@ -2754,17 +2764,25 @@ avm_revalidate_candidate = function()
 	for i = 1, n do
 		local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
 		if name and buyout and buyout > 0 then
-			local itemKey = avm_item_link_key(i)
+			local record = nil
 			local sig
-			if c.ignoreOwnerSignature then
-				sig = avm_signature_no_owner(name, count, buyout, quality, level, itemKey)
+			if avm_is_auxarb_candidate(c) then
+				record = AVM_AUX_INFO_OK and AVM_AUX_INFO and AVM_AUX_INFO.auction(i, "list") or nil
+				if record then
+					record.index = i
+					record.page = c.sourcePage
+					sig = avm_auxarb_signature_from_record(record)
+				end
 			else
-				sig = avm_signature(name, count, buyout, owner, quality, level, itemKey)
+				local itemKey = avm_item_link_key(i)
+				if c.ignoreOwnerSignature then
+					sig = avm_signature_no_owner(name, count, buyout, quality, level, itemKey)
+				else
+					sig = avm_signature(name, count, buyout, owner, quality, level, itemKey)
+				end
 			end
 			if sig == c.signature then
 				if avm_is_auxarb_candidate(c) then
-					local record = AVM_AUX_INFO_OK and AVM_AUX_INFO and AVM_AUX_INFO.auction(i, "list") or nil
-					if record then record.index = i record.page = c.sourcePage end
 					local fresh
 					if c.mode == "auxarb_de" then
 						fresh = record and avm_de_candidate_from_record(record, c.deVerifiedBook or AVM.auxArb.deMaterialBook) or nil
