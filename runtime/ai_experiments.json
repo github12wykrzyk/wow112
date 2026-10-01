@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-owner-grace",
+      "branch": "feature/ah-aux-ui-isolation-outbound-diag",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2037,7 +2037,7 @@
         "AuxVmangos guarded vendor revalidation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "86df17f9dd1c4f1e9bece6d58f5db3828f3e9945",
+      "observed_head": "340ef74129f90be1deca44551669d8565832b5d4",
       "verified_commit": null,
       "tests": [
         {
@@ -2091,7 +2091,7 @@
         }
       ],
       "package": null,
-      "notes": "Current in-game v1.3 no longer crashes but still advances roughly one AUX page every few seconds. Upstream aux.core.scan waits up to 5 seconds for owner_data_complete when ignore_owner is disabled or seller names are unresolved; this remains after native page correlation and exactly explains the residual cadence. v1.4 retains verified native 0x025C response pacing but bounds owner/seller resolution to 100 ms, then accepts the authoritative page even if some seller names remain '?'. Diagnostic /auxfast adds ownerGrace counter. Feature is based on current verified parallel HEAD 86df17f9."
+      "notes": "Report #54 on exact parallel SHA 340ef74129f90be1deca44551669d8565832b5d4 shows queries=6, native=3, matched=3, timeouts=3, bypass=3, ownerGrace=0 after 14.1s at page 3. This disproves seller/owner resolution as the active delay in that sample and strongly suggests QueryAuctionItems attempts made while stock CanSend was false are not producing real outbound CMSGs. v1.5 test candidate therefore (1) forces ignore_owner for non-buy/non-bid list scans, (2) detaches Blizzard AuctionFrameBrowse AUCTION_ITEM_LIST_UPDATE handling during the original AUX scan and restores it afterward, matching prior benchmark UI isolation, and (3) adds a native ClientServices::Send outbound counter/page so /auxfast can compare Lua queries against actual CMSG_AUCTION_LIST_ITEMS sends. If queries > stockSent by the timeout count, the next implementation should move sequential page driving to the verified native replay path instead of stock QueryAuctionItems."
     },
     {
       "id": "map-tele-keep-open",

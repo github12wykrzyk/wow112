@@ -1,4 +1,4 @@
--- AuxFastBridge v1.4
+-- AuxFastBridge v1.5
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -23,6 +23,10 @@ local nativeAt = 0
 local matchedResults = 0
 local nativeTimeouts = 0
 local ownerGraceAccepts = 0
+local nativeStockSentTotal = 0
+local nativeStockSentBase = 0
+local nativeLastStockPage = -1
+local browseDetached = false
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -34,6 +38,28 @@ local function out(msg)
 	if DEFAULT_CHAT_FRAME then
 		DEFAULT_CHAT_FRAME:AddMessage("|cff66ff99[AUX FAST]|r " .. tostring(msg))
 	end
+end
+
+local function detach_blizzard_browse()
+	if browseDetached then return end
+	if AuctionFrameBrowse and AuctionFrameBrowse.UnregisterEvent then
+		AuctionFrameBrowse:UnregisterEvent("AUCTION_ITEM_LIST_UPDATE")
+		browseDetached = true
+	end
+end
+
+local function restore_blizzard_browse()
+	if not browseDetached then return end
+	if AuctionFrameBrowse and AuctionFrameBrowse.RegisterEvent then
+		AuctionFrameBrowse:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
+	end
+	browseDetached = false
+end
+
+local function native_stock_sent()
+	local n = nativeStockSentTotal - nativeStockSentBase
+	if n < 0 then return 0 end
+	return n
 end
 
 local function avm_busy()
@@ -59,6 +85,13 @@ function AUXFAST_NativeAuctionResult(count, nativeTick)
 	end
 end
 
+-- Published from the native ClientServices::Send hook on the timer thread after
+-- a real CMSG_AUCTION_LIST_ITEMS packet has actually left the Lua/UI path.
+function AUXFAST_NativeQueryObserved(total, page, nativeTick)
+	nativeStockSentTotal = tonumber(total) or nativeStockSentTotal
+	nativeLastStockPage = tonumber(page) or nativeLastStockPage
+end
+
 function AUXFAST_Status()
 	return {
 		busy = busy > 0,
@@ -71,6 +104,9 @@ function AUXFAST_Status()
 		matchedResults = matchedResults,
 		nativeTimeouts = nativeTimeouts,
 		ownerGraceAccepts = ownerGraceAccepts,
+		nativeStockSent = native_stock_sent(),
+		nativeLastStockPage = nativeLastStockPage,
+		browseDetached = browseDetached,
 		queryPage = queryPage,
 		startedAt = startedAt,
 		hookInstalled = hookInstalled,
@@ -103,6 +139,12 @@ local function install_scan_hook()
 
 	M.start = function(params)
 		params = params or {}
+		-- Seller names are not required for ordinary market/search scans. Force
+		-- owner-agnostic scanning only when no buy/bid validator is active.
+		local uiIsolation = params.type == "list" and not params.auto_buy_validator and not params.auto_bid_validator
+		if uiIsolation then
+			params.ignore_owner = true
+		end
 		local oldComplete = params.on_complete
 		local oldAbort = params.on_abort
 		local released = false
@@ -118,8 +160,11 @@ local function install_scan_hook()
 				AuxFastBridgeDB.lastMatchedResults = matchedResults
 				AuxFastBridgeDB.lastNativeTimeouts = nativeTimeouts
 				AuxFastBridgeDB.lastOwnerGraceAccepts = ownerGraceAccepts
+				AuxFastBridgeDB.lastNativeStockSent = native_stock_sent()
+				AuxFastBridgeDB.lastNativeLastStockPage = nativeLastStockPage
 				AuxFastBridgeDB.lastBypassChecks = bypassChecks
 				AuxFastBridgeDB.lastDuration = startedAt > 0 and (GetTime() - startedAt) or 0
+				restore_blizzard_browse()
 			end
 		end
 
@@ -140,11 +185,14 @@ local function install_scan_hook()
 			matchedResults = 0
 			nativeTimeouts = 0
 			ownerGraceAccepts = 0
+			nativeStockSentBase = nativeStockSentTotal
+			nativeLastStockPage = -1
 			queryPage = -1
 			startedAt = GetTime()
 		end
 
 		busy = busy + 1
+		if uiIsolation then detach_blizzard_browse() end
 		return originalStart(params)
 	end
 
@@ -222,12 +270,15 @@ SlashCmdList["AUXFAST"] = function()
 		" native=" .. tostring(nativeResults) ..
 		" matched=" .. tostring(matchedResults) ..
 		" timeouts=" .. tostring(nativeTimeouts) ..
-		" ownerGrace=" .. tostring(ownerGraceAccepts))
+		" ownerGrace=" .. tostring(ownerGraceAccepts) ..
+		" stockSent=" .. tostring(native_stock_sent()))
 	out("uiEvents=" .. tostring(uiEvents) ..
 		" bypass=" .. tostring(bypassChecks) ..
 		" page=" .. tostring(queryPage) ..
+		" stockPage=" .. tostring(nativeLastStockPage) ..
+		" uiIso=" .. tostring(browseDetached) ..
 		" elapsed=" .. string.format("%.1f", duration) .. "s" ..
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.4 loaded: native response pacing + 100ms owner grace; hook=" .. tostring(hookInstalled))
+out("v1.5 loaded: ownerless scan + Blizzard Browse isolation + outbound proof; hook=" .. tostring(hookInstalled))

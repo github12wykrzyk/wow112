@@ -1,5 +1,9 @@
 # Aux FAST Bridge
 
+Version 1.5 responds to report #54. Ordinary original-AUX list scans now force `ignore_owner=true` because seller names are not needed for market valuation, and the stock Blizzard `AuctionFrameBrowse` is detached from `AUCTION_ITEM_LIST_UPDATE` for the duration of the AUX scan then restored. The native DLL also reports the cumulative count/page of AH list CMSG packets that actually reached `ClientServices::Send`. This separates Lua `QueryAuctionItems` attempts from real outbound requests: `/auxfast` now shows `queries` versus `stockSent`.
+
+Report #54 showed `queries=6 native=3 matched=3 timeouts=3 bypass=3 ownerGrace=0`. That means seller resolution was not the active delay in that run; the exact 1:1 match between bypasses and timeouts instead points at calls attempted while the stock gate was closed. UI isolation is tested because the earlier throughput benchmark deliberately detached Blizzard Browse, but the outbound probe is the decisive evidence for whether stock `QueryAuctionItems` itself suppresses those calls.
+
 This addon preserves the original `aux-addon-vanilla` GUI and scan state machine while replacing its fragile list-response pacing on this WoW 1.12.1 / vMaNGOS target.
 
 Version 1.4 keeps the native-response correlation and caps seller/owner resolution to a 100 ms grace period after the verified auction response. Original AUX can otherwise wait up to 5 seconds for missing seller names on every page; that behavior is useful for complete owner data but defeats fast full-market scans. Fast scans now accept the authoritative auction page after 100 ms even if some seller names remain `?`. `/auxfast` reports `ownerGrace` so this path is visible.

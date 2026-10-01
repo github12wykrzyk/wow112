@@ -11,7 +11,7 @@
  * then replays mutated copies using distinct listfrom values.
  *
  * Repeatability stages: alternating 75 ms and 125 ms, five runs each.
- * V8 additionally provides F2 FAST MARKET and a passive AUX response-correlator callback.
+ * V8 additionally provides F2 FAST MARKET plus passive AUX receive and real-outbound CMSG probes.
  * After the native 0x025C handler finishes, Lua consumes that exact page, then the
  * next page is sent after a short 25 ms settle. This avoids page-correlation drift.
  * Each stage sends 500 distinct pages and allows 10 seconds to drain responses.
@@ -170,6 +170,10 @@ static u32 g_fastPage=0u;
 static u32 g_fastSentAt=0u;
 static u32 g_fastNextAt=0u;
 static u32 g_fastStartedAt=0u;
+static u32 g_auxObservedSent=0u;
+static u32 g_auxObservedPage=0u;
+static u32 g_auxObservedTick=0u;
+static u32 g_auxObservedDirty=0u;
 
 static u32 read32(u32 a){return *(volatile u32*)(u32)a;}
 static void write32(u32 a,u32 v){*(volatile u32*)(u32)a=v;}
@@ -362,13 +366,23 @@ static void abort_test(const char *reason){
     reset_test();
 }
 static void capture_if_needed(DataStore5875 *packet){
-    u8 *raw;u32 i,n;
-    if((!g_active||!g_armed||g_captured) && (!g_fastActive||!g_fastArmed||g_fastCaptured))return;
+    u8 *raw;u32 i,n,listfrom;
     if(!packet)return;
     raw=packet_raw(packet);
     if(!raw||packet->size<16u)return;
     if(*(u32*)raw!=OPCODE_AH_LIST)return;
-    if(*(u32*)(raw+12u)!=0u){
+
+    /* Passive proof of what really reached ClientServices::Send. This is
+       deliberately recorded before the benchmark/F2 capture gates so AUX can
+       distinguish a Lua QueryAuctionItems call from an actual outbound CMSG. */
+    listfrom=*(u32*)(raw+12u);
+    ++g_auxObservedSent;
+    g_auxObservedPage=listfrom/50u;
+    g_auxObservedTick=tick_now();
+    g_auxObservedDirty=1u;
+
+    if((!g_active||!g_armed||g_captured) && (!g_fastActive||!g_fastArmed||g_fastCaptured))return;
+    if(listfrom!=0u){
         if(g_fastActive)fast_finish("BASELINE_LISTFROM_NOT_ZERO");
         else abort_test("BASELINE_LISTFROM_NOT_ZERO");
         return;
@@ -441,6 +455,10 @@ static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
     if(!g_installed||g_busy||!keyfn)return;
     g_busy=1u;now=tick_now();
     try_receive_hook();
+    if(g_auxObservedDirty){
+        g_auxObservedDirty=0u;
+        publish_call3("AUXFAST_NativeQueryObserved",g_auxObservedSent,g_auxObservedPage,g_auxObservedTick,"AuxFastNativeQueryObserved");
+    }
     key=(keyfn(VK_F5_KEY)&(short)0x8000)?1u:0u;
     key2=(keyfn(VK_F2_KEY)&(short)0x8000)?1u:0u;
 
