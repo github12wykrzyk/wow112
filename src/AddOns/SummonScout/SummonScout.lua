@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.57"
+local ADDON_VERSION = "1.58"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -380,6 +380,8 @@ local function hasSummonToken(s)
         or phraseHas(s, "summ")
         or phraseHas(s, "summs")
         or phraseHas(s, "sum")
+        or phraseHas(s, "smn")
+        or phraseHas(s, "smns")
         or phraseHas(s, "sumon")
 end
 
@@ -597,6 +599,7 @@ local function whisperInviteDecision(message)
     local paymentOffer = hasWhisperPaymentOffer(s)
     local plusMarker = hasWhisperPlusMarker(raw)
     local inviteStem = hasWhisperInviteStem(s)
+    local summonToken = hasSummonToken(s)
     local oneRequest = phraseHas(s, "take one")
         or phraseHas(s, "need one")
         or phraseHas(s, "want one")
@@ -604,14 +607,21 @@ local function whisperInviteDecision(message)
         or phraseHas(s, "have one")
         or phraseHas(s, "like one")
         or phraseHas(s, "grab one")
-    local strongDirect = plusMarker or inviteStem or oneRequest
+    local summonRequest = summonToken
+        and (phraseHas(s, "take")
+            or phraseHas(s, "need")
+            or phraseHas(s, "want")
+            or phraseHas(s, "get")
+            or phraseHas(s, "grab")
+            or phraseHas(s, "like"))
+    local strongDirect = plusMarker or inviteStem or oneRequest or summonRequest
 
     -- Exact service codes remain conservative. "123" additionally tolerates
     -- short politeness suffixes; '+' is handled from raw text because normal
     -- punctuation normalization intentionally strips it.
     local exactCode = WHISPER_EXACT_CODES[s]
         or (string.len(s) <= 32 and phraseHas(s, "123"))
-    local directSummonQuestion = hasSummonToken(s)
+    local directSummonQuestion = summonToken
         and (phraseHas(s, "can i")
             or phraseHas(s, "could i")
             or phraseHas(s, "can i get")
@@ -632,6 +642,7 @@ local function whisperInviteDecision(message)
     if plusMarker then score = score + 5 end
     if inviteStem then score = score + 4 end
     if oneRequest then score = score + 4 end
+    if summonRequest then score = score + 5 end
     if exactCode then score = score + 3 end
     if directSummonQuestion then score = score + 5 end
     if paymentOffer then score = score + 5 end
@@ -644,7 +655,7 @@ local function whisperInviteDecision(message)
         score = score + 3
     end
 
-    if hasSummonToken(s) then score = score + 3 end
+    if summonToken then score = score + 3 end
     if not inviteStem and hasCue(s, WHISPER_INVITE_CUES) then score = score + 3 end
     if hasBuyerIntentCue(s) then score = score + 2 end
     if hasCue(s, WHISPER_PRICE_CUES) then score = score + 1 end
@@ -668,7 +679,8 @@ local function whisperInviteDecision(message)
         plusMarker and "plus-match"
         or (inviteStem and "invite-stem"
         or (oneRequest and "one-request"
-        or "smart-match"))
+        or (summonRequest and "summon-request"
+        or "smart-match")))
 end
 
 local function channelMatches(channelBaseName, channelFullName)
