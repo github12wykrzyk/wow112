@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.49"
+local ADDON_VERSION = "1.50"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -53,6 +53,10 @@ SS.summonRequestSeq = 0
 SS.shardGuardPaused = false
 SS.shardGuardLastCount = -1
 SS.shardGuardNextCheckAt = 0
+SS.loginRecoveryArmed = false
+SS.loginRecoveryUntil = 0
+SS.nextLoginRecoveryAt = 0
+SS.loginRecoveryPasses = 0
 
 local LOCATIONS = {
     -- Instances / raids. More specific / colliding aliases first.
@@ -1699,6 +1703,7 @@ local function setDefaults()
     if SummonScoutDB.logDedupeSeconds == nil then SummonScoutDB.logDedupeSeconds = 60 end
     if SummonScoutDB.maxLogEntries == nil then SummonScoutDB.maxLogEntries = 200 end
     if SummonScoutDB.debug == nil then SummonScoutDB.debug = false end
+    if SummonScoutDB.loginRecoveryEnabled == nil then SummonScoutDB.loginRecoveryEnabled = true end
     if type(SummonScoutDB.inviteBlacklist) ~= "table" then SummonScoutDB.inviteBlacklist = {} end
     if SummonScoutDB.service == nil then SummonScoutDB.service = "all" end
     local canonicalService = resolveServiceSpec(SummonScoutDB.service)
@@ -1747,6 +1752,54 @@ local function setDefaults()
     if SummonScoutDB.lastAdvertNormalized == nil then SummonScoutDB.lastAdvertNormalized = "" end
     if SummonScoutDB.lastAdvertWall == nil then SummonScoutDB.lastAdvertWall = 0 end
     ensureStats()
+end
+
+local function startLoginRecovery()
+    if not SummonScoutDB.loginRecoveryEnabled then
+        SS.loginRecoveryUntil = 0
+        SS.nextLoginRecoveryAt = 0
+        SS.loginRecoveryPasses = 0
+        return
+    end
+
+    SS.loginRecoveryUntil = now() + 8.0
+    SS.nextLoginRecoveryAt = now()
+    SS.loginRecoveryPasses = 0
+end
+
+local function processLoginRecovery()
+    local t = now()
+    local pass
+
+    if not SummonScoutDB.loginRecoveryEnabled then return end
+    if not SS.loginRecoveryUntil or SS.loginRecoveryUntil <= 0 then return end
+    if t > SS.loginRecoveryUntil then
+        SS.loginRecoveryUntil = 0
+        SS.nextLoginRecoveryAt = 0
+        return
+    end
+    if t < (SS.nextLoginRecoveryAt or 0) then return end
+
+    pass = SS.loginRecoveryPasses or 0
+
+    -- Vanilla 1.12.1 build 5875 exposes CancelLogout and DoEmote in the
+    -- in-world FrameScript API. Cancel repeatedly during the short login
+    -- recovery window because the inherited countdown can become visible
+    -- slightly after PLAYER_ENTERING_WORLD. STAND is deterministic and does
+    -- not toggle an already-standing character back to sitting.
+    if CancelLogout then
+        CancelLogout()
+    end
+    if DoEmote and (pass == 0 or pass == 2 or pass == 4) then
+        DoEmote("STAND")
+    end
+
+    SS.loginRecoveryPasses = pass + 1
+    SS.nextLoginRecoveryAt = t + 1.0
+
+    if SummonScoutDB.debug and pass == 0 then
+        chat("login recovery -> CancelLogout + STAND guard active for 8s")
+    end
 end
 
 local function status()
@@ -2691,6 +2744,7 @@ end
 
 local frame = CreateFrame("Frame", "SummonScoutFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
 frame:RegisterEvent("BAG_UPDATE")
 frame:RegisterEvent("TRADE_REQUEST")
@@ -2711,6 +2765,7 @@ frame:RegisterEvent("CHAT_MSG_SPELL_FAILED_LOCALPLAYER")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         setDefaults()
+        SS.loginRecoveryArmed = true
         W112_AUTOSUMMON_REQUEST = ""
         W112_AUTOSUMMON_REQUEST_SEQ = ""
         W112_AUTOSUMMON_ACK = ""
@@ -2726,6 +2781,15 @@ frame:SetScript("OnEvent", function()
         chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
             .. "; serving=" .. servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
+        return
+    end
+
+    if event == "PLAYER_ENTERING_WORLD" then
+        if SS.loginRecoveryArmed then
+            SS.loginRecoveryArmed = false
+            startLoginRecovery()
+            processLoginRecovery()
+        end
         return
     end
 
@@ -2878,6 +2942,7 @@ frame:SetScript("OnEvent", function()
 end)
 frame:SetScript("OnUpdate", function()
     local t = now()
+    processLoginRecovery()
     if t >= (SS.shardGuardNextCheckAt or 0) then
         SS.shardGuardNextCheckAt = t + 0.50
         refreshShardGuardState(false)

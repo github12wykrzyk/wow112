@@ -2154,6 +2154,27 @@
         "artifact_id": 11157873378
       },
       "notes": "Integrated to parallel. Map teleport no longer calls HideUIPanel(WorldMapFrame) after sending the teleport pulse, so the world map remains visible for repeated E/click map teleports. Existing validation, F7 abort and optional native S backstep are unchanged. CI/package passed; gameplay behavior awaits user test."
+    },
+    {
+      "id": "summonscout-login-recovery",
+      "branch": "feature/summonscout-login-recovery",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-need-one-invite"
+      ],
+      "shared_resources": [
+        "Vanilla FrameScript CancelLogout",
+        "Vanilla FrameScript DoEmote(STAND)",
+        "PLAYER_LOGIN / PLAYER_ENTERING_WORLD"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "746a7f18f8496e68fc103358073cfa8af2a3b56a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.50 adds an 8-second login recovery guard: PLAYER_LOGIN arms it, first PLAYER_ENTERING_WORLD starts it, CancelLogout is retried once per second and deterministic DoEmote('STAND') is issued on passes 1/3/5. It does not re-arm on ordinary later zone transitions. Exact 5875 API evidence: ClassicAPI BlizzardScriptAPI.md recovered registration tables list CancelLogout, SitOrStand and DoEmote. Current updater CloseGameProcesses already hard-kills WoW and explicitly avoids WM_CLOSE, so this guards residual/inherited logout state rather than changing updater shutdown semantics."
     }
   ]
 }
