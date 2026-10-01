@@ -2778,6 +2778,28 @@
       ],
       "package": null,
       "notes": "User gameplay screenshot on 2026-10-01 showed Champion's Wall Shield of the Gorilla still listed at the exact 1g94s39c buyout immediately after AUX_ARB_RACE said it moved/disappeared. Root cause is stale full-AH sourcePage identity: postscan DE waited through a long full scan plus material verification, then generic revalidation searched only the old sourcePage +/-1. 0.20.2 derives the base item name from original AUX item data, performs a fresh filtered query from page 0, pages the filtered result set to exhaustion, and still requires the exact suffix-aware signature/buyout before PlaceAuctionBid. No gameplay PASS claimed yet. Integrated to current verified parallel base a26e35d43d8f5755f8c420b6a005f0aed8736718; aggregate candidate build pending."
+    },
+    {
+      "id": "ah-market-lowgc",
+      "branch": "feature/ah-market-lowgc",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-continuous-arb-market-loop",
+        "ah-aux-filter-history-dump"
+      ],
+      "shared_resources": [
+        "AuxVmangos full MARKET snapshot accumulator",
+        "AVM_DB marketDB schema 2 output",
+        "AUX/market shared AH scheduler"
+      ],
+      "status": "in_progress",
+      "observed_head": "62bed1d751a9b7e0267e4b6022cbb8568ad7361e",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Reduce WoW 1.12 Lua heap/GC pressure during full MARKET scans without slowing AUX/vendor acquisition. Replace per-auction duplicate prices[] plus offers-table allocation with price-level aggregation {auctions,units}; derive auction percentiles and depth5/10/20 from one sorted distinct-price list at finish. Output history schema/semantics are unchanged. User reported noticeable client slowdown specifically during MARKET; exact gameplay SHA was not independently established, so no game-test result is recorded yet."
     }
   ]
 }

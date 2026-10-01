@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.20.2-de-filtered-revalidate"
+AVM_VERSION = "0.20.3-market-lowgc"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -888,20 +888,34 @@ local function avm_market_push_history(dbrow, row)
 	end
 end
 
-local function avm_market_depth_price(offers, depth)
-	depth = tonumber(depth) or 1
-	if depth < 1 then depth = 1 end
-	if not offers or table.getn(offers) == 0 then return 0 end
-	table.sort(offers, function(a,b)
-		if a.unit ~= b.unit then return a.unit < b.unit end
-		return a.count > b.count
-	end)
-	local units = 0
-	for i = 1, table.getn(offers) do
-		units = units + (tonumber(offers[i].count) or 0)
-		if units >= depth then return tonumber(offers[i].unit) or 0 end
+local function avm_market_level_metrics(a)
+	local prices = {}
+	for price in pairs(a.levels or {}) do table.insert(prices, tonumber(price) or 0) end
+	table.sort(prices)
+	local auctionTotal = tonumber(a.auctions) or 0
+	local p25Target = math.ceil(auctionTotal * 0.25)
+	local p50Target = math.ceil(auctionTotal * 0.50)
+	local p75Target = math.ceil(auctionTotal * 0.75)
+	if p25Target < 1 then p25Target = 1 end
+	if p50Target < 1 then p50Target = 1 end
+	if p75Target < 1 then p75Target = 1 end
+	local auctionCum = 0
+	local unitCum = 0
+	local p25, p50, p75 = 0, 0, 0
+	local depth5, depth10, depth20 = 0, 0, 0
+	for i = 1, table.getn(prices) do
+		local price = prices[i]
+		local level = a.levels[price] or {}
+		auctionCum = auctionCum + (tonumber(level.auctions) or 0)
+		unitCum = unitCum + (tonumber(level.units) or 0)
+		if p25 == 0 and auctionCum >= p25Target then p25 = price end
+		if p50 == 0 and auctionCum >= p50Target then p50 = price end
+		if p75 == 0 and auctionCum >= p75Target then p75 = price end
+		if depth5 == 0 and unitCum >= 5 then depth5 = price end
+		if depth10 == 0 and unitCum >= 10 then depth10 = price end
+		if depth20 == 0 and unitCum >= 20 then depth20 = price end
 	end
-	return 0
+	return p25, p50, p75, depth5, depth10, depth20
 end
 
 local function avm_market_aggregate_page()
@@ -924,9 +938,9 @@ local function avm_market_aggregate_page()
 					sumUnit = 0,
 					minUnit = nil,
 					maxUnit = nil,
-					prices = {},
-					offers = {},
+					levels = {},
 					sellers = {},
+					sellerCount = 0,
 				}
 				AVM.market.items[key] = a
 			end
@@ -936,9 +950,17 @@ local function avm_market_aggregate_page()
 			a.sumUnit = a.sumUnit + unit
 			if not a.minUnit or unit < a.minUnit then a.minUnit = unit end
 			if not a.maxUnit or unit > a.maxUnit then a.maxUnit = unit end
-			table.insert(a.prices, unit)
-			table.insert(a.offers, { unit = unit, count = count })
-			if owner and owner ~= "" then a.sellers[owner] = true end
+			local levelRow = a.levels[unit]
+			if not levelRow then
+				levelRow = { auctions = 0, units = 0 }
+				a.levels[unit] = levelRow
+			end
+			levelRow.auctions = levelRow.auctions + 1
+			levelRow.units = levelRow.units + count
+			if owner and owner ~= "" and not a.sellers[owner] then
+				a.sellers[owner] = true
+				a.sellerCount = a.sellerCount + 1
+			end
 			AVM.market.auctions = AVM.market.auctions + 1
 			AVM.market.units = AVM.market.units + count
 		end
@@ -954,21 +976,14 @@ local function avm_market_finish(save, reason)
 		local seen = {}
 		local itemCount = 0
 		for key,a in pairs(m.items) do
-			table.sort(a.prices)
-			local n = table.getn(a.prices)
 			local avg = 0
 			local weighted = 0
 			if a.auctions > 0 then avg = math.floor(a.sumUnit / a.auctions) end
 			if a.units > 0 then weighted = math.floor(a.value / a.units) end
-			local sellerCount = 0
-			for _ in pairs(a.sellers or {}) do sellerCount = sellerCount + 1 end
-			local floorUnits = 0
-			for i = 1, table.getn(a.offers or {}) do
-				if a.offers[i].unit == a.minUnit then floorUnits = floorUnits + (a.offers[i].count or 0) end
-			end
-			local depth5 = avm_market_depth_price(a.offers, 5)
-			local depth10 = avm_market_depth_price(a.offers, 10)
-			local depth20 = avm_market_depth_price(a.offers, 20)
+			local p25, median, p75, depth5, depth10, depth20 = avm_market_level_metrics(a)
+			local floorLevel = a.minUnit and a.levels and a.levels[a.minUnit] or nil
+			local floorUnits = floorLevel and (tonumber(floorLevel.units) or 0) or 0
+			local sellerCount = tonumber(a.sellerCount) or 0
 
 			local dbrow = AVM_DB.marketDB[key]
 			if not dbrow then
@@ -988,9 +1003,9 @@ local function avm_market_finish(save, reason)
 				auctions = a.auctions,
 				units = a.units,
 				min = a.minUnit or 0,
-				p25 = avm_market_percentile(a.prices, 0.25),
-				median = avm_market_percentile(a.prices, 0.50),
-				p75 = avm_market_percentile(a.prices, 0.75),
+				p25 = p25,
+				median = median,
+				p75 = p75,
 				max = a.maxUnit or 0,
 				avg = avg,
 				weighted = weighted,
@@ -1032,6 +1047,7 @@ local function avm_market_finish(save, reason)
 		AVM.stats.marketScans = AVM.stats.marketScans + 1
 		avm_print("MARKET done items=" .. itemCount ..
 			" auctions=" .. m.auctions .. " units=" .. m.units ..
+			" accumulator=price-levels" ..
 			" boundary=" .. tostring(m.boundary) ..
 			" pages=" .. tostring((m.lastPage or 0) - (m.boundary or 0) + 1) ..
 			" duration=" .. string.format("%.1f", AVM_DB.marketMeta.duration) .. "s")

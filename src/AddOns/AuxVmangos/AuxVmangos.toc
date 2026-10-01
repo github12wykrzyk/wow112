@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with filtered exact DE revalidation, postscan transaction locking, history-anchored flips and trusted realm vendor values.
+## Notes: Original AUX arbitrage with low-GC MARKET history, filtered exact DE revalidation, postscan transaction locking, history-anchored flips and trusted vendor values.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.20.2-de-filtered-revalidate
+## Version: 0.20.3-market-lowgc
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
