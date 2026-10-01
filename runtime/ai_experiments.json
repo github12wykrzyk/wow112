@@ -2856,6 +2856,54 @@
       ],
       "package": null,
       "notes": "Select the best live-eligible DE/flip candidate (wallet + session budget) instead of gating only the theoretical best. Reserve postscan ownership across transient pending/unknown/queryInFlight state so LOOP/MARKET cannot steal the scheduler. Emit explicit SELECT/FALLBACK/BLOCKED/SKIP diagnostics for every postscan outcome."
+    },
+    {
+      "id": "updater-live-update-parallel",
+      "branch": "feature/updater-live-update",
+      "modules": [
+        "ParallelUpdater",
+        "UpdaterMultibox"
+      ],
+      "dependencies": [
+        "multibox-background-sound-parallel"
+      ],
+      "shared_resources": [
+        "Parallel updater root runtime install transaction",
+        ".wow112_parallel_updater pending/backup state",
+        "WoW process lifetime detection"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "045359639612252cfe42183a33f75e644dcbd81a",
+      "verified_commit": "045359639612252cfe42183a33f75e644dcbd81a",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "045359639612252cfe42183a33f75e644dcbd81a",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36912303704 passed on exact feature SHA 045359639612252cfe42183a33f75e644dcbd81a."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "045359639612252cfe42183a33f75e644dcbd81a",
+          "date": "2026-10-01",
+          "evidence": "Build WoW112 updater run 36912303684 passed on exact feature SHA, including x86 compile, attestation tests, addon tests and GUI smoke."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "045359639612252cfe42183a33f75e644dcbd81a",
+          "date": "2026-10-01",
+          "evidence": "Updater artifact 11186259103 (WoW112ParallelUpdater-045359639612252cfe42183a33f75e644dcbd81a) was uploaded by the successful exact-SHA updater workflow."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "045359639612252cfe42183a33f75e644dcbd81a",
+        "artifact_id": 11186259103
+      },
+      "notes": "Feature starts from verified parallel@6b18ae8f. Goal: allow UPDATE while WoW instances remain open. AddOns apply immediately; EXE/DLL/dlls.txt and stale root-runtime removals are staged with SHA checks and auto-finalized only after the last WoW process exits. No gameplay acceptance claimed."
     }
   ]
 }

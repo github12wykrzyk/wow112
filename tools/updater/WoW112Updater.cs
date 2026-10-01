@@ -63,6 +63,10 @@ namespace WoW112Updater
         private readonly string configPath;
         private RemotePackageInfo lastRemote;
         private bool busy;
+        private bool lastUpdateDeferredRuntime;
+        private bool pendingApplyBusy;
+        private bool pendingApplyFaulted;
+        private readonly Timer pendingApplyTimer = new Timer();
 
         public MainForm()
         {
@@ -80,6 +84,11 @@ namespace WoW112Updater
             BuildUi();
             LoadConfig();
             RefreshLocalState();
+
+            pendingApplyTimer.Interval = 2000;
+            pendingApplyTimer.Tick += delegate { TryFinalizePendingUpdate(); };
+            pendingApplyTimer.Start();
+            Shown += delegate { TryFinalizePendingUpdate(); };
         }
 
         private void BuildUi()
@@ -294,8 +303,9 @@ namespace WoW112Updater
             {
                 ValidateInputs();
                 var updateRoot = gameDir.Text.Trim();
-                if (!ConfirmCloseRunningGameForUpdate(updateRoot))
-                    return;
+                lastUpdateDeferredRuntime = false;
+                if (IsGameRunning(updateRoot))
+                    Log("LIVE UPDATE: WoW działa. AddOny zainstaluję od razu; zmiany EXE/DLL/dlls.txt zapiszę jako oczekujące i dokończę automatycznie po zamknięciu ostatniej instancji.");
 
                 SaveConfig(false);
                 SetBusy(true, "Pobieranie najnowszej paczki...");
@@ -312,12 +322,22 @@ namespace WoW112Updater
                 status.Text = "Instalowanie zweryfikowanych plików...";
                 var addonFiles = new List<UpdaterAddonAsset>(cachedVerifiedAddons);
                 var result = await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot, addonFiles));
-                status.Text = result.Changed == 0
-                    ? "EXE i pozostałe pliki już były aktualne."
-                    : "Aktualizacja zakończona: " + result.Changed + " plików"
-                        + (result.ExeChanged ? " (w tym EXE)." : ".");
-                Log("Gotowe. Zmieniono: " + result.Changed + ", bez zmian: " + result.Unchanged
-                    + "; EXE: " + (result.ExeChanged ? "zaktualizowany" : "bez zmian") + ".");
+                lastUpdateDeferredRuntime = result.Deferred > 0;
+                if (result.Deferred > 0)
+                {
+                    status.Text = "LIVE UPDATE: " + result.Changed + " plików zaktualizowano teraz; runtime " + result.Deferred + " plików oczekuje na zamknięcie WoW.";
+                    Log("LIVE UPDATE zapisany. Aktywne instancje nie są zamykane. Runtime zostanie dokończony automatycznie po zamknięciu ostatniej instancji WoW.");
+                }
+                else
+                {
+                    status.Text = result.Changed == 0
+                        ? "EXE i pozostałe pliki już były aktualne."
+                        : "Aktualizacja zakończona: " + result.Changed + " plików"
+                            + (result.ExeChanged ? " (w tym EXE)." : ".");
+                }
+                Log("Gotowe. Zmieniono teraz: " + result.Changed + ", oczekuje runtime: " + result.Deferred
+                    + ", bez zmian: " + result.Unchanged
+                    + "; EXE: " + (result.ExeChanged ? (result.Deferred > 0 ? "oczekuje" : "zaktualizowany") : "bez zmian") + ".");
                 if (!string.IsNullOrWhiteSpace(result.BackupDir)) Log("Backup: " + result.BackupDir);
                 TrimBackups(gameDir.Text.Trim(), MaxBackups);
                 RefreshLocalState();
@@ -337,14 +357,18 @@ namespace WoW112Updater
 
         private async Task UpdateAndPlayAsync()
         {
-            // Do not silently keep stale Interface/AddOns files when WoW is
-            // already running. UpdateAsync owns the close-game confirmation.
             await UpdateAsync();
-            if (!status.Text.StartsWith("Aktualizacja nie powiodła", StringComparison.OrdinalIgnoreCase))
+            if (status.Text.StartsWith("Aktualizacja nie powiodła", StringComparison.OrdinalIgnoreCase))
+                return;
+            if (lastUpdateDeferredRuntime)
             {
-                status.Text = "Gotowe. Uruchamiam WoW...";
-                LaunchGame();
+                status.Text = "Runtime oczekuje na zamknięcie aktywnych instancji. Nie uruchamiam nowego klienta na starej wersji.";
+                Log("UPDATE + PLAY: pomijam start nowej instancji, bo zweryfikowany runtime jest jeszcze oczekujący.");
+                return;
             }
+
+            status.Text = "Gotowe. Uruchamiam WoW...";
+            LaunchGame();
         }
 
         private async Task<RemotePackageInfo> FindLatestPackageAsync()
@@ -617,7 +641,7 @@ namespace WoW112Updater
 
         private ApplyResult ApplyPackage(byte[] packageBytes, RemotePackageInfo remote, string root, IList<UpdaterAddonAsset> addonFiles)
         {
-            if (IsGameRunning(root)) throw new InvalidOperationException("Gra działa. Zamknij WoW przed instalacją.");
+            var gameRunning = IsGameRunning(root);
             var files = new List<PackageFile>();
             var packageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using (var ms = new MemoryStream(packageBytes, false))
@@ -640,8 +664,7 @@ namespace WoW112Updater
                 throw new InvalidOperationException("Paczka nie zawiera WoW.exe/canonical WoW executable.");
             if (!files.Any(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException("Paczka nie zawiera DLL-i.");
-            // Addons are verified against the exact Parallel candidate commit.
-            // Install only two whitelisted addons; never put their files into dlls.txt.
+
             foreach (var addon in addonFiles)
             {
                 if (!packageNames.Add(addon.Name))
@@ -723,46 +746,291 @@ namespace WoW112Updater
                 && File.Exists(SafeDestination(root, name))
                 && (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || IsDllInstallDisabled(name) || IsDllUpdateEnabled(name))).ToList();
 
-            var backupDir = string.Empty;
-            if (changed.Count > 0 || stale.Count > 0)
+            var exeName = files.First(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).Name;
+
+            if (gameRunning)
             {
-                backupDir = CreateBackup(root, changed.Select(f => f.Name).Concat(stale).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), oldState, remote);
+                var liveChanged = changed.Where(f => UpdaterAddons.IsAddonPath(f.Name)).ToList();
+                var deferredChanged = changed.Where(f => !UpdaterAddons.IsAddonPath(f.Name)).ToList();
+                var liveStale = stale.Where(UpdaterAddons.IsAddonPath).ToList();
+                var deferredStale = stale.Where(name => !UpdaterAddons.IsAddonPath(name)).ToList();
+                var backupDir = string.Empty;
+
+                if (liveChanged.Count > 0 || liveStale.Count > 0)
+                    backupDir = CreateBackup(root, liveChanged.Select(f => f.Name).Concat(liveStale).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), oldState, remote);
+
+                try
+                {
+                    ApplyChangedFiles(root, liveChanged);
+                    ApplyStaleFiles(root, liveStale);
+
+                    if (deferredChanged.Count > 0 || deferredStale.Count > 0)
+                        StagePendingRuntime(root, remote, deferredChanged, deferredStale, newManaged.ToList(), exeName);
+                    else
+                    {
+                        ClearPendingUpdate(root);
+                        WriteInstalledState(root, remote, newManaged.ToList(), exeName);
+                    }
+                }
+                catch
+                {
+                    if (!string.IsNullOrWhiteSpace(backupDir)) RestoreBackupDirectory(root, backupDir, false);
+                    throw;
+                }
+
+                return new ApplyResult
+                {
+                    Changed = liveChanged.Count + liveStale.Count,
+                    Deferred = deferredChanged.Count + deferredStale.Count,
+                    Unchanged = files.Count - changed.Count,
+                    ExeChanged = deferredChanged.Any(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
+                    BackupDir = backupDir
+                };
             }
+
+            var fullBackupDir = string.Empty;
+            if (changed.Count > 0 || stale.Count > 0)
+                fullBackupDir = CreateBackup(root, changed.Select(f => f.Name).Concat(stale).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), oldState, remote);
 
             try
             {
-                foreach (var file in changed)
-                {
-                    var dest = SafeDestination(root, file.Name);
-                    var temp = dest + ".wow112tmp";
-                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
-                    File.WriteAllBytes(temp, file.Bytes);
-                    if (!string.Equals(Sha256File(temp), file.Sha256, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("Błąd SHA256 po zapisie pliku tymczasowego: " + file.Name);
-                    ReplaceFile(temp, dest);
-                    if (!string.Equals(Sha256File(dest), file.Sha256, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("Błąd SHA256 po instalacji: " + file.Name);
-                    Log("OK  " + file.Name);
-                }
-
-                foreach (var name in stale)
-                {
-                    File.Delete(SafeDestination(root, name));
-                    Log("DEL " + name + " (stary zarządzany plik)");
-                }
-
-                var exeName = files.First(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).Name;
+                ApplyChangedFiles(root, changed);
+                ApplyStaleFiles(root, stale);
                 WriteInstalledState(root, remote, newManaged.ToList(), exeName);
+                ClearPendingUpdate(root);
             }
             catch
             {
-                if (!string.IsNullOrWhiteSpace(backupDir)) RestoreBackupDirectory(root, backupDir, false);
+                if (!string.IsNullOrWhiteSpace(fullBackupDir)) RestoreBackupDirectory(root, fullBackupDir, false);
                 throw;
             }
 
-            return new ApplyResult { Changed = changed.Count + stale.Count, Unchanged = files.Count - changed.Count,
+            return new ApplyResult
+            {
+                Changed = changed.Count + stale.Count,
+                Deferred = 0,
+                Unchanged = files.Count - changed.Count,
                 ExeChanged = changed.Any(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
-                BackupDir = backupDir };
+                BackupDir = fullBackupDir
+            };
+        }
+
+        private void ApplyChangedFiles(string root, IList<PackageFile> changed)
+        {
+            foreach (var file in changed)
+            {
+                var dest = SafeDestination(root, file.Name);
+                var temp = dest + ".wow112tmp";
+                Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                File.WriteAllBytes(temp, file.Bytes);
+                if (!string.Equals(Sha256File(temp), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Błąd SHA256 po zapisie pliku tymczasowego: " + file.Name);
+                ReplaceFile(temp, dest);
+                if (!string.Equals(Sha256File(dest), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Błąd SHA256 po instalacji: " + file.Name);
+                Log("OK  " + file.Name);
+            }
+        }
+
+        private void ApplyStaleFiles(string root, IList<string> stale)
+        {
+            foreach (var name in stale)
+            {
+                File.Delete(SafeDestination(root, name));
+                Log("DEL " + name + " (stary zarządzany plik)");
+            }
+        }
+
+        private static string PendingRoot(string root)
+        {
+            return Path.Combine(root, ".wow112_parallel_updater", "pending");
+        }
+
+        private static string PendingManifestPath(string root)
+        {
+            return Path.Combine(PendingRoot(root), "pending.json");
+        }
+
+        private void StagePendingRuntime(string root, RemotePackageInfo remote, IList<PackageFile> changed,
+            IList<string> stale, IList<string> managedFiles, string exeName)
+        {
+            var pendingRoot = PendingRoot(root);
+            var parent = Path.GetDirectoryName(pendingRoot);
+            Directory.CreateDirectory(parent);
+            var stage = pendingRoot + ".stage-" + Guid.NewGuid().ToString("N");
+            var stageFiles = Path.Combine(stage, "files");
+            Directory.CreateDirectory(stageFiles);
+
+            try
+            {
+                var fileRows = new ArrayList();
+                foreach (var file in changed)
+                {
+                    ValidatePendingRuntimeName(file.Name);
+                    var path = Path.Combine(stageFiles, file.Name);
+                    File.WriteAllBytes(path, file.Bytes);
+                    if (!string.Equals(Sha256File(path), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("LIVE UPDATE: SHA256 pliku oczekującego nie zgadza się: " + file.Name);
+                    var row = new Dictionary<string, object>();
+                    row["name"] = file.Name;
+                    row["sha256"] = file.Sha256;
+                    fileRows.Add(row);
+                }
+
+                var manifest = new Dictionary<string, object>();
+                manifest["schema_version"] = 1;
+                manifest["created_utc"] = DateTime.UtcNow.ToString("o");
+                manifest["channel"] = remote.Channel;
+                manifest["run_id"] = remote.RunId;
+                manifest["head_sha"] = remote.HeadSha;
+                manifest["exe_name"] = exeName;
+                manifest["files"] = fileRows;
+                manifest["stale"] = new ArrayList(stale.Cast<object>().ToArray());
+                manifest["managed_files"] = new ArrayList(managedFiles.Cast<object>().ToArray());
+                UpdaterSafety.WriteUtf8Atomic(Path.Combine(stage, "pending.json"), json.Serialize(manifest), ".tmp", ".previous");
+
+                if (Directory.Exists(pendingRoot)) Directory.Delete(pendingRoot, true);
+                Directory.Move(stage, pendingRoot);
+                pendingApplyFaulted = false;
+                Log("LIVE UPDATE: runtime oczekuje na bezpieczne dokończenie • " + ShortSha(remote.HeadSha)
+                    + " • pliki " + changed.Count + " • usunięcia " + stale.Count + ".");
+            }
+            catch
+            {
+                if (Directory.Exists(stage)) Directory.Delete(stage, true);
+                throw;
+            }
+        }
+
+        private static void ValidatePendingRuntimeName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)
+                || UpdaterAddons.IsAddonPath(name)
+                || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || Path.GetFileName(name) != name)
+                throw new InvalidOperationException("LIVE UPDATE: nieprawidłowa nazwa pliku runtime: " + name);
+        }
+
+        private void ClearPendingUpdate(string root)
+        {
+            var pendingRoot = PendingRoot(root);
+            if (Directory.Exists(pendingRoot)) Directory.Delete(pendingRoot, true);
+            pendingApplyFaulted = false;
+        }
+
+        private string ReadPendingHeadSha(string root)
+        {
+            try
+            {
+                var path = PendingManifestPath(root);
+                if (!File.Exists(path)) return string.Empty;
+                var manifest = AsDictionary(json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)));
+                return GetString(manifest, "head_sha");
+            }
+            catch
+            {
+                return "?";
+            }
+        }
+
+        private void TryFinalizePendingUpdate()
+        {
+            if (busy || pendingApplyBusy || pendingApplyFaulted) return;
+            var root = gameDir.Text.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return;
+            var manifestPath = PendingManifestPath(root);
+            if (!File.Exists(manifestPath) || IsGameRunning(root)) return;
+
+            pendingApplyBusy = true;
+            SetBusy(true, "Dokańczanie oczekującej aktualizacji runtime...");
+            string backupDir = null;
+            try
+            {
+                var manifest = AsDictionary(json.DeserializeObject(File.ReadAllText(manifestPath, Encoding.UTF8)));
+                if (GetLong(manifest, "schema_version") != 1)
+                    throw new InvalidOperationException("LIVE UPDATE: nieobsługiwany manifest oczekującego runtime.");
+
+                var remote = new RemotePackageInfo
+                {
+                    Channel = GetString(manifest, "channel"),
+                    RunId = GetLong(manifest, "run_id"),
+                    HeadSha = GetString(manifest, "head_sha")
+                };
+                if (remote.HeadSha.Length != 40 || !remote.HeadSha.All(Uri.IsHexDigit))
+                    throw new InvalidOperationException("LIVE UPDATE: nieprawidłowy commit oczekującego runtime.");
+
+                var pendingRoot = PendingRoot(root);
+                var pendingFiles = Path.Combine(pendingRoot, "files");
+                var changed = new List<PackageFile>();
+                foreach (var item in AsArray(GetValue(manifest, "files")))
+                {
+                    var row = AsDictionary(item);
+                    var name = GetString(row, "name");
+                    var expected = GetString(row, "sha256");
+                    ValidatePendingRuntimeName(name);
+                    if (!UpdaterSafety.IsSha256Hex(expected))
+                        throw new InvalidOperationException("LIVE UPDATE: nieprawidłowy SHA256 dla " + name + ".");
+                    var path = Path.Combine(pendingFiles, name);
+                    if (!File.Exists(path))
+                        throw new InvalidOperationException("LIVE UPDATE: brakuje oczekującego pliku " + name + ".");
+                    var bytes = File.ReadAllBytes(path);
+                    var file = new PackageFile(name, bytes);
+                    if (!string.Equals(file.Sha256, expected, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("LIVE UPDATE: zmieniony plik oczekujący " + name + ".");
+                    changed.Add(file);
+                }
+
+                var stale = new List<string>();
+                foreach (var item in AsArray(GetValue(manifest, "stale")))
+                {
+                    var name = Convert.ToString(item);
+                    ValidatePendingRuntimeName(name);
+                    stale.Add(name);
+                }
+
+                var managed = new List<string>();
+                foreach (var item in AsArray(GetValue(manifest, "managed_files")))
+                {
+                    var name = Convert.ToString(item);
+                    if (!string.IsNullOrWhiteSpace(name)) managed.Add(name);
+                }
+                var exeName = GetString(manifest, "exe_name");
+                ValidatePendingRuntimeName(exeName);
+
+                var oldState = ReadInstalledState(root);
+                var touched = changed.Select(f => f.Name).Concat(stale).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (touched.Count > 0)
+                    backupDir = CreateBackup(root, touched, oldState, remote);
+
+                try
+                {
+                    ApplyChangedFiles(root, changed);
+                    ApplyStaleFiles(root, stale);
+                    WriteInstalledState(root, remote, managed, exeName);
+                    ClearPendingUpdate(root);
+                }
+                catch
+                {
+                    if (!string.IsNullOrWhiteSpace(backupDir)) RestoreBackupDirectory(root, backupDir, false);
+                    throw;
+                }
+
+                status.Text = "Oczekujący runtime zainstalowany • " + ShortSha(remote.HeadSha);
+                Log("LIVE UPDATE: dokończono runtime po zamknięciu ostatniej instancji WoW • " + ShortSha(remote.HeadSha) + ".");
+                TrimBackups(root, MaxBackups);
+            }
+            catch (Exception ex)
+            {
+                pendingApplyFaulted = true;
+                status.Text = "Oczekujący runtime wymaga ponowienia — szczegóły w logu.";
+                Log("BŁĄD LIVE UPDATE: " + ex.Message);
+            }
+            finally
+            {
+                pendingApplyBusy = false;
+                SetBusy(false, status.Text);
+                RefreshLocalState();
+            }
         }
 
         private string CreateBackup(string root, IList<string> touchedNames, Dictionary<string, object> oldState, RemotePackageInfo remote)
@@ -826,6 +1094,10 @@ namespace WoW112Updater
                     + " • " + ShortSha(GetString(installed, "head_sha"))
                     + whenText;
             }
+
+            var pendingHead = ReadPendingHeadSha(root);
+            if (!string.IsNullOrWhiteSpace(pendingHead))
+                localInfo.Text += " • RUNTIME OCZEKUJE " + ShortSha(pendingHead);
 
             var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
             if (Directory.Exists(backupRoot))
@@ -1163,73 +1435,6 @@ namespace WoW112Updater
             }
         }
 
-        private bool ConfirmCloseRunningGameForUpdate(string root)
-        {
-            if (!IsGameRunning(root)) return true;
-
-            var answer = MessageBox.Show(
-                this,
-                "Gra działa z tego katalogu.\n\nTak — zamknij wszystkie instancje WoW z tego katalogu i kontynuuj aktualizację.\nNie — anuluj aktualizację i zostaw grę uruchomioną.",
-                "WoW112 Updater — gra jest uruchomiona",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question,
-                MessageBoxDefaultButton.Button2);
-
-            if (answer != DialogResult.Yes)
-            {
-                status.Text = "Aktualizacja anulowana.";
-                Log("Aktualizacja anulowana — WoW pozostał uruchomiony.");
-                return false;
-            }
-
-            status.Text = "Zamykanie WoW przed aktualizacją...";
-            Log("Użytkownik potwierdził zamknięcie WoW przed aktualizacją.");
-            CloseGameProcesses(root);
-
-            if (IsGameRunning(root))
-                throw new InvalidOperationException("Nie udało się zamknąć wszystkich instancji WoW z wybranego katalogu.");
-
-            Log("WoW zamknięty. Kontynuuję aktualizację.");
-            return true;
-        }
-
-        private static void CloseGameProcesses(string root)
-        {
-            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            foreach (var process in System.Diagnostics.Process.GetProcesses())
-            {
-                try
-                {
-                    var module = process.MainModule;
-                    var file = module == null ? null : module.FileName;
-                    if (string.IsNullOrWhiteSpace(file)) continue;
-
-                    var fullPath = Path.GetFullPath(file);
-                    var name = Path.GetFileName(fullPath);
-                    var isWow = string.Equals(name, "WoW.exe", StringComparison.OrdinalIgnoreCase)
-                        || (name.StartsWith("WoW_", StringComparison.OrdinalIgnoreCase)
-                            && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-                    if (!isWow || !fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    // Do not send WM_CLOSE here. In WoW 1.12.1 that can enter
-                    // the normal client logout path and start the in-world logout
-                    // countdown before the updater closes the process. For an
-                    // update we want an immediate process stop instead.
-                    process.Kill();
-                    process.WaitForExit(5000);
-                }
-                catch
-                {
-                    // A process can disappear or deny access between enumeration and close.
-                    // The post-check in ConfirmCloseRunningGameForUpdate is authoritative.
-                }
-                finally
-                {
-                    process.Dispose();
-                }
-            }
-        }
-
         private static bool IsGameRunning(string root)
         {
             var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -1378,6 +1583,7 @@ namespace WoW112Updater
         private sealed class ApplyResult
         {
             public int Changed;
+            public int Deferred;
             public int Unchanged;
             public bool ExeChanged;
             public string BackupDir;
