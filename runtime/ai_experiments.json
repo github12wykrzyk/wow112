@@ -2344,9 +2344,9 @@
         "WoW 1.12 Lua 5.0 32-upvalue closure limit",
         "SummonScout OnEvent dispatcher"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "a15d374c0b45383f366cb5ea7f42e72319cf1e82",
-      "verified_commit": null,
+      "status": "rejected",
+      "observed_head": "0a7b09c009ac19e811821af76f697ec674cf08d7",
+      "verified_commit": "0a7b09c009ac19e811821af76f697ec674cf08d7",
       "tests": [
         {
           "kind": "ci",
@@ -2354,10 +2354,35 @@
           "commit": "fe7b943875c5428db585ac749b7ae3fb3d83b390",
           "date": "2026-10-01",
           "evidence": "Original feature revision passed Parallel feature preflight run 36876651684; upvalue guard reported OnEvent=3 and OnUpdate=12 candidates. This rebased revision still requires exact-SHA preflight."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "0a7b09c009ac19e811821af76f697ec674cf08d7",
+          "date": "2026-10-01",
+          "evidence": "Integrated Build work candidate run 36877044595 passed on exact parallel SHA; FINAL_PACKAGE/candidate gates passed and the Lua upvalue guard remained below the WoW 1.12 closure limit."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "0a7b09c009ac19e811821af76f697ec674cf08d7",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11169827538 was uploaded for exact parallel SHA 0a7b09c009ac19e811821af76f697ec674cf08d7."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "0a7b09c009ac19e811821af76f697ec674cf08d7",
+          "date": "2026-10-01",
+          "evidence": "User confirmed SummonScout now loads past the prior 32-upvalue error, but startup logout recovery still produces heavy initial spam/flickering CAMP window and does not durably cancel the logout countdown."
         }
       ],
-      "package": null,
-      "notes": "SummonScout 1.54 bundles OnEvent helper references through EventAPI to stay below the 32-upvalue client limit and adds a preflight regression gate. Rebased onto current parallel after unrelated Auction work advanced the trunk; exact rebased SHA pending CI."
+      "package": {
+        "verified": true,
+        "commit": "0a7b09c009ac19e811821af76f697ec674cf08d7",
+        "artifact_id": 11169827538
+      },
+      "notes": "SummonScout 1.54 fixed the real-client Lua 5.0 upvalue load failure, but exact parallel candidate 0a7b09c was rejected for startup logout recovery: heavy initial spam, CAMP flicker and no durable cancel. The EventAPI upvalue refactor is retained by the follow-up."
     },
     {
       "id": "ah-live-market-flip-revalidate-racefix",
@@ -2388,6 +2413,28 @@
       ],
       "package": null,
       "notes": "Race-window fix for report #57. When the exact flip auction is already present on the final filtered live-valuation page, reuse that current authoritative list for the guarded exact revalidation/PlaceAuctionBid path instead of issuing a redundant second query. If the candidate was found on an earlier filtered page, keep one exact re-query but do not shorten the normal AVM_EVENT_SETTLE quiet window."
+    },
+    {
+      "id": "summonscout-startup-logout-native-v4",
+      "branch": "feature/summonscout-startup-logout-v4",
+      "modules": [
+        "SummonScout",
+        "AutoSummonAssist"
+      ],
+      "dependencies": [
+        "summonscout-lua-upvalue-fix"
+      ],
+      "shared_resources": [
+        "Vanilla 1.12.1 PLAYER_CAMPING / LOGOUT_CANCEL",
+        "W112_LOGIN_RECOVERY_REQUEST_SEQ / ACK_SEQ Lua-native handshake",
+        "AutoSummonAssist per-client WoW HWND SPACE PostMessage"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "6f3b172c4e1ca5fd8804456ad0602817260cf94d",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.55 removes the spam-prone /afk, autoClearAFK, Jump() and StaticPopup_Hide recovery path. PLAYER_CAMPING/CAMP/IDLE_MESSAGE now requests a one-shot native per-client SPACE pulse from AutoSummonAssist, then sends bounded CancelLogout with at most two passes during a startup-only window. Manual later /logout is outside the guard."
     }
   ]
 }

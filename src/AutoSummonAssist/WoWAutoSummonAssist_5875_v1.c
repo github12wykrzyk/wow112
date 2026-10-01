@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v22 - direct summon bridge + dormant coordinator telemetry + payer-first trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v23 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -222,6 +222,8 @@ static u32 g_antiAfkNextAt = 0u;
 static u32 g_antiAfkDeferCheckAt = 0u;
 static u32 g_antiAfkRng = 0u;
 static u32 g_antiAfkSlashInstallAt = 0u;
+static u32 g_loginRecoveryLastRequestSeq = 0u;
+static u32 g_loginRecoveryRetryAt = 0u;
 static volatile u32 g_antiAfkSlashFeedback = 0u;
 static volatile u32 g_antiAfkSlashCommands = 0u;
 static u32 g_lastTradePoll = 0u;
@@ -420,6 +422,8 @@ static void resetWorld(void)
     g_antiAfkNextAt=0u;
     g_antiAfkDeferCheckAt=0u;
     g_antiAfkSecondsLeft=0u;
+    g_loginRecoveryLastRequestSeq=0u;
+    g_loginRecoveryRetryAt=0u;
     g_lastTradePoll=0u;
     g_lastSummonBridgePoll=0u;
     g_summonIssuedAt=0u;
@@ -606,6 +610,32 @@ static int antiAfkPostSpace(void)
     ++g_antiAfkActions;
     g_antiAfkLastAction=1u;
     return 1;
+}
+
+static void pollStartupLogoutRecovery(u32 now)
+{
+    static const char ackScript[]=
+        "W112_LOGIN_RECOVERY_ACK_SEQ=tostring(W112_LOGIN_RECOVERY_REQUEST_SEQ or '');"
+        "W112_LOGIN_RECOVERY_NATIVE_PULSES=(tonumber(W112_LOGIN_RECOVERY_NATIVE_PULSES) or 0)+1";
+    const char *request;
+    u32 seq;
+
+    request=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)(
+        "W112_LOGIN_RECOVERY_REQUEST_SEQ",-1,0u);
+    seq=parseDecimalU32(request);
+    if(!seq || seq==0xFFFFFFFFu || seq==g_loginRecoveryLastRequestSeq) return;
+    if(g_loginRecoveryRetryAt && (int)(now-g_loginRecoveryRetryAt)<0) return;
+
+    /* A real per-window SPACE key transition follows the same input path as a
+     * user pressing SPACE. This is deliberately one-shot per Lua request; the
+     * addon owns the two-pass retry budget and CancelLogout timing. */
+    if(antiAfkPostSpace()) {
+        g_loginRecoveryLastRequestSeq=seq;
+        g_loginRecoveryRetryAt=0u;
+        ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(ackScript,"AutoSummonAssist");
+    } else {
+        g_loginRecoveryRetryAt=now+250u;
+    }
 }
 
 static void antiAfkTick(u32 player,u32 now)
@@ -1017,6 +1047,10 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
     g_busyRaw=busy ? 1u:0u;
 
     pollAndMaybeAcceptGold(now);
+
+    /* Startup logout recovery uses one real per-client SPACE transition before
+     * the addon sends bounded CancelLogout. It is request-driven, never a loop. */
+    pollStartupLogoutRecovery(now);
 
     /* Anti-AFK is deliberately independent from AutoSummon enable state. */
     antiAfkFlushSlashFeedback();
