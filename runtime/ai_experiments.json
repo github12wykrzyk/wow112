@@ -1614,6 +1614,30 @@
         "artifact_id": 11133070182
       },
       "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation. Integrated to parallel after exact-SHA preflight PASS; aggregate parallel candidate build passed; ready for gameplay repeatability test."
+    },
+    {
+      "id": "summon-coordinator-debug-report-v1",
+      "branch": "feature/summon-coordinator-debug-report",
+      "modules": [
+        "Updater",
+        "SummonCoordinator"
+      ],
+      "dependencies": [
+        "character-switch-relogin-handoff-v5",
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "loader GitHub issue diagnostic report",
+        "SummonCoordinator.log / SummonCoordinator.jsonl",
+        "SummonWorker*.log / SummonWorker*.jsonl",
+        "CharacterSwitchDiag.log"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "b35fd35fe2779591ad0322ee5f087cd8441ec011",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Adds bounded loader-report collection for the upcoming 2-warlock/2-slave shared-pair coordinator. Report contract covers request/lease/worker/slot/combat/READY/switch/ritual/click/retry fields while explicitly excluding credentials. This change only adds diagnostic plumbing; it does not claim coordinator runtime behavior."
     }
   ]
 }

@@ -269,6 +269,26 @@ namespace WoW112Updater
                 else sb.AppendLine("CharacterSwitchDiag.log not found.");
 
                 sb.AppendLine();
+                sb.AppendLine("### Summon coordinator / slave-worker diagnostics");
+                sb.AppendLine("Contract: request_id, source warlock, destination, request/lease state, worker label/PID, target slot, combat gate, READY count, switch timing, ritual/click result and retry reason. Credentials must never be logged.");
+                var summonDiagFiles = GetSummonCoordinatorDiagFiles(root);
+                if (summonDiagFiles.Length == 0)
+                {
+                    sb.AppendLine("No SummonCoordinator/SummonWorker diagnostic files found.");
+                }
+                else
+                {
+                    foreach (var file in summonDiagFiles)
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine("#### " + Path.GetFileName(file) + " (UTC " + File.GetLastWriteTimeUtc(file).ToString("o") + ")");
+                        sb.AppendLine("```text");
+                        sb.AppendLine(Sanitize(TailFile(file, 4500), root, 4500));
+                        sb.AppendLine("```");
+                    }
+                }
+
+                sb.AppendLine();
                 sb.AppendLine("### TaxiFlight hotkey / flight telemetry (CSV)");
                 var taxiFiles = GetRecentTaxiFiles(root);
                 if (taxiFiles.Length == 0)
@@ -363,6 +383,12 @@ namespace WoW112Updater
                 var charSwitchLog = Path.Combine(root, "CharacterSwitchDiag.log");
                 if (File.Exists(charSwitchLog))
                     sb.AppendLine(Sanitize(TailFile(charSwitchLog, 16000), root, 16000));
+                foreach (var summonFile in GetSummonCoordinatorDiagFiles(root))
+                {
+                    sb.AppendLine(Path.GetFileName(summonFile));
+                    sb.AppendLine(File.GetLastWriteTimeUtc(summonFile).Ticks.ToString());
+                    sb.AppendLine(Sanitize(TailFile(summonFile, 3000), root, 3000));
+                }
                 foreach (var taxiFile in GetRecentTaxiFiles(root))
                 {
                     sb.AppendLine(Path.GetFileName(taxiFile));
@@ -378,6 +404,28 @@ namespace WoW112Updater
                 foreach (var error in GetRecentWowApplicationErrors(root))
                     sb.AppendLine(Sanitize(error, root, 5000));
                 return sb.ToString();
+            }
+
+            private static string[] GetSummonCoordinatorDiagFiles(string root)
+            {
+                try
+                {
+                    if (!Directory.Exists(root)) return new string[0];
+                    var files = new List<string>();
+                    foreach (var name in new[] { "SummonCoordinator.log", "SummonCoordinator.jsonl" })
+                    {
+                        var path = Path.Combine(root, name);
+                        if (File.Exists(path)) files.Add(path);
+                    }
+                    files.AddRange(Directory.GetFiles(root, "SummonWorker*.log", SearchOption.TopDirectoryOnly));
+                    files.AddRange(Directory.GetFiles(root, "SummonWorker*.jsonl", SearchOption.TopDirectoryOnly));
+                    return files
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderByDescending(File.GetLastWriteTimeUtc)
+                        .Take(4)
+                        .ToArray();
+                }
+                catch { return new string[0]; }
             }
 
             private static string[] GetRecentCrashFiles(string root)
