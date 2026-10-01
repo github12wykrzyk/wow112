@@ -1763,6 +1763,38 @@
       "tests": [],
       "package": null,
       "notes": "V2 removes the persistent in-game Character Switch Diagnostic overlay while preserving its headless switch worker/backend. SummonScout publishes the configured single destination. AutoSummonAssist gates HYJAL/HYDRAXIAN Ritual requests on exact coordinator READY and publishes per-process request/cast/portal-click telemetry. The updater automatically arbitrates the two shared slave accounts without preemption or a global FIFO: oldest live pending request acquires the pair, both workers switch with combat hard-block, Ritual is released only after READY 2/2, and the lease is released after both slave native portal-click PRE counters advance or a controlled timeout. Other summon destinations retain the legacy direct bridge."
+    },
+    {
+      "id": "ah-native-receive-probe",
+      "branch": "feature/ah-native-receive-probe-v2",
+      "modules": [
+        "AHThrottleNative",
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-repeatability-75-125"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "NetClient global 0x00C28128",
+        "NetClient handler table +0x74 / context table +0xD64",
+        "SMSG_AUCTION_LIST_RESULT opcode 0x025C handler 0x004CC7F0",
+        "AUCTION_ITEM_LIST_UPDATE comparison"
+      ],
+      "status": "in_progress",
+      "observed_head": "bf3e271b7483142c29989384249e9fab42330150",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "fd94a07625af17a318d1cd4f7186c4fe7b288122",
+          "date": "2026-10-01",
+          "evidence": "Initial exact feature SHA passed Parallel feature preflight run 36838684578 and Verify AI experiment registry run 36838684557; rebased because parallel advanced with unrelated SummonScout/AutoSummon/CharacterSwitch/updater work before integration."
+        }
+      ],
+      "package": null,
+      "notes": "Passive exact-build receive probe. Exact 5875 EXE disassembly verifies dispatcher 0x00537AA0, registration slot tables +0x74/+0xD64, NetClient getter 0x005AB490 -> 0x00C28128, and opcode 0x025C mapped to auction handler 0x004CC7F0 with context 0. SMSG_AUCTION_LIST_RESULT has no listfrom/page field, so this experiment first determines whether prior Lua AUCTION_ITEM_LIST_UPDATE misses are real missing native responses or only event undercount/coalescing. No gameplay result claimed yet. Rebased onto current parallel without overwriting unrelated parallel changes."
     }
   ]
 }

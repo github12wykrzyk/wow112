@@ -1,5 +1,5 @@
--- AHThrottleTest v1.8 repeatability benchmark for WoW 1.12.1 build 5875.
--- Uses WoWAHThrottleNative_5875_v6_REPEAT125 sender. Never bids or buys.
+-- AHThrottleTest v1.9 native receive-probe benchmark for WoW 1.12.1 build 5875.
+-- Uses WoWAHThrottleNative_5875_v7_RXPROBE sender/receiver observer. Never bids or buys.
 AHThrottleTestDB = AHThrottleTestDB or {}
 
 local AHT={open=false,bench={running=false,stageActive=false,stage=0,intervalMs=0,expected=0,rawEvents=0,results={},browseWasDetached=false,startedAt=0}}
@@ -41,7 +41,7 @@ end
 local function saveReport(summary)
     AHThrottleTestDB.last={
         timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
-        mode="repeatability-75-vs-125",
+        mode="repeatability-75-vs-125-rxprobe",
         results=AHT.bench.results,
         summary=summary
     }
@@ -59,7 +59,8 @@ function AHThrottleTest_BenchNativeStart()
     if canSend()~=true then out("REPEAT: poczekaj az Search bedzie aktywny i nacisnij F5 ponownie.");return end
     resetBench()
     AHT.bench.running=true;AHT.bench.startedAt=now();detachBrowse()
-    out("=== AH REPEATABILITY 75ms vs 125ms ===")
+    out("=== AH RX PROBE 75ms vs 125ms ===")
+    out("native SMSG_AUCTION_LIST_RESULT hook: VERIFIED/ACTIVE")
     out("10 etapow: 75/125 przeplatane, po 500 query. Nie klikaj AH.")
     out("Test potrwa ok. 10-12 min.")
     local ok,err=pcall(QueryAuctionItems,"",nil,nil,0,0,0,0,false,0,false)
@@ -79,23 +80,30 @@ function AHThrottleTest_BenchStageStart(stage,intervalMs,expected)
     out("RUN "..tostring(rep).."/5 @ "..tostring(intervalMs).."ms sends="..tostring(expected))
 end
 
-function AHThrottleTest_BenchStageDone(stage,intervalMs,sent)
+function AHThrottleTest_BenchStageDone(stage,intervalMs,sent,nativeRecv,nativeInvalid)
     if not AHT.bench.running then return end
     AHT.bench.stageActive=false
     local expected=tonumber(sent) or AHT.bench.expected
     local recv=AHT.bench.rawEvents
+    local nrecv=tonumber(nativeRecv) or 0
+    local nbad=tonumber(nativeInvalid) or 0
     local miss=expected-recv;if miss<0 then miss=0 end
     local extra=recv-expected;if extra<0 then extra=0 end
+    local nmiss=expected-nrecv;if nmiss<0 then nmiss=0 end
+    local nextra=nrecv-expected;if nextra<0 then nextra=0 end
     local lossPct=expected>0 and miss*100/expected or 100
-    local effective=(50000/(tonumber(intervalMs) or 1))*(math.min(recv,expected)/expected)
-    local r={stage=tonumber(stage) or 0,intervalMs=tonumber(intervalMs) or 0,sent=expected,recv=recv,missing=miss,extra=extra,lossPct=lossPct,effective=effective}
-    table.insert(AHT.bench.results,r)
-    out("RESULT "..tostring(intervalMs).."ms recv="..tostring(recv).."/"..tostring(expected)..
-        " miss="..fmt(lossPct).."% effective~"..fmt(effective).." auc/s")
+    local nativeLossPct=expected>0 and nmiss*100/expected or 100
+    local effective=(50000/(tonumber(intervalMs) or 1))*(math.min(nrecv,expected)/expected)
+    local rr={stage=tonumber(stage) or 0,intervalMs=tonumber(intervalMs) or 0,sent=expected,recv=recv,missing=miss,extra=extra,lossPct=lossPct,nativeRecv=nrecv,nativeMissing=nmiss,nativeExtra=nextra,nativeInvalid=nbad,nativeLossPct=nativeLossPct,effective=effective}
+    table.insert(AHT.bench.results,rr)
+    out("RESULT "..tostring(intervalMs).."ms event="..tostring(recv).."/"..tostring(expected)..
+        " native="..tostring(nrecv).."/"..tostring(expected).." nativeBad="..tostring(nbad))
+    out("LOSS event="..fmt(lossPct).."% native="..fmt(nativeLossPct).."% effective~"..fmt(effective).." auc/s")
 end
 
 local function summarize(interval)
     local n,totalSent,totalRecv,totalMiss,sumLoss,sumSq,worst,best,worstMissing,zeroRuns = 0,0,0,0,0,0,-1,101,0,0
+    local totalNativeRecv,totalNativeMiss,sumNativeLoss,sumNativeSq,nativeWorst,nativeWorstMissing,nativeZeroRuns,nativeInvalid = 0,0,0,0,-1,0,0,0
     local i,r
     for i=1,table.getn(AHT.bench.results) do
         r=AHT.bench.results[i]
@@ -105,13 +113,22 @@ local function summarize(interval)
             if r.lossPct>worst then worst=r.lossPct;worstMissing=r.missing end
             if r.lossPct<best then best=r.lossPct end
             if r.missing==0 then zeroRuns=zeroRuns+1 end
+            totalNativeRecv=totalNativeRecv+(r.nativeRecv or 0);totalNativeMiss=totalNativeMiss+(r.nativeMissing or 0)
+            sumNativeLoss=sumNativeLoss+(r.nativeLossPct or 0);sumNativeSq=sumNativeSq+(r.nativeLossPct or 0)*(r.nativeLossPct or 0)
+            if (r.nativeLossPct or 0)>nativeWorst then nativeWorst=(r.nativeLossPct or 0);nativeWorstMissing=(r.nativeMissing or 0) end
+            if (r.nativeMissing or 0)==0 then nativeZeroRuns=nativeZeroRuns+1 end
+            nativeInvalid=nativeInvalid+(r.nativeInvalid or 0)
         end
     end
     local mean=n>0 and sumLoss/n or 0
     local var=n>0 and (sumSq/n-mean*mean) or 0;if var<0 then var=0 end
     local sd=math.sqrt(var)
     local aggregateLoss=totalSent>0 and totalMiss*100/totalSent or 100
-    return {intervalMs=interval,runs=n,totalSent=totalSent,totalRecv=totalRecv,totalMiss=totalMiss,meanLoss=mean,sdLoss=sd,worstLoss=worst,bestLoss=best,worstMissing=worstMissing,zeroRuns=zeroRuns,aggregateLoss=aggregateLoss}
+    local nativeMean=n>0 and sumNativeLoss/n or 0
+    local nativeVar=n>0 and (sumNativeSq/n-nativeMean*nativeMean) or 0;if nativeVar<0 then nativeVar=0 end
+    local nativeSd=math.sqrt(nativeVar)
+    local nativeAggregateLoss=totalSent>0 and totalNativeMiss*100/totalSent or 100
+    return {intervalMs=interval,runs=n,totalSent=totalSent,totalRecv=totalRecv,totalMiss=totalMiss,meanLoss=mean,sdLoss=sd,worstLoss=worst,bestLoss=best,worstMissing=worstMissing,zeroRuns=zeroRuns,aggregateLoss=aggregateLoss,totalNativeRecv=totalNativeRecv,totalNativeMiss=totalNativeMiss,nativeMeanLoss=nativeMean,nativeSdLoss=nativeSd,nativeWorstLoss=nativeWorst,nativeWorstMissing=nativeWorstMissing,nativeZeroRuns=nativeZeroRuns,nativeAggregateLoss=nativeAggregateLoss,nativeInvalid=nativeInvalid}
 end
 
 function AHThrottleTest_BenchFinished()
@@ -120,43 +137,41 @@ function AHThrottleTest_BenchFinished()
     out("=== REPEATABILITY FINAL ===")
     local s75=summarize(75)
     local s125=summarize(125)
-    out("75ms: recv="..tostring(s75.totalRecv).."/"..tostring(s75.totalSent)..
-        " aggregate miss="..fmt(s75.aggregateLoss).."% mean="..fmt(s75.meanLoss)..
-        "% sd="..fmt(s75.sdLoss).."% worst="..fmt(s75.worstLoss)..
-        "% zero-loss runs="..tostring(s75.zeroRuns).."/"..tostring(s75.runs))
-    out("125ms: recv="..tostring(s125.totalRecv).."/"..tostring(s125.totalSent)..
-        " aggregate miss="..fmt(s125.aggregateLoss).."% mean="..fmt(s125.meanLoss)..
-        "% sd="..fmt(s125.sdLoss).."% worst="..fmt(s125.worstLoss)..
-        "% zero-loss runs="..tostring(s125.zeroRuns).."/"..tostring(s125.runs))
+    out("75ms EVENT: recv="..tostring(s75.totalRecv).."/"..tostring(s75.totalSent)..
+        " miss="..fmt(s75.aggregateLoss).."% worst="..fmt(s75.worstLoss).."%")
+    out("75ms NATIVE: recv="..tostring(s75.totalNativeRecv).."/"..tostring(s75.totalSent)..
+        " miss="..fmt(s75.nativeAggregateLoss).."% worst="..fmt(s75.nativeWorstLoss)..
+        "% zero-loss="..tostring(s75.nativeZeroRuns).."/"..tostring(s75.runs).." bad="..tostring(s75.nativeInvalid))
+    out("125ms EVENT: recv="..tostring(s125.totalRecv).."/"..tostring(s125.totalSent)..
+        " miss="..fmt(s125.aggregateLoss).."% worst="..fmt(s125.worstLoss).."%")
+    out("125ms NATIVE: recv="..tostring(s125.totalNativeRecv).."/"..tostring(s125.totalSent)..
+        " miss="..fmt(s125.nativeAggregateLoss).."% worst="..fmt(s125.nativeWorstLoss)..
+        "% zero-loss="..tostring(s125.nativeZeroRuns).."/"..tostring(s125.runs).." bad="..tostring(s125.nativeInvalid))
 
-    local avgRetryCount=s75.totalMiss/math.max(1,s75.runs)
+    local avgRetryCount=s75.totalNativeMiss/math.max(1,s75.runs)
     local projected75=500*75 + avgRetryCount*125
     local full125=500*125
     local gain=full125-projected75
     local gainPct=gain*100/full125
-
-    local worstProjected75=500*75 + s75.worstMissing*125
+    local worstProjected75=500*75 + s75.nativeWorstMissing*125
     local worstGain=full125-worstProjected75
     local worstGainPct=worstGain*100/full125
 
-    out("=== SELECTIVE RETRY PROJECTION ===")
-    out("AVG: 75ms burst + avg "..fmt(avgRetryCount).." retry @125ms = "..fmt(projected75/1000)..
-        "s vs 62.500s; gain="..fmt(gain/1000).."s ("..fmt(gainPct).."%)")
-    out("WORST OBSERVED: 75ms + "..tostring(s75.worstMissing).." retry = "..fmt(worstProjected75/1000)..
-        "s; gain="..fmt(worstGain/1000).."s ("..fmt(worstGainPct).."%)")
-
+    out("=== NATIVE RECEIVE VERDICT ===")
     local decision
-    if s125.totalMiss==0 and worstGain>0 then
-        decision="75ms+selective retry remains faster even at observed worst 75ms run"
-    elseif s125.totalMiss==0 and gain>0 then
-        decision="75ms+selective retry faster on average, but worst-case margin is not proven"
-    elseif s125.totalMiss>0 then
-        decision="125ms is not a fully lossless retry floor; test a safer retry interval"
+    if s75.totalNativeMiss==0 and s125.totalNativeMiss==0 and s75.nativeInvalid==0 and s125.nativeInvalid==0 then
+        decision="native RX is lossless in this run; Lua event misses are not missing SMSG responses"
+    elseif s75.totalNativeMiss>0 or s125.totalNativeMiss>0 then
+        decision="real native RX gaps observed; retry/correlation work remains necessary"
     else
-        decision="full 125ms is competitive; do not prefer 75ms burst yet"
+        decision="native RX payload sanity failed; do not interpret event misses as packet loss"
     end
     out("DECISION: "..decision)
-    out("NOTE: retry timing is a projection until exact missing-page IDs are correlated.")
+    if s75.totalNativeMiss>0 then
+        out("Projected 75ms + retry@125 from NATIVE gaps: avg gain="..fmt(gainPct).."% worst="..fmt(worstGainPct).."%")
+    else
+        out("No native 75ms gaps -> selective retry is unnecessary for this run.")
+    end
 
     local summary={s75=s75,s125=s125,avgRetryCount=avgRetryCount,projected75ms=projected75,baseline125ms=full125,gainMs=gain,gainPct=gainPct,worstProjected75ms=worstProjected75,worstGainMs=worstGain,worstGainPct=worstGainPct,decision=decision}
     saveReport(summary);restoreBrowse();AHT.bench.running=false
@@ -194,11 +209,11 @@ SlashCmdList["AHTHROTTLETEST"]=function(msg)
         if AHThrottleTestDB.last and AHThrottleTestDB.last.summary then
             local s=AHThrottleTestDB.last.summary
             out("LAST "..tostring(AHThrottleTestDB.last.timestamp))
-            out("75ms aggregate miss="..fmt(s.s75.aggregateLoss).."% worst="..fmt(s.s75.worstLoss).."%")
-            out("125ms aggregate miss="..fmt(s.s125.aggregateLoss).."% worst="..fmt(s.s125.worstLoss).."%")
-            out("avg projected gain="..fmt(s.gainPct).."% worst projected gain="..fmt(s.worstGainPct).."%")
+            out("75ms EVENT miss="..fmt(s.s75.aggregateLoss).."% NATIVE miss="..fmt(s.s75.nativeAggregateLoss).."%")
+            out("125ms EVENT miss="..fmt(s.s125.aggregateLoss).."% NATIVE miss="..fmt(s.s125.nativeAggregateLoss).."%")
+            out("native bad payloads="..tostring((s.s75.nativeInvalid or 0)+(s.s125.nativeInvalid or 0)).." decision="..tostring(s.decision))
         else out("brak kompletnego zapisanego wyniku") end
     else out("/ahtest repeat | status | last") end
 end
 
-out("loaded v1.7 REPEATABILITY 75/125. /ahtest repeat -> F5.")
+out("loaded v1.9 RXPROBE 75/125. /ahtest repeat -> F5.")
