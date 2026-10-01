@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-original-aux-fast-hookfix",
+      "branch": "parallel",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2035,9 +2035,9 @@
         "Aux merchant_sell learned vendor cache",
         "AuxVmangos guarded vendor revalidation"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "0ff7e7fad79812d27c42773568d4822bec8b0f7b",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
+      "verified_commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
       "tests": [
         {
           "kind": "ci",
@@ -2045,10 +2045,35 @@
           "commit": "87bf1182324c08613bd8852f1ad58bc159b8a8d0",
           "date": "2026-10-01",
           "evidence": "Initial Parallel feature preflight run 36850449252 and Verify AI experiment registry run 36850449267 passed on exact SHA before parallel advanced with unrelated summon/ledger changes."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36853165276 and Verify AI experiment registry run 36853165322 passed on exact hookfix SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
+          "date": "2026-10-01",
+          "evidence": "Integrated parallel Build work candidate run 36853292714 completed successfully on exact SHA, including final runnable ZIP gate, addon packaging, provenance and attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11156596803 (WoW112-WORK-CANDIDATE-76745b45d086bccf6d2593b22d09c98cd58aeb75) was produced by successful integrated parallel run 36853292714."
         }
       ],
-      "package": null,
-      "notes": "Hookfix v1.1: patch aux.core.scan through its real module environment (module 'aux.core.scan' + M.start) instead of assigning to the read-only require() interface. Preserve original AUX GUI/state machine and response-paced one-query-at-a-time behavior; /auxfast now exposes hook=true/false for direct validation. In-game observation on exact integrated SHA 0ff7e7fad79812d27c42773568d4822bec8b0f7b: original AUX GUI/Search worked, but /auxfast showed busy=false pages=0 bypass=0 while Search was actively scanning Page 2/180, proving the v1.0 wrapper was not installed. Root cause is aux libs/package.lua read-only interface semantics. Structured game-test evidence is intentionally not added because repository validation currently forbids it."
+      "package": {
+        "verified": true,
+        "commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
+        "artifact_id": 11156596803
+      },
+      "notes": "Integrated on parallel. Hookfix v1.1 installs the original AUX scan wrapper through the real aux.core.scan module environment (M.start), not the read-only require() proxy. /auxfast now exposes hook=true/false. Previous integrated SHA 0ff7e7f restored the GUI but game observation showed busy=false/pages=0/bypass=0 during active Search, identifying the silent hook-install failure. Exact integrated hookfix SHA passed preflight and full parallel package gates; gameplay validation of hook=true and removal of the ~5s/query lock is pending."
     }
   ]
 }
