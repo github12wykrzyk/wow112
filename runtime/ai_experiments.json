@@ -3562,6 +3562,13 @@
           "evidence": "Parallel feature preflight run 36935457573, AutoLoginBridge run 36935457501 and updater run 36935457494 passed before integration; exact integrated parallel Build work candidate run 36935583965, updater run 36935584023 and AutoLoginBridge run 36935584074 passed."
         },
         {
+          "kind": "package",
+          "result": "passed",
+          "commit": "f03ca4b7e73edf935956ab702d936503be148225",
+          "date": "2026-10-02",
+          "evidence": "Exact integrated parallel aggregate candidate artifact 11197952027 and updater artifact 11198106247 were produced for f03ca4b7e73edf935956ab702d936503be148225; FINAL_PACKAGE and candidate attestation passed."
+        },
+        {
           "kind": "game",
           "result": "failed",
           "commit": "f03ca4b7e73edf935956ab702d936503be148225",
