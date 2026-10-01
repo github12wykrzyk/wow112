@@ -1988,11 +1988,11 @@
         }
       ],
       "package": null,
-      "notes": "Rejected as a semantic misread: screenshot phrase was 'i need one', not 'ready when you are'. Readiness cues are removed in the follow-up feature before gameplay validation."
+      "notes": "Rejected as semantic misread before gameplay validation: screenshot phrase was 'i need one', not 'ready when you are'. Readiness cues were removed in SummonScout 1.49."
     },
     {
       "id": "summonscout-need-one-invite",
-      "branch": "feature/summonscout-need-one-invite",
+      "branch": "parallel",
       "modules": [
         "SummonScout"
       ],
@@ -2003,11 +2003,19 @@
         "SummonScout direct-whisper smart-invite parser"
       ],
       "status": "awaiting_ci",
-      "observed_head": "18e59c02b9756469876d73b822c26b2f4804c78f",
+      "observed_head": "c2286eb95c428af5fdac655ca58a0b6435597852",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "c2286eb95c428af5fdac655ca58a0b6435597852",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36851509652 completed success for exact feature SHA c2286eb95c428af5fdac655ca58a0b6435597852; Verify AI experiment registry run 36851509809 also passed."
+        }
+      ],
       "package": null,
-      "notes": "SummonScout 1.49 removes the mistakenly inferred readiness cues and adds the actual screenshot phrase 'i need one' as a high-confidence direct-whisper smart auto-invite cue."
+      "notes": "SummonScout 1.49 integrated candidate: the mistakenly inferred readiness cues were removed and the actual direct-whisper phrase 'i need one' is a high-confidence smart auto-invite cue."
     }
   ]
 }
