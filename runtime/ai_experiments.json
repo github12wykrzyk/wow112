@@ -2169,9 +2169,9 @@
         "Vanilla FrameScript DoEmote(STAND)",
         "PLAYER_LOGIN / PLAYER_ENTERING_WORLD"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "95db290d40682729f3f2455e82f84854345c1264",
-      "verified_commit": null,
+      "status": "failed_game_test",
+      "observed_head": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+      "verified_commit": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
       "tests": [
         {
           "kind": "ci",
@@ -2179,10 +2179,64 @@
           "commit": "2a6b4d89699cfec6899ca648a315ceb91db18c8b",
           "date": "2026-10-01",
           "evidence": "Parallel feature preflight run 36866605996 completed success for exact feature SHA 2a6b4d89699cfec6899ca648a315ceb91db18c8b; Verify AI experiment registry run 36866605956 also passed."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+          "date": "2026-10-01",
+          "evidence": "Integrated Build work candidate run 36866860251 passed on exact parallel SHA, including FINAL_PACKAGE and candidate attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11163992585 was uploaded for exact parallel SHA 7037be7db0c9620ec477fb6bf2e251b11f07577c."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+          "date": "2026-10-01",
+          "evidence": "User observed that the recovery code was visibly running/spamming, but the character remained in the logout countdown. Timer-only CancelLogout + repeated DoEmote('STAND') did not exit the inherited logout state."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+        "artifact_id": 11163992585
+      },
+      "notes": "SummonScout 1.50 failed gameplay validation: repeated timer-side CancelLogout() and DoEmote('STAND') did not exit the inherited startup logout countdown. Keep this exact SHA as failed evidence; follow-up uses the actual PLAYER_CAMPING / LOGOUT_CANCEL lifecycle and stock CAMP popup path."
+    },
+    {
+      "id": "summonscout-login-camp-ack-v2",
+      "branch": "feature/summonscout-login-camp-ack",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-login-recovery"
+      ],
+      "shared_resources": [
+        "Vanilla 1.12.1 PLAYER_CAMPING / LOGOUT_CANCEL",
+        "Vanilla StaticPopup CAMP OnHide -> CancelLogout",
+        "Vanilla Jump / MoveForwardStart / MoveForwardStop movement bindings"
+      ],
+      "status": "preflight_passed",
+      "observed_head": "cab9d691f5f2011594427e387ccbf9e32ce6bb78",
+      "verified_commit": "cab9d691f5f2011594427e387ccbf9e32ce6bb78",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "cab9d691f5f2011594427e387ccbf9e32ce6bb78",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36869091323 passed on exact feature SHA cab9d691f5f2011594427e387ccbf9e32ce6bb78."
         }
       ],
       "package": null,
-      "notes": "SummonScout 1.50 integrated candidate: PLAYER_LOGIN arms an 8-second first-world-entry recovery window; CancelLogout retries once per second and DoEmote('STAND') runs on early passes. Ordinary later zone transitions do not re-arm it. Exact 5875 FrameScript registration evidence lists CancelLogout and DoEmote; updater hard-kill shutdown remains unchanged."
+      "notes": "SummonScout 1.51 follow-up. Reacts to actual PLAYER_CAMPING, closes the real CAMP StaticPopup (whose stock 1.12.1 OnHide calls CancelLogout), waits for LOGOUT_CANCEL ACK, uses one Jump and one later forward start/stop pulse as movement-side fallback, and removes repeated STAND emote spam. Integration/package pending."
     }
   ]
 }
