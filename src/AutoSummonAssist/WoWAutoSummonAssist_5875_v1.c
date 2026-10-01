@@ -88,6 +88,8 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define OBJ_GUID_LO                 0x0030u
 #define OBJ_GUID_HI                 0x0034u
 #define OBJ_NEXT                    0x003Cu
+#define OBJ_UNIT_AUX_PTR            0x0110u
+#define UNIT_AUX_LEVEL_OFF          0x0070u
 #define PLAYER_X                    0x09B8u
 #define PLAYER_Y                    0x09BCu
 #define PLAYER_Z                    0x09C0u
@@ -189,6 +191,7 @@ typedef struct SummonCoordMapV1 {
 static volatile UINT_PTR32 g_timer = 0u;
 static volatile u32 g_status = STATUS_DETACHED;
 static volatile u32 g_enabled = 1u;
+static volatile u32 g_forcedProfile = 0u; /* 0=manual, 1=SLAVE(level 1), 2=MASTER(level 20) */
 static volatile u32 g_heartbeat = 0u;
 static volatile u32 g_scanTicks = 0u;
 static volatile u32 g_candidatePresent = 0u;
@@ -436,6 +439,7 @@ static void resetWorld(void)
     g_nearestEntry=0u;
     g_nearestType=0u;
     g_nearestDistance100=0u;
+    g_forcedProfile=0u;
 }
 
 static int buildGuard(void)
@@ -501,6 +505,14 @@ static u32 localPlayer(u32 now)
     return obj;
 }
 
+static u32 playerLevel(u32 player)
+{
+    u32 aux;
+    if(!ptrOk(player)) return 0u;
+    aux=read32(player+OBJ_UNIT_AUX_PTR);
+    return ptrOk(aux) ? read32(aux+UNIT_AUX_LEVEL_OFF) : 0u;
+}
+
 static int playerBusy(u32 player)
 {
     u32 desc;
@@ -541,6 +553,24 @@ static void antiAfkSetEnabled(u32 enabled)
 {
     g_antiAfkEnabled=enabled?1u:0u;
     antiAfkResetRuntime();
+}
+
+static void enforceLevelProfile(u32 player)
+{
+    u32 level=playerLevel(player);
+    u32 role=(level==1u)?1u:((level==20u)?2u:0u);
+    g_forcedProfile=role;
+
+    if(role==1u) {
+        if(!g_enabled) g_enabled=1u;
+        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+    } else if(role==2u) {
+        if(g_enabled) {
+            g_enabled=0u;
+            resetPortal();
+        }
+        if(g_antiAfkEnabled) antiAfkSetEnabled(0u);
+    }
 }
 
 static int antiAfkCmdIs(const char *s,const char *word)
@@ -1038,6 +1068,11 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
         return;
     }
 
+    /* Summon role is deterministic for the fixed farm characters:
+     * level 1 is always SLAVE; level 20 is always MASTER.
+     * Other levels retain the saved/manual profile. */
+    enforceLevelProfile(player);
+
     /* Re-register periodically so /reload cannot permanently lose the slash
      * binding. Registration and command handling stay inside this WoW process. */
     antiAfkInstallSlash(now);
@@ -1163,12 +1198,14 @@ static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
 {
     if(!v||v->u32>1u) return 0;
     if(id==1u){
-        g_enabled=v->u32;
+        u32 wanted=(g_forcedProfile==1u)?1u:((g_forcedProfile==2u)?0u:v->u32);
+        g_enabled=wanted;
         if(!g_enabled) resetPortal();
         return 1;
     }
     if(id==21u){
-        antiAfkSetEnabled(v->u32);
+        u32 wanted=(g_forcedProfile==1u)?1u:((g_forcedProfile==2u)?0u:v->u32);
+        if(g_antiAfkEnabled!=wanted) antiAfkSetEnabled(wanted);
         return 1;
     }
     return 0;

@@ -2514,6 +2514,28 @@
       "tests": [],
       "package": null,
       "notes": "Continuous background loop for original AUX Search arbitrage with periodic full MARKET snapshots. Default loop interval 15m, 2s inter-cycle gap. Loop owns scheduling only between completed AUX scans/transactions, never overlaps original AUX, MARKET, standalone VENDOR, pending/unknown purchases or AVM queries. MARKET snapshot is inserted only when due; completion/failure returns to the current AUX Search filter from page 0. LIVE remains session-only and still requires explicit /avm auxarb live on. /avm off and /avm auxarb off disable the loop."
+    },
+    {
+      "id": "autosummon-level-role-lock",
+      "branch": "feature/autosummon-level-role-lock",
+      "modules": [
+        "AutoSummonAssist",
+        "WoWPlayerESP"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel"
+      ],
+      "shared_resources": [
+        "AutoSummonAssist W112_CONTROL_API_V1 enabled/anti-afk profile values",
+        "WoW 5875 local-player unit aux level field +0x70",
+        "Parallel SUMMON GUI MASTER/SLAVE profile indicators"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": null,
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Level-role lock for summon clients: local player level 1 is forced to SLAVE (AutoSummon enabled + Anti-AFK enabled); level 20 is forced to MASTER (both disabled). The native provider enforces the role every world tick and ignores conflicting GUI/profile writes after level detection, so the existing SUMMON GUI sync always converges to the correct role. Other levels retain saved/manual behavior."
     }
   ]
 }
