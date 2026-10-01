@@ -540,3 +540,16 @@ The 1.50 timer-only guard was not sufficient in the observed reconnect case: the
 - uses one `Jump()` and, only after repeated failure, one zero-duration `MoveForwardStart()/MoveForwardStop()` pulse as an independent movement-side escape,
 - removes the repeated `DoEmote("STAND")` path, so recovery no longer spams stand emotes,
 - recovery is limited to the first 12 seconds after initial world entry and does not interfere with ordinary later manual logout.
+
+
+## 1.52 broader direct-whisper auto-invite phrasing
+
+Smart auto-invite now accepts additional natural short replies that ask for one summon without repeating the word "summon", including:
+- `need one`, `want one`
+- `can/could I get one`
+- `can/could I have one`
+- `one pls/plz/please`
+- `I'd like one`
+- `I'll grab one`
+
+These remain direct-whisper cues; they do not broaden World-channel request parsing or seller/competition detection.

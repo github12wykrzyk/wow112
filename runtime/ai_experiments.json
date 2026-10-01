@@ -2244,6 +2244,23 @@
       ],
       "package": null,
       "notes": "SummonScout 1.51 follow-up. Functional source SHA cab9d691f5f2011594427e387ccbf9e32ce6bb78 passed preflight. This ledger correction uses supported experiment states before re-running exact-SHA preflight; integration/package pending."
+    },
+    {
+      "id": "summonscout-auto-invite-one-phrases",
+      "branch": "feature/summonscout-auto-invite-one-phrases",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "SummonScout direct-whisper intent parser"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "0d0391cc4c52a20275476843c8c8219aa2bff98f",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.52 expands direct-whisper auto-invite phrasing for natural 'one' requests shown in gameplay. Feature preflight/package/game evidence pending."
     }
   ]
 }
