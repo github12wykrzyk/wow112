@@ -506,9 +506,9 @@ Persistent auto-invite blacklist:
 - Native Ritual requests are temporarily direct for all destinations. Hyjal/Hydraxian do not wait for updater slave/account-switch coordinator READY/FAIL.
 
 
-## 1.48 readiness-response smart invite
+## 1.49 `i need one` smart invite correction
 
-- Direct whispers containing the high-confidence readiness phrase `ready when you are` now trigger smart auto-invite.
-- `ready whenever you are` is accepted as the same intent.
-- Punctuation, leading `yes`, and emoticons are harmless because matching uses normalized text; e.g. `yes! ready when you are :)` matches.
-- The generic word `ready` alone is deliberately not a trigger, reducing conversational false positives.
+- Corrected the previous screenshot interpretation: the requested whisper phrase is `i need one`, not `ready when you are`.
+- `i need one` is now a high-confidence direct-whisper auto-invite cue.
+- The mistakenly added `ready when you are` / `ready whenever you are` cues were removed before gameplay validation.
+- Generic `need` by itself is not promoted to an exact high-confidence response cue; existing summon/location/payment evidence still applies normally.

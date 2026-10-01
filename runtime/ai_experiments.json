@@ -1975,12 +1975,39 @@
       "shared_resources": [
         "SummonScout direct-whisper smart-invite parser"
       ],
-      "status": "awaiting_ci",
+      "status": "rejected",
       "observed_head": "a6f1dcd179f95100bcbe9516dc72c3a9b55e04d9",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "18e59c02b9756469876d73b822c26b2f4804c78f",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36851165787 passed technically, but user corrected the screenshot semantics before gameplay validation."
+        }
+      ],
+      "package": null,
+      "notes": "Rejected as a semantic misread: screenshot phrase was 'i need one', not 'ready when you are'. Readiness cues are removed in the follow-up feature before gameplay validation."
+    },
+    {
+      "id": "summonscout-need-one-invite",
+      "branch": "feature/summonscout-need-one-invite",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summon-direct-pay-intent"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart-invite parser"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "18e59c02b9756469876d73b822c26b2f4804c78f",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "SummonScout 1.48 adds high-confidence direct-whisper readiness cues 'ready when you are' and 'ready whenever you are'. Normalization makes 'yes! ready when you are :)' match, while generic 'ready' alone remains non-triggering."
+      "notes": "SummonScout 1.49 removes the mistakenly inferred readiness cues and adds the actual screenshot phrase 'i need one' as a high-confidence direct-whisper smart auto-invite cue."
     }
   ]
 }

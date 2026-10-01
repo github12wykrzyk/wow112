@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.48"
+local ADDON_VERSION = "1.49"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -211,7 +211,7 @@ local WHISPER_INVITE_CUES = {
     "can i get a summon", "can i get summon", "need summon", "need summ",
     "lf summon", "lf summ", "wtb summon", "wtb summ",
     "still summoning", "take one", "i d take one", "ill take one", "i ll take one",
-    "ready when you are", "ready whenever you are"
+    "i need one"
 }
 
 local WHISPER_PRICE_CUES = {
