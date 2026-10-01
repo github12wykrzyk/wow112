@@ -1614,6 +1614,29 @@
         "artifact_id": 11133070182
       },
       "notes": "Repeatability benchmark requested before user sleeps. Alternates 75ms and 110ms, five 500-query runs each (5000 total) with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule versus full 110ms. Projection remains conditional on future exact missing-page correlation. Integrated to parallel after exact-SHA preflight PASS; aggregate parallel candidate build passed; ready for gameplay repeatability test."
+    },
+    {
+      "id": "ah-repeatability-75-125",
+      "branch": "feature/ah-repeatability-75-125",
+      "modules": [
+        "AHThrottleTest",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-repeatability-75-110"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "CMSG_AUCTION_LIST_ITEMS 0x0258",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AuctionFrameBrowse event isolation"
+      ],
+      "status": "in_progress",
+      "observed_head": "b35fd35fe2779591ad0322ee5f087cd8441ec011",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Repeatability follow-up after interrupted 75/110 run showed 110ms still losing responses. Alternates 75ms and 125ms, five 500-query runs each (5000 total), with 10s drain and UI isolation. Addon reports aggregate/mean/stdev/worst loss, zero-loss run counts, and average/worst projected selective-retry schedule using 125ms as recovery/reference."
     }
   ]
 }

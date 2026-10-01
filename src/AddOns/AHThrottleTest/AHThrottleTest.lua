@@ -1,5 +1,5 @@
--- AHThrottleTest v1.7 repeatability benchmark for WoW 1.12.1 build 5875.
--- Uses WoWAHThrottleNative_5875_v5_REPEAT sender. Never bids or buys.
+-- AHThrottleTest v1.8 repeatability benchmark for WoW 1.12.1 build 5875.
+-- Uses WoWAHThrottleNative_5875_v6_REPEAT125 sender. Never bids or buys.
 AHThrottleTestDB = AHThrottleTestDB or {}
 
 local AHT={open=false,bench={running=false,stageActive=false,stage=0,intervalMs=0,expected=0,rawEvents=0,results={},browseWasDetached=false,startedAt=0}}
@@ -41,7 +41,7 @@ end
 local function saveReport(summary)
     AHThrottleTestDB.last={
         timestamp=(date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)),
-        mode="repeatability-75-vs-110",
+        mode="repeatability-75-vs-125",
         results=AHT.bench.results,
         summary=summary
     }
@@ -59,8 +59,8 @@ function AHThrottleTest_BenchNativeStart()
     if canSend()~=true then out("REPEAT: poczekaj az Search bedzie aktywny i nacisnij F5 ponownie.");return end
     resetBench()
     AHT.bench.running=true;AHT.bench.startedAt=now();detachBrowse()
-    out("=== AH REPEATABILITY 75ms vs 110ms ===")
-    out("10 etapow: 75/110 przeplatane, po 500 query. Nie klikaj AH.")
+    out("=== AH REPEATABILITY 75ms vs 125ms ===")
+    out("10 etapow: 75/125 przeplatane, po 500 query. Nie klikaj AH.")
     out("Test potrwa ok. 10-12 min.")
     local ok,err=pcall(QueryAuctionItems,"",nil,nil,0,0,0,0,false,0,false)
     if not ok then out("REPEAT baseline ERROR: "..tostring(err));resetBench() end
@@ -119,46 +119,46 @@ function AHThrottleTest_BenchFinished()
     AHT.bench.stageActive=false
     out("=== REPEATABILITY FINAL ===")
     local s75=summarize(75)
-    local s110=summarize(110)
+    local s125=summarize(125)
     out("75ms: recv="..tostring(s75.totalRecv).."/"..tostring(s75.totalSent)..
         " aggregate miss="..fmt(s75.aggregateLoss).."% mean="..fmt(s75.meanLoss)..
         "% sd="..fmt(s75.sdLoss).."% worst="..fmt(s75.worstLoss)..
         "% zero-loss runs="..tostring(s75.zeroRuns).."/"..tostring(s75.runs))
-    out("110ms: recv="..tostring(s110.totalRecv).."/"..tostring(s110.totalSent)..
-        " aggregate miss="..fmt(s110.aggregateLoss).."% mean="..fmt(s110.meanLoss)..
-        "% sd="..fmt(s110.sdLoss).."% worst="..fmt(s110.worstLoss)..
-        "% zero-loss runs="..tostring(s110.zeroRuns).."/"..tostring(s110.runs))
+    out("125ms: recv="..tostring(s125.totalRecv).."/"..tostring(s125.totalSent)..
+        " aggregate miss="..fmt(s125.aggregateLoss).."% mean="..fmt(s125.meanLoss)..
+        "% sd="..fmt(s125.sdLoss).."% worst="..fmt(s125.worstLoss)..
+        "% zero-loss runs="..tostring(s125.zeroRuns).."/"..tostring(s125.runs))
 
     local avgRetryCount=s75.totalMiss/math.max(1,s75.runs)
-    local projected75=500*75 + avgRetryCount*110
-    local full110=500*110
-    local gain=full110-projected75
-    local gainPct=gain*100/full110
+    local projected75=500*75 + avgRetryCount*125
+    local full125=500*125
+    local gain=full125-projected75
+    local gainPct=gain*100/full125
 
-    local worstProjected75=500*75 + s75.worstMissing*110
-    local worstGain=full110-worstProjected75
-    local worstGainPct=worstGain*100/full110
+    local worstProjected75=500*75 + s75.worstMissing*125
+    local worstGain=full125-worstProjected75
+    local worstGainPct=worstGain*100/full125
 
     out("=== SELECTIVE RETRY PROJECTION ===")
-    out("AVG: 75ms burst + avg "..fmt(avgRetryCount).." retry @110ms = "..fmt(projected75/1000)..
-        "s vs 55.000s; gain="..fmt(gain/1000).."s ("..fmt(gainPct).."%)")
+    out("AVG: 75ms burst + avg "..fmt(avgRetryCount).." retry @125ms = "..fmt(projected75/1000)..
+        "s vs 62.500s; gain="..fmt(gain/1000).."s ("..fmt(gainPct).."%)")
     out("WORST OBSERVED: 75ms + "..tostring(s75.worstMissing).." retry = "..fmt(worstProjected75/1000)..
         "s; gain="..fmt(worstGain/1000).."s ("..fmt(worstGainPct).."%)")
 
     local decision
-    if s110.totalMiss==0 and worstGain>0 then
+    if s125.totalMiss==0 and worstGain>0 then
         decision="75ms+selective retry remains faster even at observed worst 75ms run"
-    elseif s110.totalMiss==0 and gain>0 then
+    elseif s125.totalMiss==0 and gain>0 then
         decision="75ms+selective retry faster on average, but worst-case margin is not proven"
-    elseif s110.totalMiss>0 then
-        decision="110ms is not a fully lossless retry floor; test a safer retry interval"
+    elseif s125.totalMiss>0 then
+        decision="125ms is not a fully lossless retry floor; test a safer retry interval"
     else
-        decision="full 110ms is competitive; do not prefer 75ms burst yet"
+        decision="full 125ms is competitive; do not prefer 75ms burst yet"
     end
     out("DECISION: "..decision)
     out("NOTE: retry timing is a projection until exact missing-page IDs are correlated.")
 
-    local summary={s75=s75,s110=s110,avgRetryCount=avgRetryCount,projected75ms=projected75,baseline110ms=full110,gainMs=gain,gainPct=gainPct,worstProjected75ms=worstProjected75,worstGainMs=worstGain,worstGainPct=worstGainPct,decision=decision}
+    local summary={s75=s75,s125=s125,avgRetryCount=avgRetryCount,projected75ms=projected75,baseline125ms=full125,gainMs=gain,gainPct=gainPct,worstProjected75ms=worstProjected75,worstGainMs=worstGain,worstGainPct=worstGainPct,decision=decision}
     saveReport(summary);restoreBrowse();AHT.bench.running=false
     out("Wynik zapisany do AHThrottleTestDB.last")
 end
@@ -195,10 +195,10 @@ SlashCmdList["AHTHROTTLETEST"]=function(msg)
             local s=AHThrottleTestDB.last.summary
             out("LAST "..tostring(AHThrottleTestDB.last.timestamp))
             out("75ms aggregate miss="..fmt(s.s75.aggregateLoss).."% worst="..fmt(s.s75.worstLoss).."%")
-            out("110ms aggregate miss="..fmt(s.s110.aggregateLoss).."% worst="..fmt(s.s110.worstLoss).."%")
+            out("125ms aggregate miss="..fmt(s.s125.aggregateLoss).."% worst="..fmt(s.s125.worstLoss).."%")
             out("avg projected gain="..fmt(s.gainPct).."% worst projected gain="..fmt(s.worstGainPct).."%")
         else out("brak kompletnego zapisanego wyniku") end
     else out("/ahtest repeat | status | last") end
 end
 
-out("loaded v1.7 REPEATABILITY 75/110. /ahtest repeat -> F5.")
+out("loaded v1.7 REPEATABILITY 75/125. /ahtest repeat -> F5.")
