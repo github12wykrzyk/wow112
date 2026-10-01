@@ -11,7 +11,7 @@
  * then replays mutated copies using distinct listfrom values.
  *
  * Repeatability stages: alternating 75 ms and 125 ms, five runs each.
- * V8 additionally provides F2 FAST MARKET, passive AUX receive/outbound probes, and an exact-build 25 ms QueryAuctionItems cooldown patch.
+ * V8 keeps passive AUX receive/outbound probes and the exact-build 25 ms QueryAuctionItems cooldown patch. F2 FAST MARKET is disabled; full MARKET is manual-only through /avm market start.
  * After the native 0x025C handler finishes, Lua consumes that exact page, then the
  * next page is sent after a short 25 ms settle. This avoids page-correlation drift.
  * Each stage sends 500 distinct pages and allows 10 seconds to drain responses.
@@ -499,14 +499,10 @@ static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
     }
     g_keyF5=key;
 
-    if(key2&&!g_keyF2&&!g_active&&!g_fastActive){
-        if(!g_rxHooked){
-            lua_exec("if AVM_FastMarketNativeDone then AVM_FastMarketNativeDone('RX_HOOK_NOT_READY') end","AVMFastMarketNoRx");
-        }else{
-            g_fastActive=1u;g_fastArmed=1u;g_fastCaptured=0u;g_fastAwaiting=0u;
-            g_fastPage=0u;g_fastSentAt=0u;g_fastNextAt=0u;g_fastStartedAt=now;
-            lua_exec("if AVM_FastMarketNativeStart then AVM_FastMarketNativeStart() end","AVMFastMarketStart");
-        }
+    /* Full MARKET is manual-only. F2 must never arm the native replay state,
+       capture an unrelated AUX query, or call the MARKET entry point. */
+    if(key2&&!g_keyF2){
+        lua_exec("if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff60ff00[AH NATIVE]|r F2 MARKET disabled; use /avm market start') end","AVMFastMarketDisabled");
     }
     g_keyF2=key2;
 
