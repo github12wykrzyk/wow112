@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.15.2-original-aux-arbitrage-grayfilter"
+AVM_VERSION = "0.16-live-de-depth3"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -14,6 +14,14 @@ AVM_WATCH_MAX_PAGES = 100
 
 local AVM_AUX_INFO_OK, AVM_AUX_INFO = pcall(require, "aux.util.info")
 local AVM_AUX_DE_OK, AVM_AUX_DE = pcall(require, "aux.core.disenchant")
+
+local AVM_DE_MATERIAL_IDS = {
+	[10940]=true,[10938]=true,[10939]=true,[10978]=true,[10998]=true,
+	[11083]=true,[11082]=true,[11084]=true,[11134]=true,[11138]=true,
+	[11137]=true,[11135]=true,[11139]=true,[11174]=true,[11177]=true,
+	[11176]=true,[11175]=true,[11178]=true,[16202]=true,[14343]=true,
+	[16204]=true,[16203]=true,[14344]=true,[20725]=true,
+}
 
 AVM = {
 	open = false,
@@ -60,6 +68,10 @@ AVM = {
 		vendorCandidates = 0,
 		deCandidates = 0,
 		deNoValue = 0,
+		deRawCandidates = {},
+		deMaterialBook = {},
+		deBest = nil,
+		deVerify = nil,
 	},
 	candidate = nil,
 	revalidatePages = nil,
@@ -203,6 +215,11 @@ local function avm_diag_record(msg)
 		auxArbPages = AVM.auxArb and AVM.auxArb.pages or 0,
 		auxArbVendorCandidates = AVM.auxArb and AVM.auxArb.vendorCandidates or 0,
 		auxArbDeCandidates = AVM.auxArb and AVM.auxArb.deCandidates or 0,
+		auxArbDeRaw = AVM.auxArb and table.getn(AVM.auxArb.deRawCandidates or {}) or 0,
+		auxArbDeVerify = AVM.auxArb and AVM.auxArb.deVerify and true or false,
+		deDepthUnits = AVM_DB.deDepthUnits or 3,
+		deAhCutPct = AVM_DB.deAhCutPct or 5,
+		deSafetyMarginPct = AVM_DB.deSafetyMarginPct or 25,
 	}
 end
 
@@ -292,6 +309,9 @@ local function avm_defaults()
 	if AVM_DB.auxArbLive == nil then AVM_DB.auxArbLive = false end
 	if AVM_DB.deMinProfit == nil then AVM_DB.deMinProfit = 500 end
 	if AVM_DB.deMaxBuyout == nil then AVM_DB.deMaxBuyout = 10000 end
+	if AVM_DB.deDepthUnits == nil then AVM_DB.deDepthUnits = 3 end
+	if AVM_DB.deAhCutPct == nil then AVM_DB.deAhCutPct = 5 end
+	if AVM_DB.deSafetyMarginPct == nil then AVM_DB.deSafetyMarginPct = 25 end
 	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
 	if AVM_DB.diag == nil then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
 	if AVM_DB.vendorMeta.sweepPass == nil then AVM_DB.vendorMeta.sweepPass = 0 end
@@ -1298,6 +1318,156 @@ local function avm_auxarb_candidate_better(a, b)
 	return (a.buyout or 0) < (b.buyout or 0)
 end
 
+local function avm_de_book_add(book, itemId, name, count, buyout)
+	itemId = tonumber(itemId)
+	count = tonumber(count) or 0
+	buyout = tonumber(buyout) or 0
+	if not itemId or not AVM_DE_MATERIAL_IDS[itemId] or count <= 0 or buyout <= 0 then return end
+	local row = book[itemId]
+	if not row then
+		row = { name = name or "", units = 0, offers = {}, depthCache = {} }
+		book[itemId] = row
+	elseif (row.name or "") == "" and name then
+		row.name = name
+	end
+	local unit = math.floor(buyout / count)
+	if unit <= 0 then return end
+	table.insert(row.offers, { unit = unit, count = count })
+	row.units = (row.units or 0) + count
+	row.depthCache = {}
+end
+
+local function avm_de_depth_price(book, itemId, depth)
+	local row = book and book[tonumber(itemId)]
+	depth = tonumber(depth) or 3
+	if depth < 1 then depth = 1 end
+	if not row or (row.units or 0) < depth then return nil end
+	if row.depthCache and row.depthCache[depth] then return row.depthCache[depth], row end
+	table.sort(row.offers, function(a,b)
+		if a.unit ~= b.unit then return a.unit < b.unit end
+		return a.count > b.count
+	end)
+	local units = 0
+	for i = 1, table.getn(row.offers) do
+		units = units + (tonumber(row.offers[i].count) or 0)
+		if units >= depth then
+			row.depthCache[depth] = row.offers[i].unit
+			return row.offers[i].unit, row
+		end
+	end
+	return nil
+end
+
+local function avm_de_record_key(record, itemId)
+	local itemKey = record and record.itemKey or ""
+	if (not itemKey or itemKey == "") and record and record.index then itemKey = avm_item_link_key(record.index) end
+	if not itemKey or itemKey == "" then itemKey = "item:" .. tostring(itemId or 0) end
+	return itemKey
+end
+
+local function avm_de_raw_candidate(record)
+	if not AVM_DB.auxArbEnabled or not record then return nil end
+	if not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil end
+	if record.quality ~= 2 and record.quality ~= 3 and record.quality ~= 4 then return nil end
+	if not record.slot then return nil end
+	local buyout = tonumber(record.buyout_price) or 0
+	local count = tonumber(record.count or record.aux_quantity) or 0
+	local itemId = tonumber(record.item_id)
+	if buyout <= 0 or count <= 0 or not itemId then return nil end
+	local maxBuyout = tonumber(AVM_DB.deMaxBuyout) or 0
+	if maxBuyout > 0 and buyout > maxBuyout then return nil end
+	local itemKey = avm_de_record_key(record, itemId)
+	local sig = avm_signature_no_owner(record.name, count, buyout, record.quality, record.level, itemKey)
+	if avm_recent(sig) then return nil end
+	return {
+		name = record.name, item_id = itemId, itemId = itemId,
+		count = count, aux_quantity = count, buyout_price = buyout, buyout = buyout,
+		quality = record.quality, level = record.level, slot = record.slot,
+		owner = record.owner, itemKey = itemKey, signature = sig,
+		page = tonumber(record.page) or AVM.queryPage or 0,
+		sourcePage = tonumber(record.page) or AVM.queryPage or 0,
+	}
+end
+
+local function avm_de_candidate_from_record(record, book)
+	if not record or not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil, "no-de-module" end
+	local raw = avm_de_raw_candidate(record)
+	if not raw then
+		-- Revalidation candidates already carry normalized fields rather than buyout_price.
+		local buyout = tonumber(record.buyout or record.buyout_price) or 0
+		local count = tonumber(record.count or record.aux_quantity) or 0
+		local itemId = tonumber(record.itemId or record.item_id)
+		if (record.quality ~= 2 and record.quality ~= 3 and record.quality ~= 4) or
+		   not record.slot or buyout <= 0 or count <= 0 or not itemId then return nil, "not-de-item" end
+		raw = {
+			name=record.name,item_id=itemId,itemId=itemId,count=count,aux_quantity=count,
+			buyout_price=buyout,buyout=buyout,quality=record.quality,level=record.level,
+			slot=record.slot,owner=record.owner,itemKey=avm_de_record_key(record,itemId),
+			signature=record.signature,page=record.sourcePage or record.page or 0,
+			sourcePage=record.sourcePage or record.page or 0,
+		}
+	end
+
+	local ok, dist = pcall(AVM_AUX_DE.distribution, raw.slot, raw.quality, raw.level or 0, raw.itemId)
+	if not ok or not dist or table.getn(dist) == 0 then return nil, "no-distribution" end
+
+	local depth = tonumber(AVM_DB.deDepthUnits) or 3
+	local cutPct = tonumber(AVM_DB.deAhCutPct) or 5
+	local marginPct = tonumber(AVM_DB.deSafetyMarginPct) or 25
+	if depth < 1 then depth = 1 end
+	if cutPct < 0 then cutPct = 0 elseif cutPct > 30 then cutPct = 30 end
+	if marginPct < 0 then marginPct = 0 elseif marginPct > 90 then marginPct = 90 end
+
+	local grossExpected, netExpected = 0, 0
+	local mats, seen = {}, {}
+	for i = 1, table.getn(dist) do
+		local event = dist[i]
+		local matId = tonumber(event.item_id)
+		local floorPrice, row = avm_de_depth_price(book, matId, depth)
+		if not floorPrice or not row or not row.name or row.name == "" then
+			return nil, "no-depth:" .. tostring(matId)
+		end
+		local p = tonumber(event.probability) or 0
+		local avgQty = ((tonumber(event.min_quantity) or 0) + (tonumber(event.max_quantity) or 0)) / 2
+		local netUnit = math.floor(floorPrice * (100 - cutPct) / 100)
+		grossExpected = grossExpected + p * avgQty * floorPrice
+		netExpected = netExpected + p * avgQty * netUnit
+		if not seen[matId] then
+			seen[matId] = true
+			table.insert(mats, {
+				itemId = matId, name = row.name, floor = floorPrice, net = netUnit,
+				probability = p, avgQty = avgQty,
+			})
+		end
+	end
+
+	local grossTotal = math.floor(grossExpected * raw.count)
+	local netTotal = math.floor(netExpected * raw.count)
+	local profit = netTotal - raw.buyout
+	local minProfit = tonumber(AVM_DB.deMinProfit) or 0
+	local maxBuyout = tonumber(AVM_DB.deMaxBuyout) or 0
+	local maxEntry = math.floor(netTotal * (100 - marginPct) / 100)
+	if maxBuyout > 0 and raw.buyout > maxBuyout then return nil, "max-buyout" end
+	if profit < minProfit then return nil, "min-profit" end
+	if raw.buyout > maxEntry then return nil, "safety-margin" end
+
+	local money = GetMoney()
+	local missing = raw.buyout - money
+	if missing < 0 then missing = 0 end
+	return {
+		mode = "auxarb_de", route = "disenchant", name = raw.name,
+		itemId = raw.itemId, count = raw.count, buyout = raw.buyout,
+		unit = math.floor(raw.buyout / raw.count), deGross = grossTotal, deValue = netTotal,
+		valuationTotal = netTotal, profit = profit, owner = raw.owner,
+		quality = raw.quality, level = raw.level, slot = raw.slot, itemKey = raw.itemKey,
+		signature = raw.signature or avm_signature_no_owner(raw.name, raw.count, raw.buyout, raw.quality, raw.level, raw.itemKey),
+		ignoreOwnerSignature = true, sourcePage = raw.sourcePage or 0,
+		affordable = raw.buyout <= money, missing = missing,
+		deDepthUnits = depth, deCutPct = cutPct, deMarginPct = marginPct,
+		deMaxEntry = maxEntry, materials = mats,
+	}, nil
+end
+
 local function avm_auxarb_candidate_from_record(record, requiredMode)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
 	local buyout = tonumber(record.buyout_price) or 0
@@ -1307,16 +1477,14 @@ local function avm_auxarb_candidate_from_record(record, requiredMode)
 
 	local itemId = tonumber(record.item_id)
 	if not itemId then return nil end
-	local itemKey = ""
-	if record.index then itemKey = avm_item_link_key(record.index) end
-	if itemKey == "" then itemKey = "item:" .. tostring(itemId) end
+	local itemKey = avm_de_record_key(record, itemId)
 	local sig = avm_signature_no_owner(record.name, count, buyout, record.quality, record.level, itemKey)
 	if avm_recent(sig) then return nil end
 
 	local money = GetMoney()
 	local missing = buyout - money
 	if missing < 0 then missing = 0 end
-	local best = nil
+	if requiredMode == "auxarb_de" then return nil end
 
 	if (not requiredMode or requiredMode == "auxarb_vendor") and record.quality ~= 0 then
 		local vendorSource = "static"
@@ -1332,7 +1500,7 @@ local function avm_auxarb_candidate_from_record(record, requiredMode)
 			local minProfit = tonumber(AVM_DB.vendorMinProfit) or 0
 			local maxBuyout = tonumber(AVM_DB.vendorMaxBuyout) or 0
 			if profit >= minProfit and (maxBuyout <= 0 or buyout <= maxBuyout) then
-				best = {
+				return {
 					mode = "auxarb_vendor", route = "vendor", name = record.name,
 					itemId = itemId, count = count, buyout = buyout,
 					unit = math.floor(buyout / count), vendorUnit = vendorUnit,
@@ -1346,34 +1514,102 @@ local function avm_auxarb_candidate_from_record(record, requiredMode)
 			end
 		end
 	end
+	return nil
+end
 
-	if (not requiredMode or requiredMode == "auxarb_de") and AVM_AUX_DE_OK and AVM_AUX_DE and
-	   (record.quality == 2 or record.quality == 3 or record.quality == 4) and record.slot then
-		local ok, deUnit = pcall(AVM_AUX_DE.value, record.slot, record.quality, record.level or 0, itemId)
-		deUnit = ok and tonumber(deUnit) or nil
-		if deUnit and deUnit > 0 then
-			local total = math.floor(deUnit * count)
-			local profit = total - buyout
-			local minProfit = tonumber(AVM_DB.deMinProfit) or 0
-			local maxBuyout = tonumber(AVM_DB.deMaxBuyout) or 0
-			if profit >= minProfit and (maxBuyout <= 0 or buyout <= maxBuyout) then
-				local de = {
-					mode = "auxarb_de", route = "disenchant", name = record.name,
-					itemId = itemId, count = count, buyout = buyout,
-					unit = math.floor(buyout / count), deValue = total,
-					valuationTotal = total, profit = profit, owner = record.owner,
-					quality = record.quality, level = record.level, itemKey = itemKey,
-					signature = sig, ignoreOwnerSignature = true,
-					sourcePage = tonumber(record.page) or AVM.queryPage or 0,
-					affordable = buyout <= money, missing = missing,
-				}
-				if avm_auxarb_candidate_better(de, best) then best = de end
-			end
-		elseif AVM.auxArb and AVM.auxArb.active then
-			AVM.auxArb.deNoValue = (AVM.auxArb.deNoValue or 0) + 1
+local function avm_de_fail_postscan(candidate, reason)
+	local a = AVM.auxArb
+	if candidate and candidate.signature then AVM.recent[candidate.signature] = GetTime() + 2 end
+	a.deVerify = nil
+	a.candidate = nil
+	AVM.candidate = nil
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
+	AVM.phase = "IDLE"
+	avm_print("AUX_ARB_DE_REJECT " .. tostring(candidate and candidate.name or "?") ..
+		" reason=" .. tostring(reason or "unknown"))
+end
+
+local function avm_de_begin_live_verify(candidate)
+	local a = AVM.auxArb
+	if not candidate or not candidate.materials or table.getn(candidate.materials) == 0 then
+		avm_de_fail_postscan(candidate, "no-materials")
+		return false
+	end
+	a.deVerify = {
+		candidate = candidate, materials = candidate.materials,
+		index = 1, page = 0, lastPage = 0, book = {},
+	}
+	AVM.candidate = candidate
+	AVM.phase = "DE_MAT_REVALIDATE"
+	AVM.nextQueryAt = GetTime() + 0.05
+	avm_print("AUX_ARB_DE_VERIFY start " .. tostring(candidate.name) ..
+		" mats=" .. tostring(table.getn(candidate.materials)) ..
+		" depth=" .. tostring(AVM_DB.deDepthUnits or 3) ..
+		" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
+		" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%")
+	return true
+end
+
+local function avm_de_live_verify_accept(page, total)
+	local a = AVM.auxArb
+	local v = a.deVerify
+	if not v or not v.candidate then return end
+	local mat = v.materials[v.index]
+	if not mat then
+		avm_de_fail_postscan(v.candidate, "verify-state")
+		return
+	end
+
+	local n = GetNumAuctionItems("list") or 0
+	for i = 1, n do
+		local name,_,count,_,_,_,_,_,buyout = GetAuctionItemInfo("list", i)
+		if name and count and count > 0 and buyout and buyout > 0 then
+			local itemId = avm_vendor_item_id(i)
+			if itemId == mat.itemId then avm_de_book_add(v.book, itemId, name, count, buyout) end
 		end
 	end
-	return best
+
+	local lastPage = 0
+	if total and total > 0 then lastPage = math.floor((total - 1) / 50) end
+	v.lastPage = lastPage
+	if page < lastPage then
+		v.page = page + 1
+		return
+	end
+
+	local floorPrice = avm_de_depth_price(v.book, mat.itemId, tonumber(AVM_DB.deDepthUnits) or 3)
+	if not floorPrice then
+		avm_de_fail_postscan(v.candidate, "material-depth:" .. tostring(mat.name))
+		return
+	end
+	avm_print("AUX_ARB_DE_MAT " .. tostring(mat.name) ..
+		" depthFloor=" .. avm_money(floorPrice) ..
+		" units>=" .. tostring(AVM_DB.deDepthUnits or 3))
+
+	v.index = v.index + 1
+	v.page = 0
+	v.lastPage = 0
+	if v.index <= table.getn(v.materials) then return end
+
+	local fresh, reason = avm_de_candidate_from_record(v.candidate, v.book)
+	if not fresh then
+		avm_de_fail_postscan(v.candidate, "live-" .. tostring(reason or "valuation"))
+		return
+	end
+	fresh.scanComplete = true
+	fresh.deVerifiedBook = v.book
+	a.deVerify = nil
+	a.candidate = fresh
+	AVM.candidate = fresh
+	avm_prepare_revalidate(fresh)
+	AVM.phase = "REVALIDATE"
+	AVM.nextQueryAt = GetTime() + 0.05
+	avm_print("AUX_ARB_DE_LIVE_OK " .. tostring(fresh.name) ..
+		" buy=" .. avm_money(fresh.buyout) ..
+		" netEV=" .. avm_money(fresh.deValue) ..
+		" maxEntry=" .. avm_money(fresh.deMaxEntry) ..
+		" profit=" .. avm_money(fresh.profit))
 end
 
 local function avm_auxarb_resume_search(reason)
@@ -1383,6 +1619,7 @@ local function avm_auxarb_resume_search(reason)
 	a.pausePending = false
 	a.resumePending = false
 	a.pageBest = nil
+	a.bestSeen = nil
 	a.candidate = nil
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
@@ -1403,24 +1640,36 @@ local function avm_auxarb_resume_search(reason)
 	end
 end
 
-function AVM_AuxArbScanStart()
+function AVM_AuxArbScanStart(resume)
 	local a = AVM.auxArb
+	local keepScanBook = resume and a.deRawCandidates and a.deMaterialBook
 	a.active = AVM_DB.auxArbEnabled and true or false
 	a.paused = false
 	a.pausePending = false
 	a.resumePending = false
 	a.pageBest = nil
-	a.bestSeen = nil
 	a.candidate = nil
-	a.pages = 0
-	a.lastPage = 0
-	a.vendorCandidates = 0
-	a.deCandidates = 0
-	a.deNoValue = 0
+	a.deVerify = nil
+	if not keepScanBook then
+		a.bestSeen = nil
+		a.pages = 0
+		a.lastPage = 0
+		a.vendorCandidates = 0
+		a.deCandidates = 0
+		a.deNoValue = 0
+		a.deRawCandidates = {}
+		a.deMaterialBook = {}
+		a.deBest = nil
+	end
 	if a.active then
-		avm_print("AUX_ARB_SCAN start live=" .. tostring(AVM_DB.auxArbLive) ..
+		avm_print((keepScanBook and "AUX_ARB_SCAN resume" or "AUX_ARB_SCAN start") ..
+			" live=" .. tostring(AVM_DB.auxArbLive) ..
 			" vendorMin=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
-			" deMin=" .. avm_money(AVM_DB.deMinProfit or 0))
+			" DE min=" .. avm_money(AVM_DB.deMinProfit or 0) ..
+			" depth=" .. tostring(AVM_DB.deDepthUnits or 3) ..
+			" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
+			" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%" ..
+			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})))
 	end
 end
 
@@ -1429,16 +1678,17 @@ function AVM_AuxArbAuction(record)
 	if not a.active or a.paused or a.pausePending then return end
 	if not record or not record.blizzard_query then return end
 	if (record.blizzard_query.name or "") ~= "" then return end
-	local c = avm_auxarb_candidate_from_record(record)
+
+	avm_de_book_add(a.deMaterialBook, record.item_id, record.name,
+		record.count or record.aux_quantity, record.buyout_price)
+	local rawDe = avm_de_raw_candidate(record)
+	if rawDe then table.insert(a.deRawCandidates, rawDe) end
+
+	local c = avm_auxarb_candidate_from_record(record, "auxarb_vendor")
 	if not c then return end
 	AVM.stats.auxArbCandidates = AVM.stats.auxArbCandidates + 1
-	if c.mode == "auxarb_vendor" then
-		a.vendorCandidates = a.vendorCandidates + 1
-		AVM.stats.auxArbVendorCandidates = AVM.stats.auxArbVendorCandidates + 1
-	else
-		a.deCandidates = a.deCandidates + 1
-		AVM.stats.auxArbDeCandidates = AVM.stats.auxArbDeCandidates + 1
-	end
+	a.vendorCandidates = a.vendorCandidates + 1
+	AVM.stats.auxArbVendorCandidates = AVM.stats.auxArbVendorCandidates + 1
 	if avm_auxarb_candidate_better(c, a.pageBest) then a.pageBest = c end
 	if avm_auxarb_candidate_better(c, a.bestSeen) then a.bestSeen = c end
 end
@@ -1454,8 +1704,7 @@ function AVM_AuxArbPageDone(page, lastPage)
 	if not c then return false end
 
 	avm_print("AUX_ARB_PAGE page=" .. tostring(page) ..
-		" route=" .. tostring(c.route) ..
-		" " .. tostring(c.name) ..
+		" route=vendor " .. tostring(c.name) ..
 		" buy=" .. avm_money(c.buyout) ..
 		" value=" .. avm_money(c.valuationTotal or 0) ..
 		" profit=" .. avm_money(c.profit or 0))
@@ -1469,15 +1718,12 @@ function AVM_AuxArbPageDone(page, lastPage)
 		return false
 	end
 	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
-	if not c.affordable or (maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend) then
-		return false
-	end
+	if not c.affordable or (maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend) then return false end
 	a.pausePending = true
 	a.resumePending = true
 	a.candidate = c
 	AVM.stats.auxArbPauses = AVM.stats.auxArbPauses + 1
-	avm_print("AUX_ARB_CANDIDATE route=" .. tostring(c.route) ..
-		" page=" .. tostring(c.sourcePage) ..
+	avm_print("AUX_ARB_CANDIDATE route=vendor page=" .. tostring(c.sourcePage) ..
 		" profit=" .. avm_money(c.profit or 0) .. " -> pause/revalidate")
 	return true
 end
@@ -1501,6 +1747,22 @@ function AVM_AuxArbScanDone()
 	local a = AVM.auxArb
 	if not a.active then return end
 	a.active = false
+
+	local bestDe = nil
+	for i = 1, table.getn(a.deRawCandidates or {}) do
+		local de, reason = avm_de_candidate_from_record(a.deRawCandidates[i], a.deMaterialBook)
+		if de then
+			a.deCandidates = a.deCandidates + 1
+			AVM.stats.auxArbCandidates = AVM.stats.auxArbCandidates + 1
+			AVM.stats.auxArbDeCandidates = AVM.stats.auxArbDeCandidates + 1
+			if avm_auxarb_candidate_better(de, bestDe) then bestDe = de end
+		elseif reason and string.find(reason, "no-depth:", 1, true) == 1 then
+			a.deNoValue = a.deNoValue + 1
+		end
+	end
+	a.deBest = bestDe
+	if bestDe and avm_auxarb_candidate_better(bestDe, a.bestSeen) then a.bestSeen = bestDe end
+
 	local best = a.bestSeen
 	if best then
 		avm_print("AUX_ARB_SCAN_DONE pages=" .. tostring(a.pages) ..
@@ -1509,11 +1771,25 @@ function AVM_AuxArbScanDone()
 			" value=" .. avm_money(best.valuationTotal or 0) ..
 			" profit=" .. avm_money(best.profit or 0) ..
 			" vendorCandidates=" .. tostring(a.vendorCandidates) ..
-			" deCandidates=" .. tostring(a.deCandidates))
+			" deCandidates=" .. tostring(a.deCandidates) ..
+			" deNoDepth=" .. tostring(a.deNoValue or 0))
 	else
 		avm_print("AUX_ARB_SCAN_DONE pages=" .. tostring(a.pages) ..
-			" no qualifying candidate deNoValue=" .. tostring(a.deNoValue or 0))
+			" no qualifying candidate deNoDepth=" .. tostring(a.deNoValue or 0))
 	end
+
+	if not AVM_DB.auxArbLive or not bestDe then return end
+	if AVM.pending or AVM.unknown or AVM.queryInFlight then return end
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+	if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+		AVM_DB.auxArbLive = false
+		return
+	end
+	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
+	if not bestDe.affordable or (maxSpend > 0 and AVM.sessionSpend + bestDe.buyout > maxSpend) then return end
+	bestDe.scanComplete = true
+	a.candidate = bestDe
+	avm_de_begin_live_verify(bestDe)
 end
 
 local function avm_vendor_pick_page_best()
@@ -1690,6 +1966,20 @@ end
 
 local function avm_resume_after_candidate(c, dryRun)
 	if avm_is_auxarb_candidate(c) then
+		if c and c.scanComplete then
+			local a = AVM.auxArb
+			a.paused = false
+			a.pausePending = false
+			a.resumePending = false
+			a.candidate = nil
+			a.deVerify = nil
+			AVM.candidate = nil
+			AVM.revalidatePages = nil
+			AVM.revalidatePos = 0
+			AVM.phase = "IDLE"
+			avm_print("AUX_ARB_POSTSCAN_DONE " .. tostring(dryRun and "dryrun" or "transaction"))
+			return
+		end
 		avm_auxarb_resume_search(dryRun and "dryrun" or "transaction")
 		return
 	end
@@ -2198,7 +2488,12 @@ avm_revalidate_candidate = function()
 				if avm_is_auxarb_candidate(c) then
 					local record = AVM_AUX_INFO_OK and AVM_AUX_INFO and AVM_AUX_INFO.auction(i, "list") or nil
 					if record then record.index = i record.page = c.sourcePage end
-					local fresh = record and avm_auxarb_candidate_from_record(record, c.mode) or nil
+					local fresh
+					if c.mode == "auxarb_de" then
+						fresh = record and avm_de_candidate_from_record(record, c.deVerifiedBook or AVM.auxArb.deMaterialBook) or nil
+					else
+						fresh = record and avm_auxarb_candidate_from_record(record, c.mode) or nil
+					end
 					if not fresh or fresh.signature ~= c.signature then
 						AVM.stats.failed = AVM.stats.failed + 1
 						AVM.recent[c.signature] = GetTime() + 2
@@ -2210,6 +2505,9 @@ avm_revalidate_candidate = function()
 					c.valuationTotal = fresh.valuationTotal
 					c.vendorTotal = fresh.vendorTotal
 					c.deValue = fresh.deValue
+					c.deGross = fresh.deGross
+					c.deMaxEntry = fresh.deMaxEntry
+					c.materials = fresh.materials or c.materials
 					c.affordable = fresh.affordable
 					c.missing = fresh.missing
 				end
@@ -2352,6 +2650,10 @@ local function avm_accept_result()
 	end
 	if isVendor then
 		avm_vendor_accept(kind, page, total, positive)
+		return
+	end
+	if kind == "DE_MAT_REVALIDATE" then
+		avm_de_live_verify_accept(page, total)
 		return
 	end
 
@@ -2654,6 +2956,9 @@ local function avm_tick()
 				if AVM.vendor.consecutiveTimeouts >= 3 then
 					avm_vendor_finish("3 consecutive query timeouts")
 				end
+			elseif AVM.queryKind == "DE_MAT_REVALIDATE" and AVM.auxArb.deVerify then
+				avm_de_fail_postscan(AVM.auxArb.deVerify.candidate, "material-query-timeout")
+				return
 			else
 				if AVM.queryKind == "REVALIDATE" and avm_is_auxarb_candidate(AVM.candidate) then
 					local c = AVM.candidate
@@ -2688,6 +2993,17 @@ local function avm_tick()
 	if AVM.rulesDirty and not AVM.queryInFlight and not AVM.pending and not AVM.unknown then
 		AVM.rulesDirty = false
 		avm_restart_boundary(true)
+	end
+
+	if AVM.phase == "DE_MAT_REVALIDATE" and AVM.auxArb.deVerify then
+		local v = AVM.auxArb.deVerify
+		local mat = v.materials and v.materials[v.index]
+		if not mat or not mat.name or mat.name == "" then
+			avm_de_fail_postscan(v.candidate, "material-name-missing")
+		else
+			avm_send_query("DE_MAT_REVALIDATE", v.page or 0, mat.name)
+		end
+		return
 	end
 
 	if AVM.candidate and (AVM.candidate.mode == "fastvendor" or avm_is_auxarb_candidate(AVM.candidate)) and AVM.phase == "REVALIDATE" then
@@ -2922,6 +3238,30 @@ local function avm_auxarb_slash(rest)
 		else
 			avm_print("invalid demax")
 		end
+	elseif sub == "dedepth" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 1 and n <= 20 then
+			AVM_DB.deDepthUnits = math.floor(n)
+			avm_print("AUX_ARB DE depthUnits=" .. tostring(AVM_DB.deDepthUnits))
+		else
+			avm_print("dedepth must be 1..20")
+		end
+	elseif sub == "decut" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 0 and n <= 30 then
+			AVM_DB.deAhCutPct = n
+			avm_print("AUX_ARB DE AH cut=" .. tostring(n) .. "%")
+		else
+			avm_print("decut must be 0..30")
+		end
+	elseif sub == "demargin" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 0 and n <= 90 then
+			AVM_DB.deSafetyMarginPct = n
+			avm_print("AUX_ARB DE safety margin=" .. tostring(n) .. "%")
+		else
+			avm_print("demargin must be 0..90")
+		end
 	elseif sub == "status" then
 		local a = AVM.auxArb
 		avm_print("AUX_ARB enabled=" .. tostring(AVM_DB.auxArbEnabled) ..
@@ -2931,10 +3271,14 @@ local function avm_auxarb_slash(rest)
 			" pages=" .. tostring(a.pages) .. "/" .. tostring(a.lastPage))
 		avm_print("AUX_ARB vendor min/max=" .. avm_money(AVM_DB.vendorMinProfit or 0) .. "/" .. avm_money(AVM_DB.vendorMaxBuyout or 0) ..
 			" DE min/max=" .. avm_money(AVM_DB.deMinProfit or 0) .. "/" .. avm_money(AVM_DB.deMaxBuyout or 0) ..
-			" candidates vendor/de=" .. tostring(a.vendorCandidates or 0) .. "/" .. tostring(a.deCandidates or 0) ..
-			" deNoValue=" .. tostring(a.deNoValue or 0))
+			" depth=" .. tostring(AVM_DB.deDepthUnits or 3) ..
+			" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
+			" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%")
+		avm_print("AUX_ARB candidates vendor/de=" .. tostring(a.vendorCandidates or 0) .. "/" .. tostring(a.deCandidates or 0) ..
+			" deNoDepth=" .. tostring(a.deNoValue or 0) ..
+			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})))
 	else
-		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g")
+		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g|dedepth 3|decut 5|demargin 25")
 	end
 end
 
@@ -3208,6 +3552,9 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.paused = false
 		AVM.auxArb.pausePending = false
 		AVM.auxArb.resumePending = false
+		AVM.auxArb.deRawCandidates = {}
+		AVM.auxArb.deMaterialBook = {}
+		AVM.auxArb.deVerify = nil
 		AVM_DB.live = false
 		AVM.queryInFlight = false
 		AVM.lastResultAt = 0

@@ -1,4 +1,4 @@
--- AuxFastBridge v1.9
+-- AuxFastBridge v2.0
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -33,6 +33,7 @@ local nativeCooldownPatched = false
 local gateBlockedChecks = 0
 local pauseRequested = false
 local pausePage = -1
+local resumeRequested = false
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -174,9 +175,11 @@ local function install_scan_hook()
 		local oldAbort = params.on_abort
 		local released = false
 
+		local arbResume = resumeRequested
+		resumeRequested = false
 		params.on_scan_start = function()
 			if oldScanStart then oldScanStart() end
-			if auxArbAttached and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart) end
+			if auxArbAttached and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart, arbResume) end
 		end
 
 		params.on_auction = function(record)
@@ -334,8 +337,10 @@ function AUXFAST_ResumeSearch()
 		out("resume failed: aux.tabs.search unavailable")
 		return false
 	end
+	resumeRequested = true
 	local ok, err = pcall(searchTab.execute, true)
 	if not ok then
+		resumeRequested = false
 		out("resume failed: " .. tostring(err))
 		return false
 	end
@@ -385,4 +390,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.9 loaded: Search arbitrage + safe pause abort; hook=" .. tostring(hookInstalled))
+out("v2.0 loaded: Search arbitrage + resumable live-DE cache; hook=" .. tostring(hookInstalled))

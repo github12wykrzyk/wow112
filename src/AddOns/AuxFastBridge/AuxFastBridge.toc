@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Native-response-correlated original AUX Search bridge with 25ms query cooldown and guarded arbitrage callbacks.
+## Notes: Original AUX fast Search bridge with resumable arbitrage scan state and live-DE cache continuity.
 ## Author: github12wykrzyk/wow112
-## Version: 1.9
+## Version: 2.0
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
