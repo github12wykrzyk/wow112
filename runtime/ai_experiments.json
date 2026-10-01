@@ -1819,6 +1819,44 @@
       "tests": [],
       "package": null,
       "notes": "First practical fast-market prototype. F6 starts one-outstanding-query native scan from page 0. Each response is processed by the exact native 0x025C handler first, then AuxVmangos aggregates that exact page into the existing MARKET PriceDB; only afterward is the next page sent with 25ms settle. No page-ID correlation is required because at most one request is outstanding. A 1500ms page timeout aborts fail-closed rather than shifting page association. Full scan stops on first short page (<50 rows) or max page 2000. No buying path is changed; FAST MARKET forces scanner/LIVE off while it owns the scheduler. Gameplay validation pending."
+    },
+    {
+      "id": "updater-two-status-bars",
+      "branch": "feature/updater-two-status-bars",
+      "modules": [
+        "UpdaterGitHubMonitor",
+        "UpdaterUI"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "Parallel updater GitHub status header",
+        "feature/promote exact-HEAD workflow monitor"
+      ],
+      "status": "accepted",
+      "observed_head": "4098f868f271344f81eeec8a6c9743f85be8e8ba",
+      "verified_commit": "4098f868f271344f81eeec8a6c9743f85be8e8ba",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "4098f868f271344f81eeec8a6c9743f85be8e8ba",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36841031818 passed on exact feature SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "4098f868f271344f81eeec8a6c9743f85be8e8ba",
+          "date": "2026-10-01",
+          "evidence": "Build WoW112 updater run 36841031848 passed; verified updater artifact 11151163601 was produced for the exact feature SHA."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "4098f868f271344f81eeec8a6c9743f85be8e8ba",
+        "artifact_id": 11151163601
+      },
+      "notes": "Two-row GitHub status header accepted for integration: row 1 shows Parallel/Work/Main; row 2 shows the most relevant exact-HEAD feature/promote gate. Resulting parallel SHA still requires its own aggregate Build work candidate and updater build."
     }
   ]
 }
