@@ -536,8 +536,9 @@ local function avm_reload_cycle_tick(now)
 	if not ok then
 		AVM_DB.reloadCycle = nil
 		AVM.reloadCycle.pending = false
-		avm_print("RELOAD_AFTER_SCAN failed: " .. tostring(err))
-		avm_loop_schedule_arb("reload failed")
+		AVM.auxLoop.nextAt = GetTime() + 2
+		AVM.auxLoop.lastAction = "reload failed"
+		avm_print("RELOAD_AFTER_SCAN failed: " .. tostring(err) .. " - legacy loop retry in 2s")
 	end
 	return true
 end
