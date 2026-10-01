@@ -1617,7 +1617,7 @@
     },
     {
       "id": "summon-coordinator-debug-report-v1",
-      "branch": "feature/summon-coordinator-debug-report",
+      "branch": "parallel",
       "modules": [
         "Updater",
         "SummonCoordinator"
@@ -1632,12 +1632,56 @@
         "SummonWorker*.log / SummonWorker*.jsonl",
         "CharacterSwitchDiag.log"
       ],
+      "status": "accepted",
+      "observed_head": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
+      "verified_commit": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
+          "date": "2026-10-01",
+          "evidence": "Integrated parallel Build work candidate run 36831389885 and updater run 36831389879 completed success on exact SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
+          "date": "2026-10-01",
+          "evidence": "Verified candidate artifact 11147590097 and updater artifact 11147375308 were produced for exact integrated SHA."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
+        "artifact_id": 11147590097
+      },
+      "notes": "Diagnostic plumbing integrated to parallel. Loader report now collects bounded SummonCoordinator/SummonWorker tails and the exact integrated updater/candidate workflows passed. No gameplay coordinator behavior is inferred from this infrastructure-only acceptance."
+    },
+    {
+      "id": "slave-coordinator-v1",
+      "branch": "feature/slave-coordinator-v1",
+      "modules": [
+        "UpdaterSummonCoordinator",
+        "CharacterSwitchDiag"
+      ],
+      "dependencies": [
+        "summon-coordinator-debug-report-v1",
+        "character-switch-relogin-handoff-v5"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonWorker_<PID> shared memory",
+        "updater accountSessions PID/account binding",
+        "ClientServices::Disconnect 0x005AB1A0",
+        "AutoLoginBridge relogin handoff",
+        "SummonCoordinator.log / SummonWorker_<PID>.log"
+      ],
       "status": "awaiting_ci",
-      "observed_head": "b35fd35fe2779591ad0322ee5f087cd8441ec011",
+      "observed_head": "b4d25f4d60226b0662e79876ddd5bcb2bd2f6ca4",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Adds bounded loader-report collection for the upcoming 2-warlock/2-slave shared-pair coordinator. Report contract covers request/lease/worker/slot/combat/READY/switch/ritual/click/retry fields while explicitly excluding credentials. This change only adds diagnostic plumbing; it does not claim coordinator runtime behavior."
+      "notes": "V1 manual PREPARE pilot for exactly two shared slave workers. Updater selects two distinct account-bound WoW processes, maps HYJAL/HYDRAXIAN to configurable character slots, sends one semantic pair request, and waits for READY 2/2. CharacterSwitchDiag exposes a per-PID shared worker map, blocks FAST switching during combat, reports heartbeat/ack/state/phase/error/current slot, and writes per-worker diagnostics. V1 intentionally does not automate Ritual or SummonScout yet."
     }
   ]
 }

@@ -76,6 +76,7 @@ jobs:
             tools\updater\UpdaterProcessGuard.cs `
             tools\updater\UpdaterRealmlistFeature.cs `
             tools\updater\UpdaterAccountsFeature.cs `
+            tools\updater\UpdaterSummonCoordinatorFeature.cs `
             tools\updater\UpdaterMaintenanceFeature.cs `
             tools\updater\UpdaterIssueReportFeature.cs
           if ($LASTEXITCODE -ne 0) { throw "updater csc failed with exit code $LASTEXITCODE" }

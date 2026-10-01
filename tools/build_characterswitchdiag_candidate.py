@@ -53,9 +53,9 @@ def main():
             "source_sha256":sha256_file(SOURCE),"build_profile":PROFILE,"toolchain_mode":timing.get("mode"),
             "sha256":sha256_file(out),"size":out.stat().st_size,"pe_machine":pe.get("machine_hex"),
             "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
-            "module_id":"characterswitchdiag","diagnostic_only":True,
-            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","FAST direct ClientServices disconnect/relogin slot 1/2","CharacterSwitchDiag.log"],
-            "safety":["no logout timer patch","no crafted packet injection","FAST path is explicit manual diagnostic only"],
+            "module_id":"characterswitchdiag","diagnostic_only":False,
+            "capabilities":["stock logout timing","automatic slot 1/2 re-entry","FAST direct ClientServices disconnect/relogin slot 1/2","Local\\\\WoW112_SummonWorker_<PID> coordinator worker map","combat-gated external PREPARE slot command","CharacterSwitchDiag.log and SummonWorker_<PID>.log"],
+            "safety":["no logout timer patch","no crafted packet injection","coordinator switch waits while UnitAffectingCombat(player) is true","shared worker command validates slot 1-10 and publishes heartbeat/ack/state"],
             "timings_ms":timing}
     if a.compile_only:
         module["process_total_ms"]=(time.perf_counter()-t0)*1000.0
