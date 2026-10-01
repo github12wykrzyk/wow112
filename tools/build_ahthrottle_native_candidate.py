@@ -5,8 +5,8 @@ from pathlib import Path
 from build_active_module import build_one, sha256_file
 
 ROOT=Path(__file__).resolve().parents[1]
-SOURCE=ROOT/"src/AHThrottleNative/WoWAHThrottleNative_5875_v7_RXPROBE.c"
-DLL_NAME="WoWAHThrottleNative_5875_v7_RXPROBE.dll"
+SOURCE=ROOT/"src/AHThrottleNative/WoWAHThrottleNative_5875_v8_FASTMARKET.c"
+DLL_NAME="WoWAHThrottleNative_5875_v8_FASTMARKET.dll"
 DLL_LIST_NAME="dlls.txt"
 PROFILE="clangcl_i686_crtless"
 
@@ -64,7 +64,7 @@ def main():
       "source_sha256":sha256_file(SOURCE),"build_profile":PROFILE,"toolchain_mode":timing.get("mode"),
       "sha256":sha256_file(output),"size":output.stat().st_size,"pe_machine":pe.get("machine_hex"),
       "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
-      "module_id":"ahthrottle_native","settings":["diagnostic-only","F5 trigger","10 alternating stages x500","75ms vs 125ms repeatability","native SMSG 0x025C receive probe","no bid/buy"]
+      "module_id":"ahthrottle_native","settings":["diagnostic-only","F5 trigger","10 alternating stages x500","75ms vs 125ms repeatability","native SMSG 0x025C receive probe","F6 response-paced full-market scan","one in-flight query","no bid/buy"]
     }
     expected=deterministic_repack(package,output)
     with zipfile.ZipFile(package) as z:
@@ -74,7 +74,7 @@ def main():
     psha=sha256_file(package);psz=package.stat().st_size
     extras=append_extra(meta.get("candidate_extra_dlls"),module)
     pilot={"module":DLL_NAME,"branch":"parallel","trigger":"F5 while AH open and CanSendAuctionQuery=true",
-           "capture":"exact outbound opcode 0x258 at ClientServices::Send","receive_probe":"NetClient handler table opcode 0x25C -> verified 0x004CC7F0, passive wrapper counts calls and sanity-checks auction count","intervals_ms":[75,125,75,125,75,125,75,125,75,125],"stage_sends":500,
+           "capture":"exact outbound opcode 0x258 at ClientServices::Send","receive_probe":"NetClient handler table opcode 0x25C -> verified 0x004CC7F0, passive wrapper counts calls and sanity-checks auction count","fast_market":"F6 baseline capture; one request in flight; next page only after native 0x25C handler + Lua aggregation; 25ms settle; 1500ms fail-closed timeout","intervals_ms":[75,125,75,125,75,125,75,125,75,125],"stage_sends":500,
            "chain":"replay through pre-existing send hook target","safety":"only captured CMSG_AUCTION_LIST_ITEMS is replayed; listfrom is the only mutated payload field; no auction bid/buy opcode",
            "game_runtime_tested":False}
     meta.update({"zip_root_entries":names,"package_sha256":psha,"package_size":psz,

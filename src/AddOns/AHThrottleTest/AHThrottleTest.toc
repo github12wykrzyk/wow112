@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: AHThrottleTest
-## Notes: Native SMSG_AUCTION_LIST_RESULT receive probe comparing Lua event yield versus exact 5875 handler calls.
+## Notes: Native receive probe plus V8 response-paced FAST MARKET companion.
 ## Author: github12wykrzyk/wow112
-## Version: 1.9-rxprobe-75-125
+## Version: 2.0-rxprobe-fastmarket
 ## SavedVariables: AHThrottleTestDB
 
 AHThrottleTest.lua

@@ -1,5 +1,5 @@
--- AHThrottleTest v1.9 native receive-probe benchmark for WoW 1.12.1 build 5875.
--- Uses WoWAHThrottleNative_5875_v7_RXPROBE sender/receiver observer. Never bids or buys.
+-- AHThrottleTest v2.0 native receive-probe benchmark + V8 companion for WoW 1.12.1 build 5875.
+-- Uses WoWAHThrottleNative_5875_v8_FASTMARKET sender/receiver observer. Never bids or buys.
 AHThrottleTestDB = AHThrottleTestDB or {}
 
 local AHT={open=false,bench={running=false,stageActive=false,stage=0,intervalMs=0,expected=0,rawEvents=0,results={},browseWasDetached=false,startedAt=0}}
@@ -216,4 +216,4 @@ SlashCmdList["AHTHROTTLETEST"]=function(msg)
     else out("/ahtest repeat | status | last") end
 end
 
-out("loaded v1.9 RXPROBE 75/125. /ahtest repeat -> F5.")
+out("loaded v2.0 RXPROBE/V8. /ahtest repeat -> F5; FAST MARKET -> F6.")

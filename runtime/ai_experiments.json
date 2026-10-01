@@ -1795,6 +1795,30 @@
       ],
       "package": null,
       "notes": "Passive exact-build receive probe. Exact 5875 EXE disassembly verifies dispatcher 0x00537AA0, registration slot tables +0x74/+0xD64, NetClient getter 0x005AB490 -> 0x00C28128, and opcode 0x025C mapped to auction handler 0x004CC7F0 with context 0. SMSG_AUCTION_LIST_RESULT has no listfrom/page field, so this experiment first determines whether prior Lua AUCTION_ITEM_LIST_UPDATE misses are real missing native responses or only event undercount/coalescing. No gameplay result claimed yet. Rebased onto current parallel without overwriting unrelated parallel changes."
+    },
+    {
+      "id": "ah-fast-market-responsepaced",
+      "branch": "feature/ah-fast-market-responsepaced",
+      "modules": [
+        "AHThrottleNative",
+        "AuxVmangos",
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-native-receive-probe"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "SMSG_AUCTION_LIST_RESULT 0x025C handler 0x004CC7F0",
+        "AuxVmangos MARKET PriceDB aggregation",
+        "Auction House query scheduler"
+      ],
+      "status": "in_progress",
+      "observed_head": "7a265a0f511224c50be90aae23ece5088dba4d48",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "First practical fast-market prototype. F6 starts one-outstanding-query native scan from page 0. Each response is processed by the exact native 0x025C handler first, then AuxVmangos aggregates that exact page into the existing MARKET PriceDB; only afterward is the next page sent with 25ms settle. No page-ID correlation is required because at most one request is outstanding. A 1500ms page timeout aborts fail-closed rather than shifting page association. Full scan stops on first short page (<50 rows) or max page 2000. No buying path is changed; FAST MARKET forces scanner/LIVE off while it owns the scheduler. Gameplay validation pending."
     }
   ]
 }

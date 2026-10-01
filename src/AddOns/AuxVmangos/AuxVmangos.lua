@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.11-vmangos-vendor-fast-seek"
+AVM_VERSION = "0.12-vmangos-fast-native-market"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -40,6 +40,8 @@ AVM = {
 	watchRaces = 0,
 	rulesDirty = false,
 	uiGeneration = 0,
+	fastMarketNative = false,
+	fastMarketPages = 0,
 	candidate = nil,
 	revalidatePages = nil,
 	revalidatePos = 0,
@@ -728,6 +730,98 @@ local function avm_market_finish(save, reason)
 	if AVM_DB.enabled then avm_restart_boundary(false) end
 end
 
+-- Native response-paced full-market scan bridge.
+-- F6 is owned by WoWAHThrottleNative V8. The native side keeps exactly one
+-- CMSG_AUCTION_LIST_ITEMS request in flight and calls these functions only
+-- after the exact 0x025C handler has populated the normal client auction list.
+function AVM_FastMarketNativeStart()
+	if not AVM.open then
+		avm_print("FAST MARKET requires open Auction House")
+		return
+	end
+	if AVM.pending or AVM.unknown or AVM.vendor.active or AVM.vendor.requested then
+		avm_print("FAST MARKET blocked by purchase/vendor state")
+		return
+	end
+	if AVM.market.active or AVM.market.requested then
+		avm_print("FAST MARKET blocked: MARKET already active")
+		return
+	end
+	if AVM_DB.enabled then
+		AVM_DB.enabled = false
+		avm_print("scanner OFF - FAST MARKET owns AH scheduler")
+	end
+	if AVM_DB.live then
+		AVM_DB.live = false
+		avm_print("LIVE OFF - FAST MARKET owns AH scheduler")
+	end
+	AVM.queryInFlight = false
+	AVM.nextQueryAt = 0
+	AVM.market.active = true
+	AVM.market.requested = false
+	AVM.market.stopRequested = false
+	AVM.market.phase = "FAST_NATIVE"
+	AVM.market.boundary = 0
+	AVM.market.page = 0
+	AVM.market.lastPage = 0
+	AVM.market.startedAt = GetTime()
+	AVM.market.items = {}
+	AVM.market.auctions = 0
+	AVM.market.units = 0
+	AVM.market.consecutiveTimeouts = 0
+	AVM.fastMarketNative = true
+	AVM.fastMarketPages = 0
+	avm_print("FAST MARKET start: response-paced native scan, one query in flight")
+	local ok,err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, 0, false, 0, false)
+	if not ok then
+		AVM.fastMarketNative = false
+		AVM.market.active = false
+		AVM.market.phase = "IDLE"
+		avm_print("FAST MARKET baseline ERROR: " .. tostring(err))
+	end
+end
+
+function AVM_FastMarketNativePage(page, nativeRows)
+	if not AVM.fastMarketNative or not AVM.market.active or AVM.market.phase ~= "FAST_NATIVE" then return end
+	page = tonumber(page) or 0
+	local rows,total = GetNumAuctionItems("list")
+	rows = rows or 0
+	total = total or 0
+	AVM.queryPage = page
+	AVM.total = total
+	if total > 0 then AVM.market.lastPage = math.floor((total - 1) / 50) end
+	if tonumber(nativeRows) and tonumber(nativeRows) ~= rows then
+		avm_print("FAST MARKET row mismatch page=" .. tostring(page) ..
+			" native=" .. tostring(nativeRows) .. " lua=" .. tostring(rows))
+	end
+	avm_market_aggregate_page()
+	AVM.fastMarketPages = AVM.fastMarketPages + 1
+	AVM.market.page = page + 1
+	if page == 0 or mod(page, 25) == 0 or page >= AVM.market.lastPage then
+		local pct = 0
+		if AVM.market.lastPage > 0 then pct = math.floor((page + 1) * 100 / (AVM.market.lastPage + 1)) end
+		if pct > 100 then pct = 100 end
+		avm_print("FAST MARKET page=" .. tostring(page) .. "/" .. tostring(AVM.market.lastPage) ..
+			" " .. tostring(pct) .. "% auctions=" .. tostring(AVM.market.auctions))
+	end
+end
+
+function AVM_FastMarketNativeDone(reason)
+	reason = tostring(reason or "UNKNOWN")
+	if not AVM.fastMarketNative then
+		if reason ~= "COMPLETE" then avm_print("FAST MARKET native: " .. reason) end
+		return
+	end
+	AVM.fastMarketNative = false
+	if reason == "COMPLETE" and AVM.fastMarketPages > 0 then
+		AVM.market.boundary = 0
+		avm_print("FAST MARKET native complete pages=" .. tostring(AVM.fastMarketPages))
+		avm_market_finish(true, "fast native complete")
+	else
+		avm_market_finish(false, "FAST MARKET " .. reason)
+	end
+end
+
 local function avm_market_enter_scan(boundary, lastPage)
 	local m = AVM.market
 	m.boundary = boundary
@@ -931,7 +1025,8 @@ local function avm_market_show_status()
 		" phase=" .. tostring(m.phase) ..
 		" page=" .. tostring(m.page) .. "/" .. tostring(m.lastPage) ..
 		" boundary=" .. tostring(m.boundary) ..
-		" auto=" .. tostring(AVM_DB.marketAutoMinutes or 0) .. "m")
+		" auto=" .. tostring(AVM_DB.marketAutoMinutes or 0) .. "m" ..
+		" fastNative=" .. tostring(AVM.fastMarketNative))
 	avm_print("MARKET DB items=" .. tostring(meta.items or 0) ..
 		" auctions=" .. tostring(meta.auctions or 0) ..
 		" units=" .. tostring(meta.units or 0) ..
@@ -991,6 +1086,8 @@ local function avm_market_slash(rest)
 	arg = arg or ""
 	if sub == "start" then
 		avm_market_request_start()
+	elseif sub == "fast" then
+		avm_print("FAST MARKET: open AH, wait for active Search, then press F6 once.")
 	elseif sub == "stop" then
 		AVM.market.requested = false
 		if AVM.market.active then
@@ -2600,6 +2697,8 @@ frame:SetScript("OnEvent", function()
 			avm_print("MARKET aborted: Auction House closed")
 		end
 		AVM.open = false
+		AVM.fastMarketNative = false
+		AVM.fastMarketPages = 0
 		AVM.queryInFlight = false
 		AVM.lastResultAt = 0
 		AVM.nextQueryAt = 0

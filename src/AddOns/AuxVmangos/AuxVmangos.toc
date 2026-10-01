@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Unified vMaNGOS market bot + full-page best-unit watchlist sniper.
+## Notes: Unified vMaNGOS market bot + response-paced native FAST MARKET + watchlist/vendor.
 ## Author: github12wykrzyk/wow112
-## Version: 0.11-vmangos-vendor-fast-seek
+## Version: 0.12-vmangos-fast-native-market
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
