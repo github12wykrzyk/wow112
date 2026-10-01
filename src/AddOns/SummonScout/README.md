@@ -512,3 +512,18 @@ Persistent auto-invite blacklist:
 - `i need one` is now a high-confidence direct-whisper auto-invite cue.
 - The mistakenly added `ready when you are` / `ready whenever you are` cues were removed before gameplay validation.
 - Generic `need` by itself is not promoted to an exact high-confidence response cue; existing summon/location/payment evidence still applies normally.
+
+
+## 1.50 login logout-cancel / stand recovery
+
+Summoner login now has a short fail-safe recovery window:
+- `PLAYER_LOGIN` arms the guard; the first `PLAYER_ENTERING_WORLD` starts it.
+- For 8 seconds the addon retries `CancelLogout()` once per second.
+- It also issues deterministic `DoEmote("STAND")` on the first, third and fifth recovery passes so a character left sitting by an inherited logout sequence is stood up.
+- The guard runs only for the initial world entry after login/UI reload; normal later zone transitions do not re-arm it.
+- `SummonScoutDB.loginRecoveryEnabled` defaults to true.
+
+Exact-build API evidence: the recovered Vanilla 1.12.1 build-5875 FrameScript registration tables list `CancelLogout`, `SitOrStand`, and `DoEmote` as in-world functions:
+https://github.com/brues-code/ClassicAPI/blob/master/docs/BlizzardScriptAPI.md
+
+Updater note: current `CloseGameProcesses` already uses immediate `process.Kill()` and explicitly avoids `WM_CLOSE` because the latter can start WoW's normal logout countdown. This login guard is therefore a defensive recovery for residual/inherited logout state rather than a replacement for the updater close path.

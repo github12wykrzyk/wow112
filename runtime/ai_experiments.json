@@ -2154,6 +2154,35 @@
         "artifact_id": 11157873378
       },
       "notes": "Integrated to parallel. Map teleport no longer calls HideUIPanel(WorldMapFrame) after sending the teleport pulse, so the world map remains visible for repeated E/click map teleports. Existing validation, F7 abort and optional native S backstep are unchanged. CI/package passed; gameplay behavior awaits user test."
+    },
+    {
+      "id": "summonscout-login-recovery",
+      "branch": "parallel",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-need-one-invite"
+      ],
+      "shared_resources": [
+        "Vanilla FrameScript CancelLogout",
+        "Vanilla FrameScript DoEmote(STAND)",
+        "PLAYER_LOGIN / PLAYER_ENTERING_WORLD"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "95db290d40682729f3f2455e82f84854345c1264",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "2a6b4d89699cfec6899ca648a315ceb91db18c8b",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36866605996 completed success for exact feature SHA 2a6b4d89699cfec6899ca648a315ceb91db18c8b; Verify AI experiment registry run 36866605956 also passed."
+        }
+      ],
+      "package": null,
+      "notes": "SummonScout 1.50 integrated candidate: PLAYER_LOGIN arms an 8-second first-world-entry recovery window; CancelLogout retries once per second and DoEmote('STAND') runs on early passes. Ordinary later zone transitions do not re-arm it. Exact 5875 FrameScript registration evidence lists CancelLogout and DoEmote; updater hard-kill shutdown remains unchanged."
     }
   ]
 }
