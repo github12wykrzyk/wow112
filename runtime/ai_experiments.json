@@ -3319,6 +3319,56 @@
       ],
       "package": null,
       "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged. Registry status corrected to the repository-supported awaiting_ci state after verifier run 36924820961 rejected the non-schema label awaiting_parallel_ci. Native F2 entry was additionally cut at the DLL layer because arming g_fastActive before the Lua no-op could otherwise capture a later AUX query. Manual /avm market start now waits for AUXFAST_IsBusy=false before taking the AH scheduler, avoiding overlap with an active original AUX Search while preserving the continuous AUX loop after MARKET."
+    },
+    {
+      "id": "updater-reload-kill-bootstrap",
+      "branch": "feature/reload-kill-migration",
+      "modules": [
+        "ParallelUpdater",
+        "UpdaterProcessLifecycle"
+      ],
+      "dependencies": [
+        "updater-reload-worker-protocol-v2",
+        "updater-live-update-parallel"
+      ],
+      "shared_resources": [
+        "WoW process MainWindow / WM_CLOSE lifecycle",
+        "CharacterSwitch worker protocol probe",
+        ".wow112_parallel_updater pending live-update finalization",
+        "kill-all process set"
+      ],
+      "status": "awaiting_game_test",
+      "observed_head": "e42e4daf6f5b55d994db277088fdeb90f06edf30",
+      "verified_commit": "e42e4daf6f5b55d994db277088fdeb90f06edf30",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "e42e4daf6f5b55d994db277088fdeb90f06edf30",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36927831217 passed on exact feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "e42e4daf6f5b55d994db277088fdeb90f06edf30",
+          "date": "2026-10-01",
+          "evidence": "Build WoW112 updater run 36927831188 passed on exact feature SHA, including x86 compile, WinForms smoke, PE/hash verification and artifact upload."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "e42e4daf6f5b55d994db277088fdeb90f06edf30",
+          "date": "2026-10-01",
+          "evidence": "Updater artifact 11194617951 (WoW112ParallelUpdater-e42e4daf6f5b55d994db277088fdeb90f06edf30)."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "e42e4daf6f5b55d994db277088fdeb90f06edf30",
+        "artifact_id": 11194617951
+      },
+      "notes": "Fixes the bootstrap deadlock reported from the updater UI: active clients still using worker v1 prevent the v2 ReloadUI command, while the pending v2 runtime cannot replace loaded DLLs until those clients exit. If any target PID is not worker protocol v2, the button performs a one-time graceful CloseMainWindow migration for the entire preflighted process set, waits up to 35s without Kill(), then lets the existing pending-runtime finalizer apply v2. Subsequent launches use normal ReloadUI+ACK+Kill."
     }
   ]
 }

@@ -250,3 +250,12 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - Updater odrzuca stary worker **przed wysłaniem komendy** i pokazuje jednoznaczny komunikat `stary CharacterSwitch worker (protokół v1, wymagany v2)`.
 - Naprawia przypadek, w którym updater 2.9-parallel.15 widział v1 jako zgodny, wysyłał reserved command, a stary worker interpretował ją jako nieprawidłowy slot i zwracał `state=5, error=41`.
 - Kill nadal jest fail-closed: przy starej/niezgodnej instancji nie zabija żadnego klienta.
+
+
+## Updater 2.9-parallel.17 — bootstrap starego workera bez deadlocku
+
+- **Zabij wszystkie** nie wpada już w pętlę, gdy na dysku czeka runtime z workerem v2, ale uruchomione procesy nadal mają v1.
+- Jeżeli choć jeden bieżący PID nie wystawia protokołu worker v2, updater przechodzi w **jednorazowy tryb migracji** zamiast zwracać błąd.
+- Tryb migracji nie używa `Kill()`. Najpierw preflightuje wszystkie okna, następnie wysyła normalne zamknięcie `CloseMainWindow()` do całego zestawu klientów i czeka do 35 s na naturalne zakończenie procesów.
+- Po zamknięciu ostatniej instancji istniejący mechanizm LIVE UPDATE finalizuje oczekujący runtime. Następne uruchomienia mają worker v2 i używają standardowego `ReloadUI -> ACK -> 1 s -> Kill`.
+- Jeśli któregokolwiek klienta nie da się zamknąć normalnie, updater pozostaje fail-closed i nie przechodzi do twardego killowania starego runtime.
