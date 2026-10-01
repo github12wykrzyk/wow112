@@ -1934,7 +1934,7 @@
     },
     {
       "id": "summon-direct-pay-intent",
-      "branch": "feature/summonscout-pay-intent",
+      "branch": "parallel",
       "modules": [
         "SummonScout",
         "AutoSummonAssist"
@@ -1949,11 +1949,19 @@
         "Local\\\\WoW112_SummonAssist_<PID> dormant coordinator map"
       ],
       "status": "awaiting_ci",
-      "observed_head": "62511bcf0a5eea8e5ff1e5598bfb086eb8a994df",
+      "observed_head": "262990f451f1789c7b32defbada9d3ff3f80a8e6",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "262990f451f1789c7b32defbada9d3ff3f80a8e6",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36850545070 completed success for exact feature SHA 262990f451f1789c7b32defbada9d3ff3f80a8e6; Verify AI experiment registry run 36850545052 also passed."
+        }
+      ],
       "package": null,
-      "notes": "SummonScout 1.47 makes positive payment-offer whispers with an explicit gold amount (e.g. I can pay 3g) strong smart-invite intent while excluding payment negations. AutoSummonAssist v22 compiles coordinator infrastructure but sets SUMMON_COORDINATOR_ENABLED=0, so Hyjal/Hydraxian and all other destinations use the direct native Ritual bridge and do not publish/gate through updater slave/account switching."
+      "notes": "Integrated candidate: SummonScout 1.47 treats positive payment-offer whispers with explicit gold amount as strong auto-invite intent while excluding payment negations. AutoSummonAssist v22 has SUMMON_COORDINATOR_ENABLED=0, so all Ritual requests, including Hyjal/Hydraxian, use the direct native bridge and do not publish/gate through updater slave/account switching. Coordinator infrastructure remains dormant for later experiments."
     }
   ]
 }
