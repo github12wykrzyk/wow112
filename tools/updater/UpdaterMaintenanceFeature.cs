@@ -44,7 +44,6 @@ namespace WoW112Updater
             private readonly Form form;
             private readonly JavaScriptSerializer json = new JavaScriptSerializer();
             private readonly Button verifyRepairButton = new Button();
-            private readonly Button diagnosticsButton = new Button();
             private readonly Button selfUpdateButton = new Button();
             private bool attached;
             private bool maintenanceBusy;
@@ -61,10 +60,8 @@ namespace WoW112Updater
                 attached = true;
 
                 verifyRepairButton.Click += async delegate { await VerifyRepairAsync(); };
-                diagnosticsButton.Click += delegate { ExportDiagnostics(); };
                 selfUpdateButton.Click += async delegate { await SelfUpdateAsync(); };
                 host.RegisterUiControl("verify", verifyRepairButton);
-                host.RegisterUiControl("diagnostics", diagnosticsButton);
                 host.RegisterUiControl("selfUpdate", selfUpdateButton);
 
                 host.GameDirectoryChanged += delegate { StampLocalUpdaterVersion(); };

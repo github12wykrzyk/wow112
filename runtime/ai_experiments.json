@@ -2965,6 +2965,54 @@
       ],
       "package": null,
       "notes": "Integrate only after exact-SHA preflight. Normal MARKET_SCAN pages are processed in small configurable chunks (default 4 rows per 50ms AVM tick) so one list update no longer performs all 50 item/link/history allocations in one frame. Page delay/history semantics stay unchanged. DE candidates from the just-finished AUX page are evaluated against accumulated material depth; when LIVE and eligible, original AUX pauses after the page, exact material markets are revalidated, the exact auction is requeried/bought, then Search continuation resumes. Vendor retains first priority."
+    },
+    {
+      "id": "updater-kill-all-control",
+      "branch": "feature/updater-kill-all",
+      "modules": [
+        "ParallelUpdater",
+        "UpdaterUI"
+      ],
+      "dependencies": [
+        "updater-live-update-parallel"
+      ],
+      "shared_resources": [
+        "WoW process lifetime detection",
+        "Parallel updater tools dashboard",
+        ".wow112_parallel_updater pending live-update finalization"
+      ],
+      "status": "awaiting_game_test",
+      "observed_head": "ed75b0500eb073d5e343d22cbdc385559b2145ca",
+      "verified_commit": "ed75b0500eb073d5e343d22cbdc385559b2145ca",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ed75b0500eb073d5e343d22cbdc385559b2145ca",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36913810698 passed on exact feature SHA ed75b0500eb073d5e343d22cbdc385559b2145ca."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ed75b0500eb073d5e343d22cbdc385559b2145ca",
+          "date": "2026-10-01",
+          "evidence": "Build WoW112 updater run 36913810622 passed on exact feature SHA, including x86 compile and WinForms UI smoke."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "ed75b0500eb073d5e343d22cbdc385559b2145ca",
+          "date": "2026-10-01",
+          "evidence": "Updater artifact 11189630497 (WoW112ParallelUpdater-ed75b0500eb073d5e343d22cbdc385559b2145ca) was uploaded by the successful exact-SHA updater workflow."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "ed75b0500eb073d5e343d22cbdc385559b2145ca",
+        "artifact_id": 11189630497
+      },
+      "notes": "Replace the unused local Diagnostics ZIP dashboard action with a guarded Kill All WoW action. It targets only WoW.exe/WoW_*.exe processes whose executable path is inside the selected game directory, requires confirmation, and immediately attempts pending LIVE UPDATE finalization after the last client exits. GitHub issue report and AH dump actions remain."
     }
   ]
 }
