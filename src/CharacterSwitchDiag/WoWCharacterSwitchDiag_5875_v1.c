@@ -1,5 +1,5 @@
 /*
- * WoWCharacterSwitchDiag 5875 v6 - headless summon switch worker
+ * WoWCharacterSwitchDiag 5875 v7 - headless summon switch/reload worker
  * FAST diagnostic: direct ClientServices disconnect -> AutoLoginBridge relogin
  * -> slot -> world.
  *
@@ -33,6 +33,7 @@
 #define COMBAT_POLL_MS 250u
 #define WORKER_MAGIC 0x53323157u
 #define WORKER_VERSION 1u
+#define WORKER_COMMAND_RELOAD 0xFFFFFFFEu
 
 enum {
     WORKER_INIT=0, WORKER_IDLE=1, WORKER_COMBAT_BLOCKED=2, WORKER_SWITCHING=3,
@@ -298,12 +299,56 @@ static void begin_fast(DWORD now,DWORD slot)
         log_line("CONNECTION_NOT_CLEARED",GetTickCount(),after);
     }
 }
+static void worker_command_fail(DWORD now,DWORD seq,DWORD error,const char*event)
+{
+    g_workerSeenSeq=seq;g_lastError=error;g_phase=PHASE_FAILED;g_workerState=WORKER_FAILED;
+    if(g_workerMap){g_workerMap->ack_seq=seq;g_workerMap->state=WORKER_FAILED;g_workerMap->error=error;g_workerMap->last_event_tick=now;}
+    worker_log_event(event,now);
+}
+static void begin_reload_ui(DWORD now,DWORD seq)
+{
+    const char*v;
+    reset_run();g_workerSeenSeq=seq;g_workerState=WORKER_BUSY;
+    if(g_workerMap){g_workerMap->state=WORKER_BUSY;g_workerMap->error=0;g_workerMap->last_event_tick=now;}
+    worker_log_event("COORD_RELOAD_BEGIN",now);
+
+    execs("W112_CSD_RELOAD_CAP=(type(ReloadUI)=='function') and '1' or '0'");
+    v=gettextv("W112_CSD_RELOAD_CAP");
+    if(!v||v[0]!='1'||v[1]){
+        execs("W112_CSD_RELOAD_CAP=nil");
+        worker_command_fail(GetTickCount(),seq,43,"COORD_RELOAD_UNAVAILABLE");
+        return;
+    }
+
+    /*
+     * FrameScript_Execute runs on WoW's window thread. ACK is deliberately
+     * written only after ReloadUI() returns, so the updater never kills on a
+     * merely queued reload request. A timeout remains fail-closed upstream.
+     */
+    execs("W112_CSD_RELOAD_CAP=nil;ReloadUI()");
+    now=GetTickCount();
+    if(g_workerMap){g_workerMap->ack_seq=seq;g_workerMap->last_event_tick=now;}
+    g_workerState=WORKER_IDLE;
+    worker_log_event("COORD_RELOAD_DONE",now);
+}
 static void poll_worker_cmd(DWORD now)
 {
     DWORD seq,slot;
     if(!g_workerMap)return;
     seq=g_workerMap->command_seq;if(!seq||seq==g_workerSeenSeq)return;
     slot=g_workerMap->command_slot;
+
+    if(slot==WORKER_COMMAND_RELOAD){
+        if(g_phase!=PHASE_IDLE&&g_phase!=PHASE_COMPLETE&&g_phase!=PHASE_FAILED){
+            worker_command_fail(now,seq,44,"COORD_RELOAD_BUSY");return;
+        }
+        if(!g_world){
+            worker_command_fail(now,seq,42,"COORD_RELOAD_NOT_IN_WORLD");return;
+        }
+        begin_reload_ui(now,seq);
+        return;
+    }
+
     if(g_phase!=PHASE_IDLE&&g_phase!=PHASE_COMPLETE&&g_phase!=PHASE_FAILED){
         g_workerState=WORKER_BUSY;return;
     }

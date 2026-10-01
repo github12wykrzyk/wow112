@@ -89,7 +89,12 @@ namespace WoW112Updater
 
             internal void Send(uint seq, int slot)
             {
-                Write32(20, (uint)slot);
+                SendRaw(seq, (uint)slot);
+            }
+
+            internal void SendRaw(uint seq, uint command)
+            {
+                Write32(20, command);
                 Thread.MemoryBarrier();
                 Write32(16, seq);
             }
