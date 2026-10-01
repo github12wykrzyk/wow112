@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Zero-config AUX live loop with safe reload after each full scan, GUI reopen, 1c vendor floor, live mid-scan DE.
+## Notes: Zero-config AUX live loop with ConsoleExec reload after each full scan, GUI reopen, 1c vendor floor, live mid-scan DE.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.26-reload-cycle
+## Version: 0.26.1-reload-consoleexec
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

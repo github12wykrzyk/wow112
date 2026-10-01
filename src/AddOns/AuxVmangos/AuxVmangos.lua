@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.26-reload-cycle"
+AVM_VERSION = "0.26.1-reload-consoleexec"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -67,6 +67,7 @@ AVM = {
 	reloadCycle = {
 		pending = false,
 		requestedAt = 0,
+		issuedAt = 0,
 		reason = "",
 		restorePending = false,
 		freshStartAt = 0,
@@ -480,6 +481,7 @@ local function avm_restore_reload_snapshot()
 	AVM.reloadCycle.restorePending = true
 	AVM.reloadCycle.filterString = tostring(snap.filterString or "")
 	AVM.reloadCycle.freshStartAt = 0
+	AVM.reloadCycle.issuedAt = 0
 	AVM.reloadCycle.retries = 0
 	AVM_DB.reloadCycle.pending = false
 	return true
@@ -515,6 +517,7 @@ local function avm_queue_reload_after_scan(reason)
 	AVM.auxLoop.waitingForMarket = false
 	AVM.reloadCycle.pending = true
 	AVM.reloadCycle.requestedAt = GetTime()
+	AVM.reloadCycle.issuedAt = 0
 	AVM.reloadCycle.reason = tostring(reason or "scan complete")
 	AVM.reloadCycle.filterString = tostring(AVM.auxArb.filterString or "")
 	avm_print("RELOAD_AFTER_SCAN queued reason=" .. AVM.reloadCycle.reason)
@@ -523,26 +526,42 @@ end
 
 local function avm_reload_cycle_tick(now)
 	if not AVM.reloadCycle.pending then return false end
+	local issuedAt = tonumber(AVM.reloadCycle.issuedAt) or 0
+	if issuedAt > 0 then
+		if now - issuedAt < 2.0 then return true end
+		if AUXFAST_CancelUiReload then pcall(AUXFAST_CancelUiReload) end
+		AVM_DB.reloadCycle = nil
+		AVM.reloadCycle.pending = false
+		AVM.reloadCycle.issuedAt = 0
+		AVM.auxLoop.nextAt = GetTime() + 2
+		AVM.auxLoop.lastAction = "reload command rejected"
+		avm_print("RELOAD_AFTER_SCAN command did not reload UI; legacy loop retry in 2s")
+		return true
+	end
 	if now - (tonumber(AVM.reloadCycle.requestedAt) or now) < 0.25 then return true end
 	if not avm_reload_is_idle() then return true end
 	local reason = AVM.reloadCycle.reason
 	avm_snapshot_for_reload(reason)
-	avm_print("RELOAD_AFTER_SCAN now; preserving AH session + session safety counters")
+	AVM.reloadCycle.issuedAt = now
+	avm_print("RELOAD_AFTER_SCAN issuing /console reloadui; preserving AH session + session safety counters")
 	if AUXFAST_PrepareUiReload then pcall(AUXFAST_PrepareUiReload) end
-	local ok, err = pcall(ReloadUI)
-	-- Normally ReloadUI never returns because the Lua state is destroyed. If it
-	-- does fail/return, restore AUX's normal close handler and fall back to loop.
-	if AUXFAST_CancelUiReload then pcall(AUXFAST_CancelUiReload) end
+	local ok, err
+	if ConsoleExec then
+		ok, err = pcall(ConsoleExec, "reloadui")
+	else
+		ok, err = false, "ConsoleExec unavailable"
+	end
 	if not ok then
+		if AUXFAST_CancelUiReload then pcall(AUXFAST_CancelUiReload) end
 		AVM_DB.reloadCycle = nil
 		AVM.reloadCycle.pending = false
+		AVM.reloadCycle.issuedAt = 0
 		AVM.auxLoop.nextAt = GetTime() + 2
 		AVM.auxLoop.lastAction = "reload failed"
 		avm_print("RELOAD_AFTER_SCAN failed: " .. tostring(err) .. " - legacy loop retry in 2s")
 	end
 	return true
 end
-
 local function avm_reload_fresh_start_tick(now)
 	local r = AVM.reloadCycle
 	if not r.restorePending then return false end
@@ -4788,6 +4807,7 @@ local function avm_hard_stop(reason)
 	AVM.auxLoop.lastAction = "hard-stop"
 
 	AVM.reloadCycle.pending = false
+	AVM.reloadCycle.issuedAt = 0
 	AVM.reloadCycle.restorePending = false
 	AVM_DB.reloadCycle = nil
 
