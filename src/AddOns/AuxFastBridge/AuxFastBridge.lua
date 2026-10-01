@@ -1,4 +1,4 @@
--- AuxFastBridge v2.0
+-- AuxFastBridge v2.1
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -168,6 +168,21 @@ local function install_scan_hook()
 			params.auto_buy_validator = nil
 			params.auto_bid_validator = nil
 		end
+		local activeFilter = ""
+		if params.queries then
+			local parts = {}
+			for i = 1, table.getn(params.queries) do
+				local q = params.queries[i]
+				local label = q and q.prettified or nil
+				if not label or label == "" then
+					local bq = q and q.blizzard_query or nil
+					label = bq and bq.name or ""
+				end
+				table.insert(parts, tostring(label or ""))
+			end
+			activeFilter = table.concat(parts, ";")
+		end
+
 		local oldScanStart = params.on_scan_start
 		local oldAuction = params.on_auction
 		local oldPageScanned = params.on_page_scanned
@@ -179,7 +194,7 @@ local function install_scan_hook()
 		resumeRequested = false
 		params.on_scan_start = function()
 			if oldScanStart then oldScanStart() end
-			if auxArbAttached and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart, arbResume) end
+			if auxArbAttached and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart, arbResume, activeFilter) end
 		end
 
 		params.on_auction = function(record)
@@ -390,4 +405,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v2.0 loaded: Search arbitrage + resumable live-DE cache; hook=" .. tostring(hookInstalled))
+out("v2.1 loaded: Search Filter Builder -> AUX_ARB + resumable cache; hook=" .. tostring(hookInstalled))

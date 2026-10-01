@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Original AUX fast Search bridge with resumable arbitrage scan state and live-DE cache continuity.
+## Notes: Original AUX fast Search bridge; Filter Builder rows feed guarded AUX_ARB with resumable state.
 ## Author: github12wykrzyk/wow112
-## Version: 2.0
+## Version: 2.1
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB

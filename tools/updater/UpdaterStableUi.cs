@@ -112,9 +112,9 @@ namespace WoW112Updater
             update.Controls.Add(actions, 0, 4);
 
             var tools = Card("NARZĘDZIA", 2); root.Controls.Add(tools, 0, 3);
-            var utilities = Grid(6, 1);
-            string[] keys = { "verify", "diagnostics", "report", "selfUpdate", "accounts", "multibox" };
-            string[] captions = { "Sprawdź / napraw", "Diagnostyka ZIP", "Wyślij raport", "Aktualizuj updater", "Konta WoW", "MULTIBOX" };
+            var utilities = Grid(7, 1);
+            string[] keys = { "verify", "diagnostics", "report", "marketDump", "selfUpdate", "accounts", "multibox" };
+            string[] captions = { "Sprawdź / napraw", "Diagnostyka ZIP", "Wyślij raport", "Wyślij AH dump", "Aktualizuj updater", "Konta WoW", "MULTIBOX" };
             for (int i = 0; i < keys.Length; i++) utilities.Controls.Add(ActionButton((Button)featureControls[keys[i]], captions[i]), i, 0);
             tools.Controls.Add(utilities, 0, 1);
             var backups = Grid(4, 1); Columns(backups, 120, -1, 120, 132);

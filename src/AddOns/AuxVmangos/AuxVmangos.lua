@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.17.2-live-market-flip-signaturefix"
+AVM_VERSION = "0.18-aux-filter-market-history"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -309,7 +309,13 @@ local function avm_defaults()
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
 	if AVM_DB.marketDB == nil then AVM_DB.marketDB = {} end
 	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
-	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 24 end
+	if AVM_DB.marketRetention == nil then
+		AVM_DB.marketRetention = 96
+	elseif AVM_DB.marketHistorySchema == nil and AVM_DB.marketRetention == 24 then
+		-- Migrate the old default only; explicit custom values survive.
+		AVM_DB.marketRetention = 96
+	end
+	if AVM_DB.marketHistorySchema == nil then AVM_DB.marketHistorySchema = 2 end
 	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 500 end
@@ -647,6 +653,11 @@ local function avm_market_encode_history(row)
 		tostring(row.avg or 0),
 		tostring(row.weighted or 0),
 		tostring(row.netDown or row.gone or 0),
+		tostring(row.depth5 or 0),
+		tostring(row.depth10 or 0),
+		tostring(row.depth20 or 0),
+		tostring(row.sellers or 0),
+		tostring(row.floorUnits or 0),
 	}, ",")
 end
 
@@ -679,6 +690,11 @@ local function avm_market_decode_history(value)
 		avg = tonumber(p[9]) or 0,
 		weighted = tonumber(p[10]) or 0,
 		netDown = tonumber(p[11]) or 0,
+		depth5 = tonumber(p[12]) or 0,
+		depth10 = tonumber(p[13]) or 0,
+		depth20 = tonumber(p[14]) or 0,
+		sellers = tonumber(p[15]) or 0,
+		floorUnits = tonumber(p[16]) or 0,
 	}
 end
 
@@ -692,10 +708,26 @@ local function avm_market_push_history(dbrow, row)
 	end
 end
 
+local function avm_market_depth_price(offers, depth)
+	depth = tonumber(depth) or 1
+	if depth < 1 then depth = 1 end
+	if not offers or table.getn(offers) == 0 then return 0 end
+	table.sort(offers, function(a,b)
+		if a.unit ~= b.unit then return a.unit < b.unit end
+		return a.count > b.count
+	end)
+	local units = 0
+	for i = 1, table.getn(offers) do
+		units = units + (tonumber(offers[i].count) or 0)
+		if units >= depth then return tonumber(offers[i].unit) or 0 end
+	end
+	return 0
+end
+
 local function avm_market_aggregate_page()
 	local n = GetNumAuctionItems("list") or 0
 	for i = 1, n do
-		local name,_,count,quality,_,level,_,_,buyout = GetAuctionItemInfo("list", i)
+		local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
 		if name and count and count > 0 and buyout and buyout > 0 then
 			local itemId, key = avm_market_identity(i, name)
 			local unit = math.floor(buyout / count)
@@ -713,6 +745,8 @@ local function avm_market_aggregate_page()
 					minUnit = nil,
 					maxUnit = nil,
 					prices = {},
+					offers = {},
+					sellers = {},
 				}
 				AVM.market.items[key] = a
 			end
@@ -723,6 +757,8 @@ local function avm_market_aggregate_page()
 			if not a.minUnit or unit < a.minUnit then a.minUnit = unit end
 			if not a.maxUnit or unit > a.maxUnit then a.maxUnit = unit end
 			table.insert(a.prices, unit)
+			table.insert(a.offers, { unit = unit, count = count })
+			if owner and owner ~= "" then a.sellers[owner] = true end
 			AVM.market.auctions = AVM.market.auctions + 1
 			AVM.market.units = AVM.market.units + count
 		end
@@ -744,6 +780,15 @@ local function avm_market_finish(save, reason)
 			local weighted = 0
 			if a.auctions > 0 then avg = math.floor(a.sumUnit / a.auctions) end
 			if a.units > 0 then weighted = math.floor(a.value / a.units) end
+			local sellerCount = 0
+			for _ in pairs(a.sellers or {}) do sellerCount = sellerCount + 1 end
+			local floorUnits = 0
+			for i = 1, table.getn(a.offers or {}) do
+				if a.offers[i].unit == a.minUnit then floorUnits = floorUnits + (a.offers[i].count or 0) end
+			end
+			local depth5 = avm_market_depth_price(a.offers, 5)
+			local depth10 = avm_market_depth_price(a.offers, 10)
+			local depth20 = avm_market_depth_price(a.offers, 20)
 
 			local dbrow = AVM_DB.marketDB[key]
 			if not dbrow then
@@ -770,6 +815,11 @@ local function avm_market_finish(save, reason)
 				avg = avg,
 				weighted = weighted,
 				netDown = netDown,
+				depth5 = depth5,
+				depth10 = depth10,
+				depth20 = depth20,
+				sellers = sellerCount,
+				floorUnits = floorUnits,
 			})
 			seen[key] = true
 			itemCount = itemCount + 1
@@ -785,6 +835,7 @@ local function avm_market_finish(save, reason)
 						t = stamp, auctions = 0, units = 0,
 						min = 0, p25 = 0, median = 0, p75 = 0, max = 0,
 						avg = 0, weighted = 0, netDown = prev.units or 0,
+						depth5 = 0, depth10 = 0, depth20 = 0, sellers = 0, floorUnits = 0,
 					})
 				end
 			end
@@ -1169,7 +1220,7 @@ local function avm_market_show_status()
 	avm_print("MARKET DB items=" .. tostring(meta.items or 0) ..
 		" auctions=" .. tostring(meta.auctions or 0) ..
 		" units=" .. tostring(meta.units or 0) ..
-		" retention=" .. tostring(AVM_DB.marketRetention or 24) ..
+		" retention=" .. tostring(AVM_DB.marketRetention or 96) ..
 		" lastScan=" .. tostring(meta.lastScanAt or 0) ..
 		" retryAfter=" .. tostring(meta.retryAfter or 0))
 end
@@ -1203,7 +1254,10 @@ local function avm_market_show_item(name)
 		" p25/p75=" .. avm_money(row.p25 or 0) .. "/" .. avm_money(row.p75 or 0))
 	avm_print("MARKET avg=" .. avm_money(row.avg or 0) ..
 		" weighted=" .. avm_money(row.weighted or 0) ..
-		" netDownUnits=" .. tostring(row.netDown or 0) ..
+		" depth5/10/20=" .. avm_money(row.depth5 or 0) .. "/" .. avm_money(row.depth10 or 0) .. "/" .. avm_money(row.depth20 or 0) ..
+		" sellers=" .. tostring(row.sellers or 0) ..
+		" floorUnits=" .. tostring(row.floorUnits or 0))
+	avm_print("MARKET netDownUnits=" .. tostring(row.netDown or 0) ..
 		" (net supply decrease; not proven sales)")
 	local first = n - 3
 	if first < 1 then first = 1 end
@@ -1249,11 +1303,11 @@ local function avm_market_slash(rest)
 		end
 	elseif sub == "retention" then
 		local n = tonumber(avm_trim(arg))
-		if n and n >= 1 and n <= 96 then
+		if n and n >= 1 and n <= 336 then
 			AVM_DB.marketRetention = n
 			avm_print("MARKET history retention=" .. n .. " snapshots/item")
 		else
-			avm_print("market retention must be 1..96")
+			avm_print("market retention must be 1..336")
 		end
 	elseif sub == "clear" then
 		if AVM.market.active then
@@ -1900,7 +1954,7 @@ local function avm_auxarb_resume_search(reason)
 	end
 end
 
-function AVM_AuxArbScanStart(resume)
+function AVM_AuxArbScanStart(resume, filterString)
 	local a = AVM.auxArb
 	local keepScanBook = resume and a.deRawCandidates and a.deMaterialBook and a.flipBook
 	a.active = AVM_DB.auxArbEnabled and true or false
@@ -1911,6 +1965,8 @@ function AVM_AuxArbScanStart(resume)
 	a.candidate = nil
 	a.deVerify = nil
 	if not keepScanBook then
+		a.filterString = tostring(filterString or "")
+		a.filteredRecords = 0
 		a.bestSeen = nil
 		a.pages = 0
 		a.lastPage = 0
@@ -1936,7 +1992,8 @@ function AVM_AuxArbScanStart(resume)
 			" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%" ..
 			" flip=" .. tostring(AVM_DB.flipEnabled) ..
 			" flipDepth=" .. tostring(AVM_DB.flipDepthUnits or 5) ..
-			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})))
+			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})) ..
+			" filter='" .. string.sub(tostring(a.filterString or ""), 1, 180) .. "'")
 	end
 end
 
@@ -1944,7 +2001,10 @@ function AVM_AuxArbAuction(record)
 	local a = AVM.auxArb
 	if not a.active or a.paused or a.pausePending then return end
 	if not record or not record.blizzard_query then return end
-	if (record.blizzard_query.name or "") ~= "" then return end
+	-- Original AUX invokes on_auction only after the active Search validator accepts the row.
+	-- Thus GUI Filter Builder components are already an upstream allow-list for AUX_ARB.
+	-- Named/exact Blizzard queries are valid too; DE remains fail-closed on missing material depth.
+	a.filteredRecords = (a.filteredRecords or 0) + 1
 
 	avm_de_book_add(a.deMaterialBook, record.item_id, record.name,
 		record.count or record.aux_quantity, record.buyout_price)
@@ -2052,11 +2112,13 @@ function AVM_AuxArbScanDone()
 			" deCandidates=" .. tostring(a.deCandidates) ..
 			" flipCandidates=" .. tostring(a.flipCandidates or 0) ..
 			" deNoDepth=" .. tostring(a.deNoValue or 0) ..
-			" flipNoDepth=" .. tostring(a.flipNoDepth or 0))
+			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
+			" filteredRecords=" .. tostring(a.filteredRecords or 0))
 	else
 		avm_print("AUX_ARB_SCAN_DONE pages=" .. tostring(a.pages) ..
 			" no qualifying candidate deNoDepth=" .. tostring(a.deNoValue or 0) ..
-			" flipNoDepth=" .. tostring(a.flipNoDepth or 0))
+			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
+			" filteredRecords=" .. tostring(a.filteredRecords or 0))
 	end
 
 	local postBest = bestDe

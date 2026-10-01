@@ -200,3 +200,11 @@ GitHub diagnostic reports now include the newest AuxVmangos SavedVariables diagn
 
 Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsza pokazuje równolegle `PARALLEL`, `WORK` i `MAIN` z krótkim SHA; `SUCCESS` na development jest prezentowany jako `READY`, a `MAIN` zachowuje zielony `STABLE` z ostatniego autorytatywnego `Build stable candidate`, gdy późniejszy commit main nie uruchamia stable workflow. Druga belka pokazuje najważniejszy bieżący exact-HEAD gate `feature/*` lub `promote/*` (PREFLIGHT / PRE-PROMOTE), a `| +N` sygnalizuje dodatkowe aktualne gate'y. Historyczne branche bez exact-HEAD gate w 100 najnowszych runach nie zaśmiecają nagłówka; pełna lista dopasowanych gate'ów pozostaje w tooltipie i Monitor GH. Feature/promote pozostają wyłącznie podglądem i nigdy nie są instalowane jako Parallel.
 
+
+
+## Updater 2.9-parallel.11 — AUX filters + AH Market Dump
+
+- Original AUX Search Filter Builder is now an explicit upstream allow-list for AUX_ARB. The bridge forwards the active compiled Search filter label into AuxVmangos diagnostics, and AUX_ARB accepts named/exact Blizzard searches as well as post-filters. The original AUX validator still decides which rows reach the bot; guarded vendor/DE/flip economics and exact live revalidation remain authoritative. Old AUX Auto Buy/Auto Bid stay disabled while AUX_ARB is attached.
+- AuxVmangos market history schema 2 keeps compact snapshots with min/p25/median/p75/max/average/weighted prices plus depth prices for 5/10/20 units, seller count, units at the current floor and net supply decrease. The old default retention of 24 snapshots migrates once to 96; the configurable ceiling is 336 snapshots/item.
+- **Wyślij AH dump** uses the existing DPAPI-protected Issues token and uploads only the newest flushed AuxVmangos `marketMeta` plus the complete compact `marketDB` history. Large dumps are chunked across comments of one GitHub Issue and include a deterministic payload SHA256. Account-directory names, credentials and unrelated SavedVariables are not uploaded.
+- WoW writes SavedVariables on `/reload`, logout or exit. If the client is still open, run `/reload` immediately before **Wyślij AH dump** to include the newest in-memory market history.

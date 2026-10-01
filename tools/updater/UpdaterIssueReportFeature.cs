@@ -35,6 +35,7 @@ namespace WoW112Updater
             private readonly RichTextBox log;
             private readonly Label status;
             private readonly Button sendButton = new Button();
+            private readonly Button marketDumpButton = new Button();
             private readonly Button tokenButton = new Button();
             private readonly JavaScriptSerializer json = new JavaScriptSerializer();
             private bool busy;
@@ -51,9 +52,11 @@ namespace WoW112Updater
             {
                 if (gameDir == null) return;
                 sendButton.Click += async delegate { await SendReportAsync(); };
+                marketDumpButton.Click += async delegate { await SendMarketDumpAsync(); };
                 tokenButton.Click += delegate { ChangeReportToken(); };
                 var host = (IUpdaterHost)form;
                 host.RegisterUiControl("report", sendButton);
+                host.RegisterUiControl("marketDump", marketDumpButton);
                 host.RegisterUiControl("reportToken", tokenButton);
             }
 
@@ -128,6 +131,158 @@ namespace WoW112Updater
                 {
                     finalStatus = "Wysyłanie raportu nie powiodło się";
                     Log("BŁĄD raportu GitHub: " + ex.Message);
+                    MessageBox.Show(form, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    SetBusy(false, finalStatus);
+                }
+            }
+
+            private async Task SendMarketDumpAsync()
+            {
+                string finalStatus = "Gotowy";
+                try
+                {
+                    if (busy) return;
+                    var root = gameDir.Text.Trim();
+                    if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                        throw new InvalidOperationException("Wybierz istniejący katalog gry.");
+                    root = Path.GetFullPath(root);
+
+                    var reportToken = LoadReportToken();
+                    if (string.IsNullOrWhiteSpace(reportToken))
+                    {
+                        reportToken = PromptForToken();
+                        if (string.IsNullOrWhiteSpace(reportToken))
+                        {
+                            finalStatus = "Wysyłanie AH dump anulowane.";
+                            return;
+                        }
+                        SaveReportToken(reportToken);
+                    }
+
+                    var auxFiles = GetAuxVmangosSavedVariablesFiles(root);
+                    string auxFile = null;
+                    string marketDb = null;
+                    string marketMeta = null;
+                    foreach (var candidate in auxFiles)
+                    {
+                        var text = File.ReadAllText(candidate, Encoding.UTF8);
+                        var db = ExtractLuaTableField(text, "marketDB");
+                        if (string.IsNullOrWhiteSpace(db)) continue;
+                        auxFile = candidate;
+                        marketDb = db;
+                        marketMeta = ExtractLuaTableField(text, "marketMeta") ?? "[\"marketMeta\"] = {}";
+                        break;
+                    }
+                    if (auxFile == null)
+                        throw new InvalidOperationException(
+                            "Nie znaleziono zapisanej marketDB AuxVmangos. Uruchom pełny MARKET/Search i wykonaj /reload, logout albo zamknij klienta, aby WoW zapisał SavedVariables.");
+
+                    string headSha = string.Empty;
+                    long runId = 0;
+                    var installedPath = Path.Combine(root, ".wow112_parallel_updater", "installed.json");
+                    if (File.Exists(installedPath))
+                    {
+                        var installed = AsDictionary(json.DeserializeObject(File.ReadAllText(installedPath, Encoding.UTF8)));
+                        headSha = GetString(installed, "head_sha");
+                        runId = GetLong(installed, "run_id");
+                    }
+
+                    var savedUtc = File.GetLastWriteTimeUtc(auxFile);
+                    var dump = "AVM_AH_MARKET_DUMP_V1\n" +
+                        "saved_variables_utc=" + savedUtc.ToString("o") + "\n" +
+                        "head_sha=" + headSha + "\n" +
+                        "run_id=" + runId + "\n" +
+                        "updater=" + UpdaterBuildInfo.Version + "\n\n" +
+                        marketMeta + "\n\n" + marketDb + "\n";
+                    var fullSha = Sha256Text(dump);
+                    var signature = fullSha.Substring(0, 12);
+                    var marker = "[ahdump:" + signature + "]";
+
+                    SetBusy(true, "Wysyłanie pełnej historii AH...");
+                    using (var client = CreateClient(reportToken))
+                    {
+                        var existing = await FindExistingIssueAsync(client, marker);
+                        if (existing > 0)
+                        {
+                            finalStatus = "Ten AH dump już istnieje jako GitHub Issue #" + existing + ".";
+                            Log(finalStatus);
+                            MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return;
+                        }
+
+                        const int ChunkChars = 45000;
+                        var chunks = Math.Max(1, (dump.Length + ChunkChars - 1) / ChunkChars);
+                        var body = new StringBuilder();
+                        body.AppendLine("## WoW112 AH Market Dump");
+                        body.AppendLine();
+                        body.AppendLine("Head SHA: `" + headSha + "`");
+                        body.AppendLine("Run ID: " + runId);
+                        body.AppendLine("SavedVariables UTC: " + savedUtc.ToString("o"));
+                        body.AppendLine("Payload SHA256: `" + fullSha + "`");
+                        body.AppendLine("Payload chars: " + dump.Length);
+                        body.AppendLine("Chunks: " + chunks);
+                        body.AppendLine();
+                        body.AppendLine("Contains only AuxVmangos `marketMeta` + full compact `marketDB` history. No account path, credentials or unrelated SavedVariables are uploaded.");
+                        body.AppendLine("`netDown` is a net supply-decrease proxy, not proof of a sale. Schema 2 appends depth5/depth10/depth20, seller count and units at floor.");
+                        body.AppendLine();
+                        body.AppendLine("If WoW is still open, use `/reload` immediately before sending so SavedVariables includes the newest in-memory market history.");
+                        body.AppendLine();
+                        body.AppendLine(marker);
+
+                        var payload = new Dictionary<string, object>();
+                        payload["title"] = "[AH-DUMP] " + ShortSha(headSha) + " " + savedUtc.ToString("yyyy-MM-dd HH:mm") + "Z " + marker;
+                        payload["body"] = body.ToString();
+                        long issueNumber;
+                        using (var request = new HttpRequestMessage(HttpMethod.Post, ApiRoot + "/issues"))
+                        {
+                            request.Content = new StringContent(json.Serialize(payload), Encoding.UTF8, "application/json");
+                            using (var response = await client.SendAsync(request))
+                            {
+                                var responseText = await response.Content.ReadAsStringAsync();
+                                if (!response.IsSuccessStatusCode)
+                                {
+                                    HandleAuthenticationFailure(response.StatusCode);
+                                    throw BuildIssueApiException(response.StatusCode, responseText);
+                                }
+                                issueNumber = GetLong(AsDictionary(json.DeserializeObject(responseText)), "number");
+                            }
+                        }
+
+                        for (var i = 0; i < chunks; i++)
+                        {
+                            var start = i * ChunkChars;
+                            var count = Math.Min(ChunkChars, dump.Length - start);
+                            var chunk = dump.Substring(start, count);
+                            var comment = new Dictionary<string, object>();
+                            comment["body"] = "AH dump chunk " + (i + 1) + "/" + chunks + "\n```text\n" + chunk + "\n```";
+                            using (var request = new HttpRequestMessage(HttpMethod.Post, ApiRoot + "/issues/" + issueNumber + "/comments"))
+                            {
+                                request.Content = new StringContent(json.Serialize(comment), Encoding.UTF8, "application/json");
+                                using (var response = await client.SendAsync(request))
+                                {
+                                    var responseText = await response.Content.ReadAsStringAsync();
+                                    if (!response.IsSuccessStatusCode)
+                                    {
+                                        HandleAuthenticationFailure(response.StatusCode);
+                                        throw BuildIssueApiException(response.StatusCode, responseText);
+                                    }
+                                }
+                            }
+                            if (i + 1 < chunks) await Task.Delay(100);
+                        }
+
+                        finalStatus = "AH Market Dump wysłany jako GitHub Issue #" + issueNumber + " (" + chunks + " części).";
+                        Log(finalStatus);
+                        MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    finalStatus = "Wysyłanie AH dump nie powiodło się";
+                    Log("BŁĄD AH dump: " + ex.Message);
                     MessageBox.Show(form, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 finally
@@ -534,6 +689,42 @@ namespace WoW112Updater
                 {
                     return "<AuxVmangos diagnostics read error: " + ex.Message + ">";
                 }
+            }
+
+            private static string ExtractLuaTableField(string text, string key)
+            {
+                if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(key)) return null;
+                var marker = "[\"" + key + "\"]";
+                var markerIndex = text.IndexOf(marker, StringComparison.Ordinal);
+                if (markerIndex < 0) return null;
+                var eq = text.IndexOf('=', markerIndex + marker.Length);
+                if (eq < 0) return null;
+                var open = text.IndexOf('{', eq + 1);
+                if (open < 0) return null;
+
+                var depth = 0;
+                var inString = false;
+                var escaped = false;
+                for (var i = open; i < text.Length; i++)
+                {
+                    var c = text[i];
+                    if (inString)
+                    {
+                        if (escaped) { escaped = false; continue; }
+                        if (c == '\\') { escaped = true; continue; }
+                        if (c == '"') inString = false;
+                        continue;
+                    }
+                    if (c == '"') { inString = true; continue; }
+                    if (c == '{') depth++;
+                    else if (c == '}')
+                    {
+                        depth--;
+                        if (depth == 0)
+                            return text.Substring(markerIndex, i - markerIndex + 1);
+                    }
+                }
+                return null;
             }
 
             private static string[] GetRecentDiagFiles(string root)

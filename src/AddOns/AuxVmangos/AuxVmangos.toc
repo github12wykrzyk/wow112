@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with vendor, live-DE and guarded live market-flip valuation/revalidation.
+## Notes: Original AUX Filter Builder-driven arbitrage plus guarded vendor/DE/flip and market history.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.17-live-market-flip
+## Version: 0.18-aux-filter-market-history
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

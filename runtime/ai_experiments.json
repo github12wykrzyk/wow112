@@ -2464,6 +2464,31 @@
       ],
       "package": null,
       "notes": "Use the same AUX-normalized record fields and item identity to construct signatures during AUX_ARB exact revalidation. This removes the cross-API signature mismatch while preserving existing fail-closed economics, wallet, session-limit and PlaceAuctionBid guards."
+    },
+    {
+      "id": "ah-aux-filter-history-dump",
+      "branch": "feature/ah-filter-history-dump",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge",
+        "ParallelUpdater"
+      ],
+      "dependencies": [
+        "ah-live-market-flip-signature-fix",
+        "ah-original-aux-fast-v1"
+      ],
+      "shared_resources": [
+        "Original AUX Search Filter Builder validators",
+        "AuxFastBridge full Search callback chain",
+        "AVM_DB marketDB SavedVariables history",
+        "Parallel updater GitHub Issues report token and UI"
+      ],
+      "status": "in_progress",
+      "observed_head": null,
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Expose the already-authoritative original AUX Search validator as the explicit AUX_ARB selection layer (including named/exact searches), extend compact PriceDB snapshots with market depth/liquidity fields and one-time 24->96 default retention migration, and add a separate updater AH Market Dump action that uploads only flushed marketMeta+marketDB in bounded GitHub Issue comments using the existing report token. No legacy AUX Auto Buy/Auto Bid path is re-enabled."
     }
   ]
 }
