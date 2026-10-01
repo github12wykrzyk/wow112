@@ -150,6 +150,7 @@ function lazyWarlockLoad.LoadParseWarlock()
 	lazyWarlock.meleeWeave = lazyWarlock.meleeWeave or {
 		lastMeleeSwingAt = nil,
 		lastWandShotAt = nil,
+		wandStartedAt = nil,
 		pendingAt = nil,
 		pendingBaseline = nil,
 		pendingTarget = nil,
@@ -162,6 +163,7 @@ function lazyWarlockLoad.LoadParseWarlock()
 		local s = lazyWarlock.meleeWeave
 		s.lastMeleeSwingAt = nil
 		s.lastWandShotAt = nil
+		s.wandStartedAt = nil
 		s.pendingAt = nil
 		s.pendingBaseline = nil
 		s.pendingTarget = nil
@@ -174,12 +176,20 @@ function lazyWarlockLoad.LoadParseWarlock()
 		s.pendingBaseline = nil
 		s.pendingTarget = nil
 		s.retryAt = nil
+		s.lastWandShotAt = nil
+		s.wandStartedAt = nil
 		-- Keep lastMeleeSwingAt: the player swing timer is not target-specific.
 	end
 
 	function lazyWarlock.OnMeleeWeaveSwing()
 		local s = lazyWarlock.meleeWeave
-		s.lastMeleeSwingAt = GetTime()
+		-- Self-hit events also include a few non-melee cases. Only accept one
+		-- while this weave owns an active melee lease.
+		if not s.pendingAt then return end
+		local slot = lazyWarlock.GetMeleeWeaveAttackSlot(true)
+		if slot and IsCurrentAction(slot) == 1 then
+			s.lastMeleeSwingAt = GetTime()
+		end
 	end
 
 	function lazyWarlock.GetMeleeWeaveAttackSlot(sayNothing)
@@ -221,10 +231,15 @@ function lazyWarlockLoad.LoadParseWarlock()
 	end
 
 	function lazyWarlock.MeleeWeaveTargetInRange(sayNothing)
-		local slot = lazyWarlock.GetMeleeWeaveAttackSlot(sayNothing)
-		if not slot then return false end
-		local inRange = IsActionInRange(slot)
-		return inRange == 1
+		-- Attack has no numeric range in its tooltip, so IsActionInRange(Attack)
+		-- is not a reliable melee-range oracle in 1.12. Use the 9.9 yd duel
+		-- interaction only as a coarse prefilter; the actual white hit/miss event
+		-- below is authoritative and a short lease recovers when the mob is 5-10 yd.
+		if not lazyWarlock.MeleeWeaveTargetAttackable() then return false end
+		if CheckInteractDistance then
+			return CheckInteractDistance("target", 3) == 1
+		end
+		return true
 	end
 
 	function lazyWarlock.MeleeWeaveSwingReady()
@@ -239,16 +254,44 @@ function lazyWarlockLoad.LoadParseWarlock()
 		if not msg then return end
 		local slot = lazyScript.GetShootSlot(true)
 		if not slot or IsAutoRepeatAction(slot) ~= 1 then return end
-		local shootName = lazyScript.GetActionNameFromTooltip(slot)
-		if shootName and string.find(msg, shootName, 1, true) then
-			lazyWarlock.meleeWeave.lastWandShotAt = GetTime()
+		-- While Shoot auto-repeat is actually active, a direct self-spell damage
+		-- event is our wand impact. Do not locale-match tooltip text: private 1.12
+		-- combat logs can phrase wand hits differently.
+		lazyWarlock.meleeWeave.lastWandShotAt = GetTime()
+	end
+
+	function lazyWarlock.MeleeWeaveRangedSpeed()
+		if UnitRangedDamage then
+			local speed = UnitRangedDamage("player")
+			if speed and speed > 0 then return speed end
 		end
+		return 2.0
+	end
+
+	function lazyWarlock.MeleeWeaveWandCycleReady(now, wandActive)
+		if not wandActive then return true end
+		local s = lazyWarlock.meleeWeave
+		if s.lastWandShotAt and now - s.lastWandShotAt >= 0 and now - s.lastWandShotAt <= 0.30 then
+			return true
+		end
+		-- Fail-safe for servers/locales where wand damage does not reach the
+		-- expected chat event: wait one full ranged cycle plus latency instead of
+		-- blocking melee weaving forever.
+		local base = s.lastWandShotAt or s.wandStartedAt
+		if base then
+			return now - base >= lazyWarlock.MeleeWeaveRangedSpeed() + 0.15
+		end
+		return false
 	end
 
 	function lazyWarlock.MeleeWeaveSetAttack(enabled, attackSlot)
 		if not attackSlot then return end
 		local active = IsCurrentAction(attackSlot) == 1
-		if active ~= enabled then AttackTarget() end
+		if enabled then
+			if not active then AttackTarget() end
+		elseif active then
+			if StopAttack then StopAttack() else AttackTarget() end
+		end
 	end
 
 	function lazyWarlock.MeleeWeaveSetWand(enabled, sayNothing)
@@ -261,7 +304,10 @@ function lazyWarlockLoad.LoadParseWarlock()
 			return false
 		end
 		local active = IsAutoRepeatAction(slot) == 1
-		if active ~= enabled then UseAction(slot) end
+		if active ~= enabled then
+			UseAction(slot)
+			if enabled then lazyWarlock.meleeWeave.wandStartedAt = GetTime() end
+		end
 		return true
 	end
 
@@ -306,7 +352,7 @@ function lazyWarlockLoad.LoadParseWarlock()
 				s.pendingAt = nil
 				s.pendingBaseline = nil
 				s.pendingTarget = nil
-				s.retryAt = now + 0.55
+				s.retryAt = now + 0.75
 				if not moving then lazyWarlock.MeleeWeaveSetWand(true, true) end
 			else
 				lazyWarlock.MeleeWeaveSetWand(false, true)
@@ -314,10 +360,12 @@ function lazyWarlockLoad.LoadParseWarlock()
 			end
 		else
 			local canTry = (not s.retryAt or now >= s.retryAt) and inRange and lazyWarlock.MeleeWeaveSwingReady()
-			-- When wanding, cut over only immediately after a confirmed wand shot;
-			-- this avoids clipping a Shoot wind-up just because the melee timer is ready.
-			local recentWandShot = s.lastWandShotAt and (now - s.lastWandShotAt >= 0) and (now - s.lastWandShotAt <= 0.22)
-			if canTry and (moving or recentWandShot or IsAutoRepeatAction(lazyScript.GetShootSlot(true)) ~= 1) then
+			local shootSlot = lazyScript.GetShootSlot(true)
+			local wandActive = shootSlot and IsAutoRepeatAction(shootSlot) == 1
+			-- Stationary wanding cuts over just after a confirmed shot. A full-cycle
+			-- timing fallback prevents combat-log localization from disabling weaving.
+			local safeWandCut = moving or lazyWarlock.MeleeWeaveWandCycleReady(now, wandActive)
+			if canTry and safeWandCut then
 				lazyWarlock.MeleeWeaveSetWand(false, true)
 				lazyWarlock.MeleeWeaveSetAttack(true, attackSlot)
 				s.pendingAt = now
