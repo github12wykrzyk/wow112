@@ -2169,7 +2169,7 @@
         "Vanilla FrameScript DoEmote(STAND)",
         "PLAYER_LOGIN / PLAYER_ENTERING_WORLD"
       ],
-      "status": "failed_game_test",
+      "status": "rejected",
       "observed_head": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
       "verified_commit": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
       "tests": [
@@ -2223,7 +2223,7 @@
         "Vanilla StaticPopup CAMP OnHide -> CancelLogout",
         "Vanilla Jump / MoveForwardStart / MoveForwardStop movement bindings"
       ],
-      "status": "preflight_passed",
+      "status": "awaiting_ci",
       "observed_head": "cab9d691f5f2011594427e387ccbf9e32ce6bb78",
       "verified_commit": "cab9d691f5f2011594427e387ccbf9e32ce6bb78",
       "tests": [
@@ -2233,10 +2233,17 @@
           "commit": "cab9d691f5f2011594427e387ccbf9e32ce6bb78",
           "date": "2026-10-01",
           "evidence": "Parallel feature preflight run 36869091323 passed on exact feature SHA cab9d691f5f2011594427e387ccbf9e32ce6bb78."
+        },
+        {
+          "kind": "ci",
+          "result": "failed",
+          "commit": "27bfe353d31e5f0d24807cadfcbeb1d9b200e274",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36869510533 failed only at tools/ai_experiments.py validation because the ledger used unsupported status values; source/build logic from the prior exact feature SHA had already passed preflight."
         }
       ],
       "package": null,
-      "notes": "SummonScout 1.51 follow-up. Reacts to actual PLAYER_CAMPING, closes the real CAMP StaticPopup (whose stock 1.12.1 OnHide calls CancelLogout), waits for LOGOUT_CANCEL ACK, uses one Jump and one later forward start/stop pulse as movement-side fallback, and removes repeated STAND emote spam. Integration/package pending."
+      "notes": "SummonScout 1.51 follow-up. Functional source SHA cab9d691f5f2011594427e387ccbf9e32ce6bb78 passed preflight. This ledger correction uses supported experiment states before re-running exact-SHA preflight; integration/package pending."
     }
   ]
 }
