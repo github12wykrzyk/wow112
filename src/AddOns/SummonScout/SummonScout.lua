@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.53"
+local ADDON_VERSION = "1.54"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -2854,9 +2854,46 @@ frame:RegisterEvent("SPELLCAST_FAILED")
 frame:RegisterEvent("SPELLCAST_INTERRUPTED")
 frame:RegisterEvent("UI_ERROR_MESSAGE")
 frame:RegisterEvent("CHAT_MSG_SPELL_FAILED_LOCALPLAYER")
+-- WoW 1.12 embeds Lua 5.0, where one closure may capture at most 32 upvalues.
+-- Keep the large OnEvent dispatcher on a single helper-table upvalue instead
+-- of capturing every local helper function independently.
+local EventAPI = {
+    chat = chat,
+    now = now,
+    trim = trim,
+    lower = lower,
+    normalizeMessage = normalizeMessage,
+    servedLocationLabel = servedLocationLabel,
+    whisperInviteDecision = whisperInviteDecision,
+    samePlayer = samePlayer,
+    isInGroup = isInGroup,
+    reportMaster = reportMaster,
+    guiRefreshSafe = guiRefreshSafe,
+    currentTradePartner = currentTradePartner,
+    beginTrade = beginTrade,
+    finishTrade = finishTrade,
+    queuePartySummon = queuePartySummon,
+    notePendingManualInvite = notePendingManualInvite,
+    syncPartyRoster = syncPartyRoster,
+    summonDestinationLabel = summonDestinationLabel,
+    finishActiveSummon = finishActiveSummon,
+    retryActiveSummon = retryActiveSummon,
+    markActiveSummonStarted = markActiveSummonStarted,
+    tryWhisperInvite = tryWhisperInvite,
+    setDefaults = setDefaults,
+    loginRecoveryActive = loginRecoveryActive,
+    stopLoginRecovery = stopLoginRecovery,
+    startLoginRecovery = startLoginRecovery,
+    isIdleLogoutMessage = isIdleLogoutMessage,
+    clearStartupIdleLogout = clearStartupIdleLogout,
+    processLoginRecovery = processLoginRecovery,
+    refreshShardGuardState = refreshShardGuardState,
+    handleChannelMessage = handleChannelMessage,
+}
+
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
-        setDefaults()
+        EventAPI.setDefaults()
         SS.loginRecoveryArmed = true
         W112_AUTOSUMMON_REQUEST = ""
         W112_AUTOSUMMON_REQUEST_SEQ = ""
@@ -2867,11 +2904,11 @@ frame:SetScript("OnEvent", function()
         W112_AUTOSUMMON_NATIVE_STATUS = "idle"
         W112_AUTOSUMMON_NATIVE_TARGET = ""
         W112_AUTOSUMMON_NATIVE_SLOT = ""
-        syncPartyRoster(true)
-        SS.nextRosterPollAt = now() + 0.75
-        refreshShardGuardState(true)
-        chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
-            .. "; serving=" .. servedLocationLabel()
+        EventAPI.syncPartyRoster(true)
+        SS.nextRosterPollAt = EventAPI.now() + 0.75
+        EventAPI.refreshShardGuardState(true)
+        EventAPI.chat("v" .. ADDON_VERSION .. " loaded; watching #" .. (SummonScoutDB.channel or "world")
+            .. "; serving=" .. EventAPI.servedLocationLabel()
             .. "; logged=" .. tostring(SummonScoutDB.stats.total or 0))
         return
     end
@@ -2879,23 +2916,23 @@ frame:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" then
         if SS.loginRecoveryArmed then
             SS.loginRecoveryArmed = false
-            startLoginRecovery()
-            processLoginRecovery()
+            EventAPI.startLoginRecovery()
+            EventAPI.processLoginRecovery()
         end
         return
     end
 
     if event == "LOGOUT_CANCEL" then
-        if loginRecoveryActive() and SS.loginRecoveryAttempted then
-            stopLoginRecovery(true)
+        if EventAPI.loginRecoveryActive() and SS.loginRecoveryAttempted then
+            EventAPI.stopLoginRecovery(true)
             if SummonScoutDB.debug and SS.loginRecoveryIdleSeen then
-                chat("startup idle logout cancel ACK")
+                EventAPI.chat("startup idle logout cancel ACK")
             end
         end
         return
     end
 
-    if refreshShardGuardState(false) then
+    if EventAPI.refreshShardGuardState(false) then
         return
     end
 
@@ -2904,27 +2941,27 @@ frame:SetScript("OnEvent", function()
     end
 
     if event == "UI_ERROR_MESSAGE" or event == "CHAT_MSG_SPELL_FAILED_LOCALPLAYER" then
-        if SS.summonActiveName and (now() - (SS.lastSummonRequestAt or -100000)) < 6 then
-            SS.lastSummonError = trim(arg1 or "spell rejected")
-            chat("summon rejected -> " .. SS.lastSummonError)
-            guiRefreshSafe()
+        if SS.summonActiveName and (EventAPI.now() - (SS.lastSummonRequestAt or -100000)) < 6 then
+            SS.lastSummonError = EventAPI.trim(arg1 or "spell rejected")
+            EventAPI.chat("summon rejected -> " .. SS.lastSummonError)
+            EventAPI.guiRefreshSafe()
         end
         return
     end
 
     if event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
-        SS.partySyncAt = now() + 0.20
+        SS.partySyncAt = EventAPI.now() + 0.20
         return
     end
 
     if event == "CHAT_MSG_SYSTEM" then
-        local line = trim(arg1 or "")
+        local line = EventAPI.trim(arg1 or "")
 
         -- This is the exact Vanilla inactivity warning from GlobalStrings.lua.
         -- React once to the idle condition itself instead of repeatedly
         -- cancelling PLAYER_CAMPING, which caused the visible message storm.
-        if loginRecoveryActive() and isIdleLogoutMessage(line) then
-            clearStartupIdleLogout("IDLE_MESSAGE")
+        if EventAPI.loginRecoveryActive() and EventAPI.isIdleLogoutMessage(line) then
+            EventAPI.clearStartupIdleLogout("IDLE_MESSAGE")
             return
         end
 
@@ -2932,10 +2969,10 @@ frame:SetScript("OnEvent", function()
         -- InviteByName path. Track the client's confirmation and reconcile it
         -- against the real roster until that player actually joins.
         local _, _, invitedName = string.find(line, "^You have invited (.+) to join your group%.?$")
-        invitedName = trim(invitedName or "")
+        invitedName = EventAPI.trim(invitedName or "")
         if invitedName ~= "" then
-            notePendingManualInvite(invitedName)
-            SS.partySyncAt = now() + 0.20
+            EventAPI.notePendingManualInvite(invitedName)
+            SS.partySyncAt = EventAPI.now() + 0.20
             return
         end
 
@@ -2946,13 +2983,13 @@ frame:SetScript("OnEvent", function()
         if not joinedName then
             _, _, joinedName = string.find(line, "^(.+) joins the party%.?$")
         end
-        joinedName = trim(joinedName or "")
-        if joinedName ~= "" and not samePlayer(joinedName, UnitName("player")) then
+        joinedName = EventAPI.trim(joinedName or "")
+        if joinedName ~= "" and not EventAPI.samePlayer(joinedName, UnitName("player")) then
             if SummonScoutDB.partyAutoSummon then
-                queuePartySummon(joinedName)
+                EventAPI.queuePartySummon(joinedName)
             end
-            SS.pendingManualInvites[lower(joinedName)] = nil
-            SS.partySyncAt = now() + 0.20
+            SS.pendingManualInvites[EventAPI.lower(joinedName)] = nil
+            SS.partySyncAt = EventAPI.now() + 0.20
         end
         return
     end
@@ -2960,24 +2997,24 @@ frame:SetScript("OnEvent", function()
     if event == "CHAT_MSG_WHISPER" then
         if not SummonScoutDB.enabled or not SummonScoutDB.whisperAutoInvite then return end
         local message = arg1 or ""
-        local sender = trim(arg2 or "")
-        if sender == "" or samePlayer(sender, UnitName("player")) or isInGroup(sender) then return end
-        local accept, loc, reason = whisperInviteDecision(message)
+        local sender = EventAPI.trim(arg2 or "")
+        if sender == "" or EventAPI.samePlayer(sender, UnitName("player")) or EventAPI.isInGroup(sender) then return end
+        local accept, loc, reason = EventAPI.whisperInviteDecision(message)
         if accept then
-            local invited, why = tryWhisperInvite(sender, loc)
+            local invited, why = EventAPI.tryWhisperInvite(sender, loc)
             if not invited and SummonScoutDB.debug then
-                chat("whisper invite suppressed -> " .. sender .. " [" .. tostring(why) .. "]")
+                EventAPI.chat("whisper invite suppressed -> " .. sender .. " [" .. tostring(why) .. "]")
             end
         elseif SummonScoutDB.debug then
-            chat("whisper ignore -> " .. sender .. " [" .. tostring(reason) .. "]")
+            EventAPI.chat("whisper ignore -> " .. sender .. " [" .. tostring(reason) .. "]")
         end
         return
     end
 
     if event == "SPELLCAST_START" then
-        local spell = normalizeMessage(arg1 or "")
+        local spell = EventAPI.normalizeMessage(arg1 or "")
         if SS.summonActiveName and spell == "ritual of summoning" then
-            markActiveSummonStarted("event")
+            EventAPI.markActiveSummonStarted("event")
         end
         return
     end
@@ -2986,36 +3023,36 @@ frame:SetScript("OnEvent", function()
         if SS.summonActiveName and SS.summonActiveStarted then
             local completedName = SS.summonActiveName
             if SummonScoutDB.debug then
-                chat("summon cast completed -> " .. completedName)
+                EventAPI.chat("summon cast completed -> " .. completedName)
             end
             if SummonScoutDB.masterReportLifecycle then
-                reportMaster("SUMMON OK", completedName .. " -> " .. summonDestinationLabel())
+                EventAPI.reportMaster("SUMMON OK", completedName .. " -> " .. EventAPI.summonDestinationLabel())
             end
-            finishActiveSummon(completedName)
+            EventAPI.finishActiveSummon(completedName)
         end
         return
     end
 
     if event == "SPELLCAST_FAILED" or event == "SPELLCAST_INTERRUPTED" then
         if SS.summonActiveName then
-            local spell = normalizeMessage(arg1 or "")
+            local spell = EventAPI.normalizeMessage(arg1 or "")
             if spell == "" or spell == "ritual of summoning" then
                 if SummonScoutDB.debug then
-                    chat("summon cast retry -> " .. SS.summonActiveName)
+                    EventAPI.chat("summon cast retry -> " .. SS.summonActiveName)
                 end
-                retryActiveSummon(0.75)
+                EventAPI.retryActiveSummon(0.75)
             end
         end
         return
     end
 
     if event == "TRADE_REQUEST" then
-        SS.tradeRequestedBy = trim(arg1 or "")
+        SS.tradeRequestedBy = EventAPI.trim(arg1 or "")
         return
     end
 
     if event == "TRADE_SHOW" then
-        beginTrade()
+        EventAPI.beginTrade()
         return
     end
 
@@ -3024,7 +3061,7 @@ frame:SetScript("OnEvent", function()
             SS.tradeTargetMoney = GetTargetTradeMoney() or SS.tradeTargetMoney or 0
         end
         if not SS.tradePartner or SS.tradePartner == "" then
-            SS.tradePartner = currentTradePartner()
+            SS.tradePartner = EventAPI.currentTradePartner()
         end
         return
     end
@@ -3035,18 +3072,18 @@ frame:SetScript("OnEvent", function()
             SS.tradeTargetMoney = GetTargetTradeMoney() or SS.tradeTargetMoney or 0
         end
         if not SS.tradePartner or SS.tradePartner == "" then
-            SS.tradePartner = currentTradePartner()
+            SS.tradePartner = EventAPI.currentTradePartner()
         end
         return
     end
 
     if event == "TRADE_CLOSED" then
-        finishTrade()
+        EventAPI.finishTrade()
         return
     end
 
     if event == "CHAT_MSG_CHANNEL" then
-        handleChannelMessage(arg1, arg2, arg9, arg4)
+        EventAPI.handleChannelMessage(arg1, arg2, arg9, arg4)
         return
     end
 end)

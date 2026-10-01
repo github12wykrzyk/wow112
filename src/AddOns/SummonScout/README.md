@@ -573,3 +573,15 @@ The new startup recovery:
 Evidence used for this correction:
 - Vanilla 1.12.1 FrameXML defines `IDLE_MESSAGE`, `autoClearAFK`, the `/afk` handler as `SendChatMessage(msg, "AFK")`, and CAMP `OnHide -> CancelLogout()`.
 - vMaNGOS chat handling toggles AFK when an empty AFK chat packet is received, matching the stock `/afk` path.
+
+
+## 1.54 WoW 1.12 Lua upvalue-limit fix
+
+The 1.53 package could pass repository/build/package CI but fail while loading in the actual 1.12.1 client with:
+`SummonScout.lua:3049: too many upvalues (limit=32)`.
+
+Root cause: the large anonymous `OnEvent` closure directly referenced more than the Lua 5.0 closure upvalue budget after the idle-recovery helpers were added. Because addon files are packaged as source, the existing CI did not compile them with the client's Lua limit.
+
+1.54 preserves the same event behavior but routes local helper calls through one `EventAPI` table captured by the callback. This reduces the callback from dozens of independent helper upvalues to a small fixed set.
+
+A new `tools/verify_summonscout_lua_upvalues.py` gate is also part of Parallel feature preflight. It checks the `OnEvent` and `OnUpdate` callback budgets with headroom, so this client-load failure is caught before integration.
