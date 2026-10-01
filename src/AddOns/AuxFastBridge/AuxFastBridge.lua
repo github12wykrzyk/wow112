@@ -1,4 +1,4 @@
--- AuxFastBridge v2.5 hard-stop aware
+-- AuxFastBridge v2.6 WoW-1.12 upvalue-safe hard-stop
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -34,8 +34,6 @@ local gateBlockedChecks = 0
 local pauseRequested = false
 local pausePage = -1
 local resumeRequested = false
-local hardStopRequested = false
-local abortActiveScan = nil
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -142,7 +140,7 @@ end
 -- exact request, rather than treating duplicate UI events as page completion.
 QueryAuctionItems = function(...)
 	local a = arg or {}
-	if busy > 0 and (hardStopRequested or avm_hard_stopped()) then
+	if busy > 0 and avm_hard_stopped() then
 		out("QUERY_SUPPRESSED reason=hard-stop page=" .. tostring(tonumber(a[7]) or -1))
 		return
 	end
@@ -239,7 +237,6 @@ local function install_scan_hook()
 			released = true
 			if busy > 0 then busy = busy - 1 end
 			if busy == 0 then
-				hardStopRequested = false
 				AuxFastBridgeDB.lastUiEvents = uiEvents
 				AuxFastBridgeDB.lastQueries = queryCount
 				AuxFastBridgeDB.lastNativeResults = nativeResults
@@ -341,16 +338,8 @@ local function install_scan_hook()
 	-- has been scanned. Abort at the next submit boundary so upstream Search can
 	-- save a correct continuation without invalidating the current scan stack.
 	local originalSubmitQuery = submit_query
-	abortActiveScan = function()
-		local state = get_state()
-		if state and state.id then
-			abort(state.id)
-			return true
-		end
-		return false
-	end
 	submit_query = function()
-		if hardStopRequested or avm_hard_stopped() then
+		if avm_hard_stopped() then
 			local state = get_state()
 			if state and state.id then abort(state.id) end
 			return
@@ -372,14 +361,14 @@ if not install_scan_hook() then
 end
 
 function AUXFAST_HardStop()
-	hardStopRequested = true
 	resumeRequested = false
 	pauseRequested = false
 	pausePage = -1
 	local aborted = false
-	if abortActiveScan then
-		local ok, value = pcall(abortActiveScan)
-		aborted = ok and value and true or false
+	local state = get_state()
+	if state and state.id then
+		local ok = pcall(abort, state.id)
+		aborted = ok and true or false
 	end
 	out("AH_HARD_STOP bridge busy=" .. tostring(busy > 0) .. " aborted=" .. tostring(aborted))
 	return true
@@ -482,4 +471,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v2.5 loaded: hard-stop aware AUX Search + midscan DE pause/resume + continuous Search; hook=" .. tostring(hookInstalled))
+out("v2.6 loaded: WoW-1.12 upvalue-safe single hard-stop gate + midscan DE pause/resume + continuous Search; hook=" .. tostring(hookInstalled))

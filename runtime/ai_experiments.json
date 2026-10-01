@@ -3369,6 +3369,27 @@
         "artifact_id": 11194617951
       },
       "notes": "Fixes the bootstrap deadlock reported from the updater UI: active clients still using worker v1 prevent the v2 ReloadUI command, while the pending v2 runtime cannot replace loaded DLLs until those clients exit. If any target PID is not worker protocol v2, the button performs a one-time graceful CloseMainWindow migration for the entire preflighted process set, waits up to 35s without Kill(), then lets the existing pending-runtime finalizer apply v2. Subsequent launches use normal ReloadUI+ACK+Kill."
+    },
+    {
+      "id": "auxfast-upvalue-limit-fix",
+      "branch": "feature/auxfast-upvalue-fix",
+      "modules": [
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-hard-stop-manual-market"
+      ],
+      "shared_resources": [
+        "WoW 1.12 Lua 32-upvalue function limit",
+        "aux.core.scan submit_query/abort state",
+        "AVM.hardStop global automation gate"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "c133fa588f43f8b4aca74e66ed450df92d56f689",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Runtime screenshot reports Interface/AddOns/AuxFastBridge/AuxFastBridge.lua:366 too many upvalues (limit=32). The v2.5 hard-stop patch added bridge-local hardStopRequested and abortActiveScan captures to install_scan_hook, pushing the WoW 1.12 Lua closure over its 32-upvalue ceiling. v2.6 removes both extra captured locals and uses AVM.hardStop as the sole persistent gate; AUXFAST_HardStop aborts the active scan directly through get_state()/abort(). Exact installed gameplay SHA from the screenshot is not independently established, so no game result is recorded."
     }
   ]
 }

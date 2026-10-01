@@ -2,7 +2,7 @@
 ## Title: Aux FAST Bridge
 ## Notes: Original AUX fast Search bridge with global AVM hard-stop, mid-scan DE pause/resume and resumable Search.
 ## Author: github12wykrzyk/wow112
-## Version: 2.5
+## Version: 2.6
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
