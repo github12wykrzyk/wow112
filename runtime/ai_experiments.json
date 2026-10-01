@@ -2303,6 +2303,32 @@
       "tests": [],
       "package": null,
       "notes": "SummonScout 1.53 replaces repeated CAMP cancellation with a single IDLE_MESSAGE-driven AFK clear + one CAMP cancel. Feature preflight/package/game evidence pending."
+    },
+    {
+      "id": "ah-live-market-flip-v1",
+      "branch": "feature/ah-live-market-flip-v1",
+      "modules": [
+        "OriginalAux",
+        "AuxVmangos",
+        "AuxFastBridge",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "ah-original-aux-fast-v1"
+      ],
+      "shared_resources": [
+        "Original AUX full Search auction callbacks",
+        "current full-scan per-item commodity order book",
+        "AuxVmangos guarded query scheduler and exact auction revalidation",
+        "PlaceAuctionBid + money-delta confirmation",
+        "AuxFastBridge v2.0 pause/resume scan-cache continuity"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "68854d2c5dce74a240b6b9d2eb2f5a11cd48c487",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Conservative live commodity flip route. Only non-grey stackable items are eligible. Full scan builds current per-item price levels; candidate is cheapest unit-price auction. Exit floor excludes the candidate and requires visible depth >= max(configured flip depth, candidate count). Default target is floor-1c, 5% AH cut, 25% safety margin, min profit 10s, max buyout 5g. Before LIVE purchase it re-queries the exact item across all filtered pages, requires the original candidate signature to still exist, rebuilds live depth, recomputes profitability, then exact-revalidates the auction. Fail closed on race/timeout/depth loss."
     }
   ]
 }

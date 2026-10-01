@@ -1,3 +1,32 @@
+# AuxVmangos 0.17 — live market flip
+
+Adds a conservative commodity flip route on top of the validated original AUX full-market scan.
+
+The flip engine only considers non-grey stackable items (`max_stack > 1`). During the full AUX scan it builds a current order book per item ID and considers the cheapest unit-price auction as the entry candidate. The reference exit price excludes that auction and must have enough visible supply to cover `max(flipdepth, candidate stack count)` units.
+
+Default valuation:
+- `flipdepth = 5` units;
+- target relist price = current depth floor minus 1 copper;
+- AH cut = 5%;
+- safety margin = 25%, so entry price must be <= 75% of net exit value;
+- minimum expected profit = 10s;
+- maximum purchase = 5g.
+
+Before any LIVE flip purchase the addon re-queries that exact item by name across every result page, rebuilds the item order book, requires the original candidate auction to still exist, recalculates depth/net exit/margin, then performs one final exact-auction revalidation before `PlaceAuctionBid`. Any missing depth, moved auction, timeout, wallet/session-limit failure or changed margin fails closed.
+
+Commands:
+- `/avm auxarb flip on|off`
+- `/avm auxarb flipmin 10s`
+- `/avm auxarb flipmax 5g`
+- `/avm auxarb flipdepth 5`
+- `/avm auxarb flipcut 5`
+- `/avm auxarb flipmargin 25`
+- `/avm auxarb status`
+
+Vendor and live-DE routes remain intact. Aux FAST Bridge 2.0 already preserves full-scan caches across guarded vendor pause/resume cycles.
+
+---
+
 # AuxVmangos 0.16 — live depth-3 disenchant arbitrage
 
 Disenchant purchases no longer depend on AUX historical material prices. A completed original AUX full Search builds a current-scan order book for every Vanilla enchanting material. A material price is the third-cheapest unit level by default: the lowest BO/unit level at which cumulative visible supply reaches at least 3 units.

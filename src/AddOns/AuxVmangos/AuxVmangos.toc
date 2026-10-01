@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with grey-safe vendor path and live depth-3 disenchant EV/revalidation.
+## Notes: Original AUX arbitrage with vendor, live-DE and guarded live market-flip valuation/revalidation.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.16-live-de-depth3
+## Version: 0.17-live-market-flip
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
