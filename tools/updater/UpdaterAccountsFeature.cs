@@ -275,6 +275,7 @@ namespace WoW112Updater
                 };
                 var selectAll = new Button { Text = "Zaznacz wszystkie", Location = new Point(14, 414), Size = new Size(138, 34) };
                 var clearAll = new Button { Text = "Wyczyść", Location = new Point(160, 414), Size = new Size(92, 34) };
+                var coordinator = new Button { Text = "SLAVE COORDINATOR", Location = new Point(492, 414), Size = new Size(210, 34) };
                 var launchSelected = new Button { Text = "URUCHOM ZAZNACZONE", Location = new Point(716, 414), Size = new Size(190, 34) };
                 var launchAll = new Button { Text = "URUCHOM WSZYSTKIE", Location = new Point(914, 414), Size = new Size(160, 34) };
                 var close = new Button { Text = "Zamknij", Location = new Point(1082, 414), Size = new Size(134, 34) };
@@ -287,7 +288,7 @@ namespace WoW112Updater
                 };
                 dialog.Controls.AddRange(new Control[] {
                     info, accountsHeader, backgroundSoundHeader, autoFirstCharacterHeader, statesHeader,
-                    accounts, backgroundSound, autoFirstCharacter, states, selectAll, clearAll, launchSelected, launchAll, close, footer
+                    accounts, backgroundSound, autoFirstCharacter, states, selectAll, clearAll, coordinator, launchSelected, launchAll, close, footer
                 });
 
                 var accountByIndex = new List<WowAccount>();
@@ -352,6 +353,7 @@ namespace WoW112Updater
                 {
                     selectAll.Enabled = enabled;
                     clearAll.Enabled = enabled;
+                    coordinator.Enabled = enabled;
                     backgroundSound.Enabled = enabled;
                     autoFirstCharacter.Enabled = enabled;
                     launchSelected.Enabled = enabled;
@@ -368,6 +370,7 @@ namespace WoW112Updater
                     for (int i = 0; i < accounts.Items.Count; i++) accounts.SetItemChecked(i, false);
                 };
                 close.Click += delegate { if (!multiboxRunning) dialog.Close(); };
+                coordinator.Click += delegate { if (!multiboxRunning) ShowSummonCoordinator(dialog); };
 
                 launchSelected.Click += async delegate
                 {

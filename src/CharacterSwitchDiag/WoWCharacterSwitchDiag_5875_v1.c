@@ -30,6 +30,34 @@
 #define SELECT_SETTLE_MS 350u
 #define ENTER_TIMEOUT_MS 30000u
 #define FAST_TIMEOUT_MS 45000u
+#define COMBAT_POLL_MS 250u
+#define WORKER_MAGIC 0x53323157u
+#define WORKER_VERSION 1u
+
+enum {
+    WORKER_INIT=0, WORKER_IDLE=1, WORKER_COMBAT_BLOCKED=2, WORKER_SWITCHING=3,
+    WORKER_READY=4, WORKER_FAILED=5, WORKER_BUSY=6, WORKER_WAIT_WORLD=7,
+    WORKER_OFFLINE=8
+};
+
+typedef struct WorkerMapV1 {
+    DWORD magic;
+    DWORD version;
+    DWORD pid;
+    volatile DWORD heartbeat_tick;
+    volatile DWORD command_seq;
+    volatile DWORD command_slot;
+    volatile DWORD ack_seq;
+    volatile DWORD state;
+    volatile DWORD phase;
+    volatile DWORD target_slot;
+    volatile DWORD in_world;
+    volatile DWORD combat;
+    volatile DWORD error;
+    volatile DWORD elapsed_ms;
+    volatile DWORD current_slot;
+    volatile DWORD last_event_tick;
+} WorkerMapV1;
 
 typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
 typedef const char* (__fastcall *FrameScriptGetTextFn)(const char*,int,DWORD);
@@ -48,6 +76,10 @@ static volatile DWORD g_phase=PHASE_IDLE,g_targetSlot=0,g_elapsedToGlue=0,g_elap
 static volatile DWORD g_lastError=0,g_world=0,g_glueVisible=0,g_fast=0;
 static UINT_PTR g_timer=0;
 static DWORD g_startedAt=0,g_glueAt=0,g_enterIssuedAt=0,g_lastUiRefresh=0,g_lastWorld=0;
+static HANDLE g_workerMapHandle=0;
+static WorkerMapV1 *g_workerMap=0;
+static DWORD g_workerSeenSeq=0,g_workerState=WORKER_INIT,g_workerLastState=0xFFFFFFFFu;
+static DWORD g_currentSlot=0,g_combat=0,g_lastCombatProbe=0;
 static W112_ControlSettingV1 g_settings[7];
 static DWORD g_descReady=0;
 int _fltused=0;
@@ -56,6 +88,53 @@ static DWORD rd32(DWORD a){return *(volatile DWORD*)a;}
 static char *app(char*p,const char*s){while(s&&*s)*p++=*s++;return p;}
 static char *appu(char*p,DWORD v){char t[16];int n=0;if(!v){*p++='0';return p;}while(v&&n<15){t[n++]=(char)('0'+v%10);v/=10;}while(n)*p++=t[--n];return p;}
 static int eq(const char*a,const char*b){if(!a||!b)return 0;while(*a&&*b){if(*a++!=*b++)return 0;}return *a==0&&*b==0;}
+
+static void worker_log_event(const char*event,DWORD now)
+{
+    HANDLE h;DWORD wr=0,pid=GetCurrentProcessId();char name[96],b[512],*p=name,*q=b;
+    p=app(p,"SummonWorker_");p=appu(p,pid);p=app(p,".log");*p=0;
+    q=app(q,event);q=app(q," tick=");q=appu(q,now);
+    q=app(q," request_id=");q=appu(q,g_workerMap?g_workerMap->command_seq:0);
+    q=app(q," ack=");q=appu(q,g_workerMap?g_workerMap->ack_seq:0);
+    q=app(q," slot=");q=appu(q,g_workerMap?g_workerMap->command_slot:0);
+    q=app(q," state=");q=appu(q,g_workerState);
+    q=app(q," phase=");q=appu(q,g_phase);
+    q=app(q," world=");q=appu(q,g_world);
+    q=app(q," combat=");q=appu(q,g_combat);
+    q=app(q," err=");q=appu(q,g_lastError);
+    q=app(q," elapsed_ms=");q=appu(q,g_startedAt?now-g_startedAt:g_elapsedTotal);
+    q=app(q,"\r\n");*q=0;
+    h=CreateFileA(name,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(h==INVALID_HANDLE_VALUE)return;
+    SetFilePointer(h,0,NULL,FILE_END);WriteFile(h,b,(DWORD)(q-b),&wr,NULL);CloseHandle(h);
+}
+
+static void init_worker_map(void)
+{
+    char name[96],*p=name;DWORD pid=GetCurrentProcessId();
+    p=app(p,"Local\\WoW112_SummonWorker_");p=appu(p,pid);*p=0;
+    g_workerMapHandle=CreateFileMappingA(INVALID_HANDLE_VALUE,NULL,PAGE_READWRITE,0,sizeof(WorkerMapV1),name);
+    if(!g_workerMapHandle)return;
+    g_workerMap=(WorkerMapV1*)MapViewOfFile(g_workerMapHandle,FILE_MAP_ALL_ACCESS,0,0,sizeof(WorkerMapV1));
+    if(!g_workerMap){CloseHandle(g_workerMapHandle);g_workerMapHandle=0;return;}
+    g_workerMap->magic=WORKER_MAGIC;g_workerMap->version=WORKER_VERSION;g_workerMap->pid=pid;
+    g_workerMap->heartbeat_tick=0;g_workerMap->command_seq=0;g_workerMap->command_slot=0;g_workerMap->ack_seq=0;
+    g_workerMap->state=WORKER_INIT;g_workerMap->phase=PHASE_IDLE;g_workerMap->target_slot=0;g_workerMap->in_world=g_world;
+    g_workerMap->combat=0;g_workerMap->error=0;g_workerMap->elapsed_ms=0;g_workerMap->current_slot=0;
+    g_workerMap->last_event_tick=GetTickCount();
+    worker_log_event("WORKER_MAP_READY",GetTickCount());
+}
+
+static void shutdown_worker_map(void)
+{
+    if(g_workerMap){
+        g_workerState=WORKER_OFFLINE;g_workerMap->state=WORKER_OFFLINE;
+        g_workerMap->heartbeat_tick=GetTickCount();g_workerMap->last_event_tick=g_workerMap->heartbeat_tick;
+        worker_log_event("WORKER_OFFLINE",g_workerMap->heartbeat_tick);
+        UnmapViewOfFile(g_workerMap);g_workerMap=0;
+    }
+    if(g_workerMapHandle){CloseHandle(g_workerMapHandle);g_workerMapHandle=0;}
+}
 
 static void log_line(const char*event,DWORD now,DWORD value)
 {
@@ -120,6 +199,37 @@ static int bridge_state(void)
 {
     HMODULE h=GetModuleHandleA("WoWAutoLoginBridge_5875_v1.dll");
     BridgeStateFn fn;if(!h)return -99;fn=(BridgeStateFn)GetProcAddress(h,"W112_AutoLoginBridge_GetReloginState");return fn?fn():-98;
+}
+static void probe_combat(DWORD now)
+{
+    const char*v;
+    if(!g_world){g_combat=0;return;}
+    if(g_lastCombatProbe&&now-g_lastCombatProbe<COMBAT_POLL_MS)return;
+    g_lastCombatProbe=now;
+    execs("W112_CSD_COMBAT='0';if type(UnitAffectingCombat)=='function' and UnitAffectingCombat('player') then W112_CSD_COMBAT='1' end");
+    v=gettextv("W112_CSD_COMBAT");g_combat=(v&&v[0]=='1'&&!v[1])?1:0;
+}
+static void publish_worker(DWORD now)
+{
+    DWORD state;
+    if(!g_workerMap)return;
+    state=g_workerState;
+    if(g_phase==PHASE_FAILED)state=WORKER_FAILED;
+    else if(g_phase==PHASE_COMPLETE&&g_world)state=WORKER_READY;
+    else if(g_phase!=PHASE_IDLE&&g_phase!=PHASE_COMPLETE&&g_phase!=PHASE_FAILED)state=WORKER_SWITCHING;
+    else if(g_workerMap->command_seq!=g_workerSeenSeq){
+        if(!g_world)state=WORKER_WAIT_WORLD;
+        else if(g_combat)state=WORKER_COMBAT_BLOCKED;
+        else state=WORKER_BUSY;
+    }else if(g_phase==PHASE_IDLE&&g_world)state=WORKER_IDLE;
+    g_workerState=state;
+    g_workerMap->heartbeat_tick=now;g_workerMap->state=state;g_workerMap->phase=g_phase;
+    g_workerMap->target_slot=g_targetSlot;g_workerMap->in_world=g_world;g_workerMap->combat=g_combat;
+    g_workerMap->error=g_lastError;g_workerMap->elapsed_ms=g_startedAt?now-g_startedAt:g_elapsedTotal;
+    g_workerMap->current_slot=g_currentSlot;
+    if(g_workerLastState!=state){
+        g_workerMap->last_event_tick=now;g_workerLastState=state;worker_log_event("WORKER_STATE",now);
+    }
 }
 static void begin_stock(DWORD now,DWORD slot)
 {
@@ -188,6 +298,37 @@ static void begin_fast(DWORD now,DWORD slot)
         log_line("CONNECTION_NOT_CLEARED",GetTickCount(),after);
     }
 }
+static void poll_worker_cmd(DWORD now)
+{
+    DWORD seq,slot;
+    if(!g_workerMap)return;
+    seq=g_workerMap->command_seq;if(!seq||seq==g_workerSeenSeq)return;
+    slot=g_workerMap->command_slot;
+    if(g_phase!=PHASE_IDLE&&g_phase!=PHASE_COMPLETE&&g_phase!=PHASE_FAILED){
+        g_workerState=WORKER_BUSY;return;
+    }
+    if(!g_world){g_workerState=WORKER_WAIT_WORLD;return;}
+    if(g_combat){
+        if(g_workerState!=WORKER_COMBAT_BLOCKED)worker_log_event("COORD_COMBAT_BLOCK",now);
+        g_workerState=WORKER_COMBAT_BLOCKED;return;
+    }
+    if(slot==0){
+        g_workerSeenSeq=seq;g_workerMap->ack_seq=seq;reset_run();g_workerState=WORKER_IDLE;
+        worker_log_event("COORD_CANCEL",now);return;
+    }
+    if(slot>10u){
+        g_workerSeenSeq=seq;g_workerMap->ack_seq=seq;g_lastError=41;g_phase=PHASE_FAILED;g_workerState=WORKER_FAILED;
+        worker_log_event("COORD_BAD_SLOT",now);return;
+    }
+    g_workerSeenSeq=seq;g_workerMap->ack_seq=seq;
+    if(g_currentSlot==slot){
+        reset_run();g_targetSlot=slot;g_phase=PHASE_COMPLETE;g_workerState=WORKER_READY;
+        worker_log_event("COORD_ALREADY_READY",now);return;
+    }
+    g_workerState=WORKER_SWITCHING;worker_log_event("COORD_SWITCH_BEGIN",now);
+    begin_fast(now,slot);
+    if(g_phase==PHASE_FAILED)g_workerState=WORKER_FAILED;
+}
 static void poll_cmd(DWORD now)
 {
     const char*c=gettextv("W112_CSD_CMD");if(!c||!c[0])return;execs("W112_CSD_CMD=''");
@@ -198,8 +339,11 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
 {
     DWORD world=rd32(WOW_OBJMGR)?1:0;(void)h;(void)m;(void)id;g_world=world;
     if(world){
-        g_glueVisible=0;ensure_ui();poll_cmd(now);
-        if(g_phase==PHASE_ENTERING && !g_lastWorld){g_elapsedTotal=g_startedAt?now-g_startedAt:0;g_phase=PHASE_COMPLETE;log_line("WORLD_ENTERED",now,g_elapsedTotal);}
+        g_glueVisible=0;probe_combat(now);ensure_ui();poll_worker_cmd(now);poll_cmd(now);
+        if(g_phase==PHASE_ENTERING && !g_lastWorld){
+            g_elapsedTotal=g_startedAt?now-g_startedAt:0;g_phase=PHASE_COMPLETE;g_currentSlot=g_targetSlot;g_workerState=WORKER_READY;
+            log_line("WORLD_ENTERED",now,g_elapsedTotal);worker_log_event("COORD_READY",now);
+        }
         if(g_phase==PHASE_FAST_DISCONNECT && g_startedAt && now-g_startedAt>5000u){
             g_lastError=15;g_phase=PHASE_FAILED;log_line("WORLD_STILL_PRESENT_TIMEOUT",now,rd32(WOW_OBJMGR));
         }
@@ -221,6 +365,8 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
             g_lastError=30;g_phase=PHASE_FAILED;log_line("ENTER_TIMEOUT",now,g_targetSlot);
         }
     }
+    if(!world)g_combat=0;
+    publish_worker(now);
     g_lastWorld=world;
 }
 static void init_settings(void)
@@ -241,6 +387,6 @@ static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlMo
 __declspec(dllexport) const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_settings();return &mod;}
 BOOL WINAPI DllMain(HMODULE h,DWORD r,LPVOID x)
 {
-    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;log_line("LOAD_V4",GetTickCount(),WOW_CLIENTSERVICES_DISC);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
-    else if(r==DLL_PROCESS_DETACH&&g_timer)KillTimer(NULL,g_timer);return TRUE;
+    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V5_COORD",GetTickCount(),WOW_CLIENTSERVICES_DISC);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
+    else if(r==DLL_PROCESS_DETACH){if(g_timer)KillTimer(NULL,g_timer);shutdown_worker_map();}return TRUE;
 }
