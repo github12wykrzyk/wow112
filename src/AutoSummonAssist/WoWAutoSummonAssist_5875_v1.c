@@ -563,13 +563,11 @@ static void enforceLevelProfile(u32 player)
 
     if(role==1u) {
         if(!g_enabled) g_enabled=1u;
-        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
     } else if(role==2u) {
         if(g_enabled) {
             g_enabled=0u;
             resetPortal();
         }
-        if(g_antiAfkEnabled) antiAfkSetEnabled(0u);
     }
 }
 
@@ -1204,8 +1202,7 @@ static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
         return 1;
     }
     if(id==21u){
-        u32 wanted=(g_forcedProfile==1u)?1u:((g_forcedProfile==2u)?0u:v->u32);
-        if(g_antiAfkEnabled!=wanted) antiAfkSetEnabled(wanted);
+        if(g_antiAfkEnabled!=v->u32) antiAfkSetEnabled(v->u32);
         return 1;
     }
     return 0;

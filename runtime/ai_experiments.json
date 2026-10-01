@@ -2586,6 +2586,28 @@
       "tests": [],
       "package": null,
       "notes": "SummonScout 1.56 rebuilds direct-whisper request intent around explicit markers instead of literal phrase-only matching. Any literal '+' anywhere in a direct whisper is a strong request marker, and token forms inv/invi/invit/invite are equivalent. Existing seller, ambiguity, blacklist/group and wrong-destination safety gates remain; explicit plus/invite markers are allowed to override seller-text heuristics in direct whispers."
+    },
+    {
+      "id": "autosummon-antiafk-independent",
+      "branch": "feature/autosummon-antiafk-independent",
+      "modules": [
+        "AutoSummonAssist",
+        "WoWPlayerESP"
+      ],
+      "dependencies": [
+        "autosummon-level-role-lock"
+      ],
+      "shared_resources": [
+        "AutoSummonAssist W112_CONTROL_API_V1 setting 21 Anti-AFK",
+        "Parallel SUMMON GUI profile buttons and Anti-AFK checkbox",
+        "WoW 5875 level-derived summon role lock"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "d4c31882dba640ce79f0e2bc9815943733ce4b09",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Keep level-derived summon role fixed (level 1 SLAVE / AutoSummon ON, level 20 MASTER / AutoSummon OFF) while decoupling Anti-AFK completely from role. Setting 21 remains writable for every client, saved independently, and MASTER/SLAVE profile buttons/indicators no longer encode or overwrite Anti-AFK."
     }
   ]
 }

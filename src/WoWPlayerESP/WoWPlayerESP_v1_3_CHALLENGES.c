@@ -666,9 +666,9 @@ static void ui_sync_summon(void) {
     if(g_ui_summon_antiafk_check)
         SendMessageA(g_ui_summon_antiafk_check,UI_SETCHECK,anti.u32?1u:0u,0);
     if(g_ui_summon_master_profile)
-        SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,(!enabled.u32&&!anti.u32)?1u:0u,0);
+        SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,enabled.u32?0u:1u,0);
     if(g_ui_summon_slave_profile)
-        SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,(enabled.u32&&anti.u32)?1u:0u,0);
+        SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,enabled.u32?1u:0u,0);
 
     if(g_ui_summon_loaded){
         p=buf;p=app_str(p,"DLL: LOADED | API module v");
@@ -720,15 +720,10 @@ static void ui_sync_summon(void) {
 
 static BOOL ui_summon_apply_profile(DWORD slave) {
     const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,31u);
-    W112_ControlValueV1 oldEnabled,oldAnti,value;
-    if(!m||!m->get_value(1u,&oldEnabled)||!m->get_value(21u,&oldAnti))return FALSE;
+    W112_ControlValueV1 value;
+    if(!m)return FALSE;
     value.u32=slave?1u:0u;
-    if(!m->set_value(1u,&value))return FALSE;
-    if(!m->set_value(21u,&value)) {
-        m->set_value(1u,&oldEnabled);
-        return FALSE;
-    }
-    return TRUE;
+    return m->set_value(1u,&value)?TRUE:FALSE;
 }
 
 
@@ -1886,7 +1881,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "SUMMON / AUTOMATION",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "Profiles persist; background-safe, no mouse/focus. MASTER: both OFF | SLAVE: both ON. TYPE 18 = ritual fallback.",
+        "Role and Anti-AFK are independent. Lvl 1 = SLAVE, lvl 20 = MASTER; Anti-AFK stays user-controlled. TYPE 18 = ritual fallback.",
         42,181,665,32,FALSE));
     g_ui_summon_master_profile=ui_button(g_parallel_ui_hwnd,
         "MASTER / CASTER",46,221,321,36,233u,TRUE);
