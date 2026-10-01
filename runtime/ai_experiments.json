@@ -3051,6 +3051,28 @@
       ],
       "package": null,
       "notes": "Automatic full MARKET snapshots are disabled by default in continuous AUX loop and existing users migrate to autoMarket=false. /avm loop on explicitly keeps automatic MARKET off. Manual /avm market start remains available; /avm loop market on is explicit diagnostic opt-in. Vendor/DE/flip scan cadence is unchanged."
+    },
+    {
+      "id": "summonscout-summon-shorthand-intent",
+      "branch": "feature/summonscout-summon-shorthand-intent",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-take-one-whisper-r2"
+      ],
+      "shared_resources": [
+        "SummonScout CHAT_MSG_WHISPER smart auto-invite parser",
+        "SummonScout summon-token aliases",
+        "SummonScout multi-service destination routing",
+        "WoW 1.12 Lua 5.0 upvalue budget"
+      ],
+      "status": "in_progress",
+      "observed_head": "42753c46668eea205bf18263d5d77eddf1f085c1",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.58 accepts direct-whisper summon shorthand such as 'I will take smn pls' and similar take/need/want/get/grab/like + summon-token variants. Adds smn/smns aliases to summon token recognition while retaining seller, wrong-destination, ambiguity, blacklist/group and multi-service safety behavior."
     }
   ]
 }
