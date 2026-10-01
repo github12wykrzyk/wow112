@@ -2,7 +2,9 @@
 
 This addon preserves the original `aux-addon-vanilla` GUI and scan state machine while replacing its fragile list-response pacing on this WoW 1.12.1 / vMaNGOS target.
 
-Version 1.3 keeps the native-response correlation from v1.2 and fixes module-environment binding so the bridge uses the exported `aux` interface captured before entering `aux.core.scan`. This avoids a nil `account_data` reference inside the replacement wait function.
+Version 1.4 keeps the native-response correlation and caps seller/owner resolution to a 100 ms grace period after the verified auction response. Original AUX can otherwise wait up to 5 seconds for missing seller names on every page; that behavior is useful for complete owner data but defeats fast full-market scans. Fast scans now accept the authoritative auction page after 100 ms even if some seller names remain `?`. `/auxfast` reports `ownerGrace` so this path is visible.
+
+Version 1.3 fixed module-environment binding so the bridge uses the exported `aux` interface captured before entering `aux.core.scan`. This avoids a nil `account_data` reference inside the replacement wait function.
 
 Version 1.2 correlates every original AUX list query with the verified native `SMSG_AUCTION_LIST_RESULT` (0x025C) handler exposed by `WoWAHThrottleNative_5875_v8_FASTMARKET.dll`. The next AUX page is accepted only after a newer real network response has populated the stock client auction list.
 

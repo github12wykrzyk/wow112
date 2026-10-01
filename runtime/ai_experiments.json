@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-accountdata-fix",
+      "branch": "feature/ah-aux-owner-grace",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2037,7 +2037,7 @@
         "AuxVmangos guarded vendor revalidation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "d94fe48fad0e53af100367966def24130ddc4499",
+      "observed_head": "86df17f9dd1c4f1e9bece6d58f5db3828f3e9945",
       "verified_commit": null,
       "tests": [
         {
@@ -2091,7 +2091,7 @@
         }
       ],
       "package": null,
-      "notes": "Runtime crash on integrated SHA d94fe48fad0e53af100367966def24130ddc4499: AuxFastBridge.lua:148 attempted to index aux.account_data but the replacement wait_for_list_results function was created after module 'aux.core.scan' changed the chunk environment, so global aux resolved incorrectly. v1.3 captures the exported aux interface as local auxCore before entering the module environment and uses auxCore.account_data / auxCore.when inside the replacement wait function. Native 0x025C response correlation remains unchanged."
+      "notes": "Current in-game v1.3 no longer crashes but still advances roughly one AUX page every few seconds. Upstream aux.core.scan waits up to 5 seconds for owner_data_complete when ignore_owner is disabled or seller names are unresolved; this remains after native page correlation and exactly explains the residual cadence. v1.4 retains verified native 0x025C response pacing but bounds owner/seller resolution to 100 ms, then accepts the authoritative page even if some seller names remain '?'. Diagnostic /auxfast adds ownerGrace counter. Feature is based on current verified parallel HEAD 86df17f9."
     },
     {
       "id": "map-tele-keep-open",

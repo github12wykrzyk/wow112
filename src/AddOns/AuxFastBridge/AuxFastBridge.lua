@@ -1,4 +1,4 @@
--- AuxFastBridge v1.3
+-- AuxFastBridge v1.4
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -22,11 +22,13 @@ local nativeCount = 0
 local nativeAt = 0
 local matchedResults = 0
 local nativeTimeouts = 0
+local ownerGraceAccepts = 0
 
 local awaitNativeSeq = 0
 local querySentAt = 0
 local queryPage = -1
 local NATIVE_WAIT_TIMEOUT = 1.50
+local OWNER_GRACE_SECONDS = 0.10
 
 local function out(msg)
 	if DEFAULT_CHAT_FRAME then
@@ -68,6 +70,7 @@ function AUXFAST_Status()
 		nativeCount = nativeCount,
 		matchedResults = matchedResults,
 		nativeTimeouts = nativeTimeouts,
+		ownerGraceAccepts = ownerGraceAccepts,
 		queryPage = queryPage,
 		startedAt = startedAt,
 		hookInstalled = hookInstalled,
@@ -114,6 +117,7 @@ local function install_scan_hook()
 				AuxFastBridgeDB.lastNativeResults = nativeResults
 				AuxFastBridgeDB.lastMatchedResults = matchedResults
 				AuxFastBridgeDB.lastNativeTimeouts = nativeTimeouts
+				AuxFastBridgeDB.lastOwnerGraceAccepts = ownerGraceAccepts
 				AuxFastBridgeDB.lastBypassChecks = bypassChecks
 				AuxFastBridgeDB.lastDuration = startedAt > 0 and (GetTime() - startedAt) or 0
 			end
@@ -135,6 +139,7 @@ local function install_scan_hook()
 			nativeResults = 0
 			matchedResults = 0
 			nativeTimeouts = 0
+			ownerGraceAccepts = 0
 			queryPage = -1
 			startedAt = GetTime()
 		end
@@ -147,15 +152,20 @@ local function install_scan_hook()
 		local expectedSeq = awaitNativeSeq
 		local sentAt = querySentAt
 		local ignoreOwner = get_state().params.ignore_owner or auxCore.account_data.ignore_owner
+		local usedOwnerGrace = false
 
 		return auxCore.when(function()
 			if nativeSeq > expectedSeq then
 				if ignoreOwner or owner_data_complete() then
 					return true
 				end
-				-- Preserve original owner-resolution tolerance for the uncommon
-				-- mode that explicitly requires seller names.
-				if nativeAt > 0 and GetTime() - nativeAt >= 5 then
+
+				-- Seller-name resolution can emit delayed owner updates for seconds.
+				-- The auction page itself is already authoritative once the verified
+				-- native 0x025C response completed, so give owners only a tiny grace
+				-- window and never let them reintroduce the upstream 5-second cadence.
+				if nativeAt > 0 and GetTime() - nativeAt >= OWNER_GRACE_SECONDS then
+					usedOwnerGrace = true
 					return true
 				end
 			end
@@ -165,6 +175,7 @@ local function install_scan_hook()
 		end, function()
 			if nativeSeq > expectedSeq then
 				matchedResults = matchedResults + 1
+				if usedOwnerGrace then ownerGraceAccepts = ownerGraceAccepts + 1 end
 				return accept_results()
 			end
 
@@ -210,7 +221,8 @@ SlashCmdList["AUXFAST"] = function()
 		" queries=" .. tostring(queryCount) ..
 		" native=" .. tostring(nativeResults) ..
 		" matched=" .. tostring(matchedResults) ..
-		" timeouts=" .. tostring(nativeTimeouts))
+		" timeouts=" .. tostring(nativeTimeouts) ..
+		" ownerGrace=" .. tostring(ownerGraceAccepts))
 	out("uiEvents=" .. tostring(uiEvents) ..
 		" bypass=" .. tostring(bypassChecks) ..
 		" page=" .. tostring(queryPage) ..
@@ -218,4 +230,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.3 loaded: original AUX + native response correlation; hook=" .. tostring(hookInstalled))
+out("v1.4 loaded: native response pacing + 100ms owner grace; hook=" .. tostring(hookInstalled))
