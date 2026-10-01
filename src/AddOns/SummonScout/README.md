@@ -585,3 +585,22 @@ Root cause: the large anonymous `OnEvent` closure directly referenced more than 
 1.54 preserves the same event behavior but routes local helper calls through one `EventAPI` table captured by the callback. This reduces the callback from dozens of independent helper upvalues to a small fixed set.
 
 A new `tools/verify_summonscout_lua_upvalues.py` gate is also part of Parallel feature preflight. It checks the `OnEvent` and `OnUpdate` callback budgets with headroom, so this client-load failure is caught before integration.
+
+
+## Parser keyword research — 2026-10-01
+
+Public Classic/Classic-era summon tooling and player discussions were compared before extending the parser:
+
+- Leatrix Plus Classic documents `inv` as the default whisper auto-invite keyword:
+  https://eu.forums.blizzard.com/en/wow/t/auto-invite/142271
+- RaidSummon documents `123`, `summon`, `sum` and `port` as summon-list keywords:
+  https://www.curseforge.com/wow/addons/raidsummon
+- Syndicate Summoner (Classic 1.13.x) documents `123`, `1`, `inv`, `summon plz`, `summon`, `sum`, `summ`:
+  https://www.curseforge.com/wow/addons/syndicate_summoner
+- Brum's Summon Helper documents default `123`, `sum...` and `port...` patterns:
+  https://www.curseforge.com/wow/addons/brums-summon-helper
+- Current player discussions also show `123`, `sum` / `summ`, and direct "can you summon?" usage:
+  https://www.reddit.com/r/classicwow/comments/l9i187/theres_at_least_3_people_every_raid_day/
+  https://www.reddit.com/r/classicwow/comments/1he4kt9/why_are_mages_so_stingy_because_this_is_how_you/
+
+SummonScout 1.57 therefore adds the missing established short code `1` (exact, plus short polite forms such as `1 pls`) and `portal` as a direct-whisper transport cue. Existing support already covers `123`, `inv`, `summon`, `sum`, `summ`, `port`, and the realm-observed `taxi` phrase. Broad weak tokens such as `tp` or `ride` were not added because the research did not establish them strongly enough to justify the false-positive risk.

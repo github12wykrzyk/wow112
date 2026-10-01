@@ -2480,11 +2480,19 @@
         "single-service destination inheritance"
       ],
       "status": "awaiting_ci",
-      "observed_head": "5b4e4ab6508561874e3686ea980f5fe98582db9e",
+      "observed_head": "cedc48e8db932e1c8a93b6fe0af3d246f1d7b81e",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "cedc48e8db932e1c8a93b6fe0af3d246f1d7b81e",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36884386367 and Verify AI experiment registry run 36884386381 both passed on exact SummonScout 1.56 feature SHA."
+        }
+      ],
       "package": null,
-      "notes": "SummonScout 1.56 recognizes direct-whisper taxi phrasing (including 'taxi pls' through whole-word matching) as strong smart auto-invite intent. Existing single-service inheritance supplies the configured destination after the match; World-chat detection and seller/recruitment heuristics are unchanged."
+      "notes": "SummonScout 1.57 parser expansion after public Classic summon-usage research: retains realm-observed direct-whisper taxi support, adds the established short summon code '1' (including short polite forms like '1 pls') and 'portal' as a transport cue. Existing 123/inv/summon/sum/summ/port handling already matches common RaidSummon, Syndicate Summoner, Brum Summon Helper and Leatrix conventions. Broad weak tokens such as tp/ride remain excluded to limit false positives."
     }
   ]
 }

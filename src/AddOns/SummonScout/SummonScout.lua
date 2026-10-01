@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.56"
+local ADDON_VERSION = "1.57"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -220,7 +220,7 @@ local REQUEST_CUES = {
 
 local WHISPER_INVITE_CUES = {
     "taxi",
-    "inv", "invite", "invite me", "port", "summon me", "sum me",
+    "inv", "invite", "invite me", "port", "portal", "summon me", "sum me",
     "can i get a summon", "can i get summon", "need summon", "need summ",
     "lf summon", "lf summ", "wtb summon", "wtb summ",
     "still summoning", "take one", "i d take one", "ill take one", "i ll take one",
@@ -247,6 +247,7 @@ local WHISPER_PAYMENT_NEGATIVE_CUES = {
 
 local WHISPER_EXACT_CODES = {
     ["123"] = true,
+    ["1"] = true,
     ["here"] = true,
     ["sure"] = true,
     ["+"] = true
@@ -560,6 +561,9 @@ local function whisperInviteDecision(message)
     local exactCode = WHISPER_EXACT_CODES[s]
         or raw == "+"
         or (string.len(s) <= 32 and phraseHas(s, "123"))
+        or (string.len(s) <= 16
+            and phraseHas(s, "1")
+            and (phraseHas(s, "pls") or phraseHas(s, "plz") or phraseHas(s, "please")))
     local directSummonQuestion = hasSummonToken(s)
         and (phraseHas(s, "can i")
             or phraseHas(s, "could i")
