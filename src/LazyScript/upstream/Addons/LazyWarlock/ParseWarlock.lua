@@ -49,6 +49,46 @@ function lazyWarlockLoad.LoadParseWarlock()
 	lazyWarlock.actions.drainLife             = lazyWarlock.Action:New("drainLife",              "Spell_Shadow_LifeDrain02")
 	lazyWarlock.actions.drainMana             = lazyWarlock.Action:New("drainMana",              "Spell_Shadow_SiphonMana")
 	lazyWarlock.actions.drainSoul             = lazyWarlock.Action:New("drainSoul",              "Spell_Shadow_Haunting")
+
+	-- WoW 1.12 can report Drain Soul as unusable while Shoot wand auto-repeat is active.
+	-- LazyScript normally validates every action in a compound line before executing any of them,
+	-- so stopWand-drainSoul could be rejected before stopWand ever ran. Treat active wanding as
+	-- a deferred-transition case: preserve mana/cooldown/range gates, then stop the wand immediately
+	-- before dispatching Drain Soul.
+	local drainSoulBaseIsUsable = lazyWarlock.Action.IsUsable
+	local drainSoulBaseUse = lazyWarlock.Action.Use
+
+	function lazyWarlock.actions.drainSoul:IsUsable(sayNothing)
+		if drainSoulBaseIsUsable(self, sayNothing) then
+			return true
+		end
+		if not lazyScript.IsAutoWanding(sayNothing) then
+			return false
+		end
+
+		local spellIndexStart, rankCount = self:FindSpellRanks(sayNothing)
+		if not spellIndexStart or not rankCount or rankCount < 1 then
+			return false
+		end
+		if not self:GetSlot(sayNothing) then
+			return false
+		end
+
+		local inRange = IsActionInRange(self.slot)
+		local _, notEnoughMana = IsUsableAction(self.slot)
+		local cooldown = GetActionCooldown(self.slot)
+		if notEnoughMana == 1 then
+			return false
+		end
+		return cooldown == 0 and (inRange == 1 or inRange == nil)
+	end
+
+	function lazyWarlock.actions.drainSoul:Use()
+		if lazyScript.IsAutoWanding(true) then
+			lazyScript.StopWanding()
+		end
+		drainSoulBaseUse(self)
+	end
 	lazyWarlock.actions.enslave               = lazyWarlock.Action:New("enslave",                "Spell_Shadow_EnslaveDemon")
 	lazyWarlock.actions.fear                  = lazyWarlock.Action:New("fear",                   "Spell_Shadow_Possession")
 	lazyWarlock.actions.felDomination         = lazyWarlock.Action:New("felDomination",          "Spell_Nature_RemoveCurse", nil, false)

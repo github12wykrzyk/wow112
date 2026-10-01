@@ -2665,6 +2665,28 @@
       ],
       "package": null,
       "notes": "0.20 risk hardening integrated from verified feature/aux-flip-history-anchor. Screenshots showed depth-only valuation could treat normal 100%-of-history floors as flips against 180-250%-of-history tails. LIVE flip now requires entry <=70% of AUX weighted history with >=2 completed history days, >=3 sellers and depth 10; exit is capped at historical value; identity is suffix-aware and pricing uses AUX aux_quantity/unit price. Per-item session exposure defaults to 20g/3 buys. Vendor LIVE defaults to realm-learned AUX merchant_sell only. Integrated parallel exact-SHA candidate build pending."
+    },
+    {
+      "id": "lazyscript-warlock-wand-drainsoul",
+      "branch": "feature/lazyscript-warlock-wand-drainsoul",
+      "modules": [
+        "LazyScript",
+        "LazyWarlock"
+      ],
+      "dependencies": [
+        "lazyscript-warlock-gcd-demonarmor"
+      ],
+      "shared_resources": [
+        "LazyScript compound-action prevalidation",
+        "Warlock Drain Soul action usability",
+        "wand Shoot auto-repeat transition"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "4dcec0fddd62890bdcdaf33fa5bd91fd7ef6473f",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Fix Drain Soul handoff from an active wand. LazyScript validates all actions before executing a compound line, so stopWand-drainSoul could be rejected while Shoot made Drain Soul appear unusable. Drain Soul now accepts only the narrow active-wand transition when spell exists, mana is sufficient, cooldown is clear and target is in range; Use stops wand immediately before casting."
     }
   ]
 }
