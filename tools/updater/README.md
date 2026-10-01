@@ -208,3 +208,11 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - AuxVmangos market history schema 2 keeps compact snapshots with min/p25/median/p75/max/average/weighted prices plus depth prices for 5/10/20 units, seller count, units at the current floor and net supply decrease. The old default retention of 24 snapshots migrates once to 96; the configurable ceiling is 336 snapshots/item.
 - **Wyślij AH dump** uses the existing DPAPI-protected Issues token and uploads only the newest flushed AuxVmangos `marketMeta` plus the complete compact `marketDB` history. Large dumps are chunked across comments of one GitHub Issue and include a deterministic payload SHA256. Account-directory names, credentials and unrelated SavedVariables are not uploaded.
 - WoW writes SavedVariables on `/reload`, logout or exit. If the client is still open, run `/reload` immediately before **Wyślij AH dump** to include the newest in-memory market history.
+
+
+## Updater 2.9-parallel.12 — safe AH persistence
+
+- AuxVmangos 0.21 stores custom full-market history in a single compact `marketPacked` SavedVariables string instead of thousands of nested `marketDB` tables. Existing schema-2 tables migrate on load, retention is safety-clamped to 8 snapshots on migration (configurable 1..24), and the legacy table is removed before the next WoW SavedVariables flush.
+- **Wyślij AH dump** prefers packed schema 3 and remains backward compatible with legacy `marketDB` files. Dump header is `AVM_AH_MARKET_DUMP_V2` and records `market_format`.
+- MARKET background scans isolate the stock Browse-frame update handler and default to 1.0 s between full-scan pages. Existing 15-minute loop cadence migrates once to 60 minutes so MARKET does not monopolize the AH bot; AUX/vendor paths keep their existing fast cadence.
+- Original AUX economic tooltips are enabled by default once per character: historical Value, Today, Vendor Sell, Vendor Buy, Disenchant Value and Disenchant Distribution.

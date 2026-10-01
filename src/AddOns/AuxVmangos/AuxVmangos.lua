@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.20.3-market-lowgc"
+AVM_VERSION = "0.21-market-safe-persist"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -125,6 +125,7 @@ AVM = {
 		priceCeiling = false,
 		consecutiveTimeouts = 0,
 	},
+	marketDB = {},
 	market = {
 		active = false,
 		requested = false,
@@ -140,6 +141,7 @@ AVM = {
 		auctions = 0,
 		units = 0,
 		consecutiveTimeouts = 0,
+		browseDetached = false,
 	},
 	stats = {
 		queries = 0,
@@ -247,11 +249,14 @@ local function avm_diag_record(msg)
 		flipAhCutPct = AVM_DB.flipAhCutPct or 5,
 		flipSafetyMarginPct = AVM_DB.flipSafetyMarginPct or 25,
 		auxLoopEnabled = AVM_DB.auxLoopEnabled and true or false,
-		auxLoopMarketMinutes = AVM_DB.auxLoopMarketMinutes or 15,
+		auxLoopMarketMinutes = AVM_DB.auxLoopMarketMinutes or 60,
 		auxLoopNextAt = AVM.auxLoop and AVM.auxLoop.nextAt or 0,
 		auxLoopWaitingMarket = AVM.auxLoop and AVM.auxLoop.waitingForMarket and true or false,
 		auxLoopCycles = AVM.auxLoop and AVM.auxLoop.cycles or 0,
 		auxLoopMarketCycles = AVM.auxLoop and AVM.auxLoop.marketCycles or 0,
+		marketPageDelay = AVM_DB.marketPageDelay or 1.0,
+		marketPackedChars = string.len(AVM_DB.marketPacked or ""),
+		marketRuntimeItems = AVM_DB.marketPackedItems or 0,
 	}
 end
 
@@ -325,19 +330,20 @@ local function avm_defaults()
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 1 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
-	if AVM_DB.marketDB == nil then AVM_DB.marketDB = {} end
+	if AVM_DB.marketPacked == nil then AVM_DB.marketPacked = "" end
 	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
-	if AVM_DB.marketRetention == nil then
-		AVM_DB.marketRetention = 96
-	elseif AVM_DB.marketHistorySchema == nil and AVM_DB.marketRetention == 24 then
-		-- Migrate the old default only; explicit custom values survive.
-		AVM_DB.marketRetention = 96
-	end
+	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 8 end
 	if AVM_DB.marketHistorySchema == nil then AVM_DB.marketHistorySchema = 2 end
+	if AVM_DB.marketPageDelay == nil then AVM_DB.marketPageDelay = 1.0 end
 	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
+	if AVM_DB.marketStorageSchema == nil then AVM_DB.marketStorageSchema = 0 end
 	if AVM_DB.auxLoopEnabled == nil then AVM_DB.auxLoopEnabled = false end
-	if AVM_DB.auxLoopMarketMinutes == nil then AVM_DB.auxLoopMarketMinutes = 15 end
+	if AVM_DB.auxLoopMarketMinutes == nil then AVM_DB.auxLoopMarketMinutes = 60 end
+	if AVM_DB.marketPacingSchema == nil then
+		if tonumber(AVM_DB.auxLoopMarketMinutes) == 15 then AVM_DB.auxLoopMarketMinutes = 60 end
+		AVM_DB.marketPacingSchema = 1
+	end
 	if AVM_DB.auxLoopDelaySeconds == nil then AVM_DB.auxLoopDelaySeconds = 2 end
 	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 500 end
 	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 10000 end
@@ -379,7 +385,7 @@ end
 
 local function avm_loop_market_due()
 	if not AVM_DB.auxLoopEnabled then return false end
-	local mins = tonumber(AVM_DB.auxLoopMarketMinutes) or 15
+	local mins = tonumber(AVM_DB.auxLoopMarketMinutes) or 60
 	if mins <= 0 then return false end
 	local now = time()
 	local retryAfter = tonumber(AVM_DB.marketMeta and AVM_DB.marketMeta.retryAfter) or 0
@@ -467,7 +473,7 @@ local function avm_loop_status()
 		nextIn = AVM.auxLoop.nextAt - GetTime()
 	end
 	avm_print("LOOP enabled=" .. tostring(AVM_DB.auxLoopEnabled) ..
-		" marketEvery=" .. tostring(AVM_DB.auxLoopMarketMinutes or 15) .. "m" ..
+		" marketEvery=" .. tostring(AVM_DB.auxLoopMarketMinutes or 60) .. "m" ..
 		" gap=" .. tostring(AVM_DB.auxLoopDelaySeconds or 2) .. "s" ..
 		" nextIn=" .. string.format("%.1f", nextIn) .. "s" ..
 		" waitingMarket=" .. tostring(AVM.auxLoop.waitingForMarket))
@@ -494,7 +500,7 @@ local function avm_loop_slash(rest)
 		AVM.auxLoop.waitingForMarket = false
 		avm_loop_schedule_arb("loop enabled")
 		avm_print("LOOP ON - AUX_ARB repeats continuously; MARKET snapshot every " ..
-			tostring(AVM_DB.auxLoopMarketMinutes or 15) .. "m")
+			tostring(AVM_DB.auxLoopMarketMinutes or 60) .. "m")
 	elseif sub == "off" then
 		AVM_DB.auxLoopEnabled = false
 		AVM.auxLoop.nextAt = 0
@@ -878,10 +884,136 @@ local function avm_market_decode_history(value)
 	}
 end
 
+local function avm_market_escape(value)
+	local text = tostring(value or "")
+	text = string.gsub(text, "%%", function() return "%25" end)
+	text = string.gsub(text, "\t", function() return "%09" end)
+	text = string.gsub(text, "\r", function() return "%0D" end)
+	text = string.gsub(text, "\n", function() return "%0A" end)
+	return text
+end
+
+local function avm_market_unescape(value)
+	local text = tostring(value or "")
+	text = string.gsub(text, "%%0A", function() return "\n" end)
+	text = string.gsub(text, "%%0D", function() return "\r" end)
+	text = string.gsub(text, "%%09", function() return "\t" end)
+	text = string.gsub(text, "%%25", function() return "%" end)
+	return text
+end
+
+local function avm_market_pack_storage()
+	local keys = {}
+	for key in pairs(AVM.marketDB or {}) do table.insert(keys, key) end
+	table.sort(keys)
+	local lines = { "AVM3" }
+	for i = 1, table.getn(keys) do
+		local key = keys[i]
+		local row = AVM.marketDB[key]
+		if row then
+			local history = ""
+			if row.history and table.getn(row.history) > 0 then history = table.concat(row.history, ";") end
+			table.insert(lines,
+				avm_market_escape(key) .. "\t" ..
+				avm_market_escape(row.name or "") .. "\t" ..
+				tostring(tonumber(row.itemId) or 0) .. "\t" .. history)
+		end
+	end
+	AVM_DB.marketPacked = table.concat(lines, "\n")
+	AVM_DB.marketPackedItems = table.getn(keys)
+	AVM_DB.marketDB = nil
+	AVM_DB.marketStorageSchema = 3
+end
+
+local function avm_market_unpack_storage(packed)
+	local out = {}
+	if type(packed) ~= "string" or packed == "" then return out end
+	local lines = avm_split(packed, "\n")
+	local start = 1
+	if lines[1] == "AVM3" then start = 2 end
+	for i = start, table.getn(lines) do
+		local line = lines[i]
+		if line and line ~= "" then
+			local fields = avm_split(line, "\t")
+			local key = avm_market_unescape(fields[1] or "")
+			if key ~= "" then
+				local row = {
+					name = avm_market_unescape(fields[2] or ""),
+					itemId = tonumber(fields[3]) or nil,
+					history = {},
+				}
+				if fields[4] and fields[4] ~= "" then
+					local hist = avm_split(fields[4], ";")
+					for h = 1, table.getn(hist) do
+						if hist[h] and hist[h] ~= "" then table.insert(row.history, hist[h]) end
+					end
+				end
+				out[key] = row
+			end
+		end
+	end
+	return out
+end
+
+local function avm_market_storage_init()
+	local old = AVM_DB.marketDB
+	if type(old) == "table" then
+		local hasOld = false
+		for _ in pairs(old) do hasOld = true break end
+		if hasOld then AVM.marketDB = old else AVM.marketDB = avm_market_unpack_storage(AVM_DB.marketPacked) end
+	else
+		AVM.marketDB = avm_market_unpack_storage(AVM_DB.marketPacked)
+	end
+	local previousSchema = tonumber(AVM_DB.marketStorageSchema) or 0
+	if previousSchema < 3 then
+		local keep = tonumber(AVM_DB.marketRetention) or 8
+		if keep > 8 then keep = 8 end
+		if keep < 1 then keep = 1 end
+		AVM_DB.marketRetention = keep
+	end
+	local keep = tonumber(AVM_DB.marketRetention) or 8
+	if keep < 1 then keep = 1 elseif keep > 24 then keep = 24 end
+	AVM_DB.marketRetention = keep
+	for _,row in pairs(AVM.marketDB or {}) do
+		while row.history and table.getn(row.history) > keep do table.remove(row.history, 1) end
+	end
+	AVM_DB.marketDB = nil
+	avm_market_pack_storage()
+end
+
+local function avm_aux_tooltip_defaults()
+	if not aux or not aux.character_data or not aux.character_data.tooltip then return end
+	local t = aux.character_data.tooltip
+	if t.wow112_all_on_v1 then return end
+	t.value = true
+	t.daily = true
+	t.merchant_sell = true
+	t.merchant_buy = true
+	t.disenchant_value = true
+	t.disenchant_distribution = true
+	t.wow112_all_on_v1 = true
+end
+
+local function avm_market_ui_isolate(enable)
+	if enable then
+		if not AVM.market.browseDetached and AuctionFrameBrowse and AuctionFrameBrowse.UnregisterEvent then
+			AuctionFrameBrowse:UnregisterEvent("AUCTION_ITEM_LIST_UPDATE")
+			AVM.market.browseDetached = true
+			avm_print("MARKET background UI isolation ON")
+		end
+	else
+		if AVM.market.browseDetached and AuctionFrameBrowse and AuctionFrameBrowse.RegisterEvent then
+			AuctionFrameBrowse:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
+			AVM.market.browseDetached = false
+			avm_print("MARKET background UI isolation OFF")
+		end
+	end
+end
+
 local function avm_market_push_history(dbrow, row)
 	if not dbrow.history then dbrow.history = {} end
 	table.insert(dbrow.history, avm_market_encode_history(row))
-	local keep = tonumber(AVM_DB.marketRetention) or 24
+	local keep = tonumber(AVM_DB.marketRetention) or 8
 	if keep < 1 then keep = 1 end
 	while table.getn(dbrow.history) > keep do
 		table.remove(dbrow.history, 1)
@@ -985,10 +1117,10 @@ local function avm_market_finish(save, reason)
 			local floorUnits = floorLevel and (tonumber(floorLevel.units) or 0) or 0
 			local sellerCount = tonumber(a.sellerCount) or 0
 
-			local dbrow = AVM_DB.marketDB[key]
+			local dbrow = AVM.marketDB[key]
 			if not dbrow then
 				dbrow = { name = a.name, itemId = a.itemId, history = {} }
-				AVM_DB.marketDB[key] = dbrow
+				AVM.marketDB[key] = dbrow
 			end
 			dbrow.name = a.name
 			dbrow.itemId = a.itemId
@@ -1022,7 +1154,7 @@ local function avm_market_finish(save, reason)
 
 		-- Record a zero observation only when an item existed in the previous
 		-- snapshot and is now absent. netDown is only a net supply-decrease proxy.
-		for key,dbrow in pairs(AVM_DB.marketDB) do
+		for key,dbrow in pairs(AVM.marketDB) do
 			if not seen[key] and dbrow.history and table.getn(dbrow.history) > 0 then
 				local prev = avm_market_decode_history(dbrow.history[table.getn(dbrow.history)])
 				if prev and prev.auctions and prev.auctions > 0 then
@@ -1044,6 +1176,7 @@ local function avm_market_finish(save, reason)
 		AVM_DB.marketMeta.auctions = m.auctions
 		AVM_DB.marketMeta.units = m.units
 		AVM_DB.marketMeta.duration = GetTime() - m.startedAt
+		avm_market_pack_storage()
 		AVM.stats.marketScans = AVM.stats.marketScans + 1
 		avm_print("MARKET done items=" .. itemCount ..
 			" auctions=" .. m.auctions .. " units=" .. m.units ..
@@ -1059,6 +1192,7 @@ local function avm_market_finish(save, reason)
 			"; auto retry backoff=" .. tostring(retry) .. "s")
 	end
 
+	avm_market_ui_isolate(false)
 	m.active = false
 	m.requested = false
 	m.stopRequested = false
@@ -1106,6 +1240,7 @@ function AVM_FastMarketNativeStart()
 	AVM.market.active = true
 	AVM.market.requested = false
 	AVM.market.stopRequested = false
+	avm_market_ui_isolate(true)
 	AVM.market.phase = "FAST_NATIVE"
 	AVM.market.boundary = 0
 	AVM.market.page = 0
@@ -1125,6 +1260,7 @@ function AVM_FastMarketNativeStart()
 		AVM.fastMarketNative = false
 		AVM.market.active = false
 		AVM.market.phase = "IDLE"
+		avm_market_ui_isolate(false)
 		avm_print("FAST MARKET baseline ERROR: " .. tostring(err))
 	end
 end
@@ -1227,6 +1363,7 @@ local function avm_market_begin()
 	m.active = true
 	m.requested = false
 	m.stopRequested = false
+	avm_market_ui_isolate(true)
 	m.low = 0
 	m.high = 0
 	m.page = 0
@@ -1422,7 +1559,9 @@ local function avm_market_show_status()
 	avm_print("MARKET DB items=" .. tostring(meta.items or 0) ..
 		" auctions=" .. tostring(meta.auctions or 0) ..
 		" units=" .. tostring(meta.units or 0) ..
-		" retention=" .. tostring(AVM_DB.marketRetention or 96) ..
+		" retention=" .. tostring(AVM_DB.marketRetention or 8) ..
+		" delay=" .. tostring(AVM_DB.marketPageDelay or 1.0) .. "s" ..
+		" packedChars=" .. tostring(string.len(AVM_DB.marketPacked or "")) ..
 		" lastScan=" .. tostring(meta.lastScanAt or 0) ..
 		" retryAfter=" .. tostring(meta.retryAfter or 0))
 end
@@ -1434,11 +1573,11 @@ local function avm_market_show_item(name)
 		return
 	end
 	local found = nil
-	for _,row in pairs(AVM_DB.marketDB) do
+	for _,row in pairs(AVM.marketDB) do
 		if row.name and string.lower(row.name) == name then found = row break end
 	end
 	if not found then
-		for _,row in pairs(AVM_DB.marketDB) do
+		for _,row in pairs(AVM.marketDB) do
 			if row.name and string.find(string.lower(row.name), name, 1, true) then found = row break end
 		end
 	end
@@ -1503,24 +1642,39 @@ local function avm_market_slash(rest)
 		else
 			avm_print("market auto must be 0..1440 minutes")
 		end
+	elseif sub == "delay" then
+		local n = tonumber(avm_trim(arg))
+		if n and n >= 0.35 and n <= 3 then
+			AVM_DB.marketPageDelay = n
+			avm_print("MARKET background page delay=" .. tostring(n) .. "s")
+		else
+			avm_print("market delay must be 0.35..3 seconds")
+		end
 	elseif sub == "retention" then
 		local n = tonumber(avm_trim(arg))
-		if n and n >= 1 and n <= 336 then
-			AVM_DB.marketRetention = n
-			avm_print("MARKET history retention=" .. n .. " snapshots/item")
+		if n and n >= 1 and n <= 24 then
+			AVM_DB.marketRetention = math.floor(n)
+			for _,row in pairs(AVM.marketDB or {}) do
+				while row.history and table.getn(row.history) > AVM_DB.marketRetention do table.remove(row.history, 1) end
+			end
+			avm_market_pack_storage()
+			avm_print("MARKET history retention=" .. tostring(AVM_DB.marketRetention) .. " snapshots/item")
 		else
-			avm_print("market retention must be 1..336")
+			avm_print("market retention must be 1..24")
 		end
 	elseif sub == "clear" then
 		if AVM.market.active then
 			avm_print("MARKET cannot clear DB while scan is running")
 		else
-			AVM_DB.marketDB = {}
+			AVM.marketDB = {}
 			AVM_DB.marketMeta = {}
+			AVM_DB.marketPacked = "AVM3"
+			AVM_DB.marketPackedItems = 0
+			AVM_DB.marketDB = nil
 			avm_print("MARKET PriceDB cleared")
 		end
 	else
-		avm_print("/avm market start|stop|status|item NAME|auto MIN|retention N|clear")
+		avm_print("/avm market start|stop|status|item NAME|auto MIN|delay SEC|retention N|clear")
 		avm_print("/avm loop on|off|status|marketmin 15|delay 2")
 	end
 end
@@ -3550,7 +3704,12 @@ local function avm_handle_list_update()
 	-- so a delayed duplicate cannot be mistaken for the next query's response.
 	AVM.queryInFlight = false
 	AVM.lastResultAt = now
-	AVM.nextQueryAt = now + AVM_EVENT_SETTLE
+	local settle = AVM_EVENT_SETTLE
+	if AVM.queryKind == "MARKET_SCAN" then
+		local marketDelay = tonumber(AVM_DB.marketPageDelay) or 1.0
+		if marketDelay > settle then settle = marketDelay end
+	end
+	AVM.nextQueryAt = now + settle
 	avm_accept_result()
 end
 
@@ -4299,6 +4458,7 @@ AVM_WATCH_API = {
 
 local frame = CreateFrame("Frame", "AuxVmangosFrame")
 frame:RegisterEvent("ADDON_LOADED")
+frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
 frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
@@ -4309,6 +4469,7 @@ frame:RegisterEvent("UI_ERROR_MESSAGE")
 frame:SetScript("OnEvent", function()
 	if event == "ADDON_LOADED" and arg1 == "AuxVmangos" then
 		avm_defaults()
+		avm_market_storage_init()
 		for i = 1, AVM_WATCH_SLOTS do avm_ensure_rule_slot(i) end
 		-- LIVE modes are intentionally session-only; never carry an armed state across reload/login.
 		AVM_DB.live = false
@@ -4316,6 +4477,8 @@ frame:SetScript("OnEvent", function()
 		SLASH_AUXVMANGOS1 = "/avm"
 		SlashCmdList["AUXVMANGOS"] = avm_slash
 		avm_print("loaded " .. AVM_VERSION .. " - DRY-RUN default")
+	elseif event == "PLAYER_LOGIN" then
+		avm_aux_tooltip_defaults()
 	elseif event == "AUCTION_HOUSE_SHOW" then
 		AVM.open = true
 		AVM.queryInFlight = false
@@ -4339,6 +4502,7 @@ frame:SetScript("OnEvent", function()
 			avm_print("VENDOR aborted: Auction House closed")
 		end
 		if AVM.market.active or AVM.market.requested then
+			avm_market_ui_isolate(false)
 			AVM.market.active = false
 			AVM.market.requested = false
 			AVM.market.stopRequested = false

@@ -164,21 +164,32 @@ namespace WoW112Updater
 
                     var auxFiles = GetAuxVmangosSavedVariablesFiles(root);
                     string auxFile = null;
-                    string marketDb = null;
+                    string marketData = null;
+                    string marketFormat = null;
                     string marketMeta = null;
                     foreach (var candidate in auxFiles)
                     {
                         var text = File.ReadAllText(candidate, Encoding.UTF8);
-                        var db = ExtractLuaTableField(text, "marketDB");
-                        if (string.IsNullOrWhiteSpace(db)) continue;
+                        var packed = ExtractLuaStringField(text, "marketPacked");
+                        if (!string.IsNullOrWhiteSpace(packed))
+                        {
+                            auxFile = candidate;
+                            marketData = packed;
+                            marketFormat = "packed-v3";
+                            marketMeta = ExtractLuaTableField(text, "marketMeta") ?? "[\"marketMeta\"] = {}";
+                            break;
+                        }
+                        var legacy = ExtractLuaTableField(text, "marketDB");
+                        if (string.IsNullOrWhiteSpace(legacy)) continue;
                         auxFile = candidate;
-                        marketDb = db;
+                        marketData = legacy;
+                        marketFormat = "legacy-table";
                         marketMeta = ExtractLuaTableField(text, "marketMeta") ?? "[\"marketMeta\"] = {}";
                         break;
                     }
                     if (auxFile == null)
                         throw new InvalidOperationException(
-                            "Nie znaleziono zapisanej marketDB AuxVmangos. Uruchom pełny MARKET/Search i wykonaj /reload, logout albo zamknij klienta, aby WoW zapisał SavedVariables.");
+                            "Nie znaleziono zapisanego marketPacked/marketDB AuxVmangos. Uruchom pełny MARKET i wykonaj /reload, logout albo zamknij klienta, aby WoW zapisał SavedVariables.");
 
                     string headSha = string.Empty;
                     long runId = 0;
@@ -191,12 +202,13 @@ namespace WoW112Updater
                     }
 
                     var savedUtc = File.GetLastWriteTimeUtc(auxFile);
-                    var dump = "AVM_AH_MARKET_DUMP_V1\n" +
+                    var dump = "AVM_AH_MARKET_DUMP_V2\n" +
                         "saved_variables_utc=" + savedUtc.ToString("o") + "\n" +
                         "head_sha=" + headSha + "\n" +
                         "run_id=" + runId + "\n" +
-                        "updater=" + UpdaterBuildInfo.Version + "\n\n" +
-                        marketMeta + "\n\n" + marketDb + "\n";
+                        "updater=" + UpdaterBuildInfo.Version + "\n" +
+                        "market_format=" + marketFormat + "\n\n" +
+                        marketMeta + "\n\n" + marketData + "\n";
                     var fullSha = Sha256Text(dump);
                     var signature = fullSha.Substring(0, 12);
                     var marker = "[ahdump:" + signature + "]";
@@ -225,8 +237,8 @@ namespace WoW112Updater
                         body.AppendLine("Payload chars: " + dump.Length);
                         body.AppendLine("Chunks: " + chunks);
                         body.AppendLine();
-                        body.AppendLine("Contains only AuxVmangos `marketMeta` + full compact `marketDB` history. No account path, credentials or unrelated SavedVariables are uploaded.");
-                        body.AppendLine("`netDown` is a net supply-decrease proxy, not proof of a sale. Schema 2 appends depth5/depth10/depth20, seller count and units at floor.");
+                        body.AppendLine("Contains only AuxVmangos `marketMeta` plus compact `marketPacked` schema 3 (or legacy `marketDB` fallback). No account path, credentials or unrelated SavedVariables are uploaded.");
+                        body.AppendLine("Packed schema 3 stores the same schema-2 snapshot fields without thousands of nested SavedVariables tables. `netDown` remains a net supply-decrease proxy, not proof of a sale.");
                         body.AppendLine();
                         body.AppendLine("If WoW is still open, use `/reload` immediately before sending so SavedVariables includes the newest in-memory market history.");
                         body.AppendLine();
@@ -689,6 +701,28 @@ namespace WoW112Updater
                 {
                     return "<AuxVmangos diagnostics read error: " + ex.Message + ">";
                 }
+            }
+
+            private static string ExtractLuaStringField(string text, string key)
+            {
+                if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(key)) return null;
+                var marker = "[\"" + key + "\"]";
+                var markerIndex = text.IndexOf(marker, StringComparison.Ordinal);
+                if (markerIndex < 0) return null;
+                var eq = text.IndexOf('=', markerIndex + marker.Length);
+                if (eq < 0) return null;
+                var quote = text.IndexOf('"', eq + 1);
+                if (quote < 0) return null;
+
+                var escaped = false;
+                for (var i = quote + 1; i < text.Length; i++)
+                {
+                    var c = text[i];
+                    if (escaped) { escaped = false; continue; }
+                    if (c == '\\') { escaped = true; continue; }
+                    if (c == '"') return text.Substring(markerIndex, i - markerIndex + 1);
+                }
+                return null;
             }
 
             private static string ExtractLuaTableField(string text, string key)

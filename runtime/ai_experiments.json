@@ -2800,6 +2800,31 @@
       "tests": [],
       "package": null,
       "notes": "Reduce WoW 1.12 Lua heap/GC pressure during full MARKET scans without slowing AUX/vendor acquisition. Replace per-auction duplicate prices[] plus offers-table allocation with price-level aggregation {auctions,units}; derive auction percentiles and depth5/10/20 from one sorted distinct-price list at finish. Output history schema/semantics are unchanged. User reported noticeable client slowdown specifically during MARKET; exact gameplay SHA was not independently established, so no game-test result is recorded yet."
+    },
+    {
+      "id": "ah-market-safe-persist-tooltips",
+      "branch": "feature/ah-market-safe-storage-tooltips",
+      "modules": [
+        "AuxVmangos",
+        "ParallelUpdater"
+      ],
+      "dependencies": [
+        "ah-market-lowgc",
+        "ah-aux-filter-history-dump",
+        "ah-continuous-arb-market-loop"
+      ],
+      "shared_resources": [
+        "AuxVmangos SavedVariables AVM_DB market persistence",
+        "AuxVmangos full MARKET scheduler and AuctionFrameBrowse AUCTION_ITEM_LIST_UPDATE",
+        "Original AUX per-character tooltip settings",
+        "Parallel updater AH dump parser"
+      ],
+      "status": "in_progress",
+      "observed_head": "83c5e338d470921f31b311f8bc5c3d329c08ecb2",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Crash/lag hardening after AH-only character reports native ERROR #132 around reload/logout and user reports MARKET remains extremely laggy after low-GC accumulator change. Exact gameplay SHA for the crash/lag report is not independently established, so no gameplay result is asserted. 0.21 migrates nested AVM_DB.marketDB into one packed SavedVariables string, safety-clamps migrated retention to 8 snapshots (configurable 1..24), paces only MARKET_SCAN pages at 1.0s, isolates stock AuctionFrameBrowse list updates during MARKET, and migrates the old 15m loop cadence to 60m once. AUX/vendor/DE/flip cadence is unchanged. Original AUX per-character tooltip defaults are enabled once for Value, Today, Vendor Sell/Buy, Disenchant Value and Disenchant Distribution. Updater 2.9-parallel.12 reads packed dump schema 3 with legacy fallback."
     }
   ]
 }
