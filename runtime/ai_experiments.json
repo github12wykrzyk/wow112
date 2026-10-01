@@ -2096,6 +2096,27 @@
         "artifact_id": 11158575954
       },
       "notes": "Report #53 diagnosed the remaining 5s cadence: on hookfix v1.1, one real query produced many AUCTION_ITEM_LIST_UPDATE events (e.g. ui-event counter 103 with only about 8 query/gate checks), so bypassing CanSendAuctionQuery let stale duplicate UI events masquerade as subsequent page responses. Integrated v1.2 now correlates original AUX pages to the verified native SMSG_AUCTION_LIST_RESULT (0x025C) handler after the stock client has populated the auction list. UI events are diagnostic only. /auxfast reports queries/native/matched/timeouts/uiEvents; healthy scans should keep queries, native and matched together with timeouts=0. Exact code SHA a4c6453c passed preflight and full parallel package gates; gameplay validation pending."
+    },
+    {
+      "id": "map-tele-keep-open",
+      "branch": "feature/map-tele-keep-open",
+      "modules": [
+        "MovementCore"
+      ],
+      "dependencies": [
+        "parallel-rogue"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 WorldMapFrame/WorldMapButton Lua bridge",
+        "MovementCore Tele E map request state",
+        "native map high-launch S backstep"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "d94fe48fad0e53af100367966def24130ddc4499",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Point change from current parallel: map teleport no longer calls HideUIPanel(WorldMapFrame) after sending the teleport pulse. The map remains visible so repeated E/click map teleports can be issued without reopening it. Existing validation, F7 abort and optional native S backstep are unchanged; in-game behavior remains unverified."
     }
   ]
 }

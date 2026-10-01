@@ -1195,7 +1195,7 @@ static float g_teleDestX=0.0f,g_teleDestY=0.0f,g_teleDestZ=0.0f;
 static const char g_stepOnChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r ON: aim TERRAIN + press/repeat E (movement/fall allowed); unit/object/NPC hits ignored; F7 abort') end";
 static const char g_stepOffChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r OFF') end";
 static const char g_teleSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele E]|r one pulse sent; SERVER acceptance NOT confirmed') end";
-static const char g_mapSentChat[]="if WorldMapFrame and WorldMapFrame:IsShown() then HideUIPanel(WorldMapFrame) end; if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r teleport pulse sent; optional S backstep queued; SERVER acceptance NOT confirmed') end";
+static const char g_mapSentChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff55ff55[Tele map]|r teleport pulse sent; map stays open; optional S backstep queued; SERVER acceptance NOT confirmed') end";
 static const char g_teleStopChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffff55[Tele E]|r point captured; preparing one pulse (walking/CTM allowed)') end";
 static const char g_teleAbortChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r ABORT: second E / world unavailable / timeout / invalid XYZ; no pulse') end";
 static const char g_teleTooCloseChat[]="if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r aim at a different point (minimum 0.5 units away)') end";
@@ -1383,7 +1383,8 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
             if(!g_telePendingFromMap&&W112_TeleMapShown()){
                 g_telePending=0u;g_stepActive=0u;DebugChat(g_teleAbortChat);return;
             }
-            /* Map-only backstep follows on the timer once the map has closed.
+            /* Map-only backstep follows on the timer after the teleport pulse.
+               The world map intentionally stays open for repeated map teleports.
                Do not fake an in-memory yaw here: it never generated actual native
                key-driven movement or a falling transition in the game test. */
             g_telePending=0u;
