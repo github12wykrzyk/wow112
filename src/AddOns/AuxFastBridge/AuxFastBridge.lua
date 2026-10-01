@@ -1,4 +1,4 @@
--- AuxFastBridge v2.7 low-FPS repeat-scan isolation
+-- AuxFastBridge v2.8 restart-filter guard + low-FPS repeat-scan isolation
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -87,6 +87,27 @@ local function avm_busy()
 		phase == "REVALIDATE" or phase == "BUY_PENDING" or phase == "UNKNOWN_HOLD" or
 		(AVM.market and (AVM.market.active or AVM.market.requested)) or
 		(AVM.vendor and (AVM.vendor.active or AVM.vendor.requested))
+end
+
+-- Upstream AUX execute(true) assumes current_search().filter_string is always a
+-- string and passes it straight to EditBox:SetText. The initial Search object is
+-- created with a nil filter, so an automatic loop restart can hit SetText(nil)
+-- before a manual Search has normalized that state. Enter the real module
+-- environment (require() exposes only the read-only export proxy) and repair the
+-- internal field without replacing/resetting the Search result table.
+local function ensure_search_resume_filter()
+	module "aux.tabs.search"
+	local search = current_search and current_search()
+	if not search then return false, "current search unavailable" end
+	if type(search.filter_string) ~= "string" then
+		local filter = ""
+		if search_box and search_box.GetText then
+			filter = search_box:GetText() or ""
+		end
+		if type(filter) ~= "string" then filter = tostring(filter or "") end
+		search.filter_string = filter
+	end
+	return true, search.filter_string
 end
 
 function AUXFAST_IsBusy()
@@ -419,6 +440,11 @@ function AUXFAST_ResumeSearch()
 		out("resume failed: aux.tabs.search unavailable")
 		return false
 	end
+	local stateOk, stateErr = ensure_search_resume_filter()
+	if not stateOk then
+		out("resume failed: " .. tostring(stateErr))
+		return false
+	end
 	resumeRequested = true
 	local ok, err = pcall(searchTab.execute, true)
 	if not ok then
@@ -445,6 +471,11 @@ function AUXFAST_RestartSearch()
 	end
 	if not okSearchTab or not searchTab or not searchTab.execute then
 		out("restart failed: aux.tabs.search unavailable")
+		return false
+	end
+	local stateOk, stateErr = ensure_search_resume_filter()
+	if not stateOk then
+		out("restart failed: " .. tostring(stateErr))
 		return false
 	end
 	resumeRequested = false
@@ -514,4 +545,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AUXFAST_HEADLESS_RECORDS or 0))
 end
 
-out("v2.7 loaded: low-FPS repeat scans keep first AUX UI snapshot and run later AVM cycles headless; hook=" .. tostring(hookInstalled))
+out("v2.8 loaded: restart/resume filter state guarded; repeat scans keep first AUX UI snapshot and run later AVM cycles headless; hook=" .. tostring(hookInstalled))

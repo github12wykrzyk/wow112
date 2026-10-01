@@ -3490,6 +3490,27 @@
       ],
       "package": null,
       "notes": "Root cause: mid-scan DE evaluation only revisited dePageRawCandidates from the current page. If an equipment candidate appeared before enough auction depth for one of its disenchant materials, it was discarded from the page-local live path and only reconsidered in AVM_AuxArbScanDone over all deRawCandidates. Candidate adds an indexed no-depth:<materialId> waiter map: equipment is evaluated immediately, unresolved candidates wait on the exact missing material, and are re-evaluated as soon as that material reaches configured depth later in the same scan. Page-end pause then runs the existing live material verify -> exact item revalidation -> buy -> resume path. Also migrates the prior zero-config vendor 10s default to 1c while preserving non-default user values."
+    },
+    {
+      "id": "auxfast-restart-filter-guard",
+      "branch": "feature/auxfast-restart-filter-guard",
+      "modules": [
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "auxfast-repeat-scan-fps",
+        "ah-live-de-midscan-v2"
+      ],
+      "shared_resources": [
+        "pinned aux.tabs.search execute(true) resume/restart path",
+        "completed AUX Search UI snapshot used by headless repeat loop"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "2b92374126d7cd6492395962117b10bf8773d511",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Runtime screenshot reports AUX FAST restart failure at pinned upstream tabs/search/results.lua:302: EditBox:SetText receives a non-string filter during bridge-driven execute(true). Exact installed gameplay SHA is not independently established, so no game result is recorded. Upstream creates the first Search with filter_string=nil; v2.8 normalizes the internal current_search().filter_string from search_box (or empty string) before both resume and restart, preserving execute(true), continuation semantics and the v2.7 headless UI snapshot rather than resetting the results table."
     }
   ]
 }
