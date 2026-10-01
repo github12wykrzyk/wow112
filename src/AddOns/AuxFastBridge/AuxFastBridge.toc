@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Original AUX fast Search bridge with Filter Builder routing, resumable candidates and full Search restart.
+## Notes: Original AUX fast Search bridge with AVM postscan ownership lock, Filter Builder routing and resumable Search.
 ## Author: github12wykrzyk/wow112
-## Version: 2.2
+## Version: 2.3
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB

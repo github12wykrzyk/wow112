@@ -2687,6 +2687,38 @@
       "tests": [],
       "package": null,
       "notes": "Fix Drain Soul handoff from an active wand. LazyScript validates all actions before executing a compound line, so stopWand-drainSoul could be rejected while Shoot made Drain Soul appear unusable. Drain Soul now accepts only the narrow active-wand transition when spell exists, mana is sufficient, cooldown is clear and target is in range; Use stops wand immediately before casting."
+    },
+    {
+      "id": "ah-loop-postscan-transaction-lock",
+      "branch": "feature/ah-loop-postscan-lock",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-continuous-arb-market-loop",
+        "ah-flip-history-anchor-v20"
+      ],
+      "shared_resources": [
+        "AUX_ARB continuous loop scheduler",
+        "DE_MAT_REVALIDATE / FLIP_MARKET_REVALIDATE postscan ownership",
+        "AuxFastBridge original AUX Search restart gate",
+        "PlaceAuctionBid guarded purchase lifecycle"
+      ],
+      "status": "in_progress",
+      "observed_head": null,
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "4dcec0fddd62890bdcdaf33fa5bd91fd7ef6473f",
+          "date": "2026-10-01",
+          "evidence": "Automatic diagnostic report #62: LIVE scan completed with Champion's Wall Shield of the Gorilla as DE best (buy 1g94s39c, net value 3g8s6c, expected profit 1g13s67c), emitted AUX_ARB_DE_VERIFY start, then 297ms later LOOP AUX_ARB cycle=3 restarted the full Search before any DE_MAT_REVALIDATE/BUY_SENT; sessionBuys remained 0."
+        }
+      ],
+      "package": null,
+      "notes": "Fixes report #62 scheduler ownership race. Continuous LOOP now treats DE/flip postscan verification, exact revalidation and candidate ownership as hard busy states; beginning DE/flip verification cancels stale loop wakeups. AuxFastBridge restart gate mirrors the same ownership so a restart cannot clear postscan state. Also clamps hardened flip depth to >=10 and rejects /avm auxarb flipdepth below 10, repairing stale pre-0.20 SavedVariables/macros observed in report #62."
     }
   ]
 }

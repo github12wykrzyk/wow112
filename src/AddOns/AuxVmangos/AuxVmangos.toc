@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with history-anchored flips, trusted realm vendor values, DE and periodic market snapshots.
+## Notes: Original AUX arbitrage with postscan transaction locking, history-anchored flips, trusted realm vendor values and DE.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.20-history-anchor-riskguard
+## Version: 0.20.1-postscan-lock
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

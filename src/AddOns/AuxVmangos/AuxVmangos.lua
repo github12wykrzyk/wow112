@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.20-history-anchor-riskguard"
+AVM_VERSION = "0.20.1-postscan-lock"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -362,6 +362,8 @@ local function avm_defaults()
 	if AVM_DB.flipMinProfit == nil then AVM_DB.flipMinProfit = 1000 end
 	if AVM_DB.flipMaxBuyout == nil then AVM_DB.flipMaxBuyout = 50000 end
 	if AVM_DB.flipDepthUnits == nil then AVM_DB.flipDepthUnits = 10 end
+	-- Depth <10 came from pre-0.20 macros/SavedVariables and defeats the hardened flip model.
+	if (tonumber(AVM_DB.flipDepthUnits) or 0) < 10 then AVM_DB.flipDepthUnits = 10 end
 	if AVM_DB.flipAhCutPct == nil then AVM_DB.flipAhCutPct = 5 end
 	if AVM_DB.flipSafetyMarginPct == nil then AVM_DB.flipSafetyMarginPct = 25 end
 	if AVM_DB.flipHistMaxPct == nil then AVM_DB.flipHistMaxPct = 70 end
@@ -416,10 +418,24 @@ local function avm_loop_after_market(saved, reason)
 	avm_loop_schedule_arb(saved and "market snapshot complete" or ("market failed: " .. tostring(reason or "unknown")))
 end
 
+local function avm_postscan_transaction_active()
+	local a = AVM.auxArb or {}
+	if AVM.pending or AVM.unknown or AVM.candidate then return true end
+	if a.deVerify or a.flipVerify or a.paused or a.pausePending then return true end
+	return AVM.phase == "DE_MAT_REVALIDATE" or
+		AVM.phase == "FLIP_MARKET_REVALIDATE" or
+		AVM.phase == "REVALIDATE" or
+		AVM.phase == "BUY_PENDING" or
+		AVM.phase == "UNKNOWN_HOLD"
+end
+
 local function avm_loop_tick(now)
 	if not AVM_DB.auxLoopEnabled then return false end
 	local nextAt = tonumber(AVM.auxLoop.nextAt) or 0
 	if nextAt <= 0 or now < nextAt then return false end
+	-- Never let a stale/duplicate loop wakeup replace a post-scan DE/flip
+	-- verification or an exact purchase revalidation. Report #62 proved this race.
+	if avm_postscan_transaction_active() then return false end
 	if AVM.pending or AVM.unknown or AVM.queryInFlight or
 	   AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or
 	   AVM.auxArb.active or AVM.auxArb.paused then return false end
@@ -1963,6 +1979,7 @@ local function avm_flip_begin_live_verify(candidate)
 	}
 	AVM.candidate = candidate
 	AVM.phase = "FLIP_MARKET_REVALIDATE"
+	AVM.auxLoop.nextAt = 0
 	AVM.nextQueryAt = GetTime() + 0.05
 	AVM.stats.auxArbFlipVerifies = AVM.stats.auxArbFlipVerifies + 1
 	avm_print("AUX_ARB_FLIP_VERIFY start " .. tostring(candidate.name) ..
@@ -2111,6 +2128,7 @@ local function avm_de_begin_live_verify(candidate)
 	}
 	AVM.candidate = candidate
 	AVM.phase = "DE_MAT_REVALIDATE"
+	AVM.auxLoop.nextAt = 0
 	AVM.nextQueryAt = GetTime() + 0.05
 	avm_print("AUX_ARB_DE_VERIFY start " .. tostring(candidate.name) ..
 		" mats=" .. tostring(table.getn(candidate.materials)) ..
@@ -3931,8 +3949,8 @@ local function avm_auxarb_slash(rest)
 		else avm_print("invalid flipmax") end
 	elseif sub == "flipdepth" then
 		local n = tonumber(avm_trim(arg))
-		if n and n >= 1 and n <= 200 then AVM_DB.flipDepthUnits = math.floor(n) avm_print("AUX_ARB FLIP depthUnits=" .. tostring(AVM_DB.flipDepthUnits))
-		else avm_print("flipdepth must be 1..200") end
+		if n and n >= 10 and n <= 200 then AVM_DB.flipDepthUnits = math.floor(n) avm_print("AUX_ARB FLIP depthUnits=" .. tostring(AVM_DB.flipDepthUnits))
+		else avm_print("flipdepth must be 10..200 (0.20+ risk floor)") end
 	elseif sub == "flipcut" then
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 0 and n <= 30 then AVM_DB.flipAhCutPct = n avm_print("AUX_ARB FLIP AH cut=" .. tostring(n) .. "%")

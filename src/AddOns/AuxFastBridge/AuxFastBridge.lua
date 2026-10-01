@@ -70,15 +70,19 @@ local function native_stock_sent()
 end
 
 local function avm_busy()
-	return AVM and (
-		AVM.queryInFlight or AVM.pending or AVM.unknown or
+	if not AVM then return false end
+	local arb = AVM.auxArb or {}
+	local phase = AVM.phase or "IDLE"
+	return AVM.queryInFlight or AVM.pending or AVM.unknown or AVM.candidate or
+		arb.deVerify or arb.flipVerify or arb.paused or arb.pausePending or
+		phase == "DE_MAT_REVALIDATE" or phase == "FLIP_MARKET_REVALIDATE" or
+		phase == "REVALIDATE" or phase == "BUY_PENDING" or phase == "UNKNOWN_HOLD" or
 		(AVM.market and (AVM.market.active or AVM.market.requested)) or
 		(AVM.vendor and (AVM.vendor.active or AVM.vendor.requested))
-	)
 end
 
 function AUXFAST_IsBusy()
-	return busy > 0
+	return busy > 0 or avm_busy()
 end
 
 -- Called by WoWAHThrottleNative after the verified stock 0x025C handler returns.
@@ -432,4 +436,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v2.2 loaded: Filter Builder -> AUX_ARB + resumable/continuous Search; hook=" .. tostring(hookInstalled))
+out("v2.3 loaded: postscan transaction lock + Filter Builder/AUX_ARB continuous Search; hook=" .. tostring(hookInstalled))
