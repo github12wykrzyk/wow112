@@ -2565,6 +2565,27 @@
       ],
       "package": null,
       "notes": "Allow explicit session-only AUX_ARB LIVE arming while MARKET owns the AH query scheduler. No buy can occur during MARKET; the flag becomes effective automatically on the next AUX Search. Keep purchase/pending/unknown and standalone VENDOR conflicts blocked. Existing vendor logic already interrupts original AUX at the end of the current loaded page, then exact-revalidates and buys before resuming; log wording is clarified."
+    },
+    {
+      "id": "summonscout-whisper-intent-v2",
+      "branch": "feature/summonscout-whisper-intent-v2",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-auto-invite-one-phrases"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper intent parser",
+        "WoW 1.12 CHAT_MSG_WHISPER",
+        "SummonScout Lua 5.0 upvalue budget"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "2bb0586db606c15c43d115a363fd97923323833a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.56 rebuilds direct-whisper request intent around explicit markers instead of literal phrase-only matching. Any literal '+' anywhere in a direct whisper is a strong request marker, and token forms inv/invi/invit/invite are equivalent. Existing seller, ambiguity, blacklist/group and wrong-destination safety gates remain; explicit plus/invite markers are allowed to override seller-text heuristics in direct whispers."
     }
   ]
 }

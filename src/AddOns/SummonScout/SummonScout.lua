@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.55"
+local ADDON_VERSION = "1.56"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -247,8 +247,7 @@ local WHISPER_PAYMENT_NEGATIVE_CUES = {
 local WHISPER_EXACT_CODES = {
     ["123"] = true,
     ["here"] = true,
-    ["sure"] = true,
-    ["+"] = true
+    ["sure"] = true
 }
 
 -- Strong buyer intent only. Generic words such as "me", "inv" and "port"
@@ -296,6 +295,24 @@ local function hasCue(s, cues)
     local j
     for j = 1, table.getn(cues) do
         if phraseHas(s, cues[j]) then return true end
+    end
+    return false
+end
+
+-- Direct whisper intent is deliberately more tolerant than World parsing.
+-- A literal '+' anywhere in a whisper is an explicit summon request marker.
+-- Invite shorthand is token-based so "inv", "invi", "invit" and "invite"
+-- behave identically without matching unrelated words such as "inventory".
+local function hasWhisperPlusMarker(message)
+    return string.find(message or "", "+", 1, true) ~= nil
+end
+
+local function hasWhisperInviteStem(s)
+    local token
+    for token in string.gfind(s or "", "%S+") do
+        if token == "inv" or token == "invi" or token == "invit" or token == "invite" then
+            return true
+        end
     end
     return false
 end
@@ -553,11 +570,14 @@ local function whisperInviteDecision(message)
     local service = SummonScoutDB.service or "all"
     local score = 0
     local paymentOffer = hasWhisperPaymentOffer(s)
-    -- Explicit one-word service codes such as "123", "here" and "sure" are
-    -- accepted immediately. 123 also remains tolerant as a whole token in short
-    -- whispers so normal politeness variants like "123 pls" still work.
+    local plusMarker = hasWhisperPlusMarker(raw)
+    local inviteStem = hasWhisperInviteStem(s)
+    local strongDirect = plusMarker or inviteStem
+
+    -- Exact service codes remain conservative. "123" additionally tolerates
+    -- short politeness suffixes; '+' is handled from raw text because normal
+    -- punctuation normalization intentionally strips it.
     local exactCode = WHISPER_EXACT_CODES[s]
-        or raw == "+"
         or (string.len(s) <= 32 and phraseHas(s, "123"))
     local directSummonQuestion = hasSummonToken(s)
         and (phraseHas(s, "can i")
@@ -569,11 +589,16 @@ local function whisperInviteDecision(message)
             or phraseHas(s, "summon pls")
             or phraseHas(s, "summon please"))
 
-    if (s == "" and not exactCode)
-        or (s ~= "" and isSellerMessage(message) and not paymentOffer) then
+    if (s == "" and not exactCode and not plusMarker)
+        or (s ~= "" and isSellerMessage(message) and not paymentOffer and not strongDirect) then
         return false, nil, "not-request"
     end
     if ambiguous then return false, nil, "ambiguous-location" end
+
+    -- Strong direct-whisper markers are enough on their own:
+    -- "+", "+ pls", "+anything", "inv", "invi", "invit", "invite", etc.
+    if plusMarker then score = score + 5 end
+    if inviteStem then score = score + 4 end
     if exactCode then score = score + 3 end
     if directSummonQuestion then score = score + 5 end
     if paymentOffer then score = score + 5 end
@@ -587,7 +612,7 @@ local function whisperInviteDecision(message)
     end
 
     if hasSummonToken(s) then score = score + 3 end
-    if hasCue(s, WHISPER_INVITE_CUES) then score = score + 3 end
+    if not inviteStem and hasCue(s, WHISPER_INVITE_CUES) then score = score + 3 end
     if hasBuyerIntentCue(s) then score = score + 2 end
     if hasCue(s, WHISPER_PRICE_CUES) then score = score + 1 end
     if hasGoldPrice(s) then score = score + 1 end
@@ -601,7 +626,7 @@ local function whisperInviteDecision(message)
         if not single then return false, nil, "multi-service-needs-location" end
         loc = single
     end
-    return true, loc, "smart-match"
+    return true, loc, plusMarker and "plus-match" or (inviteStem and "invite-stem" or "smart-match")
 end
 
 local function channelMatches(channelBaseName, channelFullName)
