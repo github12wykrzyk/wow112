@@ -42,6 +42,9 @@ namespace WoW112Updater
         private const string StableInnerZip = "WoW112_STABLE_CANDIDATE.zip";
         private const string UpdaterVersion = UpdaterBuildInfo.Version;
         private const int MaxBackups = 10;
+        private const uint KillReloadCommand = 0xFFFFFFFEu;
+        private const int KillReloadTimeoutMs = 15000;
+        private const int KillReloadSettleMs = 1000;
 
         private readonly TextBox gameDir = new TextBox();
         private readonly TextBox token = new TextBox();
@@ -104,7 +107,7 @@ namespace WoW112Updater
             updateButton.Click += async delegate { await UpdateAsync(); };
             updatePlayButton.Click += async delegate { await UpdateAndPlayAsync(); };
             launchButton.Click += delegate { LaunchGame(); };
-            killAllButton.Click += delegate { KillAllGameInstances(); };
+            killAllButton.Click += async delegate { await KillAllGameInstancesAsync(); };
             rollbackButton.Click += delegate { Rollback(); };
             saveButton.Click += delegate { SaveConfig(true); };
             status.Text = "Gotowy";
@@ -1438,7 +1441,7 @@ namespace WoW112Updater
             }
         }
 
-        private void KillAllGameInstances()
+        private async Task KillAllGameInstancesAsync()
         {
             if (busy) return;
             var root = gameDir.Text.Trim();
@@ -1449,8 +1452,8 @@ namespace WoW112Updater
             }
 
             root = Path.GetFullPath(root);
-            var running = CountGameProcesses(root);
-            if (running == 0)
+            var initialPids = GetGameProcessIds(root);
+            if (initialPids.Count == 0)
             {
                 status.Text = "Brak uruchomionych instancji WoW z tego katalogu.";
                 Log(status.Text);
@@ -1459,41 +1462,66 @@ namespace WoW112Updater
 
             var answer = MessageBox.Show(
                 this,
-                "Natychmiast zakończyć wszystkie instancje WoW z wybranego katalogu?\n\n"
-                    + "Procesy: " + running + "\n"
-                    + "To jest wymuszone zakończenie bez normalnego logoutu. Najnowsze niezapisane SavedVariables mogą zostać utracone.",
-                "WoW112 Updater — ZABIJ WSZYSTKIE WoW",
+                "Zakończyć wszystkie instancje WoW z wybranego katalogu?\n\n"
+                    + "Procesy: " + initialPids.Count + "\n"
+                    + "Najpierw updater wymusi ReloadUI() w KAŻDEJ instancji i poczeka na potwierdzenie zakończenia reloadu. "
+                    + "Dopiero potem wykona twardy Kill().\n\n"
+                    + "Jeśli choć jedna instancja nie potwierdzi reloadu, żaden działający klient nie zostanie zabity.",
+                "WoW112 Updater — RELOAD + ZABIJ WSZYSTKIE",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
                 MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes)
             {
-                status.Text = "Zabicie instancji anulowane.";
+                status.Text = "Reload + zabicie instancji anulowane.";
                 return;
             }
 
             var finalStatus = "Gotowy";
             var enteredBusy = false;
+            var reservedCoordinator = false;
             try
             {
-                SetBusy(true, "Zamykanie wszystkich instancji WoW...");
-                enteredBusy = true;
-                int failed;
-                var killed = KillGameProcesses(root, out failed);
-                if (failed != 0 || IsGameRunning(root))
-                    throw new InvalidOperationException("Nie udało się zakończyć wszystkich instancji WoW. Zakończono: " + killed + ", błędy: " + failed + ".");
+                if (summonCoordinatorBusy)
+                    throw new InvalidOperationException("Koordynator slave jest zajęty. Poczekaj na zakończenie bieżącej operacji i spróbuj ponownie.");
 
-                finalStatus = "Zakończono wszystkie instancje WoW (" + killed + ").";
+                summonCoordinatorBusy = true;
+                reservedCoordinator = true;
+                SetBusy(true, "ReloadUI we wszystkich instancjach WoW...");
+                enteredBusy = true;
+
+                await ReloadGameProcessesAsync(root, initialPids);
+
+                var currentPids = GetGameProcessIds(root);
+                var unexpected = currentPids.Where(pid => !initialPids.Contains(pid)).ToList();
+                if (unexpected.Count != 0)
+                    throw new InvalidOperationException("W trakcie operacji uruchomiono nową instancję WoW (PID "
+                        + string.Join(", ", unexpected.Select(x => x.ToString()).ToArray())
+                        + "). Kill anulowany, bo ta instancja nie przeszła ReloadUI.");
+
+                var killTargets = currentPids.Where(initialPids.Contains).ToList();
+                SetBusy(true, "Reload potwierdzony. Zamykanie instancji WoW...");
+                int failed;
+                var killed = KillGameProcesses(root, killTargets, out failed);
+                if (failed != 0)
+                    throw new InvalidOperationException("Nie udało się zakończyć wszystkich przeładowanych instancji WoW. Zakończono: "
+                        + killed + ", błędy: " + failed + ".");
+
+                if (GetGameProcessIds(root).Count != 0)
+                    throw new InvalidOperationException("Po operacji nadal działa instancja WoW z wybranego katalogu. Nie była objęta potwierdzonym zestawem ReloadUI.");
+
+                finalStatus = "ReloadUI potwierdzony; zakończono wszystkie instancje WoW (" + killed + ").";
                 Log(finalStatus);
             }
             catch (Exception ex)
             {
-                finalStatus = "Zabijanie instancji nie powiodło się";
-                Log("BŁĄD ZABIJ WSZYSTKIE: " + ex.Message);
+                finalStatus = "Reload + zabijanie instancji nie powiodło się";
+                Log("BŁĄD RELOAD + ZABIJ WSZYSTKIE: " + ex.Message);
                 MessageBox.Show(this, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
+                if (reservedCoordinator) summonCoordinatorBusy = false;
                 if (enteredBusy) SetBusy(false, finalStatus);
             }
 
@@ -1501,52 +1529,157 @@ namespace WoW112Updater
                 TryFinalizePendingUpdate();
         }
 
-        private static int CountGameProcesses(string root)
+        private async Task ReloadGameProcessesAsync(string root, IList<int> pids)
+        {
+            var channels = new Dictionary<int, SummonWorkerChannel>();
+            try
+            {
+                foreach (var pid in pids)
+                {
+                    if (!IsGameProcessAliveInRoot(pid, root))
+                        throw new InvalidOperationException("PID " + pid + " zakończył się przed wysłaniem ReloadUI.");
+
+                    var channel = SummonWorkerChannel.TryOpen(pid);
+                    if (channel == null)
+                        throw new InvalidOperationException("PID " + pid
+                            + ": brak zgodnego CharacterSwitch worker. Zaktualizuj runtime i uruchom tę instancję ponownie; kill został anulowany.");
+
+                    var snapshot = channel.Read();
+                    if (!HeartbeatFresh(snapshot))
+                    {
+                        channel.Dispose();
+                        throw new InvalidOperationException("PID " + pid + ": CharacterSwitch worker nie odpowiada; kill został anulowany.");
+                    }
+                    if (snapshot.InWorld != 1)
+                    {
+                        channel.Dispose();
+                        throw new InvalidOperationException("PID " + pid + ": klient nie jest aktualnie w świecie; nie mogę potwierdzić ReloadUI.");
+                    }
+                    if (snapshot.CommandSeq != snapshot.AckSeq)
+                    {
+                        channel.Dispose();
+                        throw new InvalidOperationException("PID " + pid + ": worker wykonuje inną komendę; kill został anulowany.");
+                    }
+                    channels.Add(pid, channel);
+                }
+
+                var seq = NewSummonRequestSeq();
+                foreach (var item in channels)
+                    item.Value.SendRaw(seq, KillReloadCommand);
+
+                Log("RELOAD+KILL: wysłano ReloadUI do " + channels.Count + " instancji • seq " + seq + ".");
+                var pending = new HashSet<int>(channels.Keys);
+                var started = Environment.TickCount;
+                while (pending.Count != 0 && unchecked(Environment.TickCount - started) < KillReloadTimeoutMs)
+                {
+                    foreach (var pid in pending.ToArray())
+                    {
+                        if (!IsGameProcessAliveInRoot(pid, root))
+                            throw new InvalidOperationException("PID " + pid + " zakończył się przed potwierdzeniem ReloadUI; kill pozostałych anulowany.");
+
+                        var snapshot = channels[pid].Read();
+                        if (snapshot.AckSeq != seq) continue;
+
+                        if (snapshot.CommandSlot != KillReloadCommand || snapshot.Error != 0 || snapshot.State == 5)
+                            throw new InvalidOperationException("PID " + pid + ": ReloadUI nie został potwierdzony"
+                                + " (state=" + snapshot.State + ", error=" + snapshot.Error + "). Kill anulowany.");
+
+                        pending.Remove(pid);
+                        Log("RELOAD+KILL: PID " + pid + " potwierdził zakończenie ReloadUI.");
+                    }
+
+                    if (pending.Count != 0)
+                        await Task.Delay(50);
+                }
+
+                if (pending.Count != 0)
+                    throw new InvalidOperationException("Timeout ReloadUI dla PID: "
+                        + string.Join(", ", pending.OrderBy(x => x).Select(x => x.ToString()).ToArray())
+                        + ". Żaden klient nie został zabity.");
+
+                status.Text = "ReloadUI potwierdzony we wszystkich instancjach. Finalizuję zapis...";
+                await Task.Delay(KillReloadSettleMs);
+            }
+            finally
+            {
+                foreach (var channel in channels.Values) channel.Dispose();
+            }
+        }
+
+        private static List<int> GetGameProcessIds(string root)
         {
             var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var count = 0;
+            var result = new List<int>();
             foreach (var process in System.Diagnostics.Process.GetProcesses())
             {
                 try
                 {
                     var module = process.MainModule;
                     var file = module == null ? null : module.FileName;
-                    if (IsGameProcessPath(file, fullRoot)) ++count;
+                    if (IsGameProcessPath(file, fullRoot)) result.Add(process.Id);
                 }
                 catch { }
                 finally { process.Dispose(); }
             }
-            return count;
+            result.Sort();
+            return result;
         }
 
-        private static int KillGameProcesses(string root, out int failed)
+        private static bool IsGameProcessAliveInRoot(int pid, string root)
+        {
+            try
+            {
+                using (var process = System.Diagnostics.Process.GetProcessById(pid))
+                {
+                    if (process.HasExited) return false;
+                    var module = process.MainModule;
+                    var file = module == null ? null : module.FileName;
+                    var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    return IsGameProcessPath(file, fullRoot);
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int KillGameProcesses(string root, IList<int> pids, out int failed)
         {
             var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var killed = 0;
             failed = 0;
-            foreach (var process in System.Diagnostics.Process.GetProcesses())
+            foreach (var pid in pids.Distinct().ToArray())
             {
                 try
                 {
-                    var module = process.MainModule;
-                    var file = module == null ? null : module.FileName;
-                    if (!IsGameProcessPath(file, fullRoot)) continue;
-
-                    process.Kill();
-                    if (!process.WaitForExit(5000))
+                    using (var process = System.Diagnostics.Process.GetProcessById(pid))
                     {
-                        ++failed;
-                        continue;
+                        if (process.HasExited) continue;
+                        var module = process.MainModule;
+                        var file = module == null ? null : module.FileName;
+                        if (!IsGameProcessPath(file, fullRoot))
+                        {
+                            ++failed;
+                            continue;
+                        }
+
+                        process.Kill();
+                        if (!process.WaitForExit(5000))
+                        {
+                            ++failed;
+                            continue;
+                        }
+                        ++killed;
                     }
-                    ++killed;
+                }
+                catch (ArgumentException)
+                {
+                    // Process already exited naturally after confirmed ReloadUI.
                 }
                 catch
                 {
                     ++failed;
-                }
-                finally
-                {
-                    process.Dispose();
                 }
             }
             return killed;

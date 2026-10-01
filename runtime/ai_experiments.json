@@ -3075,6 +3075,56 @@
       "tests": [],
       "package": null,
       "notes": "Adds self-contained Warlock melee weaving with no SP_SwingTimer dependency. meleeWeave waits for a confirmed wand shot before cutting Shoot, arms exactly one melee swing when UnitAttackSpeed says the white-swing timer is ready, confirms hit/miss from 1.12 self combat events, then returns to wand. A 0.45s melee lease plus 0.55s retry backoff prevents 100 ms form spam, range/facing failures or server latency from trapping the client in melee mode. Wand is never started while the native movement observer reports moving/stale. Requires Attack and Shoot on action bars. In-game timing still requires exact-SHA gameplay validation."
+    },
+    {
+      "id": "updater-reload-before-kill",
+      "branch": "feature/reload-before-kill",
+      "modules": [
+        "ParallelUpdater",
+        "CharacterSwitchDiag"
+      ],
+      "dependencies": [
+        "updater-kill-all-control",
+        "character-switch-clientservices-v4"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonWorker_<PID> shared worker map",
+        "WoW 1.12.1 FrameScript_Execute 0x00704CD0",
+        "Parallel updater kill-all process set",
+        ".wow112_parallel_updater pending live-update finalization"
+      ],
+      "status": "awaiting_game_test",
+      "observed_head": "201c34af876bc00f052f77452df0cb729f75c5a0",
+      "verified_commit": "201c34af876bc00f052f77452df0cb729f75c5a0",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "201c34af876bc00f052f77452df0cb729f75c5a0",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36917839291 passed on exact feature SHA, including changed CharacterSwitchDiag x86 compilation and repository/runtime gates."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "201c34af876bc00f052f77452df0cb729f75c5a0",
+          "date": "2026-10-01",
+          "evidence": "Build WoW112 updater run 36917839209 passed on exact feature SHA, including x86 compile, WinForms UI smoke, attestation and addon tests."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "201c34af876bc00f052f77452df0cb729f75c5a0",
+          "date": "2026-10-01",
+          "evidence": "Verified updater artifact 11191260535 (WoW112ParallelUpdater-201c34af876bc00f052f77452df0cb729f75c5a0)."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "201c34af876bc00f052f77452df0cb729f75c5a0",
+        "artifact_id": 11191260535
+      },
+      "notes": "Fail-closed pre-kill persistence pass. Updater requires every target WoW PID to expose a fresh CharacterSwitch worker, sends reserved worker command 0xFFFFFFFE, waits for per-PID ACK after native ReloadUI() returns, settles 1s, then kills only the acknowledged PID set. Any missing/stale/busy/not-in-world worker, error, timeout, unexpected exit, or newly launched PID aborts killing remaining clients."
     }
   ]
 }

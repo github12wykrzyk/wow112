@@ -233,3 +233,12 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - Akcja wykrywa wyłącznie `WoW.exe` / `WoW_*.exe` uruchomione z aktualnie wybranego katalogu gry, pokazuje liczbę procesów i wymaga potwierdzenia przed wymuszonym zakończeniem.
 - Po zamknięciu wszystkich instancji updater natychmiast próbuje sfinalizować oczekujący LIVE UPDATE, bez czekania na następny 2-sekundowy tick.
 - GitHub Issue **Wyślij raport** oraz **Wyślij AH dump** pozostają bez zmian; usunięty został tylko lokalny eksport Diagnostyka ZIP z GUI.
+
+
+## Updater 2.9-parallel.15 — ReloadUI przed Kill All
+
+- **Zabij wszystkie** działa teraz jako fail-closed **ReloadUI + Kill**. Updater najpierw identyfikuje dokładny zestaw PID-ów WoW z wybranego katalogu.
+- Każdy PID musi mieć świeży kanał `Local\\WoW112_SummonWorker_<PID>` z nowym CharacterSwitchDiag v7, być w świecie i nie wykonywać innej komendy. Brak zgodnego workera w choć jednej instancji anuluje cały kill.
+- Updater wysyła specjalną komendę IPC do wszystkich PID-ów równolegle. Native worker wykonuje `ReloadUI()` przez zweryfikowany dla 5875 `FrameScript_Execute 0x00704CD0` i zapisuje ACK dopiero po powrocie z reloadu.
+- Updater czeka maksymalnie 15 s na ACK każdego klienta, następnie 1 s przed twardym zakończeniem. Błąd/timeout/wyjście klienta przed ACK lub nowa instancja uruchomiona w trakcie powoduje anulowanie kill dla pozostałych.
+- Po udanym reloadzie zabijane są tylko PID-y należące do potwierdzonego zestawu. Następnie, jak wcześniej, finalizowany jest oczekujący LIVE UPDATE.
