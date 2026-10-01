@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.26.1-reload-consoleexec"
+AVM_VERSION = "0.26.2-reload-chatpath"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -506,9 +506,56 @@ local function avm_reload_is_idle()
 	local a = AVM.auxArb or {}
 	if AVM.pending or AVM.unknown or AVM.queryInFlight or AVM.candidate then return false end
 	if AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested then return false end
+	if ChatFrameEditBox and ChatFrameEditBox.IsVisible and ChatFrameEditBox:IsVisible() then return false end
 	if a.active or a.paused or a.pausePending or a.resumePending or a.candidate or
 	   a.deVerify or a.flipVerify or a.postscanCandidate then return false end
 	return AVM.phase == "IDLE"
+end
+
+local function avm_reload_command_text()
+	-- Prefer the exact /reload alias the user can execute manually. Addons in a
+	-- Vanilla client may provide /reload, /reloadui or /rl; discover the alias
+	-- instead of assuming a specific SlashCmdList key.
+	if SlashCmdList then
+		for key in pairs(SlashCmdList) do
+			local i = 1
+			while i <= 20 do
+				local alias = getglobal("SLASH_" .. tostring(key) .. tostring(i))
+				if not alias then break end
+				local lower = string.lower(tostring(alias))
+				if lower == "/reload" then return alias end
+				if lower == "/reloadui" or lower == "/rl" then
+					-- Keep looking for literal /reload first; remember a working reload alias.
+					local fallback = alias
+					for key2 in pairs(SlashCmdList) do
+						local j = 1
+						while j <= 20 do
+							local alias2 = getglobal("SLASH_" .. tostring(key2) .. tostring(j))
+							if not alias2 then break end
+							if string.lower(tostring(alias2)) == "/reload" then return alias2 end
+							j = j + 1
+						end
+					end
+					return fallback
+				end
+				i = i + 1
+			end
+		end
+	end
+	-- Stock 1.12 has /console even if no addon exposes /reload.
+	return "/console reloadui"
+end
+
+local function avm_issue_reload_through_chat()
+	if not ChatFrameEditBox or not ChatFrameEditBox.SetText or not ChatEdit_SendText then
+		return false, "ChatFrameEditBox/ChatEdit_SendText unavailable", ""
+	end
+	local command = avm_reload_command_text()
+	local okSet, setErr = pcall(ChatFrameEditBox.SetText, ChatFrameEditBox, command)
+	if not okSet then return false, setErr, command end
+	local okSend, sendErr = pcall(ChatEdit_SendText, ChatFrameEditBox)
+	if not okSend then return false, sendErr, command end
+	return true, nil, command
 end
 
 local function avm_queue_reload_after_scan(reason)
@@ -543,14 +590,10 @@ local function avm_reload_cycle_tick(now)
 	local reason = AVM.reloadCycle.reason
 	avm_snapshot_for_reload(reason)
 	AVM.reloadCycle.issuedAt = now
-	avm_print("RELOAD_AFTER_SCAN issuing /console reloadui; preserving AH session + session safety counters")
 	if AUXFAST_PrepareUiReload then pcall(AUXFAST_PrepareUiReload) end
-	local ok, err
-	if ConsoleExec then
-		ok, err = pcall(ConsoleExec, "reloadui")
-	else
-		ok, err = false, "ConsoleExec unavailable"
-	end
+	local ok, err, command = avm_issue_reload_through_chat()
+	avm_print("RELOAD_AFTER_SCAN issuing chat " .. tostring(command or "?") ..
+		"; preserving AH session + session safety counters")
 	if not ok then
 		if AUXFAST_CancelUiReload then pcall(AUXFAST_CancelUiReload) end
 		AVM_DB.reloadCycle = nil

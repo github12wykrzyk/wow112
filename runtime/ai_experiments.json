@@ -3674,10 +3674,67 @@
       ],
       "status": "awaiting_ci",
       "observed_head": "edd58d878ef31b50b7dda1c4ba6aa525079b1859",
+      "verified_commit": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
+          "date": "2026-10-02",
+          "run_id": 36940541517,
+          "evidence": "Parallel feature preflight passed on exact feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
+          "date": "2026-10-02",
+          "run_id": 36940590225,
+          "evidence": "Integrated Parallel Build work candidate passed on exact SHA, including FINAL_PACKAGE and addon/provenance attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
+          "date": "2026-10-02",
+          "evidence": "Verified candidate artifact 11200440088."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
+          "date": "2026-10-02",
+          "evidence": "User screenshot showed 'RELOAD_AFTER_SCAN issuing /console reloadui' followed two seconds later by 'command did not reload UI; legacy loop retry in 2s'; automatic reload did not occur."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
+        "artifact_id": 11200440088
+      },
+      "notes": "User screenshot showed repeated RELOAD_AFTER_SCAN messages without an actual automatic reload. Exact installed SHA was not independently established. Candidate switches the reload trigger to ConsoleExec('reloadui'), used by Vanilla 1.12 reload helpers, and adds a two-second watchdog so a rejected command cannot repeat every AVM tick. Existing idle gating, saved safety counters, AUX GUI reopen/filter restore and fresh visible scan path are preserved. Gameplay disproved direct ConsoleExec from the automatic OnUpdate context."
+    },
+    {
+      "id": "ah-reload-chatpath-fix",
+      "branch": "feature/ah-reload-chatpath",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-reload-consoleexec-fix",
+        "ah-reload-after-scan-safe-ui"
+      ],
+      "shared_resources": [
+        "Vanilla ChatFrameEditBox slash-command parser",
+        "manual /reload alias",
+        "AUX reload-cycle scheduler"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "4edcb49dd9639b074dae70f0f9544f8002a46f7d",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "User screenshot showed repeated RELOAD_AFTER_SCAN messages without an actual automatic reload. Exact installed SHA was not independently established. Candidate switches the reload trigger to ConsoleExec('reloadui'), used by Vanilla 1.12 reload helpers, and adds a two-second watchdog so a rejected command cannot repeat every AVM tick. Existing idle gating, saved safety counters, AUX GUI reopen/filter restore and fresh visible scan path are preserved."
+      "notes": "Direct ReloadUI() and direct ConsoleExec('reloadui') both returned without reloading in the automatic scan-completion context. The user has a working manual /reload shortcut. Candidate now discovers a live /reload (or /reloadui,/rl) alias and submits it through the same ChatFrameEditBox + ChatEdit_SendText slash-command path; if none is registered it submits stock '/console reloadui' through the chat parser. Reload waits while the user is typing in chat, remains single-shot with the existing two-second watchdog, and preserves all transaction-idle/session-state/AUX-GUI restore logic."
     }
   ]
 }
