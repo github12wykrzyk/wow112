@@ -500,8 +500,12 @@ end
 local function avm_prepare_revalidate(c)
 	local pages = {}
 	local seen = {}
+	local maxPage = AVM.lastPage or 0
+	if c and c.mode == "fastvendor" and AVM.market and (tonumber(AVM.market.lastPage) or 0) > maxPage then
+		maxPage = tonumber(AVM.market.lastPage) or maxPage
+	end
 	local function add_page(p)
-		if p and p >= 0 and p <= AVM.lastPage and not seen[p] then
+		if p and p >= 0 and p <= maxPage and not seen[p] then
 			seen[p] = true
 			table.insert(pages, p)
 		end
@@ -859,7 +863,8 @@ function AVM_FastMarketNativeDone(reason)
 			avm_prepare_revalidate(best)
 			AVM.phase = "REVALIDATE"
 			AVM.nextQueryAt = GetTime() + 0.50
-			avm_print("FAST VENDOR LIVE: revalidate exact auction before one purchase")
+			avm_print("FAST VENDOR LIVE: revalidate exact auction on full-AH page " ..
+				tostring(best.sourcePage) .. " before one purchase")
 		end
 	else
 		AVM.fastVendorBest = nil
@@ -2344,8 +2349,11 @@ local function avm_tick()
 
 	if AVM.candidate and AVM.candidate.mode == "fastvendor" and AVM.phase == "REVALIDATE" then
 		if AVM.revalidatePages and AVM.revalidatePages[AVM.revalidatePos] then
-			avm_send_query("REVALIDATE", AVM.revalidatePages[AVM.revalidatePos], AVM.candidate.name)
+			-- FAST MARKET sourcePage belongs to the unfiltered full-AH ordering.
+			-- Revalidate the exact signature on that same unfiltered page.
+			avm_send_query("REVALIDATE", AVM.revalidatePages[AVM.revalidatePos], "")
 		else
+			avm_print("FAST VENDOR revalidate has no valid source page; abort")
 			avm_resume_after_candidate(AVM.candidate, false)
 		end
 		return
