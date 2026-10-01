@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-native-response-correlation",
+      "branch": "parallel",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2036,9 +2036,9 @@
         "Aux merchant_sell learned vendor cache",
         "AuxVmangos guarded vendor revalidation"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "935a54ed0ad73645d6a10e7b76052fa3109d691b",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
+      "verified_commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
       "tests": [
         {
           "kind": "ci",
@@ -2067,10 +2067,35 @@
           "commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
           "date": "2026-10-01",
           "evidence": "Verified aggregate candidate artifact 11156596803 (WoW112-WORK-CANDIDATE-76745b45d086bccf6d2593b22d09c98cd58aeb75) was produced by successful integrated parallel run 36853292714."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36854822303 and Verify AI experiment registry run 36854822193 passed on exact native-response-correlation SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
+          "date": "2026-10-01",
+          "evidence": "Integrated parallel Build work candidate run 36854967698 passed on exact SHA, including changed native AH module build, FINAL_PACKAGE, addon package, provenance and candidate attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11158575954 (WoW112-WORK-CANDIDATE-a4c6453c0d339d0f55586b8e10763a44b50da1b5) was produced by successful integrated parallel run 36854967698."
         }
       ],
-      "package": null,
-      "notes": "Report #53 on integrated SHA 935a54ed0ad73645d6a10e7b76052fa3109d691b: hook=true proved v1.1 installed, but counters showed far more AUCTION_ITEM_LIST_UPDATE events than actual QueryAuctionItems calls (e.g. ui-event/page counter 103 vs bypass/query-scale 8), matching the user's pattern of ~2 fast pages followed by an upstream 5s wait. Root cause: duplicate/stale UI update events are not safe page-correlation evidence once CanSendAuctionQuery is bypassed. v1.2 feature correlates each AUX request to the verified native 0x025C response after the stock handler populates the list; duplicate UI events become diagnostics only, with fail-safe fallback to upstream waiting if native correlation is absent."
+      "package": {
+        "verified": true,
+        "commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
+        "artifact_id": 11158575954
+      },
+      "notes": "Report #53 diagnosed the remaining 5s cadence: on hookfix v1.1, one real query produced many AUCTION_ITEM_LIST_UPDATE events (e.g. ui-event counter 103 with only about 8 query/gate checks), so bypassing CanSendAuctionQuery let stale duplicate UI events masquerade as subsequent page responses. Integrated v1.2 now correlates original AUX pages to the verified native SMSG_AUCTION_LIST_RESULT (0x025C) handler after the stock client has populated the auction list. UI events are diagnostic only. /auxfast reports queries/native/matched/timeouts/uiEvents; healthy scans should keep queries, native and matched together with timeouts=0. Exact code SHA a4c6453c passed preflight and full parallel package gates; gameplay validation pending."
     }
   ]
 }
