@@ -95,7 +95,7 @@ function AHThrottleTest_BenchStageDone(stage,intervalMs,sent)
 end
 
 local function summarize(interval)
-    local n=0,totalSent=0,totalRecv=0,totalMiss=0,sumLoss=0,sumSq=0,worst=-1,best=101,worstMissing=0,zeroRuns=0
+    local n,totalSent,totalRecv,totalMiss,sumLoss,sumSq,worst,best,worstMissing,zeroRuns = 0,0,0,0,0,0,-1,101,0,0
     local i,r
     for i=1,table.getn(AHT.bench.results) do
         r=AHT.bench.results[i]
