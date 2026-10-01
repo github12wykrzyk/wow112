@@ -93,7 +93,7 @@ def count_upvalue_candidates(prefix: str, body: str) -> list[str]:
     for name in sorted(root):
         if name in shadowed:
             continue
-        if re.search(rf"\b{re.escape(name)}\b", clean):
+        if re.search(rf"(?<![.:])\b{re.escape(name)}\b", clean):
             refs.append(name)
     return refs
 
