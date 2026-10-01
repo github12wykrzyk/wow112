@@ -20,6 +20,7 @@ STATIC_GATES = [
     ["tools/verify_parallel_gui_abi.py"],
     ["tools/verify_parallel_gui_contract.py"],
     ["tools/ai_experiments.py", "validate"],
+    ["tools/verify_summonscout_lua_upvalues.py"],
 ]
 
 def run(args):

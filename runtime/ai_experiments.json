@@ -2297,12 +2297,34 @@
         "Vanilla /afk SendChatMessage AFK path",
         "Vanilla StaticPopup CAMP OnHide -> CancelLogout"
       ],
-      "status": "awaiting_ci",
+      "status": "rejected",
       "observed_head": "7986940a0e6488fa397edc419121a180ad7c5f4c",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "SummonScout 1.53 replaces repeated CAMP cancellation with a single IDLE_MESSAGE-driven AFK clear + one CAMP cancel. Feature preflight/package/game evidence pending."
+      "notes": "SummonScout 1.53 was rejected after the real 1.12.1 client failed to load SummonScout.lua with 'too many upvalues (limit=32)' near line 3049. Repository/package CI had passed because it did not enforce the client Lua closure limit. Exact installed gameplay SHA was not independently verified, so no fabricated exact-SHA game test was added."
+    },
+    {
+      "id": "summonscout-lua-upvalue-fix",
+      "branch": "feature/summonscout-upvalue-fix",
+      "modules": [
+        "SummonScout",
+        "parallel feature preflight"
+      ],
+      "dependencies": [
+        "summonscout-idle-recovery-v3",
+        "summonscout-auto-invite-one-phrases"
+      ],
+      "shared_resources": [
+        "WoW 1.12 Lua 5.0 32-upvalue closure limit",
+        "SummonScout OnEvent dispatcher"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "68854d2c5dce74a240b6b9d2eb2f5a11cd48c487",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.54 bundles OnEvent helper references through EventAPI to stay below the 32-upvalue client limit and adds a preflight regression gate. CI/package/game evidence pending."
     }
   ]
 }
