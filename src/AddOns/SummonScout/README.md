@@ -553,3 +553,23 @@ Smart auto-invite now accepts additional natural short replies that ask for one 
 - `I'll grab one`
 
 These remain direct-whisper cues; they do not broaden World-channel request parsing or seller/competition detection.
+
+
+## 1.53 idle-logout recovery without message storm
+
+The repeated yellow `IDLE_MESSAGE` was caused by the 1.51 recovery loop cancelling CAMP every 250 ms while the underlying AFK/idle condition remained active. 1.53 removes that loop.
+
+The new startup recovery:
+- reacts to the exact Vanilla `IDLE_MESSAGE` (with a text fallback),
+- performs at most one recovery action per login,
+- temporarily enables the stock `autoClearAFK` CVar,
+- sends the stock empty AFK toggle used by `/afk` to clear the already-active AFK state,
+- performs one `Jump()` movement pulse,
+- cancels/hides CAMP once and waits for `LOGOUT_CANCEL`,
+- restores the user's previous `autoClearAFK` value,
+- only treats an already-open CAMP popup as inherited during the first two seconds after entering the world,
+- no longer registers or repeatedly reacts to `PLAYER_CAMPING`, so a normal manual logout is not intercepted.
+
+Evidence used for this correction:
+- Vanilla 1.12.1 FrameXML defines `IDLE_MESSAGE`, `autoClearAFK`, the `/afk` handler as `SendChatMessage(msg, "AFK")`, and CAMP `OnHide -> CancelLogout()`.
+- vMaNGOS chat handling toggles AFK when an empty AFK chat packet is received, matching the stock `/afk` path.

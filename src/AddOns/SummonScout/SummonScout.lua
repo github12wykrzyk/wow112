@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.52"
+local ADDON_VERSION = "1.53"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -55,11 +55,12 @@ SS.shardGuardLastCount = -1
 SS.shardGuardNextCheckAt = 0
 SS.loginRecoveryArmed = false
 SS.loginRecoveryUntil = 0
-SS.nextLoginRecoveryAt = 0
-SS.loginRecoveryPasses = 0
-SS.loginRecoveryCampingSeen = false
-SS.loginRecoveryJumped = false
+SS.loginRecoveryDetectUntil = 0
+SS.loginRecoveryAttempted = false
+SS.loginRecoveryIdleSeen = false
 SS.loginRecoveryAcked = false
+SS.loginRecoverySavedAutoClearAFK = nil
+SS.loginRecoveryRestoreCVarAt = 0
 SS.loginRecoveryReported = false
 
 local LOCATIONS = {
@@ -1767,67 +1768,97 @@ local function loginRecoveryActive()
     return now() <= SS.loginRecoveryUntil
 end
 
+local function restoreLoginRecoveryCVar()
+    if SS.loginRecoverySavedAutoClearAFK ~= nil and SetCVar then
+        SetCVar("autoClearAFK", SS.loginRecoverySavedAutoClearAFK)
+    end
+    SS.loginRecoverySavedAutoClearAFK = nil
+    SS.loginRecoveryRestoreCVarAt = 0
+end
+
 local function stopLoginRecovery(acked)
     SS.loginRecoveryAcked = acked and true or false
     SS.loginRecoveryUntil = 0
-    SS.nextLoginRecoveryAt = 0
+    SS.loginRecoveryDetectUntil = 0
+    restoreLoginRecoveryCVar()
 end
 
 local function startLoginRecovery()
     if not SummonScoutDB.loginRecoveryEnabled then
         stopLoginRecovery(false)
-        SS.loginRecoveryPasses = 0
-        SS.loginRecoveryCampingSeen = false
-        SS.loginRecoveryJumped = false
+        SS.loginRecoveryAttempted = false
+        SS.loginRecoveryIdleSeen = false
         SS.loginRecoveryReported = false
         return
     end
 
-    -- Do not spam CancelLogout on every normal login. Keep a short armed
-    -- window and react when the real Vanilla CAMP state/event appears.
+    -- The previous implementation repeatedly cancelled CAMP, which can make
+    -- Vanilla's native IDLE_MESSAGE fire over and over when the underlying
+    -- AFK state was never cleared. Keep a short startup window, but perform
+    -- at most one recovery action.
     SS.loginRecoveryUntil = now() + 12.0
-    SS.nextLoginRecoveryAt = now() + 0.10
-    SS.loginRecoveryPasses = 0
-    SS.loginRecoveryCampingSeen = false
-    SS.loginRecoveryJumped = false
+    SS.loginRecoveryDetectUntil = now() + 2.0
+    SS.loginRecoveryAttempted = false
+    SS.loginRecoveryIdleSeen = false
     SS.loginRecoveryAcked = false
+    SS.loginRecoverySavedAutoClearAFK = nil
+    SS.loginRecoveryRestoreCVarAt = 0
     SS.loginRecoveryReported = false
 end
 
-local function cancelStartupLogout(reason)
+local function isIdleLogoutMessage(line)
+    line = trim(line or "")
+    if line == "" then return false end
+    if IDLE_MESSAGE and line == IDLE_MESSAGE then return true end
+
+    -- Fallback for localized/private-server clients that keep the English
+    -- Vanilla text but do not expose IDLE_MESSAGE to this addon environment.
+    local s = normalizeMessage(line)
+    return has(s, "you have been inactive for some time")
+        and has(s, "will be logged out of the game")
+end
+
+local function clearStartupIdleLogout(reason)
     local campVisible
 
-    if not loginRecoveryActive() then return false end
-    SS.loginRecoveryCampingSeen = true
+    if not loginRecoveryActive() or SS.loginRecoveryAttempted then return false end
+    SS.loginRecoveryAttempted = true
+    SS.loginRecoveryIdleSeen = true
 
-    -- Canonical Vanilla cancel path. The stock 1.12.1 CAMP popup calls
-    -- CancelLogout() when its Cancel button is accepted or the popup hides.
-    if CancelLogout then
-        CancelLogout()
+    -- Vanilla 1.12 exposes autoClearAFK as the "Auto Clear AFK" option.
+    -- Force it on only for this recovery pulse and restore the user's value
+    -- afterwards. This lets the movement pulse clear the AFK state.
+    if GetCVar and SetCVar then
+        SS.loginRecoverySavedAutoClearAFK = GetCVar("autoClearAFK")
+        SetCVar("autoClearAFK", "1")
+        SS.loginRecoveryRestoreCVarAt = now() + 2.0
     end
 
-    -- If the stock popup is already visible, close that exact CAMP dialog too.
-    -- Its Blizzard OnHide handler issues another CancelLogout(), matching a
-    -- real user cancellation instead of merely changing our own state.
-    campVisible = StaticPopup_Visible and StaticPopup_Visible("CAMP")
-    if campVisible and StaticPopup_Hide then
-        StaticPopup_Hide("CAMP")
+    -- IDLE_MESSAGE is emitted by the native inactivity path after the player
+    -- is already AFK. Vanilla's /afk command is SendChatMessage("", "AFK");
+    -- on vMaNGOS an empty AFK message toggles an existing AFK state off.
+    if SendChatMessage then
+        SendChatMessage("", "AFK")
     end
 
-    -- Independent movement-side escape. Vanilla 1.12 binds SPACE directly to
-    -- Jump(); use it once only after CAMP was actually observed so normal
-    -- summoner logins never jump.
-    if not SS.loginRecoveryJumped and Jump then
-        SS.loginRecoveryJumped = true
+    -- Also generate one normal movement action while autoClearAFK is enabled.
+    -- No repeating Jump/MoveForward loop: one pulse only.
+    if Jump then
         Jump()
     end
 
-    SS.loginRecoveryPasses = (SS.loginRecoveryPasses or 0) + 1
-    SS.nextLoginRecoveryAt = now() + 0.25
+    -- Cancel the actual CAMP popup once. Hiding the stock CAMP popup invokes
+    -- Blizzard's own OnHide -> CancelLogout path, so avoid double-cancelling.
+    campVisible = StaticPopup_Visible and StaticPopup_Visible("CAMP")
+    if campVisible and StaticPopup_Hide then
+        StaticPopup_Hide("CAMP")
+    elseif CancelLogout then
+        CancelLogout()
+    end
 
     if SummonScoutDB.debug and not SS.loginRecoveryReported then
         SS.loginRecoveryReported = true
-        chat("startup logout detected -> CancelLogout + CAMP hide + movement escape")
+        chat("startup idle logout -> AFK clear + one cancel [" .. tostring(reason or "idle") .. "]")
     end
     return true
 end
@@ -1838,29 +1869,27 @@ local function processLoginRecovery()
 
     if not SummonScoutDB.loginRecoveryEnabled then return end
     if not SS.loginRecoveryUntil or SS.loginRecoveryUntil <= 0 then return end
+
+    if SS.loginRecoveryRestoreCVarAt and SS.loginRecoveryRestoreCVarAt > 0
+        and t >= SS.loginRecoveryRestoreCVarAt then
+        restoreLoginRecoveryCVar()
+    end
+
     if t > SS.loginRecoveryUntil then
-        if SummonScoutDB.debug and SS.loginRecoveryCampingSeen and not SS.loginRecoveryAcked then
-            chat("startup logout recovery expired without LOGOUT_CANCEL ACK")
-        end
         stopLoginRecovery(false)
         return
     end
-    if t < (SS.nextLoginRecoveryAt or 0) then return end
 
-    campVisible = StaticPopup_Visible and StaticPopup_Visible("CAMP")
-    if campVisible or SS.loginRecoveryCampingSeen then
-        cancelStartupLogout(campVisible and "CAMP_VISIBLE" or "RETRY")
-
-        -- If canonical cancel + Jump did not yield LOGOUT_CANCEL promptly,
-        -- emit one zero-duration forward start/stop movement pulse. These are
-        -- the exact functions used by Vanilla 1.12 MOVEFORWARD bindings.
-        if (SS.loginRecoveryPasses or 0) == 3 and MoveForwardStart and MoveForwardStop then
-            MoveForwardStart()
-            MoveForwardStop()
+    -- If the client entered the world with an already-open CAMP popup, catch
+    -- it only during the first two seconds. Later manual /logout must never be
+    -- intercepted by this startup guard.
+    if not SS.loginRecoveryAttempted
+        and t <= (SS.loginRecoveryDetectUntil or 0)
+        and StaticPopup_Visible then
+        campVisible = StaticPopup_Visible("CAMP")
+        if campVisible then
+            clearStartupIdleLogout("startup CAMP")
         end
-    else
-        -- Nothing to cancel yet; poll quickly without producing chat/emote spam.
-        SS.nextLoginRecoveryAt = t + 0.10
     end
 end
 
@@ -2807,7 +2836,6 @@ end
 local frame = CreateFrame("Frame", "SummonScoutFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-frame:RegisterEvent("PLAYER_CAMPING")
 frame:RegisterEvent("LOGOUT_CANCEL")
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
 frame:RegisterEvent("BAG_UPDATE")
@@ -2857,25 +2885,11 @@ frame:SetScript("OnEvent", function()
         return
     end
 
-    if event == "PLAYER_CAMPING" then
-        -- The stock UI raises this event when the 20s logout/CAMP state begins.
-        -- During the initial login recovery window, cancel from the event
-        -- itself and then let OnUpdate verify/close the stock popup.
-        if SS.loginRecoveryArmed then
-            SS.loginRecoveryArmed = false
-            startLoginRecovery()
-        end
-        if loginRecoveryActive() then
-            cancelStartupLogout("PLAYER_CAMPING")
-            return
-        end
-    end
-
     if event == "LOGOUT_CANCEL" then
-        if loginRecoveryActive() or SS.loginRecoveryCampingSeen then
+        if loginRecoveryActive() and SS.loginRecoveryAttempted then
             stopLoginRecovery(true)
-            if SummonScoutDB.debug and SS.loginRecoveryCampingSeen then
-                chat("startup logout cancel ACK")
+            if SummonScoutDB.debug and SS.loginRecoveryIdleSeen then
+                chat("startup idle logout cancel ACK")
             end
         end
         return
@@ -2905,6 +2919,14 @@ frame:SetScript("OnEvent", function()
 
     if event == "CHAT_MSG_SYSTEM" then
         local line = trim(arg1 or "")
+
+        -- This is the exact Vanilla inactivity warning from GlobalStrings.lua.
+        -- React once to the idle condition itself instead of repeatedly
+        -- cancelling PLAYER_CAMPING, which caused the visible message storm.
+        if loginRecoveryActive() and isIdleLogoutMessage(line) then
+            clearStartupIdleLogout("IDLE_MESSAGE")
+            return
+        end
 
         -- Manual /invite and right-click invites do not pass through SSI's own
         -- InviteByName path. Track the client's confirmation and reconcile it
