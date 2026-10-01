@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-republish-0151",
+      "branch": "feature/ah-aux-arb-search-detect",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2038,7 +2038,7 @@
         "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "746a7f18f8496e68fc103358073cfa8af2a3b56a",
+      "observed_head": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
       "verified_commit": null,
       "tests": [
         {
@@ -2113,7 +2113,7 @@
         }
       ],
       "package": null,
-      "notes": "Forced republish requested after user reported /avm unavailable in game despite the previous successful package. This iteration changes only the AuxVmangos runtime/version marker from 0.15 to 0.15.1 so addon bytes definitely change and the updater must see/install a fresh AuxVmangos payload. Economic logic and validated 25 ms original-AUX transport are unchanged."
+      "notes": "Report #56 from installed artifact 95db290d/run 36866053336 proves AuxVmangos 0.15.1 loaded and /avm worked, but after completed original AUX Search it showed pages=0/0, vendor/de candidates=0/0 and deNoValue=0. Upstream tabs/search/results.lua shows every Search always supplies auto_buy_validator and auto_bid_validator functions even when no saved rule is enabled. AuxFastBridge v1.7 required both fields to be nil before attaching arbitrage callbacks, so the economic loop never saw scan/page/auction events. v1.8 identifies normal full Search by its real callback shape and attaches AuxVmangos; transport and 25 ms cooldown remain unchanged."
     },
     {
       "id": "map-tele-keep-open",

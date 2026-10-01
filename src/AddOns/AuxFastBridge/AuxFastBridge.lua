@@ -1,4 +1,4 @@
--- AuxFastBridge v1.7
+-- AuxFastBridge v1.8
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -152,11 +152,20 @@ local function install_scan_hook()
 
 	M.start = function(params)
 		params = params or {}
-		-- Seller names are not required for ordinary market/search scans. Force
-		-- owner-agnostic scanning only when no buy/bid validator is active.
-		local uiIsolation = params.type == "list" and not params.auto_buy_validator and not params.auto_bid_validator
-		if uiIsolation then
+		-- Original AUX Search always supplies validator functions even when no
+		-- saved automatic rule is enabled, so function presence cannot classify
+		-- the scan. Detect the normal full Search by its callback shape instead.
+		local fullSearchScan = params.type == "list" and
+			params.on_scan_start and params.on_start_query and
+			params.on_page_scanned and params.on_auction and true or false
+		local auxArbAttached = fullSearchScan and AVM_DB and AVM_DB.auxArbEnabled and
+			AVM_AuxArbScanStart and AVM_AuxArbAuction and AVM_AuxArbPageDone and true or false
+		if fullSearchScan then
 			params.ignore_owner = true
+		end
+		if auxArbAttached then
+			params.auto_buy_validator = nil
+			params.auto_bid_validator = nil
 		end
 		local oldScanStart = params.on_scan_start
 		local oldAuction = params.on_auction
@@ -167,17 +176,17 @@ local function install_scan_hook()
 
 		params.on_scan_start = function()
 			if oldScanStart then oldScanStart() end
-			if uiIsolation and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart) end
+			if auxArbAttached and AVM_AuxArbScanStart then pcall(AVM_AuxArbScanStart) end
 		end
 
 		params.on_auction = function(record)
 			if oldAuction then oldAuction(record) end
-			if uiIsolation and AVM_AuxArbAuction then pcall(AVM_AuxArbAuction, record) end
+			if auxArbAttached and AVM_AuxArbAuction then pcall(AVM_AuxArbAuction, record) end
 		end
 
 		params.on_page_scanned = function()
 			if oldPageScanned then oldPageScanned() end
-			if uiIsolation and AVM_AuxArbPageDone then
+			if auxArbAttached and AVM_AuxArbPageDone then
 				local state = get_state()
 				local page = state and state.page or queryPage
 				local last = page
@@ -216,7 +225,7 @@ local function install_scan_hook()
 			release()
 			local result
 			if oldComplete then result = oldComplete() end
-			if uiIsolation and AVM_AuxArbScanDone then pcall(AVM_AuxArbScanDone) end
+			if auxArbAttached and AVM_AuxArbScanDone then pcall(AVM_AuxArbScanDone) end
 			pauseRequested = false
 			pausePage = -1
 			return result
@@ -227,7 +236,7 @@ local function install_scan_hook()
 			local result
 			if oldAbort then result = oldAbort() end
 			pauseRequested = false
-			if arbPause and uiIsolation and AVM_AuxArbPaused then
+			if arbPause and auxArbAttached and AVM_AuxArbPaused then
 				pcall(AVM_AuxArbPaused, pausePage)
 			end
 			pausePage = -1
@@ -252,7 +261,7 @@ local function install_scan_hook()
 		end
 
 		busy = busy + 1
-		if uiIsolation then detach_blizzard_browse() end
+		if fullSearchScan then detach_blizzard_browse() end
 		return originalStart(params)
 	end
 
@@ -376,4 +385,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.7 loaded: fast stock gate + pause/revalidate/resume bridge; hook=" .. tostring(hookInstalled))
+out("v1.8 loaded: original Search detection + arbitrage bridge; hook=" .. tostring(hookInstalled))
