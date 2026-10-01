@@ -1152,6 +1152,7 @@ static void ui_sync_rear(void) {
 #define UI_PROFILE_POLL_FRAMES 30u
 __declspec(dllimport) DWORD WINAPI GetPrivateProfileStringA(LPCSTR,LPCSTR,LPCSTR,char*,DWORD,LPCSTR);
 __declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCSTR,LPCSTR);
+__declspec(dllimport) DWORD WINAPI GetEnvironmentVariableA(LPCSTR,LPSTR,DWORD);
 static char g_ui_profile_path[512];
 static BOOL g_ui_profile_initialized=FALSE;
 static DWORD g_ui_profile_next_frame=0u;
@@ -1179,6 +1180,46 @@ static volatile DWORD *const g_ui_profile_esp_flags[]={
     &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile,&g_quest_enabled
 };
 static DWORD g_ui_profile_esp_last[5];
+
+/* MULTIBOX already supplies WOW112_AUTOLOGIN_ACCOUNT per child process.
+ * Keep the legacy shared filename for ordinary/manual launches, but isolate
+ * launcher-managed clients into deterministic per-account INI files so one
+ * account cannot seed or overwrite another account's ESP GUI settings. */
+static DWORD ui_profile_filename(char *out,DWORD cap) {
+    static const char legacy[]=UI_PROFILE_NAME;
+    static const char prefix[]="wow112_parallel_gui_";
+    static const char suffix[]=".ini";
+    static const char hex[]="0123456789ABCDEF";
+    char account[96];
+    DWORD n,i,pos=0u,hash=2166136261u;
+    if(!out||cap<2u)return 0u;
+    n=GetEnvironmentVariableA("WOW112_AUTOLOGIN_ACCOUNT",account,sizeof(account));
+    if(!n||n>=sizeof(account)) {
+        for(i=0u;legacy[i]&&i+1u<cap;++i)out[i]=legacy[i];
+        if(legacy[i]){out[0]=0;return 0u;}
+        out[i]=0;return i;
+    }
+    for(i=0u;i<n;++i) {
+        BYTE c=(BYTE)account[i];
+        if(c>='A'&&c<='Z')c=(BYTE)(c+('a'-'A'));
+        hash^=(DWORD)c;
+        hash*=16777619u;
+    }
+    for(i=0u;prefix[i];++i) {
+        if(pos+1u>=cap){out[0]=0;return 0u;}
+        out[pos++]=prefix[i];
+    }
+    for(i=0u;i<8u;++i) {
+        if(pos+1u>=cap){out[0]=0;return 0u;}
+        out[pos++]=hex[(hash>>(28u-i*4u))&15u];
+    }
+    for(i=0u;suffix[i];++i) {
+        if(pos+1u>=cap){out[0]=0;return 0u;}
+        out[pos++]=suffix[i];
+    }
+    out[pos]=0;
+    return pos;
+}
 
 static void ui_profile_key(char key[16],DWORD id) {
     char *end=app_u32(key,id);
@@ -1231,18 +1272,20 @@ static const W112_ControlSettingV1 *ui_profile_descriptor(const W112_ControlModu
 }
 static void ui_filters_changed(void); /* callback defined below; required by x86 C99 compiler */
 static void ui_profile_bootstrap(void) {
-    DWORD n,start,i,bits;
+    DWORD n,start,i,bits,profileLen;
+    char profileName[64];
     if(g_ui_profile_initialized)return;
     g_ui_profile_initialized=TRUE;
     n=GetModuleFileNameA(NULL,g_ui_profile_path,sizeof(g_ui_profile_path));
     if(!n||n>=sizeof(g_ui_profile_path)){g_ui_profile_path[0]=0;return;}
     start=n;
     while(start&&g_ui_profile_path[start-1u]!='\\'&&g_ui_profile_path[start-1u]!='/')--start;
-    if(!start||start+sizeof(UI_PROFILE_NAME)>sizeof(g_ui_profile_path)) {
+    profileLen=ui_profile_filename(profileName,sizeof(profileName));
+    if(!profileLen||!start||start+profileLen+1u>sizeof(g_ui_profile_path)) {
         g_ui_profile_path[0]=0;return;
     }
-    for(i=0u;i<sizeof(UI_PROFILE_NAME);++i)
-        g_ui_profile_path[start+i]=UI_PROFILE_NAME[i];
+    for(i=0u;i<=profileLen;++i)
+        g_ui_profile_path[start+i]=profileName[i];
     for(i=0u;i<5u;++i) {
         char key[16];
         ui_profile_key(key,i+1u);

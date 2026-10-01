@@ -2800,6 +2800,26 @@
       "tests": [],
       "package": null,
       "notes": "Reduce WoW 1.12 Lua heap/GC pressure during full MARKET scans without slowing AUX/vendor acquisition. Replace per-auction duplicate prices[] plus offers-table allocation with price-level aggregation {auctions,units}; derive auction percentiles and depth5/10/20 from one sorted distinct-price list at finish. Output history schema/semantics are unchanged. User reported noticeable client slowdown specifically during MARKET; exact gameplay SHA was not independently established, so no game-test result is recorded yet."
+    },
+    {
+      "id": "playeresp-account-profiles",
+      "branch": "feature/esp-account-profiles",
+      "modules": [
+        "WoWPlayerESP"
+      ],
+      "dependencies": [
+        "multibox-auto-first-character-parallel"
+      ],
+      "shared_resources": [
+        "WOW112_AUTOLOGIN_ACCOUNT child-process environment contract",
+        "PlayerESP wow112_parallel_gui*.ini persistence"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "83c5e338d470921f31b311f8bc5c3d329c08ecb2",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Split PlayerESP GUI persistence per MULTIBOX account. Launcher-managed clients derive a deterministic account-specific INI filename from WOW112_AUTOLOGIN_ACCOUNT; ordinary/manual launches keep the legacy wow112_parallel_gui.ini. This prevents settings configured on one account from being restored by every simultaneously launched client."
     }
   ]
 }
