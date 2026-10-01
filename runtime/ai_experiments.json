@@ -2308,8 +2308,7 @@
       "id": "summonscout-lua-upvalue-fix",
       "branch": "feature/summonscout-upvalue-fix",
       "modules": [
-        "SummonScout",
-        "parallel feature preflight"
+        "SummonScout"
       ],
       "dependencies": [
         "summonscout-idle-recovery-v3",
@@ -2322,9 +2321,17 @@
       "status": "awaiting_ci",
       "observed_head": "68854d2c5dce74a240b6b9d2eb2f5a11cd48c487",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "failed",
+          "commit": "e5591697aa0acd9b6dc7d33d44a503763428d860",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36876527292 failed at ai_experiments validation because the experiment listed a non-module infrastructure label; source change and upvalue gate were not reached."
+        }
+      ],
       "package": null,
-      "notes": "SummonScout 1.54 bundles OnEvent helper references through EventAPI to stay below the 32-upvalue client limit and adds a preflight regression gate. CI/package/game evidence pending."
+      "notes": "SummonScout 1.54 bundles OnEvent helper references through EventAPI to stay below the 32-upvalue client limit and adds a preflight regression gate. Ledger module metadata corrected after preflight 36876527292; exact corrected SHA pending CI."
     }
   ]
 }
