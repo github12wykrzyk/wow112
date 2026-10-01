@@ -3041,8 +3041,8 @@
           "evidence": "User reports DE still did not buy and loop immediately entered full MARKET again; requested automatic MARKET be disabled to isolate purchase flow."
         },
         {
-          "kind": "parallel_feature_preflight",
-          "result": "pass",
+          "kind": "ci",
+          "result": "passed",
           "commit": "3dcde810ae1a7c257dd9de5faa256a16a86df1e0",
           "date": "2026-10-01",
           "run_id": 36914154878,
