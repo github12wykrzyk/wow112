@@ -3125,6 +3125,29 @@
         "artifact_id": 11191260535
       },
       "notes": "Fail-closed pre-kill persistence pass. Updater requires every target WoW PID to expose a fresh CharacterSwitch worker, sends reserved worker command 0xFFFFFFFE, waits for per-PID ACK after native ReloadUI() returns, settles 1s, then kills only the acknowledged PID set. Any missing/stale/busy/not-in-world worker, error, timeout, unexpected exit, or newly launched PID aborts killing remaining clients."
+    },
+    {
+      "id": "ah-zero-config-live-defaults",
+      "branch": "feature/ah-zero-config-live-defaults",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-loop-no-auto-market",
+        "ah-midscan-de-smooth-market"
+      ],
+      "shared_resources": [
+        "AUX_ARB default live state",
+        "continuous loop startup on AUCTION_HOUSE_SHOW",
+        "vendor/DE/flip default risk parameters",
+        "session purchase/spend gates"
+      ],
+      "status": "in_progress",
+      "observed_head": "6c5016143075f10075015badd44783c876408896",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User requested zero manual configuration. One-time migration plus AH-open activation sets AUX_ARB live=true, loop=true, automatic MARKET=false, maxSessionBuys=0 unlimited, maxSessionSpend=0 unlimited. Defaults: vendor min 10s/max 5g; DE min 10s/max 5g/depth3/cut5%/margin25%; flip min 10s/max 10g/depth10/cut5%/margin25%. Legacy scanner remains off. Existing economic tooltip default-on behavior is preserved."
     }
   ]
 }
