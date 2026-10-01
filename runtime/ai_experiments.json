@@ -1888,6 +1888,28 @@
       ],
       "package": null,
       "notes": "Gameplay test on exact parallel dca7a8cd showed native page 0 then PAGE_TIMEOUT. Static audit found send_test_page wrongly required diagnostic g_captured although FAST mode sets g_fastCaptured, so page 1 was never sent. Fix permits replay for either capture mode. F6 is occupied by teleport; FAST MARKET trigger moved to F2. Rebased onto current parallel HEAD without overwriting updater changes."
+    },
+    {
+      "id": "ah-fast-vendor-live",
+      "branch": "feature/ah-fast-vendor-live",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-fast-market-hotfix-f2"
+      ],
+      "shared_resources": [
+        "FAST MARKET response-paced page callbacks",
+        "AVM_VENDOR_VALUES",
+        "PlaceAuctionBid live transaction path",
+        "purchase revalidation/pending confirmation"
+      ],
+      "status": "in_progress",
+      "observed_head": "65c383fbaefbe11a121bdce54b8942f1b84a8da2",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "First practical <vendor purchase bridge. F2 full scan still builds PriceDB, while each page also evaluates vendor value candidates. Keeps only the single best qualifying opportunity by absolute profit. Explicit /avm vendor fastlive on arms a one-shot purchase: after full scan, exact auction signature is re-queried/revalidated through the existing guarded purchase path before PlaceAuctionBid. Scan itself keeps LIVE off. One best candidate means at most one purchase per F2 cycle; normal max buyout, min profit, wallet and session spend guards remain active. Gameplay validation pending."
     }
   ]
 }

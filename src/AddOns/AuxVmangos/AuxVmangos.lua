@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.12-vmangos-fast-native-market"
+AVM_VERSION = "0.13-vmangos-fast-vendor-live"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -42,6 +42,8 @@ AVM = {
 	uiGeneration = 0,
 	fastMarketNative = false,
 	fastMarketPages = 0,
+	fastVendorBest = nil,
+	fastVendorArmed = false,
 	candidate = nil,
 	revalidatePages = nil,
 	revalidatePos = 0,
@@ -257,6 +259,7 @@ local function avm_defaults()
 	if AVM_DB.vendorHotPages == nil then AVM_DB.vendorHotPages = AVM_DB.vendorMaxPages end
 	if AVM_DB.vendorSweepPages == nil then AVM_DB.vendorSweepPages = 25 end -- legacy 0.10 setting
 	if AVM_DB.vendorSeekRadius == nil then AVM_DB.vendorSeekRadius = 1 end
+	if AVM_DB.fastVendorLive == nil then AVM_DB.fastVendorLive = false end
 	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
 	if AVM_DB.diag == nil then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
 	if AVM_DB.vendorMeta.sweepPass == nil then AVM_DB.vendorMeta.sweepPass = 0 end
@@ -730,6 +733,8 @@ local function avm_market_finish(save, reason)
 	if AVM_DB.enabled then avm_restart_boundary(false) end
 end
 
+local avm_vendor_candidate_from_row
+
 -- Native response-paced full-market scan bridge.
 -- F6 is owned by WoWAHThrottleNative V8. The native side keeps exactly one
 -- CMSG_AUCTION_LIST_ITEMS request in flight and calls these functions only
@@ -751,6 +756,7 @@ function AVM_FastMarketNativeStart()
 		AVM_DB.enabled = false
 		avm_print("scanner OFF - FAST MARKET owns AH scheduler")
 	end
+	AVM.fastVendorArmed = AVM_DB.fastVendorLive and true or false
 	if AVM_DB.live then
 		AVM_DB.live = false
 		avm_print("LIVE OFF - FAST MARKET owns AH scheduler")
@@ -771,7 +777,9 @@ function AVM_FastMarketNativeStart()
 	AVM.market.consecutiveTimeouts = 0
 	AVM.fastMarketNative = true
 	AVM.fastMarketPages = 0
-	avm_print("FAST MARKET start: response-paced native scan, one query in flight")
+	AVM.fastVendorBest = nil
+	avm_print("FAST MARKET start: response-paced native scan, one query in flight" ..
+		(AVM.fastVendorArmed and " + FAST VENDOR ARMED (max 1 buy after revalidate)" or ""))
 	local ok,err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, 0, false, 0, false)
 	if not ok then
 		AVM.fastMarketNative = false
@@ -795,6 +803,20 @@ function AVM_FastMarketNativePage(page, nativeRows)
 			" native=" .. tostring(nativeRows) .. " lua=" .. tostring(rows))
 	end
 	avm_market_aggregate_page()
+	if avm_vendor_candidate_from_row then
+		local i,c
+		for i = 1, rows do
+			c = avm_vendor_candidate_from_row(i)
+			if c then
+				c.mode = "fastvendor"
+				c.sourcePage = page
+				if not AVM.fastVendorBest or c.profit > AVM.fastVendorBest.profit or
+				   (c.profit == AVM.fastVendorBest.profit and c.buyout < AVM.fastVendorBest.buyout) then
+					AVM.fastVendorBest = c
+				end
+			end
+		end
+	end
 	AVM.fastMarketPages = AVM.fastMarketPages + 1
 	AVM.market.page = page + 1
 	if page == 0 or mod(page, 25) == 0 or page >= AVM.market.lastPage then
@@ -814,10 +836,34 @@ function AVM_FastMarketNativeDone(reason)
 	end
 	AVM.fastMarketNative = false
 	if reason == "COMPLETE" and AVM.fastMarketPages > 0 then
+		local best = AVM.fastVendorBest
+		local armed = AVM.fastVendorArmed
 		AVM.market.boundary = 0
 		avm_print("FAST MARKET native complete pages=" .. tostring(AVM.fastMarketPages))
+		if best then
+			avm_print("FAST VENDOR BEST " .. tostring(best.count) .. "x " .. tostring(best.name) ..
+				" buy=" .. avm_money(best.buyout) ..
+				" vendor=" .. avm_money(best.vendorTotal or 0) ..
+				" profit=" .. avm_money(best.profit or 0) ..
+				" page=" .. tostring(best.sourcePage))
+		else
+			avm_print("FAST VENDOR no qualifying <vendor opportunity in full scan")
+		end
 		avm_market_finish(true, "fast native complete")
+		AVM.fastVendorBest = nil
+		AVM.fastVendorArmed = false
+		if armed and best then
+			best.mode = "fastvendor"
+			AVM.candidate = best
+			AVM_DB.live = true
+			avm_prepare_revalidate(best)
+			AVM.phase = "REVALIDATE"
+			AVM.nextQueryAt = GetTime() + 0.50
+			avm_print("FAST VENDOR LIVE: revalidate exact auction before one purchase")
+		end
 	else
+		AVM.fastVendorBest = nil
+		AVM.fastVendorArmed = false
 		avm_market_finish(false, "FAST MARKET " .. reason)
 	end
 end
@@ -1137,7 +1183,7 @@ local function avm_vendor_item_id(i)
 	return tonumber(id)
 end
 
-local function avm_vendor_candidate_from_row(i)
+avm_vendor_candidate_from_row = function(i)
 	local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
 	if not name or not count or count <= 0 or not buyout or buyout <= 0 then return nil end
 
@@ -1351,6 +1397,23 @@ local function avm_vendor_resume_after_candidate()
 	end
 	v.resumeSegment = "HOT"
 	avm_vendor_restart_cycle()
+end
+
+local function avm_resume_after_candidate(c, dryRun)
+	if c and (c.mode == "vendor" or c.mode == "fastvendor") then
+		avm_vendor_resume_after_candidate()
+		return
+	end
+	if c and c.mode == "fastvendor" then
+		AVM.candidate = nil
+		AVM.revalidatePages = nil
+		AVM.revalidatePos = 0
+		AVM.phase = "IDLE"
+		if AVM_DB.live then AVM_DB.live = false end
+		avm_print("FAST VENDOR cycle complete; LIVE OFF")
+		return
+	end
+	avm_restart_boundary()
 end
 
 local function avm_vendor_finish(reason)
@@ -1726,6 +1789,18 @@ local function avm_vendor_slash(rest)
 		end
 	elseif sub == "status" then
 		avm_vendor_status()
+		avm_print("FAST VENDOR live=" .. tostring(AVM_DB.fastVendorLive) .. " (F2 full scan -> best candidate -> exact revalidate -> max 1 buy)")
+	elseif sub == "fastlive" then
+		local v = string.lower(avm_trim(arg))
+		if v == "on" then
+			AVM_DB.fastVendorLive = true
+			avm_print("FAST VENDOR LIVE ARMED: next F2 scan may buy ONE revalidated <vendor auction")
+		elseif v == "off" then
+			AVM_DB.fastVendorLive = false
+			avm_print("FAST VENDOR LIVE OFF")
+		else
+			avm_print("usage: /avm vendor fastlive on|off")
+		end
 	elseif sub == "minprofit" then
 		local n = avm_parse_money(avm_trim(arg))
 		if n and n >= 0 then
@@ -1770,7 +1845,7 @@ local function avm_vendor_slash(rest)
 	elseif sub == "sweeppages" or sub == "sweepreset" then
 		avm_print("VENDOR SWEEP is legacy in 0.11; FAST SEEK is active")
 	else
-		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|hotpages 10|seekradius 1|targets")
+		avm_print("/avm vendor start|stop|status|fastlive on|off|minprofit 5s|maxbuyout 1g|hotpages 10|seekradius 1|targets")
 	end
 end
 
@@ -1823,7 +1898,7 @@ avm_revalidate_candidate = function()
 					if not c.affordable then
 						wallet = " affordable=false missing=" .. avm_money(c.missing or 0)
 					end
-					if c.mode == "vendor" then
+					if (c.mode == "vendor" or c.mode == "fastvendor") then
 						avm_print("VENDOR_DRYRUN " .. c.count .. "x " .. c.name ..
 							" buy=" .. avm_money(c.buyout) ..
 							" vendor=" .. avm_money(c.vendorTotal or 0) ..
@@ -1886,7 +1961,7 @@ avm_revalidate_candidate = function()
 				}
 				AVM.candidate = nil
 				AVM.phase = "BUY_PENDING"
-				if c.mode == "vendor" then
+				if (c.mode == "vendor" or c.mode == "fastvendor") then
 					avm_print("BUY_SENT " .. c.count .. "x " .. c.name .. " " .. avm_money(c.buyout) ..
 						" expectedVendorProfit=" .. avm_money(c.profit or 0))
 				else
@@ -1905,7 +1980,7 @@ avm_revalidate_candidate = function()
 
 	AVM.stats.failed = AVM.stats.failed + 1
 	AVM.recent[c.signature] = GetTime() + 2
-	if c.mode == "vendor" then
+	if (c.mode == "vendor" or c.mode == "fastvendor") then
 		avm_print("VENDOR_RACE " .. c.name .. " - opportunity moved/disappeared before revalidate")
 	else
 		AVM.stats.watchRaces = AVM.stats.watchRaces + 1
@@ -2141,7 +2216,7 @@ local function avm_tick_pending(now)
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
 			AVM.recent[p.candidate.signature] = now + 15
-			if p.candidate.mode == "vendor" then
+			if (p.candidate.mode == "vendor" or p.candidate.mode == "fastvendor") then
 				avm_print("CONFIRMED " .. p.candidate.name .. " " .. avm_money(p.candidate.buyout) ..
 					" expectedVendorProfit=" .. avm_money(p.candidate.profit or 0))
 			else
@@ -2181,7 +2256,7 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
-			if u.candidate.mode == "vendor" then
+			if (u.candidate.mode == "vendor" or u.candidate.mode == "fastvendor") then
 				avm_print("CONFIRMED_LATE " .. u.candidate.name .. " " .. avm_money(u.candidate.buyout) ..
 					" expectedVendorProfit=" .. avm_money(u.candidate.profit or 0))
 			else
@@ -2265,6 +2340,15 @@ local function avm_tick()
 	if AVM.rulesDirty and not AVM.queryInFlight and not AVM.pending and not AVM.unknown then
 		AVM.rulesDirty = false
 		avm_restart_boundary(true)
+	end
+
+	if AVM.candidate and AVM.candidate.mode == "fastvendor" and AVM.phase == "REVALIDATE" then
+		if AVM.revalidatePages and AVM.revalidatePages[AVM.revalidatePos] then
+			avm_send_query("REVALIDATE", AVM.revalidatePages[AVM.revalidatePos], AVM.candidate.name)
+		else
+			avm_resume_after_candidate(AVM.candidate, false)
+		end
+		return
 	end
 
 	if not AVM_DB.enabled then return end
@@ -2699,6 +2783,9 @@ frame:SetScript("OnEvent", function()
 		AVM.open = false
 		AVM.fastMarketNative = false
 		AVM.fastMarketPages = 0
+		AVM.fastVendorBest = nil
+		AVM.fastVendorArmed = false
+		AVM_DB.live = false
 		AVM.queryInFlight = false
 		AVM.lastResultAt = 0
 		AVM.nextQueryAt = 0
