@@ -2019,25 +2019,29 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "parallel",
+      "branch": "feature/ah-query-cooldown25",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
-        "AuxVmangos"
+        "AuxVmangos",
+        "AHThrottleNative"
       ],
       "dependencies": [
         "ah-fast-vendor-revalidate-fix"
       ],
       "shared_resources": [
         "QueryAuctionItems / CanSendAuctionQuery",
-        "AUCTION_ITEM_LIST_UPDATE",
+        "WoW 5875 QueryAuctionItems cooldown instruction 0x004CEC47 / immediate 0x004CEC48",
+        "WoW 5875 auction query deadline 0x00B72638",
+        "ClientServices::Send 0x005AB630",
         "native SMSG_AUCTION_LIST_RESULT 0x025C handler",
+        "AUCTION_ITEM_LIST_UPDATE",
         "original Aux scan state machine and GUI",
         "Aux merchant_sell learned vendor cache",
         "AuxVmangos guarded vendor revalidation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "45445055a4be3c1825265239424bca629ef3c0a7",
+      "observed_head": "ae4b9ed139e2129004fa3ec3e7f2ccd23586d958",
       "verified_commit": null,
       "tests": [
         {
@@ -2095,10 +2099,24 @@
           "commit": "92c56caee3c5d65b8cc9041ddc0742247735268f",
           "date": "2026-10-01",
           "evidence": "Parallel feature preflight run 36858217437 and Verify AI experiment registry run 36858217450 passed on exact v1.5 SHA 92c56caee3c5d65b8cc9041ddc0742247735268f."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "ae4b9ed139e2129004fa3ec3e7f2ccd23586d958",
+          "date": "2026-10-01",
+          "evidence": "Integrated parallel Build work candidate run 36858561988 passed on exact SHA ae4b9ed139e2129004fa3ec3e7f2ccd23586d958 and produced artifact 11159882284."
+        },
+        {
+          "kind": "binary",
+          "result": "passed",
+          "commit": "ae4b9ed139e2129004fa3ec3e7f2ccd23586d958",
+          "date": "2026-10-01",
+          "evidence": "Exact verified Parallel candidate artifact 11159882284 disassembly: QueryAuctionItems at 0x004CE980 checks deadline 0x00B72638 before send; after ClientServices::Send at 0x004CEC3D it calls the tick function, executes bytes 05 88 13 00 00 at 0x004CEC47 (add eax,5000), then A3 38 26 B7 00 stores the deadline. CanSendAuctionQuery at 0x004CFBB0 reads the same deadline."
         }
       ],
       "package": null,
-      "notes": "v1.5 integrated to parallel after exact feature preflight PASS. Report #54 showed queries=6 native=3 matched=3 timeouts=3 bypass=3 ownerGrace=0, so seller resolution was not the active delay. v1.5 forces ownerless ordinary list scans, detaches Blizzard AuctionFrameBrowse during AUX Search, and adds a native ClientServices::Send outbound CMSG counter. Integrated exact-SHA candidate build/registry validation pending."
+      "notes": "Report #54 and v1.5 game output proved Lua queries=6 while only stockSent/native/matched=3 with timeouts=3; seller ownerGrace remained 0. Exact current Parallel candidate disassembly then located the real 5000 ms stock throttle inside QueryAuctionItems: 0x004CEC47 add eax,0x1388, stored to 0x00B72638 and checked before send; CanSendAuctionQuery reads the same deadline. v1.6 feature removes the Lua gate bypass and runtime-patches only the verified 32-bit cooldown immediate to 25 ms after an exact byte signature check, restoring 5000 ms on unload. Response correlation remains one real 0x025C per page."
     },
     {
       "id": "map-tele-keep-open",

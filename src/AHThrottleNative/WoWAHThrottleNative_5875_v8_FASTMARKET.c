@@ -11,7 +11,7 @@
  * then replays mutated copies using distinct listfrom values.
  *
  * Repeatability stages: alternating 75 ms and 125 ms, five runs each.
- * V8 additionally provides F2 FAST MARKET plus passive AUX receive and real-outbound CMSG probes.
+ * V8 additionally provides F2 FAST MARKET, passive AUX receive/outbound probes, and an exact-build 25 ms QueryAuctionItems cooldown patch.
  * After the native 0x025C handler finishes, Lua consumes that exact page, then the
  * next page is sent after a short 25 ms settle. This avoids page-correlation drift.
  * Each stage sends 500 distinct pages and allows 10 seconds to drain responses.
@@ -97,6 +97,8 @@ typedef int (FASTCALL *InboundHandlerFn)(void*,u32,void*,InboundStore5875*);
 #define ADDR_NETCLIENT_GETTER 0x005AB490u
 #define ADDR_AH_RX_REGISTER_SITE 0x004CC114u
 #define ADDR_AH_RX_HANDLER 0x004CC7F0u
+#define ADDR_AH_QUERY_COOLDOWN_INSN 0x004CEC47u
+#define ADDR_AH_QUERY_COOLDOWN_IMM  0x004CEC48u
 #define NETCLIENT_GLOBAL 0x00C28128u
 #define NET_HANDLER_BASE 0x00000074u
 #define NET_CONTEXT_BASE 0x00000D64u
@@ -122,6 +124,8 @@ typedef int (FASTCALL *InboundHandlerFn)(void*,u32,void*,InboundStore5875*);
 #define FAST_SETTLE_MS    25u
 #define FAST_PAGE_TIMEOUT_MS 1500u
 #define FAST_MAX_PAGE     2000u
+#define AH_QUERY_COOLDOWN_ORIGINAL_MS 5000u
+#define AH_QUERY_COOLDOWN_FAST_MS       25u
 #define STAGE_SENDS      500u
 #define STAGE_COUNT      10u
 #define FIRST_TEST_PAGE  20u
@@ -174,6 +178,7 @@ static u32 g_auxObservedSent=0u;
 static u32 g_auxObservedPage=0u;
 static u32 g_auxObservedTick=0u;
 static u32 g_auxObservedDirty=0u;
+static u32 g_ahCooldownPatched=0u;
 
 static u32 read32(u32 a){return *(volatile u32*)(u32)a;}
 static void write32(u32 a,u32 v){*(volatile u32*)(u32)a=v;}
@@ -240,15 +245,36 @@ static int safe_build(void){
     static const u8 getterSig[]={0xA1,0x28,0x81,0xC2,0x00,0xC3};
     static const u8 rxMapSig[]={0x57,0xBA,0xF0,0xC7,0x4C,0x00,0xB9,0x5C,0x02,0x00,0x00};
     static const u8 rxHandlerSig[]={0x53,0x8B,0xDC,0x83,0xEC,0x08,0x83,0xE4,0xF8,0x83,0xC4,0x04};
+    static const u8 ahCooldownSig[]={0x05,0x88,0x13,0x00,0x00,0xA3,0x38,0x26,0xB7,0x00};
     u32 next;
     if(!signature(FRAME_EXECUTE,scriptSig,sizeof(scriptSig)))return 0;
     if(!signature(ADDR_NETCLIENT_GETTER,getterSig,sizeof(getterSig)))return 0;
     if(!signature(ADDR_AH_RX_REGISTER_SITE,rxMapSig,sizeof(rxMapSig)))return 0;
     if(!signature(ADDR_AH_RX_HANDLER,rxHandlerSig,sizeof(rxHandlerSig)))return 0;
+    if(!signature(ADDR_AH_QUERY_COOLDOWN_INSN,ahCooldownSig,sizeof(ahCooldownSig)))return 0;
     next=decode_jump(ADDR_CLIENT_SEND);
     if(!valid_ptr(next))return 0;
     g_nextSend=next;
     return 1;
+}
+
+static int install_ah_query_cooldown_patch(void){
+    u32 fast=AH_QUERY_COOLDOWN_FAST_MS;
+    if(read32(ADDR_AH_QUERY_COOLDOWN_IMM)!=AH_QUERY_COOLDOWN_ORIGINAL_MS)return 0;
+    if(!write_mem((void*)(u32)ADDR_AH_QUERY_COOLDOWN_IMM,&fast,4u))return 0;
+    if(read32(ADDR_AH_QUERY_COOLDOWN_IMM)!=AH_QUERY_COOLDOWN_FAST_MS)return 0;
+    g_ahCooldownPatched=1u;
+    return 1;
+}
+
+static void restore_ah_query_cooldown_patch(void){
+    u32 original=AH_QUERY_COOLDOWN_ORIGINAL_MS;
+    if(!g_ahCooldownPatched)return;
+    if(*(volatile u8*)(u32)ADDR_AH_QUERY_COOLDOWN_INSN==0x05u &&
+       read32(ADDR_AH_QUERY_COOLDOWN_IMM)==AH_QUERY_COOLDOWN_FAST_MS){
+        (void)write_mem((void*)(u32)ADDR_AH_QUERY_COOLDOWN_IMM,&original,4u);
+    }
+    g_ahCooldownPatched=0u;
 }
 static void fast_publish_page(u32 page,u32 count){
     publish_call3("AVM_FastMarketNativePage",page,count,0u,"AVMFastMarketPage");
@@ -457,7 +483,7 @@ static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
     try_receive_hook();
     if(g_auxObservedDirty){
         g_auxObservedDirty=0u;
-        publish_call3("AUXFAST_NativeQueryObserved",g_auxObservedSent,g_auxObservedPage,g_auxObservedTick,"AuxFastNativeQueryObserved");
+        publish_call5("AUXFAST_NativeQueryObserved",g_auxObservedSent,g_auxObservedPage,g_auxObservedTick,AH_QUERY_COOLDOWN_FAST_MS,g_ahCooldownPatched,"AuxFastNativeQueryObserved");
     }
     key=(keyfn(VK_F5_KEY)&(short)0x8000)?1u:0u;
     key2=(keyfn(VK_F2_KEY)&(short)0x8000)?1u:0u;
@@ -534,12 +560,24 @@ static void STDCALL timer_proc(HWND32 hwnd,u32 msg,TIMER32 timer,u32 ignored){
 static int install(void){
     SetTimerFn st;u32 cur;
     if(!safe_build())return 0;
+    if(!install_ah_query_cooldown_patch())return 0;
     cur=g_nextSend;
-    if(!patch_jump(ADDR_CLIENT_SEND,(u32)(void*)&SendWrapper))return 0;
+    if(!patch_jump(ADDR_CLIENT_SEND,(u32)(void*)&SendWrapper)){
+        restore_ah_query_cooldown_patch();
+        return 0;
+    }
     st=(SetTimerFn)iat(IAT_TIMER);
-    if(!st){patch_jump(ADDR_CLIENT_SEND,cur);return 0;}
+    if(!st){
+        patch_jump(ADDR_CLIENT_SEND,cur);
+        restore_ah_query_cooldown_patch();
+        return 0;
+    }
     g_timer=st(0,0u,TIMER_MS,timer_proc);
-    if(!g_timer){patch_jump(ADDR_CLIENT_SEND,cur);return 0;}
+    if(!g_timer){
+        patch_jump(ADDR_CLIENT_SEND,cur);
+        restore_ah_query_cooldown_patch();
+        return 0;
+    }
     g_installed=1u;return 1;
 }
 static void uninstall(void){
@@ -550,6 +588,7 @@ static void uninstall(void){
     if(cur==(u32)(void*)&SendWrapper&&g_nextSend)patch_jump(ADDR_CLIENT_SEND,g_nextSend);
     if(g_fastActive)fast_finish("UNLOAD");
     restore_receive_hook();
+    restore_ah_query_cooldown_patch();
     reset_test();
 }
 BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved){

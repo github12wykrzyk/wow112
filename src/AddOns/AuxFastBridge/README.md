@@ -1,5 +1,9 @@
 # Aux FAST Bridge
 
+Version 1.6 removes the Lua-side CanSendAuctionQuery bypass. Exact 5875 disassembly from the verified Parallel candidate shows the real stock throttle inside QueryAuctionItems: at 0x004CEC47 the client executes `add eax, 0x1388` and stores that deadline at 0x00B72638; the function also checks the same deadline before building/sending CMSG_AUCTION_LIST_ITEMS. The native companion now signature-checks `05 88 13 00 00 A3 38 26 B7 00`, patches only the 32-bit immediate from 5000 ms to 25 ms at runtime, and restores 5000 ms on unload if it still owns the patch.
+
+Because CanSendAuctionQuery reads the same deadline, original AUX can now use the stock gate truthfully. The response-correlated `0x025C` wait remains in place, so pacing is still request -> real response -> next request rather than blind flooding. `/auxfast` reports `cdPatch`, `cdMs`, `gateWait`, `queries`, `stockSent`, `native`, `matched`, and `timeouts`.
+
 Version 1.5 responds to report #54. Ordinary original-AUX list scans now force `ignore_owner=true` because seller names are not needed for market valuation, and the stock Blizzard `AuctionFrameBrowse` is detached from `AUCTION_ITEM_LIST_UPDATE` for the duration of the AUX scan then restored. The native DLL also reports the cumulative count/page of AH list CMSG packets that actually reached `ClientServices::Send`. This separates Lua `QueryAuctionItems` attempts from real outbound requests: `/auxfast` now shows `queries` versus `stockSent`.
 
 Report #54 showed `queries=6 native=3 matched=3 timeouts=3 bypass=3 ownerGrace=0`. That means seller resolution was not the active delay in that run; the exact 1:1 match between bypasses and timeouts instead points at calls attempted while the stock gate was closed. UI isolation is tested because the earlier throughput benchmark deliberately detached Blizzard Browse, but the outbound probe is the decisive evidence for whether stock `QueryAuctionItems` itself suppresses those calls.
@@ -14,7 +18,7 @@ Version 1.2 correlates every original AUX list query with the verified native `S
 
 This matters because one genuine auction response can generate many `AUCTION_ITEM_LIST_UPDATE` events while owner data resolves. Treating those duplicate UI events as independent page responses can advance AUX too early and then fall into its 5-second retry timeout. The bridge therefore keeps the UI events for diagnostics but does not use them as page-correlation evidence.
 
-The stock `CanSendAuctionQuery` gate is bypassed only while an original AUX scan owns the query channel and AuxVmangos is idle. If the native callback is unavailable for 1.5 seconds, the bridge falls back to upstream AUX waiting semantics rather than sending overlapping queries.
+The stock `CanSendAuctionQuery` gate is no longer bypassed. Its underlying exact-build deadline is shortened natively to 25 ms. If native response correlation is unavailable for 1.5 seconds, the bridge still falls back to upstream AUX waiting semantics rather than sending overlapping queries.
 
 The original Aux source is not vendored here. The Parallel addon packager fetches the exact upstream commit declared in `runtime/parallel_candidate.json`.
 

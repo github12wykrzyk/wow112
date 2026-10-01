@@ -1,4 +1,4 @@
--- AuxFastBridge v1.5
+-- AuxFastBridge v1.6
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -27,6 +27,9 @@ local nativeStockSentTotal = 0
 local nativeStockSentBase = 0
 local nativeLastStockPage = -1
 local browseDetached = false
+local nativeCooldownMs = -1
+local nativeCooldownPatched = false
+local gateBlockedChecks = 0
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -87,9 +90,11 @@ end
 
 -- Published from the native ClientServices::Send hook on the timer thread after
 -- a real CMSG_AUCTION_LIST_ITEMS packet has actually left the Lua/UI path.
-function AUXFAST_NativeQueryObserved(total, page, nativeTick)
+function AUXFAST_NativeQueryObserved(total, page, nativeTick, cooldownMs, cooldownPatched)
 	nativeStockSentTotal = tonumber(total) or nativeStockSentTotal
 	nativeLastStockPage = tonumber(page) or nativeLastStockPage
+	nativeCooldownMs = tonumber(cooldownMs) or nativeCooldownMs
+	nativeCooldownPatched = tonumber(cooldownPatched) == 1
 end
 
 function AUXFAST_Status()
@@ -107,6 +112,9 @@ function AUXFAST_Status()
 		nativeStockSent = native_stock_sent(),
 		nativeLastStockPage = nativeLastStockPage,
 		browseDetached = browseDetached,
+		nativeCooldownMs = nativeCooldownMs,
+		nativeCooldownPatched = nativeCooldownPatched,
+		gateBlockedChecks = gateBlockedChecks,
 		queryPage = queryPage,
 		startedAt = startedAt,
 		hookInstalled = hookInstalled,
@@ -180,6 +188,7 @@ local function install_scan_hook()
 		if busy == 0 then
 			uiEvents = 0
 			bypassChecks = 0
+			gateBlockedChecks = 0
 			queryCount = 0
 			nativeResults = 0
 			matchedResults = 0
@@ -248,9 +257,11 @@ CanSendAuctionQuery = function(...)
 	if originalCanSendAuctionQuery then
 		ready = originalCanSendAuctionQuery(unpack(arg or {}))
 	end
-	if busy > 0 and not avm_busy() then
-		if not ready then bypassChecks = bypassChecks + 1 end
-		return true
+	-- v1.6 no longer lies to AUX about the client gate. The native companion
+	-- changes the exact 5875 QueryAuctionItems cooldown from 5000 ms to 25 ms,
+	-- so both CanSendAuctionQuery and QueryAuctionItems share the same short gate.
+	if busy > 0 and not avm_busy() and not ready then
+		gateBlockedChecks = gateBlockedChecks + 1
 	end
 	return ready
 end
@@ -271,7 +282,9 @@ SlashCmdList["AUXFAST"] = function()
 		" matched=" .. tostring(matchedResults) ..
 		" timeouts=" .. tostring(nativeTimeouts) ..
 		" ownerGrace=" .. tostring(ownerGraceAccepts) ..
-		" stockSent=" .. tostring(native_stock_sent()))
+		" stockSent=" .. tostring(native_stock_sent()) ..
+		" cdPatch=" .. tostring(nativeCooldownPatched) ..
+		" cdMs=" .. tostring(nativeCooldownMs))
 	out("uiEvents=" .. tostring(uiEvents) ..
 		" bypass=" .. tostring(bypassChecks) ..
 		" page=" .. tostring(queryPage) ..
@@ -281,4 +294,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.5 loaded: ownerless scan + Blizzard Browse isolation + outbound proof; hook=" .. tostring(hookInstalled))
+out("v1.6 loaded: stock gate + native 25ms QueryAuctionItems cooldown; hook=" .. tostring(hookInstalled))

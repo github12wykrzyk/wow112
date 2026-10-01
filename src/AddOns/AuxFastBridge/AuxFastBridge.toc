@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Native-response-correlated transport bridge with ownerless scan and UI isolation for original Aux on WoW 1.12.1 / vMaNGOS.
+## Notes: Native-response-correlated transport bridge with exact-build 25ms QueryAuctionItems cooldown for original Aux on WoW 1.12.1 / vMaNGOS.
 ## Author: github12wykrzyk/wow112
-## Version: 1.5
+## Version: 1.6
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
