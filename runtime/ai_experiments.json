@@ -3272,7 +3272,8 @@
       "branch": "feature/ah-hard-stop-manual-market",
       "modules": [
         "AuxVmangos",
-        "AuxFastBridge"
+        "AuxFastBridge",
+        "AHThrottleNative"
       ],
       "dependencies": [
         "ah-loop-no-auto-market",
@@ -3284,7 +3285,8 @@
         "AUXFAST_RestartSearch/AUXFAST_ResumeSearch bridge",
         "AUX_ARB continuous loop and postscan purchase resume",
         "full MARKET scheduler/manual entry",
-        "AUCTION_ITEM_LIST_UPDATE callback lifecycle"
+        "AUCTION_ITEM_LIST_UPDATE callback lifecycle",
+        "native F2 fast-MARKET arming/replay state"
       ],
       "status": "awaiting_ci",
       "observed_head": "6d4eb07485c58421296bf9976dba559ce868523e",
@@ -3297,10 +3299,18 @@
           "date": "2026-10-01",
           "run_id": 36924599124,
           "evidence": "Exact feature SHA passed Parallel feature preflight. Static audit leaves one MARKET requested=true writer (manual /avm market start), centralizes direct Lua QueryAuctionItems behind the hard-stop gate, and makes AuxFastBridge abort/suppress restart after hard stop."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "281ff524bf5a8ae00312d97a6b897c7f1a96673a",
+          "date": "2026-10-01",
+          "run_id": 36925317402,
+          "evidence": "Exact native follow-up feature passed Parallel feature preflight including changed x86 module compilation. F2 no longer arms g_fastActive/g_fastArmed and no longer calls AVM_FastMarketNativeStart."
         }
       ],
       "package": null,
-      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged. Registry status corrected to the repository-supported awaiting_ci state after verifier run 36924820961 rejected the non-schema label awaiting_parallel_ci."
+      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged. Registry status corrected to the repository-supported awaiting_ci state after verifier run 36924820961 rejected the non-schema label awaiting_parallel_ci. Native F2 entry was additionally cut at the DLL layer because arming g_fastActive before the Lua no-op could otherwise capture a later AUX query."
     }
   ]
 }
