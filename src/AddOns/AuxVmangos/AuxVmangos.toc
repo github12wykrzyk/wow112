@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with live-eligible DE/flip fallback selection, paced MARKET, compact SavedVariables history and guarded purchases.
+## Notes: Original AUX arbitrage with mid-scan DE live purchase, chunked smooth MARKET processing, live fallback selection and guarded purchases.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.21.1-postscan-live-fallback
+## Version: 0.22-midscan-de-smooth-market
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
