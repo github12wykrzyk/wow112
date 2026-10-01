@@ -50,9 +50,6 @@
 #define HANDOFF_NONCE_CAP 80u
 #define HANDOFF_PATH_CAP  1024u
 #define HANDOFF_FILE_CAP  2304u
-#define LOGIN_GATE_NAME       "Local\\\\WoW112_AutoLogin_5875"
-#define LOGIN_GATE_STABLE_MS  350u
-#define LOGIN_GATE_GAP_MS     1400u
 
 typedef void (__fastcall *GlueLoginFn)(const char*, char*);
 typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
@@ -360,7 +357,6 @@ static DWORD WINAPI worker(LPVOID unused)
 {
     DWORD start,autoStart;
     int initialLogin=0;
-    HANDLE loginGate=NULL;
     (void)unused;
     g_pid=GetCurrentProcessId();
 
@@ -375,51 +371,11 @@ static DWORD WINAPI worker(LPVOID unused)
     if(!guard_ok()) { g_done=-1; wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); return 0u; }
 
     if(initialLogin) {
-        loginGate=CreateMutexA(NULL,FALSE,LOGIN_GATE_NAME);
-        if(!loginGate) {
-            g_done=-3;
-            wipe(g_blob,sizeof(g_blob));
-            wipe(g_account,sizeof(g_account));
-            return 0u;
-        }
-
         start=GetTickCount();
         while(!g_stop && !g_done && (DWORD)(GetTickCount()-start)<40000u) {
-            if(ensure_hook() && glue_ready()) {
-                DWORD wait=WaitForSingleObject(loginGate,0u);
-                if(wait==WAIT_OBJECT_0 || wait==WAIT_ABANDONED) {
-                    DWORD stable=GetTickCount();
-                    int ready=1;
-
-                    /* Eight LOW clients can reach Glue almost together.  Keep the
-                       actual native login call process-serial and require a short
-                       stable-ready window before dispatching it.  This avoids a
-                       burst of concurrent SRP/login attempts without coupling the
-                       queue to process creation speed or foreground focus. */
-                    while(!g_stop && !g_done &&
-                          (DWORD)(GetTickCount()-stable)<LOGIN_GATE_STABLE_MS) {
-                        if(!glue_ready()) { ready=0; break; }
-                        Sleep(25u);
-                    }
-
-                    if(ready && !g_stop && !g_done && glue_ready() && ensure_hook()) {
-                        if(PostMessageA(g_hwnd,WM_AUTOLOGIN,0,0)) {
-                            DWORD dispatch=GetTickCount();
-                            while(!g_stop && !g_done &&
-                                  (DWORD)(GetTickCount()-dispatch)<5000u)
-                                Sleep(25u);
-                            if(g_done==1) Sleep(LOGIN_GATE_GAP_MS);
-                        }
-                    }
-
-                    ReleaseMutex(loginGate);
-                    if(g_done) break;
-                }
-            }
+            if(ensure_hook()) PostMessageA(g_hwnd,WM_AUTOLOGIN,0,0);
             Sleep(50u);
         }
-        CloseHandle(loginGate);
-        loginGate=NULL;
         if(!g_done) { wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); }
     }
 

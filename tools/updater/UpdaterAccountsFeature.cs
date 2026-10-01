@@ -109,7 +109,7 @@ namespace WoW112Updater
         private WowAccountVault accountVault;
         private readonly List<WowAccountSession> accountSessions = new List<WowAccountSession>();
         private bool multiboxRunning;
-        private const int MultiboxProcessStaggerMs = 600;
+        private const int MultiboxProcessStaggerMs = 1500;
 
         private string ConfigureReloginHandoffEnvironment(ProcessStartInfo startInfo, WowAccount account)
         {
@@ -240,7 +240,7 @@ namespace WoW112Updater
                 };
                 var info = new Label
                 {
-                    Text = "Wybory MULTIBOX są zapamiętywane per konto. Native AutoLogin loguje bez klawiatury/fokusu; wiele klientów jest kolejkowanych bezpiecznie.",
+                    Text = "Wybory MULTIBOX są zapamiętywane per konto. Native AutoLogin loguje bez klawiatury/fokusu; start klientów jest celowo rozłożony w czasie.",
                     Location = new Point(14, 5),
                     Size = new Size(1202, 18),
                     AutoEllipsis = true
@@ -464,8 +464,8 @@ namespace WoW112Updater
                         Log("Multibox: profil " + account.Label + " przypisany przy starcie do PID " + game.Id + ".");
                         ok++;
 
-                        // Avoid an eight-process startup burst.  AutoLoginBridge separately serializes
-                        // the actual native login calls, so this delay only smooths client initialization load.
+                        // Avoid an eight-process startup/auth burst without changing the proven native
+                        // AutoLoginBridge dispatch path.  Reliability is controlled only by process-start cadence.
                         await Task.Delay(MultiboxProcessStaggerMs);
                     }
                     catch (Exception ex)
