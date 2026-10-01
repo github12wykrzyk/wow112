@@ -2904,6 +2904,28 @@
         "artifact_id": 11186259103
       },
       "notes": "Feature starts from verified parallel@6b18ae8f. Goal: allow UPDATE while WoW instances remain open. AddOns apply immediately; EXE/DLL/dlls.txt and stale root-runtime removals are staged with SHA checks and auto-finalized only after the last WoW process exits. No gameplay acceptance claimed."
+    },
+    {
+      "id": "summonscout-take-one-whisper-r2",
+      "branch": "feature/summonscout-take-one-whisper-r2",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-whisper-intent-v2",
+        "summonscout-auto-invite-one-phrases"
+      ],
+      "shared_resources": [
+        "SummonScout CHAT_MSG_WHISPER smart auto-invite parser",
+        "SummonScout multi-service destination routing",
+        "WoW 1.12 Lua 5.0 upvalue budget"
+      ],
+      "status": "in_progress",
+      "observed_head": "5422c63f811283d83736d946ab986ee7fca24ac7",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Rebased follow-up on current parallel. Fixes direct-whisper auto-invite for natural one-request replies such as 'I take one'. SummonScout 1.57 promotes one-request wording to explicit direct intent and permits destination-less explicit whispers on multi-service profiles while retaining wrong-destination, ambiguity, blacklist/group and seller safety gates."
     }
   ]
 }
