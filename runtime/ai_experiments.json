@@ -1819,6 +1819,29 @@
       "tests": [],
       "package": null,
       "notes": "First practical fast-market prototype. F6 starts one-outstanding-query native scan from page 0. Each response is processed by the exact native 0x025C handler first, then AuxVmangos aggregates that exact page into the existing MARKET PriceDB; only afterward is the next page sent with 25ms settle. No page-ID correlation is required because at most one request is outstanding. A 1500ms page timeout aborts fail-closed rather than shifting page association. Full scan stops on first short page (<50 rows) or max page 2000. No buying path is changed; FAST MARKET forces scanner/LIVE off while it owns the scheduler. Gameplay validation pending."
+    },
+    {
+      "id": "ah-fast-market-hotfix-f2",
+      "branch": "feature/ah-fast-market-hotfix-f2",
+      "modules": [
+        "AHThrottleNative",
+        "AuxVmangos",
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-fast-market-responsepaced"
+      ],
+      "shared_resources": [
+        "AH native send replay",
+        "SMSG_AUCTION_LIST_RESULT receive hook",
+        "FAST MARKET hotkey F2"
+      ],
+      "status": "in_progress",
+      "observed_head": "dca7a8cd5240f45b9ceb2d0a2c7997c69912b9b0",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay test on exact parallel dca7a8cd showed native page 0 then PAGE_TIMEOUT. Static audit found send_test_page wrongly required diagnostic g_captured although FAST mode sets g_fastCaptured, so page 1 was never sent. Fix permits replay for either capture mode. F6 is occupied by teleport; FAST MARKET trigger moved to F2."
     }
   ]
 }

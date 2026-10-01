@@ -1087,7 +1087,7 @@ local function avm_market_slash(rest)
 	if sub == "start" then
 		avm_market_request_start()
 	elseif sub == "fast" then
-		avm_print("FAST MARKET: open AH, wait for active Search, then press F6 once.")
+		avm_print("FAST MARKET: open AH, wait for active Search, then press F2 once.")
 	elseif sub == "stop" then
 		AVM.market.requested = false
 		if AVM.market.active then
