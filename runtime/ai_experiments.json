@@ -1962,6 +1962,25 @@
       ],
       "package": null,
       "notes": "Integrated candidate: SummonScout 1.47 treats positive payment-offer whispers with explicit gold amount as strong auto-invite intent while excluding payment negations. AutoSummonAssist v22 has SUMMON_COORDINATOR_ENABLED=0, so all Ritual requests, including Hyjal/Hydraxian, use the direct native bridge and do not publish/gate through updater slave/account switching. Coordinator infrastructure remains dormant for later experiments."
+    },
+    {
+      "id": "summonscout-ready-invite",
+      "branch": "feature/summonscout-ready-invite",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summon-direct-pay-intent"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart-invite parser"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "a6f1dcd179f95100bcbe9516dc72c3a9b55e04d9",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.48 adds high-confidence direct-whisper readiness cues 'ready when you are' and 'ready whenever you are'. Normalization makes 'yes! ready when you are :)' match, while generic 'ready' alone remains non-triggering."
     }
   ]
 }
