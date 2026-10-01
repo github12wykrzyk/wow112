@@ -2489,6 +2489,31 @@
       "tests": [],
       "package": null,
       "notes": "Expose the already-authoritative original AUX Search validator as the explicit AUX_ARB selection layer (including named/exact searches), extend compact PriceDB snapshots with market depth/liquidity fields and one-time 24->96 default retention migration, and add a separate updater AH Market Dump action that uploads only flushed marketMeta+marketDB in bounded GitHub Issue comments using the existing report token. No legacy AUX Auto Buy/Auto Bid path is re-enabled."
+    },
+    {
+      "id": "ah-continuous-arb-market-loop",
+      "branch": "feature/ah-continuous-loop",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-aux-filter-history-dump",
+        "ah-live-market-flip-signature-fix"
+      ],
+      "shared_resources": [
+        "Original AUX Search execute/resume state machine",
+        "AuxFastBridge serialized native-correlated AH scan ownership",
+        "AuxVmangos AUX_ARB guarded buy lifecycle",
+        "AuxVmangos MARKET full-AH snapshot scheduler",
+        "AVM_DB market history and session-only live arming"
+      ],
+      "status": "in_progress",
+      "observed_head": "d646f40953dcd6e42ad1ae12b81b2d433011ef3d",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Continuous background loop for original AUX Search arbitrage with periodic full MARKET snapshots. Default loop interval 15m, 2s inter-cycle gap. Loop owns scheduling only between completed AUX scans/transactions, never overlaps original AUX, MARKET, standalone VENDOR, pending/unknown purchases or AVM queries. MARKET snapshot is inserted only when due; completion/failure returns to the current AUX Search filter from page 0. LIVE remains session-only and still requires explicit /avm auxarb live on. /avm off and /avm auxarb off disable the loop."
     }
   ]
 }

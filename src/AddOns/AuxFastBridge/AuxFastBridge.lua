@@ -1,4 +1,4 @@
--- AuxFastBridge v2.1
+-- AuxFastBridge v2.2
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -363,6 +363,33 @@ function AUXFAST_ResumeSearch()
 	return true
 end
 
+function AUXFAST_RestartSearch()
+	if busy > 0 then
+		out("restart deferred: original AUX scan is still busy")
+		return false
+	end
+	if avm_busy() then
+		out("restart deferred: AVM owns AH scheduler")
+		return false
+	end
+	if not okSearchTab or not searchTab or not searchTab.execute then
+		out("restart failed: aux.tabs.search unavailable")
+		return false
+	end
+	resumeRequested = false
+	local ok, err = pcall(searchTab.execute, false, false)
+	if not ok then
+		out("restart failed: " .. tostring(err))
+		return false
+	end
+	if busy <= 0 then
+		out("restart did not start a Search (check current AUX filter)")
+		return false
+	end
+	out("restarted original AUX Search from page 0")
+	return true
+end
+
 CanSendAuctionQuery = function(...)
 	local ready = true
 	if originalCanSendAuctionQuery then
@@ -405,4 +432,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v2.1 loaded: Search Filter Builder -> AUX_ARB + resumable cache; hook=" .. tostring(hookInstalled))
+out("v2.2 loaded: Filter Builder -> AUX_ARB + resumable/continuous Search; hook=" .. tostring(hookInstalled))

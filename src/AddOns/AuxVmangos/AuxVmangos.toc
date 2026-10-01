@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX Filter Builder-driven arbitrage plus guarded vendor/DE/flip and market history.
+## Notes: Continuous original AUX arbitrage loop with periodic full-market history snapshots and guarded vendor/DE/flip.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.18-aux-filter-market-history
+## Version: 0.19-continuous-arb-market-loop
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
