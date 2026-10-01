@@ -3384,12 +3384,40 @@
         "aux.core.scan submit_query/abort state",
         "AVM.hardStop global automation gate"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "c133fa588f43f8b4aca74e66ed450df92d56f689",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Runtime screenshot reports Interface/AddOns/AuxFastBridge/AuxFastBridge.lua:366 too many upvalues (limit=32). The v2.5 hard-stop patch added bridge-local hardStopRequested and abortActiveScan captures to install_scan_hook, pushing the WoW 1.12 Lua closure over its 32-upvalue ceiling. v2.6 removes both extra captured locals and uses AVM.hardStop as the sole persistent gate; AUXFAST_HardStop aborts the active scan directly through get_state()/abort(). Exact installed gameplay SHA from the screenshot is not independently established, so no game result is recorded."
+      "status": "awaiting_game_test",
+      "observed_head": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
+      "verified_commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
+          "date": "2026-10-01",
+          "run_id": 36928614246,
+          "evidence": "Parallel feature preflight passed on exact feature SHA before integration."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
+          "date": "2026-10-01",
+          "run_id": 36928748294,
+          "evidence": "Integrated Parallel Build work candidate passed on exact SHA, including FINAL_PACKAGE, addon packaging and candidate provenance/attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
+          "date": "2026-10-01",
+          "evidence": "Verified aggregate candidate artifact 11195301604 (WoW112-WORK-CANDIDATE-0891dcb6608dff80c38c0012a5c659b3dd77f2a0) contains AuxFastBridge v2.6."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
+        "artifact_id": 11195301604
+      },
+      "notes": "Runtime screenshot reports Interface/AddOns/AuxFastBridge/AuxFastBridge.lua:366 too many upvalues (limit=32). The v2.5 hard-stop patch added bridge-local hardStopRequested and abortActiveScan captures to install_scan_hook, pushing the WoW 1.12 Lua closure over its 32-upvalue ceiling. v2.6 removes both extra captured locals and uses AVM.hardStop as the sole persistent gate; AUXFAST_HardStop aborts the active scan directly through get_state()/abort(). Exact installed gameplay SHA from the screenshot is not independently established, so no game result is recorded. Integrated exact parallel SHA passed package gates; gameplay confirmation of the compile-error fix remains pending."
     }
   ]
 }
