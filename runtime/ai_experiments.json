@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "parallel",
+      "branch": "feature/ah-aux-native-response-correlation",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2031,13 +2031,14 @@
       "shared_resources": [
         "QueryAuctionItems / CanSendAuctionQuery",
         "AUCTION_ITEM_LIST_UPDATE",
+        "native SMSG_AUCTION_LIST_RESULT 0x025C handler",
         "original Aux scan state machine and GUI",
         "Aux merchant_sell learned vendor cache",
         "AuxVmangos guarded vendor revalidation"
       ],
-      "status": "awaiting_game_test",
-      "observed_head": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
-      "verified_commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
+      "status": "awaiting_ci",
+      "observed_head": "935a54ed0ad73645d6a10e7b76052fa3109d691b",
+      "verified_commit": null,
       "tests": [
         {
           "kind": "ci",
@@ -2068,12 +2069,8 @@
           "evidence": "Verified aggregate candidate artifact 11156596803 (WoW112-WORK-CANDIDATE-76745b45d086bccf6d2593b22d09c98cd58aeb75) was produced by successful integrated parallel run 36853292714."
         }
       ],
-      "package": {
-        "verified": true,
-        "commit": "76745b45d086bccf6d2593b22d09c98cd58aeb75",
-        "artifact_id": 11156596803
-      },
-      "notes": "Integrated on parallel. Hookfix v1.1 installs the original AUX scan wrapper through the real aux.core.scan module environment (M.start), not the read-only require() proxy. /auxfast now exposes hook=true/false. Previous integrated SHA 0ff7e7f restored the GUI but game observation showed busy=false/pages=0/bypass=0 during active Search, identifying the silent hook-install failure. Exact integrated hookfix SHA passed preflight and full parallel package gates; gameplay validation of hook=true and removal of the ~5s/query lock is pending."
+      "package": null,
+      "notes": "Report #53 on integrated SHA 935a54ed0ad73645d6a10e7b76052fa3109d691b: hook=true proved v1.1 installed, but counters showed far more AUCTION_ITEM_LIST_UPDATE events than actual QueryAuctionItems calls (e.g. ui-event/page counter 103 vs bypass/query-scale 8), matching the user's pattern of ~2 fast pages followed by an upstream 5s wait. Root cause: duplicate/stale UI update events are not safe page-correlation evidence once CanSendAuctionQuery is bypassed. v1.2 feature correlates each AUX request to the verified native 0x025C response after the stock handler populates the list; duplicate UI events become diagnostics only, with fail-safe fallback to upstream waiting if native correlation is absent."
     }
   ]
 }

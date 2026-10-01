@@ -64,7 +64,7 @@ def main():
       "source_sha256":sha256_file(SOURCE),"build_profile":PROFILE,"toolchain_mode":timing.get("mode"),
       "sha256":sha256_file(output),"size":output.stat().st_size,"pe_machine":pe.get("machine_hex"),
       "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
-      "module_id":"ahthrottle_native","settings":["diagnostic-only","F5 trigger","10 alternating stages x500","75ms vs 125ms repeatability","native SMSG 0x025C receive probe","F6 response-paced full-market scan","one in-flight query","no bid/buy"]
+      "module_id":"ahthrottle_native","settings":["diagnostic-only","F5 trigger","10 alternating stages x500","75ms vs 125ms repeatability","native SMSG 0x025C receive probe","AUX native response correlation callback","F2 response-paced full-market scan","one in-flight query","no bid/buy"]
     }
     expected=deterministic_repack(package,output)
     with zipfile.ZipFile(package) as z:

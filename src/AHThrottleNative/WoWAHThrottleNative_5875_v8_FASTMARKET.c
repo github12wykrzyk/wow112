@@ -11,7 +11,7 @@
  * then replays mutated copies using distinct listfrom values.
  *
  * Repeatability stages: alternating 75 ms and 125 ms, five runs each.
- * V8 additionally provides F2 FAST MARKET: exactly one auction query is in flight.
+ * V8 additionally provides F2 FAST MARKET and a passive AUX response-correlator callback.
  * After the native 0x025C handler finishes, Lua consumes that exact page, then the
  * next page is sent after a short 25 ms settle. This avoids page-correlation drift.
  * Each stage sends 500 distinct pages and allows 10 seconds to drain responses.
@@ -272,24 +272,38 @@ static int inbound_count_sane(InboundStore5875 *p){
 static int FASTCALL AuctionResultHook(void *ctx,u32 opcode,void *arg1,InboundStore5875 *packet){
     InboundHandlerFn next=(InboundHandlerFn)(u32)g_rxOrigHandler;
     u32 fastCount=0u,fastPage=0u,fastWas=0u,base=0u;
+    u32 auxCount=0u,auxWas=0u;
     int result=0;
     if(opcode==OPCODE_AH_RESULT && g_active && (g_phase==2u||g_phase==3u)){
         ++g_stageNativeRecv;
         if(!inbound_count_sane(packet))++g_stageNativeInvalid;
     }
-    if(opcode==OPCODE_AH_RESULT && g_fastActive && g_fastAwaiting && packet &&
+    if(opcode==OPCODE_AH_RESULT && packet &&
        packet->cursor<=packet->size && packet->cursor+4u<=packet->size &&
        packet->cursor>=packet->windowStart){
         u32 off=packet->cursor-packet->windowStart;
         if(off+4u<=packet->windowSize){
             base=(u32)packet->data-packet->windowStart;
             if(valid_ptr(base+packet->cursor)){
-                fastCount=*(volatile u32*)(u32)(base+packet->cursor);
-                if(fastCount<=50u){fastWas=1u;fastPage=g_fastPage;}
+                auxCount=*(volatile u32*)(u32)(base+packet->cursor);
+                if(auxCount<=50u){
+                    auxWas=1u;
+                    if(g_fastActive && g_fastAwaiting){
+                        fastCount=auxCount;fastWas=1u;fastPage=g_fastPage;
+                    }
+                }
             }
         }
     }
     if(next)result=next(ctx,opcode,arg1,packet);
+
+    /* Publish exactly one callback per real 0x025C response after the stock
+       handler has populated the client auction list. AuxFastBridge uses this
+       native sequence to reject duplicate/stale AUCTION_ITEM_LIST_UPDATE events. */
+    if(auxWas){
+        publish_call3("AUXFAST_NativeAuctionResult",auxCount,tick_now(),0u,"AuxFastNativeAuctionResult");
+    }
+
     if(fastWas && g_fastActive && g_fastAwaiting && fastPage==g_fastPage){
         g_fastAwaiting=0u;
         fast_publish_page(fastPage,fastCount);
