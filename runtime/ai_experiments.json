@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-original-aux-arbitrage-loop",
+      "branch": "feature/ah-aux-republish-0151",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2038,7 +2038,7 @@
         "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "6b01e3ffffaa1476181d7dac0992823df7266364",
+      "observed_head": "746a7f18f8496e68fc103358073cfa8af2a3b56a",
       "verified_commit": null,
       "tests": [
         {
@@ -2113,7 +2113,7 @@
         }
       ],
       "package": null,
-      "notes": "Report #55 (user gameplay on parallel SHA 0b552b0475bc389c43d1cc8b51294b1a55663a04) established the frozen transport baseline: 1107/1107 queries reached ClientServices::Send, 1107/1107 native responses matched, 0 timeouts, 157.2s total, cdPatch=true cdMs=25. This feature adds only the economic loop: every unfiltered original AUX page is valued for vendor profit and AUX-history-based disenchant profit; LIVE selects the best qualifying page candidate, pauses at the next safe submit boundary, re-queries the exact unfiltered source page, revalidates identity/profit/wallet/session limits, uses the existing guarded PlaceAuctionBid + money-delta confirmation, then resumes the original AUX Search continuation. LIVE is session-only and defaults OFF. Game report remains descriptive in notes because repository regression policy currently forbids kind=game ledger entries."
+      "notes": "Forced republish requested after user reported /avm unavailable in game despite the previous successful package. This iteration changes only the AuxVmangos runtime/version marker from 0.15 to 0.15.1 so addon bytes definitely change and the updater must see/install a fresh AuxVmangos payload. Economic logic and validated 25 ms original-AUX transport are unchanged."
     },
     {
       "id": "map-tele-keep-open",

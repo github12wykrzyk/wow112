@@ -3,7 +3,7 @@
 ## Notes: Original AUX fast-scan arbitrage companion: vendor + disenchant valuation, guarded revalidation, buy and resume.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.15-original-aux-arbitrage
+## Version: 0.15.1-original-aux-arbitrage-republish
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
