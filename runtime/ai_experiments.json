@@ -3384,7 +3384,7 @@
         "aux.core.scan submit_query/abort state",
         "AVM.hardStop global automation gate"
       ],
-      "status": "awaiting_game_test",
+      "status": "accepted",
       "observed_head": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
       "verified_commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
       "tests": [
@@ -3410,6 +3410,13 @@
           "commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
           "date": "2026-10-01",
           "evidence": "Verified aggregate candidate artifact 11195301604 (WoW112-WORK-CANDIDATE-0891dcb6608dff80c38c0012a5c659b3dd77f2a0) contains AuxFastBridge v2.6."
+        },
+        {
+          "kind": "game",
+          "result": "passed",
+          "commit": "aee21bb605436541cd0c93f1217d399881c969b8",
+          "date": "2026-10-01",
+          "evidence": "User reached working first and second AUX scans after the v2.6 update; the previous Lua 'too many upvalues (limit=32)' load failure is no longer blocking AuxFastBridge."
         }
       ],
       "package": {
@@ -3417,7 +3424,40 @@
         "commit": "0891dcb6608dff80c38c0012a5c659b3dd77f2a0",
         "artifact_id": 11195301604
       },
-      "notes": "Runtime screenshot reports Interface/AddOns/AuxFastBridge/AuxFastBridge.lua:366 too many upvalues (limit=32). The v2.5 hard-stop patch added bridge-local hardStopRequested and abortActiveScan captures to install_scan_hook, pushing the WoW 1.12 Lua closure over its 32-upvalue ceiling. v2.6 removes both extra captured locals and uses AVM.hardStop as the sole persistent gate; AUXFAST_HardStop aborts the active scan directly through get_state()/abort(). Exact installed gameplay SHA from the screenshot is not independently established, so no game result is recorded. Integrated exact parallel SHA passed package gates; gameplay confirmation of the compile-error fix remains pending."
+      "notes": "Runtime screenshot reports Interface/AddOns/AuxFastBridge/AuxFastBridge.lua:366 too many upvalues (limit=32). The v2.5 hard-stop patch added bridge-local hardStopRequested and abortActiveScan captures to install_scan_hook, pushing the WoW 1.12 Lua closure over its 32-upvalue ceiling. v2.6 removes both extra captured locals and uses AVM.hardStop as the sole persistent gate; AUXFAST_HardStop aborts the active scan directly through get_state()/abort(). Exact installed gameplay SHA from the screenshot is not independently established, so no game result is recorded. Integrated exact parallel SHA passed package gates; gameplay confirmation of the compile-error fix remains pending. Subsequent live test confirms the addon loads and scans; performance of repeated scans is tracked separately."
+    },
+    {
+      "id": "auxfast-repeat-scan-fps",
+      "branch": "feature/auxfast-repeat-scan-fps",
+      "modules": [
+        "AuxFastBridge",
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "auxfast-upvalue-limit-fix",
+        "ah-hard-stop-manual-market",
+        "ah-zero-config-live-defaults"
+      ],
+      "shared_resources": [
+        "upstream AUX Search results table callbacks",
+        "AUXFAST_RestartSearch/AUXFAST_ResumeSearch",
+        "AVM continuous AUX_ARB loop",
+        "WoW 1.12 Lua allocation/GC and per-page UI sorting"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "aee21bb605436541cd0c93f1217d399881c969b8",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "aee21bb605436541cd0c93f1217d399881c969b8",
+          "date": "2026-10-01",
+          "evidence": "User reports the first AUX scan is smooth, but the second continuous scan causes severe low FPS and visible stutter."
+        }
+      ],
+      "package": null,
+      "notes": "Root-cause audit of pinned upstream aux-addon-vanilla commit 6b56d0f found Search on_page_scanned calls search.table:SetDatabase() every page, rebuilding/sorting accumulated results, while same-filter execute(false,false) replaces the prior records table. At the project's 25 ms native AH cadence this repeated UI/database work and allocation/GC is unnecessary for automation. Candidate keeps first-scan AUX results as a UI snapshot and runs automatic repeat scans headless at the Search-UI callback layer while preserving all fresh AVM arbitrage callbacks and transaction logic."
     }
   ]
 }

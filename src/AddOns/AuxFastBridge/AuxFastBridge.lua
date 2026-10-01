@@ -1,8 +1,12 @@
--- AuxFastBridge v2.6 WoW-1.12 upvalue-safe hard-stop
+-- AuxFastBridge v2.7 low-FPS repeat-scan isolation
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
 AuxFastBridgeDB = AuxFastBridgeDB or {}
+AUXFAST_REPEAT_PENDING = false
+AUXFAST_HEADLESS_LOOP_ACTIVE = false
+AUXFAST_HEADLESS_RECORDS = 0
+AUXFAST_HEADLESS_PAGES = 0
 
 local originalCanSendAuctionQuery = CanSendAuctionQuery
 local originalQueryAuctionItems = QueryAuctionItems
@@ -132,6 +136,9 @@ function AUXFAST_Status()
 		queryPage = queryPage,
 		startedAt = startedAt,
 		hookInstalled = hookInstalled,
+		headlessLoop = AUXFAST_HEADLESS_LOOP_ACTIVE and true or false,
+		headlessRecords = AUXFAST_HEADLESS_RECORDS or 0,
+		headlessPages = AUXFAST_HEADLESS_PAGES or 0,
 	}
 end
 
@@ -173,6 +180,18 @@ local function install_scan_hook()
 			params.on_page_scanned and params.on_auction and true or false
 		local auxArbAttached = fullSearchScan and AVM_DB and AVM_DB.auxArbEnabled and
 			AVM_AuxArbScanStart and AVM_AuxArbAuction and AVM_AuxArbPageDone and true or false
+		-- Continuous AVM restarts reuse the completed AUX Search object/results as a
+		-- read-only UI snapshot. Fresh auctions still flow through AVM callbacks, but
+		-- upstream Search does not append another 2000 records or rebuild/sort the
+		-- whole results table on every page. This avoids the second-pass FPS collapse.
+		local headlessLoop = fullSearchScan and
+			(AUXFAST_REPEAT_PENDING or (resumeRequested and AUXFAST_HEADLESS_LOOP_ACTIVE)) and true or false
+		AUXFAST_REPEAT_PENDING = false
+		AUXFAST_HEADLESS_LOOP_ACTIVE = headlessLoop
+		if headlessLoop and not resumeRequested then
+			AUXFAST_HEADLESS_RECORDS = 0
+			AUXFAST_HEADLESS_PAGES = 0
+		end
 		if fullSearchScan then
 			params.ignore_owner = true
 		end
@@ -210,12 +229,20 @@ local function install_scan_hook()
 		end
 
 		params.on_auction = function(record)
-			if oldAuction then oldAuction(record) end
+			if headlessLoop then
+				AUXFAST_HEADLESS_RECORDS = (AUXFAST_HEADLESS_RECORDS or 0) + 1
+			elseif oldAuction then
+				oldAuction(record)
+			end
 			if auxArbAttached and AVM_AuxArbAuction then pcall(AVM_AuxArbAuction, record) end
 		end
 
 		params.on_page_scanned = function()
-			if oldPageScanned then oldPageScanned() end
+			if headlessLoop then
+				AUXFAST_HEADLESS_PAGES = (AUXFAST_HEADLESS_PAGES or 0) + 1
+			elseif oldPageScanned then
+				oldPageScanned()
+			end
 			if auxArbAttached and AVM_AuxArbPageDone then
 				local state = get_state()
 				local page = state and state.page or queryPage
@@ -256,6 +283,7 @@ local function install_scan_hook()
 			local result
 			if oldComplete then result = oldComplete() end
 			if auxArbAttached and AVM_AuxArbScanDone then pcall(AVM_AuxArbScanDone) end
+			AUXFAST_HEADLESS_LOOP_ACTIVE = false
 			pauseRequested = false
 			pausePage = -1
 			return result
@@ -268,6 +296,8 @@ local function install_scan_hook()
 			pauseRequested = false
 			if arbPause and auxArbAttached and AVM_AuxArbPaused then
 				pcall(AVM_AuxArbPaused, pausePage)
+			else
+				AUXFAST_HEADLESS_LOOP_ACTIVE = false
 			end
 			pausePage = -1
 			return result
@@ -361,6 +391,8 @@ if not install_scan_hook() then
 end
 
 function AUXFAST_HardStop()
+	AUXFAST_REPEAT_PENDING = false
+	AUXFAST_HEADLESS_LOOP_ACTIVE = false
 	resumeRequested = false
 	pauseRequested = false
 	pausePage = -1
@@ -416,16 +448,24 @@ function AUXFAST_RestartSearch()
 		return false
 	end
 	resumeRequested = false
-	local ok, err = pcall(searchTab.execute, false, false)
+	AUXFAST_REPEAT_PENDING = true
+	-- Upstream execute(true) preserves the completed Search result table. With no
+	-- continuation after a normal completion it still starts from page 0; the
+	-- bridge's headless callbacks keep that UI snapshot while AVM evaluates fresh rows.
+	local ok, err = pcall(searchTab.execute, true)
 	if not ok then
+		AUXFAST_REPEAT_PENDING = false
+		AUXFAST_HEADLESS_LOOP_ACTIVE = false
 		out("restart failed: " .. tostring(err))
 		return false
 	end
 	if busy <= 0 then
+		AUXFAST_REPEAT_PENDING = false
+		AUXFAST_HEADLESS_LOOP_ACTIVE = false
 		out("restart did not start a Search (check current AUX filter)")
 		return false
 	end
-	out("restarted original AUX Search from page 0")
+	out("restarted AUX loop headless from page 0; Search UI snapshot preserved")
 	return true
 end
 
@@ -468,7 +508,10 @@ SlashCmdList["AUXFAST"] = function()
 		" stockPage=" .. tostring(nativeLastStockPage) ..
 		" uiIso=" .. tostring(browseDetached) ..
 		" elapsed=" .. string.format("%.1f", duration) .. "s" ..
-		" avmBusy=" .. tostring(avm_busy() and true or false))
+		" avmBusy=" .. tostring(avm_busy() and true or false) ..
+		" headless=" .. tostring(AUXFAST_HEADLESS_LOOP_ACTIVE and true or false) ..
+		" hPages=" .. tostring(AUXFAST_HEADLESS_PAGES or 0) ..
+		" hRecords=" .. tostring(AUXFAST_HEADLESS_RECORDS or 0))
 end
 
-out("v2.6 loaded: WoW-1.12 upvalue-safe single hard-stop gate + midscan DE pause/resume + continuous Search; hook=" .. tostring(hookInstalled))
+out("v2.7 loaded: low-FPS repeat scans keep first AUX UI snapshot and run later AVM cycles headless; hook=" .. tostring(hookInstalled))
