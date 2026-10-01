@@ -1333,7 +1333,7 @@ function lazyScript.bitParsers.ifGlobalCooldown(bit, actions, masks)
 		elseif class == "MAGE" then
 		gcdActionObj = lazyScript.actions.frostArmor
 		elseif class == "WARLOCK" then
-		gcdActionObj = lazyScript.actions.demonSkin
+		gcdActionObj = lazyScript.actions.demonArmor
 		elseif class == "SHAMAN" then
 		gcdActionObj = lazyScript.actions.rockbiter
 		elseif class == "PALADIN" then

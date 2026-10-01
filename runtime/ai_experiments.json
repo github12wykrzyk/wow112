@@ -2608,6 +2608,25 @@
       "tests": [],
       "package": null,
       "notes": "Keep level-derived summon role fixed (level 1 SLAVE / AutoSummon ON, level 20 MASTER / AutoSummon OFF) while decoupling Anti-AFK completely from role. Setting 21 remains writable for every client, saved independently, and MASTER/SLAVE profile buttons/indicators no longer encode or overwrite Anti-AFK."
+    },
+    {
+      "id": "lazyscript-warlock-gcd-demonarmor",
+      "branch": "feature/lazyscript-warlock-gcd-demonarmor",
+      "modules": [
+        "LazyScript",
+        "LazyWarlock"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "LazyScript ifGlobalCooldown class-specific spell probe",
+        "Warlock Demon Armor action slot/cooldown state"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "77303027f1854ea245a7d45abf39488a5e1cbbdc",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Warlock ifGlobalCooldown previously used demonSkin as the class GCD probe. Switch only the WARLOCK probe in ParseGeneral.lua to demonArmor; keep Demon Skin actions/buff parsing unchanged. Feature starts from exact current parallel HEAD 77303027."
     }
   ]
 }
