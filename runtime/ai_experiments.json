@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-ui-isolation-outbound-diag",
+      "branch": "parallel",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2036,8 +2036,8 @@
         "Aux merchant_sell learned vendor cache",
         "AuxVmangos guarded vendor revalidation"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "340ef74129f90be1deca44551669d8565832b5d4",
+      "status": "awaiting_build",
+      "observed_head": "92c56caee3c5d65b8cc9041ddc0742247735268f",
       "verified_commit": null,
       "tests": [
         {
@@ -2088,10 +2088,17 @@
           "commit": "a4c6453c0d339d0f55586b8e10763a44b50da1b5",
           "date": "2026-10-01",
           "evidence": "Verified aggregate candidate artifact 11158575954 (WoW112-WORK-CANDIDATE-a4c6453c0d339d0f55586b8e10763a44b50da1b5) was produced by successful integrated parallel run 36854967698."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "92c56caee3c5d65b8cc9041ddc0742247735268f",
+          "date": "2026-10-01",
+          "evidence": "Parallel feature preflight run 36858217437 and Verify AI experiment registry run 36858217450 passed on exact v1.5 SHA 92c56caee3c5d65b8cc9041ddc0742247735268f."
         }
       ],
       "package": null,
-      "notes": "Report #54 on exact parallel SHA 340ef74129f90be1deca44551669d8565832b5d4 shows queries=6, native=3, matched=3, timeouts=3, bypass=3, ownerGrace=0 after 14.1s at page 3. This disproves seller/owner resolution as the active delay in that sample and strongly suggests QueryAuctionItems attempts made while stock CanSend was false are not producing real outbound CMSGs. v1.5 test candidate therefore (1) forces ignore_owner for non-buy/non-bid list scans, (2) detaches Blizzard AuctionFrameBrowse AUCTION_ITEM_LIST_UPDATE handling during the original AUX scan and restores it afterward, matching prior benchmark UI isolation, and (3) adds a native ClientServices::Send outbound counter/page so /auxfast can compare Lua queries against actual CMSG_AUCTION_LIST_ITEMS sends. If queries > stockSent by the timeout count, the next implementation should move sequential page driving to the verified native replay path instead of stock QueryAuctionItems."
+      "notes": "v1.5 integrated to parallel after preflight. Report #54 showed queries=6 native=3 matched=3 timeouts=3 bypass=3 ownerGrace=0, so seller resolution was not the active delay. v1.5 forces ownerless ordinary list scans, detaches Blizzard AuctionFrameBrowse during AUX Search, and adds a native ClientServices::Send outbound CMSG counter. Full integrated package build is pending on the metadata follow-up SHA."
     },
     {
       "id": "map-tele-keep-open",
