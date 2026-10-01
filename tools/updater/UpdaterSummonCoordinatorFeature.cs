@@ -337,7 +337,7 @@ namespace WoW112Updater
             uint bestAge = 0;
             var now = unchecked((uint)Environment.TickCount);
 
-            foreach (var process in Process.GetProcesses())
+            foreach (var process in System.Diagnostics.Process.GetProcesses())
             {
                 try
                 {
