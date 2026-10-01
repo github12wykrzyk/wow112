@@ -3266,6 +3266,41 @@
         "artifact_id": 11192680369
       },
       "notes": "Protocol hardening after observed reload-before-kill failure state=5,error=41. Root cause in current source: ReloadUI support was added while WORKER_VERSION remained 1, so an already-running pre-feature worker v1 passed updater compatibility checks and interpreted 0xFFFFFFFE as a bad slot (>10). Exact tested candidate SHA from the screenshot is not independently established, so no gameplay result is recorded. This iteration bumps worker protocol to v2 on both native and updater sides and probes incompatible maps to emit a clear restart-required error before sending any command."
+    },
+    {
+      "id": "ah-hard-stop-manual-market",
+      "branch": "feature/ah-hard-stop-manual-market",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-loop-no-auto-market",
+        "ah-zero-config-live-defaults",
+        "ah-midscan-de-smooth-market"
+      ],
+      "shared_resources": [
+        "AUX Search QueryAuctionItems scheduler",
+        "AUXFAST_RestartSearch/AUXFAST_ResumeSearch bridge",
+        "AUX_ARB continuous loop and postscan purchase resume",
+        "full MARKET scheduler/manual entry",
+        "AUCTION_ITEM_LIST_UPDATE callback lifecycle"
+      ],
+      "status": "awaiting_parallel_ci",
+      "observed_head": "6d4eb07485c58421296bf9976dba559ce868523e",
+      "verified_commit": "5f97dddcfa249eaf4221d0a9f62b074a409931bb",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "5f97dddcfa249eaf4221d0a9f62b074a409931bb",
+          "date": "2026-10-01",
+          "run_id": 36924599124,
+          "evidence": "Exact feature SHA passed Parallel feature preflight. Static audit leaves one MARKET requested=true writer (manual /avm market start), centralizes direct Lua QueryAuctionItems behind the hard-stop gate, and makes AuxFastBridge abort/suppress restart after hard stop."
+        }
+      ],
+      "package": null,
+      "notes": "Fixes two scheduler failures together: full MARKET is manual-only (legacy auto timer, loop MARKET path, loop-market opt-in and native fast-MARKET entry are inert), while /avm off sets one global hardStop and clears AUX/loop/MARKET/VENDOR/query/purchase-resume state. AuxFastBridge aborts the active Search and suppresses restart/resume/query continuation while hardStop is set. Reopen AH or explicit /avm on starts the zero-config AUX_ARB live loop again. marketPacked storage and confirmed buy path remain unchanged."
     }
   ]
 }

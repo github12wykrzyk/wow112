@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.23-zero-config-live"
+AVM_VERSION = "0.24-hardstop-manual-market"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -26,6 +26,7 @@ local AVM_DE_MATERIAL_IDS = {
 
 AVM = {
 	open = false,
+	hardStop = false,
 	phase = "IDLE",
 	queryInFlight = false,
 	querySeq = 0,
@@ -132,6 +133,8 @@ AVM = {
 	market = {
 		active = false,
 		requested = false,
+		manualRequested = false,
+		requestSource = "",
 		stopRequested = false,
 		phase = "IDLE",
 		boundary = nil,
@@ -276,6 +279,10 @@ local function avm_print(msg)
 	DEFAULT_CHAT_FRAME:AddMessage("|cff60ff00[AVM]|r " .. tostring(msg), 0.8, 0.9, 1)
 end
 
+local function avm_suppress(kind, source)
+	avm_print(tostring(kind) .. " reason=hard-stop" .. (source and (" source=" .. tostring(source)) or ""))
+end
+
 local function avm_money(copper)
 	copper = tonumber(copper) or 0
 	local g = math.floor(copper / 10000)
@@ -361,6 +368,9 @@ local function avm_defaults()
 		if tonumber(AVM_DB.auxLoopMarketMinutes) == 15 then AVM_DB.auxLoopMarketMinutes = 60 end
 		AVM_DB.marketPacingSchema = 1
 	end
+	-- Full MARKET is manual-only. Legacy SavedVariables are forcibly inert on every defaults pass.
+	AVM_DB.marketAutoMinutes = 0
+	AVM_DB.auxLoopMarketEnabled = false
 	if AVM_DB.auxLoopDelaySeconds == nil then AVM_DB.auxLoopDelaySeconds = 2 end
 	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 1000 end
 	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 50000 end
@@ -428,17 +438,15 @@ local function avm_defaults()
 end
 
 local function avm_loop_market_due()
-	if not AVM_DB.auxLoopEnabled or not AVM_DB.auxLoopMarketEnabled then return false end
-	local mins = tonumber(AVM_DB.auxLoopMarketMinutes) or 60
-	if mins <= 0 then return false end
-	local now = time()
-	local retryAfter = tonumber(AVM_DB.marketMeta and AVM_DB.marketMeta.retryAfter) or 0
-	if retryAfter > now then return false end
-	local last = tonumber(AVM_DB.marketMeta and AVM_DB.marketMeta.lastScanAt) or 0
-	return last == 0 or (now - last) >= mins * 60
+	-- Compatibility stub. Automatic full MARKET is intentionally impossible.
+	return false
 end
 
 local function avm_loop_schedule_arb(reason)
+	if AVM.hardStop then
+		avm_suppress("RESUME_SUPPRESSED", reason or "loop-schedule")
+		return
+	end
 	if not AVM_DB.auxLoopEnabled then return end
 	local delay = tonumber(AVM_DB.auxLoopDelaySeconds) or 2
 	if delay < 0.5 then delay = 0.5 end
@@ -449,16 +457,13 @@ local function avm_loop_schedule_arb(reason)
 end
 
 local function avm_loop_after_arb(reason)
-	if not AVM_DB.auxLoopEnabled then return end
-	if avm_loop_market_due() then
-		AVM.auxLoop.nextAt = 0
-		AVM.auxLoop.waitingForMarket = true
-		AVM.auxLoop.lastAction = "market"
-		AVM.market.requested = true
-		avm_print("LOOP MARKET due after AUX_ARB; snapshot queued")
-	else
-		avm_loop_schedule_arb(reason or "scan complete")
+	if AVM.hardStop then
+		avm_suppress("RESUME_SUPPRESSED", reason or "loop-after-arb")
+		return
 	end
+	if not AVM_DB.auxLoopEnabled then return end
+	-- Continuous automation repeats AUX only. Full MARKET has no automatic call-site.
+	avm_loop_schedule_arb(reason or "scan complete")
 end
 
 local function avm_loop_after_market(saved, reason)
@@ -480,6 +485,7 @@ local function avm_postscan_transaction_active()
 end
 
 local function avm_loop_tick(now)
+	if AVM.hardStop then return false end
 	if not AVM_DB.auxLoopEnabled then return false end
 	local nextAt = tonumber(AVM.auxLoop.nextAt) or 0
 	if nextAt <= 0 or now < nextAt then return false end
@@ -534,6 +540,10 @@ local function avm_loop_slash(rest)
 	sub = string.lower(sub or "status")
 	arg = arg or ""
 	if sub == "on" then
+		if AVM.hardStop then
+			avm_print("LOOP blocked by hard-stop; use /avm on or reopen AH")
+			return
+		end
 		if AVM.vendor.active or AVM.vendor.requested then
 			avm_print("LOOP blocked while standalone VENDOR owns/requests AH scheduler")
 			return
@@ -553,18 +563,13 @@ local function avm_loop_slash(rest)
 		AVM.auxLoop.waitingForMarket = false
 		avm_print("LOOP OFF - current scan/transaction may finish; no automatic restart")
 	elseif sub == "market" then
-		local v = string.lower(avm_trim(arg))
-		if v == "on" then
-			AVM_DB.auxLoopMarketEnabled = true
-			avm_print("LOOP automatic MARKET ON - manual opt-in")
-		elseif v == "off" then
-			AVM_DB.auxLoopMarketEnabled = false
-			AVM.market.requested = false
-			AVM.auxLoop.waitingForMarket = false
-			avm_print("LOOP automatic MARKET OFF")
-		else
-			avm_print("loop market on|off")
-		end
+		AVM_DB.auxLoopMarketEnabled = false
+		AVM_DB.marketAutoMinutes = 0
+		AVM.market.requested = false
+		AVM.market.manualRequested = false
+		AVM.auxLoop.waitingForMarket = false
+		avm_print("LOOP MARKET is manual-only; use /avm market start")
+
 	elseif sub == "marketmin" then
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 1 and n <= 1440 then
@@ -728,6 +733,10 @@ local function avm_candidate_from_row(i)
 end
 
 local function avm_send_query(kind, page, name)
+	if AVM.hardStop then
+		avm_suppress("QUERY_SUPPRESSED", kind)
+		return false
+	end
 	if not AVM.open or AVM.queryInFlight then return false end
 	if GetTime() < (AVM.nextQueryAt or 0) then return false end
 	if not CanSendAuctionQuery() then return false end
@@ -1043,7 +1052,7 @@ end
 local function avm_aux_tooltip_defaults()
 	if not aux or not aux.character_data or not aux.character_data.tooltip then return end
 	local t = aux.character_data.tooltip
-	if t.wow112_all_on_v1 then return end
+	if t.wow112_all_on_v2 then return end
 	t.value = true
 	t.daily = true
 	t.merchant_sell = true
@@ -1051,6 +1060,7 @@ local function avm_aux_tooltip_defaults()
 	t.disenchant_value = true
 	t.disenchant_distribution = true
 	t.wow112_all_on_v1 = true
+	t.wow112_all_on_v2 = true
 end
 
 local function avm_market_ui_isolate(enable)
@@ -1320,59 +1330,8 @@ local avm_vendor_candidate_from_row
 -- CMSG_AUCTION_LIST_ITEMS request in flight and calls these functions only
 -- after the exact 0x025C handler has populated the normal client auction list.
 function AVM_FastMarketNativeStart()
-	if AUXFAST_IsBusy and AUXFAST_IsBusy() then
-		avm_print("FAST MARKET blocked: original Aux scan is active")
-		return
-	end
-	if not AVM.open then
-		avm_print("FAST MARKET requires open Auction House")
-		return
-	end
-	if AVM.pending or AVM.unknown or AVM.vendor.active or AVM.vendor.requested then
-		avm_print("FAST MARKET blocked by purchase/vendor state")
-		return
-	end
-	if AVM.market.active or AVM.market.requested then
-		avm_print("FAST MARKET blocked: MARKET already active")
-		return
-	end
-	if AVM_DB.enabled then
-		AVM_DB.enabled = false
-		avm_print("scanner OFF - FAST MARKET owns AH scheduler")
-	end
-	AVM.fastVendorArmed = AVM_DB.fastVendorLive and true or false
-	if AVM_DB.live then
-		AVM_DB.live = false
-		avm_print("LIVE OFF - FAST MARKET owns AH scheduler")
-	end
-	AVM.queryInFlight = false
-	AVM.nextQueryAt = 0
-	AVM.market.active = true
-	AVM.market.requested = false
-	AVM.market.stopRequested = false
-	avm_market_ui_isolate(true)
-	AVM.market.phase = "FAST_NATIVE"
-	AVM.market.boundary = 0
-	AVM.market.page = 0
-	AVM.market.lastPage = 0
-	AVM.market.startedAt = GetTime()
-	AVM.market.items = {}
-	AVM.market.auctions = 0
-	AVM.market.units = 0
-	AVM.market.consecutiveTimeouts = 0
-	AVM.fastMarketNative = true
-	AVM.fastMarketPages = 0
-	AVM.fastVendorBest = nil
-	avm_print("FAST MARKET start: response-paced native scan, one query in flight" ..
-		(AVM.fastVendorArmed and " + FAST VENDOR ARMED (max 1 buy after revalidate)" or ""))
-	local ok,err = pcall(QueryAuctionItems, "", nil, nil, 0, 0, 0, 0, false, 0, false)
-	if not ok then
-		AVM.fastMarketNative = false
-		AVM.market.active = false
-		AVM.market.phase = "IDLE"
-		avm_market_ui_isolate(false)
-		avm_print("FAST MARKET baseline ERROR: " .. tostring(err))
-	end
+	avm_print("BLOCKED reason=market-manual-only source=native-fast-market")
+	return
 end
 
 function AVM_FastMarketNativePage(page, nativeRows)
@@ -1468,10 +1427,22 @@ end
 
 local function avm_market_begin()
 	local m = AVM.market
+	if AVM.hardStop then
+		m.requested = false
+		m.manualRequested = false
+		avm_suppress("BLOCKED", "market-begin")
+		return
+	end
+	if not m.manualRequested then
+		m.requested = false
+		avm_print("BLOCKED reason=market-manual-only source=" .. tostring(m.requestSource or "unknown"))
+		return
+	end
 	if m.active then return end
 	if AVM.pending or AVM.unknown then return end
 	m.active = true
 	m.requested = false
+	m.manualRequested = false
 	m.stopRequested = false
 	avm_market_ui_isolate(true)
 	m.low = 0
@@ -1501,6 +1472,10 @@ local function avm_market_begin()
 end
 
 local function avm_market_request_start()
+	if AVM.hardStop then
+		avm_print("BLOCKED reason=hard-stop source=manual-market; use /avm on or reopen AH")
+		return
+	end
 	if not AVM.open then
 		avm_print("MARKET requires open Auction House")
 		return
@@ -1517,8 +1492,10 @@ local function avm_market_request_start()
 		AVM_DB.live = false
 		avm_print("LIVE OFF - MARKET scan owns the AH query scheduler")
 	end
+	AVM.market.manualRequested = true
+	AVM.market.requestSource = "manual-/avm-market-start"
 	AVM.market.requested = true
-	avm_print("MARKET scan queued")
+	avm_print("MARKET scan queued source=manual-/avm-market-start")
 end
 
 local function avm_market_accept(kind, page, total, positive)
@@ -1638,19 +1615,8 @@ local function avm_market_tick()
 end
 
 local function avm_market_auto_due()
-	if AVM_DB.auxLoopEnabled then return false end
-	local mins = tonumber(AVM_DB.marketAutoMinutes) or 0
-	if mins <= 0 then return false end
-	if AUXFAST_IsBusy then
-		local ok, isBusy = pcall(AUXFAST_IsBusy)
-		if ok and isBusy then return false end
-	end
-	if AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or AVM_DB.live or AVM.pending or AVM.unknown then return false end
-	local now = time()
-	local retryAfter = tonumber(AVM_DB.marketMeta.retryAfter) or 0
-	if retryAfter > now then return false end
-	local last = tonumber(AVM_DB.marketMeta.lastScanAt) or 0
-	return last == 0 or (now - last) >= mins * 60
+	-- Compatibility stub only. Full MARKET is manual-only.
+	return false
 end
 
 local function avm_market_show_status()
@@ -1743,13 +1709,10 @@ local function avm_market_slash(rest)
 	elseif sub == "item" or sub == "price" then
 		avm_market_show_item(arg)
 	elseif sub == "auto" then
-		local n = tonumber(avm_trim(arg))
-		if n and n >= 0 and n <= 1440 then
-			AVM_DB.marketAutoMinutes = n
-			avm_print("MARKET auto interval=" .. n .. " minutes (0=off)")
-		else
-			avm_print("market auto must be 0..1440 minutes")
-		end
+		AVM_DB.marketAutoMinutes = 0
+		AVM_DB.auxLoopMarketEnabled = false
+		avm_print("MARKET auto is permanently disabled; use /avm market start")
+
 	elseif sub == "delay" then
 		local n = tonumber(avm_trim(arg))
 		if n and n >= 0.35 and n <= 3 then
@@ -2446,6 +2409,7 @@ end
 
 local function avm_de_begin_live_verify(candidate)
 	local a = AVM.auxArb
+	avm_print("DE_VERIFY name=" .. tostring(candidate and candidate.name or "?"))
 	if not candidate or not candidate.materials or table.getn(candidate.materials) == 0 then
 		avm_de_fail_postscan(candidate, "no-materials")
 		return false
@@ -2531,6 +2495,9 @@ local function avm_de_live_verify_accept(page, total)
 	end
 	AVM.phase = "REVALIDATE"
 	AVM.nextQueryAt = GetTime() + 0.05
+	avm_print("DE_LIVE_OK name=" .. tostring(fresh.name) ..
+		" buy=" .. avm_money(fresh.buyout or 0) ..
+		" profit=" .. avm_money(fresh.profit or 0))
 	avm_print("AUX_ARB_DE_LIVE_OK " .. tostring(fresh.name) ..
 		" buy=" .. avm_money(fresh.buyout) ..
 		" netEV=" .. avm_money(fresh.deValue) ..
@@ -2541,6 +2508,22 @@ end
 
 avm_auxarb_resume_search = function(reason)
 	local a = AVM.auxArb
+	if AVM.hardStop or not AVM_DB.auxLoopEnabled then
+		a.active = false
+		a.paused = false
+		a.pausePending = false
+		a.resumePending = false
+		a.candidate = nil
+		AVM.candidate = nil
+		AVM.revalidatePages = nil
+		AVM.revalidatePos = 0
+		AVM.phase = "IDLE"
+		AVM.queryInFlight = false
+		AVM.nextQueryAt = 0
+		avm_print("RESUME_SUPPRESSED reason=" .. (AVM.hardStop and "hard-stop" or "loop-off") ..
+			" source=" .. tostring(reason or "candidate"))
+		return
+	end
 	a.active = false
 	a.paused = false
 	a.pausePending = false
@@ -2558,6 +2541,7 @@ avm_auxarb_resume_search = function(reason)
 		local ok, resumed = pcall(AUXFAST_ResumeSearch)
 		if ok and resumed then
 			AVM.stats.auxArbResumes = AVM.stats.auxArbResumes + 1
+			avm_print("AUX_RESUME reason=" .. tostring(reason or "continue"))
 			avm_print("AUX_ARB_RESUME " .. tostring(reason or "continue"))
 		else
 			avm_print("AUX_ARB_RESUME_FAILED " .. tostring(reason or "continue"))
@@ -2569,6 +2553,11 @@ end
 
 function AVM_AuxArbScanStart(resume, filterString)
 	local a = AVM.auxArb
+	if AVM.hardStop or not AVM_DB.auxArbEnabled then
+		a.active = false
+		avm_print("SCAN_CANCELLED reason=" .. (AVM.hardStop and "hard-stop" or "auxarb-disabled"))
+		return
+	end
 	local keepScanBook = resume and a.deRawCandidates and a.deMaterialBook and a.flipBook
 	a.active = AVM_DB.auxArbEnabled and true or false
 	a.paused = false
@@ -2603,6 +2592,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.deMidScanHits = 0
 	end
 	if a.active then
+		avm_print("AUX_SCAN_START resume=" .. tostring(keepScanBook and true or false))
 		avm_print((keepScanBook and "AUX_ARB_SCAN resume" or "AUX_ARB_SCAN start") ..
 			" live=" .. tostring(AVM_DB.auxArbLive) ..
 			" vendorMin=" .. avm_money(AVM_DB.vendorMinProfit or 0) ..
@@ -2646,6 +2636,7 @@ end
 
 function AVM_AuxArbPageDone(page, lastPage)
 	local a = AVM.auxArb
+	if AVM.hardStop then return false end
 	if not a.active or a.paused then return false end
 	a.pages = a.pages + 1
 	a.lastPage = tonumber(lastPage) or a.lastPage or 0
@@ -2701,6 +2692,9 @@ function AVM_AuxArbPageDone(page, lastPage)
 	AVM.stats.auxArbPauses = AVM.stats.auxArbPauses + 1
 	if selected.mode == "auxarb_de" then
 		a.deMidScanHits = (a.deMidScanHits or 0) + 1
+		avm_print("DE_CANDIDATE name=" .. tostring(selected.name) ..
+			" buy=" .. avm_money(selected.buyout or 0) ..
+			" profit=" .. avm_money(selected.profit or 0))
 		avm_print("AUX_ARB_DE_HIT page=" .. tostring(selected.sourcePage) ..
 			" " .. tostring(selected.name) ..
 			" buy=" .. avm_money(selected.buyout or 0) ..
@@ -2715,6 +2709,17 @@ end
 
 function AVM_AuxArbPaused(page)
 	local a = AVM.auxArb
+	if AVM.hardStop then
+		a.active = false
+		a.paused = false
+		a.pausePending = false
+		a.resumePending = false
+		a.candidate = nil
+		AVM.candidate = nil
+		AVM.phase = "IDLE"
+		avm_print("RESUME_SUPPRESSED reason=hard-stop source=aux-paused")
+		return
+	end
 	if not a.pausePending or not a.candidate then return end
 	a.active = false
 	a.paused = true
@@ -2738,8 +2743,19 @@ local avm_try_postscan_candidate
 
 function AVM_AuxArbScanDone()
 	local a = AVM.auxArb
+	if AVM.hardStop then
+		a.active = false
+		avm_print("RESUME_SUPPRESSED reason=hard-stop source=scan-done")
+		return
+	end
 	if not a.active then return end
 	a.active = false
+	avm_print("AUX_SCAN_DONE pages=" .. tostring(a.pages or 0))
+	if not AVM_DB.auxLoopEnabled then
+		AVM.phase = "IDLE"
+		avm_print("RESUME_SUPPRESSED reason=loop-off source=scan-done")
+		return
+	end
 
 	local bestDe = nil
 	local bestDeLive = nil
@@ -3160,6 +3176,11 @@ end
 
 local function avm_vendor_begin()
 	local v = AVM.vendor
+	if AVM.hardStop then
+		v.requested = false
+		avm_suppress("BLOCKED", "vendor-begin")
+		return
+	end
 	if v.active then return end
 	if AVM.pending or AVM.unknown then return end
 	v.active = true
@@ -3176,6 +3197,10 @@ local function avm_vendor_begin()
 end
 
 local function avm_vendor_request_start()
+	if AVM.hardStop then
+		avm_print("BLOCKED reason=hard-stop source=vendor-start; use /avm on or reopen AH")
+		return
+	end
 	if not AVM.open then
 		avm_print("VENDOR requires open Auction House")
 		return
@@ -3963,6 +3988,13 @@ end
 
 local function avm_handle_list_update()
 	local now = GetTime()
+	if AVM.hardStop then
+		if AVM.queryInFlight then
+			AVM.queryInFlight = false
+			avm_print("QUERY_SUPPRESSED reason=hard-stop source=AUCTION_ITEM_LIST_UPDATE")
+		end
+		return
+	end
 	if not AVM.queryInFlight then
 		if AVM.open and (AVM_DB.enabled or AVM.market.active or AVM.vendor.active) and AVM.lastResultAt > 0 and
 		   now - AVM.lastResultAt <= AVM_EXTRA_EVENT_WINDOW then
@@ -4070,12 +4102,8 @@ end
 
 local function avm_tick()
 	if not AVM.open then return end
+	if AVM.hardStop then return end
 	local now = GetTime()
-
-	if avm_market_auto_due() then
-		AVM.market.requested = true
-		avm_print("MARKET auto scan due")
-	end
 
 	if avm_tick_pending(now) then return end
 	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
@@ -4212,8 +4240,13 @@ end
 local function avm_status()
 	local rule = avm_active_rule()
 	avm_print("v" .. AVM_VERSION ..
-		" enabled=" .. tostring(AVM_DB.enabled) ..
-		" live=" .. tostring(AVM_DB.live) ..
+		" AUX=" .. tostring(AVM_DB.auxArbEnabled) ..
+		" auxLive=" .. tostring(AVM_DB.auxArbLive) ..
+		" loop=" .. tostring(AVM_DB.auxLoopEnabled) ..
+		" hardStop=" .. tostring(AVM.hardStop) ..
+		" autoMarket=false/manual-only" ..
+		" legacyEnabled=" .. tostring(AVM_DB.enabled) ..
+		" legacyLive=" .. tostring(AVM_DB.live) ..
 		" phase=" .. AVM.phase ..
 		" slot=" .. tostring(AVM.ruleIndex) ..
 		" activeRules=" .. tostring(avm_rule_count()) ..
@@ -4256,6 +4289,12 @@ local function avm_status()
 		" vendorSeekTargets=" .. AVM.stats.vendorSeekTargets ..
 		" vendorCeilings=" .. AVM.stats.vendorPriceCeilings ..
 		" vendorTimeouts=" .. AVM.stats.vendorTimeouts)
+	avm_print("scan active=" .. tostring(AVM.auxArb.active) ..
+		" paused=" .. tostring(AVM.auxArb.paused) ..
+		" pending=" .. tostring(AVM.pending ~= nil) ..
+		" unknownHold=" .. tostring(AVM.unknown ~= nil) ..
+		" market=" .. tostring(AVM.market.active) ..
+		" vendor=" .. tostring(AVM.vendor.active))
 	if AVM.vendor.active or AVM.vendor.requested then avm_vendor_status() end
 end
 
@@ -4507,6 +4546,87 @@ local function avm_auxarb_slash(rest)
 	end
 end
 
+local function avm_hard_stop(reason)
+	AVM.hardStop = true
+	AVM_DB.enabled = false
+	AVM_DB.live = false
+	AVM_DB.auxArbEnabled = false
+	AVM_DB.auxArbLive = false
+	AVM_DB.auxLoopEnabled = false
+	AVM_DB.auxLoopMarketEnabled = false
+	AVM_DB.marketAutoMinutes = 0
+
+	AVM.auxLoop.nextAt = 0
+	AVM.auxLoop.waitingForMarket = false
+	AVM.auxLoop.lastAction = "hard-stop"
+
+	AVM.market.requested = false
+	AVM.market.manualRequested = false
+	AVM.market.requestSource = ""
+	AVM.market.active = false
+	AVM.market.stopRequested = false
+	AVM.market.phase = "IDLE"
+	AVM.market.processing = false
+	AVM.market.items = {}
+	avm_market_ui_isolate(false)
+	AVM.fastMarketNative = false
+	AVM.fastMarketPages = 0
+	AVM.fastVendorBest = nil
+	AVM.fastVendorArmed = false
+
+	AVM.vendor.requested = false
+	AVM.vendor.active = false
+	AVM.vendor.stopRequested = false
+	AVM.vendor.phase = "IDLE"
+	AVM.vendor.best = nil
+
+	local a = AVM.auxArb
+	a.active = false
+	a.paused = false
+	a.pausePending = false
+	a.resumePending = false
+	a.pageBest = nil
+	a.candidate = nil
+	a.deVerify = nil
+	a.flipVerify = nil
+	a.postscanCandidate = nil
+
+	AVM.candidate = nil
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
+	AVM.pending = nil
+	AVM.unknown = nil
+	AVM.queryInFlight = false
+	AVM.queryKind = ""
+	AVM.nextQueryAt = 0
+	AVM.phase = "IDLE"
+
+	if AUXFAST_HardStop then pcall(AUXFAST_HardStop) end
+	avm_print("AH_HARD_STOP reason=" .. tostring(reason or "manual"))
+	avm_print("SCAN_CANCELLED reason=hard-stop")
+end
+
+local function avm_start_zero_config(reason)
+	AVM.hardStop = false
+	AVM_DB.enabled = false
+	AVM_DB.live = false
+	AVM_DB.auxArbEnabled = true
+	AVM_DB.auxArbLive = true
+	AVM_DB.auxLoopEnabled = true
+	AVM_DB.auxLoopMarketEnabled = false
+	AVM_DB.marketAutoMinutes = 0
+	AVM_DB.maxSessionBuys = 0
+	AVM_DB.maxSessionSpend = 0
+	AVM.market.requested = false
+	AVM.market.manualRequested = false
+	AVM.market.requestSource = ""
+	AVM.auxLoop.waitingForMarket = false
+	AVM.auxLoop.nextAt = 0
+	avm_loop_schedule_arb(reason or "zero-config")
+	avm_print("AH_START source=" .. tostring(reason or "zero-config"))
+	avm_print("AH_ZERO_CONFIG_ACTIVE live=true loop=true autoMarket=false maxBuys=unlimited budget=unlimited")
+end
+
 local function avm_slash(msg)
 	avm_defaults()
 	msg = avm_trim(msg or "")
@@ -4515,22 +4635,13 @@ local function avm_slash(msg)
 	rest = rest or ""
 
 	if cmd == "on" then
-		AVM_DB.enabled = true
-		avm_restart_boundary()
-		avm_print("scanner ON")
+		if not AVM.open then
+			avm_print("AH_START requires open Auction House")
+		else
+			avm_start_zero_config("manual-/avm-on")
+		end
 	elseif cmd == "off" then
-		AVM_DB.enabled = false
-		AVM_DB.live = false
-		AVM_DB.auxLoopEnabled = false
-		AVM.auxLoop.nextAt = 0
-		AVM.auxLoop.waitingForMarket = false
-		AVM.queryInFlight = false
-		AVM.phase = "IDLE"
-		AVM.market.requested = false
-		if AVM.market.active then AVM.market.stopRequested = true end
-		AVM.vendor.requested = false
-		if AVM.vendor.active then AVM.vendor.stopRequested = true end
-		avm_print("scanner/LIVE/LOOP OFF")
+		avm_hard_stop("manual-/avm-off")
 	elseif cmd == "live" then
 		if string.lower(avm_trim(rest)) == "on" then
 			if not AVM.open then
@@ -4722,7 +4833,7 @@ AVM_WATCH_API = {
 			maxUnit = rule and (tonumber(rule.maxUnit) or 0) or 0,
 			maxTotal = rule and (tonumber(rule.maxTotal) or 0) or 0,
 			sessionBuys = AVM.sessionBuys,
-			maxSessionBuys = AVM_DB.maxSessionBuys or 1,
+			maxSessionBuys = AVM_DB.maxSessionBuys or 0,
 			sessionSpend = AVM.sessionSpend,
 			generation = AVM.uiGeneration,
 		}
@@ -4747,6 +4858,7 @@ frame:SetScript("OnEvent", function()
 		-- Zero-config AH profile: legacy scanner stays off; AUX_ARB is armed automatically when AH opens.
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = true
+		AVM.hardStop = false
 		SLASH_AUXVMANGOS1 = "/avm"
 		SlashCmdList["AUXVMANGOS"] = avm_slash
 		avm_print("loaded " .. AVM_VERSION .. " - DRY-RUN default")
@@ -4761,17 +4873,8 @@ frame:SetScript("OnEvent", function()
 		AVM.unknown = nil
 		AVM.auxLoop.nextAt = 0
 		AVM.auxLoop.waitingForMarket = false
-		AVM_DB.enabled = false
-		AVM_DB.live = false
-		AVM_DB.auxArbEnabled = true
-		AVM_DB.auxArbLive = true
-		AVM_DB.auxLoopEnabled = true
-		AVM_DB.auxLoopMarketEnabled = false
-		AVM_DB.marketAutoMinutes = 0
-		AVM.market.requested = false
 		avm_restart_boundary(false)
-		avm_loop_schedule_arb("AH opened / zero-config")
-		avm_print("AH ZERO-CONFIG ACTIVE: live=true loop=true autoMarket=false maxBuys=unlimited budget=unlimited")
+		avm_start_zero_config("AH-open")
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = false
