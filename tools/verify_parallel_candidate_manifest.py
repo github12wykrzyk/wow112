@@ -63,6 +63,24 @@ def main():
         require((ROOT / "src/AddOns" / addon).is_dir() or (ROOT / "src/LazyScript/upstream/Addons" / addon).is_dir(),
                 f"addon root missing: {addon}")
 
+    external = addons.get("external", [])
+    require(isinstance(external, list), "external addons must be a list")
+    external_destinations = set()
+    for item in external:
+        require(isinstance(item, dict), "external addon entry must be an object")
+        name = item.get("name")
+        repository = item.get("repository")
+        commit = item.get("commit")
+        destination = item.get("destination")
+        require(all(isinstance(x, str) and x for x in (name, repository, commit, destination)),
+                "external addon entry missing fields")
+        require(len(commit) == 40 and all(c in "0123456789abcdefABCDEF" for c in commit),
+                f"external addon commit must be full SHA: {name}")
+        key = destination.lower()
+        require(key not in external_destinations, f"duplicate external addon destination: {destination}")
+        require(key not in set(x.lower() for x in roots), f"external addon collides with repo addon: {destination}")
+        external_destinations.add(key)
+
     workflow_path = data.get("workflow")
     require(isinstance(workflow_path, str) and rel_exists(workflow_path), "candidate workflow missing")
     workflow = (ROOT / workflow_path).read_text(encoding="utf-8")

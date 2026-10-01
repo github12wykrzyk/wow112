@@ -1931,6 +1931,31 @@
       "tests": [],
       "package": null,
       "notes": "Fix report 51 stall: fastvendor revalidation now bounds pages against AVM.market.lastPage and re-queries the original unfiltered full-AH source page (empty name filter), preserving exact signature matching before purchase."
+    },
+    {
+      "id": "ah-original-aux-fast-v1",
+      "branch": "feature/ah-original-aux-fast-v1",
+      "modules": [
+        "OriginalAux",
+        "AuxFastBridge",
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-fast-vendor-revalidate-fix"
+      ],
+      "shared_resources": [
+        "QueryAuctionItems / CanSendAuctionQuery",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "original Aux scan state machine and GUI",
+        "Aux merchant_sell learned vendor cache",
+        "AuxVmangos guarded vendor revalidation"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "62511bcf0a5eea8e5ff1e5598bfb086eb8a994df",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Restore original Aux frontend at pinned upstream commit 6b56d0f and keep its Search/Post/Auctions/Bids/history/tooltip/disenchant systems intact. AuxFastBridge removes only CanSendAuctionQuery waiting while an original Aux scan is active, preserving response-paced one-query-at-a-time state transitions. AuxVmangos vendor valuation now prefers original Aux learned merchant_sell data and falls back to the existing static table. F2 FAST MARKET is blocked while an original Aux scan is active. Gameplay validation pending."
     }
   ]
 }
