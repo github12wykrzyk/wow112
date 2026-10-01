@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.56"
+local ADDON_VERSION = "1.57"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -597,7 +597,14 @@ local function whisperInviteDecision(message)
     local paymentOffer = hasWhisperPaymentOffer(s)
     local plusMarker = hasWhisperPlusMarker(raw)
     local inviteStem = hasWhisperInviteStem(s)
-    local strongDirect = plusMarker or inviteStem
+    local oneRequest = phraseHas(s, "take one")
+        or phraseHas(s, "need one")
+        or phraseHas(s, "want one")
+        or phraseHas(s, "get one")
+        or phraseHas(s, "have one")
+        or phraseHas(s, "like one")
+        or phraseHas(s, "grab one")
+    local strongDirect = plusMarker or inviteStem or oneRequest
 
     -- Exact service codes remain conservative. "123" additionally tolerates
     -- short politeness suffixes; '+' is handled from raw text because normal
@@ -624,6 +631,7 @@ local function whisperInviteDecision(message)
     -- "+", "+ pls", "+anything", "inv", "invi", "invit", "invite", etc.
     if plusMarker then score = score + 5 end
     if inviteStem then score = score + 4 end
+    if oneRequest then score = score + 4 end
     if exactCode then score = score + 3 end
     if directSummonQuestion then score = score + 5 end
     if paymentOffer then score = score + 5 end
@@ -645,13 +653,23 @@ local function whisperInviteDecision(message)
     -- Direct whispers are a strong signal, but generic chatter is ignored.
     if score < 3 then return false, loc, "weak-intent" end
 
-    -- A destination-less whisper inherits this summoner's configured service.
+    -- A destination-less whisper normally inherits a single configured service.
+    -- For a multi-service profile, an explicit direct-whisper request still
+    -- targets this exact client, so invite it instead of requiring the buyer
+    -- to repeat the destination. The physical summoner decides the actual cast.
     if not loc and service ~= "all" then
         local single = singleServiceLocation()
-        if not single then return false, nil, "multi-service-needs-location" end
-        loc = single
+        if single then
+            loc = single
+        elseif not (strongDirect or exactCode or directSummonQuestion or paymentOffer) then
+            return false, nil, "multi-service-needs-location"
+        end
     end
-    return true, loc, plusMarker and "plus-match" or (inviteStem and "invite-stem" or "smart-match")
+    return true, loc,
+        plusMarker and "plus-match"
+        or (inviteStem and "invite-stem"
+        or (oneRequest and "one-request"
+        or "smart-match"))
 end
 
 local function channelMatches(channelBaseName, channelFullName)

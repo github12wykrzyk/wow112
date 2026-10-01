@@ -2746,6 +2746,26 @@
       "tests": [],
       "package": null,
       "notes": "Recognize paid taxi-style multi-destination competitor adverts without an explicit summon token; treat Waterlords/Waterlord as Hydraxian Waterlords aliases. Gameplay evidence pending."
+    },
+    {
+      "id": "summonscout-take-one-whisper",
+      "branch": "feature/summonscout-take-one-whisper",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-whisper-intent-v2"
+      ],
+      "shared_resources": [
+        "SummonScout CHAT_MSG_WHISPER smart auto-invite parser",
+        "SummonScout multi-service destination routing"
+      ],
+      "status": "in_progress",
+      "observed_head": "a26e35d43d8f5755f8c420b6a005f0aed8736718",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Fix direct-whisper auto-invite for natural one-request replies such as 'I take one'. The phrase already scored as intent, but destination-less requests could still be rejected by the multi-service guard. SummonScout 1.57 promotes one-request phrasing to strong direct intent and lets explicit direct-whisper requests invite on multi-service profiles while preserving wrong-destination, blacklist, group, ambiguity and seller safety gates."
     }
   ]
 }
