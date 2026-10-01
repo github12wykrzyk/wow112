@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.15.1-original-aux-arbitrage-republish"
+AVM_VERSION = "0.15.2-original-aux-arbitrage-grayfilter"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1237,6 +1237,9 @@ end
 avm_vendor_candidate_from_row = function(i)
 	local name,_,count,quality,_,level,_,_,buyout,_,_,owner = GetAuctionItemInfo("list", i)
 	if not name or not count or count <= 0 or not buyout or buyout <= 0 then return nil end
+	-- Poor/grey loot is deliberately excluded from vendor arbitrage. Custom
+	-- server sell prices can diverge materially from static Vanilla data.
+	if quality == 0 then return nil end
 
 	local itemId = avm_vendor_item_id(i)
 	if not itemId then return nil end
@@ -1317,7 +1320,7 @@ local function avm_auxarb_candidate_from_record(record, requiredMode)
 	if missing < 0 then missing = 0 end
 	local best = nil
 
-	if not requiredMode or requiredMode == "auxarb_vendor" then
+	if (not requiredMode or requiredMode == "auxarb_vendor") and record.quality ~= 0 then
 		local vendorSource = "static"
 		local vendorUnit = 0
 		if aux and aux.account_data and aux.account_data.merchant_sell then

@@ -1,4 +1,6 @@
-# AuxVmangos 0.15 — Original AUX fast arbitrage loop
+# AuxVmangos 0.15.2 — Original AUX fast arbitrage loop
+
+Poor-quality (grey) items are now excluded completely from vendor arbitrage. Reported in-game evidence showed Serrated Petal (item 18223) selling to the custom server vendor for about 12s while the embedded Vanilla static table contains 61s42c, so using static Vanilla sell data for grey junk is unsafe on this realm. Non-grey vendor opportunities remain eligible; learned AUX merchant-sell values still take precedence over the static table.
 
 The validated original AUX Search path is now the primary full-market transport. On WoW 1.12.1 build 5875 the exact client query cooldown is reduced to 25 ms by the native companion, while original AUX remains response-correlated one request at a time.
 

@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-arb-search-detect",
+      "branch": "feature/ah-aux-gray-vendor-abortfix",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2038,7 +2038,7 @@
         "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+      "observed_head": "9b0194beb0dc2ab167f8a1ff94edae5e73057f3b",
       "verified_commit": null,
       "tests": [
         {
@@ -2113,7 +2113,7 @@
         }
       ],
       "package": null,
-      "notes": "Report #56 from installed artifact 95db290d/run 36866053336 proves AuxVmangos 0.15.1 loaded and /avm worked, but after completed original AUX Search it showed pages=0/0, vendor/de candidates=0/0 and deNoValue=0. Upstream tabs/search/results.lua shows every Search always supplies auto_buy_validator and auto_bid_validator functions even when no saved rule is enabled. AuxFastBridge v1.7 required both fields to be nil before attaching arbitrage callbacks, so the economic loop never saw scan/page/auction events. v1.8 identifies normal full Search by its real callback shape and attaches AuxVmangos; transport and 25 ms cooldown remain unchanged."
+      "notes": "Live vendor test after report #56 exposed two concrete issues. First, AuxFastBridge pause called M.abort from the package export proxy; reads from that M proxy are nil, causing AuxFastBridge.lua:314. v1.9 calls the actual module-environment abort function. Second, Serrated Petal item 18223 was valued from embedded Vanilla static vendor data at 61s42c while the user observed about 12s vendor sell on the custom realm. AuxVmangos 0.15.2 therefore excludes quality=0 grey items from all vendor-arbitrage candidate generation and revalidation. DE logic is unchanged and already only considers uncommon/rare/epic items."
     },
     {
       "id": "map-tele-keep-open",
