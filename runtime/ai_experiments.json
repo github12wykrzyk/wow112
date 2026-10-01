@@ -1713,6 +1713,30 @@
       "tests": [],
       "package": null,
       "notes": "V1 manual PREPARE pilot for exactly two shared slave workers. Updater selects two distinct account-bound WoW processes, maps HYJAL/HYDRAXIAN to configurable character slots, sends one semantic pair request, and waits for READY 2/2. CharacterSwitchDiag exposes a per-PID shared worker map, blocks FAST switching during combat, reports heartbeat/ack/state/phase/error/current slot, and writes per-worker diagnostics. V1 intentionally does not automate Ritual or SummonScout yet."
+    },
+    {
+      "id": "ah-native-receive-probe",
+      "branch": "feature/ah-native-receive-probe",
+      "modules": [
+        "AHThrottleNative",
+        "AHThrottleTest"
+      ],
+      "dependencies": [
+        "ah-repeatability-75-125"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630",
+        "NetClient global 0x00C28128",
+        "NetClient handler table +0x74 / context table +0xD64",
+        "SMSG_AUCTION_LIST_RESULT opcode 0x025C handler 0x004CC7F0",
+        "AUCTION_ITEM_LIST_UPDATE comparison"
+      ],
+      "status": "in_progress",
+      "observed_head": "65f8d932ae472948d6ec62604c6458de38f5dad7",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Passive exact-build receive probe. Exact 5875 EXE disassembly verifies dispatcher 0x00537AA0, registration slot tables +0x74/+0xD64, NetClient getter 0x005AB490 -> 0x00C28128, and opcode 0x025C mapped to auction handler 0x004CC7F0 with context 0. SMSG_AUCTION_LIST_RESULT has no listfrom/page field, so this experiment first determines whether prior Lua AUCTION_ITEM_LIST_UPDATE misses are real missing native responses or only event undercount/coalescing. No gameplay result claimed yet."
     }
   ]
 }
