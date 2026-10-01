@@ -1460,14 +1460,27 @@ namespace WoW112Updater
                 return;
             }
 
+            var legacyPids = initialPids
+                .Where(pid => SummonWorkerChannel.ProbeProtocolVersion(pid) != SummonWorkerVersion)
+                .ToList();
+            var legacyMigration = legacyPids.Count != 0;
+
             var answer = MessageBox.Show(
                 this,
-                "Zakończyć wszystkie instancje WoW z wybranego katalogu?\n\n"
-                    + "Procesy: " + initialPids.Count + "\n"
-                    + "Najpierw updater wymusi ReloadUI() w KAŻDEJ instancji i poczeka na potwierdzenie zakończenia reloadu. "
-                    + "Dopiero potem wykona twardy Kill().\n\n"
-                    + "Jeśli choć jedna instancja nie potwierdzi reloadu, żaden działający klient nie zostanie zabity.",
-                "WoW112 Updater — RELOAD + ZABIJ WSZYSTKIE",
+                legacyMigration
+                    ? "Wykryto stare instancje WoW, które nie mają jeszcze workera ReloadUI v" + SummonWorkerVersion + ".\n\n"
+                        + "Procesy: " + initialPids.Count + " • stare/niezgodne: " + legacyPids.Count + "\n"
+                        + "To jest jednorazowa migracja po aktualizacji. Updater wyśle wszystkim klientom NORMALNE zamknięcie okna WoW "
+                        + "(bez Kill), poczeka aż procesy same się zakończą, a następnie sfinalizuje oczekujący runtime.\n\n"
+                        + "Przy kolejnych uruchomieniach przycisk wróci do trybu ReloadUI → ACK → Kill."
+                    : "Zakończyć wszystkie instancje WoW z wybranego katalogu?\n\n"
+                        + "Procesy: " + initialPids.Count + "\n"
+                        + "Najpierw updater wymusi ReloadUI() w KAŻDEJ instancji i poczeka na potwierdzenie zakończenia reloadu. "
+                        + "Dopiero potem wykona twardy Kill().\n\n"
+                        + "Jeśli choć jedna instancja nie potwierdzi reloadu, żaden działający klient nie zostanie zabity.",
+                legacyMigration
+                    ? "WoW112 Updater — JEDNORAZOWA MIGRACJA RUNTIME"
+                    : "WoW112 Updater — RELOAD + ZABIJ WSZYSTKIE",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
                 MessageBoxDefaultButton.Button2);
@@ -1487,31 +1500,41 @@ namespace WoW112Updater
 
                 summonCoordinatorBusy = true;
                 reservedCoordinator = true;
-                SetBusy(true, "ReloadUI we wszystkich instancjach WoW...");
                 enteredBusy = true;
 
-                await ReloadGameProcessesAsync(root, initialPids);
+                if (legacyMigration)
+                {
+                    SetBusy(true, "Jednorazowa migracja: bezpieczne zamykanie starych klientów...");
+                    await GracefullyCloseLegacyGameProcessesAsync(root, initialPids);
+                    finalStatus = "Stare instancje zamknięte normalnie. Finalizuję nowy runtime.";
+                    Log(finalStatus);
+                }
+                else
+                {
+                    SetBusy(true, "ReloadUI we wszystkich instancjach WoW...");
+                    await ReloadGameProcessesAsync(root, initialPids);
 
-                var currentPids = GetGameProcessIds(root);
-                var unexpected = currentPids.Where(pid => !initialPids.Contains(pid)).ToList();
-                if (unexpected.Count != 0)
-                    throw new InvalidOperationException("W trakcie operacji uruchomiono nową instancję WoW (PID "
-                        + string.Join(", ", unexpected.Select(x => x.ToString()).ToArray())
-                        + "). Kill anulowany, bo ta instancja nie przeszła ReloadUI.");
+                    var currentPids = GetGameProcessIds(root);
+                    var unexpected = currentPids.Where(pid => !initialPids.Contains(pid)).ToList();
+                    if (unexpected.Count != 0)
+                        throw new InvalidOperationException("W trakcie operacji uruchomiono nową instancję WoW (PID "
+                            + string.Join(", ", unexpected.Select(x => x.ToString()).ToArray())
+                            + "). Kill anulowany, bo ta instancja nie przeszła ReloadUI.");
 
-                var killTargets = currentPids.Where(initialPids.Contains).ToList();
-                SetBusy(true, "Reload potwierdzony. Zamykanie instancji WoW...");
-                int failed;
-                var killed = KillGameProcesses(root, killTargets, out failed);
-                if (failed != 0)
-                    throw new InvalidOperationException("Nie udało się zakończyć wszystkich przeładowanych instancji WoW. Zakończono: "
-                        + killed + ", błędy: " + failed + ".");
+                    var killTargets = currentPids.Where(initialPids.Contains).ToList();
+                    SetBusy(true, "Reload potwierdzony. Zamykanie instancji WoW...");
+                    int failed;
+                    var killed = KillGameProcesses(root, killTargets, out failed);
+                    if (failed != 0)
+                        throw new InvalidOperationException("Nie udało się zakończyć wszystkich przeładowanych instancji WoW. Zakończono: "
+                            + killed + ", błędy: " + failed + ".");
 
-                if (GetGameProcessIds(root).Count != 0)
-                    throw new InvalidOperationException("Po operacji nadal działa instancja WoW z wybranego katalogu. Nie była objęta potwierdzonym zestawem ReloadUI.");
+                    if (GetGameProcessIds(root).Count != 0)
+                        throw new InvalidOperationException("Po operacji nadal działa instancja WoW z wybranego katalogu. Nie była objęta potwierdzonym zestawem ReloadUI.");
 
-                finalStatus = "ReloadUI potwierdzony; zakończono wszystkie instancje WoW (" + killed + ").";
-                Log(finalStatus);
+                    finalStatus = "ReloadUI potwierdzony; zakończono wszystkie instancje WoW (" + killed + ").";
+                    Log(finalStatus);
+                }
             }
             catch (Exception ex)
             {
@@ -1527,6 +1550,78 @@ namespace WoW112Updater
 
             if (!IsGameRunning(root))
                 TryFinalizePendingUpdate();
+        }
+
+        private async Task GracefullyCloseLegacyGameProcessesAsync(string root, IList<int> pids)
+        {
+            var original = new HashSet<int>(pids);
+            var current = GetGameProcessIds(root);
+            var unexpected = current.Where(pid => !original.Contains(pid)).ToList();
+            if (unexpected.Count != 0)
+                throw new InvalidOperationException("W trakcie przygotowania migracji uruchomiono nową instancję WoW (PID "
+                    + string.Join(", ", unexpected.Select(x => x.ToString()).ToArray())
+                    + "). Migracja anulowana przed zamykaniem.");
+
+            // Preflight every target before closing any window so a missing/non-GUI
+            // process cannot cause an avoidable half-migration.
+            foreach (var pid in pids)
+            {
+                if (!IsGameProcessAliveInRoot(pid, root)) continue;
+                using (var process = System.Diagnostics.Process.GetProcessById(pid))
+                {
+                    if (process.MainWindowHandle == IntPtr.Zero)
+                        throw new InvalidOperationException("PID " + pid
+                            + ": nie znaleziono głównego okna WoW. Jednorazowa migracja została anulowana bez użycia Kill().");
+                }
+            }
+
+            foreach (var pid in pids)
+            {
+                if (!IsGameProcessAliveInRoot(pid, root)) continue;
+                using (var process = System.Diagnostics.Process.GetProcessById(pid))
+                {
+                    if (!process.CloseMainWindow())
+                        throw new InvalidOperationException("PID " + pid
+                            + ": Windows nie przyjął normalnego zamknięcia okna. Nie użyłem Kill().");
+                    Log("MIGRACJA RUNTIME: wysłano normalne zamknięcie do PID " + pid + ".");
+                }
+            }
+
+            var started = Environment.TickCount;
+            var nextRetry = 2000;
+            while (unchecked(Environment.TickCount - started) < 35000)
+            {
+                var remaining = pids.Where(pid => IsGameProcessAliveInRoot(pid, root)).ToList();
+                if (remaining.Count == 0)
+                {
+                    await Task.Delay(500);
+                    return;
+                }
+
+                var elapsed = unchecked(Environment.TickCount - started);
+                if (elapsed >= nextRetry)
+                {
+                    foreach (var pid in remaining)
+                    {
+                        try
+                        {
+                            using (var process = System.Diagnostics.Process.GetProcessById(pid))
+                            {
+                                if (!process.HasExited) process.CloseMainWindow();
+                            }
+                        }
+                        catch { }
+                    }
+                    nextRetry += 2000;
+                }
+
+                await Task.Delay(100);
+            }
+
+            var stuck = pids.Where(pid => IsGameProcessAliveInRoot(pid, root)).OrderBy(pid => pid).ToArray();
+            throw new InvalidOperationException("Stare klienty nie zamknęły się normalnie w 35 s. Nadal działa PID: "
+                + string.Join(", ", stuck.Select(x => x.ToString()).ToArray())
+                + ". Nie użyłem Kill(); zamknij ewentualne okno potwierdzenia w grze i kliknij przycisk ponownie.");
         }
 
         private async Task ReloadGameProcessesAsync(string root, IList<int> pids)
