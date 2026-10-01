@@ -1,4 +1,4 @@
--- AuxFastBridge v1.8
+-- AuxFastBridge v1.9
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -311,7 +311,7 @@ local function install_scan_hook()
 	submit_query = function()
 		if pauseRequested then
 			local state = get_state()
-			if state and state.id then M.abort(state.id) end
+			if state and state.id then abort(state.id) end
 			return
 		end
 		return originalSubmitQuery()
@@ -385,4 +385,4 @@ SlashCmdList["AUXFAST"] = function()
 		" avmBusy=" .. tostring(avm_busy() and true or false))
 end
 
-out("v1.8 loaded: original Search detection + arbitrage bridge; hook=" .. tostring(hookInstalled))
+out("v1.9 loaded: Search arbitrage + safe pause abort; hook=" .. tostring(hookInstalled))

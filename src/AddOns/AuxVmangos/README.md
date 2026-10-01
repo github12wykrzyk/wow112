@@ -1,4 +1,6 @@
-# AuxVmangos 0.15 — Original AUX fast arbitrage loop
+# AuxVmangos 0.15.2 — Original AUX fast arbitrage loop
+
+Poor-quality (grey) items are excluded from vendor arbitrage. Serrated Petal (item 18223) showed a large mismatch between embedded Vanilla vendor data and the current realm's actual vendor payout, so grey junk is no longer considered for vendor-profit purchases.
 
 The validated original AUX Search path is now the primary full-market transport. On WoW 1.12.1 build 5875 the exact client query cooldown is reduced to 25 ms by the native companion, while original AUX remains response-correlated one request at a time.
 

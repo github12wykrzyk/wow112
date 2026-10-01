@@ -2019,7 +2019,7 @@
     },
     {
       "id": "ah-original-aux-fast-v1",
-      "branch": "feature/ah-aux-arb-search-detect",
+      "branch": "feature/ah-aux-gray-vendor-abortfix-r2",
       "modules": [
         "OriginalAux",
         "AuxFastBridge",
@@ -2038,7 +2038,7 @@
         "AuxVmangos guarded revalidation / PlaceAuctionBid / money-delta confirmation"
       ],
       "status": "awaiting_ci",
-      "observed_head": "7037be7db0c9620ec477fb6bf2e251b11f07577c",
+      "observed_head": "1204eee80dde0167c3c4595f3079cbccf2af8626",
       "verified_commit": null,
       "tests": [
         {
@@ -2113,7 +2113,7 @@
         }
       ],
       "package": null,
-      "notes": "Report #56 from installed artifact 95db290d/run 36866053336 proves AuxVmangos 0.15.1 loaded and /avm worked, but after completed original AUX Search it showed pages=0/0, vendor/de candidates=0/0 and deNoValue=0. Upstream tabs/search/results.lua shows every Search always supplies auto_buy_validator and auto_bid_validator functions even when no saved rule is enabled. AuxFastBridge v1.7 required both fields to be nil before attaching arbitrage callbacks, so the economic loop never saw scan/page/auction events. v1.8 identifies normal full Search by its real callback shape and attaches AuxVmangos; transport and 25 ms cooldown remain unchanged."
+      "notes": "Live vendor test exposed two issues. AuxFastBridge pause used M.abort even though the module's readable function is abort, causing the nil-call crash. Also Serrated Petal item 18223 demonstrated that embedded Vanilla vendor values can diverge from current realm vendor payouts. This iteration calls abort directly and excludes quality=0 grey items from both vendor candidate paths. Disenchant logic is unchanged."
     },
     {
       "id": "map-tele-keep-open",
