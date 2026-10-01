@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.22.1-loop-no-auto-market"
+AVM_VERSION = "0.23-zero-config-live"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -339,7 +339,7 @@ local function avm_defaults()
 	if AVM_DB.watchMaxPages == nil then AVM_DB.watchMaxPages = AVM_WATCH_MAX_PAGES end
 	if AVM_DB.boundaryRefresh == nil then AVM_DB.boundaryRefresh = 20 end
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
-	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 1 end
+	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 0 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
 	if AVM_DB.marketPacked == nil then AVM_DB.marketPacked = "" end
 	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
@@ -350,7 +350,7 @@ local function avm_defaults()
 	if AVM_DB.marketAutoMinutes == nil then AVM_DB.marketAutoMinutes = 0 end
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 	if AVM_DB.marketStorageSchema == nil then AVM_DB.marketStorageSchema = 0 end
-	if AVM_DB.auxLoopEnabled == nil then AVM_DB.auxLoopEnabled = false end
+	if AVM_DB.auxLoopEnabled == nil then AVM_DB.auxLoopEnabled = true end
 	if AVM_DB.auxLoopMarketMinutes == nil then AVM_DB.auxLoopMarketMinutes = 60 end
 	if AVM_DB.auxLoopMarketEnabled == nil then AVM_DB.auxLoopMarketEnabled = false end
 	if AVM_DB.auxLoopMarketPolicySchema == nil then
@@ -362,17 +362,17 @@ local function avm_defaults()
 		AVM_DB.marketPacingSchema = 1
 	end
 	if AVM_DB.auxLoopDelaySeconds == nil then AVM_DB.auxLoopDelaySeconds = 2 end
-	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 500 end
-	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 10000 end
+	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 1000 end
+	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 50000 end
 	if AVM_DB.vendorMaxPages == nil then AVM_DB.vendorMaxPages = 10 end -- legacy alias for HOT pages
 	if AVM_DB.vendorHotPages == nil then AVM_DB.vendorHotPages = AVM_DB.vendorMaxPages end
 	if AVM_DB.vendorSweepPages == nil then AVM_DB.vendorSweepPages = 25 end -- legacy 0.10 setting
 	if AVM_DB.vendorSeekRadius == nil then AVM_DB.vendorSeekRadius = 1 end
 	if AVM_DB.fastVendorLive == nil then AVM_DB.fastVendorLive = false end
 	if AVM_DB.auxArbEnabled == nil then AVM_DB.auxArbEnabled = true end
-	if AVM_DB.auxArbLive == nil then AVM_DB.auxArbLive = false end
-	if AVM_DB.deMinProfit == nil then AVM_DB.deMinProfit = 500 end
-	if AVM_DB.deMaxBuyout == nil then AVM_DB.deMaxBuyout = 10000 end
+	if AVM_DB.auxArbLive == nil then AVM_DB.auxArbLive = true end
+	if AVM_DB.deMinProfit == nil then AVM_DB.deMinProfit = 1000 end
+	if AVM_DB.deMaxBuyout == nil then AVM_DB.deMaxBuyout = 50000 end
 	if AVM_DB.deDepthUnits == nil then AVM_DB.deDepthUnits = 3 end
 	if AVM_DB.deAhCutPct == nil then AVM_DB.deAhCutPct = 5 end
 	if AVM_DB.deSafetyMarginPct == nil then AVM_DB.deSafetyMarginPct = 25 end
@@ -383,7 +383,7 @@ local function avm_defaults()
 	end
 	if AVM_DB.flipEnabled == nil then AVM_DB.flipEnabled = true end
 	if AVM_DB.flipMinProfit == nil then AVM_DB.flipMinProfit = 1000 end
-	if AVM_DB.flipMaxBuyout == nil then AVM_DB.flipMaxBuyout = 50000 end
+	if AVM_DB.flipMaxBuyout == nil then AVM_DB.flipMaxBuyout = 100000 end
 	if AVM_DB.flipDepthUnits == nil then AVM_DB.flipDepthUnits = 10 end
 	-- Depth <10 came from pre-0.20 macros/SavedVariables and defeats the hardened flip model.
 	if (tonumber(AVM_DB.flipDepthUnits) or 0) < 10 then AVM_DB.flipDepthUnits = 10 end
@@ -398,6 +398,33 @@ local function avm_defaults()
 	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
 	if AVM_DB.diag == nil then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
 	if AVM_DB.vendorMeta.sweepPass == nil then AVM_DB.vendorMeta.sweepPass = 0 end
+	if AVM_DB.zeroConfigAhSchema == nil then
+		-- User-requested zero-configuration AH profile. Apply once to existing SavedVariables.
+		AVM_DB.enabled = false
+		AVM_DB.live = false
+		AVM_DB.auxArbEnabled = true
+		AVM_DB.auxArbLive = true
+		AVM_DB.auxLoopEnabled = true
+		AVM_DB.auxLoopMarketEnabled = false
+		AVM_DB.marketAutoMinutes = 0
+		AVM_DB.auxLoopDelaySeconds = 2
+		AVM_DB.maxSessionSpend = 0
+		AVM_DB.maxSessionBuys = 0
+		AVM_DB.vendorMinProfit = 1000
+		AVM_DB.vendorMaxBuyout = 50000
+		AVM_DB.deMinProfit = 1000
+		AVM_DB.deMaxBuyout = 50000
+		AVM_DB.deDepthUnits = 3
+		AVM_DB.deAhCutPct = 5
+		AVM_DB.deSafetyMarginPct = 25
+		AVM_DB.flipEnabled = true
+		AVM_DB.flipMinProfit = 1000
+		AVM_DB.flipMaxBuyout = 100000
+		AVM_DB.flipDepthUnits = 10
+		AVM_DB.flipAhCutPct = 5
+		AVM_DB.flipSafetyMarginPct = 25
+		AVM_DB.zeroConfigAhSchema = 1
+	end
 end
 
 local function avm_loop_market_due()
@@ -2648,7 +2675,7 @@ function AVM_AuxArbPageDone(page, lastPage)
 
 	if not AVM_DB.auxArbLive then return false end
 	if AVM.pending or AVM.unknown or AVM.queryInFlight then return false end
-	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 	if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 		AVM_DB.auxArbLive = false
 		avm_print("AUX_ARB LIVE OFF purchase limit reached (" .. tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
@@ -2773,7 +2800,7 @@ function AVM_AuxArbScanDone()
 		return
 	end
 
-	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 	if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 		AVM_DB.auxArbLive = false
 		avm_print("AUX_ARB_POSTSCAN_BLOCKED purchase-limit " .. tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys))
@@ -2829,7 +2856,7 @@ avm_try_postscan_candidate = function()
 		return true
 	end
 
-	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 	if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 		AVM_DB.auxArbLive = false
 		a.postscanCandidate = nil
@@ -3415,7 +3442,7 @@ local function avm_vendor_status()
 		" seek=" .. tostring(v.seekIndex or 0) .. "/" .. tostring(targetCount) ..
 		" target=" .. avm_money(v.seekTarget or 0) ..
 		" range=" .. tostring(v.seekLow or 0) .. "-" .. tostring(v.seekHigh or 0))
-	avm_print("VENDOR buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
+	avm_print("VENDOR buys=" .. tostring(AVM.sessionBuys) .. "/" .. ((tonumber(AVM_DB.maxSessionBuys) or 0) == 0 and "unlimited" or tostring(AVM_DB.maxSessionBuys)) ..
 		" spend=" .. avm_money(AVM.sessionSpend) ..
 		" hotPages=" .. tostring(AVM.stats.vendorHotPages) ..
 		" seekQueries=" .. tostring(AVM.stats.vendorSeekQueries) ..
@@ -3638,7 +3665,7 @@ avm_revalidate_candidate = function()
 					return
 				end
 
-				local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+				local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 				if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 					avm_disarm_candidate_live(c)
 					avm_print((avm_is_auxarb_candidate(c) and "AUX_ARB_LIVE_AUTO_OFF" or "LIVE_AUTO_OFF") .. " purchase limit reached (" ..
@@ -3976,7 +4003,7 @@ local function avm_tick_pending(now)
 			else
 				avm_print("CONFIRMED " .. p.candidate.name .. " " .. avm_money(p.candidate.buyout))
 			end
-			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 			if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 				avm_disarm_candidate_live(p.candidate)
 				avm_print((avm_is_auxarb_candidate(p.candidate) and "AUX_ARB_LIVE_AUTO_OFF" or "LIVE_AUTO_OFF") .. " purchase limit reached (" ..
@@ -4020,7 +4047,7 @@ local function avm_tick_pending(now)
 			else
 				avm_print("CONFIRMED_LATE " .. u.candidate.name .. " " .. avm_money(u.candidate.buyout))
 			end
-			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+			local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 			if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
 				avm_disarm_candidate_live(u.candidate)
 				avm_print((avm_is_auxarb_candidate(u.candidate) and "AUX_ARB_LIVE_AUTO_OFF" or "LIVE_AUTO_OFF") .. " purchase limit reached (" ..
@@ -4195,7 +4222,7 @@ local function avm_status()
 		" scanPage=" .. tostring((AVM.boundaryPage or 0) + (AVM.scanOffset or 0)) ..
 		" scanned=" .. tostring(AVM.watchPagesScanned) ..
 		" cache=" .. tostring(avm_cached_boundary(rule)) ..
-		" buys=" .. tostring(AVM.sessionBuys) .. "/" .. tostring(AVM_DB.maxSessionBuys or 1) ..
+		" buys=" .. tostring(AVM.sessionBuys) .. "/" .. ((tonumber(AVM_DB.maxSessionBuys) or 0) == 0 and "unlimited" or tostring(AVM_DB.maxSessionBuys)) ..
 		" spend=" .. avm_money(AVM.sessionSpend))
 	avm_print("queries=" .. AVM.stats.queries ..
 		" results=" .. AVM.stats.results ..
@@ -4560,11 +4587,11 @@ local function avm_slash(msg)
 		avm_auxarb_slash(rest)
 	elseif cmd == "maxbuys" then
 		local n = tonumber(avm_trim(rest))
-		if n and n >= 1 and n <= 100 then
-			AVM_DB.maxSessionBuys = n
-			avm_print("session live purchase limit=" .. tostring(n))
+		if n and n >= 0 and n <= 100 then
+			AVM_DB.maxSessionBuys = math.floor(n)
+			avm_print("session live purchase limit=" .. (AVM_DB.maxSessionBuys == 0 and "unlimited" or tostring(AVM_DB.maxSessionBuys)))
 		else
-			avm_print("maxbuys must be 1..100")
+			avm_print("maxbuys must be 0..100 (0 = unlimited)")
 		end
 	elseif cmd == "reset" then
 		if AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or AVM.pending or AVM.unknown then
@@ -4717,9 +4744,9 @@ frame:SetScript("OnEvent", function()
 		avm_defaults()
 		avm_market_storage_init()
 		for i = 1, AVM_WATCH_SLOTS do avm_ensure_rule_slot(i) end
-		-- LIVE modes are intentionally session-only; never carry an armed state across reload/login.
+		-- Zero-config AH profile: legacy scanner stays off; AUX_ARB is armed automatically when AH opens.
 		AVM_DB.live = false
-		AVM_DB.auxArbLive = false
+		AVM_DB.auxArbLive = true
 		SLASH_AUXVMANGOS1 = "/avm"
 		SlashCmdList["AUXVMANGOS"] = avm_slash
 		avm_print("loaded " .. AVM_VERSION .. " - DRY-RUN default")
@@ -4734,9 +4761,17 @@ frame:SetScript("OnEvent", function()
 		AVM.unknown = nil
 		AVM.auxLoop.nextAt = 0
 		AVM.auxLoop.waitingForMarket = false
+		AVM_DB.enabled = false
+		AVM_DB.live = false
+		AVM_DB.auxArbEnabled = true
+		AVM_DB.auxArbLive = true
+		AVM_DB.auxLoopEnabled = true
+		AVM_DB.auxLoopMarketEnabled = false
+		AVM_DB.marketAutoMinutes = 0
+		AVM.market.requested = false
 		avm_restart_boundary(false)
-		if AVM_DB.auxLoopEnabled then avm_loop_schedule_arb("AH opened") end
-		if AVM_DB.enabled then avm_print("AH open; cached boundary verification armed") end
+		avm_loop_schedule_arb("AH opened / zero-config")
+		avm_print("AH ZERO-CONFIG ACTIVE: live=true loop=true autoMarket=false maxBuys=unlimited budget=unlimited")
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = false
