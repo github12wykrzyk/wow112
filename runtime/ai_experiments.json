@@ -3579,10 +3579,38 @@
       ],
       "status": "awaiting_ci",
       "observed_head": "f03ca4b7e73edf935956ab702d936503be148225",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "User confirmed manual reload prevents cumulative slowdown but observed that reload closes the AUX GUI. Candidate makes reload-per-full-scan the default continuous-loop path, only after AH transaction state is idle. It snapshots session safety state, temporarily detaches AUX frame OnHide so teardown does not deliberately CloseAuctionHouse, then after reload reopens the visible Search, restores the filter and starts a normal fresh scan (not execute(true)/headless) so every pass behaves like scan #1 and repopulates the GUI. Legacy in-process repeat remains available via /avm reloadscan off. Runtime AH-session persistence still requires gameplay verification; failure retries are bounded and fail closed."
+      "verified_commit": "30823de2d0cd79902eccbc69d8afe074f2a2b5c7",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "30823de2d0cd79902eccbc69d8afe074f2a2b5c7",
+          "date": "2026-10-02",
+          "run_id": 36937976347,
+          "evidence": "Parallel feature preflight passed on exact feature SHA after the final reload-fallback fix."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "30823de2d0cd79902eccbc69d8afe074f2a2b5c7",
+          "date": "2026-10-02",
+          "run_id": 36938066212,
+          "evidence": "Integrated Parallel Build work candidate passed on exact SHA, including FINAL_PACKAGE, addon packaging and candidate provenance/attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "30823de2d0cd79902eccbc69d8afe074f2a2b5c7",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11198039664 (WoW112-WORK-CANDIDATE-30823de2d0cd79902eccbc69d8afe074f2a2b5c7) contains AuxVmangos 0.26 and AuxFastBridge 2.9."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "30823de2d0cd79902eccbc69d8afe074f2a2b5c7",
+        "artifact_id": 11198039664
+      },
+      "notes": "User confirmed manual reload prevents cumulative slowdown but observed that reload closes the AUX GUI. Candidate makes reload-per-full-scan the default continuous-loop path, only after AH transaction state is idle. It snapshots session safety state, temporarily detaches AUX frame OnHide so teardown does not deliberately CloseAuctionHouse, then after reload reopens the visible Search, restores the filter and starts a normal fresh scan (not execute(true)/headless) so every pass behaves like scan #1 and repopulates the GUI. Legacy in-process repeat remains available via /avm reloadscan off. Runtime AH-session persistence still requires gameplay verification; failure retries are bounded and fail closed. CI/package gates now pass on exact integrated code SHA. Gameplay must confirm that this 5875 client keeps the AH interaction alive across controlled ReloadUI and that AUX reopens/restarts without cumulative slowdown."
     }
   ]
 }
