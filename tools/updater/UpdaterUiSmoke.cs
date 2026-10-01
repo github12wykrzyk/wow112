@@ -124,8 +124,9 @@ namespace WoW112Updater
 
         private void AssertGitHubBadgeSmoke()
         {
-            if (githubMonitorBadges.Count != 3 || githubMonitorBadges.Values.Any(b => b.Parent == null || !b.Visible))
-                throw new Exception("GH badges not visible in main window");
+            if (githubMonitorBadges.Count != 3 || githubMonitorBadges.Values.Any(b => b.Parent == null || !b.Visible) ||
+                githubPipelineBadge.Parent == null || !githubPipelineBadge.Visible)
+                throw new Exception("Two-row GH status header not visible in main window");
             const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
             var branch = "{\"commit\":{\"sha\":\"" + sha + "\"}}";
             Func<string, string, string> run = (status, conclusion) =>
@@ -141,7 +142,22 @@ namespace WoW112Updater
                 MonitorBranchBadge("work", branch, run("completed", "cancelled")).Status != "FAIL")
                 throw new Exception("Red GH badge failed");
             if (MonitorBranchBadge("work", branch, run("completed", "success").Replace(sha, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).Status != "UNKNOWN")
-                throw new Exception("Stale SHA was green");
+                throw new Exception("Stale work SHA was green");
+
+            var stableOld = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+            var stableRuns = "{\"workflow_runs\":[{\"name\":\"Build stable candidate\",\"head_sha\":\"" + stableOld +
+                "\",\"status\":\"completed\",\"conclusion\":\"success\",\"id\":20}]}";
+            if (MonitorBranchBadge("main", branch, stableRuns).Status != "SUCCESS")
+                throw new Exception("Main stable fallback did not preserve verified stable state");
+
+            var featureBranches = "[{\"name\":\"feature/smoke-two-bars\",\"commit\":{\"sha\":\"" + sha + "\"}}]";
+            var featureRuns = "{\"workflow_runs\":[{\"name\":\"Parallel feature preflight\",\"head_branch\":\"feature/smoke-two-bars\",\"head_sha\":\"" +
+                sha + "\",\"status\":\"completed\",\"conclusion\":\"success\",\"id\":30}]}";
+            var pipeline = MonitorPipelineBadge(featureBranches, featureRuns);
+            if (pipeline.Status != "PASS" || pipeline.Text.IndexOf("PREFLIGHT PASS", StringComparison.Ordinal) < 0)
+                throw new Exception("Feature pipeline badge parser failed");
+            SetGitHubPipelineBadge(pipeline.Status, pipeline.Text, pipeline.Detail);
+
             SetGitHubMonitorBadge("work", "SUCCESS", sha, "Offline mock");
             SetGitHubMonitorBadge("parallel", "RUNNING", sha, "Offline mock");
             SetGitHubMonitorBadge("main", "FAIL", sha, "Offline mock");
