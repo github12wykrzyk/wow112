@@ -51,7 +51,7 @@ namespace WoW112Updater
                     SetBusy(true, state == "downloading" ? "Pobieranie najnowszej paczki…" : "Instalowanie zweryfikowanych plików…");
                     if (featureControls.Values.Any(x => x.Enabled) || gameDir.Enabled || channel.Enabled) throw new Exception("Busy controls are enabled");
                 }
-                if (state == "game-running") status.Text = "Gra działa. Zamknij WoW przed aktualizacją.";
+                if (state == "game-running") status.Text = "Gra działa. LIVE UPDATE nie zamyka instancji; runtime dokończy się po ich zamknięciu.";
                 log.Text = "[08:30:00] Updater gotowy.\n[08:30:01] Przykładowy wpis diagnostyczny — tryb testu GUI.";
                 System.Windows.Forms.Application.DoEvents();
                 SaveUiBitmap(Path.Combine(folder, state + ".png"));

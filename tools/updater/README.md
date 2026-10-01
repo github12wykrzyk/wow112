@@ -216,3 +216,12 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - **Wyślij AH dump** prefers packed schema 3 and remains backward compatible with legacy `marketDB` files. Dump header is `AVM_AH_MARKET_DUMP_V2` and records `market_format`.
 - MARKET background scans isolate the stock Browse-frame update handler and default to 1.0 s between full-scan pages. Existing 15-minute loop cadence migrates once to 60 minutes so MARKET does not monopolize the AH bot; AUX/vendor paths keep their existing fast cadence.
 - Original AUX economic tooltips are enabled by default once per character: historical Value, Today, Vendor Sell, Vendor Buy, Disenchant Value and Disenchant Distribution.
+
+
+## Updater 2.9-parallel.13 — LIVE UPDATE bez zamykania WoW
+
+- **AKTUALIZUJ** nie pyta już o zamknięcie działających instancji i nie używa `Kill()` w ścieżce aktualizacji.
+- Gdy WoW działa, zweryfikowane pliki AddOnów są aktualizowane od razu. Zmiany root runtime (`EXE`, `DLL`, `dlls.txt` oraz usunięcia starych plików) są zapisywane do lokalnej, SHA-sprawdzonej transakcji oczekującej.
+- Otwarty updater sprawdza stan procesu co 2 sekundy. Po naturalnym zamknięciu ostatniej instancji WoW automatycznie tworzy backup, podmienia oczekujący runtime, zapisuje `installed.json` i usuwa transakcję. Jeżeli updater był zamknięty, finalizacja nastąpi przy jego następnym uruchomieniu.
+- Aktywne procesy nadal działają na już załadowanych bajtach; nowy runtime obowiązuje dopiero dla kolejnych uruchomień po finalizacji. **UPDATE + PLAY** nie uruchamia nowej instancji, jeśli runtime nadal oczekuje, żeby nie startować klienta na starym zestawie.
+- Rollback pozostaje fail-closed i nadal wymaga zamkniętej gry.
