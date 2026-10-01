@@ -40,14 +40,22 @@ class ExperimentRoutingTests(unittest.TestCase):
             with self.subTest(branch=branch), self.assertRaises(ValueError):
                 route(self.entries, "MovementCore", branch)
 
-    def test_no_invented_game_test_or_package(self):
+    def test_game_test_evidence_and_package_provenance(self):
         game_tests = [
             event
             for entry in self.entries
             for event in entry["tests"]
             if event["kind"] == "game"
         ]
-        self.assertEqual(game_tests, [])
+        # Real gameplay results belong in the ledger once the user reports
+        # them. Keep this regression fail-closed by requiring the same exact
+        # SHA/date/non-empty evidence contract enforced by validate(), rather
+        # than forbidding game evidence entirely.
+        for event in game_tests:
+            self.assertIn(event["result"], {"passed", "failed", "inconclusive"})
+            self.assertRegex(event["commit"], r"^[0-9a-f]{40}$")
+            self.assertRegex(event["date"], r"^\\d{4}-\\d{2}-\\d{2}$")
+            self.assertTrue(event["evidence"].strip())
 
         for entry in self.entries:
             package = entry["package"]
