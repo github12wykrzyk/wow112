@@ -3490,6 +3490,29 @@
       ],
       "package": null,
       "notes": "Root cause: mid-scan DE evaluation only revisited dePageRawCandidates from the current page. If an equipment candidate appeared before enough auction depth for one of its disenchant materials, it was discarded from the page-local live path and only reconsidered in AVM_AuxArbScanDone over all deRawCandidates. Candidate adds an indexed no-depth:<materialId> waiter map: equipment is evaluated immediately, unresolved candidates wait on the exact missing material, and are re-evaluated as soon as that material reaches configured depth later in the same scan. Page-end pause then runs the existing live material verify -> exact item revalidation -> buy -> resume path. Also migrates the prior zero-config vendor 10s default to 1c while preserving non-default user values."
+    },
+    {
+      "id": "autologin-multibox-serial-gate",
+      "branch": "feature/autologin-multibox-serialize",
+      "modules": [
+        "AutoLoginBridge",
+        "UpdaterMultibox"
+      ],
+      "dependencies": [
+        "multibox-auto-first-character-parallel"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_AutoLogin_5875 cross-process mutex",
+        "WoW 1.12.1 Glue native login 0x0046AFB0",
+        "child-process AutoLogin environment contract",
+        "multibox process creation cadence"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "2b92374126d7cd6492395962117b10bf8773d511",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User reports that when launching 8 multibox clients, usually 1-2 reach a bad-password result although stored credentials normally work. Exact installed gameplay SHA is not independently established, so no game result is recorded. Audit found per-process credential transport is isolated, but RunMultiboxAsync starts clients only 180 ms apart and AutoLoginBridge had no cross-process gate around the native Glue login call. Candidate serializes actual native login submissions with a Local named mutex, requires 350 ms stable Glue readiness, keeps a 1400 ms post-dispatch gap, and increases process-start staggering to 600 ms to reduce startup contention."
     }
   ]
 }
