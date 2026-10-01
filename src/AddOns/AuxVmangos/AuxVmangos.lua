@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.21-market-safe-persist"
+AVM_VERSION = "0.21.1-postscan-live-fallback"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -88,6 +88,7 @@ AVM = {
 		flipHistoryRejects = 0,
 		flipSellerRejects = 0,
 		flipExposureRejects = 0,
+		postscanCandidate = nil,
 	},
 	candidate = nil,
 	revalidatePages = nil,
@@ -427,7 +428,7 @@ end
 local function avm_postscan_transaction_active()
 	local a = AVM.auxArb or {}
 	if AVM.pending or AVM.unknown or AVM.candidate then return true end
-	if a.deVerify or a.flipVerify or a.paused or a.pausePending then return true end
+	if a.deVerify or a.flipVerify or a.postscanCandidate or a.paused or a.pausePending then return true end
 	return AVM.phase == "DE_MAT_REVALIDATE" or
 		AVM.phase == "FLIP_MARKET_REVALIDATE" or
 		AVM.phase == "REVALIDATE" or
@@ -1750,9 +1751,27 @@ avm_is_auxarb_candidate = function(c)
 end
 
 local function avm_auxarb_candidate_better(a, b)
+	if not a then return false end
 	if not b then return true end
 	if (a.profit or 0) ~= (b.profit or 0) then return (a.profit or 0) > (b.profit or 0) end
 	return (a.buyout or 0) < (b.buyout or 0)
+end
+
+local function avm_auxarb_live_purchase_ok(c)
+	if not c then return false, "no-candidate" end
+	local money = GetMoney() or 0
+	c.affordable = (tonumber(c.buyout) or 0) <= money
+	c.missing = (tonumber(c.buyout) or 0) - money
+	if c.missing < 0 then c.missing = 0 end
+	if not c.affordable then
+		return false, "wallet need=" .. avm_money(c.buyout or 0) .. " have=" .. avm_money(money)
+	end
+	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
+	if maxSpend > 0 and (AVM.sessionSpend or 0) + (tonumber(c.buyout) or 0) > maxSpend then
+		return false, "session-budget spend=" .. avm_money(AVM.sessionSpend or 0) ..
+			" buy=" .. avm_money(c.buyout or 0) .. " cap=" .. avm_money(maxSpend)
+	end
+	return true, "ok"
 end
 
 local function avm_de_book_add(book, itemId, name, count, buyout)
@@ -2117,6 +2136,7 @@ end
 
 local function avm_flip_best_from_book(book)
 	local best = nil
+	local bestLive = nil
 	local noDepth = 0
 	local candidates = 0
 	for _,row in pairs(book or {}) do
@@ -2125,6 +2145,8 @@ local function avm_flip_best_from_book(book)
 			if fc then
 				candidates = candidates + 1
 				if avm_auxarb_candidate_better(fc, best) then best = fc end
+				local liveOk = avm_auxarb_live_purchase_ok(fc)
+				if liveOk and avm_auxarb_candidate_better(fc, bestLive) then bestLive = fc end
 			elseif reason == "no-depth" then
 				noDepth = noDepth + 1
 			elseif reason == "no-history" or reason == "history-days" or reason == "history-entry" then
@@ -2136,7 +2158,7 @@ local function avm_flip_best_from_book(book)
 			end
 		end
 	end
-	return best, noDepth, candidates
+	return best, noDepth, candidates, bestLive
 end
 
 local function avm_flip_fail_postscan(candidate, reason)
@@ -2144,6 +2166,7 @@ local function avm_flip_fail_postscan(candidate, reason)
 	if candidate and candidate.signature then AVM.recent[candidate.signature] = GetTime() + 2 end
 	a.flipVerify = nil
 	a.candidate = nil
+	a.postscanCandidate = nil
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
 	AVM.revalidatePos = 0
@@ -2451,6 +2474,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipHistoryRejects = 0
 		a.flipSellerRejects = 0
 		a.flipExposureRejects = 0
+		a.postscanCandidate = nil
 	end
 	if a.active then
 		avm_print((keepScanBook and "AUX_ARB_SCAN resume" or "AUX_ARB_SCAN start") ..
@@ -2541,12 +2565,15 @@ function AVM_AuxArbPaused(page)
 		" revalidatePage=" .. tostring(AVM.candidate.sourcePage))
 end
 
+local avm_try_postscan_candidate
+
 function AVM_AuxArbScanDone()
 	local a = AVM.auxArb
 	if not a.active then return end
 	a.active = false
 
 	local bestDe = nil
+	local bestDeLive = nil
 	for i = 1, table.getn(a.deRawCandidates or {}) do
 		local de, reason = avm_de_candidate_from_record(a.deRawCandidates[i], a.deMaterialBook)
 		if de then
@@ -2554,6 +2581,8 @@ function AVM_AuxArbScanDone()
 			AVM.stats.auxArbCandidates = AVM.stats.auxArbCandidates + 1
 			AVM.stats.auxArbDeCandidates = AVM.stats.auxArbDeCandidates + 1
 			if avm_auxarb_candidate_better(de, bestDe) then bestDe = de end
+			local liveOk = avm_auxarb_live_purchase_ok(de)
+			if liveOk and avm_auxarb_candidate_better(de, bestDeLive) then bestDeLive = de end
 		elseif reason and string.find(reason, "no-depth:", 1, true) == 1 then
 			a.deNoValue = a.deNoValue + 1
 		end
@@ -2561,7 +2590,7 @@ function AVM_AuxArbScanDone()
 	a.deBest = bestDe
 	if bestDe and avm_auxarb_candidate_better(bestDe, a.bestSeen) then a.bestSeen = bestDe end
 
-	local bestFlip, flipNoDepth, flipCandidates = avm_flip_best_from_book(a.flipBook)
+	local bestFlip, flipNoDepth, flipCandidates, bestFlipLive = avm_flip_best_from_book(a.flipBook)
 	a.flipBest = bestFlip
 	a.flipNoDepth = flipNoDepth or 0
 	a.flipCandidates = flipCandidates or 0
@@ -2591,27 +2620,100 @@ function AVM_AuxArbScanDone()
 			" filteredRecords=" .. tostring(a.filteredRecords or 0))
 	end
 
-	local postBest = bestDe
-	if bestFlip and avm_auxarb_candidate_better(bestFlip, postBest) then postBest = bestFlip end
-	local launchedPostscan = false
-	if AVM_DB.auxArbLive and postBest and not AVM.pending and not AVM.unknown and not AVM.queryInFlight then
-		local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
-		if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
-			AVM_DB.auxArbLive = false
-		else
-			local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
-			if postBest.affordable and not (maxSpend > 0 and AVM.sessionSpend + postBest.buyout > maxSpend) then
-				postBest.scanComplete = true
-				a.candidate = postBest
-				if postBest.mode == "auxarb_flip" then
-					launchedPostscan = avm_flip_begin_live_verify(postBest) and true or false
-				else
-					launchedPostscan = avm_de_begin_live_verify(postBest) and true or false
-				end
-			end
-		end
+	local bestPost = bestDe
+	if bestFlip and avm_auxarb_candidate_better(bestFlip, bestPost) then bestPost = bestFlip end
+	local bestLive = bestDeLive
+	if bestFlipLive and avm_auxarb_candidate_better(bestFlipLive, bestLive) then bestLive = bestFlipLive end
+
+	if not AVM_DB.auxArbLive then
+		if bestPost then avm_print("AUX_ARB_POSTSCAN_SKIP live=false best=" .. tostring(bestPost.route) .. ":" .. tostring(bestPost.name)) end
+		avm_loop_after_arb("AUX_ARB scan complete")
+		return
 	end
-	if not launchedPostscan then avm_loop_after_arb("AUX_ARB scan complete") end
+
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+	if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+		AVM_DB.auxArbLive = false
+		avm_print("AUX_ARB_POSTSCAN_BLOCKED purchase-limit " .. tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys))
+		avm_loop_after_arb("AUX_ARB purchase limit")
+		return
+	end
+
+	if not bestLive then
+		if bestPost then
+			local _, reason = avm_auxarb_live_purchase_ok(bestPost)
+			avm_print("AUX_ARB_POSTSCAN_BLOCKED best=" .. tostring(bestPost.route) .. ":" .. tostring(bestPost.name) ..
+				" buy=" .. avm_money(bestPost.buyout or 0) .. " reason=" .. tostring(reason or "not-live-eligible"))
+		end
+		avm_loop_after_arb("AUX_ARB no live-eligible candidate")
+		return
+	end
+
+	if bestPost and bestPost.signature ~= bestLive.signature then
+		local _, skippedReason = avm_auxarb_live_purchase_ok(bestPost)
+		avm_print("AUX_ARB_POSTSCAN_FALLBACK skipped=" .. tostring(bestPost.route) .. ":" .. tostring(bestPost.name) ..
+			" reason=" .. tostring(skippedReason or "not-live-eligible") ..
+			" selected=" .. tostring(bestLive.route) .. ":" .. tostring(bestLive.name) ..
+			" buy=" .. avm_money(bestLive.buyout or 0) ..
+			" profit=" .. avm_money(bestLive.profit or 0))
+	end
+
+	bestLive.scanComplete = true
+	a.postscanCandidate = bestLive
+	AVM.auxLoop.nextAt = 0
+	avm_print("AUX_ARB_POSTSCAN_SELECT route=" .. tostring(bestLive.route) ..
+		" " .. tostring(bestLive.name) ..
+		" buy=" .. avm_money(bestLive.buyout or 0) ..
+		" profit=" .. avm_money(bestLive.profit or 0) ..
+		" pending=" .. tostring(AVM.pending ~= nil) ..
+		" unknown=" .. tostring(AVM.unknown ~= nil) ..
+		" queryInFlight=" .. tostring(AVM.queryInFlight))
+	avm_try_postscan_candidate()
+end
+
+avm_try_postscan_candidate = function()
+	local a = AVM.auxArb
+	local c = a.postscanCandidate
+	if not c then return false end
+
+	if not AVM_DB.auxArbLive then
+		a.postscanCandidate = nil
+		avm_print("AUX_ARB_POSTSCAN_CANCEL live=false " .. tostring(c.name))
+		avm_loop_after_arb("postscan live disabled")
+		return false
+	end
+
+	if AVM.pending or AVM.unknown or AVM.queryInFlight then
+		return true
+	end
+
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 1
+	if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+		AVM_DB.auxArbLive = false
+		a.postscanCandidate = nil
+		avm_print("AUX_ARB_POSTSCAN_BLOCKED purchase-limit " .. tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys))
+		avm_loop_after_arb("postscan purchase limit")
+		return false
+	end
+
+	local liveOk, reason = avm_auxarb_live_purchase_ok(c)
+	if not liveOk then
+		a.postscanCandidate = nil
+		avm_print("AUX_ARB_POSTSCAN_BLOCKED selected=" .. tostring(c.route) .. ":" .. tostring(c.name) ..
+			" reason=" .. tostring(reason or "not-live-eligible"))
+		avm_loop_after_arb("postscan candidate blocked")
+		return false
+	end
+
+	a.postscanCandidate = nil
+	a.candidate = c
+	local launched
+	if c.mode == "auxarb_flip" then
+		launched = avm_flip_begin_live_verify(c) and true or false
+	else
+		launched = avm_de_begin_live_verify(c) and true or false
+	end
+	return launched or true
 end
 
 local function avm_vendor_pick_page_best()
@@ -3807,6 +3909,7 @@ local function avm_tick()
 	end
 
 	if avm_tick_pending(now) then return end
+	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
 	if avm_loop_tick(now) then return end
 
 	if AVM.queryInFlight then
@@ -4523,6 +4626,7 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.deRawCandidates = {}
 		AVM.auxArb.deMaterialBook = {}
 		AVM.auxArb.deVerify = nil
+		AVM.auxArb.postscanCandidate = nil
 		AVM.auxArb.flipBook = {}
 		AVM.auxArb.flipBest = nil
 		AVM.auxArb.flipVerify = nil

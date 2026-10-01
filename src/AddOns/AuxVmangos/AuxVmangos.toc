@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with paced background MARKET, compact SavedVariables history, all economic tooltips default-on, guarded DE/flip and trusted vendor values.
+## Notes: Original AUX arbitrage with live-eligible DE/flip fallback selection, paced MARKET, compact SavedVariables history and guarded purchases.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.21-market-safe-persist
+## Version: 0.21.1-postscan-live-fallback
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
