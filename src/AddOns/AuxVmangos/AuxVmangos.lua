@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.20.1-postscan-lock"
+AVM_VERSION = "0.20.2-de-filtered-revalidate"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1662,6 +1662,19 @@ local function avm_auxarb_signature_from_record(record)
 	return avm_signature_no_owner(record.name, count, buyout, record.quality, record.level, itemKey)
 end
 
+local function avm_auxarb_revalidate_query_name(candidate)
+	local itemId = tonumber(candidate and (candidate.itemId or candidate.item_id))
+	if itemId and AVM_AUX_INFO_OK and AVM_AUX_INFO and AVM_AUX_INFO.item then
+		local ok, info = pcall(AVM_AUX_INFO.item, itemId, 0)
+		if ok and info and info.name and info.name ~= "" then return tostring(info.name) end
+	end
+	if itemId then
+		local ok, name = pcall(GetItemInfo, itemId)
+		if ok and name and name ~= "" then return tostring(name) end
+	end
+	return tostring(candidate and candidate.name or "")
+end
+
 local function avm_de_raw_candidate(record)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
 	if not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil end
@@ -2186,17 +2199,28 @@ local function avm_de_live_verify_accept(page, total)
 	end
 	fresh.scanComplete = true
 	fresh.deVerifiedBook = v.book
+	-- Full-AH sourcePage is stale by the time a long scan plus material verification
+	-- finishes. Re-find the exact auction in a fresh item-filtered result set.
+	fresh.revalidateName = avm_auxarb_revalidate_query_name(fresh)
+	fresh.revalidateFiltered = fresh.revalidateName ~= ""
+	fresh.sourcePage = 0
 	a.deVerify = nil
 	a.candidate = fresh
 	AVM.candidate = fresh
-	avm_prepare_revalidate(fresh)
+	if fresh.revalidateFiltered then
+		AVM.revalidatePages = { 0 }
+		AVM.revalidatePos = 1
+	else
+		avm_prepare_revalidate(fresh)
+	end
 	AVM.phase = "REVALIDATE"
 	AVM.nextQueryAt = GetTime() + 0.05
 	avm_print("AUX_ARB_DE_LIVE_OK " .. tostring(fresh.name) ..
 		" buy=" .. avm_money(fresh.buyout) ..
 		" netEV=" .. avm_money(fresh.deValue) ..
 		" maxEntry=" .. avm_money(fresh.deMaxEntry) ..
-		" profit=" .. avm_money(fresh.profit))
+		" profit=" .. avm_money(fresh.profit) ..
+		" requery='" .. tostring(fresh.revalidateName or "") .. "'")
 end
 
 local function avm_auxarb_resume_search(reason)
@@ -3248,6 +3272,23 @@ avm_revalidate_candidate = function()
 		end
 	end
 
+	if c.revalidateFiltered then
+		local _, total = GetNumAuctionItems("list")
+		total = tonumber(total) or 0
+		local currentPage = tonumber(AVM.queryPage) or 0
+		local lastPage = total > 0 and math.floor((total - 1) / 50) or 0
+		if currentPage < lastPage then
+			AVM.revalidatePages = { currentPage + 1 }
+			AVM.revalidatePos = 1
+			AVM.phase = "REVALIDATE"
+			AVM.nextQueryAt = GetTime() + 0.05
+			avm_print("AUX_ARB_REVALIDATE_NEXT " .. tostring(c.name) ..
+				" query='" .. tostring(c.revalidateName or "") .. "'" ..
+				" page=" .. tostring(currentPage + 1) .. "/" .. tostring(lastPage))
+			return
+		end
+	end
+
 	if AVM.revalidatePages and AVM.revalidatePos < table.getn(AVM.revalidatePages) then
 		AVM.revalidatePos = AVM.revalidatePos + 1
 		if c.mode == "vendor" then AVM.vendor.phase = "REVALIDATE" else AVM.phase = "REVALIDATE" end
@@ -3257,7 +3298,11 @@ avm_revalidate_candidate = function()
 	AVM.stats.failed = AVM.stats.failed + 1
 	AVM.recent[c.signature] = GetTime() + 2
 	if avm_is_auxarb_candidate(c) then
-		avm_print("AUX_ARB_RACE " .. c.name .. " - opportunity moved/disappeared before revalidate")
+		local detail = ""
+		if c.revalidateFiltered then
+			detail = " filteredQuery='" .. tostring(c.revalidateName or "") .. "'"
+		end
+		avm_print("AUX_ARB_RACE " .. c.name .. " - opportunity moved/disappeared before revalidate" .. detail)
 	elseif (c.mode == "vendor" or c.mode == "fastvendor") then
 		avm_print("VENDOR_RACE " .. c.name .. " - opportunity moved/disappeared before revalidate")
 	else

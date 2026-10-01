@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Original AUX arbitrage with postscan transaction locking, history-anchored flips, trusted realm vendor values and DE.
+## Notes: Original AUX arbitrage with filtered exact DE revalidation, postscan transaction locking, history-anchored flips and trusted realm vendor values.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.20.1-postscan-lock
+## Version: 0.20.2-de-filtered-revalidate
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

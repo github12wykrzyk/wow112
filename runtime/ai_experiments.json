@@ -2746,6 +2746,30 @@
       "tests": [],
       "package": null,
       "notes": "Recognize paid taxi-style multi-destination competitor adverts without an explicit summon token; treat Waterlords/Waterlord as Hydraxian Waterlords aliases. Gameplay evidence pending."
+    },
+    {
+      "id": "ah-de-filtered-exact-revalidate",
+      "branch": "feature/ah-de-exact-revalidate",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-loop-postscan-transaction-lock",
+        "ah-live-market-flip-signature-fix",
+        "ah-original-aux-fast-v1"
+      ],
+      "shared_resources": [
+        "AUX_ARB DE material valuation/revalidation",
+        "Original AUX normalized item_key identity",
+        "QueryAuctionItems filtered candidate lookup",
+        "guarded PlaceAuctionBid exact revalidation"
+      ],
+      "status": "in_progress",
+      "observed_head": "a26e35d43d8f5755f8c420b6a005f0aed8736718",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User gameplay screenshot on 2026-10-01 showed Champion's Wall Shield of the Gorilla still listed at the exact 1g94s39c buyout immediately after AUX_ARB_RACE said it moved/disappeared. Root cause is stale full-AH sourcePage identity: postscan DE waited through a long full scan plus material verification, then generic revalidation searched only the old sourcePage +/-1. 0.20.2 derives the base item name from original AUX item data, performs a fresh filtered query from page 0, pages the filtered result set to exhaustion, and still requires the exact suffix-aware signature/buyout before PlaceAuctionBid. No gameplay PASS claimed yet."
     }
   ]
 }
