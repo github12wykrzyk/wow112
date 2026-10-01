@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.24-hardstop-manual-market"
+AVM_VERSION = "0.25-live-de-midscan"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -80,6 +80,9 @@ AVM = {
 		deRawCandidates = {},
 		dePageRawCandidates = {},
 		deMaterialBook = {},
+		deWaitByMat = {},
+		deReadyPageBest = nil,
+		deWakeups = 0,
 		deBest = nil,
 		deVerify = nil,
 		flipBook = {},
@@ -372,7 +375,7 @@ local function avm_defaults()
 	AVM_DB.marketAutoMinutes = 0
 	AVM_DB.auxLoopMarketEnabled = false
 	if AVM_DB.auxLoopDelaySeconds == nil then AVM_DB.auxLoopDelaySeconds = 2 end
-	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 1000 end
+	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 1 end
 	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 50000 end
 	if AVM_DB.vendorMaxPages == nil then AVM_DB.vendorMaxPages = 10 end -- legacy alias for HOT pages
 	if AVM_DB.vendorHotPages == nil then AVM_DB.vendorHotPages = AVM_DB.vendorMaxPages end
@@ -420,7 +423,7 @@ local function avm_defaults()
 		AVM_DB.auxLoopDelaySeconds = 2
 		AVM_DB.maxSessionSpend = 0
 		AVM_DB.maxSessionBuys = 0
-		AVM_DB.vendorMinProfit = 1000
+		AVM_DB.vendorMinProfit = 1
 		AVM_DB.vendorMaxBuyout = 50000
 		AVM_DB.deMinProfit = 1000
 		AVM_DB.deMaxBuyout = 50000
@@ -433,7 +436,14 @@ local function avm_defaults()
 		AVM_DB.flipDepthUnits = 10
 		AVM_DB.flipAhCutPct = 5
 		AVM_DB.flipSafetyMarginPct = 25
-		AVM_DB.zeroConfigAhSchema = 1
+		AVM_DB.zeroConfigAhSchema = 2
+	elseif (tonumber(AVM_DB.zeroConfigAhSchema) or 0) < 2 then
+		-- Migrate the previous zero-config vendor threshold (10s) to the new 1c default.
+		-- Preserve any non-default value the user explicitly chose.
+		if AVM_DB.vendorMinProfit == nil or tonumber(AVM_DB.vendorMinProfit) == 1000 then
+			AVM_DB.vendorMinProfit = 1
+		end
+		AVM_DB.zeroConfigAhSchema = 2
 	end
 end
 
@@ -1974,6 +1984,7 @@ end
 
 local function avm_de_candidate_from_record(record, book)
 	if not record or not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil, "no-de-module" end
+	if record.signature and avm_recent(record.signature) then return nil, "recent" end
 	local raw = avm_de_raw_candidate(record)
 	if not raw then
 		-- Revalidation candidates already carry normalized fields rather than buyout_price.
@@ -2049,6 +2060,63 @@ local function avm_de_candidate_from_record(record, book)
 		deDepthUnits = depth, deCutPct = cutPct, deMarginPct = marginPct,
 		deMaxEntry = maxEntry, materials = mats,
 	}, nil
+end
+
+local function avm_de_missing_material(reason)
+	if not reason or string.sub(reason, 1, 9) ~= "no-depth:" then return nil end
+	return tonumber(string.sub(reason, 10))
+end
+
+local function avm_de_queue_waiter(a, raw, matId)
+	matId = tonumber(matId)
+	if not a or not raw or not matId then return end
+	if not a.deWaitByMat then a.deWaitByMat = {} end
+	raw._avmWaitMat = matId
+	local bucket = a.deWaitByMat[matId]
+	if not bucket then
+		bucket = {}
+		a.deWaitByMat[matId] = bucket
+	end
+	table.insert(bucket, raw)
+end
+
+local function avm_de_consider_live_raw(a, raw)
+	if not a or not raw or not AVM_DB.auxArbLive then return nil end
+	local de, reason = avm_de_candidate_from_record(raw, a.deMaterialBook)
+	if de then
+		raw._avmWaitMat = nil
+		local liveOk = avm_auxarb_live_purchase_ok(de)
+		if liveOk and avm_auxarb_candidate_better(de, a.deReadyPageBest) then
+			a.deReadyPageBest = de
+		end
+		return de
+	end
+	local matId = avm_de_missing_material(reason)
+	if matId then
+		avm_de_queue_waiter(a, raw, matId)
+	else
+		raw._avmWaitMat = nil
+	end
+	return nil
+end
+
+local function avm_de_recheck_waiters(a, matId)
+	matId = tonumber(matId)
+	if not a or not matId or not a.deWaitByMat then return end
+	local bucket = a.deWaitByMat[matId]
+	if not bucket or table.getn(bucket) == 0 then return end
+	-- Detach the bucket before evaluation. A candidate that still lacks this same
+	-- material can safely requeue itself without duplicating entries in this pass.
+	a.deWaitByMat[matId] = nil
+	for i = 1, table.getn(bucket) do
+		local raw = bucket[i]
+		if raw and raw._avmWaitMat == matId then
+			raw._avmWaitMat = nil
+			if avm_de_consider_live_raw(a, raw) then
+				a.deWakeups = (a.deWakeups or 0) + 1
+			end
+		end
+	end
 end
 
 local function avm_flip_record_candidate(record)
@@ -2571,6 +2639,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 	a.resumePending = false
 	a.pageBest = nil
 	a.dePageRawCandidates = {}
+	a.deReadyPageBest = nil
 	a.candidate = nil
 	a.deVerify = nil
 	if not keepScanBook then
@@ -2585,6 +2654,9 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.deRawCandidates = {}
 		a.dePageRawCandidates = {}
 		a.deMaterialBook = {}
+		a.deWaitByMat = {}
+		a.deReadyPageBest = nil
+		a.deWakeups = 0
 		a.deBest = nil
 		a.flipBook = {}
 		a.flipBest = nil
@@ -2624,10 +2696,24 @@ function AVM_AuxArbAuction(record)
 
 	avm_de_book_add(a.deMaterialBook, record.item_id, record.name,
 		record.count or record.aux_quantity, record.buyout_price)
+	local matId = tonumber(record.item_id)
+	if matId and AVM_DE_MATERIAL_IDS[matId] then
+		local matRow = a.deMaterialBook and a.deMaterialBook[matId]
+		local depth = tonumber(AVM_DB.deDepthUnits) or 3
+		if depth < 1 then depth = 1 end
+		-- Wake only candidates that explicitly waited on the material whose depth
+		-- just became usable. This avoids an O(all-candidates x all-pages) rescan.
+		if matRow and (tonumber(matRow.units) or 0) >= depth then
+			avm_de_recheck_waiters(a, matId)
+		end
+	end
 	local rawDe = avm_de_raw_candidate(record)
 	if rawDe then
 		table.insert(a.deRawCandidates, rawDe)
-		table.insert(a.dePageRawCandidates, rawDe)
+		-- Evaluate immediately against material depth accumulated so far. If one
+		-- material is still missing, the candidate is indexed by that material and
+		-- reconsidered as soon as the required depth appears later in this scan.
+		avm_de_consider_live_raw(a, rawDe)
 	end
 	avm_flip_book_add(a.flipBook, record)
 
@@ -2658,16 +2744,11 @@ function AVM_AuxArbPageDone(page, lastPage)
 			" profit=" .. avm_money(vendor.profit or 0))
 	end
 
-	local pageDe = nil
-	if AVM_DB.auxArbLive then
-		for i = 1, table.getn(a.dePageRawCandidates or {}) do
-			local de = avm_de_candidate_from_record(a.dePageRawCandidates[i], a.deMaterialBook)
-			if de then
-				local liveOk = avm_auxarb_live_purchase_ok(de)
-				if liveOk and avm_auxarb_candidate_better(de, pageDe) then pageDe = de end
-			end
-		end
-	end
+	-- DE candidates are now valued while auction records arrive. This includes
+	-- earlier-page equipment that becomes actionable only after its missing
+	-- disenchant material depth appears on a later page.
+	local pageDe = a.deReadyPageBest
+	a.deReadyPageBest = nil
 	a.dePageRawCandidates = {}
 
 	if not AVM_DB.auxArbLive then return false end
@@ -2705,7 +2786,7 @@ function AVM_AuxArbPageDone(page, lastPage)
 			" " .. tostring(selected.name) ..
 			" buy=" .. avm_money(selected.buyout or 0) ..
 			" profit=" .. avm_money(selected.profit or 0) ..
-			" -> interrupt after current page/live material verify")
+			" -> interrupt now after current page/live material verify")
 	else
 		avm_print("AUX_ARB_VENDOR_HIT page=" .. tostring(selected.sourcePage) ..
 			" profit=" .. avm_money(selected.profit or 0) .. " -> interrupt after current page/revalidate/buy")
@@ -4532,6 +4613,7 @@ local function avm_auxarb_slash(rest)
 			" deNoDepth=" .. tostring(a.deNoValue or 0) ..
 			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
 			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})) ..
+			" deWakeups=" .. tostring(a.deWakeups or 0) ..
 		" midScanDE=" .. tostring(a.deMidScanHits or 0))
 		avm_print("AUX_ARB FLIP enabled=" .. tostring(AVM_DB.flipEnabled) ..
 			" min/max=" .. avm_money(AVM_DB.flipMinProfit or 0) .. "/" .. avm_money(AVM_DB.flipMaxBuyout or 0) ..

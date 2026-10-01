@@ -3458,6 +3458,38 @@
       ],
       "package": null,
       "notes": "Root-cause audit of pinned upstream aux-addon-vanilla commit 6b56d0f found Search on_page_scanned calls search.table:SetDatabase() every page, rebuilding/sorting accumulated results, while same-filter execute(false,false) replaces the prior records table. At the project's 25 ms native AH cadence this repeated UI/database work and allocation/GC is unnecessary for automation. Candidate keeps first-scan AUX results as a UI snapshot and runs automatic repeat scans headless at the Search-UI callback layer while preserving all fresh AVM arbitrage callbacks and transaction logic."
+    },
+    {
+      "id": "ah-live-de-midscan-v2",
+      "branch": "feature/ah-live-de-midscan-v2",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "auxfast-repeat-scan-fps",
+        "ah-zero-config-live-defaults",
+        "ah-midscan-de-smooth-market"
+      ],
+      "shared_resources": [
+        "AUX_ARB per-page pause/revalidate/buy/resume path",
+        "disenchant material depth book",
+        "continuous AUX scan scheduler",
+        "zero-config vendor profit defaults"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "d29c4e3afae6000fa94d6c46e0b338e61f8d0aa6",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "d29c4e3afae6000fa94d6c46e0b338e61f8d0aa6",
+          "date": "2026-10-01",
+          "evidence": "User reports profitable disenchant items are still bought only after the full AUX scan rather than during it; screenshot shows the long full scan still in progress. User also requests default vendor minimum profit = 1 copper."
+        }
+      ],
+      "package": null,
+      "notes": "Root cause: mid-scan DE evaluation only revisited dePageRawCandidates from the current page. If an equipment candidate appeared before enough auction depth for one of its disenchant materials, it was discarded from the page-local live path and only reconsidered in AVM_AuxArbScanDone over all deRawCandidates. Candidate adds an indexed no-depth:<materialId> waiter map: equipment is evaluated immediately, unresolved candidates wait on the exact missing material, and are re-evaluated as soon as that material reaches configured depth later in the same scan. Page-end pause then runs the existing live material verify -> exact item revalidation -> buy -> resume path. Also migrates the prior zero-config vendor 10s default to 1c while preserving non-default user values."
     }
   ]
 }
