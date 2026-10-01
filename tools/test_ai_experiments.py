@@ -54,7 +54,7 @@ class ExperimentRoutingTests(unittest.TestCase):
         for event in game_tests:
             self.assertIn(event["result"], {"passed", "failed", "inconclusive"})
             self.assertRegex(event["commit"], r"^[0-9a-f]{40}$")
-            self.assertRegex(event["date"], r"^\\d{4}-\\d{2}-\\d{2}$")
+            self.assertRegex(event["date"], r"^\d{4}-\d{2}-\d{2}$")
             self.assertTrue(event["evidence"].strip())
 
         for entry in self.entries:
