@@ -2464,6 +2464,27 @@
       ],
       "package": null,
       "notes": "Use the same AUX-normalized record fields and item identity to construct signatures during AUX_ARB exact revalidation. This removes the cross-API signature mismatch while preserving existing fail-closed economics, wallet, session-limit and PlaceAuctionBid guards."
+    },
+    {
+      "id": "summonscout-whisper-taxi",
+      "branch": "feature/summonscout-whisper-taxi",
+      "modules": [
+        "SummonScout"
+      ],
+      "dependencies": [
+        "summonscout-startup-logout-native-v4",
+        "summonscout-auto-invite-one-phrases"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart intent parser",
+        "single-service destination inheritance"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "5b4e4ab6508561874e3686ea980f5fe98582db9e",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.56 recognizes direct-whisper taxi phrasing (including 'taxi pls' through whole-word matching) as strong smart auto-invite intent. Existing single-service inheritance supplies the configured destination after the match; World-chat detection and seller/recruitment heuristics are unchanged."
     }
   ]
 }
