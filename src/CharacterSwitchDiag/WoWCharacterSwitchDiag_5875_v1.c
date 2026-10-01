@@ -117,9 +117,11 @@ static void init_worker_map(void)
     if(!g_workerMapHandle)return;
     g_workerMap=(WorkerMapV1*)MapViewOfFile(g_workerMapHandle,FILE_MAP_ALL_ACCESS,0,0,sizeof(WorkerMapV1));
     if(!g_workerMap){CloseHandle(g_workerMapHandle);g_workerMapHandle=0;return;}
-    ZeroMemory(g_workerMap,sizeof(*g_workerMap));
     g_workerMap->magic=WORKER_MAGIC;g_workerMap->version=WORKER_VERSION;g_workerMap->pid=pid;
-    g_workerMap->state=WORKER_INIT;g_workerMap->last_event_tick=GetTickCount();
+    g_workerMap->heartbeat_tick=0;g_workerMap->command_seq=0;g_workerMap->command_slot=0;g_workerMap->ack_seq=0;
+    g_workerMap->state=WORKER_INIT;g_workerMap->phase=PHASE_IDLE;g_workerMap->target_slot=0;g_workerMap->in_world=g_world;
+    g_workerMap->combat=0;g_workerMap->error=0;g_workerMap->elapsed_ms=0;g_workerMap->current_slot=0;
+    g_workerMap->last_event_tick=GetTickCount();
     worker_log_event("WORKER_MAP_READY",GetTickCount());
 }
 
