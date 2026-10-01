@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.17-live-market-flip"
+AVM_VERSION = "0.17.1-live-market-flip-racefix"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1692,7 +1692,6 @@ local function avm_flip_live_verify_accept(page, total)
 	AVM.candidate = fresh
 	avm_prepare_revalidate(fresh)
 	AVM.phase = "REVALIDATE"
-	AVM.nextQueryAt = GetTime() + 0.05
 	avm_print("AUX_ARB_FLIP_LIVE_OK " .. tostring(fresh.name) ..
 		" buy=" .. avm_money(fresh.buyout) ..
 		" floor=" .. avm_money(fresh.flipFloor or 0) ..
@@ -1700,6 +1699,23 @@ local function avm_flip_live_verify_accept(page, total)
 		" netExit=" .. avm_money(fresh.valuationTotal or 0) ..
 		" maxEntry=" .. avm_money(fresh.flipMaxEntry or 0) ..
 		" profit=" .. avm_money(fresh.profit or 0))
+
+	-- The filtered live valuation has already proved the exact auction signature
+	-- on every result page. If the candidate is on the page currently loaded,
+	-- revalidate/buy against that authoritative list immediately instead of
+	-- issuing a redundant second query that creates an avoidable race window.
+	-- If the candidate was on an earlier filtered page, keep one exact re-query
+	-- and preserve AVM_EVENT_SETTLE from avm_handle_list_update().
+	local currentPage = tonumber(page) or -1
+	local foundPage = tonumber(v.foundPage) or -2
+	if foundPage == currentPage then
+		avm_print("AUX_ARB_FLIP_REVALIDATE_CURRENT page=" .. tostring(currentPage) ..
+			" - reuse verified list")
+		avm_revalidate_candidate()
+	else
+		avm_print("AUX_ARB_FLIP_REVALIDATE_QUEUED page=" .. tostring(foundPage) ..
+			" current=" .. tostring(currentPage) .. " - wait result settle")
+	end
 end
 
 local function avm_auxarb_candidate_from_record(record, requiredMode)

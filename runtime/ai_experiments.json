@@ -2358,6 +2358,36 @@
       ],
       "package": null,
       "notes": "SummonScout 1.54 bundles OnEvent helper references through EventAPI to stay below the 32-upvalue client limit and adds a preflight regression gate. Rebased onto current parallel after unrelated Auction work advanced the trunk; exact rebased SHA pending CI."
+    },
+    {
+      "id": "ah-live-market-flip-revalidate-racefix",
+      "branch": "feature/ah-flip-revalidate-racefix",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-live-market-flip-v1"
+      ],
+      "shared_resources": [
+        "AuxVmangos filtered item live valuation",
+        "exact auction signature revalidation",
+        "PlaceAuctionBid current list index",
+        "AUCTION_ITEM_LIST_UPDATE settle window"
+      ],
+      "status": "in_progress",
+      "observed_head": null,
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "0a7b09c009ac19e811821af76f697ec674cf08d7",
+          "date": "2026-10-01",
+          "evidence": "Automatic diagnostic report #57 on verified parallel run 36877044595: full AUX Search selected Primal Tiger Leather at 1g99s; FLIP_MARKET_REVALIDATE passed and recomputed 12g25s94c profit, but the immediately following generic REVALIDATE ended AUX_ARB_RACE with no BUY_SENT and sessionBuys=0."
+        }
+      ],
+      "package": null,
+      "notes": "Race-window fix for report #57. When the exact flip auction is already present on the final filtered live-valuation page, reuse that current authoritative list for the guarded exact revalidation/PlaceAuctionBid path instead of issuing a redundant second query. If the candidate was found on an earlier filtered page, keep one exact re-query but do not shorten the normal AVM_EVENT_SETTLE quiet window."
     }
   ]
 }
