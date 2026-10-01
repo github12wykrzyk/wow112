@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.46"
+local ADDON_VERSION = "1.47"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -217,6 +217,17 @@ local WHISPER_PRICE_CUES = {
     "how much", "price", "cost", "fee"
 }
 
+local WHISPER_PAYMENT_OFFER_CUES = {
+    "i can pay", "can pay", "i will pay", "will pay",
+    "i ll pay", "ill pay", "happy to pay", "pay you"
+}
+
+local WHISPER_PAYMENT_NEGATIVE_CUES = {
+    "cannot pay", "cant pay", "can t pay",
+    "wont pay", "won t pay", "will not pay",
+    "not paying", "no pay"
+}
+
 local WHISPER_EXACT_CODES = {
     ["123"] = true,
     ["here"] = true,
@@ -331,6 +342,12 @@ end
 
 local function hasGoldPrice(s)
     return string.find(s, "%d+%s*g") ~= nil
+end
+
+local function hasWhisperPaymentOffer(s)
+    if not hasGoldPrice(s) then return false end
+    if hasCue(s, WHISPER_PAYMENT_NEGATIVE_CUES) then return false end
+    return hasCue(s, WHISPER_PAYMENT_OFFER_CUES)
 end
 
 local function findLocationsInMessage(message)
@@ -519,6 +536,7 @@ local function whisperInviteDecision(message)
     local loc, ambiguous = findLocation(message)
     local service = SummonScoutDB.service or "all"
     local score = 0
+    local paymentOffer = hasWhisperPaymentOffer(s)
     -- Explicit one-word service codes such as "123", "here" and "sure" are
     -- accepted immediately. 123 also remains tolerant as a whole token in short
     -- whispers so normal politeness variants like "123 pls" still work.
@@ -535,12 +553,14 @@ local function whisperInviteDecision(message)
             or phraseHas(s, "summon pls")
             or phraseHas(s, "summon please"))
 
-    if (s == "" and not exactCode) or (s ~= "" and isSellerMessage(message)) then
+    if (s == "" and not exactCode)
+        or (s ~= "" and isSellerMessage(message) and not paymentOffer) then
         return false, nil, "not-request"
     end
     if ambiguous then return false, nil, "ambiguous-location" end
     if exactCode then score = score + 3 end
     if directSummonQuestion then score = score + 5 end
+    if paymentOffer then score = score + 5 end
 
     -- Explicitly asking for another known destination must never trigger.
     if loc then

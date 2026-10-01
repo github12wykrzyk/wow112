@@ -496,3 +496,11 @@ Persistent auto-invite blacklist:
 - Stored in SummonScoutDB and survives /reload and restart.
 - Enforced on immediate World invite, queued World invite, whisper invite and queue execution.
 - Addon-driven auto-summon also respects the user blacklist.
+
+
+## 1.47 payment-intent whisper + direct summon mode
+
+- Positive direct-whisper payment offers with an explicit gold amount are strong auto-invite intent, e.g. `I can pay 3g`, `I'll pay 3g`, `I will pay 3g`.
+- Negative forms such as `can't pay`, `cannot pay`, `won't pay`, and `not paying` are excluded.
+- Payment intent overrides the generic gold-price seller heuristic in direct whispers.
+- Native Ritual requests are temporarily direct for all destinations. Hyjal/Hydraxian do not wait for updater slave/account-switch coordinator READY/FAIL.

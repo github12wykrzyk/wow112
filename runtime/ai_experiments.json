@@ -1757,12 +1757,12 @@
         "AutoLoginBridge relogin handoff",
         "SummonCoordinator.log / SummonWorker_<PID>.log"
       ],
-      "status": "awaiting_ci",
+      "status": "blocked",
       "observed_head": "65f8d932ae472948d6ec62604c6458de38f5dad7",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "V2 removes the persistent in-game Character Switch Diagnostic overlay while preserving its headless switch worker/backend. SummonScout publishes the configured single destination. AutoSummonAssist gates HYJAL/HYDRAXIAN Ritual requests on exact coordinator READY and publishes per-process request/cast/portal-click telemetry. The updater automatically arbitrates the two shared slave accounts without preemption or a global FIFO: oldest live pending request acquires the pair, both workers switch with combat hard-block, Ritual is released only after READY 2/2, and the lease is released after both slave native portal-click PRE counters advance or a controlled timeout. Other summon destinations retain the legacy direct bridge."
+      "notes": "Temporarily disabled by user decision on 2026-10-01 after live coord-failed prevented a normal summon. Coordinator/slave account-switch code remains available for later experiments, but current AutoSummonAssist must not publish or gate Hyjal/Hydraxian requests through it."
     },
     {
       "id": "ah-native-receive-probe",
@@ -1931,6 +1931,29 @@
       "tests": [],
       "package": null,
       "notes": "Fix report 51 stall: fastvendor revalidation now bounds pages against AVM.market.lastPage and re-queries the original unfiltered full-AH source page (empty name filter), preserving exact signature matching before purchase."
+    },
+    {
+      "id": "summon-direct-pay-intent",
+      "branch": "feature/summonscout-pay-intent",
+      "modules": [
+        "SummonScout",
+        "AutoSummonAssist"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel",
+        "summonscout-blacklist-multiloc"
+      ],
+      "shared_resources": [
+        "SummonScout direct-whisper smart-invite parser",
+        "W112_AUTOSUMMON_REQUEST exact-sequence native bridge",
+        "Local\\\\WoW112_SummonAssist_<PID> dormant coordinator map"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "62511bcf0a5eea8e5ff1e5598bfb086eb8a994df",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "SummonScout 1.47 makes positive payment-offer whispers with an explicit gold amount (e.g. I can pay 3g) strong smart-invite intent while excluding payment negations. AutoSummonAssist v22 compiles coordinator infrastructure but sets SUMMON_COORDINATOR_ENABLED=0, so Hyjal/Hydraxian and all other destinations use the direct native Ritual bridge and do not publish/gate through updater slave/account switching."
     }
   ]
 }

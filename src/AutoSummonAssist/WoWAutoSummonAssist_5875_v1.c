@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v21 - coordinator-gated summon bridge + portal click telemetry + payer-first trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v22 - direct summon bridge + dormant coordinator telemetry + payer-first trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -130,6 +130,7 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 
 #define SUMMON_COORD_MAGIC           0x41323157u
 #define SUMMON_COORD_VERSION         1u
+#define SUMMON_COORDINATOR_ENABLED   0u
 #define PAGE_READWRITE_VALUE         0x00000004u
 #define FILE_MAP_ALL_ACCESS_VALUE    0x000F001Fu
 
@@ -748,10 +749,12 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     seqText=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST_SEQ",-1,0u);
     destText=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_DESTINATION",-1,0u);
     seq=parseDecimalU32(seqText);
-    dest=coordinatorDestinationCode(destText);
+    dest=SUMMON_COORDINATOR_ENABLED ? coordinatorDestinationCode(destText) : COORD_DEST_NONE;
 
-    /* Only the shared-pair destinations are coordinator-gated. Other existing
-     * summon destinations retain the legacy direct bridge behavior. */
+    /* Coordinator code remains compiled for later experiments, but current
+     * Parallel intentionally does not publish/gate Hyjal or Hydraxian requests
+     * through updater slave/account switching. Every destination uses the
+     * established direct native Ritual bridge while this flag is zero. */
     if(dest!=COORD_DEST_NONE && seq!=0u) {
         if(g_coordRequestSeq!=seq) {
             g_coordRequestSeq=seq;
@@ -780,8 +783,9 @@ static void pollNativeSummonBridge(u32 player,u32 now)
         coordinatorSetState(COORD_READY,now);
     }
 
-    /* Do not pre-gate on CastingBarFrame/raw channel state. Consume each exact
-     * sequence once after the coordinator (when applicable) has READY 2/2. */
+    /* Do not pre-gate on CastingBarFrame/raw channel state. In current direct
+     * mode the exact request is consumed immediately; updater READY 2/2 is not
+     * consulted and account switching cannot block the Ritual. */
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(consumeScript,"AutoSummonAssist");
     issued=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_NATIVE_ISSUED",-1,0u);
     if(issued && issued[0]=='1' && issued[1]==0) {
@@ -1141,7 +1145,7 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00110000u,
+    0x00120000u,
     31u,
     g_settings,
     getValue,
