@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.19-continuous-arb-market-loop"
+AVM_VERSION = "0.19.1-live-arm-market"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -2208,8 +2208,8 @@ function AVM_AuxArbPageDone(page, lastPage)
 	a.resumePending = true
 	a.candidate = c
 	AVM.stats.auxArbPauses = AVM.stats.auxArbPauses + 1
-	avm_print("AUX_ARB_CANDIDATE route=vendor page=" .. tostring(c.sourcePage) ..
-		" profit=" .. avm_money(c.profit or 0) .. " -> pause/revalidate")
+	avm_print("AUX_ARB_VENDOR_HIT page=" .. tostring(c.sourcePage) ..
+		" profit=" .. avm_money(c.profit or 0) .. " -> interrupt after current page/revalidate/buy")
 	return true
 end
 
@@ -3755,12 +3755,16 @@ local function avm_auxarb_slash(rest)
 		if v == "on" then
 			if not AVM.open then
 				avm_print("AUX_ARB LIVE requires open Auction House")
-			elseif AVM.pending or AVM.unknown or AVM.market.active or AVM.vendor.active then
-				avm_print("AUX_ARB LIVE blocked by another AH transaction/scheduler")
+			elseif AVM.pending or AVM.unknown or AVM.vendor.active or AVM.vendor.requested then
+				avm_print("AUX_ARB LIVE blocked by purchase/standalone VENDOR state")
 			else
 				AVM_DB.auxArbEnabled = true
 				AVM_DB.auxArbLive = true
-				avm_print("AUX_ARB LIVE ARMED - page candidate -> pause -> exact revalidate -> buy -> resume")
+				if AVM.market.active or AVM.market.requested then
+					avm_print("AUX_ARB LIVE ARMED FOR NEXT AUX SCAN - MARKET currently owns AH scheduler")
+				else
+					avm_print("AUX_ARB LIVE ARMED - vendor page hit -> pause/revalidate/buy immediately; DE/flip postscan")
+				end
 			end
 		elseif v == "off" then
 			AVM_DB.auxArbLive = false

@@ -3,7 +3,7 @@
 ## Notes: Continuous original AUX arbitrage loop with periodic full-market history snapshots and guarded vendor/DE/flip.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.19-continuous-arb-market-loop
+## Version: 0.19.1-live-arm-market
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

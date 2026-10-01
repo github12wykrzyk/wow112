@@ -2536,6 +2536,35 @@
       "tests": [],
       "package": null,
       "notes": "Level-role lock for summon clients: local player level 1 is forced to SLAVE (AutoSummon enabled + Anti-AFK enabled); level 20 is forced to MASTER (both disabled). The native provider enforces the role every world tick and ignores conflicting GUI/profile writes after level detection, so the existing SUMMON GUI sync always converges to the correct role. Other levels retain saved/manual behavior."
+    },
+    {
+      "id": "ah-live-arm-during-market",
+      "branch": "feature/ah-live-arm-during-market",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-continuous-arb-market-loop"
+      ],
+      "shared_resources": [
+        "AuxVmangos AUX_ARB session-only live arming",
+        "AuxVmangos MARKET scheduler ownership",
+        "Original AUX page-end pause/revalidate vendor path"
+      ],
+      "status": "in_progress",
+      "observed_head": "ccc6e8700aefd04662c985f5cb0af9300cf6fd80",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "ccc6e8700aefd04662c985f5cb0af9300cf6fd80",
+          "date": "2026-10-01",
+          "evidence": "User observed continuous loop completing scans without purchases. Screenshot/status showed AUX_ARB enabled=true but live=false; attempting /avm auxarb live on during active MARKET returned 'blocked by another AH transaction/scheduler'. Vendor candidates were found but remained dry-run, so page-end fast vendor interruption was never armed."
+        }
+      ],
+      "package": null,
+      "notes": "Allow explicit session-only AUX_ARB LIVE arming while MARKET owns the AH query scheduler. No buy can occur during MARKET; the flag becomes effective automatically on the next AUX Search. Keep purchase/pending/unknown and standalone VENDOR conflicts blocked. Existing vendor logic already interrupts original AUX at the end of the current loaded page, then exact-revalidates and buys before resuming; log wording is clarified."
     }
   ]
 }
