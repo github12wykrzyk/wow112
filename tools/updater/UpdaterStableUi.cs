@@ -115,7 +115,7 @@ namespace WoW112Updater
             var tools = Card("NARZĘDZIA", 2); root.Controls.Add(tools, 0, 3);
             var utilities = Grid(7, 1);
             string[] keys = { "verify", "killAll", "report", "marketDump", "selfUpdate", "accounts", "multibox" };
-            string[] captions = { "Sprawdź / napraw", "Zabij wszystkie WoW", "Wyślij raport", "Wyślij AH dump", "Aktualizuj updater", "Konta WoW", "MULTIBOX" };
+            string[] captions = { "Sprawdź / napraw", "Zabij wszystkie", "Wyślij raport", "Wyślij AH dump", "Aktualizuj updater", "Konta WoW", "MULTIBOX" };
             for (int i = 0; i < keys.Length; i++) utilities.Controls.Add(ActionButton((Button)featureControls[keys[i]], captions[i]), i, 0);
             tools.Controls.Add(utilities, 0, 1);
             var backups = Grid(4, 1); Columns(backups, 120, -1, 120, 132);
