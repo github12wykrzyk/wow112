@@ -5050,6 +5050,30 @@
         "artifact_id": 11228719576
       },
       "notes": "Superseding AH follow-up on current parallel. Fixes native Auctions arbitration at the actual aux.tabs.auctions module environment (the prior write to require()'s read-only export proxy was inert); separates original Search list occupancy from independent owner/bidder scans so a native owner scan cannot poison AUXFAST resume/restart; reuses the just-consumed source page on the next AVM tick for mid-scan vendor revalidation instead of issuing a redundant server query; migrates only the old 2.0s automatic loop gap to the supported 0.5s floor; and snapshots upstream AUX historical unit value/days on each newly confirmed purchase so Purchases can show Paid as Hist%. Existing purchase confirmation, economics, DE/flip validation and native query/response correlation remain unchanged. Exact integrated SHA passed full parallel candidate/package gates and is ready for gameplay validation."
+    },
+    {
+      "id": "auxfast-upvalue-v36-regression-fix",
+      "branch": "feature/auxfast-upvalue-v36-fix",
+      "modules": [
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "auxfast-upvalue-limit-fix",
+        "ah-owner-history-speed-v1",
+        "market-worker-service-cycle-5875"
+      ],
+      "shared_resources": [
+        "WoW 1.12 Lua hard 32-upvalue limit",
+        "aux.core.scan M.start nested callback closure",
+        "MarketWorker AUX service-handoff pause state",
+        "AUX Search pause/resume state machine"
+      ],
+      "status": "in_progress",
+      "observed_head": "690d29bc9863be40e2c152184df6d48ab2358376",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay screenshot after the v3.6 owner/history/speed integration shows Interface\\\\AddOns\\\\AuxFastBridge\\\\AuxFastBridge.lua:444: too many upvalues (limit=32) near 'then'. Static comparison with the previously gameplay-accepted v2.6 upvalue fix shows the later MarketWorker service handoff added three new file-scope locals (servicePauseRequested/servicePaused/servicePauseHadScan) captured through M.start nested callbacks, pushing the closure back over the 32-upvalue ceiling. This fix moves only those three service-handoff flags into the existing global AUXFAST_RUNTIME table, preserving behavior while removing three lexical captures. Exact installed screenshot SHA is not independently established, so no exact game-result entry is claimed."
     }
   ]
 }

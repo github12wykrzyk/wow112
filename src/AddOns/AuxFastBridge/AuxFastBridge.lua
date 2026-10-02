@@ -1,4 +1,4 @@
--- AuxFastBridge v3.6 list/owner busy separation; service-handoff pause; upvalue-safe headless state
+-- AuxFastBridge v3.6.1 list/owner busy separation; service-handoff state moved out of M.start upvalues
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -31,6 +31,9 @@ local busy = 0
 -- file-scope upvalue (WoW 1.12 Lua has the 32-upvalue ceiling noted above).
 AUXFAST_RUNTIME = AUXFAST_RUNTIME or {}
 AUXFAST_RUNTIME.searchBusy = 0
+AUXFAST_RUNTIME.AUXFAST_RUNTIME.servicePauseRequested = false
+AUXFAST_RUNTIME.AUXFAST_RUNTIME.servicePaused = false
+AUXFAST_RUNTIME.AUXFAST_RUNTIME.servicePauseHadScan = false
 
 function AUXFAST_SearchBusy()
 	return tonumber(AUXFAST_RUNTIME.searchBusy) or 0
@@ -78,13 +81,9 @@ local pausePage = -1
 local resumeRequested = false
 
 -- MarketWorker service handoff is deliberately independent of the arbitrage
--- candidate pause path. It pauses only at an AUX submit boundary, after the
--- current real AH response has been consumed, so closing the AH cannot split
--- a query/result pair.
-local servicePauseRequested = false
-local servicePaused = false
-local servicePauseHadScan = false
-
+-- candidate pause path. Its state lives in AUXFAST_RUNTIME rather than lexical
+-- locals because M.start and its nested callbacks are already close to the
+-- WoW 1.12 Lua hard limit of 32 upvalues.
 local awaitNativeSeq = 0
 local querySentAt = 0
 local queryPage = -1
@@ -410,7 +409,7 @@ local function install_scan_hook()
 		end
 		params.on_abort = function()
 			local arbPause = pauseRequested
-			local workerPause = servicePauseRequested
+			local workerPause = AUXFAST_RUNTIME.servicePauseRequested
 			release()
 			local result
 			if oldAbort then result = oldAbort() end
@@ -419,10 +418,10 @@ local function install_scan_hook()
 			end
 			pauseRequested = false
 			if workerPause then
-				servicePauseRequested = false
-				servicePaused = true
+				AUXFAST_RUNTIME.servicePauseRequested = false
+				AUXFAST_RUNTIME.servicePaused = true
 				out("SERVICE_HANDOFF_PAUSED page=" .. tostring(queryPage) ..
-					" hadScan=" .. tostring(servicePauseHadScan and true or false))
+					" hadScan=" .. tostring(AUXFAST_RUNTIME.servicePauseHadScan and true or false))
 			end
 			if arbPause and not workerPause and auxArbAttached and AVM_AuxArbPaused then
 				pcall(AVM_AuxArbPaused, pausePage)
@@ -498,7 +497,7 @@ local function install_scan_hook()
 	-- save a correct continuation without invalidating the current scan stack.
 	local originalSubmitQuery = submit_query
 	submit_query = function()
-		if servicePauseRequested or servicePaused then
+		if AUXFAST_RUNTIME.servicePauseRequested or AUXFAST_RUNTIME.servicePaused then
 			local state = get_state()
 			if state and state.id then abort(state.id) end
 			return
@@ -526,7 +525,7 @@ end
 
 function AUXFAST_ServiceWorkerPause()
 	if avm_hard_stopped() then return false, "hard-stop" end
-	if servicePaused then return true, "paused" end
+	if AUXFAST_RUNTIME.servicePaused then return true, "paused" end
 
 	-- Never tear down AH while a purchase/revalidation/AVM-owned transaction is
 	-- outside the original AUX Search scan. The worker retries until it reaches
@@ -536,32 +535,32 @@ function AUXFAST_ServiceWorkerPause()
 	end
 
 	if busy > 0 then
-		servicePauseHadScan = true
-		servicePauseRequested = true
+		AUXFAST_RUNTIME.servicePauseHadScan = true
+		AUXFAST_RUNTIME.servicePauseRequested = true
 		return false, "pending-submit-boundary"
 	end
 
-	servicePauseHadScan = false
-	servicePauseRequested = false
-	servicePaused = true
+	AUXFAST_RUNTIME.servicePauseHadScan = false
+	AUXFAST_RUNTIME.servicePauseRequested = false
+	AUXFAST_RUNTIME.servicePaused = true
 	out("SERVICE_HANDOFF_PAUSED idle=true")
 	return true, "idle"
 end
 
 function AUXFAST_ServiceWorkerStatus()
 	return {
-		paused = servicePaused and true or false,
-		pending = servicePauseRequested and true or false,
+		paused = AUXFAST_RUNTIME.servicePaused and true or false,
+		pending = AUXFAST_RUNTIME.servicePauseRequested and true or false,
 		busy = busy > 0,
 		avmBusy = avm_busy() and true or false,
-		hadScan = servicePauseHadScan and true or false,
+		hadScan = AUXFAST_RUNTIME.servicePauseHadScan and true or false,
 	}
 end
 
 function AUXFAST_ServiceWorkerRelease()
-	servicePauseRequested = false
-	servicePaused = false
-	servicePauseHadScan = false
+	AUXFAST_RUNTIME.servicePauseRequested = false
+	AUXFAST_RUNTIME.servicePaused = false
+	AUXFAST_RUNTIME.servicePauseHadScan = false
 	out("SERVICE_HANDOFF_RELEASED")
 	return true
 end
@@ -570,9 +569,9 @@ function AUXFAST_HardStop()
 	AUXFAST_ClearHeadlessArm()
 	resumeRequested = false
 	pauseRequested = false
-	servicePauseRequested = false
-	servicePaused = false
-	servicePauseHadScan = false
+	AUXFAST_RUNTIME.servicePauseRequested = false
+	AUXFAST_RUNTIME.servicePaused = false
+	AUXFAST_RUNTIME.servicePauseHadScan = false
 	pausePage = -1
 	local aborted = false
 	local state = get_state()
@@ -716,4 +715,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AuxFastBridgeDB.lastHeadlessRecords or 0))
 end
 
-out("v3.6 loaded: list/owner busy separation + safe service handoff + headless resume; hook=" .. tostring(hookInstalled))
+out("v3.6.1 loaded: upvalue-safe service handoff + list/owner busy separation + headless resume; hook=" .. tostring(hookInstalled))
