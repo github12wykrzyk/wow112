@@ -1,15 +1,16 @@
 /*
- * WoWCharacterSwitchDiag 5875 v10 - session-safe summon switch/reload worker.
+ * WoWCharacterSwitchDiag 5875 v11 - direct world reconnect summon worker.
  *
- * Coordinator switch preserves the already authenticated account session:
- *   Logout() -> character select -> target slot -> EnterWorld().
- * It never calls ClientServices::Disconnect and never requests AutoLoginBridge
- * relogin, so slave rotation does not depend on the login server.
+ * Coordinator FAST switch is both instant-oriented and login-server independent:
+ *   world Disconnect -> preserve LoginData/session key -> ConnectToSelectedServer
+ *   -> Character Select -> target slot -> EnterWorld.
  *
- * Report #77 disproved ForceLogout as a general timer bypass on this realm:
- * both workers returned from ForceLogout but remained in world until the
- * fail-closed timeout. Vanilla/vMaNGOS instant logout is server-authorized;
- * normal outdoor logout can therefore take the standard ~20 seconds.
+ * It does NOT send the normal delayed Logout request and does NOT invoke
+ * AutoLoginBridge relogin/SRP. The existing 40-byte world session key stays in
+ * NetClient LoginData and is reused by the normal 5875 CMSG_AUTH_SESSION path.
+ *
+ * Fail closed: exact-build byte guards, NetClient state checks and an internal
+ * session-key fingerprint must all match. There is no auth-server fallback.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error WoWCharacterSwitchDiag requires x86.
@@ -20,11 +21,21 @@
 #define WOW_OBJMGR              0x00B41414u
 #define WOW_FRAMESCRIPT_GETTEXT 0x00703BF0u
 #define WOW_FRAMESCRIPT_EXECUTE 0x00704CD0u
+#define WOW_CLIENTSERVICES_GET  0x005AB490u
+#define WOW_CLIENTSERVICES_DISC 0x005AB1A0u
+#define WOW_CONNECT_SELECTED    0x005AB800u
+#define WOW_NET_CONNECT         0x00537820u
+#define NET_STATE_OFFSET        0x00000070u
+#define SESSION_KEY_OFFSET      0x00000048u
+#define SESSION_KEY_SIZE        40u
+#define NET_STATE_INITIALIZED   2u
+#define NET_STATE_CONNECTED     6u
 #define TIMER_MS 50u
 #define UI_REFRESH_MS 250u
 #define SELECT_SETTLE_MS 350u
 #define ENTER_TIMEOUT_MS 30000u
-#define SESSION_LOGOUT_TIMEOUT_MS 30000u
+#define FAST_DISCONNECT_TIMEOUT_MS 7000u
+#define FAST_RECONNECT_TIMEOUT_MS 20000u
 #define COMBAT_POLL_MS 250u
 #define WORKER_MAGIC 0x53323157u
 #define WORKER_VERSION 2u
@@ -57,10 +68,14 @@ typedef struct WorkerMapV1 {
 
 typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
 typedef const char* (__fastcall *FrameScriptGetTextFn)(const char*,int,DWORD);
+typedef void* (__cdecl *GetClientServicesFn)(void);
+typedef int (__thiscall *ClientServicesDisconnectFn)(void*);
+typedef void (__cdecl *ConnectToSelectedServerFn)(void);
 
 enum {
     PHASE_IDLE=0, PHASE_WAIT_LOGOUT=1, PHASE_CHAR_SELECT=2, PHASE_ENTERING=3,
-    PHASE_COMPLETE=4, PHASE_FAILED=5
+    PHASE_COMPLETE=4, PHASE_FAILED=5, PHASE_FAST_DISCONNECT=6,
+    PHASE_FAST_RECONNECT=7
 };
 
 static volatile DWORD g_phase=PHASE_IDLE,g_targetSlot=0,g_elapsedToGlue=0,g_elapsedTotal=0;
@@ -68,6 +83,7 @@ static volatile DWORD g_lastError=0,g_world=0,g_glueVisible=0,g_fast=0;
 static volatile DWORD g_reloadInProgress=0;
 static UINT_PTR g_timer=0;
 static DWORD g_startedAt=0,g_glueAt=0,g_enterIssuedAt=0,g_lastUiRefresh=0,g_lastWorld=0;
+static DWORD g_fastConnection=0,g_sessionHash1=0,g_sessionHash2=0,g_fastConnectAt=0;
 static HANDLE g_workerMapHandle=0;
 static WorkerMapV1 *g_workerMap=0;
 static DWORD g_workerSeenSeq=0,g_workerState=WORKER_INIT,g_workerLastState=0xFFFFFFFFu;
@@ -77,6 +93,11 @@ static DWORD g_descReady=0;
 int _fltused=0;
 
 static DWORD rd32(DWORD a){return *(volatile DWORD*)a;}
+static int ptr_ok(DWORD p){return p>=0x00010000u&&p<=0x7FFE0000u&&!(p&3u);}
+static int bytes_equal(DWORD addr,const BYTE*sig,DWORD n){DWORD i;const BYTE*p=(const BYTE*)addr;if(!p||!sig||!n)return 0;for(i=0;i<n;i++)if(p[i]!=sig[i])return 0;return 1;}
+static DWORD key_hash1(const BYTE*p){DWORD i,h=2166136261u;for(i=0;i<SESSION_KEY_SIZE;i++){h^=p[i];h*=16777619u;}return h?h:1u;}
+static DWORD key_hash2(const BYTE*p){DWORD i,h=5381u;for(i=0;i<SESSION_KEY_SIZE;i++)h=((h<<5)+h)^(DWORD)p[i];return h?h:1u;}
+static int key_nonzero(const BYTE*p){DWORD i;for(i=0;i<SESSION_KEY_SIZE;i++)if(p[i])return 1;return 0;}
 static char *app(char*p,const char*s){while(s&&*s)*p++=*s++;return p;}
 static char *appu(char*p,DWORD v){char t[16];int n=0;if(!v){*p++='0';return p;}while(v&&n<15){t[n++]=(char)('0'+v%10);v/=10;}while(n)*p++=t[--n];return p;}
 static int eq(const char*a,const char*b){if(!a||!b)return 0;while(*a&&*b){if(*a++!=*b++)return 0;}return *a==0&&*b==0;}
@@ -142,7 +163,7 @@ static const char* gettextv(const char*n){return ((FrameScriptGetTextFn)(DWORD)W
 static void reset_run(void)
 {
     g_phase=PHASE_IDLE;g_targetSlot=0;g_elapsedToGlue=0;g_elapsedTotal=0;g_lastError=0;g_fast=0;
-    g_startedAt=g_glueAt=g_enterIssuedAt=0;
+    g_startedAt=g_glueAt=g_enterIssuedAt=0;g_fastConnection=0;g_sessionHash1=0;g_sessionHash2=0;g_fastConnectAt=0;
 }
 static void ensure_ui(void)
 {
@@ -150,7 +171,7 @@ static void ensure_ui(void)
       "if not W112CSDFrame and UIParent and type(CreateFrame)=='function' then "
       "local f=CreateFrame('Frame','W112CSDFrame',UIParent);f:SetWidth(440);f:SetHeight(182);f:SetPoint('CENTER',UIParent,'CENTER',0,175);"
       "if f.SetBackdrop then f:SetBackdrop({bgFile='Interface\\\\Tooltips\\\\UI-Tooltip-Background',edgeFile='Interface\\\\Tooltips\\\\UI-Tooltip-Border',tile=true,tileSize=16,edgeSize=16,insets={left=4,right=4,top=4,bottom=4}});f:SetBackdropColor(0,0,0,.88) end;"
-      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V10');"
+      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V11');"
       "local st=f:CreateFontString('W112CSDStatus','OVERLAY','GameFontNormalSmall');st:SetPoint('TOPLEFT',f,'TOPLEFT',12,-36);st:SetWidth(416);st:SetJustifyH('LEFT');st:SetText('idle');"
       "local function B(n,x,y,w,txt,cmd)local b=CreateFrame('Button',n,f,'UIPanelButtonTemplate');b:SetWidth(w);b:SetHeight(24);b:SetPoint('BOTTOMLEFT',f,'BOTTOMLEFT',x,y);b:SetText(txt);b:SetScript('OnClick',function()W112_CSD_CMD=cmd end)end;"
       "B('W112CSDStock',12,42,92,'Stock logout','stock');B('W112CSDSlot1',112,42,92,'Switch slot 1','slot1');B('W112CSDSlot2',212,42,92,'Switch slot 2','slot2');"
@@ -165,7 +186,7 @@ static void update_ui(DWORD now)
     p=app(p," target=");p=appu(p,g_targetSlot);p=app(p," fast=");p=appu(p,g_fast);
     p=app(p," world=");p=appu(p,g_world);p=app(p," glue=");p=appu(p,g_glueVisible);
     p=app(p,"\\nworld_to_select_ms=");p=appu(p,g_elapsedToGlue);p=app(p," total_ms=");p=appu(p,g_elapsedTotal);
-    p=app(p," err=");p=appu(p,g_lastError);p=app(p,"\\nSESSION=Logout -> Character Select; login server untouched') end");*p=0;execs(b);
+    p=app(p," err=");p=appu(p,g_lastError);p=app(p,"\\nFAST=world reconnect with preserved session key; no login server') end");*p=0;execs(b);
 }
 static void probe_glue(void)
 {
@@ -218,26 +239,84 @@ static void begin_stock(DWORD now,DWORD slot)
     reset_run();g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_WAIT_LOGOUT;log_line("STOCK_BEGIN",now,slot);
     execs("if type(Logout)=='function' then Logout() end");
 }
+static int direct_reconnect_guard(void)
+{
+    static const BYTE getterSig[]={0xA1,0x28,0x81,0xC2,0x00,0xC3};
+    static const BYTE discSig[]={
+        0x56,0x8B,0xF1,0xE8,0x68,0xC7,0xF8,0xFF,
+        0xC7,0x86,0x00,0x1B,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    static const BYTE connectSelectedSig[]={
+        0xA0,0x34,0x81,0xC2,0x00,0x84,0xC0,0x75,0x1A,
+        0xE8,0xE2,0xFE,0xFF,0xFF,0x84,0xC0,0x75,0x11
+    };
+    static const BYTE netConnectSig[]={
+        0x55,0x8B,0xEC,0x81,0xEC,0x00,0x04,0x00,0x00,
+        0x56,0x8B,0xF1,0x8B,0x46,0x70,0x83,0xF8,0x02
+    };
+    return bytes_equal(WOW_CLIENTSERVICES_GET,getterSig,sizeof(getterSig)) &&
+           bytes_equal(WOW_CLIENTSERVICES_DISC,discSig,sizeof(discSig)) &&
+           bytes_equal(WOW_CONNECT_SELECTED,connectSelectedSig,sizeof(connectSelectedSig)) &&
+           bytes_equal(WOW_NET_CONNECT,netConnectSig,sizeof(netConnectSig));
+}
+static int fast_connection_state(void)
+{
+    if(!ptr_ok(g_fastConnection))return -1;
+    return (int)rd32(g_fastConnection+NET_STATE_OFFSET);
+}
+static int fast_session_key_matches(void)
+{
+    const BYTE*key;
+    if(!ptr_ok(g_fastConnection))return 0;
+    key=(const BYTE*)(g_fastConnection+SESSION_KEY_OFFSET);
+    if(!key_nonzero(key))return 0;
+    return key_hash1(key)==g_sessionHash1 && key_hash2(key)==g_sessionHash2;
+}
+static void fast_fail(DWORD now,DWORD error,const char*event)
+{
+    if(g_world)execs("W112_CSD_SESSION_SWITCH=nil");
+    g_lastError=error;g_phase=PHASE_FAILED;log_line(event,now,(DWORD)fast_connection_state());
+}
 static void begin_fast(DWORD now,DWORD slot)
 {
-    const char *v;
+    GetClientServicesFn getServices;
+    ClientServicesDisconnectFn disconnectFn;
+    void*connection;
+    const BYTE*key;
+    DWORD state;
 
-    reset_run();g_fast=1;g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_WAIT_LOGOUT;
-    log_line("SESSION_LOGOUT_BEGIN",now,slot);
+    reset_run();g_fast=1;g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_FAST_DISCONNECT;
+    log_line("DIRECT_RECONNECT_BEGIN",now,slot);
 
-    /* Fail closed and stay on the existing authenticated account session.
-       Do not fall back to ClientServices::Disconnect or AutoLoginBridge. */
-    execs("W112_CSD_LOGOUT_CAP=(type(Logout)=='function') and '1' or '0';W112_CSD_SESSION_SWITCH='1'");
-    v=gettextv("W112_CSD_LOGOUT_CAP");
-    if(!v||v[0]!='1'||v[1]){
-        execs("W112_CSD_LOGOUT_CAP=nil;W112_CSD_SESSION_SWITCH=nil");
-        g_lastError=53;g_phase=PHASE_FAILED;
-        log_line("SESSION_LOGOUT_UNAVAILABLE",GetTickCount(),slot);
-        return;
+    if(!direct_reconnect_guard()){
+        g_lastError=60;g_phase=PHASE_FAILED;log_line("DIRECT_GUARD_FAIL",now,WOW_CONNECT_SELECTED);return;
     }
 
-    execs("W112_CSD_LOGOUT_CAP=nil;Logout()");
-    log_line("SESSION_LOGOUT_REQUESTED",GetTickCount(),slot);
+    getServices=(GetClientServicesFn)(DWORD)WOW_CLIENTSERVICES_GET;
+    connection=getServices();
+    if(!ptr_ok((DWORD)connection)){
+        g_lastError=61;g_phase=PHASE_FAILED;log_line("DIRECT_CONNECTION_NULL",now,(DWORD)connection);return;
+    }
+
+    state=rd32((DWORD)connection+NET_STATE_OFFSET);
+    if(state!=NET_STATE_CONNECTED){
+        g_lastError=62;g_phase=PHASE_FAILED;log_line("DIRECT_BAD_NET_STATE",now,state);return;
+    }
+
+    key=(const BYTE*)((DWORD)connection+SESSION_KEY_OFFSET);
+    if(!key_nonzero(key)){
+        g_lastError=63;g_phase=PHASE_FAILED;log_line("DIRECT_SESSION_KEY_EMPTY",now,0);return;
+    }
+
+    g_fastConnection=(DWORD)connection;
+    g_sessionHash1=key_hash1(key);g_sessionHash2=key_hash2(key);
+    execs("W112_CSD_SESSION_SWITCH='1'");
+    log_line("DIRECT_SESSION_KEY_CAPTURED",now,1);
+
+    disconnectFn=(ClientServicesDisconnectFn)(DWORD)WOW_CLIENTSERVICES_DISC;
+    log_line("DIRECT_WORLD_DISCONNECT_CALL",now,WOW_CLIENTSERVICES_DISC);
+    disconnectFn(connection);
+    log_line("DIRECT_WORLD_DISCONNECT_RETURN",GetTickCount(),(DWORD)fast_connection_state());
 }
 static void worker_command_fail(DWORD now,DWORD seq,DWORD error,const char*event)
 {
@@ -351,25 +430,52 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
 
     if(world){
         g_glueVisible=0;
-        if(pending || switching)probe_combat(now);
+        if((pending || switching) && g_phase!=PHASE_FAST_DISCONNECT && g_phase!=PHASE_FAST_RECONNECT)probe_combat(now);
         poll_worker_cmd(now);
         if(g_phase==PHASE_ENTERING && !g_lastWorld){
             g_elapsedTotal=g_startedAt?now-g_startedAt:0;g_phase=PHASE_COMPLETE;g_currentSlot=g_targetSlot;g_workerState=WORKER_READY;
+            execs("W112_CSD_SESSION_SWITCH=nil");
             log_line("WORLD_ENTERED",now,g_elapsedTotal);worker_log_event("COORD_READY",now);
         }
-        if(g_phase==PHASE_WAIT_LOGOUT && g_fast && g_startedAt && now-g_startedAt>SESSION_LOGOUT_TIMEOUT_MS){
-            execs("W112_CSD_SESSION_SWITCH=nil");
-            g_lastError=54;g_phase=PHASE_FAILED;log_line("SESSION_LOGOUT_TIMEOUT",now,rd32(WOW_OBJMGR));
+        if(g_phase==PHASE_FAST_DISCONNECT && g_startedAt && now-g_startedAt>FAST_DISCONNECT_TIMEOUT_MS){
+            fast_fail(now,65,"DIRECT_DISCONNECT_TIMEOUT");
         }
     }else{
         /* Glue probing is needed only for an active switch. At idle this used
          * to call FrameScript every 50ms, including during ReloadUI teardown. */
-        if(switching)probe_glue();
-        if(g_phase==PHASE_WAIT_LOGOUT && g_glueVisible){
+        if(switching && g_phase!=PHASE_FAST_DISCONNECT)probe_glue();
+        if(g_phase==PHASE_FAST_DISCONNECT){
+            int state=fast_connection_state();
+            if(state==NET_STATE_INITIALIZED){
+                ConnectToSelectedServerFn connectFn;
+                if(!fast_session_key_matches()){
+                    fast_fail(now,64,"DIRECT_SESSION_KEY_CHANGED");
+                }else{
+                    log_line("DIRECT_SESSION_KEY_PRESERVED",now,1);
+                    connectFn=(ConnectToSelectedServerFn)(DWORD)WOW_CONNECT_SELECTED;
+                    g_fastConnectAt=now;g_phase=PHASE_FAST_RECONNECT;
+                    log_line("DIRECT_CONNECT_SELECTED_CALL",now,WOW_CONNECT_SELECTED);
+                    connectFn();
+                    log_line("DIRECT_CONNECT_SELECTED_RETURN",GetTickCount(),(DWORD)fast_connection_state());
+                }
+            }else if(state<0){
+                fast_fail(now,66,"DIRECT_CONNECTION_LOST");
+            }else if(g_startedAt && now-g_startedAt>FAST_DISCONNECT_TIMEOUT_MS){
+                fast_fail(now,65,"DIRECT_NET_INIT_TIMEOUT");
+            }
+        }else if(g_phase==PHASE_FAST_RECONNECT){
+            probe_glue();
+            if(g_glueVisible){
+                g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
+                select_slot(g_targetSlot);log_line("DIRECT_CHAR_SELECT",now,g_elapsedToGlue);
+                execs("W112_CSD_SESSION_SWITCH=nil");
+            }else if(g_fastConnectAt && now-g_fastConnectAt>FAST_RECONNECT_TIMEOUT_MS){
+                fast_fail(now,67,"DIRECT_RECONNECT_TIMEOUT");
+            }
+        }else if(g_phase==PHASE_WAIT_LOGOUT && g_glueVisible){
             g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
             if(g_targetSlot)select_slot(g_targetSlot);
-            log_line(g_fast?"SESSION_CHAR_SELECT":"STOCK_CHAR_SELECT",now,g_elapsedToGlue);
-            if(g_fast)execs("W112_CSD_SESSION_SWITCH=nil");
+            log_line("STOCK_CHAR_SELECT",now,g_elapsedToGlue);
         }else if(g_phase==PHASE_CHAR_SELECT && g_targetSlot && g_glueVisible && now-g_glueAt>=SELECT_SETTLE_MS){
             enter_slot(g_targetSlot);g_enterIssuedAt=now;g_phase=PHASE_ENTERING;log_line("ENTER_SLOT",now,g_targetSlot);
         }else if(g_phase==PHASE_ENTERING && g_enterIssuedAt && now-g_enterIssuedAt>ENTER_TIMEOUT_MS){
@@ -398,6 +504,6 @@ static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlMo
 __declspec(dllexport) const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_settings();return &mod;}
 BOOL WINAPI DllMain(HMODULE h,DWORD r,LPVOID x)
 {
-    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V10_SESSION_SAFE",GetTickCount(),0u);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
+    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V11_DIRECT_WORLD_RECONNECT",GetTickCount(),WOW_CONNECT_SELECTED);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
     else if(r==DLL_PROCESS_DETACH){if(g_timer)KillTimer(NULL,g_timer);shutdown_worker_map();}return TRUE;
 }

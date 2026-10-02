@@ -4424,20 +4424,63 @@
         "Local\\\\WoW112_SummonWorker_<PID> worker protocol",
         "AutoSummonAssist Anti-AFK SPACE pulse"
       ],
-      "status": "in_progress",
-      "observed_head": "e807401699e5772ef027d526743afd968b48ef27",
-      "verified_commit": null,
+      "status": "rejected",
+      "observed_head": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+      "verified_commit": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
       "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+          "date": "2026-10-02",
+          "evidence": "Clean feature preflight run 36998040115 passed; integrated parallel Build work candidate run 36998133737 and updater run 36998133136 passed on exact SHA aa7214becdfb4733b28a4fc1de01e1725708afb5."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11222224764 and updater artifact 11222443279 were produced for exact SHA aa7214becdfb4733b28a4fc1de01e1725708afb5."
+        },
         {
           "kind": "game",
           "result": "failed",
-          "commit": "e807401699e5772ef027d526743afd968b48ef27",
+          "commit": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
           "date": "2026-10-02",
-          "evidence": "Report #77 is the motivating evidence: ForceLogout returned but both workers remained in world and failed error 51. Server protocol requires server-authorized instant logout; standard outdoor logout can require ~20s."
+          "evidence": "User test feedback on exact current session-safe candidate: character switch preserved the account session but was not instant; it followed the server-controlled normal logout delay. This fails the required combination of instant switch plus no login-server dependency."
         }
       ],
+      "package": {
+        "verified": true,
+        "commit": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+        "artifact_id": 11222224764
+      },
+      "notes": "Rejected for the target behavior: ordinary Logout preserves the authenticated session but remains subject to the realm's normal ~20s outdoor logout delay. It is retained only as the safe stock diagnostic path."
+    },
+    {
+      "id": "summon-world-reconnect-session-v3",
+      "branch": "feature/summon-world-reconnect-session-v3",
+      "modules": [
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-worker-profile-binding-v1",
+        "summon-session-safe-logout-v2"
+      ],
+      "shared_resources": [
+        "ClientServices::Disconnect 0x005AB1A0",
+        "ClientServices::ConnectToSelectedServer 0x005AB800",
+        "NetClient state +0x70",
+        "NetClient LoginData session key +0x48",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
+      ],
+      "status": "in_progress",
+      "observed_head": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+      "verified_commit": null,
+      "tests": [],
       "package": null,
-      "notes": "Reliability-first same-session worker. Uses ordinary Logout() and waits for the server-controlled transition to Character Select, then selects the configured slot and EnterWorld without ClientServices::Disconnect or AutoLoginBridge relogin. Coordinator READY timeout is raised from 30s to 65s to cover a 20s logout plus world load. AutoSummonAssist suppresses its SPACE Anti-AFK pulse while W112_CSD_SESSION_SWITCH is set so it cannot cancel the logout countdown."
+      "notes": "Attempt to satisfy both requirements simultaneously: instant-oriented slave rotation and zero login-server authentication. Worker fingerprints the existing 40-byte session key internally, disconnects only the world connection, waits for NetClient NS_INITIALIZED, verifies the same key survived, calls exact-build ClientServices::ConnectToSelectedServer, then selects the configured character slot. No session-key bytes/hashes are logged and there is no AutoLoginBridge or normal Logout fallback. Exact-build guards cover getter, Disconnect, ConnectToSelectedServer and NetClient::Connect. Requires in-game validation."
     }
   ]
 }
