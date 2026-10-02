@@ -34,7 +34,7 @@ Machine-readable routing wins over stale prose.
 - `feature/**` = short-lived isolated experiments based on the correct live SHA.
 - `promote/**` = curated stable candidate only.
 
-Route new requests through `runtime/ai_experiments.json`, `tools/ai_experiments.py` and live GitHub module/branch inspection. Respect explicit `parallel`; do not transfer unaccepted state between branches. See `docs/AI_EXPERIMENTS.md`.
+Route new requests through the compact generated `runtime/ai_experiment_index.json` first, then live GitHub branch inspection. Use the full `runtime/ai_experiments.json` only for evidence/detail fallback or updates; `tools/ai_experiments.py index --check` prevents the compact view from drifting. Respect explicit `parallel`; do not transfer unaccepted state between branches. See `docs/AI_EXPERIMENTS.md`.
 
 Do not push an unverified promotion directly to `main`. The exact `promote/**` SHA must first pass `.github/workflows/pre_promote_stable.yml`.
 

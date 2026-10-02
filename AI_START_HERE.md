@@ -35,7 +35,7 @@ Default latency path: batch the mandatory startup reads, make one focused atomic
 
 ## Experiment routing
 
-After mandatory startup inspect `runtime/ai_experiments.json`, live branch heads and module/dependency ownership. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
+After mandatory startup inspect the compact `runtime/ai_experiment_index.json` first, then relevant live branch heads and module/dependency ownership. It is generated from `runtime/ai_experiments.json` and intentionally omits heavy notes/test evidence; read the full ledger only when compact routing is insufficient or evidence must be updated. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing and `python tools/ai_experiments.py index --check` verifies the fast index. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
 
 ## Fast TEST path
 

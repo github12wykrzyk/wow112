@@ -5280,6 +5280,29 @@
       "tests": [],
       "package": null,
       "notes": "Reduce ChatGPT-side deployment latency without weakening repository gates. Success-path CI observation is workflow-level and batched by exact SHA; individual jobs/steps/logs are failure-driven only. Independent gates are observed together, progress reporting is tied to durable state changes rather than extra API polling, and small already-understood one-module fixes have a 4-6 minute operational latency objective when runner capacity permits. Documentation/process-only changes do not require waiting for an unrelated game-test ZIP."
+    },
+    {
+      "id": "ai-routing-fast-index-v1",
+      "branch": "feature/ai-routing-fast-index-v1",
+      "modules": [
+        "AI-workflow",
+        "AI-experiments"
+      ],
+      "dependencies": [
+        "ai-latency-fastpath-v1"
+      ],
+      "shared_resources": [
+        "runtime/ai_experiments.json routing evidence",
+        "generated runtime/ai_experiment_index.json compact projection",
+        "AI startup routing/read order",
+        "Verify AI experiment registry workflow"
+      ],
+      "status": "in_progress",
+      "observed_head": "f51e96bc6987dd166930c4b1bc4f02fbc5f9c847",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Routing-first latency optimization derived from the AutoSell owner-refresh iteration. Adds a deterministic compact experiment index so AI can discover existing module experiments/feature branches before loading the large ledger or source files. CI fails closed if the generated index is stale. Full ledger remains authoritative and live GitHub refs remain authoritative for HEAD."
     }
   ]
 }

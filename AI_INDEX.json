@@ -47,7 +47,8 @@
     "experiment_registry": "runtime/ai_experiments.json",
     "experiment_workflow": ".github/workflows/ai_experiments.yml",
     "parallel_candidate_manifest": "runtime/parallel_candidate.json",
-    "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml"
+    "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml",
+    "experiment_fast_index": "runtime/ai_experiment_index.json"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
@@ -66,7 +67,9 @@
     "check_source_metadata": "python tools/sync_source_metadata.py --check",
     "validate_experiments": "python tools/ai_experiments.py validate",
     "route_experiment": "python tools/ai_experiments.py route --module MODULE [--branch parallel]",
-    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/parallel"
+    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/parallel",
+    "generate_experiment_fast_index": "python tools/ai_experiments.py index",
+    "check_experiment_fast_index": "python tools/ai_experiments.py index --check"
   },
   "directories": {
     "src": "canonical editable source/evidence grouped by module",
@@ -104,6 +107,7 @@
     "ledger test/package evidence must identify exact commit; unknown results remain null",
     "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
     "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded",
-    "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates"
+    "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates",
+    "read compact experiment index and live branch refs before module-source analysis; full experiment ledger is evidence/detail fallback"
   ]
 }

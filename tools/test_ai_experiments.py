@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.ai_experiments import LEDGER, route, validate
+from tools.ai_experiments import INDEX, LEDGER, build_index, render_index, route, validate
 import json
 
 
@@ -20,6 +20,27 @@ class ExperimentRoutingTests(unittest.TestCase):
         actual_ids = {row["id"] for row in self.entries}
         self.assertEqual(actual_ids, expected_ids)
         self.assertEqual(len(self.entries), len(self.data["experiments"]))
+
+    def test_compact_index_is_current_and_omits_heavy_evidence(self):
+        expected = build_index(self.data, self.entries)
+        stored_text = INDEX.read_text(encoding="utf-8")
+        self.assertEqual(json.loads(stored_text), expected)
+        self.assertEqual(stored_text, render_index(self.data, self.entries))
+        self.assertLess(len(stored_text), len(LEDGER.read_text(encoding="utf-8")))
+        for summary in expected["experiments"].values():
+            self.assertNotIn("notes", summary)
+            self.assertNotIn("tests", summary)
+            self.assertNotIn("shared_resources", summary)
+
+    def test_compact_index_module_active_ids_match_ledger(self):
+        compact = build_index(self.data, self.entries)
+        active_states = {"planned", "in_progress", "awaiting_ci", "awaiting_game_test", "blocked"}
+        for module, slot in compact["modules"].items():
+            expected = sorted(
+                row["id"] for row in self.entries
+                if module in row["modules"] and row["status"] in active_states
+            )
+            self.assertEqual(slot["active"], expected)
 
     def test_explicit_parallel_does_not_switch_to_work(self):
         self.assertEqual(route(self.entries, "MovementCore", "parallel")["branch"], "parallel")
