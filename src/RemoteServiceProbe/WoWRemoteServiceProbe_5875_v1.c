@@ -157,15 +157,6 @@ static u32 player_ptr(void){
     return ((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(((u64)hi<<32)|lo);
 }
 static u32 fbits(u32 obj,u32 off){return valid_ptr(obj)?read32(obj+off):0u;}
-static u32 dist100(u32 a,u32 b){
-    float dx,dy,dz,d2;if(!valid_ptr(a)||!valid_ptr(b))return 0xFFFFFFFFu;
-    dx=*(volatile float*)(a+OBJ_POS_X)-*(volatile float*)(b+OBJ_POS_X);
-    dy=*(volatile float*)(a+OBJ_POS_Y)-*(volatile float*)(b+OBJ_POS_Y);
-    dz=*(volatile float*)(a+OBJ_POS_Z)-*(volatile float*)(b+OBJ_POS_Z);
-    d2=dx*dx+dy*dy+dz*dz;
-    if(d2<0.0f||d2>42900000.0f)return 0xFFFFFFFEu;
-    return (u32)(d2*100.0f);
-}
 static void snapshot_pos(ServiceSnap*s){u32 p=player_ptr();s->learnPx=fbits(p,OBJ_POS_X);s->learnPy=fbits(p,OBJ_POS_Y);s->learnPz=fbits(p,OBJ_POS_Z);}
 
 static void capture_packet(DataStore5875*p){
@@ -235,18 +226,18 @@ static void learn_service(int ix,u32 now){
     }
 }
 static void send_learned(int ix,u32 now,u32 eventSeq){
-    ServiceSnap*s;DataStore5875 p;u8 local[MAX_PACKET];u32 i,obj,pl,d100;
+    ServiceSnap*s;DataStore5875 p;u8 local[MAX_PACKET];u32 i,obj,pl;
     if(ix<0||ix>2)return;s=&g_services[ix];
     if(g_activeTest>=0){log_line("TEST_REFUSED another service test is still active");return;}
     if(!s->learned||!s->len||!valid_ptr(g_nextSend)){log_line("TEST_REFUSED service not learned or send chain invalid");return;}
     lua_exec("W112_RSP_LAST_ERROR=''","RemoteServiceProbeClearError");
     for(i=0;i<s->len;i++)local[i]=s->data[i];
-    obj=((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(s->guid);pl=player_ptr();d100=dist100(pl,obj);
+    obj=((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(s->guid);pl=player_ptr();
     {
       char b[640],*x=b;x=cat(x,"TEST_SEND service=");x=cat(x,s->name);x=cat(x," t=");x=dec(x,now);
       x=cat(x," op=0x");x=hex32(x,s->opcode);x=cat(x," len=");x=dec(x,s->len);
       x=cat(x," object=0x");x=hex32(x,obj);x=cat(x," objType=");x=dec(x,valid_ptr(obj)?read32(obj+OBJ_TYPE_ID):0u);
-      x=cat(x," dist2x100=");x=dec(x,d100);
+      x=cat(x," objectLoaded=");x=dec(x,valid_ptr(obj)?1u:0u);
       x=cat(x," playerXYZbits=");x=hex32(x,fbits(pl,OBJ_POS_X));*x++='/';x=hex32(x,fbits(pl,OBJ_POS_Y));*x++='/';x=hex32(x,fbits(pl,OBJ_POS_Z));
       x=cat(x," objectXYZbits=");x=hex32(x,fbits(obj,OBJ_POS_X));*x++='/';x=hex32(x,fbits(obj,OBJ_POS_Y));*x++='/';x=hex32(x,fbits(obj,OBJ_POS_Z));
       x=cat(x," learnXYZbits=");x=hex32(x,s->learnPx);*x++='/';x=hex32(x,s->learnPy);*x++='/';x=hex32(x,s->learnPz);
@@ -258,10 +249,10 @@ static void send_learned(int ix,u32 now,u32 eventSeq){
     ((void(THISCALL*)(DataStore5875*))(u32)g_nextSend)(&p);
 }
 static void print_status(void){
-    int i;for(i=0;i<3;i++){ServiceSnap*s=&g_services[i];u32 obj=s->learned?((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(s->guid):0u;u32 d=dist100(player_ptr(),obj);
+    int i;for(i=0;i<3;i++){ServiceSnap*s=&g_services[i];u32 obj=s->learned?((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(s->guid):0u;
       char q[520],*p=q;p=cat(p,"if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP] ");p=cat(p,s->name);
       p=cat(p,"|r learned=");p=dec(p,s->learned);p=cat(p," op=0x");p=hex32(p,s->opcode);p=cat(p," len=");p=dec(p,s->len);
-      p=cat(p," obj=");p=dec(p,valid_ptr(obj)?1u:0u);p=cat(p," d2x100=");p=dec(p,d);
+      p=cat(p," obj=");p=dec(p,valid_ptr(obj)?1u:0u);
       p=cat(p," tests=");p=dec(p,s->tests);p=cat(p," ok=");p=dec(p,s->successes);p=cat(p," timeout=");p=dec(p,s->timeouts);
       p=cat(p,"') end");*p=0;lua_exec(q,"RemoteServiceProbeStatus");
     }
