@@ -64,6 +64,7 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 #define OBJ_GUID_HI        0x00000034u
 #define OBJ_UNIT_FIELDS    0x00000110u
 #define UNIT_AURA_OFF      0x000000A4u
+#define UNIT_AURA_APPLICATIONS_OFF 0x000001ACu
 #define POSITIVE_AURAS     32u
 
 #define TIMER_PERIOD_MS    100u
@@ -79,10 +80,11 @@ static TIMER32 g_timer=0u;
 static u32 g_lastHash=0u,g_lastRefresh=0u;
 static char g_lua[LUA_CAP];
 
-struct AuraRow { u32 spellId; char name[NAME_CAP]; char icon[ICON_CAP]; };
+struct AuraRow { u32 spellId; u32 rawSlot; u32 applications; char name[NAME_CAP]; char icon[ICON_CAP]; };
 static struct AuraRow g_rows[POSITIVE_AURAS];
 
 static u32 read32(u32 a){return *(volatile u32*)(u32)a;}
+static u8 read8(u32 a){return *(volatile u8*)(u32)a;}
 static void *iat(u32 a){return (void*)(u32)read32(a);}
 static int valid_ptr(u32 p){return p>=0x00010000u && p<=0x7FFE0000u && !(p&3u);}
 static int valid_byte_ptr(u32 p){return p>=0x00010000u && p<=0x7FFEFFFFu;}
@@ -168,7 +170,11 @@ static u32 collect(u32 obj,u32 *hashOut){
         spell=read32(fields+UNIT_AURA_OFF+slot*4u);h=hash_mix(h,spell);
         if(!spell)continue;
         if(count<POSITIVE_AURAS && spell_visual(spell,g_rows[count].name,g_rows[count].icon)){
-            g_rows[count].spellId=spell;++count;
+            u32 rawApplications=(u32)read8(fields+UNIT_AURA_APPLICATIONS_OFF+slot);
+            g_rows[count].spellId=spell;
+            g_rows[count].rawSlot=slot;
+            g_rows[count].applications=(rawApplications<255u)?(rawApplications+1u):1u;
+            ++count;
         }
     }
     h=hash_mix(h,count);if(hashOut)*hashOut=h;return count;
@@ -179,17 +185,24 @@ static char *append_setup(char *p,char *end){
     p=cat(p,end,"b:SetScript('OnEnter',function() GameTooltip:SetOwner(this,'ANCHOR_BOTTOMRIGHT',15,-25);GameTooltip:SetText(this.spellName or '');end);b:SetScript('OnLeave',function() GameTooltip:Hide();end);b:Hide();W112AuraReveal[i]=b;end;end;");
     return p;
 }
-static void publish(u32 count){
+static void publish(u32 count,u32 targetLo,u32 targetHi){
     char *p=g_lua,*end=g_lua+LUA_CAP;u32 i;
     FrameScriptExecuteFn run=(FrameScriptExecuteFn)(u32)FRAME_EXECUTE;
     p=append_setup(p,end);
-    p=cat(p,end,"if W112AuraReveal then local hostile=UnitExists('target') and UnitIsEnemy('player','target');for i=1,32 do W112AuraReveal[i]:Hide();end;if hostile then MAX_TARGET_BUFFS=0;for i=1,5 do local b=getglobal('TargetFrameBuff'..i);if b then b:Hide();end;end;");
+    p=cat(p,end,"W112NativeTargetBuffs={count=");p=num(p,end,count);
+    p=cat(p,end,",targetLo=");p=num(p,end,targetLo);p=cat(p,end,",targetHi=");p=num(p,end,targetHi);
+    p=cat(p,end,",hostile=(UnitExists('target') and UnitIsEnemy('player','target')) and 1 or 0,bySpell={},byName={}};");
+    p=cat(p,end,"if W112AuraReveal then local hostile=W112NativeTargetBuffs.hostile==1;for i=1,32 do W112AuraReveal[i]:Hide();end;if hostile then MAX_TARGET_BUFFS=0;for i=1,5 do local b=getglobal('TargetFrameBuff'..i);if b then b:Hide();end;end;");
     for(i=0u;i<count&&p+256<end;++i){
-        p=cat(p,end,"W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=");p=num(p,end,g_rows[i].spellId);
-        p=cat(p,end,";W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=");p=lua_q(p,end,g_rows[i].name);
-        p=cat(p,end,";W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(");p=lua_q(p,end,g_rows[i].icon);p=cat(p,end,");W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=");p=num(p,end,g_rows[i].spellId);p=cat(p,end,";W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"]:Show();");
+        p=cat(p,end,"local r={spellId=");p=num(p,end,g_rows[i].spellId);
+        p=cat(p,end,",rawSlot=");p=num(p,end,g_rows[i].rawSlot);
+        p=cat(p,end,",applications=");p=num(p,end,g_rows[i].applications);
+        p=cat(p,end,",name=");p=lua_q(p,end,g_rows[i].name);
+        p=cat(p,end,",texture=");p=lua_q(p,end,g_rows[i].icon);
+        p=cat(p,end,"};W112NativeTargetBuffs[");p=num(p,end,i+1u);p=cat(p,end,"]=r;W112NativeTargetBuffs.bySpell[r.spellId]=r;W112NativeTargetBuffs.byName[r.name]=r;");
+        p=cat(p,end,"W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=r.name;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(r.texture);W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"]:Show();");
     }
-    p=cat(p,end,"else MAX_TARGET_BUFFS=5;if TargetDebuffButton_Update then TargetDebuffButton_Update();end;end;end");
+    p=cat(p,end,"else MAX_TARGET_BUFFS=5;if TargetDebuffButton_Update then TargetDebuffButton_Update();end;end;end;if lazyScript then lazyScript.nativeTargetBuffs=W112NativeTargetBuffs;end");
     *p=0;run(g_lua,"WoWTargetAuraReveal");
 }
 static void STDCALL aura_timer(HWND32 hwnd,u32 msg,TIMER32 timer,u32 tick){
@@ -205,7 +218,7 @@ static void STDCALL aura_timer(HWND32 hwnd,u32 msg,TIMER32 timer,u32 tick){
     h=hash_mix(2166136261u,lo);h=hash_mix(h,hi);
     if(obj){typeId=read32(obj+OBJ_TYPE);if(typeId==3u||typeId==4u){u32 ah=0u;count=collect(obj,&ah);h=hash_mix(h,ah);}}
     refresh=(h!=g_lastHash)||((u32)(tick-g_lastRefresh)>=FORCE_REFRESH_MS);
-    if(refresh){publish(count);g_lastHash=h;g_lastRefresh=tick;}
+    if(refresh){publish(count,lo,hi);g_lastHash=h;g_lastRefresh=tick;}
     g_busy=0u;
 }
 static int install(void){
