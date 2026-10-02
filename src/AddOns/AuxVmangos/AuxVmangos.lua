@@ -76,6 +76,7 @@ AVM = {
 		resumeRetryAttempts = 0,
 		resumeRetryReason = "",
 		resumeRetryDetail = "",
+		revalidateCurrent = false,
 		pageBest = nil,
 		bestSeen = nil,
 		candidate = nil,
@@ -3707,6 +3708,7 @@ end
 
 avm_auxarb_resume_search = function(reason)
 	local a = AVM.auxArb
+	a.revalidateCurrent = false
 	if AVM.hardStop or not AVM_DB.auxLoopEnabled then
 		a.active = false
 		a.paused = false
@@ -3797,6 +3799,7 @@ end
 
 function AVM_AuxArbScanStart(resume, filterString)
 	local a = AVM.auxArb
+	a.revalidateCurrent = false
 	if AVM.hardStop or not AVM_DB.auxArbEnabled then
 		a.active = false
 		avm_print("SCAN_CANCELLED reason=" .. (AVM.hardStop and "hard-stop" or "auxarb-disabled"))
@@ -4004,6 +4007,7 @@ function AVM_AuxArbPaused(page)
 		a.paused = false
 		a.pausePending = false
 		a.resumePending = false
+		a.revalidateCurrent = false
 		a.candidate = nil
 		AVM.candidate = nil
 		AVM.phase = "IDLE"
@@ -4031,12 +4035,13 @@ function AVM_AuxArbPaused(page)
 	-- instead of issuing a redundant requery before PlaceAuctionBid.
 	if AVM.candidate.mode == "auxarb_vendor" and
 	   tonumber(page) == tonumber(AVM.candidate.sourcePage) then
+		a.revalidateCurrent = true
 		AVM.nextQueryAt = 0
 		avm_print("AUX_ARB_PAUSED page=" .. tostring(page) ..
-			" revalidate=current-page")
-		avm_revalidate_candidate()
+			" revalidate=current-page-next-tick")
 		return
 	end
+	a.revalidateCurrent = false
 	AVM.nextQueryAt = GetTime() + 0.05
 	avm_print("AUX_ARB_PAUSED page=" .. tostring(page) ..
 		" revalidatePage=" .. tostring(AVM.candidate.sourcePage))
@@ -5547,6 +5552,11 @@ local function avm_tick()
 	if avm_de_exposure_tick and avm_de_exposure_tick(now) then return end
 	if avm_tick_bid_pending(now) then return end
 	if avm_tick_pending(now) then return end
+	if AVM.auxArb.revalidateCurrent and AVM.candidate and AVM.phase == "REVALIDATE" then
+		AVM.auxArb.revalidateCurrent = false
+		avm_revalidate_candidate()
+		return
+	end
 	if avm_auxarb_resume_retry_tick(now) then return end
 	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
 	if avm_loop_tick(now) then return end
