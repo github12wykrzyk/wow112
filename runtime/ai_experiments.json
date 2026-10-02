@@ -4558,6 +4558,27 @@
       ],
       "package": null,
       "notes": "Rebased/superseding AH profit feature. Carries the preflighted larger sortable AUX UI, 500-row Purchases retention and quantity/share-based DE exposure guard. Adds two default-on mechanisms: (1) BID vendor/DE on bid-only auctions with duration<=1, exact item/suffix revalidation, current-required-bid only, trusted vendor 20% margin or DE net-EV >=40% margin, >=10s expected profit, 5g per-bid cap and 10 placements/session, tracked separately from purchases; (2) stack-size arbitrage buying stacks >=75% of native max stack only when <=25% small stacks have >=10 units depth across >=3 sellers, with AUX historical cap, 5% AH cut, 25% safety margin, >=10s expected profit and full live filtered revalidation. Existing vendor/DE/flip buyout behavior remains intact."
+    },
+    {
+      "id": "ah-sort-order-fix-v1",
+      "branch": "feature/ah-sort-order-fix-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-bid-stack-arbitrage-v2",
+        "ah-profit-loss-ledger-v1"
+      ],
+      "shared_resources": [
+        "AVM_AUX_UI.SortRecords shared by native Purchases and Profit/Loss tabs",
+        "Lua 5.0 table.sort comparator strict-order contract"
+      ],
+      "status": "in_progress",
+      "observed_head": "433052da79d020a7f31f84449cde99469739fc48",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay screenshot on current Parallel reports AuxVmangos_AuxPurchases.lua:37 invalid order function for sorting; Purchases and Profit/Loss both call the shared AVM_AUX_UI.SortRecords helper. Root cause is Lua boolean pseudo-ternary 'descending and a>b or a<b': when descending=true, a<b also returns true through the 'or' branch, so comparator(a,b) and comparator(b,a) can both be true. Fix uses explicit descending/ascending branches and returns false for exact ties, restoring a strict comparator without changing ledger data or economics."
     }
   ]
 }

@@ -38,10 +38,18 @@ function AVM_AUX_UI.SortRecords(rows, listing)
 		local av,bv = sort_value(a,spec),sort_value(b,spec)
 		if av == bv then
 			local as,bs = tonumber(a and a.seq) or 0, tonumber(b and b.seq) or 0
-			if as == bs then return tostring(a and (a.item or a.name) or '') < tostring(b and (b.item or b.name) or '') end
-			return descending and as > bs or as < bs
+			if as == bs then
+				local an = tostring(a and (a.item or a.name) or '')
+				local bn = tostring(b and (b.item or b.name) or '')
+				if an == bn then return false end
+				if descending then return an > bn end
+				return an < bn
+			end
+			if descending then return as > bs end
+			return as < bs
 		end
-		return descending and av > bv or av < bv
+		if descending then return av > bv end
+		return av < bv
 	end)
 end
 
