@@ -29,9 +29,13 @@ namespace WoW112Updater
             private const string Owner = "github12wykrzyk";
             private const string Repo = "wow112";
             private const string ApiRoot = "https://api.github.com/repos/" + Owner + "/" + Repo;
+            private const string SearchApiRoot = "https://api.github.com/search/issues";
             private const int AddedHeight = 50;
             private const int GitHubIssueBodySafeChars = 60000;
             private const int GitHubCommentChunkChars = 45000;
+            private const int JsonMaxChars = 32 * 1024 * 1024;
+            private const int AutoPollMs = 60000;
+            private const int AutoDiagMinutes = 5;
             private readonly Form form;
             private readonly TextBox gameDir;
             private readonly RichTextBox log;
@@ -40,7 +44,10 @@ namespace WoW112Updater
             private readonly Button marketDumpButton = new Button();
             private readonly Button tokenButton = new Button();
             private readonly JavaScriptSerializer json = new JavaScriptSerializer();
+            private readonly Timer autoTimer = new Timer();
             private bool busy;
+            private bool autoTickBusy;
+            private DateTime nextAutoDiagUtc = DateTime.MinValue;
 
             public Controller(Form form)
             {
@@ -48,21 +55,61 @@ namespace WoW112Updater
                 gameDir = GetPrivateField<TextBox>(form, "gameDir");
                 log = GetPrivateField<RichTextBox>(form, "log");
                 status = GetPrivateField<Label>(form, "status");
+                json.MaxJsonLength = JsonMaxChars;
+                json.RecursionLimit = 256;
+                autoTimer.Interval = AutoPollMs;
             }
 
             public void Attach()
             {
                 if (gameDir == null) return;
-                sendButton.Click += async delegate { await SendReportAsync(); };
-                marketDumpButton.Click += async delegate { await SendMarketDumpAsync(); };
+                sendButton.Click += async delegate { await SendReportAsync(false); };
+                marketDumpButton.Click += async delegate { await SendMarketDumpAsync(false); };
                 tokenButton.Click += delegate { ChangeReportToken(); };
                 var host = (IUpdaterHost)form;
                 host.RegisterUiControl("report", sendButton);
                 host.RegisterUiControl("marketDump", marketDumpButton);
                 host.RegisterUiControl("reportToken", tokenButton);
+
+                autoTimer.Tick += async delegate { await AutoSyncAsync(); };
+                form.FormClosed += delegate
+                {
+                    autoTimer.Stop();
+                    autoTimer.Dispose();
+                };
+                autoTimer.Start();
+                Log("AUTO DIAG/AH: ON — AH dump po zmianie SavedVariables, DIAG maks. co " + AutoDiagMinutes + " min; ręczne przyciski pozostają awaryjne.");
             }
 
-            private async Task SendReportAsync()
+            private async Task AutoSyncAsync()
+            {
+                if (autoTickBusy || busy || form.IsDisposed) return;
+                if (string.IsNullOrWhiteSpace(LoadReportToken())) return;
+
+                var root = gameDir.Text.Trim();
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return;
+
+                autoTickBusy = true;
+                try
+                {
+                    await SendMarketDumpAsync(true);
+                    if (DateTime.UtcNow >= nextAutoDiagUtc)
+                    {
+                        nextAutoDiagUtc = DateTime.UtcNow.AddMinutes(AutoDiagMinutes);
+                        await SendReportAsync(true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log("AUTO telemetry błąd: " + ex.Message);
+                }
+                finally
+                {
+                    autoTickBusy = false;
+                }
+            }
+
+            private async Task SendReportAsync(bool silent)
             {
                 string finalStatus = "Gotowy";
                 try
@@ -70,12 +117,16 @@ namespace WoW112Updater
                     if (busy) return;
                     var root = gameDir.Text.Trim();
                     if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                    {
+                        if (silent) return;
                         throw new InvalidOperationException("Wybierz istniejący katalog gry.");
+                    }
                     root = Path.GetFullPath(root);
 
                     var reportToken = LoadReportToken();
                     if (string.IsNullOrWhiteSpace(reportToken))
                     {
+                        if (silent) return;
                         reportToken = PromptForToken();
                         if (string.IsNullOrWhiteSpace(reportToken))
                         {
@@ -85,12 +136,15 @@ namespace WoW112Updater
                         SaveReportToken(reportToken);
                     }
 
-                    SetBusy(true, "Tworzenie raportu diagnostycznego...");
+                    if (silent) busy = true;
+                    else SetBusy(true, "Tworzenie raportu diagnostycznego...");
                     string headSha;
                     long runId;
                     var bodyCore = BuildReportBody(root, out headSha, out runId);
                     var signatureSeed = BuildSignatureSeed(root, headSha, runId);
                     var signature = Sha256Text(signatureSeed).Substring(0, 12);
+                    if (silent && string.Equals(GetAutoStateValue("diag_sha"), signature, StringComparison.OrdinalIgnoreCase))
+                        return;
                     var marker = "[diag:" + signature + "]";
                     var title = "[AUTO-DIAG] " + ShortSha(headSha) + " run " + runId + " " + marker;
                     var body = bodyCore + "\n\n---\nDiagnostic signature: `" + signature + "`\nGenerated by WoW112Updater " + UpdaterBuildInfo.Version + ".";
@@ -121,8 +175,10 @@ namespace WoW112Updater
                         if (existing > 0)
                         {
                             finalStatus = "Raport już istnieje jako GitHub Issue #" + existing + ".";
-                            Log(finalStatus);
-                            MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            SetAutoStateValue("diag_sha", signature);
+                            Log(silent ? "AUTO DIAG: zsynchronizowany z istniejącym Issue #" + existing + "." : finalStatus);
+                            if (!silent)
+                                MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             return;
                         }
 
@@ -171,8 +227,10 @@ namespace WoW112Updater
 
                                 finalStatus = "Raport wysłany jako GitHub Issue #" + number +
                                     (diagnosticChunks > 0 ? " (" + diagnosticChunks + " części)." : ".");
-                                Log(finalStatus);
-                                MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                                SetAutoStateValue("diag_sha", signature);
+                                Log(silent ? "AUTO DIAG -> GitHub Issue #" + number + "." : finalStatus);
+                                if (!silent)
+                                    MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             }
                         }
                     }
@@ -180,16 +238,18 @@ namespace WoW112Updater
                 catch (Exception ex)
                 {
                     finalStatus = "Wysyłanie raportu nie powiodło się";
-                    Log("BŁĄD raportu GitHub: " + ex.Message);
-                    MessageBox.Show(form, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Log((silent ? "AUTO DIAG błąd: " : "BŁĄD raportu GitHub: ") + ex.Message);
+                    if (!silent)
+                        MessageBox.Show(form, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 finally
                 {
-                    SetBusy(false, finalStatus);
+                    if (silent) busy = false;
+                    else SetBusy(false, finalStatus);
                 }
             }
 
-            private async Task SendMarketDumpAsync()
+            private async Task SendMarketDumpAsync(bool silent)
             {
                 string finalStatus = "Gotowy";
                 try
@@ -197,12 +257,16 @@ namespace WoW112Updater
                     if (busy) return;
                     var root = gameDir.Text.Trim();
                     if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                    {
+                        if (silent) return;
                         throw new InvalidOperationException("Wybierz istniejący katalog gry.");
+                    }
                     root = Path.GetFullPath(root);
 
                     var reportToken = LoadReportToken();
                     if (string.IsNullOrWhiteSpace(reportToken))
                     {
+                        if (silent) return;
                         reportToken = PromptForToken();
                         if (string.IsNullOrWhiteSpace(reportToken))
                         {
@@ -238,8 +302,11 @@ namespace WoW112Updater
                         break;
                     }
                     if (auxFile == null)
+                    {
+                        if (silent) return;
                         throw new InvalidOperationException(
                             "Nie znaleziono zapisanego marketPacked/marketDB AuxVmangos. Uruchom pełny MARKET i wykonaj /reload, logout albo zamknij klienta, aby WoW zapisał SavedVariables.");
+                    }
 
                     string headSha = string.Empty;
                     long runId = 0;
@@ -260,18 +327,24 @@ namespace WoW112Updater
                         "market_format=" + marketFormat + "\n\n" +
                         marketMeta + "\n\n" + marketData + "\n";
                     var fullSha = Sha256Text(dump);
+                    var marketContentSha = Sha256Text(marketFormat + "\n" + marketMeta + "\n" + marketData);
+                    if (silent && string.Equals(GetAutoStateValue("ah_content_sha"), marketContentSha, StringComparison.OrdinalIgnoreCase))
+                        return;
                     var signature = fullSha.Substring(0, 12);
                     var marker = "[ahdump:" + signature + "]";
 
-                    SetBusy(true, "Wysyłanie pełnej historii AH...");
+                    if (silent) busy = true;
+                    else SetBusy(true, "Wysyłanie pełnej historii AH...");
                     using (var client = CreateClient(reportToken))
                     {
                         var existing = await FindExistingIssueAsync(client, marker);
                         if (existing > 0)
                         {
                             finalStatus = "Ten AH dump już istnieje jako GitHub Issue #" + existing + ".";
-                            Log(finalStatus);
-                            MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            SetAutoStateValue("ah_content_sha", marketContentSha);
+                            Log(silent ? "AUTO AH: zsynchronizowany z istniejącym Issue #" + existing + "." : finalStatus);
+                            if (!silent)
+                                MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             return;
                         }
 
@@ -337,19 +410,23 @@ namespace WoW112Updater
                         }
 
                         finalStatus = "AH Market Dump wysłany jako GitHub Issue #" + issueNumber + " (" + chunks + " części).";
-                        Log(finalStatus);
-                        MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        SetAutoStateValue("ah_content_sha", marketContentSha);
+                        Log(silent ? "AUTO AH -> GitHub Issue #" + issueNumber + " (" + chunks + " części)." : finalStatus);
+                        if (!silent)
+                            MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                 }
                 catch (Exception ex)
                 {
                     finalStatus = "Wysyłanie AH dump nie powiodło się";
-                    Log("BŁĄD AH dump: " + ex.Message);
-                    MessageBox.Show(form, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Log((silent ? "AUTO AH błąd: " : "BŁĄD AH dump: ") + ex.Message);
+                    if (!silent)
+                        MessageBox.Show(form, ex.Message, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 finally
                 {
-                    SetBusy(false, finalStatus);
+                    if (silent) busy = false;
+                    else SetBusy(false, finalStatus);
                 }
             }
 
@@ -832,7 +909,12 @@ namespace WoW112Updater
 
             private async Task<long> FindExistingIssueAsync(HttpClient client, string marker)
             {
-                using (var response = await client.GetAsync(ApiRoot + "/issues?state=open&per_page=100"))
+                // Do not download every open Issue including its body. AH dump Issues can
+                // carry large payloads and the old per_page=100 response could exceed the
+                // JavaScriptSerializer input limit before a new report was sent.
+                var query = "repo:" + Owner + "/" + Repo + " is:issue is:open in:title \"" + marker + "\"";
+                var url = SearchApiRoot + "?per_page=5&q=" + Uri.EscapeDataString(query);
+                using (var response = await client.GetAsync(url))
                 {
                     var text = await response.Content.ReadAsStringAsync();
                     if (!response.IsSuccessStatusCode)
@@ -840,7 +922,8 @@ namespace WoW112Updater
                         HandleAuthenticationFailure(response.StatusCode);
                         throw BuildIssueApiException(response.StatusCode, text);
                     }
-                    foreach (var item in AsArray(json.DeserializeObject(text)))
+                    var root = AsDictionary(json.DeserializeObject(text));
+                    foreach (var item in AsArray(GetValue(root, "items")))
                     {
                         var row = item as Dictionary<string, object>;
                         if (row == null) continue;
@@ -923,6 +1006,45 @@ namespace WoW112Updater
             private static string ReportTokenPath()
             {
                 return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112ParallelUpdater", "report_token.dpapi");
+            }
+
+            private static string AutoStatePath()
+            {
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112ParallelUpdater", "report_auto_state.json");
+            }
+
+            private Dictionary<string, object> LoadAutoState()
+            {
+                try
+                {
+                    var path = AutoStatePath();
+                    if (!File.Exists(path)) return new Dictionary<string, object>();
+                    return AsDictionary(json.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)));
+                }
+                catch
+                {
+                    return new Dictionary<string, object>();
+                }
+            }
+
+            private string GetAutoStateValue(string key)
+            {
+                return GetString(LoadAutoState(), key);
+            }
+
+            private void SetAutoStateValue(string key, string value)
+            {
+                try
+                {
+                    var state = LoadAutoState();
+                    state[key] = value ?? string.Empty;
+                    state[key + "_utc"] = DateTime.UtcNow.ToString("o");
+                    UpdaterSafety.WriteUtf8Atomic(AutoStatePath(), json.Serialize(state), ".tmp", ".previous");
+                }
+                catch (Exception ex)
+                {
+                    Log("AUTO telemetry state warning: " + ex.Message);
+                }
             }
 
             private static byte[] ReportEntropy()

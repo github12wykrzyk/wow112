@@ -4907,6 +4907,27 @@
       "tests": [],
       "package": null,
       "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof."
+    },
+    {
+      "id": "updater-auto-report-stream-v1",
+      "branch": "feature/updater-auto-report-v1",
+      "modules": [
+        "UpdaterIssueReport",
+        "Updater"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "GitHub Issues API",
+        "DPAPI report token",
+        "AuxVmangos SavedVariables marketPacked/marketDB",
+        "%APPDATA%\\WoW112ParallelUpdater\\report_auto_state.json"
+      ],
+      "status": "in_progress",
+      "observed_head": "544fe53a1054248f9ac214ed2365fd5b8711ca36",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Updater reporter hardening and automation rebased onto current parallel. Replaces the dedupe request that downloaded up to 100 full open Issues with a bounded GitHub issue-search query, raises the local JavaScriptSerializer ceiling to 32 MiB as a secondary guard, and adds silent automatic telemetry while the updater is open. With an already stored report token, AH dump state is checked every 60 s and uploaded only when the market content SHA changes; diagnostic reports are checked at most every 5 min and uploaded only when the diagnostic signature changes. Successful/manual sends and server-side dedupe persist local SHA state. Manual report/AH buttons remain as fallback; no token means automatic sending stays dormant."
     }
   ]
 }
