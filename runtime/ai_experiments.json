@@ -4851,6 +4851,32 @@
       ],
       "package": null,
       "notes": "Exact candidate artifact 11225253885 was disassembled to recover the client logout-complete chain. RealmConnection SMSG_LOGOUT_COMPLETE dispatch at 0x005B4620 calls ClientConnection virtual 0x005AAEB0; that routine performs connection cleanup and calls 0x00401EE0 with charselect semantics. V14 first sets disconnectPending=1/reconnect=0 so NetDisconnectHandler consumes the world disconnect without LoginConnection()->Logoff or premature reconnect, then invokes 0x005AAEB0 locally after NS_INITIALIZED, waits for world teardown, reconnects only the realm/world connection with ConnectToSelectedServer, enumerates characters, selects the requested slot and enters world. Byte guards cover native entrypoints; no login-server fallback."
+    },
+    {
+      "id": "market-worker-service-cycle-5875",
+      "branch": "feature/market-worker-service-cycle-v2",
+      "modules": [
+        "MarketWorker",
+        "RemoteServiceProbe",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "remote-service-probe-5875",
+        "auction-sniper-vmangos"
+      ],
+      "shared_resources": [
+        "RemoteServiceProbe read-only learned service GUID export",
+        "wow5875 native object right-click 0x005F8660",
+        "FrameScript Execute/GetText 0x00704CD0/0x00703BF0",
+        "AuxFastBridge safe submit-boundary pause/release",
+        ".wow112_debug market_worker JSONL"
+      ],
+      "status": "in_progress",
+      "observed_head": "5625ebd4d722dd2b7331d7a0b246122c93c1523a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof."
     }
   ]
 }
