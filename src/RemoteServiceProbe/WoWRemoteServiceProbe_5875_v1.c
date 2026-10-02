@@ -296,7 +296,29 @@ static void install_lua(void){
       " local s=nil;if event=='BANKFRAME_OPENED' then s='bank' elseif event=='MAIL_SHOW' then s='mail' elseif event=='AUCTION_HOUSE_SHOW' then s='ah' end;"
       " if s then W112_RSP_EVENT_SERVICE=s;W112_RSP_EVENT_SEQ=(W112_RSP_EVENT_SEQ or 0)+1 end end);"
       "SLASH_W112RSP1='/rsp';SlashCmdList['W112RSP']=function(msg) "
-      " local c,a=string.match(msg or '','^(%S+)%s*(.-)%s*$');c=string.lower(c or 'status');a=string.lower(a or '');"
+      " local _,_,c,a=string.find(msg or '','^(%S+)%s*(.-)%s*
+      " if c=='arm' or c=='test' or c=='reset' or c=='status' or c=='dump' then "
+      "  W112_RSP_ZONE=(GetZoneText and GetZoneText()) or '';W112_RSP_SUBZONE=(GetSubZoneText and GetSubZoneText()) or '';"
+      "  W112_RSP_CMD=c;W112_RSP_ARG=a;W112_RSP_CMD_SEQ=(W112_RSP_CMD_SEQ or 0)+1;"
+      "  if c=='arm' then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r armed '..a..' - open it normally once') "
+      "  elseif c=='test' then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r replay '..a..' sent/queued') "
+      "  elseif c=='reset' then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r reset '..a) end "
+      " else DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r /rsp arm|test|reset bank|mail|ah, /rsp status, /rsp dump') end end;"
+      "DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RemoteServiceProbe]|r loaded. Learn nearby with /rsp arm bank|mail|ah');";
+    lua_exec(script,"RemoteServiceProbeInit");
+}
+BOOL32 STDCALL DllMain(void*h,u32 reason,void*r){
+    (void)h;(void)r;
+    if(reason==DLL_PROCESS_ATTACH){
+        log_line("=== RemoteServiceProbe attach build=5875 v1 ===");
+        if(!install_send_hook()){log_line("FATAL send hook install failed");return 1;}
+        install_lua();g_timer=SetTimer(0,0,TIMER_MS,(void*)&timer_proc);g_installed=1u;
+    }else if(reason==DLL_PROCESS_DETACH){
+        if(g_timer)KillTimer(0,g_timer);restore_send_hook();log_line("=== RemoteServiceProbe detach ===");
+    }
+    return 1;
+}
+);c=string.lower(c or 'status');a=string.lower(a or '');"
       " if c=='arm' or c=='test' or c=='reset' or c=='status' or c=='dump' then "
       "  W112_RSP_ZONE=(GetZoneText and GetZoneText()) or '';W112_RSP_SUBZONE=(GetSubZoneText and GetSubZoneText()) or '';"
       "  W112_RSP_CMD=c;W112_RSP_ARG=a;W112_RSP_CMD_SEQ=(W112_RSP_CMD_SEQ or 0)+1;"
