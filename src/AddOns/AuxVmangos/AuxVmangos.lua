@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.41-autosell-reprice-v1"
+AVM_VERSION = "0.41.1-autosell-focusfix"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0

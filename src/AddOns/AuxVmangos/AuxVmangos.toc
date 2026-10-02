@@ -3,7 +3,7 @@
 ## Notes: Turtle arbitrage with AutoSell repricing, owner-scan arbitration, transaction-safe fast resume and native ledger UI.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.41-autosell-reprice-v1
+## Version: 0.41.1-autosell-focusfix
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua

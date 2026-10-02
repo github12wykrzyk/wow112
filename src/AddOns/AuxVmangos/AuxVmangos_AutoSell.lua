@@ -901,9 +901,11 @@ local function refresh_ui(force)
 	ensure_db()
 	enabledBox:SetChecked(AVM_DB.autoSellEnabled)
 	allBox:SetChecked(AVM_DB.autoSellManageAll)
-	if not triggerBox:HasFocus() then triggerBox:SetText(tostring(AVM_DB.autoSellTriggerPct)) end
-	if not histBox:HasFocus() then histBox:SetText(tostring(AVM_DB.autoSellMinHistPct)) end
-	if not undercutBox:HasFocus() then undercutBox:SetText(tostring(AVM_DB.autoSellUndercutCopper)) end
+	-- AUX gui.editbox on WoW 1.12 tracks focus through its own .focused flag;
+	-- the 1.12 EditBox API does not provide HasFocus().
+	if not triggerBox.focused then triggerBox:SetText(tostring(AVM_DB.autoSellTriggerPct)) end
+	if not histBox.focused then histBox:SetText(tostring(AVM_DB.autoSellMinHistPct)) end
+	if not undercutBox.focused then undercutBox:SetText(tostring(AVM_DB.autoSellUndercutCopper)) end
 
 	local rows = T.acquire()
 	local shown = {}

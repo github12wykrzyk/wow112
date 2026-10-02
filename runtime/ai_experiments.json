@@ -5134,6 +5134,26 @@
       "tests": [],
       "package": null,
       "notes": "Adds a persistent GUI toggle on the native AUX Search tab for manual headless scans. Default ON: a manual Search evaluates the same pages and AVM arbitrage callbacks but suppresses upstream Search Results row/page rendering; OFF restores normal visible results. Automated AVM restart/resume remains headless regardless. Adds exact per-scan pages, duration and pages/sec diagnostics without introducing new M.start lexical captures. Evidence review: report #80 on a0d840dd contains 1197 pages in 24.641s (~48.6 pages/s) and 1196 pages in 20.234s (~59.1 pages/s) during the previously observed very-fast full-AH period. Latest report #107 is from candidate 98f108a3 but its retained AVM event ring contains only older 0.40 Container-filter cycles (roughly 13 pages in ~1.8-2.0s plus historical 2.0s loop gaps) and no new 0.41 scan, so it cannot prove a current transport regression. The toggle plus new metrics provides an apples-to-apples manual visible-vs-headless test on the same filter."
+    },
+    {
+      "id": "ah-autosell-ui-focus-fix-v1",
+      "branch": "feature/ah-autosell-focus-fix-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-autosell-reprice-v1"
+      ],
+      "shared_resources": [
+        "AUX gui.editbox WoW 1.12 focus state",
+        "AutoSell native AUX tab UI refresh"
+      ],
+      "status": "in_progress",
+      "observed_head": "0a3e9894a9c170c91021a5cd0a8748e1a4b777e8",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User screenshot shows AuxVmangos_AutoSell.lua:904 attempt to call method 'HasFocus' (a nil value) when the AutoSell tab refreshes. Upstream AUX gui.editbox for the pinned 1.12 addon explicitly tracks edit focus in editbox.focused and does not provide HasFocus(). Replace all three AutoSell HasFocus calls with the upstream .focused flag. No AutoSell economics, cancel/repost logic, scheduler ownership or AH transport behavior changes."
     }
   ]
 }
