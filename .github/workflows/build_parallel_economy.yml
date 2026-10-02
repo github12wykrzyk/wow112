@@ -60,10 +60,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path build/economy | Out-Null
           python tools/build_parallel_companion.py --name WoWAHThrottleNative_5875_v8_FASTMARKET.dll --output build/economy/WoWAHThrottleNative_5875_v8_FASTMARKET.dll --metadata build/economy/aht.json
           if ($LASTEXITCODE -ne 0) { throw "AHThrottleNative build failed" }
-          python tools/build_parallel_companion.py --name WoWRemoteServiceProbe_5875_v1.dll --output build/economy/WoWRemoteServiceProbe_5875_v1.dll --metadata build/economy/rsp.json
-          if ($LASTEXITCODE -ne 0) { throw "RemoteServiceProbe build failed" }
-          python tools/build_parallel_companion.py --name WoWMarketWorker_5875_v1.dll --output build/economy/WoWMarketWorker_5875_v1.dll --metadata build/economy/marketworker.json
-          if ($LASTEXITCODE -ne 0) { throw "MarketWorker build failed" }
 
       - name: Package and attest no-delete ECONOMY overlay
         shell: pwsh

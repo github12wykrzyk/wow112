@@ -26,8 +26,11 @@ def main():
         fail("unexpected inner ZIP")
     dlls = data.get("dlls")
     order = data.get("required_loader_order")
-    if not isinstance(dlls, list) or len(dlls) != 3 or order != [x.get("runtime_name") for x in dlls]:
-        fail("DLL order must exactly match the three economy DLL declarations")
+    if not isinstance(dlls, list) or not dlls:
+        fail("economy DLL declarations must be a non-empty list")
+    names = [x.get("runtime_name") for x in dlls]
+    if len(names) != len(set(names)) or order != names:
+        fail("DLL order must exactly match the unique economy DLL declarations")
     companions = {x.get("runtime_name"): x for x in full.get("companions", [])}
     for item in dlls:
         name, source, profile = item.get("runtime_name"), item.get("source"), item.get("profile")
