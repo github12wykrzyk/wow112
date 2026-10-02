@@ -95,6 +95,7 @@ AVM = {
 		flipExposureRejects = 0,
 		postscanCandidate = nil,
 		deMidScanHits = 0,
+		consumedAuctionKeys = {},
 	},
 	candidate = nil,
 	revalidatePages = nil,
@@ -765,6 +766,58 @@ local function avm_recent(sig)
 		return false
 	end
 	return true
+end
+
+function AVM_AuxArbConsumedKey(record)
+	if not record then return "" end
+	local itemId = tonumber(record.itemId or record.item_id) or 0
+	local count = tonumber(record.count or record.aux_quantity) or 0
+	local buyout = tonumber(record.buyout or record.buyout_price) or 0
+	local quality = tonumber(record.quality) or -1
+	local level = tonumber(record.level) or 0
+	local owner = tostring(record.owner or "")
+	local itemKey = tostring(record.itemKey or "")
+	if itemKey == "" and itemId > 0 then itemKey = "item:" .. tostring(itemId) end
+	return tostring(record.name or "") .. "|" .. tostring(count) .. "|" .. tostring(buyout) .. "|" ..
+		owner .. "|" .. tostring(quality) .. "|" .. tostring(level) .. "|" .. itemKey
+end
+
+function AVM_AuxArbWasConsumed(record)
+	local a = AVM and AVM.auxArb
+	if not a or not a.consumedAuctionKeys then return false end
+	local key = AVM_AuxArbConsumedKey(record)
+	return key ~= "" and a.consumedAuctionKeys[key] == true
+end
+
+function AVM_AuxArbMarkConsumed(candidate)
+	local a = AVM and AVM.auxArb
+	if not a or not candidate or not avm_is_auxarb_candidate or not avm_is_auxarb_candidate(candidate) then return end
+	if not a.consumedAuctionKeys then a.consumedAuctionKeys = {} end
+	local key = AVM_AuxArbConsumedKey(candidate)
+	if key == "" then return end
+	a.consumedAuctionKeys[key] = true
+
+	-- A resumed logical scan deliberately keeps its accumulated DE/material/flip
+	-- books. Remove the exact purchased auction from retained DE rows and clear
+	-- any cached "best" pointer that still references it, otherwise a completed
+	-- scan can select the already-bought listing again after recent-TTL expires.
+	local kept = {}
+	for i = 1, table.getn(a.deRawCandidates or {}) do
+		local raw = a.deRawCandidates[i]
+		if AVM_AuxArbConsumedKey(raw) ~= key then table.insert(kept, raw) end
+	end
+	a.deRawCandidates = kept
+
+	local function clear_if_same(field)
+		local row = a[field]
+		if row and AVM_AuxArbConsumedKey(row) == key then a[field] = nil end
+	end
+	clear_if_same("deReadyPageBest")
+	clear_if_same("deBest")
+	clear_if_same("pageBest")
+	clear_if_same("bestSeen")
+	clear_if_same("flipBest")
+	clear_if_same("postscanCandidate")
 end
 
 local function avm_candidate_from_row(i)
@@ -2275,6 +2328,7 @@ end
 
 local function avm_de_raw_candidate(record)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
+	if AVM_AuxArbWasConsumed(record) then return nil end
 	if not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil end
 	if record.quality ~= 2 and record.quality ~= 3 and record.quality ~= 4 then return nil end
 	if not record.slot then return nil end
@@ -2436,6 +2490,7 @@ end
 
 local function avm_flip_record_candidate(record)
 	if not AVM_DB.flipEnabled or not record then return nil end
+	if AVM_AuxArbWasConsumed(record) then return nil end
 	local itemId = tonumber(record.item_id or record.itemId)
 	local count = tonumber(record.aux_quantity or record.count) or 0
 	local buyout = tonumber(record.buyout_price or record.buyout) or 0
@@ -2734,6 +2789,7 @@ end
 
 local function avm_auxarb_candidate_from_record(record, requiredMode)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
+	if AVM_AuxArbWasConsumed(record) then return nil end
 	local buyout = tonumber(record.buyout_price) or 0
 	local count = tonumber(record.count or record.aux_quantity) or 0
 	if buyout <= 0 or count <= 0 then return nil end
@@ -2983,6 +3039,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipExposureRejects = 0
 		a.postscanCandidate = nil
 		a.deMidScanHits = 0
+		a.consumedAuctionKeys = {}
 		a.vendorDiag = AVM_VendorDiagNew(a.filterString)
 		AVM_VendorDiagSnapshot("scan-start")
 	end
@@ -4461,6 +4518,7 @@ local function avm_tick_pending(now)
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
 			AVM_RecordPurchase(p.candidate, "confirmed")
+			AVM_AuxArbMarkConsumed(p.candidate)
 			avm_record_item_exposure(p.candidate)
 			AVM.recent[p.candidate.signature] = now + 15
 			if avm_is_auxarb_candidate(p.candidate) then
@@ -4509,6 +4567,7 @@ local function avm_tick_pending(now)
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
 			AVM_RecordPurchase(u.candidate, "confirmed-late")
+			AVM_AuxArbMarkConsumed(u.candidate)
 			avm_record_item_exposure(u.candidate)
 			if avm_is_auxarb_candidate(u.candidate) then
 				avm_print("CONFIRMED_LATE AUX_ARB route=" .. tostring(u.candidate.route) .. " " .. u.candidate.name ..
@@ -5032,6 +5091,7 @@ local function avm_hard_stop(reason)
 	a.deVerify = nil
 	a.flipVerify = nil
 	a.postscanCandidate = nil
+	a.consumedAuctionKeys = {}
 
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
@@ -5376,6 +5436,7 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.deMaterialBook = {}
 		AVM.auxArb.deVerify = nil
 		AVM.auxArb.postscanCandidate = nil
+		AVM.auxArb.consumedAuctionKeys = {}
 		AVM.auxArb.flipBook = {}
 		AVM.auxArb.flipBest = nil
 		AVM.auxArb.flipVerify = nil
