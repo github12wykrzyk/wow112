@@ -616,7 +616,7 @@ namespace WoW112Updater
             }
         }
 
-        private bool IsCoordinatorGameProcess(Process process)
+        private bool IsCoordinatorGameProcess(System.Diagnostics.Process process)
         {
             if (process == null) return false;
             try
@@ -646,8 +646,8 @@ namespace WoW112Updater
                 ProfileMatchesAccount(existing.Game.Id, account, out existingProfile))
                 return existing;
 
-            var matches = new List<Process>();
-            foreach (var process in Process.GetProcesses())
+            var matches = new List<System.Diagnostics.Process>();
+            foreach (var process in System.Diagnostics.Process.GetProcesses())
             {
                 var keep = false;
                 try
@@ -665,22 +665,22 @@ namespace WoW112Updater
                 }
             }
 
-            Process chosen = null;
+            System.Diagnostics.Process chosen = null;
             if (matches.Count == 1) chosen = matches[0];
             else if (matches.Count > 1 && interactive)
             {
                 using (var picker = new Form
                 {
                     Text = "Wybierz zweryfikowany klient WoW: " + account.Label,
-                    ClientSize = new Size(420, 128), StartPosition = FormStartPosition.CenterParent,
+                    ClientSize = new System.Drawing.Size(420, 128), StartPosition = FormStartPosition.CenterParent,
                     FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false
                 })
                 {
-                    var selector = new ComboBox { Location = new Point(12, 13), Width = 395, DropDownStyle = ComboBoxStyle.DropDownList };
+                    var selector = new ComboBox { Location = new System.Drawing.Point(12, 13), Width = 395, DropDownStyle = ComboBoxStyle.DropDownList };
                     foreach (var process in matches.OrderBy(p => p.Id))
                         selector.Items.Add(new RunningGameItem(process));
                     selector.SelectedIndex = 0;
-                    var ok = new Button { Text = "Użyj tego okna", DialogResult = DialogResult.OK, Location = new Point(226, 74), Width = 180 };
+                    var ok = new Button { Text = "Użyj tego okna", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(226, 74), Width = 180 };
                     picker.Controls.Add(selector); picker.Controls.Add(ok); picker.AcceptButton = ok;
                     if (picker.ShowDialog(owner) == DialogResult.OK)
                         chosen = ((RunningGameItem)selector.SelectedItem).Game;

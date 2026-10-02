@@ -4215,7 +4215,7 @@
         "summon_coordinator.json route schema",
         "shared two-account slave character-slot layout"
       ],
-      "status": "awaiting_fix",
+      "status": "blocked",
       "observed_head": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
       "verified_commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
       "tests": [
