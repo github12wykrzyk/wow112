@@ -4502,6 +4502,25 @@
       "tests": [],
       "package": null,
       "notes": "New isolated native companion based on current parallel HEAD. Reads hostile target positive aura slots, resolves locale-aware spell name/icon from client DBCs, and renders up to 32 TargetFrame-style buff icons while preserving stock debuffs and friendly-target stock buffs. Local direct clang/lld smoke produced PE32 i386 with no import directory; GitHub preflight/game behavior pending."
+    },
+    {
+      "id": "summon-switch-ui-fast-route-v4",
+      "branch": "feature/summon-switch-ui-fast-route-v4",
+      "modules": [
+        "CharacterSwitchDiag"
+      ],
+      "dependencies": [
+        "summon-world-reconnect-session-v3"
+      ],
+      "shared_resources": [
+        "CharacterSwitchDiag manual command routing"
+      ],
+      "status": "in_progress",
+      "observed_head": "e410556663c81a0f73b8c9d0196e323fa2fdb1d7",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Manual CharacterSwitchDiag UI still routed legacy commands slot1/slot2 through stock Logout(), which can show the realm's 20s logout countdown. This feature routes slot1/slot2 through begin_fast/direct world reconnect just like fast1/fast2. Only the explicit Stock logout button retains ordinary Logout(). Coordinator PREPARE already uses begin_fast and is unchanged."
     }
   ]
 }

@@ -174,8 +174,8 @@ static void ensure_ui(void)
       "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V11');"
       "local st=f:CreateFontString('W112CSDStatus','OVERLAY','GameFontNormalSmall');st:SetPoint('TOPLEFT',f,'TOPLEFT',12,-36);st:SetWidth(416);st:SetJustifyH('LEFT');st:SetText('idle');"
       "local function B(n,x,y,w,txt,cmd)local b=CreateFrame('Button',n,f,'UIPanelButtonTemplate');b:SetWidth(w);b:SetHeight(24);b:SetPoint('BOTTOMLEFT',f,'BOTTOMLEFT',x,y);b:SetText(txt);b:SetScript('OnClick',function()W112_CSD_CMD=cmd end)end;"
-      "B('W112CSDStock',12,42,92,'Stock logout','stock');B('W112CSDSlot1',112,42,92,'Switch slot 1','slot1');B('W112CSDSlot2',212,42,92,'Switch slot 2','slot2');"
-      "B('W112CSDFast1',60,12,140,'SESSION slot 1','fast1');B('W112CSDFast2',230,12,140,'SESSION slot 2','fast2');"
+      "B('W112CSDStock',12,42,92,'Stock logout','stock');B('W112CSDSlot1',112,42,92,'FAST slot 1','slot1');B('W112CSDSlot2',212,42,92,'FAST slot 2','slot2');"
+      "B('W112CSDFast1',60,12,140,'Direct slot 1','fast1');B('W112CSDFast2',230,12,140,'Direct slot 2','fast2');"
       "f:Show();W112_CSD_CMD='' end";
     execs(s);
 }
@@ -401,8 +401,9 @@ static void poll_worker_cmd(DWORD now)
 static void poll_cmd(DWORD now)
 {
     const char*c=gettextv("W112_CSD_CMD");if(!c||!c[0])return;execs("W112_CSD_CMD=''");
-    if(eq(c,"stock"))begin_stock(now,0);else if(eq(c,"slot1"))begin_stock(now,1);else if(eq(c,"slot2"))begin_stock(now,2);
-    else if(eq(c,"fast1"))begin_fast(now,1);else if(eq(c,"fast2"))begin_fast(now,2);
+    if(eq(c,"stock"))begin_stock(now,0);
+    else if(eq(c,"slot1")||eq(c,"fast1"))begin_fast(now,1);
+    else if(eq(c,"slot2")||eq(c,"fast2"))begin_fast(now,2);
 }
 static int worker_command_pending(void)
 {
