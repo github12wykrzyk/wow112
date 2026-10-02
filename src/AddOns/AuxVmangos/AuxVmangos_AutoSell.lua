@@ -31,6 +31,9 @@ local R = {
 	ownerAt = 0,
 	ownerCapturePending = false,
 	ownerCaptureAt = 0,
+	ownerRefreshRequested = false,
+	ownerRefreshReason = '',
+	ownerRefreshAt = 0,
 	candidate = nil,
 	action = nil,
 	lastProbeAt = {},
@@ -289,6 +292,10 @@ end
 local function publish_owner_snapshot(rows)
 	R.owner = rows or {}
 	R.ownerAt = GetTime()
+	R.ownerRefreshRequested = false
+	R.ownerRefreshReason = ''
+	R.ownerRefreshAt = 0
+	if R.action and R.action.kind == 'OWNER_SCAN' then R.action = nil end
 	-- Confirm that a cancellation actually removed one matching own auction.
 	for key, p in pairs(AVM_DB.autoSellPending or {}) do
 		if type(p) == 'table' and (p.state == 'CANCEL_SENT' or p.state == 'WAIT_MAIL') then
@@ -352,6 +359,31 @@ local function capture_owner_page()
 		R.ownerExpected = 0
 		publish_owner_snapshot(rows)
 	end
+end
+
+local function feed_native_owner_records(records)
+	if not records then return false end
+	local rows = {}
+	for i = 1, table.getn(records) do
+		local record = records[i]
+		if record then
+			table.insert(rows, owner_copy(record, tonumber(record.page) or 0, tonumber(record.index) or i))
+		end
+	end
+	publish_owner_snapshot(rows)
+	return true
+end
+
+if AVM_OWNER_SCAN_BRIDGE then
+	AVM_OWNER_SCAN_BRIDGE.FeedAutoSellOwnerRecords = feed_native_owner_records
+end
+
+function AS.RequestOwnerRefresh(reason)
+	R.ownerRefreshRequested = true
+	R.ownerRefreshReason = tostring(reason or 'refresh')
+	R.ownerRefreshAt = GetTime()
+	diag_snapshot()
+	return true
 end
 
 local function market_begin(resume)
@@ -588,6 +620,7 @@ local function start_cancel(candidate)
 				p.state = 'WAIT_MAIL'
 				R.action = nil
 				R.candidate = nil
+				AS.RequestOwnerRefresh('cancel-confirm')
 				AVM_DB.autoSellStats.cancels = (tonumber(AVM_DB.autoSellStats.cancels) or 0) + 1
 				log_event('CANCEL_CALLBACK', {
 					name = row.name, item_key = key, ownUnit = ownUnit, marketUnit = marketUnit,
@@ -677,6 +710,7 @@ local function start_repost(p)
 				targetUnit = target, floorUnit = floor,
 			}, 'posted=' .. tostring(posted))
 			AVM_DB.autoSellPending[key] = nil
+			AS.RequestOwnerRefresh('post-confirm')
 		else
 			p.state = 'WAIT_MAIL'
 			p.retryAt = GetTime() + 5
@@ -690,10 +724,37 @@ end
 function AS.Tick(now)
 	ensure_db()
 	install_market_hooks()
-	if not AVM_DB.autoSellEnabled then return false end
-	if R.action then return true end
-	if not safe_idle() then return false end
 	now = tonumber(now) or GetTime()
+	if R.action then
+		if R.action.kind == 'OWNER_SCAN' and now - (tonumber(R.ownerRefreshAt) or now) > 15 then
+			R.action = nil
+			R.ownerRefreshRequested = true
+			R.ownerRefreshReason = 'owner-scan-timeout'
+			R.ownerRefreshAt = now
+		else
+			return true
+		end
+	end
+	if not safe_idle() then return false end
+
+	-- Refresh the owner snapshot through the existing native Auctions arbiter.
+	-- This never creates a second independent GetOwnerAuctionItems producer.
+	if R.ownerRefreshRequested then
+		local bridge = AVM_OWNER_SCAN_BRIDGE
+		if bridge and bridge.RequestOwnerSnapshot then
+			local ok, started = pcall(bridge.RequestOwnerSnapshot, R.ownerRefreshReason or 'autosell')
+			if ok and started then
+				R.ownerRefreshRequested = false
+				R.ownerRefreshAt = now
+				R.action = { kind = 'OWNER_SCAN', name = 'own auctions' }
+				diag_snapshot()
+				return true
+			end
+		end
+		return false
+	end
+
+	if not AVM_DB.autoSellEnabled then return false end
 
 	-- Repost work has priority once the user manually collected canceled mail.
 	for key, p in pairs(AVM_DB.autoSellPending) do
@@ -737,6 +798,8 @@ function AS.Status()
 		action = R.action and tostring(R.action.kind or '') or '',
 		candidate = R.candidate and tostring(R.candidate.name or '') or '',
 		marketSeq = R.marketSeq,
+		ownerRefreshRequested = R.ownerRefreshRequested and true or false,
+		ownerRefreshReason = tostring(R.ownerRefreshReason or ''),
 	}
 end
 
@@ -759,9 +822,16 @@ eventFrame:SetScript('OnEvent', function()
 end)
 eventFrame:SetScript('OnUpdate', function()
 	if R.ownerCapturePending and GetTime() >= R.ownerCaptureAt then capture_owner_page() end
-	-- If the user disabled the continuous AUX loop, AutoSell may still finish
-	-- already discovered work from a manually refreshed Auctions snapshot.
-	if AVM_DB and AVM_DB.autoSellEnabled and AVM_DB.auxLoopEnabled == false and GetTime() >= (R._standaloneTick or 0) then
+	-- Owner refresh must progress even while the continuous loop is enabled but
+	-- currently between cycles. Tick will wait for safe_idle before claiming AUX.
+	if (R.ownerRefreshRequested or (R.action and R.action.kind == 'OWNER_SCAN')) and
+	   GetTime() >= (R._ownerRefreshTick or 0) then
+		R._ownerRefreshTick = GetTime() + .20
+		AS.Tick(GetTime())
+	elseif AVM_DB and AVM_DB.autoSellEnabled and AVM_DB.auxLoopEnabled == false and
+	       GetTime() >= (R._standaloneTick or 0) then
+		-- If the user disabled the continuous AUX loop, AutoSell may still finish
+		-- already discovered work from a manually refreshed Auctions snapshot.
 		R._standaloneTick = GetTime() + .20
 		AS.Tick(GetTime())
 	end
@@ -949,6 +1019,7 @@ local function refresh_ui(force)
 		' | pending ' .. tostring(st.pending) ..
 		' | cancels ' .. tostring(stats.cancels or 0) ..
 		' | reposts ' .. tostring(stats.reposts or 0) ..
+		(st.ownerRefreshRequested and ' | owner refresh queued' or '') ..
 		(st.action ~= '' and (' | ' .. st.action) or '')
 	)
 end
@@ -962,6 +1033,7 @@ end)
 function tab.OPEN()
 	ensure_db()
 	install_market_hooks()
+	AS.RequestOwnerRefresh('tab-open')
 	frame:Show()
 	refresh_ui(true)
 end

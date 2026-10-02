@@ -362,6 +362,7 @@ local function install_auctions_summary()
 	local originalScan=env.scan_auctions or auctions.scan_auctions
 	local originalUpdate=env.update_listing
 	local queuedNativeScan=false
+	local queuedBridgeScan=false
 	local waiter=CreateFrame('Frame','AuxVmangosOwnerScanArbitration')
 	waiter:Hide()
 
@@ -373,33 +374,47 @@ local function install_auctions_summary()
 
 	local function run_native_scan()
 		queuedNativeScan=false
+		queuedBridgeScan=false
 		waiter:Hide()
-		originalScan()
+		return originalScan()
 	end
 
-	env.scan_auctions=function()
+	local function request_native_scan(fromBridge)
 		local exposureActive=AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.IsExposureActive and AVM_OWNER_SCAN_BRIDGE.IsExposureActive()
 		if exposureActive then
 			queuedNativeScan=true
+			if fromBridge then queuedBridgeScan=true end
 			if env.status_bar then
 				env.status_bar:update_status(0,0)
 				env.status_bar:set_text('Preparing owner scan...')
 			end
 			if AVM_OWNER_SCAN_BRIDGE.RequestNativePriority then AVM_OWNER_SCAN_BRIDGE.RequestNativePriority() end
 			waiter:Show()
-			return
+			return true
 		end
 		run_native_scan()
+		return true
+	end
+
+	env.scan_auctions=function()
+		return request_native_scan(false)
+	end
+
+	if AVM_OWNER_SCAN_BRIDGE then
+		AVM_OWNER_SCAN_BRIDGE.RequestOwnerSnapshot=function()
+			return request_native_scan(true)
+		end
 	end
 
 	waiter:SetScript('OnUpdate',function()
 		if not queuedNativeScan then this:Hide(); return end
 		local active=AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.IsExposureActive and AVM_OWNER_SCAN_BRIDGE.IsExposureActive()
 		if active then return end
-		if env.frame and env.frame.IsShown and env.frame:IsShown() then
+		if queuedBridgeScan or (env.frame and env.frame.IsShown and env.frame:IsShown()) then
 			run_native_scan()
 		else
 			queuedNativeScan=false
+			queuedBridgeScan=false
 			this:Hide()
 		end
 	end)
@@ -408,8 +423,13 @@ local function install_auctions_summary()
 		env.update_listing=function()
 			originalUpdate()
 			local text=env.status_bar and env.status_bar.text and env.status_bar.text:GetText() or ''
-			if text=='Scan complete' and AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords then
-				AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords(env.auction_records or {})
+			if text=='Scan complete' and AVM_OWNER_SCAN_BRIDGE then
+				if AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords then
+					AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords(env.auction_records or {})
+				end
+				if AVM_OWNER_SCAN_BRIDGE.FeedAutoSellOwnerRecords then
+					AVM_OWNER_SCAN_BRIDGE.FeedAutoSellOwnerRecords(env.auction_records or {})
+				end
 			end
 			AVM_AUX_LEDGER.UpdateAuctionsSummary(env)
 		end

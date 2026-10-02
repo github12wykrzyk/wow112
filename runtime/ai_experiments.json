@@ -5236,6 +5236,39 @@
       ],
       "package": null,
       "notes": "Introduces a separate PARALLEL / ECONOMY fast path. ECONOMY is a no-delete partial overlay: no EXE and no dlls.txt, exact-HEAD attestation, a deterministic profile fingerprint, native cache keyed by source/toolchain contract, and only the AH native trio plus economy addons. The updater requires an existing STANDARD loader order, keeps separate economy state/pending data, and blocks legacy full VERIFY/REPAIR while the overlay is active so it cannot silently roll economy files back. STANDARD remains the full candidate path; Rogue comparison builds are not on the ECONOMY critical path."
+    },
+    {
+      "id": "ah-autosell-owner-refresh-v1",
+      "branch": "feature/ah-autosell-owner-refresh-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-autosell-reprice-v1",
+        "ah-autosell-ui-focus-fix-v1",
+        "ah-owner-scan-arbitration-v1",
+        "parallel-economy-fastpath-v1"
+      ],
+      "shared_resources": [
+        "AUX native Auctions owner scan arbiter",
+        "AUCTION_OWNED_LIST_UPDATE owner snapshots",
+        "AutoSell owner rows and cancel confirmation",
+        "PARALLEL ECONOMY AuxVmangos overlay"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "fbda6e93c41e15e0984f06817dd5183af515d88a",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "fbda6e93c41e15e0984f06817dd5183af515d88a",
+          "date": "2026-10-02",
+          "evidence": "User reports the native AUX AutoSell tab renders its GUI but contains no auction rows on current parallel. Source audit shows AutoSell only passively consumes an owner scan and tab.OPEN never requests one."
+        }
+      ],
+      "package": null,
+      "notes": "AutoSell owner-data plumbing fix. Opening AutoSell queues a safe owner snapshot through the existing native Auctions arbitration instead of calling GetOwnerAuctionItems independently. The native Auctions hook can service a bridge-requested owner scan while its frame is hidden, then feeds the completed record set directly to AutoSell. Cancel/post completion requests a fresh snapshot. No repricing thresholds, floor calculations, cancel safety or repost economics are changed."
     }
   ]
 }
