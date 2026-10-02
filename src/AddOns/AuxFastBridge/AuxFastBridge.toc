@@ -2,8 +2,9 @@
 ## Title: Aux FAST Bridge
 ## Notes: Fast AUX bridge; GUI-toggle manual headless Search, per-scan speed diagnostics, transaction-safe resume.
 ## Author: github12wykrzyk/wow112
-## Version: 3.7
+## Version: 3.8
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
 AuxFastBridge.lua
+AuxFastBridge_HandoffGuard.lua
