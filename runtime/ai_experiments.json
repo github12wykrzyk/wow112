@@ -3890,7 +3890,7 @@
       "tests": [
         {
           "kind": "game",
-          "result": "partial",
+          "result": "inconclusive",
           "commit": "9149dd5110b6b2d602f247faa8dc69357b4aa1c2",
           "date": "2026-10-02",
           "evidence": "Report #68 confirms exact artifact installed and AuxVmangos 0.27.1-no-reload loaded. No new reload attempt occurs after that load. Remaining failure is later-cycle Search UI rendering."
