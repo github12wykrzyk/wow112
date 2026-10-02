@@ -1,5 +1,5 @@
 {
-  "active_experiment_count": 126,
+  "active_experiment_count": 127,
   "active_statuses": [
     "awaiting_ci",
     "awaiting_game_test",
@@ -7,7 +7,7 @@
     "in_progress",
     "planned"
   ],
-  "experiment_count": 148,
+  "experiment_count": 149,
   "experiments": {
     "ah-auto-headless-all-scans": {
       "branch": "feature/ah-auto-headless-all-scans",
@@ -1651,6 +1651,20 @@
       "status": "awaiting_game_test",
       "verified_commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17"
     },
+    "updater-delivery-lifecycle-v1": {
+      "branch": "feature/updater-delivery-lifecycle-v1",
+      "dependencies": [
+        "parallel-economy-fastpath-v1"
+      ],
+      "observed_head": "688d24ab9938ae34713e4e571ea16ec4aac4e039",
+      "package": {
+        "artifact_id": 11241864005,
+        "commit": "01c8b11f336af29ad297e46a085de24b817b15a2",
+        "verified": true
+      },
+      "status": "awaiting_ci",
+      "verified_commit": "01c8b11f336af29ad297e46a085de24b817b15a2"
+    },
     "updater-kill-all-control": {
       "branch": "feature/updater-kill-all",
       "dependencies": [
@@ -2367,6 +2381,7 @@
         "multibox-auto-first-character-parallel",
         "multibox-background-sound-parallel",
         "summon-role-nonlow-first-v2",
+        "updater-delivery-lifecycle-v1",
         "updater-live-runtime-files-v1",
         "updater-live-update-parallel"
       ],
@@ -2377,6 +2392,7 @@
         "multibox-auto-first-character-parallel",
         "multibox-background-sound-parallel",
         "summon-role-nonlow-first-v2",
+        "updater-delivery-lifecycle-v1",
         "updater-live-runtime-files-v1",
         "updater-live-update-parallel"
       ]

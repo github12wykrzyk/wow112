@@ -5303,6 +5303,46 @@
       "tests": [],
       "package": null,
       "notes": "Routing-first latency optimization derived from the AutoSell owner-refresh iteration. Adds a deterministic compact experiment index so AI can discover existing module experiments/feature branches before loading the large ledger or source files. CI fails closed if the generated index is stale. Full ledger remains authoritative and live GitHub refs remain authoritative for HEAD."
+    },
+    {
+      "id": "updater-delivery-lifecycle-v1",
+      "branch": "feature/updater-delivery-lifecycle-v1",
+      "modules": [
+        "UpdaterMultibox"
+      ],
+      "dependencies": [
+        "parallel-economy-fastpath-v1"
+      ],
+      "shared_resources": [
+        "GitHub monitor feature/preflight badge",
+        "parallel exact-HEAD Build work candidate and ECONOMY workflow state",
+        "local STANDARD/ECONOMY installed-state manifests"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "688d24ab9938ae34713e4e571ea16ec4aac4e039",
+      "verified_commit": "01c8b11f336af29ad297e46a085de24b817b15a2",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "01c8b11f336af29ad297e46a085de24b817b15a2",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 37042058111 PASS and Build WoW112 updater run 37042058375 PASS on exact feature SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "01c8b11f336af29ad297e46a085de24b817b15a2",
+          "date": "2026-10-02",
+          "evidence": "Updater artifact 11241864005 (WoW112ParallelUpdater-01c8b11f...) was produced by successful exact-SHA updater workflow."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "01c8b11f336af29ad297e46a085de24b817b15a2",
+        "artifact_id": 11241864005
+      },
+      "notes": "Updater v2.10-parallel.2 fixes delivery-state UX. Successful feature preflight is amber VERIFIED, not green ready. The monitor distinguishes WAITING INTEGRATION, BUILDING PARALLEL/ECONOMY, TEST READY IN selected profile and INSTALLED / READY TO TEST using exact parallel ancestry, exact-HEAD workflows and local installed-state SHA. Curated integration is based on current parallel without overwriting the newer compact routing-index infrastructure; exact integrated parallel CI/package evidence is pending."
     }
   ]
 }
