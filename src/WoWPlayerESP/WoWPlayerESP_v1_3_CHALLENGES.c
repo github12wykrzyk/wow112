@@ -607,10 +607,10 @@ static void ui_sync_summon(void) {
         "DISABLED","BUILD MISMATCH","NO TIMER","CAST/CHANNEL"
     };
     static const char* matches[4]={"NONE","ENTRY 36727","TYPE 18","ENTRY+TYPE"};
-    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,31u);
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,33u);
     W112_ControlValueV1 enabled,alive,candidate,source,entry,type,dist,lo,hi;
     W112_ControlValueV1 pre,current,post,scans,nearCount,nearEntry,nearType,nearDist,status,gate,busy;
-    W112_ControlValueV1 anti,nextSec,actions,channelDefers,lastAction,downPosts,upPosts;
+    W112_ControlValueV1 anti,nextSec,actions,channelDefers,lastAction,downPosts,upPosts,role,level;
     char buf[260],*p;
 
     if(!m) {
@@ -660,15 +660,17 @@ static void ui_sync_summon(void) {
     if(!m->get_value(29u,&lastAction))lastAction.u32=0u;
     if(!m->get_value(30u,&downPosts))downPosts.u32=0u;
     if(!m->get_value(31u,&upPosts))upPosts.u32=0u;
+    if(!m->get_value(32u,&role))role.u32=0u;
+    if(!m->get_value(33u,&level))level.u32=0u;
 
     if(g_ui_summon_check)
         SendMessageA(g_ui_summon_check,UI_SETCHECK,enabled.u32?1u:0u,0);
     if(g_ui_summon_antiafk_check)
         SendMessageA(g_ui_summon_antiafk_check,UI_SETCHECK,anti.u32?1u:0u,0);
     if(g_ui_summon_master_profile)
-        SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,enabled.u32?0u:1u,0);
+        SendMessageA(g_ui_summon_master_profile,UI_SETCHECK,role.u32==2u?1u:0u,0);
     if(g_ui_summon_slave_profile)
-        SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,enabled.u32?1u:0u,0);
+        SendMessageA(g_ui_summon_slave_profile,UI_SETCHECK,role.u32==1u?1u:0u,0);
 
     if(g_ui_summon_loaded){
         p=buf;p=app_str(p,"DLL: LOADED | API module v");
@@ -718,12 +720,21 @@ static void ui_sync_summon(void) {
     }
 }
 
-static BOOL ui_summon_apply_profile(DWORD slave) {
-    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,31u);
-    W112_ControlValueV1 value;
-    if(!m)return FALSE;
-    value.u32=slave?1u:0u;
-    return m->set_value(1u,&value)?TRUE:FALSE;
+static BOOL ui_summon_toggle_role(DWORD wanted) {
+    const W112_ControlModuleV1 *m=ui_work_pp_module(PAR_SUMMON_DLL,33u);
+    W112_ControlValueV1 role,level,value;
+    if(!m||!m->get_value(32u,&role)||!m->get_value(33u,&level))return FALSE;
+    if(wanted==1u) {
+        if(level.u32!=1u)return FALSE;
+        value.u32=1u;
+        return m->set_value(32u,&value)?TRUE:FALSE;
+    }
+    if(wanted==2u) {
+        if(level.u32<=1u)return FALSE;
+        value.u32=role.u32==2u?0u:2u;
+        return m->set_value(32u,&value)?TRUE:FALSE;
+    }
+    return FALSE;
 }
 
 
@@ -1173,7 +1184,7 @@ static struct UiProfileModule g_ui_profile_modules[]={
     {PAR_SPEED_DLL,3u,g_ui_profile_floor_ids,3u,FALSE,{0},{0}},
     {PAR_RANGE_DLL,7u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
     {PAR_WSG_DLL,4u,g_ui_profile_single_ids,1u,FALSE,{0},{0}},
-    {PAR_SUMMON_DLL,31u,g_ui_profile_summon_ids,2u,FALSE,{0},{0}}
+    {PAR_SUMMON_DLL,33u,g_ui_profile_summon_ids,2u,FALSE,{0},{0}}
 };
 static volatile DWORD *const g_ui_profile_esp_flags[]={
     &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,&g_parallel_show_hostile,&g_quest_enabled
@@ -1554,17 +1565,16 @@ static LONG WINAPI ui_wndproc(HWND hwnd,UINT msg,DWORD wp,LONG lp) {
         if(id==240u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(0u);return 0;}
         if(id==241u){ui_set_page(UI_TAB_ROGUE);ui_show_gather_page(1u);return 0;}
         if(id==233u||id==234u){
-            ui_summon_apply_profile(id==234u?1u:0u);
-            ui_profile_sync();
+            ui_summon_toggle_role(id==234u?1u:2u);
             ui_sync_summon();return 0;
         }
         if(id==229u){
-            ui_work_pp_flip(PAR_SUMMON_DLL,31u,1u);
+            ui_work_pp_flip(PAR_SUMMON_DLL,33u,1u);
             ui_profile_sync();
             ui_sync_summon();return 0;
         }
         if(id==230u){
-            ui_work_pp_flip(PAR_SUMMON_DLL,31u,21u);
+            ui_work_pp_flip(PAR_SUMMON_DLL,33u,21u);
             ui_profile_sync();
             ui_sync_summon();return 0;
         }
@@ -1881,7 +1891,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "SUMMON / AUTOMATION",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "Role and Anti-AFK are independent; background-safe, no mouse/focus. Lvl 1 = SLAVE, lvl 20 = MASTER; Anti-AFK stays user-controlled. TYPE 18 = ritual fallback.",
+        "Lvl 1 = forced SLAVE + Anti-AFK ON. Lvl >1: SLAVE unavailable; MASTER optional, both unchecked = NONE. background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
         42,181,665,32,FALSE));
     g_ui_summon_master_profile=ui_button(g_parallel_ui_hwnd,
         "MASTER / CASTER",46,221,321,36,233u,TRUE);

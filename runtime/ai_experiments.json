@@ -3788,6 +3788,31 @@
         "artifact_id": 11212057813
       },
       "notes": "User correlates severe slowdown with visible Search result rows: the fast automated scan shows no item list, while the slow subsequent scan renders items. Pinned upstream AUX appends up to 2000 records in on_auction and calls search.table:SetDatabase() after every page. Candidate retires reload-per-scan, keeps all AVM cycles in-process, and explicitly arms headless mode for both AUXFAST_RestartSearch and AUXFAST_ResumeSearch so no automated scan can fall back into visible row insertion/SetDatabase. Manual Search clicks remain normal and visible. Gameplay must verify 10+ automatic cycles stay row-free and smooth. CI/package gates pass. Required gameplay test: at least 10 consecutive automatic scans with no visible Search item rows during automation and no progressive FPS degradation; manual Search should still populate visible results."
+    },
+    {
+      "id": "summon-role-nonlow-first-v2",
+      "branch": "feature/summon-role-nonlow-first-v2",
+      "modules": [
+        "AutoSummonAssist",
+        "WoWPlayerESP",
+        "UpdaterMultibox"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel",
+        "multibox-auto-first-character-parallel",
+        "autologin-multibox-stagger-v2"
+      ],
+      "shared_resources": [
+        "AutoSummonAssist W112_CONTROL_API_V1 summon role and Anti-AFK state",
+        "Parallel PlayerESP SUMMON GUI",
+        "multibox process creation cadence and LOW profile flag"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "7302a322a65ebf41a394b40bea429abeab2295a4",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Rebased user-requested MULTIBOX/SUMMON iteration after parallel advanced independently. Level-1 helper is a forced SLAVE and cannot disable Anti-AFK; above level 1 SLAVE is unavailable, MASTER can be toggled off so NONE is representable. Multibox launch order is stable-partitioned so all non-LOW accounts start before LOW accounts while preserving the existing 3000 ms process stagger and relative account order."
     }
   ]
 }

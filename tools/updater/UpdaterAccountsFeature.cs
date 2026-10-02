@@ -240,7 +240,7 @@ namespace WoW112Updater
                 };
                 var info = new Label
                 {
-                    Text = "Wybory MULTIBOX są zapamiętywane per konto. Native AutoLogin loguje bez klawiatury/fokusu; start klientów jest celowo rozłożony w czasie.",
+                    Text = "Wybory MULTIBOX są zapamiętywane per konto. Native AutoLogin loguje bez klawiatury/fokusu; najpierw startują konta nie-LOW, potem LOW.",
                     Location = new Point(14, 5),
                     Size = new Size(1202, 18),
                     AutoEllipsis = true
@@ -429,10 +429,26 @@ namespace WoW112Updater
             }
         }
 
+        private static List<MultiboxLaunchEntry> PrioritizeMultiboxLaunches(IList<MultiboxLaunchEntry> launches)
+        {
+            var ordered = new List<MultiboxLaunchEntry>();
+            if (launches == null) return ordered;
+            foreach (var launch in launches)
+            {
+                if (launch == null || launch.Account == null)
+                    throw new InvalidDataException("Lista MULTIBOX zawiera pusty profil.");
+                if (!launch.Account.LowSpec) ordered.Add(launch);
+            }
+            foreach (var launch in launches)
+                if (launch.Account.LowSpec) ordered.Add(launch);
+            return ordered;
+        }
+
         private async Task RunMultiboxAsync(IList<MultiboxLaunchEntry> launches, Action<WowAccount, string> setState)
         {
             if (multiboxRunning) return;
             if (launches == null || launches.Count == 0) return;
+            var orderedLaunches = PrioritizeMultiboxLaunches(launches);
 
             var bridgePath = Path.Combine(gameDir.Text.Trim(), "WoWAutoLoginBridge_5875_v1.dll");
             if (!File.Exists(bridgePath))
@@ -448,8 +464,9 @@ namespace WoW112Updater
             int failed = 0;
             try
             {
-                SetBusy(true, "Multibox: uruchamianie " + launches.Count + " instancji...");
-                foreach (var launch in launches)
+                SetBusy(true, "Multibox: uruchamianie " + orderedLaunches.Count + " instancji (nie-LOW -> LOW)...");
+                Log("Multibox: kolejność logowania = najpierw nie-LOW, potem LOW; stagger " + MultiboxProcessStaggerMs + " ms.");
+                foreach (var launch in orderedLaunches)
                 {
                     var account = launch.Account;
                     try
@@ -712,6 +729,13 @@ namespace WoW112Updater
                 || loaded.Data.Accounts[1].AutoFirstCharacter
                 || loaded.Unprotect(loaded.Data.Accounts[1]) != "vault-test-secret-B")
                 throw new Exception("Account smoke: encrypted profile roundtrip failed");
+            var orderProbe = PrioritizeMultiboxLaunches(new List<MultiboxLaunchEntry> {
+                new MultiboxLaunchEntry { Account = loaded.Data.Accounts[0] },
+                new MultiboxLaunchEntry { Account = loaded.Data.Accounts[1] }
+            });
+            if (orderProbe.Count != 2 || orderProbe[0].Account.LowSpec || !orderProbe[1].Account.LowSpec)
+                throw new Exception("Account smoke: MULTIBOX must launch non-LOW accounts before LOW accounts");
+
             var lowRoot = Path.Combine(folder, "low-spec-smoke");
             Directory.CreateDirectory(Path.Combine(lowRoot, "WTF"));
             File.WriteAllText(Path.Combine(lowRoot, "WTF", "Config.wtf"), "SET farclip \"777\"\r\nSET anisotropic \"16\"\r\n", Encoding.UTF8);
