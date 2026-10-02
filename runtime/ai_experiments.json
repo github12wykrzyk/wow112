@@ -4910,7 +4910,7 @@
     },
     {
       "id": "updater-auto-report-stream-v1",
-      "branch": "feature/updater-auto-report-v1",
+      "branch": "parallel",
       "modules": [
         "UpdaterIssueReport",
         "Updater"
@@ -4922,12 +4922,38 @@
         "AuxVmangos SavedVariables marketPacked/marketDB",
         "%APPDATA%\\WoW112ParallelUpdater\\report_auto_state.json"
       ],
-      "status": "in_progress",
-      "observed_head": "544fe53a1054248f9ac214ed2365fd5b8711ca36",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Updater reporter hardening and automation rebased onto current parallel. Replaces the dedupe request that downloaded up to 100 full open Issues with a bounded GitHub issue-search query, raises the local JavaScriptSerializer ceiling to 32 MiB as a secondary guard, and adds silent automatic telemetry while the updater is open. With an already stored report token, AH dump state is checked every 60 s and uploaded only when the market content SHA changes; diagnostic reports are checked at most every 5 min and uploaded only when the diagnostic signature changes. Successful/manual sends and server-side dedupe persist local SHA state. Manual report/AH buttons remain as fallback; no token means automatic sending stays dormant."
+      "status": "awaiting_game_test",
+      "observed_head": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+      "verified_commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "b16ee6e7a4460b8b6aa6f58259624c216246a1ac",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 37011140877 and Build WoW112 updater run 37011134204 passed on the exact feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+          "date": "2026-10-02",
+          "evidence": "Integrated Build WoW112 updater run 37011282129 and Build work candidate run 37011282088 passed on the exact parallel SHA; final fail-closed package and provenance/attestation gates passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+          "date": "2026-10-02",
+          "evidence": "Updater artifact 11228425705 and verified aggregate candidate artifact 11228420901 were produced for the exact integrated parallel SHA."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+        "artifact_id": 11228425705
+      },
+      "notes": "Integrated to parallel after exact feature preflight and updater x86 build. The reporter no longer downloads up to 100 full open Issues for dedupe; it uses a bounded GitHub issue-title search and a 32 MiB serializer ceiling as a secondary guard. With an already stored report token and updater left open, AH state is checked every 60 s and uploads only when the Aux market content SHA changes; DIAG is checked at most every 5 min and uploads only when its signature changes. Successful/manual sends and server-side dedupe persist local SHA state. Manual report/AH buttons remain as fallback; no token keeps automatic sending dormant. Gameplay/user-flow validation is pending."
     }
   ]
 }
