@@ -1,4 +1,4 @@
--- AuxVmangos 0.8 WATCH GUI for WoW 1.12.1.
+-- AuxVmangos 0.9 WATCH + PURCHASE HISTORY GUI for WoW 1.12.1.
 -- Presentation only: all scanner/purchase state transitions remain owned by AuxVmangos.lua.
 
 AVM_WATCH_UI = AVM_WATCH_UI or {}
@@ -17,6 +17,10 @@ local scanButton
 local liveButton
 local lastStatusAt = 0
 local syncingRows = false
+local historyPanel
+local historyRows = {}
+local historyPage = 1
+local HISTORY_ROWS = 15
 
 local function compact_money(copper)
 	copper = tonumber(copper) or 0
@@ -122,6 +126,141 @@ local function refresh_status()
 	)
 end
 
+local function history_route_text(route)
+	if route == "disenchant" then return "DE" end
+	if route == "vendor" then return "VENDOR" end
+	if route == "flip" then return "FLIP" end
+	return string.upper(tostring(route or ""))
+end
+
+local function refresh_history()
+	if not historyPanel then return end
+	local count = API.GetPurchaseHistoryCount and API.GetPurchaseHistoryCount() or 0
+	local pages = math.max(1, math.ceil(count / HISTORY_ROWS))
+	if historyPage > pages then historyPage = pages end
+	if historyPage < 1 then historyPage = 1 end
+	local startIndex = ((historyPage - 1) * HISTORY_ROWS) + 1
+	for i = 1, HISTORY_ROWS do
+		local row = historyRows[i]
+		local h = API.GetPurchaseHistory and API.GetPurchaseHistory(startIndex + i - 1) or nil
+		if h then
+			row.time:SetText(string.sub(tostring(h.at or ""), -14))
+			row.route:SetText(history_route_text(h.route))
+			row.item:SetText(tostring(h.name or ""))
+			row.qty:SetText(tostring(h.count or 0))
+			row.paid:SetText(compact_money(h.buyout or 0))
+			row.value:SetText(compact_money(h.value or 0))
+			row.profit:SetText(compact_money(h.profit or 0))
+			row.source:SetText(tostring(h.source or ""))
+		else
+			row.time:SetText("")
+			row.route:SetText("")
+			row.item:SetText("")
+			row.qty:SetText("")
+			row.paid:SetText("")
+			row.value:SetText("")
+			row.profit:SetText("")
+			row.source:SetText("")
+		end
+	end
+	local summary = API.GetPurchaseHistorySummary and API.GetPurchaseHistorySummary() or {}
+	historyPanel.pageText:SetText("Page " .. tostring(historyPage) .. "/" .. tostring(pages) ..
+		" | saved " .. tostring(count) .. "/50" ..
+		" | all confirmed " .. tostring(summary.confirmed or 0) ..
+		" | spent " .. compact_money(summary.spend or 0) ..
+		" | expected profit " .. compact_money(summary.expectedProfit or 0))
+end
+
+local function create_history_panel()
+	if historyPanel then return end
+	historyPanel = CreateFrame("Frame", "AuxVmangosPurchaseHistoryPanel", UIParent)
+	historyPanel:SetWidth(820)
+	historyPanel:SetHeight(430)
+	historyPanel:SetPoint("CENTER", UIParent, "CENTER", 20, 0)
+	historyPanel:SetFrameStrata("DIALOG")
+	historyPanel:EnableMouse(true)
+	historyPanel:SetMovable(true)
+	historyPanel:RegisterForDrag("LeftButton")
+	historyPanel:SetScript("OnDragStart", function() this:StartMoving() end)
+	historyPanel:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+	historyPanel:SetBackdrop({
+		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+		tile = true, tileSize = 32, edgeSize = 24,
+		insets = { left = 8, right = 8, top = 8, bottom = 8 }
+	})
+	historyPanel:Hide()
+
+	local title = historyPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", historyPanel, "TOPLEFT", 18, -16)
+	title:SetText("AuxVmangos PURCHASE HISTORY - confirmed buys")
+
+	local close = CreateFrame("Button", "AuxVmangosPurchaseHistoryClose", historyPanel, "GameMenuButtonTemplate")
+	close:SetWidth(70)
+	close:SetHeight(24)
+	close:SetPoint("TOPRIGHT", historyPanel, "TOPRIGHT", -16, -12)
+	close:SetText("Close")
+	close:SetScript("OnClick", function() historyPanel:Hide() end)
+
+	new_label(historyPanel, "Time", 16, -52, 90)
+	new_label(historyPanel, "Route", 108, -52, 62)
+	new_label(historyPanel, "Item", 172, -52, 258)
+	new_label(historyPanel, "Qty", 435, -52, 34)
+	new_label(historyPanel, "Paid", 472, -52, 78)
+	new_label(historyPanel, "Value", 554, -52, 78)
+	new_label(historyPanel, "Profit", 636, -52, 78)
+	new_label(historyPanel, "Source", 718, -52, 88)
+
+	for i = 1, HISTORY_ROWS do
+		local y = -72 - ((i - 1) * 20)
+		local row = {}
+		historyRows[i] = row
+		row.time = new_label(historyPanel, "", 16, y, 90)
+		row.route = new_label(historyPanel, "", 108, y, 62)
+		row.item = new_label(historyPanel, "", 172, y, 258)
+		row.qty = new_label(historyPanel, "", 435, y, 34)
+		row.paid = new_label(historyPanel, "", 472, y, 78)
+		row.value = new_label(historyPanel, "", 554, y, 78)
+		row.profit = new_label(historyPanel, "", 636, y, 78)
+		row.source = new_label(historyPanel, "", 718, y, 88)
+	end
+
+	local prev = CreateFrame("Button", "AuxVmangosPurchaseHistoryPrev", historyPanel, "GameMenuButtonTemplate")
+	prev:SetWidth(70)
+	prev:SetHeight(22)
+	prev:SetPoint("BOTTOMLEFT", historyPanel, "BOTTOMLEFT", 18, 14)
+	prev:SetText("Prev")
+	prev:SetScript("OnClick", function()
+		if historyPage > 1 then historyPage = historyPage - 1 end
+		refresh_history()
+	end)
+
+	local next = CreateFrame("Button", "AuxVmangosPurchaseHistoryNext", historyPanel, "GameMenuButtonTemplate")
+	next:SetWidth(70)
+	next:SetHeight(22)
+	next:SetPoint("LEFT", prev, "RIGHT", 6, 0)
+	next:SetText("Next")
+	next:SetScript("OnClick", function()
+		local count = API.GetPurchaseHistoryCount and API.GetPurchaseHistoryCount() or 0
+		local pages = math.max(1, math.ceil(count / HISTORY_ROWS))
+		if historyPage < pages then historyPage = historyPage + 1 end
+		refresh_history()
+	end)
+
+	local refresh = CreateFrame("Button", "AuxVmangosPurchaseHistoryRefresh", historyPanel, "GameMenuButtonTemplate")
+	refresh:SetWidth(70)
+	refresh:SetHeight(22)
+	refresh:SetPoint("LEFT", next, "RIGHT", 6, 0)
+	refresh:SetText("Refresh")
+	refresh:SetScript("OnClick", function() refresh_history() end)
+
+	historyPanel.pageText = historyPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	historyPanel.pageText:SetPoint("LEFT", refresh, "RIGHT", 12, 0)
+	historyPanel.pageText:SetWidth(535)
+	historyPanel.pageText:SetJustifyH("LEFT")
+	historyPanel.pageText:SetText("")
+end
+
 local function create_panel()
 	if panel then return end
 
@@ -171,17 +310,24 @@ local function create_panel()
 		refresh_status()
 	end)
 
+	local historyButton = CreateFrame("Button", "AuxVmangosWatchHistoryButton", panel, "GameMenuButtonTemplate")
+	historyButton:SetWidth(88)
+	historyButton:SetHeight(24)
+	historyButton:SetPoint("LEFT", liveButton, "RIGHT", 6, 0)
+	historyButton:SetText("PURCHASES")
+	historyButton:SetScript("OnClick", function() AVM_WATCH_UI.ToggleHistory() end)
+
 	local refreshButton = CreateFrame("Button", "AuxVmangosWatchRefreshButton", panel, "GameMenuButtonTemplate")
-	refreshButton:SetWidth(80)
+	refreshButton:SetWidth(58)
 	refreshButton:SetHeight(24)
-	refreshButton:SetPoint("LEFT", liveButton, "RIGHT", 8, 0)
+	refreshButton:SetPoint("LEFT", historyButton, "RIGHT", 6, 0)
 	refreshButton:SetText("Refresh")
 	refreshButton:SetScript("OnClick", function() refresh_rows(); refresh_status() end)
 
 	local closeButton = CreateFrame("Button", "AuxVmangosWatchCloseButton", panel, "GameMenuButtonTemplate")
-	closeButton:SetWidth(70)
+	closeButton:SetWidth(50)
 	closeButton:SetHeight(24)
-	closeButton:SetPoint("LEFT", refreshButton, "RIGHT", 8, 0)
+	closeButton:SetPoint("LEFT", refreshButton, "RIGHT", 6, 0)
 	closeButton:SetText("Close")
 	closeButton:SetScript("OnClick", function() panel:Hide() end)
 
@@ -284,6 +430,17 @@ function AVM_WATCH_UI.Toggle()
 	end
 end
 
+function AVM_WATCH_UI.ToggleHistory()
+	create_history_panel()
+	if historyPanel:IsShown() then
+		historyPanel:Hide()
+	else
+		historyPage = 1
+		refresh_history()
+		historyPanel:Show()
+	end
+end
+
 local eventFrame = CreateFrame("Frame", "AuxVmangosWatchUIEvent")
 eventFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
 eventFrame:RegisterEvent("AUCTION_HOUSE_CLOSED")
@@ -300,5 +457,6 @@ eventFrame:SetScript("OnEvent", function()
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		if launcher then launcher:Hide() end
 		if panel then panel:Hide() end
+		if historyPanel then historyPanel:Hide() end
 	end
 end)

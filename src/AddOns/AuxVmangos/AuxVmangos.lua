@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.29-turtle-vendor-live"
+AVM_VERSION = "0.30-purchase-history-ui"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -95,6 +95,7 @@ AVM = {
 		flipExposureRejects = 0,
 		postscanCandidate = nil,
 		deMidScanHits = 0,
+		consumedAuctionKeys = {},
 	},
 	candidate = nil,
 	revalidatePages = nil,
@@ -218,6 +219,8 @@ local function avm_diag_record(msg)
 
 	local v = AVM.vendor or {}
 	d.version = AVM_VERSION
+	d.purchaseHistory = AVM_DB.purchaseHistory or {}
+	d.purchaseStats = AVM_DB.purchaseStats or { confirmed = 0, spend = 0, expectedProfit = 0 }
 	d.state = {
 		open = AVM.open and true or false,
 		live = AVM_DB.live and true or false,
@@ -299,6 +302,65 @@ local function avm_money(copper)
 	return c .. "c"
 end
 
+local function avm_purchase_route(c)
+	if not c then return "unknown" end
+	if c.route and c.route ~= "" then return tostring(c.route) end
+	if c.mode == "vendor" or c.mode == "fastvendor" or c.mode == "auxarb_vendor" then return "vendor" end
+	if c.mode == "auxarb_de" then return "disenchant" end
+	if c.mode == "auxarb_flip" then return "flip" end
+	return tostring(c.mode or "watch")
+end
+
+local function avm_purchase_source(c, route)
+	if not c then return "" end
+	if c.vendorSource and c.vendorSource ~= "" then return tostring(c.vendorSource) end
+	if route == "disenchant" then return "de-live" end
+	if route == "flip" then return "history+depth" end
+	return ""
+end
+
+function AVM_RecordPurchase(c, confirmation)
+	if not AVM_DB or not c then return end
+	if not AVM_DB.purchaseHistory then AVM_DB.purchaseHistory = {} end
+	if not AVM_DB.purchaseStats then AVM_DB.purchaseStats = { confirmed = 0, spend = 0, expectedProfit = 0 } end
+	AVM_DB.purchaseHistorySeq = (tonumber(AVM_DB.purchaseHistorySeq) or 0) + 1
+
+	local route = avm_purchase_route(c)
+	local buyout = tonumber(c.buyout) or 0
+	local value = tonumber(c.valuationTotal or c.vendorTotal or c.deValue) or 0
+	local profit = tonumber(c.profit) or (value - buyout)
+	local stamp = tostring(math.floor(GetTime() or 0))
+	if type(date) == "function" then stamp = date("%Y-%m-%d %H:%M:%S") end
+
+	local row = {
+		seq = AVM_DB.purchaseHistorySeq,
+		at = stamp,
+		confirmation = tostring(confirmation or "confirmed"),
+		route = route,
+		name = tostring(c.name or ""),
+		itemId = tonumber(c.itemId or c.item_id) or 0,
+		count = tonumber(c.count or c.aux_quantity) or 0,
+		buyout = buyout,
+		value = value,
+		profit = profit,
+		vendorUnit = tonumber(c.vendorUnit) or 0,
+		vendorTotal = tonumber(c.vendorTotal) or 0,
+		source = avm_purchase_source(c, route),
+		itemKey = tostring(c.itemKey or ""),
+	}
+	table.insert(AVM_DB.purchaseHistory, row)
+	while table.getn(AVM_DB.purchaseHistory) > 50 do table.remove(AVM_DB.purchaseHistory, 1) end
+
+	AVM_DB.purchaseStats.confirmed = (tonumber(AVM_DB.purchaseStats.confirmed) or 0) + 1
+	AVM_DB.purchaseStats.spend = (tonumber(AVM_DB.purchaseStats.spend) or 0) + buyout
+	AVM_DB.purchaseStats.expectedProfit = (tonumber(AVM_DB.purchaseStats.expectedProfit) or 0) + profit
+
+	if AVM_DB.diag then
+		AVM_DB.diag.purchaseHistory = AVM_DB.purchaseHistory
+		AVM_DB.diag.purchaseStats = AVM_DB.purchaseStats
+	end
+end
+
 local function avm_parse_money(text)
 	if not text then return nil end
 	text = string.lower(text)
@@ -351,6 +413,9 @@ local function avm_defaults()
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 0 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
+	if AVM_DB.purchaseHistory == nil then AVM_DB.purchaseHistory = {} end
+	if AVM_DB.purchaseHistorySeq == nil then AVM_DB.purchaseHistorySeq = 0 end
+	if AVM_DB.purchaseStats == nil then AVM_DB.purchaseStats = { confirmed = 0, spend = 0, expectedProfit = 0 } end
 	if AVM_DB.marketPacked == nil then AVM_DB.marketPacked = "" end
 	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
 	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 8 end
@@ -701,6 +766,60 @@ local function avm_recent(sig)
 		return false
 	end
 	return true
+end
+
+function AVM_AuxArbConsumedKey(record)
+	if not record then return "" end
+	local itemId = tonumber(record.itemId or record.item_id) or 0
+	local count = tonumber(record.count or record.aux_quantity) or 0
+	local buyout = tonumber(record.buyout or record.buyout_price) or 0
+	local quality = tonumber(record.quality) or -1
+	local level = tonumber(record.level) or 0
+	local owner = tostring(record.owner or "")
+	local itemKey = tostring(record.itemKey or "")
+	if itemKey == "" and itemId > 0 then itemKey = "item:" .. tostring(itemId) end
+	return tostring(record.name or "") .. "|" .. tostring(count) .. "|" .. tostring(buyout) .. "|" ..
+		owner .. "|" .. tostring(quality) .. "|" .. tostring(level) .. "|" .. itemKey
+end
+
+function AVM_AuxArbWasConsumed(record)
+	local a = AVM and AVM.auxArb
+	if not a or not a.consumedAuctionKeys then return false end
+	local key = AVM_AuxArbConsumedKey(record)
+	return key ~= "" and a.consumedAuctionKeys[key] == true
+end
+
+function AVM_AuxArbMarkConsumed(candidate)
+	local a = AVM and AVM.auxArb
+	if not a or not candidate then return end
+	local mode = tostring(candidate.mode or "")
+	if mode ~= "auxarb_vendor" and mode ~= "auxarb_de" and mode ~= "auxarb_flip" then return end
+	if not a.consumedAuctionKeys then a.consumedAuctionKeys = {} end
+	local key = AVM_AuxArbConsumedKey(candidate)
+	if key == "" then return end
+	a.consumedAuctionKeys[key] = true
+
+	-- A resumed logical scan deliberately keeps its accumulated DE/material/flip
+	-- books. Remove the exact purchased auction from retained DE rows and clear
+	-- any cached "best" pointer that still references it, otherwise a completed
+	-- scan can select the already-bought listing again after recent-TTL expires.
+	local kept = {}
+	for i = 1, table.getn(a.deRawCandidates or {}) do
+		local raw = a.deRawCandidates[i]
+		if AVM_AuxArbConsumedKey(raw) ~= key then table.insert(kept, raw) end
+	end
+	a.deRawCandidates = kept
+
+	local function clear_if_same(field)
+		local row = a[field]
+		if row and AVM_AuxArbConsumedKey(row) == key then a[field] = nil end
+	end
+	clear_if_same("deReadyPageBest")
+	clear_if_same("deBest")
+	clear_if_same("pageBest")
+	clear_if_same("bestSeen")
+	clear_if_same("flipBest")
+	clear_if_same("postscanCandidate")
 end
 
 local function avm_candidate_from_row(i)
@@ -2211,6 +2330,7 @@ end
 
 local function avm_de_raw_candidate(record)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
+	if AVM_AuxArbWasConsumed(record) then return nil end
 	if not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil end
 	if record.quality ~= 2 and record.quality ~= 3 and record.quality ~= 4 then return nil end
 	if not record.slot then return nil end
@@ -2235,6 +2355,7 @@ end
 
 local function avm_de_candidate_from_record(record, book)
 	if not record or not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil, "no-de-module" end
+	if AVM_AuxArbWasConsumed(record) then return nil, "consumed" end
 	if record.signature and avm_recent(record.signature) then return nil, "recent" end
 	local raw = avm_de_raw_candidate(record)
 	if not raw then
@@ -2372,6 +2493,7 @@ end
 
 local function avm_flip_record_candidate(record)
 	if not AVM_DB.flipEnabled or not record then return nil end
+	if AVM_AuxArbWasConsumed(record) then return nil end
 	local itemId = tonumber(record.item_id or record.itemId)
 	local count = tonumber(record.aux_quantity or record.count) or 0
 	local buyout = tonumber(record.buyout_price or record.buyout) or 0
@@ -2670,6 +2792,7 @@ end
 
 local function avm_auxarb_candidate_from_record(record, requiredMode)
 	if not AVM_DB.auxArbEnabled or not record then return nil end
+	if AVM_AuxArbWasConsumed(record) then return nil end
 	local buyout = tonumber(record.buyout_price) or 0
 	local count = tonumber(record.count or record.aux_quantity) or 0
 	if buyout <= 0 or count <= 0 then return nil end
@@ -2919,6 +3042,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipExposureRejects = 0
 		a.postscanCandidate = nil
 		a.deMidScanHits = 0
+		a.consumedAuctionKeys = {}
 		a.vendorDiag = AVM_VendorDiagNew(a.filterString)
 		AVM_VendorDiagSnapshot("scan-start")
 	end
@@ -4396,6 +4520,8 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
+			AVM_RecordPurchase(p.candidate, "confirmed")
+			AVM_AuxArbMarkConsumed(p.candidate)
 			avm_record_item_exposure(p.candidate)
 			AVM.recent[p.candidate.signature] = now + 15
 			if avm_is_auxarb_candidate(p.candidate) then
@@ -4443,6 +4569,8 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
+			AVM_RecordPurchase(u.candidate, "confirmed-late")
+			AVM_AuxArbMarkConsumed(u.candidate)
 			avm_record_item_exposure(u.candidate)
 			if avm_is_auxarb_candidate(u.candidate) then
 				avm_print("CONFIRMED_LATE AUX_ARB route=" .. tostring(u.candidate.route) .. " " .. u.candidate.name ..
@@ -4966,6 +5094,7 @@ local function avm_hard_stop(reason)
 	a.deVerify = nil
 	a.flipVerify = nil
 	a.postscanCandidate = nil
+	a.consumedAuctionKeys = {}
 
 	AVM.candidate = nil
 	AVM.revalidatePages = nil
@@ -5106,8 +5235,10 @@ local function avm_slash(msg)
 		avm_status()
 	elseif cmd == "gui" then
 		if AVM_WATCH_UI and AVM_WATCH_UI.Toggle then AVM_WATCH_UI.Toggle() else avm_print("WATCH GUI unavailable") end
+	elseif cmd == "history" then
+		if AVM_WATCH_UI and AVM_WATCH_UI.ToggleHistory then AVM_WATCH_UI.ToggleHistory() else avm_print("purchase history GUI unavailable") end
 	else
-		avm_print("/avm on|off | live on|off | status | gui | list | del N | pages N | budget 100g | maxbuys N")
+		avm_print("/avm on|off | live on|off | status | gui | history | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
 		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|hotpages 10|seekradius 1|targets")
 		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g")
@@ -5192,6 +5323,28 @@ AVM_WATCH_API = {
 		AVM_DB.live = true
 		AVM.uiGeneration = AVM.uiGeneration + 1
 		return true
+	end,
+	GetPurchaseHistoryCount = function()
+		avm_defaults()
+		return table.getn(AVM_DB.purchaseHistory or {})
+	end,
+	GetPurchaseHistory = function(index)
+		avm_defaults()
+		local h = AVM_DB.purchaseHistory or {}
+		local n = table.getn(h)
+		index = math.floor(tonumber(index) or 0)
+		if index < 1 or index > n then return nil end
+		return h[n - index + 1]
+	end,
+	GetPurchaseHistorySummary = function()
+		avm_defaults()
+		local s = AVM_DB.purchaseStats or {}
+		return {
+			confirmed = tonumber(s.confirmed) or 0,
+			spend = tonumber(s.spend) or 0,
+			expectedProfit = tonumber(s.expectedProfit) or 0,
+			retained = table.getn(AVM_DB.purchaseHistory or {}),
+		}
 	end,
 	GetState = function()
 		local rule = avm_active_rule()
@@ -5286,6 +5439,7 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.deMaterialBook = {}
 		AVM.auxArb.deVerify = nil
 		AVM.auxArb.postscanCandidate = nil
+		AVM.auxArb.consumedAuctionKeys = {}
 		AVM.auxArb.flipBook = {}
 		AVM.auxArb.flipBest = nil
 		AVM.auxArb.flipVerify = nil
