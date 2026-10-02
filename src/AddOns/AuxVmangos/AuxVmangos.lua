@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.41.1-autosell-focusfix"
+AVM_VERSION = "0.42-de-midscan-warm-v1"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -12,6 +12,7 @@ AVM_EXTRA_EVENT_WINDOW = 1.0
 AVM_TICK = 0.05
 AVM_WATCH_SLOTS = 16
 AVM_WATCH_MAX_PAGES = 100
+AVM_DE_WARM_CACHE_MAX_AGE = 900 -- prefilter only; every buy still gets exact live verification
 
 local AVM_AUX_CORE_OK, AVM_AUX_CORE = pcall(require, "aux")
 local AVM_AUX_INFO_OK, AVM_AUX_INFO = pcall(require, "aux.util.info")
@@ -88,6 +89,10 @@ AVM = {
 		deRawCandidates = {},
 		dePageRawCandidates = {},
 		deMaterialBook = {},
+		dePricingBook = {},
+		deWarmCacheLoaded = false,
+		deWarmCacheRows = 0,
+		deWarmHits = 0,
 		deWaitByMat = {},
 		deReadyPageBest = nil,
 		deWakeups = 0,
@@ -305,6 +310,9 @@ local function avm_diag_record(msg)
 		auxArbDeCandidates = AVM.auxArb and AVM.auxArb.deCandidates or 0,
 		auxArbDeRaw = AVM.auxArb and table.getn(AVM.auxArb.deRawCandidates or {}) or 0,
 		auxArbDeVerify = AVM.auxArb and AVM.auxArb.deVerify and true or false,
+		auxArbDeWarmLoaded = AVM.auxArb and AVM.auxArb.deWarmCacheLoaded and true or false,
+		auxArbDeWarmRows = AVM.auxArb and AVM.auxArb.deWarmCacheRows or 0,
+		auxArbDeWarmHits = AVM.auxArb and AVM.auxArb.deWarmHits or 0,
 		deDepthUnits = AVM_DB.deDepthUnits or 3,
 		deAhCutPct = AVM_DB.deAhCutPct or 5,
 		deSafetyMarginPct = AVM_DB.deSafetyMarginPct or 25,
@@ -623,6 +631,7 @@ local function avm_defaults()
 	if AVM_DB.deDepthUnits == nil then AVM_DB.deDepthUnits = 3 end
 	if AVM_DB.deAhCutPct == nil then AVM_DB.deAhCutPct = 5 end
 	if AVM_DB.deSafetyMarginPct == nil then AVM_DB.deSafetyMarginPct = 25 end
+	if type(AVM_DB.deWarmMaterialBook) ~= "table" then AVM_DB.deWarmMaterialBook = {} end
 	if AVM_DB.deExposureGuard == nil then AVM_DB.deExposureGuard = true end
 	if AVM_DB.deExposureMinEvPct == nil then AVM_DB.deExposureMinEvPct = 15 end
 	if AVM_DB.deExposureShareSoftPct == nil then AVM_DB.deExposureShareSoftPct = 20 end
@@ -2256,6 +2265,55 @@ local function avm_de_depth_price(book, itemId, depth)
 	return nil
 end
 
+-- A short-lived SavedVariables cache lets a new full scan value DE equipment
+-- before that scan encounters all required dust/essence/shard rows again.
+-- This is prefilter-only: every selected candidate still gets exact live
+-- material verification and an exact item requery before PlaceAuctionBid.
+local function avm_de_warm_cache_load()
+	local out = {}
+	local rows = 0
+	local depth = tonumber(AVM_DB.deDepthUnits) or 3
+	if depth < 1 then depth = 1 end
+	local now = type(time) == "function" and tonumber(time()) or 0
+	local saved = AVM_DB.deWarmMaterialBook
+	if type(saved) ~= "table" or now <= 0 then return out, rows end
+	for itemId,s in pairs(saved) do
+		local id = tonumber(itemId)
+		local floor = tonumber(s and s.floor) or 0
+		local seenAt = tonumber(s and s.seenAt) or 0
+		local savedDepth = tonumber(s and s.depth) or 0
+		local age = now - seenAt
+		if id and AVM_DE_MATERIAL_IDS[id] and floor > 0 and savedDepth == depth and
+		   age >= 0 and age <= AVM_DE_WARM_CACHE_MAX_AGE then
+			out[id] = {
+				name = tostring(s.name or ""), units = depth,
+				offers = { { unit = floor, count = depth } },
+				depthCache = {}, warm = true,
+			}
+			rows = rows + 1
+		end
+	end
+	return out, rows
+end
+
+local function avm_de_warm_publish(itemId, row, floor, depth)
+	itemId = tonumber(itemId)
+	floor = tonumber(floor) or 0
+	depth = tonumber(depth) or 0
+	local now = type(time) == "function" and tonumber(time()) or 0
+	if not itemId or not AVM_DE_MATERIAL_IDS[itemId] or not row or floor <= 0 or depth <= 0 or now <= 0 then return end
+	if type(AVM_DB.deWarmMaterialBook) ~= "table" then AVM_DB.deWarmMaterialBook = {} end
+	local old = AVM_DB.deWarmMaterialBook[itemId]
+	if old and tonumber(old.floor) == floor and tonumber(old.depth) == depth and
+	   tostring(old.name or "") == tostring(row.name or "") then
+		old.seenAt = now
+		return
+	end
+	AVM_DB.deWarmMaterialBook[itemId] = {
+		name = tostring(row.name or ""), floor = floor, depth = depth, seenAt = now,
+	}
+end
+
 local function avm_de_record_key(record, itemId)
 	local itemKey = ""
 	if record and record.index then itemKey = avm_item_link_key(record.index) end
@@ -2651,6 +2709,7 @@ local function avm_de_candidate_from_record(record, book)
 
 	local grossExpected, netExpected = 0, 0
 	local mats, seen = {}, {}
+	local usedWarm = false
 	for i = 1, table.getn(dist) do
 		local event = dist[i]
 		local matId = tonumber(event.item_id)
@@ -2658,6 +2717,7 @@ local function avm_de_candidate_from_record(record, book)
 		if not floorPrice or not row or not row.name or row.name == "" then
 			return nil, "no-depth:" .. tostring(matId)
 		end
+		if row.warm then usedWarm = true end
 		local p = tonumber(event.probability) or 0
 		local avgQty = ((tonumber(event.min_quantity) or 0) + (tonumber(event.max_quantity) or 0)) / 2
 		local netUnit = math.floor(floorPrice * (100 - cutPct) / 100)
@@ -2755,6 +2815,7 @@ local function avm_de_candidate_from_record(record, book)
 		deExposureMaxSharePct = maxOwnSharePct, deExposureMaxOwnUnits = maxOwnUnits,
 		deMaxEntry = maxEntry, materials = mats,
 		deSource = deSource, disenchantId = disenchantId or 0,
+		deWarmPrefilter = usedWarm,
 	}, nil
 end
 
@@ -2778,9 +2839,10 @@ end
 
 local function avm_de_consider_live_raw(a, raw)
 	if not a or not raw or not AVM_DB.auxArbLive then return nil end
-	local de, reason = avm_de_candidate_from_record(raw, a.deMaterialBook)
+	local de, reason = avm_de_candidate_from_record(raw, a.dePricingBook or a.deMaterialBook)
 	if de then
 		raw._avmWaitMat = nil
+		if de.deWarmPrefilter then a.deWarmHits = (a.deWarmHits or 0) + 1 end
 		local liveOk = avm_auxarb_live_purchase_ok(de)
 		if liveOk and avm_auxarb_candidate_better(de, a.deReadyPageBest) then
 			a.deReadyPageBest = de
@@ -3841,6 +3903,9 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.deRawCandidates = {}
 		a.dePageRawCandidates = {}
 		a.deMaterialBook = {}
+		a.dePricingBook, a.deWarmCacheRows = avm_de_warm_cache_load()
+		a.deWarmCacheLoaded = (tonumber(a.deWarmCacheRows) or 0) > 0
+		a.deWarmHits = 0
 		a.deWaitByMat = {}
 		a.deReadyPageBest = nil
 		a.deWakeups = 0
@@ -3871,6 +3936,10 @@ function AVM_AuxArbScanStart(resume, filterString)
 		AVM_VendorDiagSnapshot("scan-start")
 	end
 	if a.active then
+		if not keepScanBook and a.deWarmCacheLoaded then
+			avm_print("DE_WARM_CACHE loaded rows=" .. tostring(a.deWarmCacheRows or 0) ..
+				" ttl=" .. tostring(AVM_DE_WARM_CACHE_MAX_AGE) .. "s prefilter-only")
+		end
 		avm_print("AUX_SCAN_START resume=" .. tostring(keepScanBook and true or false))
 		avm_print((keepScanBook and "AUX_ARB_SCAN resume" or "AUX_ARB_SCAN start") ..
 			" live=" .. tostring(AVM_DB.auxArbLive) ..
@@ -3906,6 +3975,13 @@ function AVM_AuxArbAuction(record)
 		-- Wake only candidates that explicitly waited on the material whose depth
 		-- just became usable. This avoids an O(all-candidates x all-pages) rescan.
 		if matRow and (tonumber(matRow.units) or 0) >= depth then
+			local floor = avm_de_depth_price(a.deMaterialBook, matId, depth)
+			if floor then
+				if not a.dePricingBook then a.dePricingBook = {} end
+				matRow.warm = false
+				a.dePricingBook[matId] = matRow
+				avm_de_warm_publish(matId, matRow, floor, depth)
+			end
 			avm_de_recheck_waiters(a, matId)
 		end
 	end
@@ -4005,6 +4081,7 @@ function AVM_AuxArbPageDone(page, lastPage)
 			" " .. tostring(selected.name) ..
 			" buy=" .. avm_money(selected.buyout or 0) ..
 			" profit=" .. avm_money(selected.profit or 0) ..
+			" prefilter=" .. tostring(selected.deWarmPrefilter and "warm" or "current") ..
 			" -> interrupt now after current page/live material verify")
 	else
 		AVM_VendorDiagLifecycle("PAUSE_REQUEST", selected, "")

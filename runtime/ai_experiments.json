@@ -5154,6 +5154,29 @@
       "tests": [],
       "package": null,
       "notes": "User screenshot shows AuxVmangos_AutoSell.lua:904 attempt to call method 'HasFocus' (a nil value) when the AutoSell tab refreshes. Upstream AUX gui.editbox for the pinned 1.12 addon explicitly tracks edit focus in editbox.focused and does not provide HasFocus(). Replace all three AutoSell HasFocus calls with the upstream .focused flag. No AutoSell economics, cancel/repost logic, scheduler ownership or AH transport behavior changes."
+    },
+    {
+      "id": "ah-de-midscan-warm-pricing-v1",
+      "branch": "feature/ah-de-midscan-warm-pricing-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-owner-history-speed-v1",
+        "ah-resume-transaction-race-v1",
+        "auxfast-upvalue-v36-regression-fix"
+      ],
+      "shared_resources": [
+        "AUX_ARB DE page-hit pause/revalidate/buy lifecycle",
+        "full-scan disenchant material depth book",
+        "AVM SavedVariables short-lived DE material prefilter cache"
+      ],
+      "status": "in_progress",
+      "observed_head": "8f30dd407b5b9c9b97d8142f91c7de81aa73edce",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User reports profitable DE auctions are not bought during the full AUX scan and are gone by the post-scan retry. Root cause: mid-scan DE preselection currently requires the same logical scan to have already accumulated depth for every expected dust/essence/shard; early equipment becomes a waiter and often only turns actionable near ScanDone. V1 seeds each fresh scan from a <=15 minute per-material depth-floor cache learned from prior scans, immediately supersedes cached rows when current-scan depth arrives, and uses the cache only to decide whether to pause. Every selected DE candidate still performs exact live material revalidation plus exact item requery before PlaceAuctionBid. DE depth, cut, profit, margin, exposure and purchase-confirmation rules are unchanged."
     }
   ]
 }
