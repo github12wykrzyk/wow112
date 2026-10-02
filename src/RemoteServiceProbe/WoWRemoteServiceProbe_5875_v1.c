@@ -206,16 +206,22 @@ static void restore_send_hook(void){
 }
 
 static PacketSnap* choose_learn_packet(u32 now){
-    u32 k;
+    u32 k;PacketSnap*bestLive=0;PacketSnap*bestAny=0;
     for(k=0;k<RING_COUNT;k++){
-        u32 idx=(g_ringWrite-1u-k)%RING_COUNT;PacketSnap*q=&g_ring[idx];u64 guid;
+        u32 idx=(g_ringWrite-1u-k)%RING_COUNT;PacketSnap*q=&g_ring[idx];u64 guid;u32 obj;
         if(!q->tick||now-q->tick>LEARN_WINDOW_MS)break;
         if(q->len<12u)continue;
         guid=*(u64*)(q->data+4u);
         log_packet("LEARN_CANDIDATE",q);
-        if(guid!=0u)return q;
+        if(!guid)continue;
+        obj=((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(guid);
+        if(valid_ptr(obj)){
+            if(!bestLive || q->len<bestLive->len || (q->len==bestLive->len && q->tick>bestLive->tick))bestLive=q;
+        }else{
+            if(!bestAny || q->len<bestAny->len || (q->len==bestAny->len && q->tick>bestAny->tick))bestAny=q;
+        }
     }
-    return 0;
+    return bestLive?bestLive:bestAny;
 }
 static void learn_service(int ix,u32 now){
     PacketSnap*q=choose_learn_packet(now);ServiceSnap*s;if(ix<0||ix>2)return;s=&g_services[ix];
@@ -231,14 +237,20 @@ static void learn_service(int ix,u32 now){
 static void send_learned(int ix,u32 now,u32 eventSeq){
     ServiceSnap*s;DataStore5875 p;u8 local[MAX_PACKET];u32 i,obj,pl,d100;
     if(ix<0||ix>2)return;s=&g_services[ix];
+    if(g_activeTest>=0){log_line("TEST_REFUSED another service test is still active");return;}
     if(!s->learned||!s->len||!valid_ptr(g_nextSend)){log_line("TEST_REFUSED service not learned or send chain invalid");return;}
+    lua_exec("W112_RSP_LAST_ERROR=''","RemoteServiceProbeClearError");
     for(i=0;i<s->len;i++)local[i]=s->data[i];
     obj=((GetObjectByGuidFn)(u32)WOW_GET_OBJECT_BY_GUID)(s->guid);pl=player_ptr();d100=dist100(pl,obj);
     {
-      char b[360],*x=b;x=cat(x,"TEST_SEND service=");x=cat(x,s->name);x=cat(x," t=");x=dec(x,now);
+      char b[640],*x=b;x=cat(x,"TEST_SEND service=");x=cat(x,s->name);x=cat(x," t=");x=dec(x,now);
       x=cat(x," op=0x");x=hex32(x,s->opcode);x=cat(x," len=");x=dec(x,s->len);
       x=cat(x," object=0x");x=hex32(x,obj);x=cat(x," objType=");x=dec(x,valid_ptr(obj)?read32(obj+OBJ_TYPE_ID):0u);
-      x=cat(x," dist2x100=");x=dec(x,d100);x=cat(x," zone=");x=cat(x,lua_text("W112_RSP_ZONE")?lua_text("W112_RSP_ZONE"):"?");
+      x=cat(x," dist2x100=");x=dec(x,d100);
+      x=cat(x," playerXYZbits=");x=hex32(x,fbits(pl,OBJ_POS_X));*x++='/';x=hex32(x,fbits(pl,OBJ_POS_Y));*x++='/';x=hex32(x,fbits(pl,OBJ_POS_Z));
+      x=cat(x," objectXYZbits=");x=hex32(x,fbits(obj,OBJ_POS_X));*x++='/';x=hex32(x,fbits(obj,OBJ_POS_Y));*x++='/';x=hex32(x,fbits(obj,OBJ_POS_Z));
+      x=cat(x," learnXYZbits=");x=hex32(x,s->learnPx);*x++='/';x=hex32(x,s->learnPy);*x++='/';x=hex32(x,s->learnPz);
+      x=cat(x," zone=");x=cat(x,lua_text("W112_RSP_ZONE")?lua_text("W112_RSP_ZONE"):"?");
       x=cat(x," subzone=");x=cat(x,lua_text("W112_RSP_SUBZONE")?lua_text("W112_RSP_SUBZONE"):"?");*x=0;log_line(b);
     }
     p.owner=s->owner;p.data=local;p.cursor=0u;p.capacity=MAX_PACKET;p.size=s->len;p.reserved=0u;
@@ -267,6 +279,7 @@ static void process_event(u32 now){
     const char*seqs=lua_text("W112_RSP_EVENT_SEQ"),*svc=lua_text("W112_RSP_EVENT_SERVICE"),*err=lua_text("W112_RSP_LAST_ERROR");u32 seq=parse_u32(seqs);int ix=service_index(svc);
     if(!seq||seq==g_lastEventSeq)return;g_lastEventSeq=seq;
     if(ix>=0){
+        {char b[220],*p=b;p=cat(p,"SERVICE_EVENT service=");p=cat(p,g_services[ix].name);p=cat(p," t=");p=dec(p,now);p=cat(p," seq=");p=dec(p,seq);*p=0;log_line(b);}
         if(g_activeTest==ix && g_services[ix].lastSendAt && seq>g_services[ix].eventSeqAtSend){
             ServiceSnap*s=&g_services[ix];s->successes++;s->lastResult=1u;s->lastResultAt=now;g_activeTest=-1;
             {char b[280],*p=b;p=cat(p,"TEST_SUCCESS service=");p=cat(p,s->name);p=cat(p," latencyMs=");p=dec(p,now-s->lastSendAt);p=cat(p," error=");p=cat(p,err?err:"");*p=0;log_line(b);}
@@ -296,29 +309,7 @@ static void install_lua(void){
       " local s=nil;if event=='BANKFRAME_OPENED' then s='bank' elseif event=='MAIL_SHOW' then s='mail' elseif event=='AUCTION_HOUSE_SHOW' then s='ah' end;"
       " if s then W112_RSP_EVENT_SERVICE=s;W112_RSP_EVENT_SEQ=(W112_RSP_EVENT_SEQ or 0)+1 end end);"
       "SLASH_W112RSP1='/rsp';SlashCmdList['W112RSP']=function(msg) "
-      " local _,_,c,a=string.find(msg or '','^(%S+)%s*(.-)%s*
-      " if c=='arm' or c=='test' or c=='reset' or c=='status' or c=='dump' then "
-      "  W112_RSP_ZONE=(GetZoneText and GetZoneText()) or '';W112_RSP_SUBZONE=(GetSubZoneText and GetSubZoneText()) or '';"
-      "  W112_RSP_CMD=c;W112_RSP_ARG=a;W112_RSP_CMD_SEQ=(W112_RSP_CMD_SEQ or 0)+1;"
-      "  if c=='arm' then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r armed '..a..' - open it normally once') "
-      "  elseif c=='test' then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r replay '..a..' sent/queued') "
-      "  elseif c=='reset' then DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r reset '..a) end "
-      " else DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RSP]|r /rsp arm|test|reset bank|mail|ah, /rsp status, /rsp dump') end end;"
-      "DEFAULT_CHAT_FRAME:AddMessage('|cff66ccff[RemoteServiceProbe]|r loaded. Learn nearby with /rsp arm bank|mail|ah');";
-    lua_exec(script,"RemoteServiceProbeInit");
-}
-BOOL32 STDCALL DllMain(void*h,u32 reason,void*r){
-    (void)h;(void)r;
-    if(reason==DLL_PROCESS_ATTACH){
-        log_line("=== RemoteServiceProbe attach build=5875 v1 ===");
-        if(!install_send_hook()){log_line("FATAL send hook install failed");return 1;}
-        install_lua();g_timer=SetTimer(0,0,TIMER_MS,(void*)&timer_proc);g_installed=1u;
-    }else if(reason==DLL_PROCESS_DETACH){
-        if(g_timer)KillTimer(0,g_timer);restore_send_hook();log_line("=== RemoteServiceProbe detach ===");
-    }
-    return 1;
-}
-);c=string.lower(c or 'status');a=string.lower(a or '');"
+      " local _,_,c,a=string.find(msg or '','^(%S+)%s*(.-)%s*$');c=string.lower(c or 'status');a=string.lower(a or '');"
       " if c=='arm' or c=='test' or c=='reset' or c=='status' or c=='dump' then "
       "  W112_RSP_ZONE=(GetZoneText and GetZoneText()) or '';W112_RSP_SUBZONE=(GetSubZoneText and GetSubZoneText()) or '';"
       "  W112_RSP_CMD=c;W112_RSP_ARG=a;W112_RSP_CMD_SEQ=(W112_RSP_CMD_SEQ or 0)+1;"
