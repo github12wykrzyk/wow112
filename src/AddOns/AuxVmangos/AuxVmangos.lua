@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.37-resume-retry"
+AVM_VERSION = "0.38-history-age-diag"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -103,6 +103,7 @@ AVM = {
 		flipEvaluated = 0,
 		flipRejectReasons = {},
 		flipRejectSamples = {},
+		flipHistoryAge = {},
 		stackBest = nil,
 		stackCandidates = 0,
 		stackNoDepth = 0,
@@ -267,6 +268,7 @@ local function avm_diag_record(msg)
 		candidates = AVM.auxArb and AVM.auxArb.flipCandidates or 0,
 		reasons = AVM.auxArb and AVM.auxArb.flipRejectReasons or {},
 		samples = AVM.auxArb and AVM.auxArb.flipRejectSamples or {},
+		historyAge = AVM.auxArb and AVM.auxArb.flipHistoryAge or {},
 	}
 	d.state = {
 		open = AVM.open and true or false,
@@ -325,6 +327,12 @@ local function avm_diag_record(msg)
 		flipRejectRecent = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["recent"] or 0) or 0,
 		flipRejectItemBudget = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["item-budget"] or 0) or 0,
 		flipRejectItemBuyCap = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["item-buy-cap"] or 0) or 0,
+		flipHistoryPoints0 = AVM.auxArb and AVM.auxArb.flipHistoryAge and (AVM.auxArb.flipHistoryAge.points0 or 0) or 0,
+		flipHistoryPoints1 = AVM.auxArb and AVM.auxArb.flipHistoryAge and (AVM.auxArb.flipHistoryAge.points1 or 0) or 0,
+		flipHistoryPoints2 = AVM.auxArb and AVM.auxArb.flipHistoryAge and (AVM.auxArb.flipHistoryAge.points2 or 0) or 0,
+		flipHistoryPoints3Plus = AVM.auxArb and AVM.auxArb.flipHistoryAge and (AVM.auxArb.flipHistoryAge.points3plus or 0) or 0,
+		flipHistoryOldestPoint = AVM.auxArb and AVM.auxArb.flipHistoryAge and (AVM.auxArb.flipHistoryAge.oldestPoint or 0) or 0,
+		flipHistoryNewestPoint = AVM.auxArb and AVM.auxArb.flipHistoryAge and (AVM.auxArb.flipHistoryAge.newestPoint or 0) or 0,
 		deExposureActive = AVM.deExposure and AVM.deExposure.active and true or false,
 		deExposureReady = AVM.deExposure and AVM.deExposure.ready and true or false,
 		deExposurePage = AVM.deExposure and AVM.deExposure.page or 0,
@@ -2439,15 +2447,36 @@ end
 
 local function avm_flip_history_value(record, itemId)
 	local key = avm_flip_history_key(record, itemId)
-	if not AVM_AUX_HISTORY_OK or not AVM_AUX_HISTORY or not AVM_AUX_HISTORY.value then return nil, 0, key end
+	if not AVM_AUX_HISTORY_OK or not AVM_AUX_HISTORY or not AVM_AUX_HISTORY.value then
+		return nil, 0, key, 0, 0
+	end
 	local ok, value = pcall(AVM_AUX_HISTORY.value, key)
-	if not ok then return nil, 0, key end
-	local days = 0
+	if not ok then return nil, 0, key, 0, 0 end
+	local days, oldestPoint, newestPoint = 0, 0, 0
 	if AVM_AUX_HISTORY.data_points then
 		local okPoints, points = pcall(AVM_AUX_HISTORY.data_points, key)
-		if okPoints and type(points) == "table" then days = table.getn(points) end
+		if okPoints and type(points) == "table" then
+			days = table.getn(points)
+			for i = 1, days do
+				local ts = tonumber(points[i] and points[i].time) or 0
+				if ts > 0 then
+					if oldestPoint == 0 or ts < oldestPoint then oldestPoint = ts end
+					if ts > newestPoint then newestPoint = ts end
+				end
+			end
+		end
 	end
-	return tonumber(value), days, key
+	return tonumber(value), days, key, oldestPoint, newestPoint
+end
+
+local function avm_history_date(ts)
+	ts = tonumber(ts) or 0
+	if ts <= 0 then return "none" end
+	if type(date) == "function" then
+		local ok, value = pcall(date, "%Y-%m-%d %H:%M:%S", ts)
+		if ok and value then return tostring(value) end
+	end
+	return tostring(ts)
 end
 
 local function avm_auxarb_signature_from_record(record)
@@ -2733,7 +2762,7 @@ local function avm_flip_record_candidate(record)
 	if quality == 0 then return nil end
 	if record.owner and record.owner == UnitName("player") then return nil end
 	local itemKey = avm_de_record_key(record, itemId)
-	local histValue, histDays, historyKey = avm_flip_history_value(record, itemId)
+	local histValue, histDays, historyKey, histOldestPoint, histNewestPoint = avm_flip_history_value(record, itemId)
 	local sig = avm_signature_no_owner(record.name, count, buyout, quality, record.level, itemKey)
 	return {
 		name = record.name, item_id = itemId, itemId = itemId,
@@ -2741,6 +2770,7 @@ local function avm_flip_record_candidate(record)
 		quality = quality, level = record.level, max_stack = maxStack, maxStack = maxStack,
 		owner = record.owner, itemKey = itemKey, signature = sig,
 		historyKey = historyKey, bookKey = historyKey, histValue = histValue, histDays = histDays,
+		histOldestPoint = histOldestPoint, histNewestPoint = histNewestPoint,
 		page = tonumber(record.page) or AVM.queryPage or 0,
 		sourcePage = tonumber(record.page) or AVM.queryPage or 0,
 		unitExact = tonumber(record.unit_buyout_price) or (buyout / count),
@@ -2918,10 +2948,53 @@ local function avm_flip_best_from_book(book)
 	a.flipEvaluated = 0
 	a.flipRejectReasons = {}
 	a.flipRejectSamples = {}
+	a.flipHistoryAge = {
+		keys = 0, withValue = 0, withoutValue = 0,
+		points0 = 0, points1 = 0, points2 = 0, points3plus = 0,
+		oldestPoint = 0, newestPoint = 0, oldestName = "", oldestKey = "",
+		samples = {},
+	}
 	for _,row in pairs(book or {}) do
 		if row.cheapest then
 			a.flipEvaluated = a.flipEvaluated + 1
 			local raw = row.cheapest
+			local ha = a.flipHistoryAge
+			ha.keys = ha.keys + 1
+			if (tonumber(raw.histValue) or 0) > 0 then ha.withValue = ha.withValue + 1 else ha.withoutValue = ha.withoutValue + 1 end
+			local hd = tonumber(raw.histDays) or 0
+			local bucket
+			if hd <= 0 then
+				ha.points0 = ha.points0 + 1
+				bucket = "points0"
+			elseif hd == 1 then
+				ha.points1 = ha.points1 + 1
+				bucket = "points1"
+			elseif hd == 2 then
+				ha.points2 = ha.points2 + 1
+				bucket = "points2"
+			else
+				ha.points3plus = ha.points3plus + 1
+				bucket = "points3plus"
+			end
+			if not ha.samples[bucket] then
+				ha.samples[bucket] = {
+					name = tostring(raw.name or ""),
+					itemId = tonumber(raw.itemId or raw.item_id) or 0,
+					historyKey = tostring(raw.historyKey or ""),
+					histValue = tonumber(raw.histValue) or 0,
+					histDays = hd,
+					oldestPoint = tonumber(raw.histOldestPoint) or 0,
+					newestPoint = tonumber(raw.histNewestPoint) or 0,
+				}
+			end
+			local oldest = tonumber(raw.histOldestPoint) or 0
+			local newest = tonumber(raw.histNewestPoint) or 0
+			if oldest > 0 and (ha.oldestPoint == 0 or oldest < ha.oldestPoint) then
+				ha.oldestPoint = oldest
+				ha.oldestName = tostring(raw.name or "")
+				ha.oldestKey = tostring(raw.historyKey or "")
+			end
+			if newest > ha.newestPoint then ha.newestPoint = newest end
 			local fc, reason = avm_flip_candidate_from_raw(raw, book)
 			if fc then
 				candidates = candidates + 1
@@ -3707,6 +3780,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipEvaluated = 0
 		a.flipRejectReasons = {}
 		a.flipRejectSamples = {}
+		a.flipHistoryAge = {}
 		a.stackBest = nil
 		a.stackCandidates = 0
 		a.stackNoDepth = 0
@@ -4001,6 +4075,39 @@ function AVM_AuxArbScanDone()
 			" stackNoDepth=" .. tostring(a.stackNoDepth or 0) ..
 			" bidCandidates=" .. tostring(a.bidCandidates or 0) ..
 			" filteredRecords=" .. tostring(a.filteredRecords or 0))
+	end
+
+	local ha = a.flipHistoryAge or {}
+	avm_print("AUX_HISTORY_DIAG keys=" .. tostring(ha.keys or 0) ..
+		" withValue=" .. tostring(ha.withValue or 0) ..
+		" withoutValue=" .. tostring(ha.withoutValue or 0) ..
+		" points0=" .. tostring(ha.points0 or 0) ..
+		" points1=" .. tostring(ha.points1 or 0) ..
+		" points2=" .. tostring(ha.points2 or 0) ..
+		" points3plus=" .. tostring(ha.points3plus or 0) ..
+		" oldest=" .. avm_history_date(ha.oldestPoint) ..
+		" newest=" .. avm_history_date(ha.newestPoint) ..
+		" oldestItem=" .. tostring(ha.oldestName or "") ..
+		" oldestKey=" .. tostring(ha.oldestKey or ""))
+	if AVM_DB.diag then
+		AVM_DB.diag.auxHistory = {
+			available = AVM_AUX_HISTORY_OK and AVM_AUX_HISTORY and AVM_AUX_HISTORY.value and true or false,
+			keys = ha.keys or 0,
+			withValue = ha.withValue or 0,
+			withoutValue = ha.withoutValue or 0,
+			points0 = ha.points0 or 0,
+			points1 = ha.points1 or 0,
+			points2 = ha.points2 or 0,
+			points3plus = ha.points3plus or 0,
+			oldestPoint = ha.oldestPoint or 0,
+			newestPoint = ha.newestPoint or 0,
+			oldestDate = avm_history_date(ha.oldestPoint),
+			newestDate = avm_history_date(ha.newestPoint),
+			oldestName = ha.oldestName or "",
+			oldestKey = ha.oldestKey or "",
+			samples = ha.samples or {},
+			minHistoryDays = tonumber(AVM_DB.flipMinHistoryDays) or 2,
+		}
 	end
 
 	local fr = a.flipRejectReasons or {}
