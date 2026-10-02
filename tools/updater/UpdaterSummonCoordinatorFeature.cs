@@ -244,16 +244,16 @@ namespace WoW112Updater
         private static List<SummonCoordinatorRouteConfig> DefaultSummonRoutes()
         {
             return new List<SummonCoordinatorRouteConfig> {
-                new SummonCoordinatorRouteConfig { Id = "hyjal", Slot = 1 },
-                new SummonCoordinatorRouteConfig { Id = "hydraxian", Slot = 2 },
-                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 4 }
+                new SummonCoordinatorRouteConfig { Id = "hydraxian", Slot = 1 },
+                new SummonCoordinatorRouteConfig { Id = "hyjal", Slot = 2 },
+                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 3 }
             };
         }
 
         private static SummonCoordinatorConfig DefaultSummonCoordinatorConfig()
         {
             return new SummonCoordinatorConfig {
-                Version = 3, WorkerAId = "", WorkerBId = "",
+                Version = 4, WorkerAId = "", WorkerBId = "",
                 Routes = DefaultSummonRoutes(), AutoEnabled = true
             };
         }
@@ -357,7 +357,7 @@ namespace WoW112Updater
                 if (!File.Exists(path)) return fallback;
                 if (new FileInfo(path).Length > 65536) return fallback;
                 var cfg = new JavaScriptSerializer().Deserialize<SummonCoordinatorConfig>(File.ReadAllText(path, Encoding.UTF8));
-                if (cfg == null || cfg.Version < 1 || cfg.Version > 3) return fallback;
+                if (cfg == null || cfg.Version < 1 || cfg.Version > 4) return fallback;
 
                 if (cfg.Version < 3)
                 {
@@ -365,10 +365,27 @@ namespace WoW112Updater
                     var hyjal = cfg.HyjalSlot >= 1 && cfg.HyjalSlot <= 10 ? cfg.HyjalSlot : 1;
                     var hydraxian = cfg.HydraxianSlot >= 1 && cfg.HydraxianSlot <= 10 ? cfg.HydraxianSlot : 2;
                     cfg.Routes = DefaultSummonRoutes();
-                    cfg.Routes[0].Slot = hyjal;
-                    cfg.Routes[1].Slot = hydraxian;
-                    cfg.Version = 3;
+                    if (!(hyjal == 1 && hydraxian == 2))
+                    {
+                        cfg.Routes.First(r => r.Id == "hyjal").Slot = hyjal;
+                        cfg.Routes.First(r => r.Id == "hydraxian").Slot = hydraxian;
+                    }
                     if (oldVersion == 1) cfg.AutoEnabled = true;
+                    cfg.Version = 4;
+                }
+                else if (cfg.Version == 3 && cfg.Routes != null)
+                {
+                    var h = cfg.Routes.FirstOrDefault(r => r != null && string.Equals(r.Id, "hyjal", StringComparison.OrdinalIgnoreCase));
+                    var a = cfg.Routes.FirstOrDefault(r => r != null && string.Equals(r.Id, "hydraxian", StringComparison.OrdinalIgnoreCase));
+                    var w = cfg.Routes.FirstOrDefault(r => r != null && string.Equals(r.Id, "winterspring", StringComparison.OrdinalIgnoreCase));
+                    var slot3Used = cfg.Routes.Any(r => r != null && r.Slot == 3);
+                    if (h != null && a != null && w != null && h.Slot == 1 && a.Slot == 2 && w.Slot == 4 && !slot3Used)
+                    {
+                        a.Slot = 1;
+                        h.Slot = 2;
+                        w.Slot = 3;
+                    }
+                    cfg.Version = 4;
                 }
 
                 if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
@@ -385,7 +402,7 @@ namespace WoW112Updater
             if (cfg == null) return;
             if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
             ValidateSummonRoutes(cfg.Routes);
-            cfg.Version = 3;
+            cfg.Version = 4;
             var hyjal = cfg.Routes.FirstOrDefault(r => r != null && r.Id == "hyjal");
             var hydraxian = cfg.Routes.FirstOrDefault(r => r != null && r.Id == "hydraxian");
             cfg.HyjalSlot = hyjal == null ? 0 : hyjal.Slot;
@@ -901,7 +918,7 @@ namespace WoW112Updater
                     routes,
                     new Label { Text = "Ręczny test trasy:", Left = 20, Top = 225, Width = 180 },
                     routePicker, prepare, refresh, auto, close, output,
-                    new Label { Text = "V3: jedna wspólna para slave obsługuje dowolną liczbę summonerów FIFO. Default: hyjal=1, hydraxian=2, winterspring=4.", Left = 20, Top = 478, Width = 720 }
+                    new Label { Text = "V4: jedna wspólna para slave obsługuje summonerów FIFO. Default: hydraxian=1, hyjal=2, winterspring=3.", Left = 20, Top = 478, Width = 720 }
                 });
 
                 Action save = delegate {

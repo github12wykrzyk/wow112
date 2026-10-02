@@ -591,7 +591,19 @@ A new `tools/verify_summonscout_lua_upvalues.py` gate is also part of Parallel f
 
 - Re-enables the updater handshake before Ritual: a fixed-location summoner publishes its canonical service id and waits for the shared slave pair to report READY 2/2.
 - The native protocol no longer hard-codes Hyjal/Hydraxian numeric destinations. It publishes a deterministic key of any canonical SummonScout service id, so future locations do not require another native protocol change.
-- Updater Coordinator V3 maps arbitrary canonical service ids to character slots. Defaults are hyjal=1, hydraxian=2 and winterspring=4; additional routes are editable as `location=slot`.
+- Updater Coordinator maps arbitrary canonical service ids to character slots. Current shared-slave layout defaults to hydraxian=1 (Azshara), hyjal=2 and winterspring=3; additional routes are editable as `location=slot`.
 - Multiple summoners share the same two worker accounts. Pending requests are selected oldest-first; while one lease is active, the other summoners stay in `coord-wait` instead of recycling their request.
 - SummonScout's transaction watchdog is extended for shared-worker arbitration. Once READY 2/2 is granted, the existing native Ritual bridge casts and the coordinator retains the lease until both slave portal-click counters advance or the lease times out.
 - Winterspring was already a canonical SummonScout destination; V1.58 makes it routable through the same generic slave-slot mechanism rather than adding a special-case parser path.
+
+
+### Coordinator V4 slot-layout correction
+
+Current three-summoner physical layout:
+- slot 1: Hydraxian / Azshara,
+- slot 2: Hyjal,
+- slot 3: Winterspring.
+
+Updater config schema V4 uses these values for new configurations. An untouched V3 default (`hyjal=1, hydraxian=2, winterspring=4`) is migrated automatically to the current 1/2/3 layout. Customized V3 route sets are preserved.
+
+The manual route test only commands both shared workers to switch to the selected route slot and waits for READY 2/2. It does not invite a customer, cast Ritual of Summoning, click a portal, or record a payment; it is a safe transport/readiness diagnostic for the two slave clients.

@@ -4121,12 +4121,38 @@
         "CharacterSwitchDiag FAST slot switch",
         "SummonScout W112_AUTOSUMMON destination/request handshake"
       ],
-      "status": "in_progress",
-      "observed_head": "9c03e79656019459f827ab98267c2ed4d8d30e71",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Generic Coordinator V3 experiment. Re-enable READY 2/2 gating, replace hard-coded Hyjal/Hydraxian destination enum with deterministic canonical-location keys, migrate updater config to arbitrary location=slot routes, add default winterspring=4, and keep multiple summoners queued oldest-first on one shared two-account slave pair. Gameplay evidence is intentionally absent until an exact packaged SHA is tested."
+      "status": "awaiting_game_test",
+      "observed_head": "7826b91b571ec0ba1f34665724ded957a3317789",
+      "verified_commit": "7826b91b571ec0ba1f34665724ded957a3317789",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "7826b91b571ec0ba1f34665724ded957a3317789",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 36990877426 passed on exact feature SHA; integrated Build work candidate run 36990982939 passed on exact parallel SHA, including FINAL_PACKAGE and candidate provenance gates."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "7826b91b571ec0ba1f34665724ded957a3317789",
+          "date": "2026-10-02",
+          "evidence": "Build WoW112 updater run 36990982851 passed on exact parallel SHA and produced the x86 updater artifact."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "7826b91b571ec0ba1f34665724ded957a3317789",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11219118331; updater artifact 11219965225."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "7826b91b571ec0ba1f34665724ded957a3317789",
+        "artifact_id": 11219118331
+      },
+      "notes": "Generic Coordinator V3 is integrated and packaged. Gameplay validation remains pending. The originally shipped V3 defaults were hyjal=1, hydraxian=2, winterspring=4; follow-up summon-coordinator-slot-layout-v4 corrects the actual three-summoner layout."
     },
     {
       "id": "ah-purchase-history-ui",
@@ -4175,6 +4201,26 @@
         "artifact_id": 11219633243
       },
       "notes": "Persist the last 50 confirmed purchases only after exact money-delta confirmation. Store route, item id/name, stack count, buyout, valuation, expected profit, vendor unit/total when applicable and valuation source. Maintain cumulative confirmed/spend/expected-profit stats beyond the 50-row retention window. Mirror history/stats into diagnostics so updater reports retain exact transaction evidence. Add an in-game PURCHASES panel (15 rows/page, newest first) reachable from AVM WATCH and /avm history. No scan, pricing, candidate selection, revalidation or buy gating changes. Report #74 additionally exposed a stale-candidate resume bug independent of purchase-history UI: confirmed AUX_ARB purchases could remain in retained logical-scan books long enough for the 15s recent TTL to expire, causing redundant postscan DE/flip/vendor revalidation. This feature now keeps a per-logical-scan exact consumed-auction set, prunes the purchased DE raw row and clears matching cached best pointers; fresh scans reset the set."
+    },
+    {
+      "id": "summon-coordinator-slot-layout-v4",
+      "branch": "feature/summon-slot-layout-v4-r2",
+      "modules": [
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-coordinator-v3-generic"
+      ],
+      "shared_resources": [
+        "summon_coordinator.json route schema",
+        "shared two-account slave character-slot layout"
+      ],
+      "status": "in_progress",
+      "observed_head": "c17da3d0f2448b2c202eb917a188f71076aea61f",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Correct real layout to hydraxian/Azshara=1, hyjal=2, winterspring=3. Schema V4 migrates only the untouched shipped V3 default; customized V3 routes are preserved. Manual PREPARE only switches both slave workers to the selected slot and waits for READY 2/2; it does not cast Ritual or click a portal."
     }
   ]
 }
