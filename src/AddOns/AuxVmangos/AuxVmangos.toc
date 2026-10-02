@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle arbitrage with AUX history-age diagnostics, resilient resume, native ledger UI and deep diagnostics.
+## Notes: Turtle arbitrage with transaction-safe resume, AUX history-age diagnostics, native ledger UI and deep diagnostics.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.38-history-age-diag
+## Version: 0.39-resume-transaction-racefix
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua

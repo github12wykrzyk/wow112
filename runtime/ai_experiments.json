@@ -4851,6 +4851,36 @@
       ],
       "package": null,
       "notes": "Exact candidate artifact 11225253885 was disassembled to recover the client logout-complete chain. RealmConnection SMSG_LOGOUT_COMPLETE dispatch at 0x005B4620 calls ClientConnection virtual 0x005AAEB0; that routine performs connection cleanup and calls 0x00401EE0 with charselect semantics. V14 first sets disconnectPending=1/reconnect=0 so NetDisconnectHandler consumes the world disconnect without LoginConnection()->Logoff or premature reconnect, then invokes 0x005AAEB0 locally after NS_INITIALIZED, waits for world teardown, reconnects only the realm/world connection with ConnectToSelectedServer, enumerates characters, selects the requested slot and enters world. Byte guards cover native entrypoints; no login-server fallback."
+    },
+    {
+      "id": "ah-resume-transaction-race-v1",
+      "branch": "feature/ah-resume-transaction-race-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-resume-retry-v1",
+        "ah-history-age-diag-v1"
+      ],
+      "shared_resources": [
+        "AUX_ARB page-hit pause/revalidate/buy lifecycle",
+        "deferred AUXFAST_ResumeSearch retry state",
+        "AVM phase/candidate transaction arbitration"
+      ],
+      "status": "in_progress",
+      "observed_head": "5625ebd4d722dd2b7331d7a0b246122c93c1523a",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "a0d840dd6dbae753a127755ab2e18c391cf359d2",
+          "date": "2026-10-02",
+          "evidence": "Report #80 proves the race: after AUX_ARB_VENDOR_HIT and AUX_ARB_PAUSED, a new AUX_SCAN_START resume=true occurs ~16-47ms later with AUX_RESUME reason= blank and no intervening RESULT REVALIDATE, BUY_SENT or CONFIRMED. The retry feature had made resumePending executable retry state, while AVM_AuxArbPageDone still set resumePending=true merely as an intent marker. That caused resume_retry_tick to clear the candidate and restart Search before revalidation/buy."
+        }
+      ],
+      "package": null,
+      "notes": "Fixes the post-hit transaction race identified from the user's current screenshot plus report #80. PageDone no longer sets resumePending when merely requesting a scan pause; pausePending/candidate/phase already own the transaction. resumePending is now reserved for a real failed AUXFAST_ResumeSearch retry created by avm_auxarb_resume_search, and retry_tick fails closed on stale/empty retry metadata. Expected flow becomes HIT -> PAUSED -> REVALIDATE -> BUY_SENT/REJECT -> CONFIRMED/terminal outcome -> RESUME. No pricing, vendor/DE/flip economics, native scan pacing, history model or buy criteria change."
     }
   ]
 }

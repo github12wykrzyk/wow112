@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.38-history-age-diag"
+AVM_VERSION = "0.39-resume-transaction-racefix"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -3704,6 +3704,15 @@ end
 local function avm_auxarb_resume_retry_tick(now)
 	local a = AVM.auxArb
 	if not a or not a.resumePending then return false end
+	-- resumePending is exclusively a deferred bridge-retry state. Never let a
+	-- stale/intent-only flag preempt PAUSED/REVALIDATE/BUY_PENDING.
+	if (tonumber(a.resumeRetryUntil) or 0) <= 0 or tostring(a.resumeRetryReason or "") == "" then
+		avm_print("AUX_ARB_RESUME_STALE cleared phase=" .. tostring(AVM.phase or "") ..
+			" paused=" .. tostring(a.paused and true or false) ..
+			" pausePending=" .. tostring(a.pausePending and true or false))
+		avm_auxarb_clear_resume_retry()
+		return false
+	end
 	if AVM.hardStop or not AVM_DB.auxLoopEnabled then
 		avm_auxarb_clear_resume_retry()
 		return false
@@ -3915,7 +3924,9 @@ function AVM_AuxArbPageDone(page, lastPage)
 	if not selected then return false end
 
 	a.pausePending = true
-	a.resumePending = true
+	-- Do NOT arm resume retry here. The bridge must first abort the scan,
+	-- AVM_AuxArbPaused must revalidate/buy, and only the completed transaction
+	-- may request continuation through avm_auxarb_resume_search().
 	a.candidate = selected
 	AVM.stats.auxArbPauses = AVM.stats.auxArbPauses + 1
 	if selected.mode == "auxarb_de" then
