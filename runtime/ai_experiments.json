@@ -4063,9 +4063,9 @@
         "ShaguTweaks Turtle WoW 1.18 vendor sell database",
         "AuxVmangos deep vendor diagnostics"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "1476ec4b31ccf65c54ba03a37a055fd40b4b2675",
+      "verified_commit": "1476ec4b31ccf65c54ba03a37a055fd40b4b2675",
       "tests": [
         {
           "kind": "game",
@@ -4073,10 +4073,28 @@
           "commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
           "date": "2026-10-02",
           "evidence": "Report #71 root-cause evidence for this follow-up: two full scans found 29 and 32 vendor-profitable rows under the old static shadow path while learnedDbItems remained 0. The user approved replacing the old Vanilla fallback with a Turtle-specific trusted database."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "1476ec4b31ccf65c54ba03a37a055fd40b4b2675",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 36988320815 passed on exact feature SHA. After integration, Build work candidate run 36988426164 passed on exact parallel SHA, including FINAL_PACKAGE, repo-managed addon attestation and exact branch/commit provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "1476ec4b31ccf65c54ba03a37a055fd40b4b2675",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11218507039 (WoW112-WORK-CANDIDATE-1476ec4b31ccf65c54ba03a37a055fd40b4b2675) was produced by successful run 36988426164."
         }
       ],
-      "package": null,
-      "notes": "Replace generic Vanilla AVM_VENDOR_VALUES with the exact ShaguTweaks Turtle WoW sell-value table from 7d670218a9b1e0a6a9a9062c0f458508398f2e48 (Turtle 1.18 update). Runtime priority becomes realm-learned AUX value > trusted Turtle DB > no value. No fallback to the old Vanilla table. Existing vendor min-profit/max-buyout/wallet/session/revalidation/purchase gates remain unchanged. Diagnostics retain legacy static* field names for compatibility but tag vendorDbSource and report turtle-db as the actual source."
+      "package": {
+        "verified": true,
+        "commit": "1476ec4b31ccf65c54ba03a37a055fd40b4b2675",
+        "artifact_id": 11218507039
+      },
+      "notes": "Replace generic Vanilla AVM_VENDOR_VALUES with the exact ShaguTweaks Turtle WoW sell-value table from 7d670218a9b1e0a6a9a9062c0f458508398f2e48 (Turtle 1.18 update). Runtime priority becomes realm-learned AUX value > trusted Turtle DB > no value. No fallback to the old Vanilla table. Existing vendor min-profit/max-buyout/wallet/session/revalidation/purchase gates remain unchanged. Diagnostics retain legacy static* field names for compatibility but tag vendorDbSource and report turtle-db as the actual source. Integrated code SHA passed full candidate packaging. Gameplay test should confirm vendor candidates now route from turtle-db into the existing revalidation/buy path and that Turtle-specific sell values prevent the prior Serrated Petal mismatch."
     }
   ]
 }
