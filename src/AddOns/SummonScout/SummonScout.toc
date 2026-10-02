@@ -6,3 +6,4 @@
 ## SavedVariables: SummonScoutDB
 
 SummonScout.lua
+SummonScout_WinterspringEverlook.lua
