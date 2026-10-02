@@ -259,3 +259,11 @@ Nagłówek monitora GitHub mieści cały szybki status w dwóch belkach. Pierwsz
 - Tryb migracji nie używa `Kill()`. Najpierw preflightuje wszystkie okna, następnie wysyła normalne zamknięcie `CloseMainWindow()` do całego zestawu klientów i czeka do 35 s na naturalne zakończenie procesów.
 - Po zamknięciu ostatniej instancji istniejący mechanizm LIVE UPDATE finalizuje oczekujący runtime. Następne uruchomienia mają worker v2 i używają standardowego `ReloadUI -> ACK -> 1 s -> Kill`.
 - Jeśli któregokolwiek klienta nie da się zamknąć normalnie, updater pozostaje fail-closed i nie przechodzi do twardego killowania starego runtime.
+
+
+## Updater 2.9-parallel.26 — LIVE UPDATE DLL/TXT przy uruchomionym WoW
+
+- LIVE UPDATE nie odkłada już całego root runtime tylko dlatego, że działa klient. Przy otwartych instancjach updater od razu próbuje podmienić AddOny oraz wszystkie zmienione pliki root poza EXE, w tym DLL-e i generowany `dlls.txt`.
+- Każdy plik root jest weryfikowany SHA256 po zapisie. Jeśli Windows faktycznie blokuje konkretną załadowaną DLL lub usunięcie starego pliku, tylko ten plik trafia do istniejącej transakcji oczekującej; pozostałe pliki nadal aktualizują się bez zamykania klientów.
+- `dlls.txt` nie jest publikowany, jeżeli choć jedna zmiana/usunięcie DLL pozostało oczekujące. Dzięki temu updater nie uruchomi nowego klienta z manifestem wskazującym na częściowo zastosowany zestaw DLL.
+- EXE nadal celowo czeka na zamknięcie ostatniej instancji. Działające klienty zachowują kod DLL już załadowany do pamięci; nowa wersja na dysku obowiązuje kolejne uruchomienia. **UPDATE + PLAY** nadal nie startuje nowej instancji, dopóki istnieje choć jeden plik oczekujący.

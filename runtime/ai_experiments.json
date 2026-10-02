@@ -5154,6 +5154,25 @@
       "tests": [],
       "package": null,
       "notes": "User screenshot shows AuxVmangos_AutoSell.lua:904 attempt to call method 'HasFocus' (a nil value) when the AutoSell tab refreshes. Upstream AUX gui.editbox for the pinned 1.12 addon explicitly tracks edit focus in editbox.focused and does not provide HasFocus(). Replace all three AutoSell HasFocus calls with the upstream .focused flag. No AutoSell economics, cancel/repost logic, scheduler ownership or AH transport behavior changes."
+    },
+    {
+      "id": "updater-live-runtime-files-v1",
+      "branch": "feature/updater-live-runtime-files",
+      "modules": [
+        "UpdaterMultibox"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "Parallel updater LIVE UPDATE ApplyPackage transaction",
+        "root DLL/EXE/dlls.txt replacement and pending-runtime staging",
+        "installed-state backup/rollback semantics"
+      ],
+      "status": "in_progress",
+      "observed_head": "8f30dd407b5b9c9b97d8142f91c7de81aa73edce",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Changes LIVE UPDATE from blanket root-runtime deferral to per-file live application. With WoW running, AddOns and root files other than EXE are attempted immediately with SHA256 verification; only files actually blocked by Windows fall back to the existing verified pending transaction. dlls.txt is deferred whenever any DLL change/removal is deferred, preserving a coherent loader manifest. EXE remains pending while any client is running; active processes continue using already mapped DLL bytes until restart."
     }
   ]
 }

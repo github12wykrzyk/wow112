@@ -311,7 +311,7 @@ namespace WoW112Updater
                 var updateRoot = gameDir.Text.Trim();
                 lastUpdateDeferredRuntime = false;
                 if (IsGameRunning(updateRoot))
-                    Log("LIVE UPDATE: WoW działa. AddOny zainstaluję od razu; zmiany EXE/DLL/dlls.txt zapiszę jako oczekujące i dokończę automatycznie po zamknięciu ostatniej instancji.");
+                    Log("LIVE UPDATE: WoW działa. AddOny oraz pliki root inne niż EXE spróbuję zaktualizować od razu; tylko pliki faktycznie zablokowane przez Windows i EXE zapiszę jako oczekujące.");
 
                 SaveConfig(false);
                 SetBusy(true, "Pobieranie najnowszej paczki...");
@@ -331,8 +331,8 @@ namespace WoW112Updater
                 lastUpdateDeferredRuntime = result.Deferred > 0;
                 if (result.Deferred > 0)
                 {
-                    status.Text = "LIVE UPDATE: " + result.Changed + " plików zaktualizowano teraz; runtime " + result.Deferred + " plików oczekuje na zamknięcie WoW.";
-                    Log("LIVE UPDATE zapisany. Aktywne instancje nie są zamykane. Runtime zostanie dokończony automatycznie po zamknięciu ostatniej instancji WoW.");
+                    status.Text = "LIVE UPDATE: " + result.Changed + " plików zaktualizowano teraz; " + result.Deferred + " zablokowanych/EXE oczekuje na zamknięcie WoW.";
+                    Log("LIVE UPDATE: aktywne instancje nie są zamykane. DLL/TXT i inne pliki root są podmieniane od razu, gdy Windows na to pozwala; tylko zablokowane pliki oraz EXE czekają na zamknięcie ostatniej instancji.");
                 }
                 else
                 {
@@ -756,19 +756,91 @@ namespace WoW112Updater
 
             if (gameRunning)
             {
-                var liveChanged = changed.Where(f => UpdaterAddons.IsAddonPath(f.Name)).ToList();
-                var deferredChanged = changed.Where(f => !UpdaterAddons.IsAddonPath(f.Name)).ToList();
-                var liveStale = stale.Where(UpdaterAddons.IsAddonPath).ToList();
-                var deferredStale = stale.Where(name => !UpdaterAddons.IsAddonPath(name)).ToList();
-                var backupDir = string.Empty;
+                // Running clients keep their already mapped DLL image. We still update the on-disk
+                // root whenever Windows permits it, so future launches get the new bytes without
+                // forcing the current clients to exit. Only the EXE and genuinely locked files
+                // fall back to the existing verified pending-runtime transaction.
+                var immediateChanged = new List<PackageFile>();
+                var deferredChanged = changed.Where(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ToList();
+                var immediateStale = new List<string>();
+                var deferredStale = stale.Where(name => name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ToList();
+                var liveChangedCandidates = changed.Where(f =>
+                    !f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(f.Name, "dlls.txt", StringComparison.OrdinalIgnoreCase)).ToList();
+                var dllManifestCandidates = changed.Where(f =>
+                    string.Equals(f.Name, "dlls.txt", StringComparison.OrdinalIgnoreCase)).ToList();
+                var liveStaleCandidates = stale.Where(name =>
+                    !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ToList();
 
-                if (liveChanged.Count > 0 || liveStale.Count > 0)
-                    backupDir = CreateBackup(root, liveChanged.Select(f => f.Name).Concat(liveStale).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), oldState, remote);
+                var liveTouched = liveChangedCandidates.Select(f => f.Name)
+                    .Concat(dllManifestCandidates.Select(f => f.Name))
+                    .Concat(liveStaleCandidates)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var backupDir = string.Empty;
+                if (liveTouched.Count > 0)
+                    backupDir = CreateBackup(root, liveTouched, oldState, remote);
 
                 try
                 {
-                    ApplyChangedFiles(root, liveChanged);
-                    ApplyStaleFiles(root, liveStale);
+                    foreach (var file in liveChangedCandidates)
+                    {
+                        if (UpdaterAddons.IsAddonPath(file.Name))
+                        {
+                            ApplyChangedFiles(root, new[] { file });
+                            immediateChanged.Add(file);
+                        }
+                        else if (TryApplyChangedFileLive(root, file))
+                        {
+                            immediateChanged.Add(file);
+                        }
+                        else
+                        {
+                            deferredChanged.Add(file);
+                        }
+                    }
+
+                    foreach (var name in liveStaleCandidates)
+                    {
+                        if (UpdaterAddons.IsAddonPath(name))
+                        {
+                            ApplyStaleFiles(root, new[] { name });
+                            immediateStale.Add(name);
+                        }
+                        else if (TryApplyStaleFileLive(root, name))
+                        {
+                            immediateStale.Add(name);
+                        }
+                        else
+                        {
+                            deferredStale.Add(name);
+                        }
+                    }
+
+                    // Do not publish a new dlls.txt while any DLL replacement/removal is still
+                    // pending. This keeps new updater-launched clients from seeing a manifest
+                    // that refers to a partially applied DLL set.
+                    var dllRuntimeDeferred = deferredChanged.Any(f =>
+                            f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                        || deferredStale.Any(name =>
+                            name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
+
+                    foreach (var file in dllManifestCandidates)
+                    {
+                        if (dllRuntimeDeferred)
+                        {
+                            deferredChanged.Add(file);
+                            Log("LIVE DEFER " + file.Name + " (czeka razem z zablokowanym zestawem DLL)");
+                        }
+                        else if (TryApplyChangedFileLive(root, file))
+                        {
+                            immediateChanged.Add(file);
+                        }
+                        else
+                        {
+                            deferredChanged.Add(file);
+                        }
+                    }
 
                     if (deferredChanged.Count > 0 || deferredStale.Count > 0)
                         StagePendingRuntime(root, remote, deferredChanged, deferredStale, newManaged.ToList(), exeName);
@@ -786,10 +858,10 @@ namespace WoW112Updater
 
                 return new ApplyResult
                 {
-                    Changed = liveChanged.Count + liveStale.Count,
+                    Changed = immediateChanged.Count + immediateStale.Count,
                     Deferred = deferredChanged.Count + deferredStale.Count,
                     Unchanged = files.Count - changed.Count,
-                    ExeChanged = deferredChanged.Any(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
+                    ExeChanged = changed.Any(f => f.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
                     BackupDir = backupDir
                 };
             }
@@ -844,6 +916,57 @@ namespace WoW112Updater
             {
                 File.Delete(SafeDestination(root, name));
                 Log("DEL " + name + " (stary zarządzany plik)");
+            }
+        }
+
+        private bool TryApplyChangedFileLive(string root, PackageFile file)
+        {
+            var dest = SafeDestination(root, file.Name);
+            var temp = dest + ".wow112tmp";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                if (File.Exists(temp)) File.Delete(temp);
+                File.WriteAllBytes(temp, file.Bytes);
+                if (!string.Equals(Sha256File(temp), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Błąd SHA256 po zapisie pliku tymczasowego: " + file.Name);
+                ReplaceFile(temp, dest);
+                if (!string.Equals(Sha256File(dest), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Błąd SHA256 po LIVE instalacji: " + file.Name);
+                Log("LIVE OK  " + file.Name);
+                return true;
+            }
+            catch (IOException ex)
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                Log("LIVE DEFER " + file.Name + " (Windows blokuje zapis: " + ex.Message + ")");
+                return false;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                Log("LIVE DEFER " + file.Name + " (brak dostępu/blokada: " + ex.Message + ")");
+                return false;
+            }
+        }
+
+        private bool TryApplyStaleFileLive(string root, string name)
+        {
+            try
+            {
+                File.Delete(SafeDestination(root, name));
+                Log("LIVE DEL " + name + " (stary zarządzany plik)");
+                return true;
+            }
+            catch (IOException ex)
+            {
+                Log("LIVE DEFER DEL " + name + " (Windows blokuje usunięcie: " + ex.Message + ")");
+                return false;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Log("LIVE DEFER DEL " + name + " (brak dostępu/blokada: " + ex.Message + ")");
+                return false;
             }
         }
 
