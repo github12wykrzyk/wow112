@@ -1,12 +1,13 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle-specific vendor + disenchant arbitrage; purchase history is a native AUX tab.
+## Notes: Turtle-specific arbitrage with native Purchases and Profit/Loss AUX tabs.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.31-native-purchases-turtle-de
+## Version: 0.32-profit-loss-ledger
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
 AuxVmangos.lua
 AuxVmangos_AuxPurchases.lua
+AuxVmangos_AuxLedger.lua
 AuxVmangos_WatchUI.lua

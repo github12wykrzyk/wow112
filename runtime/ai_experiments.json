@@ -4350,6 +4350,28 @@
       "tests": [],
       "package": null,
       "notes": "User requires slave rotation to preserve the already-authenticated account session because the login server is unreliable. Candidate replaces Coordinator/manual FAST slot switching with fail-closed ForceLogout() -> existing character-select session -> target slot -> EnterWorld. It never calls ClientServices::Disconnect and never requests AutoLoginBridge relogin. Stock Logout remains diagnostic only and may still incur the normal 20s timer. Exact external 5875 API inventory identifies ForceLogout at 0x0048AB50; gameplay behavior still requires exact-SHA in-game validation."
+    },
+    {
+      "id": "ah-profit-loss-ledger-v1",
+      "branch": "feature/ah-profit-loss-ledger-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-native-purchases-turtle-de"
+      ],
+      "shared_resources": [
+        "AVM_DB confirmed purchase history",
+        "WoW 1.12 mailbox seller invoices",
+        "native AUX tabs/listing/status bar",
+        "AUX Auctions owner-scan records"
+      ],
+      "status": "in_progress",
+      "observed_head": "578baa5daee5ae1dbbac38288f219543e29fdd9c",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Adds a native top-level Profit/Loss AUX tab. Confirmed AVM purchases are cash-out; observed paid AH seller invoices are cash-in; cash flow and expected purchase P/L are shown separately so projected arbitrage economics are not mislabeled as realized profit. Also extends the native Auctions bottom status bar with total current buyout exposure and potential net proceeds after the configured AH cut. No scanner, candidate, valuation, revalidation or buy-gating behavior is changed."
     }
   ]
 }
