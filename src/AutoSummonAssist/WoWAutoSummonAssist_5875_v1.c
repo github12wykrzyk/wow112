@@ -643,6 +643,12 @@ static void antiAfkFlushSlashFeedback(void)
         feedback==2u?usageMsg:(g_antiAfkEnabled?onMsg:offMsg),"AutoSummonAssist");
 }
 
+static int antiAfkSessionSwitchActive(void)
+{
+    const char *v=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_CSD_SESSION_SWITCH",-1,0u);
+    return v&&v[0]=='1'&&!v[1];
+}
+
 static int antiAfkPostSpace(void)
 {
     GetGameWindowFn getWindow=(GetGameWindowFn)(ptr32)WOW_GET_GAME_WINDOW;
@@ -704,6 +710,14 @@ static void antiAfkTick(u32 player,u32 now)
         return;
     }
     g_antiAfkDeferCheckAt=0u;
+    /* A SPACE key cancels the normal 20s logout countdown. The shared slave
+       switch explicitly marks its session-safe logout window in Lua; defer
+       Anti-AFK until the worker reaches Character Select/new world. */
+    if(antiAfkSessionSwitchActive()){
+        g_antiAfkNextAt=now+ANTI_AFK_DEFER_RECHECK_MS;
+        g_antiAfkSecondsLeft=1u;
+        return;
+    }
     if(antiAfkPostSpace())antiAfkSchedule(now);
     else{
         g_antiAfkNextAt=now+ANTI_AFK_RETRY_MS;

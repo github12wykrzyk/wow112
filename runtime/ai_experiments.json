@@ -4344,12 +4344,31 @@
         "CharacterSelect Glue account session",
         "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
       ],
-      "status": "in_progress",
-      "observed_head": "66c189c1d59e9e8d512016683194d464d03da71a",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "User requires slave rotation to preserve the already-authenticated account session because the login server is unreliable. Candidate replaces Coordinator/manual FAST slot switching with fail-closed ForceLogout() -> existing character-select session -> target slot -> EnterWorld. It never calls ClientServices::Disconnect and never requests AutoLoginBridge relogin. Stock Logout remains diagnostic only and may still incur the normal 20s timer. Exact external 5875 API inventory identifies ForceLogout at 0x0048AB50; gameplay behavior still requires exact-SHA in-game validation."
+      "status": "rejected",
+      "observed_head": "e807401699e5772ef027d526743afd968b48ef27",
+      "verified_commit": "578baa5daee5ae1dbbac38288f219543e29fdd9c",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "578baa5daee5ae1dbbac38288f219543e29fdd9c",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 36995324466 and integrated Build work candidate run 36995401117 passed on the exact same-session ForceLogout implementation; artifact 11221074703 was produced."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "e807401699e5772ef027d526743afd968b48ef27",
+          "date": "2026-10-02",
+          "evidence": "Report #77 on descendant parallel SHA e8074016: both selected workers entered phase 6, called ForceLogout and returned immediately, but remained in world. After ~10s both failed with error=51 SESSION_WORLD_STILL_PRESENT. This proves ForceLogout lacks the required server-side instant-logout authorization on the tested realm."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "578baa5daee5ae1dbbac38288f219543e29fdd9c",
+        "artifact_id": 11221074703
+      },
+      "notes": "Rejected by gameplay report #77. ForceLogout is not a client-side bypass for the realm's outdoor 20s logout policy; it returned without leaving world. No login-server reconnect occurred, but the requested character switch never started."
     },
     {
       "id": "ah-profit-loss-ledger-v1",
@@ -4380,6 +4399,38 @@
       ],
       "package": null,
       "notes": "Adds a native top-level Profit/Loss AUX tab. Confirmed AVM purchases are cash-out; observed paid AH seller invoices are cash-in; cash flow and expected purchase P/L are shown separately so projected arbitrage economics are not mislabeled as realized profit. Seller-mail fingerprints are updated only while MailFrame is actually open, preventing stale inbox state after restart from duplicating income. Also extends the native Auctions bottom status bar with total current buyout exposure and potential net proceeds after the configured AH cut. No scanner, candidate, valuation, revalidation or buy-gating behavior is changed. Feature preflight is PASS; integrated parallel candidate build/package is pending."
+    },
+    {
+      "id": "summon-session-safe-logout-v2",
+      "branch": "feature/summon-session-safe-logout-v2",
+      "modules": [
+        "CharacterSwitchDiag",
+        "AutoSummonAssist",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-worker-profile-binding-v1",
+        "summon-same-session-switch-v1"
+      ],
+      "shared_resources": [
+        "existing authenticated CharacterSelect session",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol",
+        "AutoSummonAssist Anti-AFK SPACE pulse"
+      ],
+      "status": "in_progress",
+      "observed_head": "e807401699e5772ef027d526743afd968b48ef27",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "e807401699e5772ef027d526743afd968b48ef27",
+          "date": "2026-10-02",
+          "evidence": "Report #77 is the motivating evidence: ForceLogout returned but both workers remained in world and failed error 51. Server protocol requires server-authorized instant logout; standard outdoor logout can require ~20s."
+        }
+      ],
+      "package": null,
+      "notes": "Reliability-first same-session worker. Uses ordinary Logout() and waits for the server-controlled transition to Character Select, then selects the configured slot and EnterWorld without ClientServices::Disconnect or AutoLoginBridge relogin. Coordinator READY timeout is raised from 30s to 65s to cover a 20s logout plus world load. AutoSummonAssist suppresses its SPACE Anti-AFK pulse while W112_CSD_SESSION_SWITCH is set so it cannot cancel the logout countdown."
     }
   ]
 }

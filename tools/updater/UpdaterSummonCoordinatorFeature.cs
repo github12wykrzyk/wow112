@@ -41,7 +41,7 @@ namespace WoW112Updater
         private const int SummonWorkerMapSize = 64;
         private const int SummonAssistMapSize = 64;
         private const int AutoLoginProfileMapSize = 32;
-        private const int SummonPrepareTimeoutMs = 30000;
+        private const int SummonPrepareTimeoutMs = 65000;
         private const int SummonClickTimeoutMs = 10000;
         private bool summonCoordinatorBusy;
         private bool summonCoordinatorAutoTick;
