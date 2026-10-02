@@ -4620,6 +4620,37 @@
       ],
       "package": null,
       "notes": "After direct world reconnect reaches the connected NetClient state, wait a short auth-settle interval, explicitly SetCurrentScreen('charselect') and GetCharacterListUpdate(), retry character enumeration with a bounded cadence, require GetNumCharacters() to contain the target slot before selection, require selectedIndex confirmation before EnterWorld, and retry ConnectToSelectedServer up to three times if the world connection falls back to INITIALIZED. No Logout(), AutoLoginBridge relogin, password/SRP flow or login-server fallback is used."
+    },
+    {
+      "id": "ah-mail-flipdiag-watchui-v2",
+      "branch": "feature/ah-mail-flipdiag-watchui-v2",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-sort-order-fix-v1",
+        "ah-bid-stack-arbitrage-v2",
+        "ah-profit-loss-ledger-v1"
+      ],
+      "shared_resources": [
+        "native AUX Profit/Loss mailbox income ledger",
+        "legacy AVM WATCH launcher and /avm gui",
+        "AUX_ARB flip post-scan candidate evaluation and diagnostics"
+      ],
+      "status": "in_progress",
+      "observed_head": "3538498d4c1f55f31947443e4ae05c63edeec3aa",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "f450944ca35cebe98329716fe0cfd4948c0df35f",
+          "date": "2026-10-02",
+          "evidence": "Superseded v1 exact SHA f450944ca35cebe98329716fe0cfd4948c0df35f passed Parallel feature preflight run 37003756436 and registry check 37003756415 before parallel advanced with unrelated CharacterSwitchDiag work. v2 reapplies the same AuxVmangos changes onto current parallel."
+        }
+      ],
+      "package": null,
+      "notes": "Rebased current-parallel version. Removes floating AVM WATCH launcher while retaining /avm gui. Repairs Profit/Loss mail ingestion with seller-invoice plus localized sold-subject/money fallback and bounded mailbox cache retries; adds mail-ledger diagnostics. Adds exact per-reason flip rejection counts and representative samples without changing flip economics. Auto-sell/Sell Rules remains planned but is not implemented in this bugfix."
     }
   ]
 }
