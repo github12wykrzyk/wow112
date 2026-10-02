@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "purpose": "Non-secret project inventory of WoW account labels used by the WoW112 multibox/updater workflow. Never store logins, passwords or protected credential blobs here.",
-  "updated": "2026-10-02",
+  "updated": "2026-10-03",
   "accounts": [
     "hydraxian1",
     "hydraxian2",
@@ -10,6 +10,7 @@
     "octorog1",
     "octowar1",
     "hyjal1",
-    "octowinter1"
+    "octowinter1",
+    "octowinter2"
   ]
 }
