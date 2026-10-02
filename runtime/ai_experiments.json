@@ -5074,6 +5074,33 @@
       "tests": [],
       "package": null,
       "notes": "Gameplay screenshot after the v3.6 owner/history/speed integration shows Interface\\\\AddOns\\\\AuxFastBridge\\\\AuxFastBridge.lua:444: too many upvalues (limit=32) near 'then'. Static comparison with the previously gameplay-accepted v2.6 upvalue fix shows the later MarketWorker service handoff added three new file-scope locals (servicePauseRequested/servicePaused/servicePauseHadScan) captured through M.start nested callbacks, pushing the closure back over the 32-upvalue ceiling. This fix moves only those three service-handoff flags into the existing global AUXFAST_RUNTIME table, preserving behavior while removing three lexical captures. Exact installed screenshot SHA is not independently established, so no exact game-result entry is claimed."
+    },
+    {
+      "id": "ah-autosell-reprice-v1",
+      "branch": "feature/ah-autosell-reprice-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-owner-history-speed-v1",
+        "ah-profit-loss-ledger-v1",
+        "ah-purchase-history-ui",
+        "auxfast-upvalue-v36-regression-fix"
+      ],
+      "shared_resources": [
+        "upstream AUX owner snapshots / AUCTION_OWNED_LIST_UPDATE",
+        "upstream AUX exact item list scan and aux.core.scan list scheduler",
+        "aux.cancel_auction / CancelAuction",
+        "aux.core.post / StartAuction",
+        "AVM continuous loop idle scheduler slot",
+        "AVM purchaseHistory and AUX history.value"
+      ],
+      "status": "in_progress",
+      "observed_head": "a535bc4b7a51cfe9237a3f7e1b1a04308abf91d5",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "AutoSell/Repricing V1 implementing the user's earlier AH workflow. Default-on scope is intentionally limited to AVM-confirmed flip/stack purchase items; unrelated own auctions require explicit Manage All. It passively reuses sequential owner snapshots instead of creating a competing owner scan, detects >=1% undercut, exact-requeries the item immediately before any cancel, refuses auctions with bids, applies a floor=max(break-even after configured AH cut +1c, 70% AUX historical value), cancels at most one exact auction at a time, requires a later owner snapshot to confirm the auction count decreased, then waits for the user to retrieve the canceled item from mailbox. When the item is back in bags and AH is open, it exact-reprices again and automatically reposts one matching stack for 24h at current market -1c without crossing the floor. Includes a native AUX AutoSell tab, persistent pending state/history/stats and updater diagnostics. No automatic mailbox retrieval and no worker IPC in this experiment."
     }
   ]
 }

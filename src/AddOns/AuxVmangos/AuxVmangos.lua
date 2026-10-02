@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.40-owner-history-fastresume"
+AVM_VERSION = "0.41-autosell-reprice-v1"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -773,6 +773,13 @@ local function avm_loop_tick(now)
 	if AVM.pending or AVM.unknown or AVM.bidPending or AVM.bidCandidate or AVM.queryInFlight or
 	   AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or
 	   AVM.auxArb.active or AVM.auxArb.paused then return false end
+	-- AutoSell shares the list/owner auction scheduler with AUX. Give it the
+	-- idle gap before the next continuous Search cycle so exact price probes,
+	-- guarded cancels and reposts cannot race AUXFAST_RestartSearch.
+	if AVM_AUTOSELL and AVM_AUTOSELL.Tick then
+		local okAutoSell, claimed = pcall(AVM_AUTOSELL.Tick, now)
+		if okAutoSell and claimed then return true end
+	end
 	if AUXFAST_IsBusy then
 		local ok, isBusy = pcall(AUXFAST_IsBusy)
 		if ok and isBusy then return false end
