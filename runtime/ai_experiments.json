@@ -4651,6 +4651,29 @@
       ],
       "package": null,
       "notes": "Rebased current-parallel version. Removes floating AVM WATCH launcher while retaining /avm gui. Repairs Profit/Loss mail ingestion with seller-invoice plus localized sold-subject/money fallback and bounded mailbox cache retries; adds mail-ledger diagnostics. Adds exact per-reason flip rejection counts and representative samples without changing flip economics. Auto-sell/Sell Rules remains planned but is not implemented in this bugfix."
+    },
+    {
+      "id": "ah-owner-scan-arbitration-v1",
+      "branch": "feature/ah-owner-scan-arbitration-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-mail-flipdiag-watchui-v2",
+        "ah-bid-stack-arbitrage-v2"
+      ],
+      "shared_resources": [
+        "GetOwnerAuctionItems / AUCTION_OWNED_LIST_UPDATE",
+        "upstream AUX Auctions owner scan",
+        "DE exposure owner-auction scan",
+        "native AUX Auctions listing and Profit/Loss summary hook"
+      ],
+      "status": "in_progress",
+      "observed_head": "1a6028f5a72c7c8596bc06b6ec39b107769ae764",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User reports native AUX Auctions tab empty after adding DE exposure scanning. Root cause is competing owner-query producers: the DE exposure guard directly calls GetOwnerAuctionItems while upstream AUX Auctions runs its own aux.core.scan owner state machine over the same global owner page/event channel. This feature gives native Auctions priority: opening/refreshing Auctions requests exposure takeover, the DE owner scan stops issuing owner queries, native scan starts after takeover completes, and DE exposure is then refreshed from the completed native Auctions records instead of issuing a competing query. Exposure scans are also deferred while the native Auctions frame is visible. Adds owner-scan diagnostics; auction economics are unchanged."
     }
   ]
 }

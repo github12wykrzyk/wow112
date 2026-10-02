@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.35-flipdiag-mailfix"
+AVM_VERSION = "0.36-owner-scan-arbitration"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -320,6 +320,10 @@ local function avm_diag_record(msg)
 		flipRejectRecent = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["recent"] or 0) or 0,
 		flipRejectItemBudget = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["item-budget"] or 0) or 0,
 		flipRejectItemBuyCap = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["item-buy-cap"] or 0) or 0,
+		deExposureActive = AVM.deExposure and AVM.deExposure.active and true or false,
+		deExposureReady = AVM.deExposure and AVM.deExposure.ready and true or false,
+		deExposurePage = AVM.deExposure and AVM.deExposure.page or 0,
+		ownerNativeVisible = avm_owner_native_visible and avm_owner_native_visible() or false,
 		auxLoopEnabled = AVM_DB.auxLoopEnabled and true or false,
 		auxLoopMarketMinutes = AVM_DB.auxLoopMarketMinutes or 60,
 		auxLoopMarketEnabled = AVM_DB.auxLoopMarketEnabled and true or false,
@@ -5855,6 +5859,16 @@ local function avm_start_zero_config(reason)
 end
 
 
+AVM_OWNER_SCAN_BRIDGE = AVM_OWNER_SCAN_BRIDGE or {}
+
+local function avm_owner_native_visible()
+	if AVM_OWNER_SCAN_BRIDGE.IsNativeAuctionsVisible then
+		local ok, visible = pcall(AVM_OWNER_SCAN_BRIDGE.IsNativeAuctionsVisible)
+		if ok and visible then return true end
+	end
+	return false
+end
+
 local function avm_de_exposure_totals(book)
 	local mats, auctions, units, value = 0, 0, 0, 0
 	for _, row in pairs(book or {}) do
@@ -5877,6 +5891,7 @@ end
 
 local function avm_de_exposure_finish(success, why)
 	local d = AVM.deExposure
+	d.uiTakeover = false
 	local afterZeroConfig = d.afterZeroConfig
 	local resumeLoop = d.resumeLoop
 	d.active = false
@@ -5910,6 +5925,10 @@ avm_de_exposure_start = function(reason, afterZeroConfig, resumeLoop)
 	if not AVM.open or not AVM_DB.deExposureGuard or not GetOwnerAuctionItems or not GetNumAuctionItems then return false end
 	local d = AVM.deExposure
 	if d.active then return true end
+	if avm_owner_native_visible() then
+		avm_print("DE_EXPOSURE_SCAN deferred reason=native-auctions-visible source=" .. tostring(reason or ""))
+		return false
+	end
 	d.active = true
 	d.page = 0
 	d.lastPage = 0
@@ -5932,6 +5951,10 @@ end
 avm_de_exposure_tick = function(now)
 	local d = AVM.deExposure
 	if not d or not d.active then return false end
+	if d.uiTakeover or avm_owner_native_visible() then
+		avm_de_exposure_finish(false, "native-auctions-priority")
+		return true
+	end
 	if now - (tonumber(d.requestedAt) or now) > 5 then
 		avm_de_exposure_finish(false, "owner-query-timeout page=" .. tostring(d.page or 0))
 		return true
@@ -5975,6 +5998,63 @@ avm_de_exposure_tick = function(now)
 		avm_de_exposure_request_page(d.page + 1)
 	else
 		avm_de_exposure_finish(true, "complete")
+	end
+	return true
+end
+
+AVM_OWNER_SCAN_BRIDGE.IsExposureActive = function()
+	return AVM.deExposure and AVM.deExposure.active and true or false
+end
+
+AVM_OWNER_SCAN_BRIDGE.RequestNativePriority = function()
+	local d = AVM.deExposure
+	if d and d.active then
+		d.uiTakeover = true
+		avm_print("OWNER_SCAN_ARBITRATION native-auctions-priority exposurePage=" .. tostring(d.page or 0))
+		return true
+	end
+	return false
+end
+
+AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords = function(records)
+	local d = AVM.deExposure
+	if not d or not records then return false end
+	local book = {}
+	for i = 1, table.getn(records) do
+		local record = records[i]
+		local itemId = tonumber(record and (record.item_id or record.itemId))
+		local count = tonumber(record and (record.count or record.aux_quantity)) or 0
+		local buyout = tonumber(record and (record.buyout_price or record.buyout)) or 0
+		if itemId and AVM_DE_MATERIAL_IDS[itemId] and count > 0 and buyout > 0 then
+			local row = book[itemId]
+			local maxStack = tonumber(record.max_stack or record.maxStack) or 20
+			if not row then
+				row = { name = tostring(record.name or ""), units = 0, auctions = 0, buyout = 0, maxStack = maxStack }
+				book[itemId] = row
+			elseif maxStack > 0 then
+				row.maxStack = maxStack
+			end
+			row.units = row.units + count
+			row.auctions = row.auctions + 1
+			row.buyout = row.buyout + buyout
+		end
+	end
+	d.book = book
+	d.ready = true
+	d.updatedAt = GetTime()
+	d.syncedCycle = tonumber(AVM.auxLoop.cycles) or 0
+	local mats, auctions, units, value = avm_de_exposure_totals(book)
+	avm_print("DE_EXPOSURE_SYNC source=native-auctions mats=" .. tostring(mats) ..
+		" auctions=" .. tostring(auctions) ..
+		" units=" .. tostring(units) ..
+		" value=" .. avm_money(value) ..
+		" ownerRecords=" .. tostring(table.getn(records)))
+	if AVM_DB.diag then
+		AVM_DB.diag.ownerAuctions = {
+			source = "native-auctions", records = table.getn(records),
+			mats = mats, auctions = auctions, units = units, value = value,
+			updatedAtMs = math.floor((GetTime() or 0) * 1000),
+		}
 	end
 	return true
 end

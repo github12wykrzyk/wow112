@@ -355,10 +355,59 @@ local function install_auctions_summary()
 	local env=getfenv(auctions.scan_auctions)
 	if not env or env.AVM_PROFIT_LOSS_SUMMARY_HOOK then return end
 	env.AVM_PROFIT_LOSS_SUMMARY_HOOK=true
-	local original=env.update_listing
-	if original then
+
+	local originalScan=auctions.scan_auctions
+	local originalUpdate=env.update_listing
+	local queuedNativeScan=false
+	local waiter=CreateFrame('Frame','AuxVmangosOwnerScanArbitration')
+	waiter:Hide()
+
+	if AVM_OWNER_SCAN_BRIDGE then
+		AVM_OWNER_SCAN_BRIDGE.IsNativeAuctionsVisible=function()
+			return env.frame and env.frame.IsShown and env.frame:IsShown()
+		end
+	end
+
+	local function run_native_scan()
+		queuedNativeScan=false
+		waiter:Hide()
+		originalScan()
+	end
+
+	auctions.scan_auctions=function()
+		local exposureActive=AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.IsExposureActive and AVM_OWNER_SCAN_BRIDGE.IsExposureActive()
+		if exposureActive then
+			queuedNativeScan=true
+			if env.status_bar then
+				env.status_bar:update_status(0,0)
+				env.status_bar:set_text('Preparing owner scan...')
+			end
+			if AVM_OWNER_SCAN_BRIDGE.RequestNativePriority then AVM_OWNER_SCAN_BRIDGE.RequestNativePriority() end
+			waiter:Show()
+			return
+		end
+		run_native_scan()
+	end
+
+	waiter:SetScript('OnUpdate',function()
+		if not queuedNativeScan then this:Hide(); return end
+		local active=AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.IsExposureActive and AVM_OWNER_SCAN_BRIDGE.IsExposureActive()
+		if active then return end
+		if env.frame and env.frame.IsShown and env.frame:IsShown() then
+			run_native_scan()
+		else
+			queuedNativeScan=false
+			this:Hide()
+		end
+	end)
+
+	if originalUpdate then
 		env.update_listing=function()
-			original()
+			originalUpdate()
+			local text=env.status_bar and env.status_bar.text and env.status_bar.text:GetText() or ''
+			if text=='Scan complete' and AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords then
+				AVM_OWNER_SCAN_BRIDGE.FeedNativeOwnerRecords(env.auction_records or {})
+			end
 			AVM_AUX_LEDGER.UpdateAuctionsSummary(env)
 		end
 	end
