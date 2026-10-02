@@ -4698,6 +4698,26 @@
       "tests": [],
       "package": null,
       "notes": "User reports every confirmed purchase now ends at AUX_ARB_RESUME_FAILED. Source inspection shows the bridge intentionally returns false while its original AUX scan busy counter is still >0, but AVM treated that transient busy result as terminal and scheduled no retry, leaving automation stopped. Fix makes ResumeSearch return a precise failure reason, retries continuation every 150ms for up to 4s, suppresses competing loop work while retry is pending, and falls back to a fresh headless loop instead of stopping if continuation still cannot start. No pricing, candidate, buy or exposure economics change."
+    },
+    {
+      "id": "remote-service-probe-5875",
+      "branch": "feature/remote-service-probe-v4",
+      "modules": [
+        "RemoteServiceProbe"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "WoW 5875 ClientServices::Send entry 0x005AB630 ordered chain after AHThrottleNative",
+        "FrameScript_Execute 0x00704CD0 and FrameScript_GetText 0x00703BF0",
+        "object manager 0x00B41414 and GetObjectByGuid 0x00464870",
+        ".wow112_debug JSONL collected by updater issue reports"
+      ],
+      "status": "in_progress",
+      "observed_head": "8779e10834a003c3126af982c792b10357e91149",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Rebased comprehensive fail-closed opener-only bank/mail/AH diagnostic. Source is byte-identical to the CRT-less-safe source that passed feature preflight at b7f451362708fbfaf3cf702d2ceeb4b5fd9fd1f7, but this rebased exact SHA requires its own preflight. Learns a real GUID-bearing opener from normal service use, records a 96-packet outbound ring and exact opener bytes/hash/GUID offset, replays only learned opener packets, sweeps <=6/<=12/<=30/<=80/>80/unloaded object states, logs positions/range/frame events/UI errors/data events/replay latency, survives Lua reload by reinstalling its bridge, and disables active replay if the ClientServices::Send chain changes. It never moves bank items, bids/buys/cancels auctions, sends mail, spoofs position/movement or changes target."
     }
   ]
 }
