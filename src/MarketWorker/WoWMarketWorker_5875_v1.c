@@ -173,19 +173,23 @@ static u32 aux_cycles(void){return parse_u32(lua_get("W112_MW_AUX_CYCLES"));}
 
 static RspGetGuidFn rsp_provider(void){
     HMODULE m=GetModuleHandleA("WoWRemoteServiceProbe_5875_v1.dll");
+    RspGetGuidFn f;
     if(!m)return 0;
-    return (RspGetGuidFn)GetProcAddress(m,"W112_RSP_GetLearnedGuid");
+    f=(RspGetGuidFn)GetProcAddress(m,"W112_RSP_GetLearnedGuid");
+    /* Compatibility fallback for an older x86 stdcall-decorated pilot DLL. */
+    if(!f)f=(RspGetGuidFn)GetProcAddress(m,"_W112_RSP_GetLearnedGuid@20");
+    return f;
 }
 static void refresh_services(void){
     RspGetGuidFn f=rsp_provider();u32 lo=0u,hi=0u,t=0u,d=0u,obj;
     g_ahLearned=g_mailLearned=0u;g_ahLoaded=g_mailLoaded=0u;g_ahType=g_mailType=0u;
     if(!f)return;
-    if(f(SERVICE_AH,&lo,&hi,&t,&d)){
+    if(f(SERVICE_AH,&lo,&hi,&t,&d)&&t==TYPE_UNIT){
         g_ahLearned=1u;g_ahLo=lo;g_ahHi=hi;g_ahType=t;obj=find_object(lo,hi);
         if(ptr_ok(obj)&&rd32(obj+OBJ_TYPE_OFF)==TYPE_UNIT)g_ahLoaded=1u;
     }
     lo=hi=t=d=0u;
-    if(f(SERVICE_MAIL,&lo,&hi,&t,&d)){
+    if(f(SERVICE_MAIL,&lo,&hi,&t,&d)&&t==TYPE_GO){
         g_mailLearned=1u;g_mailLo=lo;g_mailHi=hi;g_mailType=t;obj=find_object(lo,hi);
         if(ptr_ok(obj)&&rd32(obj+OBJ_TYPE_OFF)==TYPE_GO)g_mailLoaded=1u;
     }
