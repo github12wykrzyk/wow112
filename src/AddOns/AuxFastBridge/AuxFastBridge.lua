@@ -1,8 +1,12 @@
--- AuxFastBridge v3.6.1 list/owner busy separation; service-handoff state moved out of M.start upvalues
+-- AuxFastBridge v3.7 manual-headless GUI + per-scan speed diagnostics; upvalue-safe runtime
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
 AuxFastBridgeDB = AuxFastBridgeDB or {}
+-- User-facing speed mode. ON means manual AUX Search still evaluates every
+-- auction/AVM rule but skips rebuilding the visible Search Results table.
+-- Automated AVM restart/resume scans remain headless regardless of this toggle.
+if AuxFastBridgeDB.manualHeadless == nil then AuxFastBridgeDB.manualHeadless = true end
 
 -- Runtime routing stays behind helper functions so the large M.start closure
 -- does not capture extra file-scope locals. WoW 1.12 Lua has a hard 32-upvalue
@@ -13,6 +17,8 @@ local headlessState = {
 	active = false,
 	records = 0,
 	pages = 0,
+	scanPages = 0,
+	scanStartedAt = 0,
 	serial = 0,
 }
 
@@ -107,9 +113,51 @@ function AUXFAST_ClearHeadlessArm()
 	headlessState.active = false
 end
 
+function AUXFAST_ManualHeadlessEnabled()
+	return AuxFastBridgeDB.manualHeadless and true or false
+end
+
+function AUXFAST_UpdateManualHeadlessButton()
+	local button = AUXFAST_RUNTIME and AUXFAST_RUNTIME.manualHeadlessButton
+	if not button or not button.SetText then return end
+	button:SetText(AUXFAST_ManualHeadlessEnabled() and "Manual Headless: ON" or "Manual Headless: OFF")
+end
+
+function AUXFAST_SetManualHeadless(enabled)
+	AuxFastBridgeDB.manualHeadless = enabled and true or false
+	AUXFAST_UpdateManualHeadlessButton()
+	out("manual headless=" .. tostring(AUXFAST_ManualHeadlessEnabled()) ..
+		" (ON skips Search Results rendering; AVM evaluation still runs)")
+	return AUXFAST_ManualHeadlessEnabled()
+end
+
+function AUXFAST_InstallManualHeadlessGui()
+	if not okSearchTab or not searchTab or not searchTab.execute then return false end
+	local env = getfenv(searchTab.execute)
+	if not env or not env.frame then return false end
+	if AUXFAST_RUNTIME.manualHeadlessButton then
+		AUXFAST_UpdateManualHeadlessButton()
+		return true
+	end
+	local button = CreateFrame("Button", "AuxFastManualHeadlessButton", env.frame, "GameMenuButtonTemplate")
+	button:SetWidth(145)
+	button:SetHeight(22)
+	button:SetPoint("BOTTOMRIGHT", env.frame, "BOTTOMRIGHT", -8, 6)
+	button:SetScript("OnClick", function()
+		AUXFAST_SetManualHeadless(not AUXFAST_ManualHeadlessEnabled())
+	end)
+	AUXFAST_RUNTIME.manualHeadlessButton = button
+	AUXFAST_UpdateManualHeadlessButton()
+	return true
+end
+
 function AUXFAST_BeginScan(fullSearchScan, isResume)
 	local source = headlessState.source
 	local headless = fullSearchScan and headlessState.pending and true or false
+	if fullSearchScan and not headless and AUXFAST_ManualHeadlessEnabled() then
+		headless = true
+		source = "manual-gui"
+	end
 	headlessState.pending = false
 	headlessState.source = ""
 	headlessState.active = headless
@@ -118,6 +166,8 @@ function AUXFAST_BeginScan(fullSearchScan, isResume)
 		headlessState.pages = 0
 	end
 	if fullSearchScan then
+		headlessState.scanPages = 0
+		headlessState.scanStartedAt = GetTime()
 		headlessState.serial = headlessState.serial + 1
 		out("SCAN_MODE id=" .. tostring(headlessState.serial) ..
 			" source=" .. tostring(source ~= "" and source or "manual") ..
@@ -135,17 +185,31 @@ function AUXFAST_HeadlessPage()
 	headlessState.pages = (headlessState.pages or 0) + 1
 end
 
+function AUXFAST_ScanPage(headless)
+	headlessState.scanPages = (headlessState.scanPages or 0) + 1
+	if headless then AUXFAST_HeadlessPage() end
+end
+
 function AUXFAST_EndScan(scanId, source, headless, aborted, paused)
+	local duration = headlessState.scanStartedAt > 0 and (GetTime() - headlessState.scanStartedAt) or 0
+	local pages = tonumber(headlessState.scanPages) or 0
+	local pps = duration > 0 and (pages / duration) or 0
 	AuxFastBridgeDB.lastScanId = tonumber(scanId) or 0
 	AuxFastBridgeDB.lastScanSource = source ~= "" and source or "manual"
 	AuxFastBridgeDB.lastScanHeadless = headless and true or false
 	AuxFastBridgeDB.lastHeadlessRecords = headlessState.records or 0
 	AuxFastBridgeDB.lastHeadlessPages = headlessState.pages or 0
+	AuxFastBridgeDB.lastScanPages = pages
+	AuxFastBridgeDB.lastScanDuration = duration
+	AuxFastBridgeDB.lastScanPagesPerSec = pps
 	out((aborted and "SCAN_ABORT" or "SCAN_DONE") ..
 		" id=" .. tostring(AuxFastBridgeDB.lastScanId) ..
 		" source=" .. tostring(AuxFastBridgeDB.lastScanSource) ..
 		" headless=" .. tostring(headless and true or false) ..
 		(aborted and (" pause=" .. tostring(paused and true or false)) or "") ..
+		" pages=" .. tostring(pages) ..
+		" duration=" .. string.format("%.3f", duration) .. "s" ..
+		" pps=" .. string.format("%.1f", pps) ..
 		" hPages=" .. tostring(headlessState.pages or 0) ..
 		" hRecords=" .. tostring(headlessState.records or 0))
 	headlessState.active = false
@@ -262,6 +326,8 @@ function AUXFAST_Status()
 		headlessLoop = headlessState.active and true or false,
 		headlessRecords = headlessState.records or 0,
 		headlessPages = headlessState.pages or 0,
+		manualHeadless = AUXFAST_ManualHeadlessEnabled(),
+		scanPages = headlessState.scanPages or 0,
 	}
 end
 
@@ -354,9 +420,8 @@ local function install_scan_hook()
 		end
 
 		params.on_page_scanned = function()
-			if headlessLoop then
-				AUXFAST_HeadlessPage()
-			elseif oldPageScanned then
+			AUXFAST_ScanPage(headlessLoop)
+			if not headlessLoop and oldPageScanned then
 				oldPageScanned()
 			end
 			if auxArbAttached and AVM_AuxArbPageDone then
@@ -522,6 +587,7 @@ end
 if not install_scan_hook() then
 	out("ERROR: aux.core.scan unavailable; fast transport disabled")
 end
+AUXFAST_InstallManualHeadlessGui()
 
 function AUXFAST_ServiceWorkerPause()
 	if avm_hard_stopped() then return false, "hard-stop" end
@@ -708,11 +774,15 @@ SlashCmdList["AUXFAST"] = function()
 		" headless=" .. tostring(headlessState.active and true or false) ..
 		" hPages=" .. tostring(headlessState.pages or 0) ..
 		" hRecords=" .. tostring(headlessState.records or 0))
-	out("lastScan id=" .. tostring(AuxFastBridgeDB.lastScanId or 0) ..
+	out("manualHeadless=" .. tostring(AUXFAST_ManualHeadlessEnabled()) ..
+		" lastScan id=" .. tostring(AuxFastBridgeDB.lastScanId or 0) ..
 		" source=" .. tostring(AuxFastBridgeDB.lastScanSource or "none") ..
 		" headless=" .. tostring(AuxFastBridgeDB.lastScanHeadless and true or false) ..
+		" pages=" .. tostring(AuxFastBridgeDB.lastScanPages or 0) ..
+		" duration=" .. string.format("%.3f", tonumber(AuxFastBridgeDB.lastScanDuration) or 0) .. "s" ..
+		" pps=" .. string.format("%.1f", tonumber(AuxFastBridgeDB.lastScanPagesPerSec) or 0) ..
 		" hPages=" .. tostring(AuxFastBridgeDB.lastHeadlessPages or 0) ..
 		" hRecords=" .. tostring(AuxFastBridgeDB.lastHeadlessRecords or 0))
 end
 
-out("v3.6.1 loaded: upvalue-safe service handoff + list/owner busy separation + headless resume; hook=" .. tostring(hookInstalled))
+out("v3.7 loaded: manual-headless GUI + scan speed diagnostics + upvalue-safe service handoff; hook=" .. tostring(hookInstalled))
