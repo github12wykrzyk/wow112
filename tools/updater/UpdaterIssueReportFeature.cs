@@ -327,7 +327,8 @@ namespace WoW112Updater
                         "market_format=" + marketFormat + "\n\n" +
                         marketMeta + "\n\n" + marketData + "\n";
                     var fullSha = Sha256Text(dump);
-                    if (silent && string.Equals(GetAutoStateValue("ah_sha"), fullSha, StringComparison.OrdinalIgnoreCase))
+                    var marketContentSha = Sha256Text(marketFormat + "\n" + marketMeta + "\n" + marketData);
+                    if (silent && string.Equals(GetAutoStateValue("ah_content_sha"), marketContentSha, StringComparison.OrdinalIgnoreCase))
                         return;
                     var signature = fullSha.Substring(0, 12);
                     var marker = "[ahdump:" + signature + "]";
@@ -340,7 +341,7 @@ namespace WoW112Updater
                         if (existing > 0)
                         {
                             finalStatus = "Ten AH dump już istnieje jako GitHub Issue #" + existing + ".";
-                            SetAutoStateValue("ah_sha", fullSha);
+                            SetAutoStateValue("ah_content_sha", marketContentSha);
                             Log(silent ? "AUTO AH: zsynchronizowany z istniejącym Issue #" + existing + "." : finalStatus);
                             if (!silent)
                                 MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -409,7 +410,7 @@ namespace WoW112Updater
                         }
 
                         finalStatus = "AH Market Dump wysłany jako GitHub Issue #" + issueNumber + " (" + chunks + " części).";
-                        SetAutoStateValue("ah_sha", fullSha);
+                        SetAutoStateValue("ah_content_sha", marketContentSha);
                         Log(silent ? "AUTO AH -> GitHub Issue #" + issueNumber + " (" + chunks + " części)." : finalStatus);
                         if (!silent)
                             MessageBox.Show(form, finalStatus, "WoW112 Updater", MessageBoxButtons.OK, MessageBoxIcon.Information);
