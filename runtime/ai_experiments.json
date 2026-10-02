@@ -4606,7 +4606,7 @@
         "CharacterSelect slot/EnterWorld flow",
         "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
       ],
-      "status": "in_progress",
+      "status": "blocked",
       "observed_head": "9ab31464d7539bf5393c666972f1bd0b94738704",
       "verified_commit": null,
       "tests": [
@@ -4619,7 +4619,7 @@
         }
       ],
       "package": null,
-      "notes": "After direct world reconnect reaches the connected NetClient state, wait a short auth-settle interval, explicitly SetCurrentScreen('charselect') and GetCharacterListUpdate(), retry character enumeration with a bounded cadence, require GetNumCharacters() to contain the target slot before selection, require selectedIndex confirmation before EnterWorld, and retry ConnectToSelectedServer up to three times if the world connection falls back to INITIALIZED. No Logout(), AutoLoginBridge relogin, password/SRP flow or login-server fallback is used."
+      "notes": "After direct world reconnect reaches the connected NetClient state, wait a short auth-settle interval, explicitly SetCurrentScreen('charselect') and GetCharacterListUpdate(), retry character enumeration with a bounded cadence, require GetNumCharacters() to contain the target slot before selection, require selectedIndex confirmation before EnterWorld, and retry ConnectToSelectedServer up to three times if the world connection falls back to INITIALIZED. No Logout(), AutoLoginBridge relogin, password/SRP flow or login-server fallback is used. Superseded by native same-realm reconnect: user reports the manual direct reconnect path still depends on the weak login/auth path in practice. No new report/exact-SHA evidence was supplied for that observation, so no additional formal game-test row is recorded here."
     },
     {
       "id": "ah-mail-flipdiag-watchui-v2",
@@ -4698,6 +4698,31 @@
       "tests": [],
       "package": null,
       "notes": "User reports every confirmed purchase now ends at AUX_ARB_RESUME_FAILED. Source inspection shows the bridge intentionally returns false while its original AUX scan busy counter is still >0, but AVM treated that transient busy result as terminal and scheduled no retry, leaving automation stopped. Fix makes ResumeSearch return a precise failure reason, retries continuation every 150ms for up to 4s, suppresses competing loop work while retry is pending, and falls back to a fresh headless loop instead of stopping if continuation still cannot start. No pricing, candidate, buy or exposure economics change."
+    },
+    {
+      "id": "summon-native-realm-reconnect-v6",
+      "branch": "feature/summon-native-realm-reconnect-v6-r2",
+      "modules": [
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-world-reconnect-charselect-v5",
+        "summon-worker-profile-binding-v1"
+      ],
+      "shared_resources": [
+        "CGlueMgr::ChangeRealm 0x0046B210",
+        "ClientServices::GetSelectedRealm 0x005AB9A0",
+        "CGlueMgr::m_disconnectPending 0x00B41D98",
+        "CGlueMgr::m_reconnect 0x00B41D9C",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
+      ],
+      "status": "in_progress",
+      "observed_head": "8779e10834a003c3126af982c792b10357e91149",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Use exact 5875 native same-realm ChangeRealm flow rather than hand-assembled Disconnect/ConnectToSelectedServer. Exact binary disassembly confirms ChangeRealm selects the supplied realm, sets disconnectPending=1 and reconnect=1, then calls ClientServices::Disconnect; NetDisconnectHandler consumes those flags and calls the existing world Connection()->Connect path without LoginConnection()->Logoff. Worker passes the currently selected REALM_INFO from GetSelectedRealm, waits for native Character Select/character list, selects the requested slot and enters world. No Logout/ForceLogout, AutoLoginBridge relogin, password/SRP flow, or login-server fallback. Runtime byte guards fail closed if patched executable code differs."
     }
   ]
 }
