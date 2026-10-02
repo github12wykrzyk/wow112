@@ -475,12 +475,20 @@ end
 
 local button = gui.button(aux.frame)
 button:SetWidth(128)
-button:SetPoint('TOPRIGHT', aux.frame, 'TOPRIGHT', -12, -13)
+-- Keep the manual action above the AutoSell controls panel. The panel is a
+-- child frame layered above aux.frame, so a default-level sibling can be covered.
+if button.SetFrameLevel and aux.frame.GetFrameLevel then
+	button:SetFrameLevel((aux.frame:GetFrameLevel() or 0) + 20)
+end
+button:SetPoint('TOPRIGHT', aux.frame, 'TOPRIGHT', -12, -34)
 button:SetText('Check + decide')
 button:SetScript('OnClick', request_manual_run)
 button:Hide()
 
 local label = gui.label(aux.frame, gui.font_size.small)
+if label.SetFrameLevel and button.GetFrameLevel then
+	label:SetFrameLevel(button:GetFrameLevel())
+end
 label:SetPoint('TOPRIGHT', button, 'BOTTOMRIGHT', 0, -3)
 label:SetWidth(210)
 label:SetJustifyH('RIGHT')
