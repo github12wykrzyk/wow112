@@ -4913,7 +4913,7 @@
       "verified_commit": null,
       "tests": [
         {
-          "kind": "gameplay",
+          "kind": "game",
           "result": "failed",
           "commit": "154320fdd2b28303f8d6a4864a1e518ea1d8c4e0",
           "date": "2026-10-02",
