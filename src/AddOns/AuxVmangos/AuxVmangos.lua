@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.42-de-midscan-warm-v1"
+AVM_VERSION = "0.43-de-exact-cache-v1"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -12,7 +12,8 @@ AVM_EXTRA_EVENT_WINDOW = 1.0
 AVM_TICK = 0.05
 AVM_WATCH_SLOTS = 16
 AVM_WATCH_MAX_PAGES = 100
-AVM_DE_WARM_CACHE_MAX_AGE = 900 -- prefilter only; every buy still gets exact live verification
+AVM_DE_WARM_CACHE_MAX_AGE = 900 -- prefilter only; every buy still requires exact live material state
+AVM_DE_EXACT_CACHE_MAX_AGE = 30 -- in-memory, per logical scan; populated only by complete filtered live material queries
 
 local AVM_AUX_CORE_OK, AVM_AUX_CORE = pcall(require, "aux")
 local AVM_AUX_INFO_OK, AVM_AUX_INFO = pcall(require, "aux.util.info")
@@ -93,6 +94,12 @@ AVM = {
 		deWarmCacheLoaded = false,
 		deWarmCacheRows = 0,
 		deWarmHits = 0,
+		deExactCache = {},
+		deExactCacheSerial = 0,
+		deExactCacheHits = 0,
+		deExactCacheMisses = 0,
+		deVerifyRejectFingerprint = {},
+		deVerifySuppressed = 0,
 		deWaitByMat = {},
 		deReadyPageBest = nil,
 		deWakeups = 0,
@@ -313,6 +320,9 @@ local function avm_diag_record(msg)
 		auxArbDeWarmLoaded = AVM.auxArb and AVM.auxArb.deWarmCacheLoaded and true or false,
 		auxArbDeWarmRows = AVM.auxArb and AVM.auxArb.deWarmCacheRows or 0,
 		auxArbDeWarmHits = AVM.auxArb and AVM.auxArb.deWarmHits or 0,
+		auxArbDeExactHits = AVM.auxArb and AVM.auxArb.deExactCacheHits or 0,
+		auxArbDeExactMisses = AVM.auxArb and AVM.auxArb.deExactCacheMisses or 0,
+		auxArbDeVerifySuppressed = AVM.auxArb and AVM.auxArb.deVerifySuppressed or 0,
 		deDepthUnits = AVM_DB.deDepthUnits or 3,
 		deAhCutPct = AVM_DB.deAhCutPct or 5,
 		deSafetyMarginPct = AVM_DB.deSafetyMarginPct or 25,
@@ -2314,6 +2324,99 @@ local function avm_de_warm_publish(itemId, row, floor, depth)
 	}
 end
 
+local function avm_de_row_clone(row)
+	if not row then return nil end
+	local out = {
+		name = tostring(row.name or ""),
+		units = tonumber(row.units) or 0,
+		offers = {},
+		depthCache = {},
+		warm = false,
+	}
+	for i = 1, table.getn(row.offers or {}) do
+		local offer = row.offers[i]
+		if offer then
+			table.insert(out.offers, {
+				unit = tonumber(offer.unit) or 0,
+				count = tonumber(offer.count) or 0,
+			})
+		end
+	end
+	return out
+end
+
+local function avm_de_exact_cache_peek(a, itemId)
+	itemId = tonumber(itemId)
+	if not a or not itemId or type(a.deExactCache) ~= "table" then return nil end
+	local entry = a.deExactCache[itemId]
+	if not entry then return nil end
+	local depth = tonumber(AVM_DB.deDepthUnits) or 3
+	if depth < 1 then depth = 1 end
+	local now = tonumber(GetTime()) or 0
+	local age = now - (tonumber(entry.at) or 0)
+	if tonumber(entry.depth) ~= depth or age < 0 or age > AVM_DE_EXACT_CACHE_MAX_AGE then
+		a.deExactCache[itemId] = nil
+		return nil
+	end
+	return entry
+end
+
+local function avm_de_exact_cache_get(a, itemId)
+	local entry = avm_de_exact_cache_peek(a, itemId)
+	if not entry then
+		if a then a.deExactCacheMisses = (tonumber(a.deExactCacheMisses) or 0) + 1 end
+		return nil
+	end
+	a.deExactCacheHits = (tonumber(a.deExactCacheHits) or 0) + 1
+	return avm_de_row_clone(entry.row), entry
+end
+
+local function avm_de_exact_cache_put(a, itemId, row, floor)
+	itemId = tonumber(itemId)
+	floor = tonumber(floor) or 0
+	if not a or not itemId or not row or floor <= 0 then return end
+	local depth = tonumber(AVM_DB.deDepthUnits) or 3
+	if depth < 1 then depth = 1 end
+	if type(a.deExactCache) ~= "table" then a.deExactCache = {} end
+	a.deExactCacheSerial = (tonumber(a.deExactCacheSerial) or 0) + 1
+	a.deExactCache[itemId] = {
+		at = tonumber(GetTime()) or 0,
+		depth = depth,
+		floor = floor,
+		serial = a.deExactCacheSerial,
+		row = avm_de_row_clone(row),
+	}
+end
+
+local function avm_de_exact_fingerprint(candidate, a)
+	local parts = {}
+	for i = 1, table.getn(candidate and candidate.materials or {}) do
+		local mat = candidate.materials[i]
+		local itemId = tonumber(mat and mat.itemId) or 0
+		local entry = avm_de_exact_cache_peek(a, itemId)
+		if entry then
+			table.insert(parts, tostring(itemId) .. ":" .. tostring(entry.serial or 0))
+		else
+			table.insert(parts, tostring(itemId) .. ":MISS")
+		end
+	end
+	table.sort(parts)
+	if table.getn(parts) == 0 then return "none" end
+	return table.concat(parts, ",")
+end
+
+local function avm_de_verify_guarded(a, candidate)
+	if not a or not candidate or not candidate.signature or type(a.deVerifyRejectFingerprint) ~= "table" then return false end
+	local guard = a.deVerifyRejectFingerprint[candidate.signature]
+	if type(guard) ~= "table" then return false end
+	local age = (tonumber(GetTime()) or 0) - (tonumber(guard.at) or 0)
+	if age < 0 or age > AVM_DE_EXACT_CACHE_MAX_AGE then
+		a.deVerifyRejectFingerprint[candidate.signature] = nil
+		return false
+	end
+	return guard.fingerprint == avm_de_exact_fingerprint(candidate, a)
+end
+
 local function avm_de_record_key(record, itemId)
 	local itemKey = ""
 	if record and record.index then itemKey = avm_item_link_key(record.index) end
@@ -2843,6 +2946,7 @@ local function avm_de_consider_live_raw(a, raw)
 	if de then
 		raw._avmWaitMat = nil
 		if de.deWarmPrefilter then a.deWarmHits = (a.deWarmHits or 0) + 1 end
+		if avm_de_verify_guarded(a, de) then return nil end
 		local liveOk = avm_auxarb_live_purchase_ok(de)
 		if liveOk and avm_auxarb_candidate_better(de, a.deReadyPageBest) then
 			a.deReadyPageBest = de
@@ -3639,9 +3743,25 @@ end
 
 local avm_auxarb_resume_search
 
+local function avm_de_reject_guardable(reason)
+	reason = tostring(reason or "")
+	return reason == "no-materials" or reason == "material-name-missing" or
+		string.find(reason, "material-depth:", 1, true) == 1 or
+		string.find(reason, "live-", 1, true) == 1
+end
+
 local function avm_de_fail_postscan(candidate, reason)
 	local a = AVM.auxArb
-	if candidate and candidate.signature then AVM.recent[candidate.signature] = GetTime() + 2 end
+	if candidate and candidate.signature then
+		AVM.recent[candidate.signature] = GetTime() + 2
+		if avm_de_reject_guardable(reason) then
+			if type(a.deVerifyRejectFingerprint) ~= "table" then a.deVerifyRejectFingerprint = {} end
+			a.deVerifyRejectFingerprint[candidate.signature] = {
+				fingerprint = avm_de_exact_fingerprint(candidate, a),
+				at = tonumber(GetTime()) or 0,
+			}
+		end
+	end
 	a.deVerify = nil
 	a.candidate = nil
 	AVM.candidate = nil
@@ -3658,6 +3778,49 @@ local function avm_de_fail_postscan(candidate, reason)
 	end
 end
 
+local function avm_de_live_verify_finish()
+	local a = AVM.auxArb
+	local v = a.deVerify
+	if not v or not v.candidate then return false end
+	local fresh, reason = avm_de_candidate_from_record(v.candidate, v.book)
+	if not fresh then
+		avm_de_fail_postscan(v.candidate, "live-" .. tostring(reason or "valuation"))
+		return false
+	end
+	if fresh.signature and type(a.deVerifyRejectFingerprint) == "table" then
+		a.deVerifyRejectFingerprint[fresh.signature] = nil
+	end
+	fresh.midScan = v.candidate.midScan and true or false
+	fresh.scanComplete = v.candidate.scanComplete and true or false
+	fresh.deVerifiedBook = v.book
+	-- Full-AH sourcePage is stale by the time a long scan plus material verification
+	-- finishes. Re-find the exact auction in a fresh item-filtered result set.
+	fresh.revalidateName = avm_auxarb_revalidate_query_name(fresh)
+	fresh.revalidateFiltered = fresh.revalidateName ~= ""
+	fresh.sourcePage = 0
+	a.deVerify = nil
+	a.candidate = fresh
+	AVM.candidate = fresh
+	if fresh.revalidateFiltered then
+		AVM.revalidatePages = { 0 }
+		AVM.revalidatePos = 1
+	else
+		avm_prepare_revalidate(fresh)
+	end
+	AVM.phase = "REVALIDATE"
+	AVM.nextQueryAt = GetTime() + 0.05
+	avm_print("DE_LIVE_OK name=" .. tostring(fresh.name) ..
+		" buy=" .. avm_money(fresh.buyout or 0) ..
+		" profit=" .. avm_money(fresh.profit or 0))
+	avm_print("AUX_ARB_DE_LIVE_OK " .. tostring(fresh.name) ..
+		" buy=" .. avm_money(fresh.buyout) ..
+		" netEV=" .. avm_money(fresh.deValue) ..
+		" maxEntry=" .. avm_money(fresh.deMaxEntry) ..
+		" profit=" .. avm_money(fresh.profit) ..
+		" requery='" .. tostring(fresh.revalidateName or "") .. "'")
+	return true
+end
+
 local function avm_de_begin_live_verify(candidate)
 	local a = AVM.auxArb
 	avm_print("DE_VERIFY name=" .. tostring(candidate and candidate.name or "?"))
@@ -3665,21 +3828,50 @@ local function avm_de_begin_live_verify(candidate)
 		avm_de_fail_postscan(candidate, "no-materials")
 		return false
 	end
+	if avm_de_verify_guarded(a, candidate) then
+		a.deVerifySuppressed = (tonumber(a.deVerifySuppressed) or 0) + 1
+		avm_print("DE_VERIFY_SUPPRESSED name=" .. tostring(candidate.name) .. " reason=same-input")
+		avm_de_fail_postscan(candidate, "repeat-same-input")
+		return false
+	end
+
+	local book = {}
+	local missing = {}
+	local cacheHits = 0
+	for i = 1, table.getn(candidate.materials) do
+		local mat = candidate.materials[i]
+		local row = mat and avm_de_exact_cache_get(a, mat.itemId) or nil
+		if row and mat and mat.itemId then
+			book[tonumber(mat.itemId)] = row
+			cacheHits = cacheHits + 1
+		elseif mat then
+			table.insert(missing, mat)
+		end
+	end
 	a.deVerify = {
-		candidate = candidate, materials = candidate.materials,
-		index = 1, page = 0, lastPage = 0, book = {},
+		candidate = candidate,
+		materials = missing,
+		allMaterials = candidate.materials,
+		index = 1, page = 0, lastPage = 0, book = book,
 	}
 	AVM.candidate = candidate
-	AVM.phase = "DE_MAT_REVALIDATE"
 	AVM.auxLoop.nextAt = 0
-	AVM.nextQueryAt = GetTime() + 0.05
 	avm_print("AUX_ARB_DE_VERIFY start " .. tostring(candidate.name) ..
 		" mats=" .. tostring(table.getn(candidate.materials)) ..
+		" cacheHit=" .. tostring(cacheHits) ..
+		" query=" .. tostring(table.getn(missing)) ..
 		" depth=" .. tostring(AVM_DB.deDepthUnits or 3) ..
 		" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
 		" margin=" .. tostring(candidate.deMarginPct or AVM_DB.deSafetyMarginPct or 25) .. "%" ..
 		" ownShare=" .. string.format("%.1f", tonumber(candidate.deExposureMaxSharePct) or 0) .. "%" ..
 		" ownUnits=" .. tostring(tonumber(candidate.deExposureMaxOwnUnits) or 0))
+
+	if table.getn(missing) == 0 then
+		avm_print("AUX_ARB_DE_VERIFY cache-only ttl=" .. tostring(AVM_DE_EXACT_CACHE_MAX_AGE) .. "s")
+		return avm_de_live_verify_finish()
+	end
+	AVM.phase = "DE_MAT_REVALIDATE"
+	AVM.nextQueryAt = GetTime() + 0.05
 	return true
 end
 
@@ -3710,53 +3902,22 @@ local function avm_de_live_verify_accept(page, total)
 		return
 	end
 
-	local floorPrice = avm_de_depth_price(v.book, mat.itemId, tonumber(AVM_DB.deDepthUnits) or 3)
+	local floorPrice, liveRow = avm_de_depth_price(v.book, mat.itemId, tonumber(AVM_DB.deDepthUnits) or 3)
 	if not floorPrice then
 		avm_de_fail_postscan(v.candidate, "material-depth:" .. tostring(mat.name))
 		return
 	end
+	avm_de_exact_cache_put(a, mat.itemId, liveRow, floorPrice)
 	avm_print("AUX_ARB_DE_MAT " .. tostring(mat.name) ..
 		" depthFloor=" .. avm_money(floorPrice) ..
-		" units>=" .. tostring(AVM_DB.deDepthUnits or 3))
+		" units>=" .. tostring(AVM_DB.deDepthUnits or 3) ..
+		" exactCache=" .. tostring(AVM_DE_EXACT_CACHE_MAX_AGE) .. "s")
 
 	v.index = v.index + 1
 	v.page = 0
 	v.lastPage = 0
 	if v.index <= table.getn(v.materials) then return end
-
-	local fresh, reason = avm_de_candidate_from_record(v.candidate, v.book)
-	if not fresh then
-		avm_de_fail_postscan(v.candidate, "live-" .. tostring(reason or "valuation"))
-		return
-	end
-	fresh.midScan = v.candidate.midScan and true or false
-	fresh.scanComplete = v.candidate.scanComplete and true or false
-	fresh.deVerifiedBook = v.book
-	-- Full-AH sourcePage is stale by the time a long scan plus material verification
-	-- finishes. Re-find the exact auction in a fresh item-filtered result set.
-	fresh.revalidateName = avm_auxarb_revalidate_query_name(fresh)
-	fresh.revalidateFiltered = fresh.revalidateName ~= ""
-	fresh.sourcePage = 0
-	a.deVerify = nil
-	a.candidate = fresh
-	AVM.candidate = fresh
-	if fresh.revalidateFiltered then
-		AVM.revalidatePages = { 0 }
-		AVM.revalidatePos = 1
-	else
-		avm_prepare_revalidate(fresh)
-	end
-	AVM.phase = "REVALIDATE"
-	AVM.nextQueryAt = GetTime() + 0.05
-	avm_print("DE_LIVE_OK name=" .. tostring(fresh.name) ..
-		" buy=" .. avm_money(fresh.buyout or 0) ..
-		" profit=" .. avm_money(fresh.profit or 0))
-	avm_print("AUX_ARB_DE_LIVE_OK " .. tostring(fresh.name) ..
-		" buy=" .. avm_money(fresh.buyout) ..
-		" netEV=" .. avm_money(fresh.deValue) ..
-		" maxEntry=" .. avm_money(fresh.deMaxEntry) ..
-		" profit=" .. avm_money(fresh.profit) ..
-		" requery='" .. tostring(fresh.revalidateName or "") .. "'")
+	avm_de_live_verify_finish()
 end
 
 local function avm_auxarb_clear_resume_retry()
@@ -3906,6 +4067,12 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.dePricingBook, a.deWarmCacheRows = avm_de_warm_cache_load()
 		a.deWarmCacheLoaded = (tonumber(a.deWarmCacheRows) or 0) > 0
 		a.deWarmHits = 0
+		a.deExactCache = {}
+		a.deExactCacheSerial = 0
+		a.deExactCacheHits = 0
+		a.deExactCacheMisses = 0
+		a.deVerifyRejectFingerprint = {}
+		a.deVerifySuppressed = 0
 		a.deWaitByMat = {}
 		a.deReadyPageBest = nil
 		a.deWakeups = 0
@@ -4172,6 +4339,10 @@ function AVM_AuxArbScanDone()
 	local bestDeLive = nil
 	for i = 1, table.getn(a.deRawCandidates or {}) do
 		local de, reason = avm_de_candidate_from_record(a.deRawCandidates[i], a.deMaterialBook)
+		if de and avm_de_verify_guarded(a, de) then
+			de = nil
+			reason = "repeat-same-input"
+		end
 		if de then
 			a.deCandidates = a.deCandidates + 1
 			AVM.stats.auxArbCandidates = AVM.stats.auxArbCandidates + 1
@@ -6088,7 +6259,9 @@ local function avm_auxarb_slash(rest)
 			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
 			" rawDE=" .. tostring(table.getn(a.deRawCandidates or {})) ..
 			" deWakeups=" .. tostring(a.deWakeups or 0) ..
-		" midScanDE=" .. tostring(a.deMidScanHits or 0))
+			" midScanDE=" .. tostring(a.deMidScanHits or 0) ..
+			" exactHit/miss=" .. tostring(a.deExactCacheHits or 0) .. "/" .. tostring(a.deExactCacheMisses or 0) ..
+			" verifySuppressed=" .. tostring(a.deVerifySuppressed or 0))
 		avm_print("AUX_ARB FLIP enabled=" .. tostring(AVM_DB.flipEnabled) ..
 			" min/max=" .. avm_money(AVM_DB.flipMinProfit or 0) .. "/" .. avm_money(AVM_DB.flipMaxBuyout or 0) ..
 			" depth=" .. tostring(AVM_DB.flipDepthUnits or 10) ..
