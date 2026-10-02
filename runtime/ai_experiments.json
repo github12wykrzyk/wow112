@@ -4215,12 +4215,69 @@
         "summon_coordinator.json route schema",
         "shared two-account slave character-slot layout"
       ],
+      "status": "awaiting_fix",
+      "observed_head": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+      "verified_commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight 36991939419 passed before integration. Integrated Build work candidate run 36992025293 passed FINAL_PACKAGE/provenance on exact parallel SHA; updater run 36992025701 passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+          "date": "2026-10-02",
+          "evidence": "Verified candidate artifact 11219669541 and updater artifact 11219957586 were produced for exact SHA 3c1e147a98e9e3b0682194082e8dae81b632fc67."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+          "date": "2026-10-02",
+          "evidence": "Report #75 manual PREPARE HYJAL: Coordinator selected labels hydraxian1/hydraxian2 and slot 2, both workers reached FAST relogin/character-select flow, then READY 2/2 was not reached. User observed that at least one client appeared to authenticate as a different/default account. Existing coordinator binding tracked account label -> PID but did not verify the AutoLoginBridge profile actually loaded inside that PID."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+        "artifact_id": 11219669541
+      },
+      "notes": "Slot layout itself is correct: hydraxian/Azshara=1, hyjal=2, winterspring=3. Report #75 exposed a separate profile-to-process binding flaw in manual PREPARE: labels/PIDs were trusted without checking the credential profile cached by AutoLoginBridge. Follow-up summon-worker-profile-binding-v1 adds fail-closed native profile fingerprints."
+    },
+    {
+      "id": "summon-worker-profile-binding-v1",
+      "branch": "feature/summon-worker-profile-binding-v1",
+      "modules": [
+        "AutoLoginBridge",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-coordinator-slot-layout-v4",
+        "updater-reload-worker-protocol-v2"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_AutoLoginProfile_<PID> profile identity map",
+        "accountSessions coordinator routing",
+        "CharacterSwitchDiag FAST relogin"
+      ],
       "status": "in_progress",
-      "observed_head": "c17da3d0f2448b2c202eb917a188f71076aea61f",
+      "observed_head": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+          "date": "2026-10-02",
+          "evidence": "Report #75 is the motivating failure: manual coordinator PREPARE could bind a selected account label to a PID whose AutoLoginBridge held another/default profile. CharacterSwitch then reused the profile actually cached in that process."
+        }
+      ],
       "package": null,
-      "notes": "Correct real layout to hydraxian/Azshara=1, hyjal=2, winterspring=3. Schema V4 migrates only the untouched shipped V3 default; customized V3 routes are preserved. Manual PREPARE only switches both slave workers to the selected slot and waits for READY 2/2; it does not cast Ritual or click a portal."
+      "notes": "Publish a non-secret two-hash account fingerprint from AutoLoginBridge per PID. Coordinator resolves/recover sessions only from exact fingerprint matches and refuses arbitrary PID binding. This also lets AUTO recover worker identity after updater restart without trusting stale in-memory accountSessions. No login or password is written to diagnostics/shared memory."
     }
   ]
 }

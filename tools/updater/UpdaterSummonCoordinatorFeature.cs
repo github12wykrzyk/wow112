@@ -36,8 +36,11 @@ namespace WoW112Updater
         private const uint SummonWorkerVersion = 2u;
         private const uint SummonAssistMagic = 0x41323157u;
         private const uint SummonAssistVersion = 2u;
+        private const uint AutoLoginProfileMagic = 0x50323157u;
+        private const uint AutoLoginProfileVersion = 1u;
         private const int SummonWorkerMapSize = 64;
         private const int SummonAssistMapSize = 64;
+        private const int AutoLoginProfileMapSize = 32;
         private const int SummonPrepareTimeoutMs = 30000;
         private const int SummonClickTimeoutMs = 10000;
         private bool summonCoordinatorBusy;
@@ -135,6 +138,72 @@ namespace WoW112Updater
 
             private uint Read32(int offset) { return unchecked((uint)Marshal.ReadInt32(view, offset)); }
             private void Write32(int offset, uint value) { Marshal.WriteInt32(view, offset, unchecked((int)value)); }
+
+            public void Dispose()
+            {
+                if (view != IntPtr.Zero) UnmapViewOfFile(view);
+                if (mapping != IntPtr.Zero) CloseHandle(mapping);
+            }
+
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            private static extern IntPtr OpenFileMapping(uint desiredAccess, bool inheritHandle, string name);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            private static extern IntPtr MapViewOfFile(IntPtr mapping, uint desiredAccess, uint offsetHigh, uint offsetLow, UIntPtr bytesToMap);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool UnmapViewOfFile(IntPtr address);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool CloseHandle(IntPtr handle);
+        }
+
+        private sealed class AutoLoginProfileSnapshot
+        {
+            public uint Pid, Hash1, Hash2, Loaded, ReloginState;
+        }
+
+        private sealed class AutoLoginProfileChannel : IDisposable
+        {
+            private const uint FileMapRead = 0x0004u;
+            private readonly IntPtr mapping;
+            private readonly IntPtr view;
+
+            private AutoLoginProfileChannel(IntPtr mappingHandle, IntPtr mappedView)
+            {
+                mapping = mappingHandle; view = mappedView;
+            }
+
+            internal static AutoLoginProfileChannel TryOpen(int pid)
+            {
+                var name = "Local\\WoW112_AutoLoginProfile_" + pid;
+                var mapping = OpenFileMapping(FileMapRead, false, name);
+                if (mapping == IntPtr.Zero) return null;
+                var view = MapViewOfFile(mapping, FileMapRead, 0, 0, (UIntPtr)AutoLoginProfileMapSize);
+                if (view == IntPtr.Zero)
+                {
+                    CloseHandle(mapping);
+                    return null;
+                }
+                var channel = new AutoLoginProfileChannel(mapping, view);
+                if (channel.Read32(0) != AutoLoginProfileMagic ||
+                    channel.Read32(4) != AutoLoginProfileVersion ||
+                    channel.Read32(8) != (uint)pid)
+                {
+                    channel.Dispose();
+                    return null;
+                }
+                return channel;
+            }
+
+            internal AutoLoginProfileSnapshot Read()
+            {
+                return new AutoLoginProfileSnapshot {
+                    Pid = Read32(8), Hash1 = Read32(12), Hash2 = Read32(16),
+                    Loaded = Read32(20), ReloginState = Read32(24)
+                };
+            }
+
+            private uint Read32(int offset) { return unchecked((uint)Marshal.ReadInt32(view, offset)); }
 
             public void Dispose()
             {
@@ -495,14 +564,155 @@ namespace WoW112Updater
             }
         }
 
-        private WowAccountSession FindLiveAccountSession(string accountId)
+        private static byte ProfileFold(char ch)
         {
-            if (string.IsNullOrWhiteSpace(accountId)) return null;
+            if (ch > 0x7F) return 0;
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + ('a' - 'A'));
+            return (byte)ch;
+        }
+
+        private static uint ProfileHash1(string value)
+        {
+            unchecked
+            {
+                uint h = 2166136261u;
+                foreach (var ch in value ?? "")
+                {
+                    var b = ProfileFold(ch);
+                    if (b == 0 && ch != '\0') return 0;
+                    h ^= b; h *= 16777619u;
+                }
+                return h == 0 ? 1u : h;
+            }
+        }
+
+        private static uint ProfileHash2(string value)
+        {
+            unchecked
+            {
+                uint h = 5381u;
+                foreach (var ch in value ?? "")
+                {
+                    var b = ProfileFold(ch);
+                    if (b == 0 && ch != '\0') return 0;
+                    h = ((h << 5) + h) ^ b;
+                }
+                return h == 0 ? 1u : h;
+            }
+        }
+
+        private static bool ProfileMatchesAccount(int pid, WowAccount account, out AutoLoginProfileSnapshot snapshot)
+        {
+            snapshot = null;
+            if (pid <= 0 || account == null || string.IsNullOrWhiteSpace(account.Login)) return false;
+            var h1 = ProfileHash1(account.Login);
+            var h2 = ProfileHash2(account.Login);
+            if (h1 == 0 || h2 == 0) return false;
+            using (var channel = AutoLoginProfileChannel.TryOpen(pid))
+            {
+                if (channel == null) return false;
+                snapshot = channel.Read();
+                return snapshot.Loaded == 1 && snapshot.Hash1 == h1 && snapshot.Hash2 == h2;
+            }
+        }
+
+        private bool IsCoordinatorGameProcess(Process process)
+        {
+            if (process == null) return false;
+            try
+            {
+                if (process.HasExited || process.MainWindowHandle == IntPtr.Zero) return false;
+                var root = Path.GetFullPath(gameDir.Text.Trim()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var fullPath = Path.GetFullPath(process.MainModule.FileName);
+                var name = Path.GetFileName(fullPath);
+                return fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                    && name.StartsWith("WoW", StringComparison.OrdinalIgnoreCase)
+                    && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        private WowAccountSession ResolveProfileBoundCoordinatorSession(WowAccount account, IWin32Window owner, bool interactive)
+        {
+            if (account == null) return null;
             accountSessions.RemoveAll(s => {
                 try { return s.Game == null || s.Game.HasExited; }
                 catch { return true; }
             });
-            return accountSessions.LastOrDefault(s => s.AccountId == accountId);
+
+            var existing = accountSessions.LastOrDefault(s => s.AccountId == account.Id && s.Game != null);
+            AutoLoginProfileSnapshot existingProfile;
+            if (existing != null && IsCoordinatorGameProcess(existing.Game) &&
+                ProfileMatchesAccount(existing.Game.Id, account, out existingProfile))
+                return existing;
+
+            var matches = new List<Process>();
+            foreach (var process in Process.GetProcesses())
+            {
+                var keep = false;
+                try
+                {
+                    AutoLoginProfileSnapshot profile;
+                    if (IsCoordinatorGameProcess(process) && ProfileMatchesAccount(process.Id, account, out profile))
+                    {
+                        matches.Add(process);
+                        keep = true;
+                    }
+                }
+                finally
+                {
+                    if (!keep) process.Dispose();
+                }
+            }
+
+            Process chosen = null;
+            if (matches.Count == 1) chosen = matches[0];
+            else if (matches.Count > 1 && interactive)
+            {
+                using (var picker = new Form
+                {
+                    Text = "Wybierz zweryfikowany klient WoW: " + account.Label,
+                    ClientSize = new Size(420, 128), StartPosition = FormStartPosition.CenterParent,
+                    FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false
+                })
+                {
+                    var selector = new ComboBox { Location = new Point(12, 13), Width = 395, DropDownStyle = ComboBoxStyle.DropDownList };
+                    foreach (var process in matches.OrderBy(p => p.Id))
+                        selector.Items.Add(new RunningGameItem(process));
+                    selector.SelectedIndex = 0;
+                    var ok = new Button { Text = "Użyj tego okna", DialogResult = DialogResult.OK, Location = new Point(226, 74), Width = 180 };
+                    picker.Controls.Add(selector); picker.Controls.Add(ok); picker.AcceptButton = ok;
+                    if (picker.ShowDialog(owner) == DialogResult.OK)
+                        chosen = ((RunningGameItem)selector.SelectedItem).Game;
+                }
+            }
+
+            foreach (var process in matches)
+                if (process != chosen) process.Dispose();
+
+            if (chosen == null)
+            {
+                if (interactive)
+                {
+                    CoordinatorLog("state=PROFILE_BIND_FAIL account=" + SafeCoordinatorToken(account.Label) + " verified_matches=" + matches.Count);
+                    throw new InvalidOperationException("Brak uruchomionego klienta z profilem " + account.Label +
+                        ". Coordinator nie przypisze konta po samym PID. Zaktualizuj PARALLEL i uruchom ten profil przez MULTIBOX.");
+                }
+                return null;
+            }
+
+            var session = new WowAccountSession { Game = chosen, AccountId = account.Id };
+            accountSessions.RemoveAll(old => old.AccountId == account.Id);
+            accountSessions.Add(session);
+            CoordinatorLog("state=PROFILE_BOUND account=" + SafeCoordinatorToken(account.Label) + " pid=" + chosen.Id);
+            return session;
+        }
+
+        private WowAccountSession FindLiveAccountSession(string accountId)
+        {
+            if (string.IsNullOrWhiteSpace(accountId) || accountVault == null) return null;
+            var account = accountVault.Data.Accounts.FirstOrDefault(a => a.Id == accountId);
+            return ResolveProfileBoundCoordinatorSession(account, null, false);
         }
 
         private PendingSummonRequest FindOldestPendingSummonRequest()
@@ -757,8 +967,8 @@ namespace WoW112Updater
         {
             if (a == null || b == null) throw new InvalidOperationException("Wybierz oba konta slave.");
             if (a.Id == b.Id) throw new InvalidOperationException("Worker A i B muszą być różnymi kontami.");
-            var sa = ResolveAccountSession(a, owner);
-            var sb = ResolveAccountSession(b, owner);
+            var sa = ResolveProfileBoundCoordinatorSession(a, owner, true);
+            var sb = ResolveProfileBoundCoordinatorSession(b, owner, true);
             if (sa == null || sb == null) return;
             if (sa.Game.Id == sb.Game.Id) throw new InvalidOperationException("Oba workery wskazują ten sam proces WoW.");
             using (var ca = await OpenCoordinatorWorkerAsync(sa))
@@ -766,8 +976,8 @@ namespace WoW112Updater
             {
                 var aa = ca == null ? null : ca.Read();
                 var bb = cb == null ? null : cb.Read();
-                output.Text = "A " + SafeCoordinatorToken(a.Label) + ": " + (aa == null ? "brak mapy CharacterSwitchDiag" : WorkerStateName(aa.State) + " PID " + aa.Pid + " world=" + aa.InWorld + " combat=" + aa.Combat + " slot=" + aa.CurrentSlot) + Environment.NewLine +
-                              "B " + SafeCoordinatorToken(b.Label) + ": " + (bb == null ? "brak mapy CharacterSwitchDiag" : WorkerStateName(bb.State) + " PID " + bb.Pid + " world=" + bb.InWorld + " combat=" + bb.Combat + " slot=" + bb.CurrentSlot);
+                output.Text = "A " + SafeCoordinatorToken(a.Label) + " [PROFILE OK]: " + (aa == null ? "brak mapy CharacterSwitchDiag" : WorkerStateName(aa.State) + " PID " + aa.Pid + " world=" + aa.InWorld + " combat=" + aa.Combat + " slot=" + aa.CurrentSlot) + Environment.NewLine +
+                              "B " + SafeCoordinatorToken(b.Label) + " [PROFILE OK]: " + (bb == null ? "brak mapy CharacterSwitchDiag" : WorkerStateName(bb.State) + " PID " + bb.Pid + " world=" + bb.InWorld + " combat=" + bb.Combat + " slot=" + bb.CurrentSlot);
             }
         }
 
@@ -782,8 +992,8 @@ namespace WoW112Updater
             foreach (var control in controls) control.Enabled = false;
             try
             {
-                var sa = ResolveAccountSession(a, owner);
-                var sb = ResolveAccountSession(b, owner);
+                var sa = ResolveProfileBoundCoordinatorSession(a, owner, true);
+                var sb = ResolveProfileBoundCoordinatorSession(b, owner, true);
                 if (sa == null || sb == null) throw new InvalidOperationException("Nie wskazano obu procesów WoW.");
                 if (sa.Game.Id == sb.Game.Id) throw new InvalidOperationException("Oba workery wskazują ten sam proces WoW.");
 
