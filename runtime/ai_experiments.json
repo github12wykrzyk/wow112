@@ -3457,7 +3457,7 @@
         }
       ],
       "package": null,
-      "notes": "Root-cause audit of pinned upstream aux-addon-vanilla commit 6b56d0f found Search on_page_scanned calls search.table:SetDatabase() every page, rebuilding/sorting accumulated results, while same-filter execute(false,false) replaces the prior records table. At the project's 25 ms native AH cadence this repeated UI/database work and allocation/GC is unnecessary for automation. Candidate keeps first-scan AUX results as a UI snapshot and runs automatic repeat scans headless at the Search-UI callback layer while preserving all fresh AVM arbitrage callbacks and transaction logic."
+      "notes": "Root-cause audit of pinned upstream aux-addon-vanilla commit 6b56d0f found Search on_page_scanned calls search.table:SetDatabase() every page, rebuilding/sorting accumulated results, while same-filter execute(false,false) replaces the prior records table. At the project's 25 ms native AH cadence this repeated UI/database work and allocation/GC is unnecessary for automation. Candidate keeps first-scan AUX results as a UI snapshot and runs automatic repeat scans headless at the Search-UI callback layer while preserving all fresh AVM arbitrage callbacks and transaction logic. Follow-up runtime observation: user reports the fast scan has no visible AUX result rows, while the next slow scan visibly populates the item list, strongly matching upstream on_auction + per-page SetDatabase cost. v3 experiment extends headless routing to every AVM restart/resume, not just repeats that retain the active headless flag."
     },
     {
       "id": "ah-live-de-midscan-v2",
@@ -3734,7 +3734,32 @@
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Direct ReloadUI() and direct ConsoleExec('reloadui') both returned without reloading in the automatic scan-completion context. The user has a working manual /reload shortcut. Candidate now discovers a live /reload (or /reloadui,/rl) alias and submits it through the same ChatFrameEditBox + ChatEdit_SendText slash-command path; if none is registered it submits stock '/console reloadui' through the chat parser. Reload waits while the user is typing in chat, remains single-shot with the existing two-second watchdog, and preserves all transaction-idle/session-state/AUX-GUI restore logic."
+      "notes": "Direct ReloadUI() and direct ConsoleExec('reloadui') both returned without reloading in the automatic scan-completion context. The user has a working manual /reload shortcut. Candidate now discovers a live /reload (or /reloadui,/rl) alias and submits it through the same ChatFrameEditBox + ChatEdit_SendText slash-command path; if none is registered it submits stock '/console reloadui' through the chat parser. Reload waits while the user is typing in chat, remains single-shot with the existing two-second watchdog, and preserves all transaction-idle/session-state/AUX-GUI restore logic. User subsequently reported that automatic reload still did not work and identified the stronger runtime correlation: the fast scan has no visible AUX item list, while the slow scan renders items. Reload path is therefore retired in favor of all-automation headless Search."
+    },
+    {
+      "id": "ah-auto-headless-all-scans",
+      "branch": "feature/ah-auto-headless-all-scans",
+      "modules": [
+        "AuxFastBridge",
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "auxfast-repeat-scan-fps",
+        "auxfast-restart-filter-guard",
+        "ah-live-de-midscan-v2"
+      ],
+      "shared_resources": [
+        "upstream AUX Search on_auction visible records",
+        "upstream AUX Search on_page_scanned SetDatabase",
+        "AUXFAST_RestartSearch and AUXFAST_ResumeSearch",
+        "AVM continuous AUX_ARB loop"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "8b73ab04105fec4676a9cd6861df3780c1561403",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User correlates severe slowdown with visible Search result rows: the fast automated scan shows no item list, while the slow subsequent scan renders items. Pinned upstream AUX appends up to 2000 records in on_auction and calls search.table:SetDatabase() after every page. Candidate retires reload-per-scan, keeps all AVM cycles in-process, and explicitly arms headless mode for both AUXFAST_RestartSearch and AUXFAST_ResumeSearch so no automated scan can fall back into visible row insertion/SetDatabase. Manual Search clicks remain normal and visible. Gameplay must verify 10+ automatic cycles stay row-free and smooth."
     }
   ]
 }

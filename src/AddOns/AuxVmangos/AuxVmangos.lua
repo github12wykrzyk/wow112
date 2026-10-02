@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.26.2-reload-chatpath"
+AVM_VERSION = "0.27-auto-headless"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -371,7 +371,10 @@ local function avm_defaults()
 	if AVM_DB.marketRetrySeconds == nil then AVM_DB.marketRetrySeconds = 300 end
 	if AVM_DB.marketStorageSchema == nil then AVM_DB.marketStorageSchema = 0 end
 	if AVM_DB.auxLoopEnabled == nil then AVM_DB.auxLoopEnabled = true end
-	if AVM_DB.reloadAfterScan == nil then AVM_DB.reloadAfterScan = true end
+	-- Reload-after-scan experiments are retired. Automatic AVM scans stay in-process
+	-- and AuxFastBridge v3.0 prevents all automated Search result rendering.
+	AVM_DB.reloadAfterScan = false
+	AVM_DB.reloadCycle = nil
 	if AVM_DB.auxLoopMarketMinutes == nil then AVM_DB.auxLoopMarketMinutes = 60 end
 	if AVM_DB.auxLoopMarketEnabled == nil then AVM_DB.auxLoopMarketEnabled = false end
 	if AVM_DB.auxLoopMarketPolicySchema == nil then
@@ -663,9 +666,9 @@ local function avm_loop_after_arb(reason)
 		return
 	end
 	if not AVM_DB.auxLoopEnabled then return end
-	-- Preferred stability path: every completed full scan gets a controlled UI
-	-- reload, then a fresh normal AUX pass. Legacy in-process restart stays fallback.
-	if avm_queue_reload_after_scan(reason or "scan complete") then return end
+	-- No reload between cycles. AuxFastBridge v3.0 guarantees every AVM-driven
+	-- restart/resume is headless, so the expensive upstream Search result table is
+	-- never populated/rebuilt by automation.
 	avm_loop_schedule_arb(reason or "scan complete")
 end
 
@@ -728,7 +731,7 @@ local function avm_loop_status()
 	end
 	avm_print("LOOP enabled=" .. tostring(AVM_DB.auxLoopEnabled) ..
 		" autoMarket=" .. tostring(AVM_DB.auxLoopMarketEnabled) ..
-		" reloadEachScan=" .. tostring(AVM_DB.reloadAfterScan and true or false) ..
+		" autoHeadless=true" ..
 		" marketEvery=" .. tostring(AVM_DB.auxLoopMarketMinutes or 60) .. "m" ..
 		" gap=" .. tostring(AVM_DB.auxLoopDelaySeconds or 2) .. "s" ..
 		" nextIn=" .. string.format("%.1f", nextIn) .. "s" ..
@@ -4916,6 +4919,11 @@ local function avm_start_zero_config(reason)
 	AVM.market.requestSource = ""
 	AVM.auxLoop.waitingForMarket = false
 	AVM.auxLoop.nextAt = 0
+	AVM.reloadCycle.pending = false
+	AVM.reloadCycle.issuedAt = 0
+	AVM.reloadCycle.restorePending = false
+	AVM_DB.reloadCycle = nil
+	AVM_DB.reloadAfterScan = false
 	avm_loop_schedule_arb(reason or "zero-config")
 	avm_print("AH_START source=" .. tostring(reason or "zero-config"))
 	avm_print("AH_ZERO_CONFIG_ACTIVE live=true loop=true autoMarket=false maxBuys=unlimited budget=unlimited")
@@ -4987,21 +4995,12 @@ local function avm_slash(msg)
 	elseif cmd == "loop" then
 		avm_loop_slash(rest)
 	elseif cmd == "reloadscan" then
-		local mode = string.lower(avm_trim(rest))
-		if mode == "off" then
-			AVM_DB.reloadAfterScan = false
-			AVM.reloadCycle.pending = false
-			AVM.reloadCycle.restorePending = false
-			AVM_DB.reloadCycle = nil
-			avm_print("RELOAD_AFTER_SCAN OFF - legacy in-process repeat fallback")
-		elseif mode == "on" then
-			AVM_DB.reloadAfterScan = true
-			avm_print("RELOAD_AFTER_SCAN ON - controlled reload after each completed full scan")
-		else
-			avm_print("RELOAD_AFTER_SCAN enabled=" .. tostring(AVM_DB.reloadAfterScan and true or false) ..
-				" pending=" .. tostring(AVM.reloadCycle.pending and true or false) ..
-				" restore=" .. tostring(AVM.reloadCycle.restorePending and true or false))
-		end
+		AVM_DB.reloadAfterScan = false
+		AVM.reloadCycle.pending = false
+		AVM.reloadCycle.issuedAt = 0
+		AVM.reloadCycle.restorePending = false
+		AVM_DB.reloadCycle = nil
+		avm_print("RELOAD_AFTER_SCAN retired; AVM automation is permanently headless in-process")
 	elseif cmd == "vendor" then
 		avm_vendor_slash(rest)
 	elseif cmd == "auxarb" then

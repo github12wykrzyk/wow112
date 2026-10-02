@@ -1,3 +1,7 @@
+# AuxVmangos 0.27 — automatic scans always headless
+
+The reload-per-scan experiment is retired. Continuous AVM automation now stays in-process and relies on AuxFastBridge 3.0 to suppress **all automated AUX Search result rendering**, including restarts and resumes after guarded transactions. Automatic scans still feed every auction/page into vendor, disenchant, flip, revalidation and purchase logic, but they do not append rows to the visible AUX Search list and do not trigger upstream per-page `search.table:SetDatabase()` rebuild/sort work. Manual AUX Search remains normal and visible.
+
 # AuxVmangos 0.26 — controlled reload after every full scan
 
 Continuous AUX automation now defaults to a controlled `ReloadUI()` after each completed full scan, but only after all pending/unknown/revalidation/purchase state is fully idle. Before reload, session purchase/spend counters, per-item flip exposure, recent-auction guards, diagnostics counters, loop count, and the active AUX filter are snapshotted in `AVM_DB`. AuxFastBridge 2.9 temporarily detaches AUX's frame OnHide handler so the reload does not intentionally call `CloseAuctionHouse()`.

@@ -1,4 +1,4 @@
--- AuxFastBridge v2.9 safe UI reload + restart-filter guard
+-- AuxFastBridge v3.0 all AVM automation headless + restart-filter guard
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -202,10 +202,10 @@ local function install_scan_hook()
 			params.on_page_scanned and params.on_auction and true or false
 		local auxArbAttached = fullSearchScan and AVM_DB and AVM_DB.auxArbEnabled and
 			AVM_AuxArbScanStart and AVM_AuxArbAuction and AVM_AuxArbPageDone and true or false
-		-- Continuous AVM restarts reuse the completed AUX Search object/results as a
-		-- read-only UI snapshot. Fresh auctions still flow through AVM callbacks, but
-		-- upstream Search does not append another 2000 records or rebuild/sort the
-		-- whole results table on every page. This avoids the second-pass FPS collapse.
+		-- Every AVM-driven restart/resume is headless. Manual clicks on AUX Search do
+		-- not set AUXFAST_REPEAT_PENDING, so they still populate the normal results UI.
+		-- This keeps automatic cycles from appending up to 2000 records and avoids the
+		-- upstream per-page search.table:SetDatabase() rebuild/sort path.
 		local headlessLoop = fullSearchScan and
 			(AUXFAST_REPEAT_PENDING or (resumeRequested and AUXFAST_HEADLESS_LOOP_ACTIVE)) and true or false
 		AUXFAST_REPEAT_PENDING = false
@@ -508,13 +508,19 @@ function AUXFAST_ResumeSearch()
 		return false
 	end
 	resumeRequested = true
+	-- Resume is AVM automation too. Re-arm headless explicitly so a post-scan
+	-- transaction cannot fall back into upstream result rendering after the prior
+	-- completed scan cleared AUXFAST_HEADLESS_LOOP_ACTIVE.
+	AUXFAST_REPEAT_PENDING = true
 	local ok, err = pcall(searchTab.execute, true)
 	if not ok then
 		resumeRequested = false
+		AUXFAST_REPEAT_PENDING = false
+		AUXFAST_HEADLESS_LOOP_ACTIVE = false
 		out("resume failed: " .. tostring(err))
 		return false
 	end
-	out("resumed original AUX search continuation")
+	out("resumed AVM search continuation headless")
 	return true
 end
 
@@ -607,4 +613,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AUXFAST_HEADLESS_RECORDS or 0))
 end
 
-out("v2.9 loaded: safe reload/reopen + fresh scan support; legacy headless repeat fallback retained; hook=" .. tostring(hookInstalled))
+out("v3.0 loaded: all AVM restart/resume cycles headless; manual AUX Search remains visible; hook=" .. tostring(hookInstalled))

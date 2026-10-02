@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Zero-config AUX live loop using the working chat /reload path after each full scan; GUI reopen; 1c vendor floor; live mid-scan DE.
+## Notes: Zero-config AUX live loop; all automated scans headless via AuxFastBridge v3.0; manual AUX Search remains visible.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.26.2-reload-chatpath
+## Version: 0.27-auto-headless
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua
