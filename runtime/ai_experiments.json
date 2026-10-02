@@ -4743,6 +4743,28 @@
       "tests": [],
       "package": null,
       "notes": "Use exact 5875 native same-realm ChangeRealm flow rather than hand-assembled Disconnect/ConnectToSelectedServer. Exact binary disassembly confirms ChangeRealm selects the supplied realm, sets disconnectPending=1 and reconnect=1, then calls ClientServices::Disconnect; NetDisconnectHandler consumes those flags and calls the existing world Connection()->Connect path without LoginConnection()->Logoff. Worker passes the currently selected REALM_INFO from GetSelectedRealm, waits for native Character Select/character list, selects the requested slot and enters world. No Logout/ForceLogout, AutoLoginBridge relogin, password/SRP flow, or login-server fallback. Runtime byte guards fail closed if patched executable code differs."
+    },
+    {
+      "id": "ah-history-age-diag-v1",
+      "branch": "feature/ah-history-age-diag-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-resume-retry-v1",
+        "ah-mail-flipdiag-watchui-v2"
+      ],
+      "shared_resources": [
+        "aux.core.history value/data_points",
+        "AUX full-scan flipBook history keys",
+        "AVM diagnostic report SavedVariables"
+      ],
+      "status": "in_progress",
+      "observed_head": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Adds exact AUX history-age evidence without changing flip economics. For every unique flip history key seen in a completed full scan it records whether a current history value exists, buckets closed daily data_points into 0/1/2/3+, captures oldest/newest AUX history timestamps across the market plus the oldest item/key, and stores one sample per bucket in AVM_DB.diag. Report #80 already proves values exist for thousands of keys but most fail the >=2 closed-day gate. AH dump #83 is empty for AVM marketPacked and by design contains only AuxVmangos marketMeta/marketPacked, not upstream aux-addon faction history, so it cannot independently prove AUX history age."
     }
   ]
 }
