@@ -102,6 +102,14 @@
         "src/CharacterSwitchDiag/WoWCharacterSwitchDiag_5875_v1.c"
       ],
       "profile": "clangcl_i686_win32imports"
+    },
+    {
+      "runtime_name": "WoWRemoteServiceProbe_5875_v1.dll",
+      "builder": "tools/build_remoteserviceprobe_candidate.py",
+      "sources": [
+        "src/RemoteServiceProbe/WoWRemoteServiceProbe_5875_v1.c"
+      ],
+      "profile": "clangcl_i686_win32imports"
     }
   ],
   "addons": {

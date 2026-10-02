@@ -4475,12 +4475,20 @@
         "NetClient LoginData session key +0x48",
         "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
       ],
-      "status": "in_progress",
-      "observed_head": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+      "status": "blocked",
+      "observed_head": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
+          "date": "2026-10-02",
+          "evidence": "Report #78: both workers disconnected instantly, preserved the internal session-key fingerprint and called ConnectToSelectedServer. One worker reached NetClient state 6 and the other later returned to state 2, but neither entered Character Select; both timed out with error 67. This isolates the remaining failure to post-reconnect Glue/character-list recovery rather than the disconnect or session-key preservation steps."
+        }
+      ],
       "package": null,
-      "notes": "Attempt to satisfy both requirements simultaneously: instant-oriented slave rotation and zero login-server authentication. Worker fingerprints the existing 40-byte session key internally, disconnects only the world connection, waits for NetClient NS_INITIALIZED, verifies the same key survived, calls exact-build ClientServices::ConnectToSelectedServer, then selects the configured character slot. No session-key bytes/hashes are logged and there is no AutoLoginBridge or normal Logout fallback. Exact-build guards cover getter, Disconnect, ConnectToSelectedServer and NetClient::Connect. Requires in-game validation."
+      "notes": "Transport half validated by report #78: instant world disconnect, preserved session-key fingerprint and direct world reconnect call all execute without AutoLoginBridge. Remaining defect: successful/recovering NetClient connection does not automatically restore Glue Character Select or request a fresh character enumeration. Follow-up summon-world-reconnect-charselect-v5 explicitly restores that flow and adds bounded direct-connect retry."
     },
     {
       "id": "target-aura-reveal-5875",
@@ -4558,6 +4566,113 @@
       ],
       "package": null,
       "notes": "Rebased/superseding AH profit feature. Carries the preflighted larger sortable AUX UI, 500-row Purchases retention and quantity/share-based DE exposure guard. Adds two default-on mechanisms: (1) BID vendor/DE on bid-only auctions with duration<=1, exact item/suffix revalidation, current-required-bid only, trusted vendor 20% margin or DE net-EV >=40% margin, >=10s expected profit, 5g per-bid cap and 10 placements/session, tracked separately from purchases; (2) stack-size arbitrage buying stacks >=75% of native max stack only when <=25% small stacks have >=10 units depth across >=3 sellers, with AUX historical cap, 5% AH cut, 25% safety margin, >=10s expected profit and full live filtered revalidation. Existing vendor/DE/flip buyout behavior remains intact."
+    },
+    {
+      "id": "ah-sort-order-fix-v1",
+      "branch": "feature/ah-sort-order-fix-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-bid-stack-arbitrage-v2",
+        "ah-profit-loss-ledger-v1"
+      ],
+      "shared_resources": [
+        "AVM_AUX_UI.SortRecords shared by native Purchases and Profit/Loss tabs",
+        "Lua 5.0 table.sort comparator strict-order contract"
+      ],
+      "status": "in_progress",
+      "observed_head": "433052da79d020a7f31f84449cde99469739fc48",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Gameplay screenshot on current Parallel reports AuxVmangos_AuxPurchases.lua:37 invalid order function for sorting; Purchases and Profit/Loss both call the shared AVM_AUX_UI.SortRecords helper. Root cause is Lua boolean pseudo-ternary 'descending and a>b or a<b': when descending=true, a<b also returns true through the 'or' branch, so comparator(a,b) and comparator(b,a) can both be true. Fix uses explicit descending/ascending branches and returns false for exact ties, restoring a strict comparator without changing ledger data or economics."
+    },
+    {
+      "id": "summon-world-reconnect-charselect-v5",
+      "branch": "feature/summon-world-reconnect-charselect-v5",
+      "modules": [
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-world-reconnect-session-v3",
+        "summon-switch-ui-fast-route-v4"
+      ],
+      "shared_resources": [
+        "ClientServices::ConnectToSelectedServer 0x005AB800",
+        "Glue SetCurrentScreen",
+        "Glue GetCharacterListUpdate",
+        "CharacterSelect slot/EnterWorld flow",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
+      ],
+      "status": "in_progress",
+      "observed_head": "9ab31464d7539bf5393c666972f1bd0b94738704",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
+          "date": "2026-10-02",
+          "evidence": "Report #78 motivates this iteration: instant disconnect and preserved session key worked; direct reconnect started, but Glue never rebuilt Character Select and worker ended error 67."
+        }
+      ],
+      "package": null,
+      "notes": "After direct world reconnect reaches the connected NetClient state, wait a short auth-settle interval, explicitly SetCurrentScreen('charselect') and GetCharacterListUpdate(), retry character enumeration with a bounded cadence, require GetNumCharacters() to contain the target slot before selection, require selectedIndex confirmation before EnterWorld, and retry ConnectToSelectedServer up to three times if the world connection falls back to INITIALIZED. No Logout(), AutoLoginBridge relogin, password/SRP flow or login-server fallback is used."
+    },
+    {
+      "id": "ah-mail-flipdiag-watchui-v2",
+      "branch": "feature/ah-mail-flipdiag-watchui-v2",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-sort-order-fix-v1",
+        "ah-bid-stack-arbitrage-v2",
+        "ah-profit-loss-ledger-v1"
+      ],
+      "shared_resources": [
+        "native AUX Profit/Loss mailbox income ledger",
+        "legacy AVM WATCH launcher and /avm gui",
+        "AUX_ARB flip post-scan candidate evaluation and diagnostics"
+      ],
+      "status": "in_progress",
+      "observed_head": "3538498d4c1f55f31947443e4ae05c63edeec3aa",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "f450944ca35cebe98329716fe0cfd4948c0df35f",
+          "date": "2026-10-02",
+          "evidence": "Superseded v1 exact SHA f450944ca35cebe98329716fe0cfd4948c0df35f passed Parallel feature preflight run 37003756436 and registry check 37003756415 before parallel advanced with unrelated CharacterSwitchDiag work. v2 reapplies the same AuxVmangos changes onto current parallel."
+        }
+      ],
+      "package": null,
+      "notes": "Rebased current-parallel version. Removes floating AVM WATCH launcher while retaining /avm gui. Repairs Profit/Loss mail ingestion with seller-invoice plus localized sold-subject/money fallback and bounded mailbox cache retries; adds mail-ledger diagnostics. Adds exact per-reason flip rejection counts and representative samples without changing flip economics. Auto-sell/Sell Rules remains planned but is not implemented in this bugfix."
+    },
+    {
+      "id": "remote-service-probe-5875",
+      "branch": "feature/remote-service-probe-v2",
+      "modules": [
+        "RemoteServiceProbe"
+      ],
+      "dependencies": [
+        "ah-native-throttle"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630 ordered chain",
+        "FrameScript events BANKFRAME_OPENED/MAIL_SHOW/AUCTION_HOUSE_SHOW",
+        "ObjectManager GUID/object lookup 0x00464870",
+        ".wow112_debug diagnostics"
+      ],
+      "status": "in_progress",
+      "observed_head": "433052da79d020a7f31f84449cde99469739fc48",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Deep one-pass diagnostic for remote BANK/MAIL/AH feasibility. Learns exact live-realm outbound handshake from a normal nearby interaction, records candidate packet timeline/GUID/object/distance/zone/errors, then replays only the learned open/list packet from arbitrary positions. No movement, position spoof, item transfer, mail send or auction bid/buy/cancel."
     }
   ]
 }

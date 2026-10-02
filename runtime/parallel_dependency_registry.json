@@ -65,6 +65,31 @@
           "embedded_adapter": "src/RogueMovementCore/WoWRogueMovementCore_Rear.c"
         }
       ]
+    },
+    {
+      "resource": "wow5875:0x005AB630:ClientServices_Send",
+      "policy": "ordered_chain",
+      "owners": [
+        {
+          "module": "WoWAHThrottleNative_5875_v8_FASTMARKET.dll",
+          "source": "src/AHThrottleNative/WoWAHThrottleNative_5875_v8_FASTMARKET.c",
+          "evidence": [
+            "#define ADDR_CLIENT_SEND 0x005AB630u",
+            "g_nextSend=next",
+            "patch_jump"
+          ]
+        },
+        {
+          "module": "WoWRemoteServiceProbe_5875_v1.dll",
+          "source": "src/RemoteServiceProbe/WoWRemoteServiceProbe_5875_v1.c",
+          "evidence": [
+            "#define ADDR_CLIENT_SEND         0x005AB630u",
+            "g_nextSend=next",
+            "patch_jump(ADDR_CLIENT_SEND",
+            "restore_send_hook"
+          ]
+        }
+      ]
     }
   ],
   "arbitrated_writers": [
