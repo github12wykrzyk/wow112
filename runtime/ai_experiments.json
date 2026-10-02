@@ -3813,6 +3813,27 @@
       "tests": [],
       "package": null,
       "notes": "Rebased user-requested MULTIBOX/SUMMON iteration after parallel advanced independently. Level-1 helper is a forced SLAVE and cannot disable Anti-AFK; above level 1 SLAVE is unavailable, MASTER can be toggled off so NONE is representable. Multibox launch order is stable-partitioned so all non-LOW accounts start before LOW accounts while preserving the existing 3000 ms process stagger and relative account order."
+    },
+    {
+      "id": "tele-e-ui-panel-guard",
+      "branch": "feature/tele-e-ui-guard",
+      "modules": [
+        "MovementCore"
+      ],
+      "dependencies": [
+        "map-tele-keep-open"
+      ],
+      "shared_resources": [
+        "MovementCore Tele E press-edge path",
+        "WoW 1.12.1 UIParent panel manager left/center/doublewide/fullscreen",
+        "WorldMapFrame map-tele Lua bridge"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1a9cfc192b9ecaa7ea3712ba40c5c034ea075bee",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Terrain Tele E is blocked whenever Blizzard's central UIParent panel manager has an open left/center/doublewide/fullscreen panel. This generically covers MailFrame, AuctionFrame and AUX hosted inside AuctionFrame without per-window exceptions. Existing WorldMap E map-tele is evaluated first and remains intentional. External exact-interface evidence: MOUZU/Blizzard-WoW-Interface 1.12.1 FrameXML/UIParent.lua."
     }
   ]
 }

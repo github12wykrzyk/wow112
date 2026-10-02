@@ -1320,6 +1320,29 @@ static DWORD W112_TeleMapShown(void)
  return !raw||raw[0]!='0'||raw[1]!=0;/* unknown != proof map closed */
 }
 
+/* Generic Blizzard UI-panel guard for terrain Tele E. Vanilla 1.12.1
+ * FrameXML/UIParent.lua owns major interaction windows through the four
+ * UIParent slots below: MailFrame uses left and AuctionFrame uses doublewide,
+ * so AUX hosted by AuctionFrame is covered automatically. This deliberately
+ * keys off the panel manager rather than a growing list of frame names.
+ * WorldMap is handled first by the existing map-tele path and therefore keeps
+ * its intentional E behavior.
+ * Evidence: https://github.com/MOUZU/Blizzard-WoW-Interface/blob/master/1.12.1/FrameXML/UIParent.lua
+ */
+static const char g_teleUiPanelScript[]=
+ "W112_TELE_UI_BLOCKED=(UIParent and "
+ "(UIParent.left or UIParent.center or UIParent.doublewide or UIParent.fullscreen)) and '1' or '0'";
+static const char g_teleUiBlockedChat[]=
+ "if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage('|cffffaa00[Tele E]|r blocked: UI panel open') end";
+static DWORD W112_TeleUiPanelOpen(void)
+{
+ const char*raw;W112_MapGetTextFn getText=(W112_MapGetTextFn)W112_MAP_GETTEXT_FN;
+ if(!W112_TeleRangeValid(W112_MAP_GETTEXT_FN,8u,1u))return 1u;/* fail closed */
+ DebugChat(g_teleUiPanelScript);
+ raw=getText("W112_TELE_UI_BLOCKED",-1,0u);
+ return !raw||raw[0]!='0'||raw[1]!=0;
+}
+
 /* Multibox-safe foreground gate: bind manual hotkeys to the process that
    owns the actual foreground window. Do not rely on a client HWND resolver,
    because multiple WoW instances can otherwise resolve the same window. */
@@ -1409,6 +1432,10 @@ static void W112_KeyTeleTick(BYTE *p,DWORD now)
     if(!W112_TeleAvailable(p)){DebugChat(g_teleBlockedChat);return;}
     if(W112_TeleMapShown()){
         DebugChat(g_teleMapECaptureScript); /* never fall through to terrain */
+        return;
+    }
+    if(W112_TeleUiPanelOpen()){
+        DebugChat(g_teleUiBlockedChat);
         return;
     }
     if(!W112_TeleRangeValid(W112_TELE_CLICK_INFO_PTR,4u,0u)||
