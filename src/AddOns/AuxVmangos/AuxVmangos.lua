@@ -487,7 +487,9 @@ local function avm_defaults()
 	if AVM_DB.deExposureBlockPct == nil then AVM_DB.deExposureBlockPct = 50 end
 	if AVM_DB.deExposureSoftMarginPct == nil then AVM_DB.deExposureSoftMarginPct = 30 end
 	if AVM_DB.deExposureHardMarginPct == nil then AVM_DB.deExposureHardMarginPct = 35 end
-	if AVM_DB.deExposureValueCap == nil then AVM_DB.deExposureValueCap = 200000 end
+	if AVM_DB.deExposureMaxOwnStacks == nil then AVM_DB.deExposureMaxOwnStacks = 2 end
+	-- Retired: absolute gold exposure is a poor saturation proxy for DE materials.
+	AVM_DB.deExposureValueCap = nil
 	if AVM_DB.flipRiskSchema == nil then
 		-- 0.20 replaces depth-only valuation with historical anchoring. Migrate only the old default.
 		if AVM_DB.flipDepthUnits == nil or AVM_DB.flipDepthUnits == 5 then AVM_DB.flipDepthUnits = 10 end
@@ -2478,7 +2480,7 @@ local function avm_de_candidate_from_record(record, book)
 
 	local marginPct = baseMarginPct
 	local maxOwnSharePct = 0
-	local maxOwnValue = 0
+	local maxOwnUnits = 0
 	if exposureGuard then
 		local ownBook = AVM.deExposure.book or {}
 		local minEvPct = tonumber(AVM_DB.deExposureMinEvPct) or 15
@@ -2487,7 +2489,8 @@ local function avm_de_candidate_from_record(record, book)
 		local shareBlock = tonumber(AVM_DB.deExposureBlockPct) or 50
 		local marginSoft = tonumber(AVM_DB.deExposureSoftMarginPct) or 30
 		local marginHard = tonumber(AVM_DB.deExposureHardMarginPct) or 35
-		local valueCap = tonumber(AVM_DB.deExposureValueCap) or 200000
+		local maxOwnStacks = tonumber(AVM_DB.deExposureMaxOwnStacks) or 2
+		if maxOwnStacks < 1 then maxOwnStacks = 1 end
 		for i = 1, table.getn(mats) do
 			local mat = mats[i]
 			local marketRow = book and book[mat.itemId]
@@ -2495,6 +2498,9 @@ local function avm_de_candidate_from_record(record, book)
 			local marketUnits = tonumber(marketRow and marketRow.units) or 0
 			local ownUnits = tonumber(own.units) or 0
 			local ownValue = tonumber(own.buyout) or 0
+			local maxStack = tonumber(own.maxStack) or 20
+			if maxStack < 1 then maxStack = 20 end
+			local ownUnitCap = math.max(1, math.floor(maxStack * maxOwnStacks))
 			local ownSharePct = 0
 			if marketUnits > 0 then ownSharePct = ownUnits * 100 / marketUnits end
 			if ownSharePct > 100 then ownSharePct = 100 end
@@ -2504,12 +2510,13 @@ local function avm_de_candidate_from_record(record, book)
 			mat.ownUnits = ownUnits
 			mat.ownAuctions = tonumber(own.auctions) or 0
 			mat.ownAuctionValue = ownValue
+			mat.ownUnitCap = ownUnitCap
 			mat.ownSharePct = ownSharePct
 			if ownSharePct > maxOwnSharePct then maxOwnSharePct = ownSharePct end
-			if ownValue > maxOwnValue then maxOwnValue = ownValue end
+			if ownUnits > maxOwnUnits then maxOwnUnits = ownUnits end
 			if evSharePct >= minEvPct then
-				if valueCap > 0 and ownValue >= valueCap then
-					return nil, "exposure-value:" .. tostring(mat.itemId)
+				if ownUnits >= ownUnitCap then
+					return nil, "exposure-units:" .. tostring(mat.itemId)
 				end
 				if ownSharePct > shareBlock then
 					return nil, "exposure-share:" .. tostring(mat.itemId)
@@ -2545,7 +2552,7 @@ local function avm_de_candidate_from_record(record, book)
 		ignoreOwnerSignature = true, sourcePage = raw.sourcePage or 0,
 		affordable = raw.buyout <= money, missing = missing,
 		deDepthUnits = depth, deCutPct = cutPct, deBaseMarginPct = baseMarginPct, deMarginPct = marginPct,
-		deExposureMaxSharePct = maxOwnSharePct, deExposureMaxOwnValue = maxOwnValue,
+		deExposureMaxSharePct = maxOwnSharePct, deExposureMaxOwnUnits = maxOwnUnits,
 		deMaxEntry = maxEntry, materials = mats,
 		deSource = deSource, disenchantId = disenchantId or 0,
 	}, nil
@@ -2993,7 +3000,7 @@ local function avm_de_begin_live_verify(candidate)
 		" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
 		" margin=" .. tostring(candidate.deMarginPct or AVM_DB.deSafetyMarginPct or 25) .. "%" ..
 		" ownShare=" .. string.format("%.1f", tonumber(candidate.deExposureMaxSharePct) or 0) .. "%" ..
-		" ownValue=" .. avm_money(candidate.deExposureMaxOwnValue or 0))
+		" ownUnits=" .. tostring(tonumber(candidate.deExposureMaxOwnUnits) or 0))
 	return true
 end
 
@@ -5349,13 +5356,20 @@ avm_de_exposure_tick = function(now)
 		local link = GetAuctionItemLink("owner", i)
 		local _,_,itemIdText = string.find(tostring(link or ""), "item:(%d+)")
 		local itemId = tonumber(itemIdText)
+		local maxStack = nil
+		if link and GetItemInfo then
+			local _,_,_,_,_,_,_,stackCount = GetItemInfo(link)
+			maxStack = tonumber(stackCount)
+		end
 		count = tonumber(count) or 0
 		buyout = tonumber(buyout) or 0
 		if itemId and AVM_DE_MATERIAL_IDS[itemId] and count > 0 and buyout > 0 then
 			local row = d.scanBook[itemId]
 			if not row then
-				row = { name = tostring(name or ""), units = 0, auctions = 0, buyout = 0 }
+				row = { name = tostring(name or ""), units = 0, auctions = 0, buyout = 0, maxStack = maxStack or 20 }
 				d.scanBook[itemId] = row
+			elseif maxStack and maxStack > 0 then
+				row.maxStack = maxStack
 			end
 			row.units = row.units + count
 			row.auctions = row.auctions + 1

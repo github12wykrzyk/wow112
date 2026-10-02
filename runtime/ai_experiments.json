@@ -4475,11 +4475,11 @@
         "Turtle DE material EV/depth/safety-margin valuation"
       ],
       "status": "in_progress",
-      "observed_head": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+      "observed_head": "315047afb522f88a03e8ea31f825b2816c9beb93",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "User-approved UI/economics iteration. AUX window grows dynamically up to 1100x560; Purchases retains 500 rows and uses the native vertical scrollbar; Purchases and Profit/Loss headers toggle ascending/descending sort; bottom summaries are widened and shortened. DE exposure guard is default-on and performs a complete owner-auction page scan before the initial automated scan and between logical loop cycles. Only DE materials contributing at least 15% of candidate EV affect exposure: own market share 20-<35% raises required margin to >=30%, 35-50% raises it to >=35%, >50% blocks, and >=20g listed value in one relevant material blocks. Vendor/flip economics are unchanged."
+      "notes": "User-approved UI/economics iteration. AUX window grows dynamically up to 1100x560; Purchases retains 500 rows and uses the native vertical scrollbar; Purchases and Profit/Loss headers toggle ascending/descending sort; bottom summaries are widened and shortened. DE exposure guard is default-on and performs a complete owner-auction page scan before the initial automated scan and between logical loop cycles. Only DE materials contributing at least 15% of candidate EV affect exposure: own market share 20-<35% raises required margin to >=30%, 35-50% raises it to >=35%, >50% blocks. The absolute 20g cap was removed per user feedback; the hard quantity cap is now two full native item stacks of the relevant material (using GetItemInfo max-stack, fallback 20), so dust/essence/shard exposure is governed by units rather than nominal gold value. Vendor/flip economics are unchanged."
     }
   ]
 }
