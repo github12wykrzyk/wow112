@@ -4759,21 +4759,38 @@
         "AUX full-scan flipBook history keys",
         "AVM diagnostic report SavedVariables"
       ],
-      "status": "awaiting_candidate_build",
+      "status": "awaiting_game_test",
       "observed_head": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
       "verified_commit": "5d1a12a49fe7c5eb76241e836fed6871154a2ef8",
       "tests": [
         {
-          "kind": "parallel_feature_preflight",
+          "kind": "ci",
           "result": "passed",
           "commit": "5d1a12a49fe7c5eb76241e836fed6871154a2ef8",
-          "run_id": 37007605252,
           "date": "2026-10-02",
-          "evidence": "Exact feature SHA passed parallel_feature_preflight.yml; registry verification run 37007605342 also passed."
+          "evidence": "Exact feature SHA passed Parallel feature preflight run 37007605252; registry verification run 37007605342 also passed."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "c146cf5d342f999668d77af56ee95fb184e8e739",
+          "date": "2026-10-02",
+          "evidence": "Integrated Parallel SHA c146cf5d342f999668d77af56ee95fb184e8e739 passed Build work candidate run 37007778922 including final runnable ZIP gate, repo-managed addon attestation and exact branch/commit provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "c146cf5d342f999668d77af56ee95fb184e8e739",
+          "date": "2026-10-02",
+          "evidence": "Verified candidate artifact 11226062680 (WoW112-WORK-CANDIDATE-c146cf5d342f999668d77af56ee95fb184e8e739) was produced by run 37007778922."
         }
       ],
-      "package": null,
-      "notes": "Adds exact AUX history-age evidence without changing flip economics. For every unique flip history key seen in a completed full scan it records whether a current history value exists, buckets closed daily data_points into 0/1/2/3+, captures oldest/newest AUX history timestamps across the market plus the oldest item/key, and stores one sample per bucket in AVM_DB.diag. Report #80 already proves values exist for thousands of keys but most fail the >=2 closed-day gate. AH dump #83 is empty for AVM marketPacked and by design contains only AuxVmangos marketMeta/marketPacked, not upstream aux-addon faction history, so it cannot independently prove AUX history age."
+      "package": {
+        "verified": true,
+        "commit": "c146cf5d342f999668d77af56ee95fb184e8e739",
+        "artifact_id": 11226062680
+      },
+      "notes": "Adds exact AUX history-age evidence without changing flip economics. For every unique flip history key seen in a completed full scan it records whether a current history value exists, buckets closed daily data_points into 0/1/2/3+, captures oldest/newest AUX history timestamps across the market plus the oldest item/key, and stores one sample per bucket in AVM_DB.diag. Report #80 already proves values exist for thousands of keys but most fail the >=2 closed-day gate. AH dump #83 is empty for AVM marketPacked and by design contains only AuxVmangos marketMeta/marketPacked, not upstream aux-addon faction history, so it cannot independently prove AUX history age. Report #83 AH dump was inspected: marketMeta is empty and marketPacked is only AVM3; by design that dump excludes upstream aux-addon faction history, so exact AUX history age must come from this new in-game diagnostic after a full scan."
     }
   ]
 }
