@@ -23,6 +23,9 @@ typedef signed int s32;
 typedef unsigned long long u64;
 typedef int BOOL32;
 
+/* MSVC x86 floating-point marker required by the CRT-less /NODEFAULTLIB build. */
+int _fltused = 0x9875;
+
 typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 typedef const char* (FASTCALL *FrameScriptGetTextFn)(const char*,int,u32);
 typedef u32 (FASTCALL *GetObjectByGuidFn)(u64);
@@ -235,7 +238,7 @@ static int prepare_log(void){
 }
 static void log_line(const char *event,u32 svc,u32 attempt,u32 opcode,u32 len,u32 guidLo,u32 guidHi,
                      u32 loaded,u32 type,u32 dist100,s32 px,s32 py,s32 pz,s32 tx,s32 ty,s32 tz,const char *detail){
-    HANDLE f;DWORD wrote=0u;char line[4096],de[1800],zone[384],ze[520];
+    HANDLE f;DWORD wrote=0u;static char line[4096],de[1800],zone[384],ze[520];
     const char *z="";
     if(!prepare_log())return;
     json_escape(de,sizeof(de),detail?detail:"");
@@ -460,7 +463,7 @@ static void packet_detail(const PacketRecord *r,char *out,u32 cap,u32 includeByt
 }
 static void learn_service(u32 svc,u32 now){
     PacketRecord *r;LearnedService *l=&g_learn[svc];u32 obj=0u,type=0u,dist=0u,glo=0u,ghi=0u,goff=0u; s32 px=0,py=0,pz=0,tx=0,ty=0,tz=0;
-    char detail[1500],recent[900];u32 same=0u,i,n;
+    static char detail[1500],recent[900];u32 same=0u,i,n;
     r=choose_candidate(svc,now,&obj,&type,&dist,&px,&py,&pz,&tx,&ty,&tz,&glo,&ghi,&goff);
     if(!r){
         recent_ops_text(recent,sizeof(recent),now);
@@ -479,7 +482,7 @@ static void learn_service(u32 svc,u32 now){
     packet_detail(&l->packet,detail,sizeof(detail),1u);
     recent_ops_text(recent,sizeof(recent),now);
     {
-        char full[1500];wsprintfA(full,"%s recent=%s",detail,recent);str_copy(detail,sizeof(detail),full);
+        static char full[1500];wsprintfA(full,"%s recent=%s",detail,recent);str_copy(detail,sizeof(detail),full);
     }
     log_line("learn_ok",svc,0u,r->opcode,r->len,glo,ghi,1u,type,dist,px,py,pz,tx,ty,tz,detail);
     if(g_verbose){
@@ -518,7 +521,7 @@ static void replay_learned(u32 svc){
     g_injecting=0u;
 }
 static void write_summary(void){
-    char d[3000];u32 p=0u,s,n;
+    static char d[3000];u32 p=0u,s,n;
     d[0]=0;
     append_text(d,sizeof(d),&p,"SAFE opener-only probe; no item move/bid/buy/mail-send/position spoof. ");
     for(s=1u;s<=SERVICE_MAX;s++){
@@ -541,7 +544,7 @@ static void write_summary(void){
     log_line("summary",0u,g_testAttempt,0u,0u,0u,0u,0u,0u,0u,0,0,0,0,0,0,d);
 }
 static void finish_test(u32 pass,const char *why,u32 now){
-    u32 svc=g_testService,loaded,type,dist,bucket; s32 px,py,pz,tx,ty,tz;char d[700];
+    u32 svc=g_testService,loaded,type,dist,bucket; s32 px,py,pz,tx,ty,tz;static char d[700];
     if(!g_testActive)return;
     bucket=distance_bucket(svc,&loaded,&type,&dist,&px,&py,&pz,&tx,&ty,&tz);
     wsprintfA(d,"%s latency_ms=%lu bucket=%lu data_seen=%lu last_error=%s",
@@ -558,7 +561,7 @@ static void finish_test(u32 pass,const char *why,u32 now){
     write_summary();
 }
 static int start_test(u32 svc,u32 now){
-    LearnedService *l=&g_learn[svc];u32 loaded,type,dist,bucket; s32 px,py,pz,tx,ty,tz;char d[1000];
+    LearnedService *l=&g_learn[svc];u32 loaded,type,dist,bucket; s32 px,py,pz,tx,ty,tz;static char d[1000];
     if(g_testActive||!g_luaReady)return 0;
     if(!g_hookHealthy||decode_jump(ADDR_CLIENT_SEND)!=(u32)(void*)&SendWrapper){
         log_line("test_blocked",svc,0u,0u,0u,0u,0u,0u,0u,0u,0,0,0,0,0,0,"send hook chain not healthy");
@@ -581,7 +584,7 @@ static int start_test(u32 svc,u32 now){
     g_testStartOpenSeq=g_lastOpenSeq;g_testStartDataSeq=g_lastDataSeq;g_testDataSeen=0u;g_testLastError[0]=0;
     packet_detail(&l->packet,d,sizeof(d),1u);
     {
-        char extra[1500];wsprintfA(extra,"%s bucket=%lu learned_type=%lu captures=%lu shape=%lu",d,bucket,l->objectType,l->captures,l->sameShape);
+        static char extra[1500];wsprintfA(extra,"%s bucket=%lu learned_type=%lu captures=%lu shape=%lu",d,bucket,l->objectType,l->captures,l->sameShape);
         log_line("test_send",svc,g_testAttempt,l->packet.opcode,l->packet.len,l->packet.guidLo,l->packet.guidHi,loaded,type,dist,px,py,pz,tx,ty,tz,extra);
     }
     replay_learned(svc);
