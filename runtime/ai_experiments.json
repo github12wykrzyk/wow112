@@ -5343,6 +5343,30 @@
         "artifact_id": 11241864005
       },
       "notes": "Updater v2.10-parallel.2 fixes delivery-state UX. Successful feature preflight is amber VERIFIED, not green ready. The monitor distinguishes WAITING INTEGRATION, BUILDING PARALLEL/ECONOMY, TEST READY IN selected profile and INSTALLED / READY TO TEST using exact parallel ancestry, exact-HEAD workflows and local installed-state SHA. Curated integration is based on current parallel without overwriting the newer compact routing-index infrastructure; exact integrated parallel CI/package evidence is pending."
+    },
+    {
+      "id": "ai-startup-fastpath-v1",
+      "branch": "feature/ai-startup-fastpath-v1",
+      "modules": [
+        "AI-workflow",
+        "AI-startup"
+      ],
+      "dependencies": [
+        "ai-routing-fast-index-v1"
+      ],
+      "shared_resources": [
+        "AGENTS.md startup contract",
+        "AI_START_HERE.md startup routing",
+        "AI_INDEX.json machine-readable fast-path contract",
+        "runtime/ai_startup_snapshot.json generated startup cache",
+        "Verify AI experiment registry workflow"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "55d17772900c698d4947d236f8a7643995f04b9e",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Adds a fail-closed verified startup snapshot. Ordinary tasks may skip loading the five canonical startup files only after matching all five snapshot Git blob identities to tree metadata from the same live selected-branch HEAD. Promotion, startup-contract edits, recovery/ambiguity, missing/stale/unverifiable snapshots always fall back to the full five-file read. Snapshot is deterministic generated cache; canonical files and live GitHub state remain authoritative."
     }
   ]
 }

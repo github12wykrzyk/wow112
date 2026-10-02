@@ -23,7 +23,8 @@
     "runtime/current.json"
   ],
   "conditional_fast_indexes": {
-    "shared_native_primitives": "runtime/verified_symbols_5875.json"
+    "shared_native_primitives": "runtime/verified_symbols_5875.json",
+    "startup_context": "runtime/ai_startup_snapshot.json"
   },
   "canonical": {
     "operating_contract": "AGENTS.md",
@@ -48,7 +49,9 @@
     "experiment_workflow": ".github/workflows/ai_experiments.yml",
     "parallel_candidate_manifest": "runtime/parallel_candidate.json",
     "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml",
-    "experiment_fast_index": "runtime/ai_experiment_index.json"
+    "experiment_fast_index": "runtime/ai_experiment_index.json",
+    "startup_snapshot": "runtime/ai_startup_snapshot.json",
+    "startup_snapshot_generator": "tools/ai_startup_snapshot.py"
   },
   "commands": {
     "fast_verify": "python tools/verify_current.py",
@@ -69,7 +72,9 @@
     "route_experiment": "python tools/ai_experiments.py route --module MODULE [--branch parallel]",
     "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/parallel",
     "generate_experiment_fast_index": "python tools/ai_experiments.py index",
-    "check_experiment_fast_index": "python tools/ai_experiments.py index --check"
+    "check_experiment_fast_index": "python tools/ai_experiments.py index --check",
+    "generate_startup_snapshot": "python tools/ai_startup_snapshot.py",
+    "check_startup_snapshot": "python tools/ai_startup_snapshot.py --check"
   },
   "directories": {
     "src": "canonical editable source/evidence grouped by module",
@@ -108,6 +113,49 @@
     "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
     "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded",
     "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates",
-    "read compact experiment index and live branch refs before module-source analysis; full experiment ledger is evidence/detail fallback"
-  ]
+    "read compact experiment index and live branch refs before module-source analysis; full experiment ledger is evidence/detail fallback",
+    "use verified runtime/ai_startup_snapshot.json fast path for eligible tasks; any identity mismatch or ambiguity falls back to the canonical five-file startup"
+  ],
+  "startup_fast_path": {
+    "schema_version": 1,
+    "snapshot": "runtime/ai_startup_snapshot.json",
+    "source_files": [
+      "AGENTS.md",
+      "AI_START_HERE.md",
+      "AI_INDEX.json",
+      "CURRENT.json",
+      "runtime/current.json"
+    ],
+    "verification": {
+      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live selected-branch HEAD",
+      "same_head_required": true,
+      "fallback_if_unverifiable": true
+    },
+    "eligible_tasks": [
+      "ordinary module or feature diagnosis",
+      "ordinary implementation on work, parallel or feature/**",
+      "CI/status follow-up where startup authority files are unchanged"
+    ],
+    "full_startup_required_for": [
+      "stable promotion or promote/** work",
+      "editing any startup source file, snapshot or generator",
+      "recovery after unknown or ambiguous write/transport state",
+      "snapshot missing, stale, mismatched or unverifiable",
+      "authority or branch ambiguity not resolved by compact state"
+    ],
+    "after_verified_snapshot": [
+      "read runtime/ai_experiment_index.json before module source",
+      "query live relevant branch HEADs before writes",
+      "read only module/dependency files needed for the task"
+    ],
+    "invariants": [
+      "snapshot is a generated cache; canonical files and live GitHub state remain authoritative",
+      "explicit parallel stays parallel and main remains accepted stable only",
+      "unproven native or multi-file parallel changes start on feature/**",
+      "one logical iteration uses one coherent commit when possible",
+      "never force-push or destructively reset unique work",
+      "exact-SHA CI/package gates and updater delivery rules are unchanged",
+      "fast startup never weakens runtime, package, provenance or promotion verification"
+    ]
+  }
 }

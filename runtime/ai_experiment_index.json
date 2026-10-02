@@ -1,5 +1,5 @@
 {
-  "active_experiment_count": 127,
+  "active_experiment_count": 128,
   "active_statuses": [
     "awaiting_ci",
     "awaiting_game_test",
@@ -7,7 +7,7 @@
     "in_progress",
     "planned"
   ],
-  "experiment_count": 149,
+  "experiment_count": 150,
   "experiments": {
     "ah-auto-headless-all-scans": {
       "branch": "feature/ah-auto-headless-all-scans",
@@ -693,6 +693,16 @@
       "observed_head": "f51e96bc6987dd166930c4b1bc4f02fbc5f9c847",
       "package": null,
       "status": "in_progress",
+      "verified_commit": null
+    },
+    "ai-startup-fastpath-v1": {
+      "branch": "feature/ai-startup-fastpath-v1",
+      "dependencies": [
+        "ai-routing-fast-index-v1"
+      ],
+      "observed_head": "55d17772900c698d4947d236f8a7643995f04b9e",
+      "package": null,
+      "status": "awaiting_ci",
       "verified_commit": null
     },
     "auction-sniper-autobuy-v2": {
@@ -1860,16 +1870,26 @@
         "parallel-workflow-hardening"
       ]
     },
+    "AI-startup": {
+      "active": [
+        "ai-startup-fastpath-v1"
+      ],
+      "all": [
+        "ai-startup-fastpath-v1"
+      ]
+    },
     "AI-workflow": {
       "active": [
         "ai-latency-fastpath-v1",
         "ai-reorganization",
-        "ai-routing-fast-index-v1"
+        "ai-routing-fast-index-v1",
+        "ai-startup-fastpath-v1"
       ],
       "all": [
         "ai-latency-fastpath-v1",
         "ai-reorganization",
         "ai-routing-fast-index-v1",
+        "ai-startup-fastpath-v1",
         "parallel-workflow-hardening"
       ]
     },
