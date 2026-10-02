@@ -272,6 +272,19 @@ jobs:
             --output build/WoWCastObserver_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel CastObserver build/package failed" }
 
+      - name: Build and append Parallel hostile target aura reveal
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_targetaurareveal_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --build-metadata dist/targetaurareveal_build.json `
+            --output build/WoWTargetAuraReveal_5875_v1.dll
+          if ($LASTEXITCODE -ne 0) { throw "Parallel Target Aura Reveal build/package failed" }
+
       - name: Build and append Parallel AH native throttle diagnostic
         if: github.ref_name == 'parallel'
         shell: pwsh

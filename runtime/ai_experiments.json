@@ -4481,6 +4481,27 @@
       "tests": [],
       "package": null,
       "notes": "Attempt to satisfy both requirements simultaneously: instant-oriented slave rotation and zero login-server authentication. Worker fingerprints the existing 40-byte session key internally, disconnects only the world connection, waits for NetClient NS_INITIALIZED, verifies the same key survived, calls exact-build ClientServices::ConnectToSelectedServer, then selects the configured character slot. No session-key bytes/hashes are logged and there is no AutoLoginBridge or normal Logout fallback. Exact-build guards cover getter, Disconnect, ConnectToSelectedServer and NetClient::Connect. Requires in-game validation."
+    },
+    {
+      "id": "target-aura-reveal-5875",
+      "branch": "feature/target-aura-reveal",
+      "modules": [
+        "TargetAuraReveal"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "WoW 1.12.1 build 5875 target GUID globals 0x00B4E2D8/0x00B4E2DC",
+        "UnitFields aura slots: 32 positive + 16 negative",
+        "client Spell.dbc / SpellIcon.dbc",
+        "FrameScript_Execute 0x00704CD0",
+        "Blizzard TargetFrame MAX_TARGET_BUFFS / TargetFrameBuff1 anchor"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "a2ee73c09e7403239158cff8938b4ec12b093a23",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "New isolated native companion based on current parallel HEAD. Reads hostile target positive aura slots, resolves locale-aware spell name/icon from client DBCs, and renders up to 32 TargetFrame-style buff icons while preserving stock debuffs and friendly-target stock buffs. Local direct clang/lld smoke produced PE32 i386 with no import directory; GitHub preflight/game behavior pending."
     }
   ]
 }
