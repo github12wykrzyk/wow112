@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle-specific arbitrage with native Purchases and Profit/Loss AUX tabs.
+## Notes: Turtle arbitrage with large sortable ledger UI and DE exposure guard.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.32-profit-loss-ledger
+## Version: 0.33-ui-ledger-de-exposure
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua

@@ -4392,9 +4392,9 @@
         "native AUX tabs/listing/status bar",
         "AUX Auctions owner-scan records"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "f74e9763e9858b1df9962a72eb4d34dc5dc8f017",
-      "verified_commit": "f74e9763e9858b1df9962a72eb4d34dc5dc8f017",
+      "status": "awaiting_game_test",
+      "observed_head": "e807401699e5772ef027d526743afd968b48ef27",
+      "verified_commit": "e807401699e5772ef027d526743afd968b48ef27",
       "tests": [
         {
           "kind": "ci",
@@ -4402,10 +4402,28 @@
           "commit": "f74e9763e9858b1df9962a72eb4d34dc5dc8f017",
           "date": "2026-10-02",
           "evidence": "Parallel feature preflight run 36996899794 and Verify AI experiment registry run 36996899835 passed on exact feature SHA f74e9763e9858b1df9962a72eb4d34dc5dc8f017."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "e807401699e5772ef027d526743afd968b48ef27",
+          "date": "2026-10-02",
+          "evidence": "Integrated Parallel Build work candidate run 36997021737 passed FINAL_PACKAGE, repo-managed addon packaging and exact-SHA provenance."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "e807401699e5772ef027d526743afd968b48ef27",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11221911977 (sha256:490d3883765c548f80b5991035b83a430ba01cd5c3afeea3cc862935f00c540a)."
         }
       ],
-      "package": null,
-      "notes": "Adds a native top-level Profit/Loss AUX tab. Confirmed AVM purchases are cash-out; observed paid AH seller invoices are cash-in; cash flow and expected purchase P/L are shown separately so projected arbitrage economics are not mislabeled as realized profit. Seller-mail fingerprints are updated only while MailFrame is actually open, preventing stale inbox state after restart from duplicating income. Also extends the native Auctions bottom status bar with total current buyout exposure and potential net proceeds after the configured AH cut. No scanner, candidate, valuation, revalidation or buy-gating behavior is changed. Feature preflight is PASS; integrated parallel candidate build/package is pending."
+      "package": {
+        "verified": true,
+        "commit": "e807401699e5772ef027d526743afd968b48ef27",
+        "artifact_id": 11221911977
+      },
+      "notes": "Adds a native top-level Profit/Loss AUX tab. Confirmed AVM purchases are cash-out; observed paid AH seller invoices are cash-in; cash flow and expected purchase P/L are shown separately so projected arbitrage economics are not mislabeled as realized profit. Seller-mail fingerprints are updated only while MailFrame is actually open, preventing stale inbox state after restart from duplicating income. Also extends the native Auctions bottom status bar with total current buyout exposure and potential net proceeds after the configured AH cut. No scanner, candidate, valuation, revalidation or buy-gating behavior is changed. Integrated parallel candidate build/package passed; gameplay validation of realized mail income remains pending."
     },
     {
       "id": "summon-session-safe-logout-v2",
@@ -4438,6 +4456,30 @@
       ],
       "package": null,
       "notes": "Reliability-first same-session worker. Uses ordinary Logout() and waits for the server-controlled transition to Character Select, then selects the configured slot and EnterWorld without ClientServices::Disconnect or AutoLoginBridge relogin. Coordinator READY timeout is raised from 30s to 65s to cover a 20s logout plus world load. AutoSummonAssist suppresses its SPACE Anti-AFK pulse while W112_CSD_SESSION_SWITCH is set so it cannot cancel the logout countdown."
+    },
+    {
+      "id": "ah-ui-ledger-de-exposure-v1",
+      "branch": "feature/ah-ui-ledger-de-exposure-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-profit-loss-ledger-v1",
+        "ah-native-purchases-turtle-de"
+      ],
+      "shared_resources": [
+        "native AUX frame geometry and bottom status bars",
+        "AVM_DB purchase/sale ledger retention",
+        "native aux.gui.listing headers and FauxScrollFrame",
+        "GetOwnerAuctionItems owner-page scan between AUX_ARB cycles",
+        "Turtle DE material EV/depth/safety-margin valuation"
+      ],
+      "status": "in_progress",
+      "observed_head": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User-approved UI/economics iteration. AUX window grows dynamically up to 1100x560; Purchases retains 500 rows and uses the native vertical scrollbar; Purchases and Profit/Loss headers toggle ascending/descending sort; bottom summaries are widened and shortened. DE exposure guard is default-on and performs a complete owner-auction page scan before the initial automated scan and between logical loop cycles. Only DE materials contributing at least 15% of candidate EV affect exposure: own market share 20-<35% raises required margin to >=30%, 35-50% raises it to >=35%, >50% blocks, and >=20g listed value in one relevant material blocks. Vendor/flip economics are unchanged."
     }
   ]
 }

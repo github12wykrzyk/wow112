@@ -2,7 +2,8 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.31-native-purchases-turtle-de"
+AVM_VERSION = "0.33-ui-ledger-de-exposure"
+AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -12,6 +13,7 @@ AVM_TICK = 0.05
 AVM_WATCH_SLOTS = 16
 AVM_WATCH_MAX_PAGES = 100
 
+local AVM_AUX_CORE_OK, AVM_AUX_CORE = pcall(require, "aux")
 local AVM_AUX_INFO_OK, AVM_AUX_INFO = pcall(require, "aux.util.info")
 local AVM_AUX_DE_OK, AVM_AUX_DE = pcall(require, "aux.core.disenchant")
 local AVM_AUX_HISTORY_OK, AVM_AUX_HISTORY = pcall(require, "aux.core.history")
@@ -106,6 +108,22 @@ AVM = {
 	sessionSpend = 0,
 	sessionBuys = 0,
 	itemExposure = {},
+	deExposure = {
+		active = false,
+		page = 0,
+		lastPage = 0,
+		requestedAt = 0,
+		settleAt = 0,
+		eventReady = false,
+		book = {},
+		scanBook = {},
+		ready = false,
+		updatedAt = 0,
+		syncedCycle = -1,
+		afterZeroConfig = false,
+		resumeLoop = false,
+		reason = "",
+	},
 	vendor = {
 		active = false,
 		requested = false,
@@ -206,6 +224,8 @@ AVM = {
 	},
 	recent = {},
 }
+
+local avm_de_exposure_start, avm_de_exposure_tick, avm_de_exposure_event
 
 local function avm_diag_record(msg)
 	if not AVM_DB then return end
@@ -351,7 +371,7 @@ function AVM_RecordPurchase(c, confirmation)
 		itemKey = tostring(c.itemKey or ""),
 	}
 	table.insert(AVM_DB.purchaseHistory, row)
-	while table.getn(AVM_DB.purchaseHistory) > 50 do table.remove(AVM_DB.purchaseHistory, 1) end
+	while table.getn(AVM_DB.purchaseHistory) > AVM_PURCHASE_HISTORY_LIMIT do table.remove(AVM_DB.purchaseHistory, 1) end
 
 	AVM_DB.purchaseStats.confirmed = (tonumber(AVM_DB.purchaseStats.confirmed) or 0) + 1
 	AVM_DB.purchaseStats.spend = (tonumber(AVM_DB.purchaseStats.spend) or 0) + buyout
@@ -416,6 +436,7 @@ local function avm_defaults()
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 0 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
 	if AVM_DB.purchaseHistory == nil then AVM_DB.purchaseHistory = {} end
+	while table.getn(AVM_DB.purchaseHistory) > AVM_PURCHASE_HISTORY_LIMIT do table.remove(AVM_DB.purchaseHistory, 1) end
 	if AVM_DB.purchaseHistorySeq == nil then AVM_DB.purchaseHistorySeq = 0 end
 	if AVM_DB.purchaseStats == nil then AVM_DB.purchaseStats = { confirmed = 0, spend = 0, expectedProfit = 0 } end
 	if AVM_DB.marketPacked == nil then AVM_DB.marketPacked = "" end
@@ -459,6 +480,14 @@ local function avm_defaults()
 	if AVM_DB.deDepthUnits == nil then AVM_DB.deDepthUnits = 3 end
 	if AVM_DB.deAhCutPct == nil then AVM_DB.deAhCutPct = 5 end
 	if AVM_DB.deSafetyMarginPct == nil then AVM_DB.deSafetyMarginPct = 25 end
+	if AVM_DB.deExposureGuard == nil then AVM_DB.deExposureGuard = true end
+	if AVM_DB.deExposureMinEvPct == nil then AVM_DB.deExposureMinEvPct = 15 end
+	if AVM_DB.deExposureShareSoftPct == nil then AVM_DB.deExposureShareSoftPct = 20 end
+	if AVM_DB.deExposureShareHardPct == nil then AVM_DB.deExposureShareHardPct = 35 end
+	if AVM_DB.deExposureBlockPct == nil then AVM_DB.deExposureBlockPct = 50 end
+	if AVM_DB.deExposureSoftMarginPct == nil then AVM_DB.deExposureSoftMarginPct = 30 end
+	if AVM_DB.deExposureHardMarginPct == nil then AVM_DB.deExposureHardMarginPct = 35 end
+	if AVM_DB.deExposureValueCap == nil then AVM_DB.deExposureValueCap = 200000 end
 	if AVM_DB.flipRiskSchema == nil then
 		-- 0.20 replaces depth-only valuation with historical anchoring. Migrate only the old default.
 		if AVM_DB.flipDepthUnits == nil or AVM_DB.flipDepthUnits == 5 then AVM_DB.flipDepthUnits = 10 end
@@ -580,6 +609,12 @@ local function avm_loop_tick(now)
 	if AUXFAST_IsBusy then
 		local ok, isBusy = pcall(AUXFAST_IsBusy)
 		if ok and isBusy then return false end
+	end
+	local deExposure = AVM.deExposure
+	if AVM_DB.deExposureGuard and avm_de_exposure_start and deExposure and
+	   not deExposure.active and (tonumber(deExposure.syncedCycle) or -1) < (tonumber(AVM.auxLoop.cycles) or 0) then
+		AVM.auxLoop.nextAt = 0
+		if avm_de_exposure_start("loop-cycle", false, true) then return true end
 	end
 	AVM.auxLoop.nextAt = 0
 	if not AUXFAST_RestartSearch then
@@ -2402,10 +2437,15 @@ local function avm_de_candidate_from_record(record, book)
 
 	local depth = tonumber(AVM_DB.deDepthUnits) or 3
 	local cutPct = tonumber(AVM_DB.deAhCutPct) or 5
-	local marginPct = tonumber(AVM_DB.deSafetyMarginPct) or 25
+	local baseMarginPct = tonumber(AVM_DB.deSafetyMarginPct) or 25
 	if depth < 1 then depth = 1 end
 	if cutPct < 0 then cutPct = 0 elseif cutPct > 30 then cutPct = 30 end
-	if marginPct < 0 then marginPct = 0 elseif marginPct > 90 then marginPct = 90 end
+	if baseMarginPct < 0 then baseMarginPct = 0 elseif baseMarginPct > 90 then baseMarginPct = 90 end
+
+	local exposureGuard = AVM_DB.deExposureGuard and true or false
+	if exposureGuard and (not AVM.deExposure or not AVM.deExposure.ready) then
+		return nil, "exposure-unavailable"
+	end
 
 	local grossExpected, netExpected = 0, 0
 	local mats, seen = {}, {}
@@ -2419,14 +2459,66 @@ local function avm_de_candidate_from_record(record, book)
 		local p = tonumber(event.probability) or 0
 		local avgQty = ((tonumber(event.min_quantity) or 0) + (tonumber(event.max_quantity) or 0)) / 2
 		local netUnit = math.floor(floorPrice * (100 - cutPct) / 100)
-		grossExpected = grossExpected + p * avgQty * floorPrice
-		netExpected = netExpected + p * avgQty * netUnit
-		if not seen[matId] then
-			seen[matId] = true
+		local grossContribution = p * avgQty * floorPrice
+		local netContribution = p * avgQty * netUnit
+		grossExpected = grossExpected + grossContribution
+		netExpected = netExpected + netContribution
+		local matIndex = seen[matId]
+		if not matIndex then
 			table.insert(mats, {
 				itemId = matId, name = row.name, floor = floorPrice, net = netUnit,
-				probability = p, avgQty = avgQty,
+				probability = p, avgQty = avgQty, netContribution = netContribution,
 			})
+			seen[matId] = table.getn(mats)
+		else
+			mats[matIndex].netContribution = (tonumber(mats[matIndex].netContribution) or 0) + netContribution
+		end
+	end
+	if netExpected <= 0 then return nil, "no-value" end
+
+	local marginPct = baseMarginPct
+	local maxOwnSharePct = 0
+	local maxOwnValue = 0
+	if exposureGuard then
+		local ownBook = AVM.deExposure.book or {}
+		local minEvPct = tonumber(AVM_DB.deExposureMinEvPct) or 15
+		local shareSoft = tonumber(AVM_DB.deExposureShareSoftPct) or 20
+		local shareHard = tonumber(AVM_DB.deExposureShareHardPct) or 35
+		local shareBlock = tonumber(AVM_DB.deExposureBlockPct) or 50
+		local marginSoft = tonumber(AVM_DB.deExposureSoftMarginPct) or 30
+		local marginHard = tonumber(AVM_DB.deExposureHardMarginPct) or 35
+		local valueCap = tonumber(AVM_DB.deExposureValueCap) or 200000
+		for i = 1, table.getn(mats) do
+			local mat = mats[i]
+			local marketRow = book and book[mat.itemId]
+			local own = ownBook[mat.itemId] or {}
+			local marketUnits = tonumber(marketRow and marketRow.units) or 0
+			local ownUnits = tonumber(own.units) or 0
+			local ownValue = tonumber(own.buyout) or 0
+			local ownSharePct = 0
+			if marketUnits > 0 then ownSharePct = ownUnits * 100 / marketUnits end
+			if ownSharePct > 100 then ownSharePct = 100 end
+			local evSharePct = (tonumber(mat.netContribution) or 0) * 100 / netExpected
+			mat.evSharePct = evSharePct
+			mat.marketUnits = marketUnits
+			mat.ownUnits = ownUnits
+			mat.ownAuctions = tonumber(own.auctions) or 0
+			mat.ownAuctionValue = ownValue
+			mat.ownSharePct = ownSharePct
+			if ownSharePct > maxOwnSharePct then maxOwnSharePct = ownSharePct end
+			if ownValue > maxOwnValue then maxOwnValue = ownValue end
+			if evSharePct >= minEvPct then
+				if valueCap > 0 and ownValue >= valueCap then
+					return nil, "exposure-value:" .. tostring(mat.itemId)
+				end
+				if ownSharePct > shareBlock then
+					return nil, "exposure-share:" .. tostring(mat.itemId)
+				elseif ownSharePct >= shareHard then
+					if marginHard > marginPct then marginPct = marginHard end
+				elseif ownSharePct >= shareSoft then
+					if marginSoft > marginPct then marginPct = marginSoft end
+				end
+			end
 		end
 	end
 
@@ -2452,7 +2544,8 @@ local function avm_de_candidate_from_record(record, book)
 		signature = raw.signature or avm_signature_no_owner(raw.name, raw.count, raw.buyout, raw.quality, raw.level, raw.itemKey),
 		ignoreOwnerSignature = true, sourcePage = raw.sourcePage or 0,
 		affordable = raw.buyout <= money, missing = missing,
-		deDepthUnits = depth, deCutPct = cutPct, deMarginPct = marginPct,
+		deDepthUnits = depth, deCutPct = cutPct, deBaseMarginPct = baseMarginPct, deMarginPct = marginPct,
+		deExposureMaxSharePct = maxOwnSharePct, deExposureMaxOwnValue = maxOwnValue,
 		deMaxEntry = maxEntry, materials = mats,
 		deSource = deSource, disenchantId = disenchantId or 0,
 	}, nil
@@ -2898,7 +2991,9 @@ local function avm_de_begin_live_verify(candidate)
 		" mats=" .. tostring(table.getn(candidate.materials)) ..
 		" depth=" .. tostring(AVM_DB.deDepthUnits or 3) ..
 		" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
-		" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%")
+		" margin=" .. tostring(candidate.deMarginPct or AVM_DB.deSafetyMarginPct or 25) .. "%" ..
+		" ownShare=" .. string.format("%.1f", tonumber(candidate.deExposureMaxSharePct) or 0) .. "%" ..
+		" ownValue=" .. avm_money(candidate.deExposureMaxOwnValue or 0))
 	return true
 end
 
@@ -4631,6 +4726,7 @@ local function avm_tick()
 	if AVM.hardStop then return end
 	local now = GetTime()
 
+	if avm_de_exposure_tick and avm_de_exposure_tick(now) then return end
 	if avm_tick_pending(now) then return end
 	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
 	if avm_loop_tick(now) then return end
@@ -5158,6 +5254,124 @@ local function avm_start_zero_config(reason)
 	avm_print("AH_ZERO_CONFIG_ACTIVE live=true loop=true autoMarket=false maxBuys=unlimited budget=unlimited")
 end
 
+
+local function avm_de_exposure_totals(book)
+	local mats, auctions, units, value = 0, 0, 0, 0
+	for _, row in pairs(book or {}) do
+		mats = mats + 1
+		auctions = auctions + (tonumber(row.auctions) or 0)
+		units = units + (tonumber(row.units) or 0)
+		value = value + (tonumber(row.buyout) or 0)
+	end
+	return mats, auctions, units, value
+end
+
+local function avm_de_exposure_request_page(page)
+	local d = AVM.deExposure
+	d.page = page
+	d.requestedAt = GetTime()
+	d.settleAt = d.requestedAt + 0.05
+	d.eventReady = false
+	GetOwnerAuctionItems(page)
+end
+
+local function avm_de_exposure_finish(success, why)
+	local d = AVM.deExposure
+	local afterZeroConfig = d.afterZeroConfig
+	local resumeLoop = d.resumeLoop
+	d.active = false
+	d.afterZeroConfig = false
+	d.resumeLoop = false
+	d.reason = tostring(why or "")
+	d.syncedCycle = tonumber(AVM.auxLoop.cycles) or 0
+	if success then
+		d.book = d.scanBook or {}
+		d.ready = true
+		d.updatedAt = GetTime()
+		local mats, auctions, units, value = avm_de_exposure_totals(d.book)
+		avm_print("DE_EXPOSURE_SYNC mats=" .. tostring(mats) ..
+			" auctions=" .. tostring(auctions) ..
+			" units=" .. tostring(units) ..
+			" value=" .. avm_money(value))
+	else
+		avm_print("DE_EXPOSURE_SYNC_FAILED reason=" .. tostring(why or "unknown") ..
+			" previousReady=" .. tostring(d.ready))
+	end
+	d.scanBook = {}
+	if afterZeroConfig and AVM.open then
+		avm_restart_boundary(false)
+		avm_start_zero_config("DE exposure synced")
+	elseif resumeLoop and AVM.open and AVM_DB.auxLoopEnabled then
+		AVM.auxLoop.nextAt = GetTime() + 0.10
+	end
+end
+
+avm_de_exposure_start = function(reason, afterZeroConfig, resumeLoop)
+	if not AVM.open or not AVM_DB.deExposureGuard or not GetOwnerAuctionItems or not GetNumAuctionItems then return false end
+	local d = AVM.deExposure
+	if d.active then return true end
+	d.active = true
+	d.page = 0
+	d.lastPage = 0
+	d.scanBook = {}
+	d.afterZeroConfig = afterZeroConfig and true or false
+	d.resumeLoop = resumeLoop and true or false
+	d.reason = tostring(reason or "")
+	avm_print("DE_EXPOSURE_SCAN start source=" .. d.reason)
+	avm_de_exposure_request_page(0)
+	return true
+end
+
+avm_de_exposure_event = function()
+	local d = AVM.deExposure
+	if not d or not d.active then return end
+	d.eventReady = true
+	d.settleAt = GetTime() + 0.05
+end
+
+avm_de_exposure_tick = function(now)
+	local d = AVM.deExposure
+	if not d or not d.active then return false end
+	if now - (tonumber(d.requestedAt) or now) > 5 then
+		avm_de_exposure_finish(false, "owner-query-timeout page=" .. tostring(d.page or 0))
+		return true
+	end
+	local pageReady = d.eventReady and true or false
+	if AVM_AUX_CORE_OK and AVM_AUX_CORE and AVM_AUX_CORE.current_owner_page then
+		local ok, currentPage = pcall(AVM_AUX_CORE.current_owner_page)
+		if ok and tonumber(currentPage) == tonumber(d.page) then pageReady = true end
+	end
+	if not pageReady or now < (tonumber(d.settleAt) or 0) then return true end
+
+	local _, total = GetNumAuctionItems("owner")
+	for i = 1, 50 do
+		local name,_,count,_,_,_,_,_,buyout = GetAuctionItemInfo("owner", i)
+		local link = GetAuctionItemLink("owner", i)
+		local _,_,itemIdText = string.find(tostring(link or ""), "item:(%d+)")
+		local itemId = tonumber(itemIdText)
+		count = tonumber(count) or 0
+		buyout = tonumber(buyout) or 0
+		if itemId and AVM_DE_MATERIAL_IDS[itemId] and count > 0 and buyout > 0 then
+			local row = d.scanBook[itemId]
+			if not row then
+				row = { name = tostring(name or ""), units = 0, auctions = 0, buyout = 0 }
+				d.scanBook[itemId] = row
+			end
+			row.units = row.units + count
+			row.auctions = row.auctions + 1
+			row.buyout = row.buyout + buyout
+		end
+	end
+	total = tonumber(total) or 0
+	d.lastPage = total > 0 and math.floor((total - 1) / 50) or 0
+	if d.page < d.lastPage then
+		avm_de_exposure_request_page(d.page + 1)
+	else
+		avm_de_exposure_finish(true, "complete")
+	end
+	return true
+end
+
 local function avm_slash(msg)
 	avm_defaults()
 	msg = avm_trim(msg or "")
@@ -5169,7 +5383,8 @@ local function avm_slash(msg)
 		if not AVM.open then
 			avm_print("AH_START requires open Auction House")
 		else
-			avm_start_zero_config("manual-/avm-on")
+			local startedExposure = AVM_DB.deExposureGuard and avm_de_exposure_start and avm_de_exposure_start("manual-/avm-on", true, false)
+			if not startedExposure then avm_start_zero_config("manual-/avm-on") end
 		end
 	elseif cmd == "off" then
 		avm_hard_stop("manual-/avm-off")
@@ -5368,6 +5583,7 @@ AVM_WATCH_API = {
 			spend = tonumber(s.spend) or 0,
 			expectedProfit = tonumber(s.expectedProfit) or 0,
 			retained = table.getn(AVM_DB.purchaseHistory or {}),
+			limit = AVM_PURCHASE_HISTORY_LIMIT,
 		}
 	end,
 	GetState = function()
@@ -5401,6 +5617,7 @@ frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
 frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
+frame:RegisterEvent("AUCTION_OWNED_LIST_UPDATE")
 frame:RegisterEvent("CHAT_MSG_SYSTEM")
 frame:RegisterEvent("UI_INFO_MESSAGE")
 frame:RegisterEvent("UI_ERROR_MESSAGE")
@@ -5428,8 +5645,16 @@ frame:SetScript("OnEvent", function()
 		AVM.unknown = nil
 		AVM.auxLoop.nextAt = 0
 		AVM.auxLoop.waitingForMarket = false
-		avm_restart_boundary(false)
-		avm_start_zero_config("AH-open")
+		AVM.deExposure.active = false
+		AVM.deExposure.ready = false
+		AVM.deExposure.book = {}
+		AVM.deExposure.scanBook = {}
+		AVM.deExposure.syncedCycle = -1
+		local startedExposure = AVM_DB.deExposureGuard and avm_de_exposure_start and avm_de_exposure_start("AH-open", true, false)
+		if not startedExposure then
+			avm_restart_boundary(false)
+			avm_start_zero_config("AH-open")
+		end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = false
@@ -5467,6 +5692,10 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.flipBook = {}
 		AVM.auxArb.flipBest = nil
 		AVM.auxArb.flipVerify = nil
+		AVM.deExposure.active = false
+		AVM.deExposure.ready = false
+		AVM.deExposure.book = {}
+		AVM.deExposure.scanBook = {}
 		AVM_DB.live = false
 		AVM.queryInFlight = false
 		AVM.lastResultAt = 0
@@ -5476,6 +5705,8 @@ frame:SetScript("OnEvent", function()
 		AVM.phase = "IDLE"
 	elseif event == "AUCTION_ITEM_LIST_UPDATE" then
 		avm_handle_list_update()
+	elseif event == "AUCTION_OWNED_LIST_UPDATE" then
+		if avm_de_exposure_event then avm_de_exposure_event() end
 	elseif (event == "CHAT_MSG_SYSTEM" or event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") and AVM.pending then
 		-- Raw event evidence only. Locale-specific text is deliberately not promoted to success.
 		avm_print("BUY_EVENT " .. event .. " " .. tostring(arg1))
