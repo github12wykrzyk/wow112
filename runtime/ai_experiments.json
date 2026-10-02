@@ -3828,12 +3828,38 @@
         "WoW 1.12.1 UIParent panel manager left/center/doublewide/fullscreen",
         "WorldMapFrame map-tele Lua bridge"
       ],
-      "status": "awaiting_ci",
-      "observed_head": "1a9cfc192b9ecaa7ea3712ba40c5c034ea075bee",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Terrain Tele E is blocked whenever Blizzard's central UIParent panel manager has an open left/center/doublewide/fullscreen panel. This generically covers MailFrame, AuctionFrame and AUX hosted inside AuctionFrame without per-window exceptions. Existing WorldMap E map-tele is evaluated first and remains intentional. External exact-interface evidence: MOUZU/Blizzard-WoW-Interface 1.12.1 FrameXML/UIParent.lua."
+      "status": "awaiting_game_test",
+      "observed_head": "31252e0d7114544cdabe49ffd754e21f5fb1d53d",
+      "verified_commit": "31252e0d7114544cdabe49ffd754e21f5fb1d53d",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "31252e0d7114544cdabe49ffd754e21f5fb1d53d",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 36973463242 passed on the exact feature SHA, including repository/runtime gates and changed MovementCore compilation."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "31252e0d7114544cdabe49ffd754e21f5fb1d53d",
+          "date": "2026-10-02",
+          "evidence": "Integrated Build work candidate run 36973551319 passed on exact parallel SHA; MovementCore build, dependency/GUI gates, FINAL_PACKAGE and candidate attestation passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "31252e0d7114544cdabe49ffd754e21f5fb1d53d",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11212526651 was uploaded for exact parallel SHA 31252e0d7114544cdabe49ffd754e21f5fb1d53d."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "31252e0d7114544cdabe49ffd754e21f5fb1d53d",
+        "artifact_id": 11212526651
+      },
+      "notes": "Integrated generic terrain Tele E UI guard. Vanilla 1.12.1 UIParent panel manager (left/center/doublewide/fullscreen) blocks terrain E while major interaction panels are open, automatically covering MailFrame and AuctionFrame/AUX without per-window exceptions. Existing WorldMap E map-tele is evaluated first and remains intentional. External exact-interface evidence: MOUZU/Blizzard-WoW-Interface 1.12.1 FrameXML/UIParent.lua. Gameplay validation pending."
     }
   ]
 }
