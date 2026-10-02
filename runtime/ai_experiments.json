@@ -4271,9 +4271,9 @@
         "accountSessions coordinator routing",
         "CharacterSwitchDiag FAST relogin"
       ],
-      "status": "in_progress",
-      "observed_head": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "0f0b075abbaead3710888486160342874a98c109",
+      "verified_commit": "0f0b075abbaead3710888486160342874a98c109",
       "tests": [
         {
           "kind": "game",
@@ -4281,10 +4281,28 @@
           "commit": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
           "date": "2026-10-02",
           "evidence": "Report #75 is the motivating failure: manual coordinator PREPARE could bind a selected account label to a PID whose AutoLoginBridge held another/default profile. CharacterSwitch then reused the profile actually cached in that process."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "0f0b075abbaead3710888486160342874a98c109",
+          "date": "2026-10-02",
+          "evidence": "Clean feature preflight run 36993958922 passed; integrated parallel Build work candidate run 36994060886, updater run 36994060867 and AutoLoginBridge run 36994060899 all passed on exact SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "0f0b075abbaead3710888486160342874a98c109",
+          "date": "2026-10-02",
+          "evidence": "Verified candidate artifact 11220237960, updater artifact 11220297805 and AutoLoginBridge artifact 11221086933 were produced for exact SHA."
         }
       ],
-      "package": null,
-      "notes": "Publish a non-secret two-hash account fingerprint from AutoLoginBridge per PID. Coordinator resolves/recover sessions only from exact fingerprint matches and refuses arbitrary PID binding. This also lets AUTO recover worker identity after updater restart without trusting stale in-memory accountSessions. No login or password is written to diagnostics/shared memory."
+      "package": {
+        "verified": true,
+        "commit": "0f0b075abbaead3710888486160342874a98c109",
+        "artifact_id": 11220237960
+      },
+      "notes": "Profile-to-process fingerprint binding is integrated and packaged. Gameplay validation remains pending. The follow-up same-session switch keeps profile binding for identifying configured worker PIDs but removes login-server authentication from every slave rotation."
     },
     {
       "id": "ah-native-purchases-turtle-de",
@@ -4309,6 +4327,29 @@
       "tests": [],
       "package": null,
       "notes": "Native AUX Purchases tab plus exact Turtle disenchant routing from tortoise-wow/tortoise-wow@d94947b0db60c33e7248523ad0ba7f58af97fd09. Known positive IDs use exact loot table, known deID=0 equip items fail closed, unknown future IDs retain AUX fallback. Material-depth pricing, AH cut, safety margin, wallet/session gates and final auction revalidation are unchanged."
+    },
+    {
+      "id": "summon-same-session-switch-v1",
+      "branch": "feature/summon-same-session-switch-v1",
+      "modules": [
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-coordinator-v3-generic",
+        "summon-worker-profile-binding-v1"
+      ],
+      "shared_resources": [
+        "WoW 5875 in-world ForceLogout Lua global",
+        "CharacterSelect Glue account session",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
+      ],
+      "status": "in_progress",
+      "observed_head": "66c189c1d59e9e8d512016683194d464d03da71a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User requires slave rotation to preserve the already-authenticated account session because the login server is unreliable. Candidate replaces Coordinator/manual FAST slot switching with fail-closed ForceLogout() -> existing character-select session -> target slot -> EnterWorld. It never calls ClientServices::Disconnect and never requests AutoLoginBridge relogin. Stock Logout remains diagnostic only and may still incur the normal 20s timer. Exact external 5875 API inventory identifies ForceLogout at 0x0048AB50; gameplay behavior still requires exact-SHA in-game validation."
     }
   ]
 }
