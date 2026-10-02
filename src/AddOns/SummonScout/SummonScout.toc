@@ -7,3 +7,4 @@
 
 SummonScout.lua
 SummonScout_WinterspringEverlook.lua
+SummonScout_PostPaymentOffer.lua
