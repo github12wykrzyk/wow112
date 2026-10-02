@@ -20,6 +20,7 @@ STATIC_GATES = [
     ["tools/verify_parallel_economy_manifest.py"],
     ["tools/verify_parallel_gui_abi.py"],
     ["tools/verify_parallel_gui_contract.py"],
+    ["tools/verify_auxvmangos_autosell_contract.py"],
     ["tools/ai_experiments.py", "validate"],
     ["tools/verify_summonscout_lua_upvalues.py"],
     ["tools/verify_target_aura_lazyscript_bridge.py"],

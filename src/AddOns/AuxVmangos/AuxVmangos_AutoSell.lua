@@ -38,9 +38,24 @@ local R = {
 	action = nil,
 	lastProbeAt = {},
 	lastDecision = {},
+	manualVerifiedAt = {},
+	manual = {
+		active = false,
+		waitOwner = false,
+		queue = {},
+		index = 0,
+		total = 0,
+		checked = 0,
+		failed = 0,
+		nextAt = 0,
+		message = 'Ready',
+		lastRunAt = 0,
+	},
 	dbNormalized = false,
 	nextUi = 0,
 }
+
+local manual_start_sweep, manual_tick
 
 local function now_epoch()
 	if type(time) == 'function' then return time() end
@@ -111,10 +126,21 @@ local function diag_snapshot()
 		minHistPct = AVM_DB.autoSellMinHistPct,
 		marketSeq = R.marketSeq,
 		ownerRows = table.getn(R.owner or {}),
+		ownerAt = R.ownerAt,
 		pending = pendingCount,
 		action = R.action and tostring(R.action.kind or '') or '',
 		candidate = R.candidate and tostring(R.candidate.name or '') or '',
 		lastDecision = R.lastDecision,
+		manual = {
+			active = R.manual.active and true or false,
+			waitOwner = R.manual.waitOwner and true or false,
+			index = tonumber(R.manual.index) or 0,
+			total = tonumber(R.manual.total) or 0,
+			checked = tonumber(R.manual.checked) or 0,
+			failed = tonumber(R.manual.failed) or 0,
+			message = tostring(R.manual.message or ''),
+			lastRunAt = tonumber(R.manual.lastRunAt) or 0,
+		},
 		stats = AVM_DB.autoSellStats,
 		history = AVM_DB.autoSellHistory,
 	}
@@ -320,6 +346,11 @@ local function publish_owner_snapshot(rows)
 			end
 		end
 	end
+	if R.manual.waitOwner and manual_start_sweep then
+		R.manual.waitOwner = false
+		R.manual.message = 'Owner refreshed'
+		manual_start_sweep()
+	end
 	diag_snapshot()
 end
 
@@ -464,7 +495,7 @@ end
 
 local function choose_candidate()
 	ensure_db()
-	if not AVM_DB.autoSellEnabled or R.action or R.candidate then return end
+	if not AVM_DB.autoSellEnabled or R.action or R.candidate or R.manual.active then return end
 	local now = GetTime()
 	local best, bestGap, bestMarket = nil, -1, 0
 	local probeRow, probeAge = nil, -1
@@ -491,8 +522,12 @@ local function choose_candidate()
 	end
 
 	if best then
+		local key = tostring(best.item_key or '')
+		local manualAge = now - (tonumber(R.manualVerifiedAt[key]) or 0)
+		local manualFresh = tonumber(R.manualVerifiedAt[key]) and manualAge >= 0 and manualAge <= 30
 		R.candidate = { row = best, name = best.name, item_key = best.item_key, item_id = best.item_id,
-			stage = 'VERIFY_PRICE', marketUnit = bestMarket, gapPct = bestGap }
+			stage = manualFresh and 'CANCEL_READY' or 'VERIFY_PRICE', marketUnit = bestMarket,
+			verifiedUnit = manualFresh and bestMarket or nil, gapPct = bestGap }
 	elseif probeRow and probeAge >= 15 then
 		-- If the active Search filter did not expose this item, rotate one exact
 		-- live probe per idle cycle. This keeps AutoSell useful without turning
@@ -515,7 +550,10 @@ local function probe_price(key, itemId, callback)
 		if done then return end
 		done = true
 		R.action = nil
-		if value and value > 0 then
+		if reason == 'complete' then
+			R.market[key] = (value and value > 0) and value or 0
+			R.marketAt[key] = GetTime()
+		elseif value and value > 0 then
 			R.market[key] = value
 			R.marketAt[key] = GetTime()
 		end
@@ -536,6 +574,156 @@ local function probe_price(key, itemId, callback)
 		on_abort = function() finish(nil, 'aborted') end,
 	}
 	return true
+end
+
+local function manual_finish()
+	R.manual.active = false
+	R.manual.lastRunAt = GetTime()
+	R.manual.message = 'Checked ' .. tostring(R.manual.checked) .. '/' .. tostring(R.manual.total)
+	if R.manual.failed > 0 then R.manual.message = R.manual.message .. ' | failed ' .. tostring(R.manual.failed) end
+	log_event('MANUAL_DONE', nil, R.manual.message)
+	DEFAULT_CHAT_FRAME:AddMessage('|cff60ff00[AutoSell]|r ' .. R.manual.message)
+	R.candidate = nil
+	choose_candidate()
+	diag_snapshot()
+end
+
+manual_tick = function()
+	if not R.manual.active then return false end
+	if AVM_DB and AVM_DB.auxLoopEnabled then
+		R.manual.active = false
+		R.manual.message = 'Stopped: Auto Loop ON'
+		log_event('MANUAL_ABORT', nil, R.manual.message)
+		DEFAULT_CHAT_FRAME:AddMessage('|cffff6060[AutoSell]|r ' .. R.manual.message)
+		return false
+	end
+	if not auction_open() then
+		R.manual.active = false
+		R.manual.message = 'Stopped: Auction House closed'
+		log_event('MANUAL_ABORT', nil, R.manual.message)
+		return false
+	end
+	if R.action then return true end
+	if GetTime() < (tonumber(R.manual.nextAt) or 0) then return true end
+	if not safe_idle() then
+		R.manual.message = 'Waiting for AUX idle...'
+		return true
+	end
+	if R.manual.index > R.manual.total then
+		manual_finish()
+		return false
+	end
+
+	local entry = R.manual.queue[R.manual.index]
+	if not entry then
+		R.manual.failed = R.manual.failed + 1
+		R.manual.index = R.manual.index + 1
+		R.manual.nextAt = GetTime() + .05
+		return true
+	end
+	local key = tostring(entry.item_key or '')
+	local pos = R.manual.index
+	R.manual.message = 'Checking ' .. tostring(pos) .. '/' .. tostring(R.manual.total) .. ': ' .. tostring(entry.name or key)
+	log_event('MANUAL_PROBE_START', entry, 'index=' .. tostring(pos) .. '/' .. tostring(R.manual.total))
+	local started = probe_price(key, entry.item_id, function(best, why)
+		R.manual.checked = R.manual.checked + 1
+		if why == 'complete' then
+			R.manualVerifiedAt[key] = GetTime()
+			log_event('MANUAL_PROBE_RESULT', {
+				name = entry.name, item_key = key, marketUnit = tonumber(best) or 0,
+			}, best and best > 0 and 'market' or 'no-market')
+		else
+			R.manual.failed = R.manual.failed + 1
+			log_event('MANUAL_PROBE_ABORT', entry, tostring(why or 'aborted'))
+		end
+		R.manual.index = R.manual.index + 1
+		R.manual.nextAt = GetTime() + .05
+	end)
+	if not started then
+		R.manual.failed = R.manual.failed + 1
+		R.manual.index = R.manual.index + 1
+		R.manual.nextAt = GetTime() + .05
+	end
+	return true
+end
+
+manual_start_sweep = function()
+	ensure_db()
+	if R.manual.active then return false end
+	if AVM_DB.auxLoopEnabled then
+		R.manual.message = 'Stop Auto Loop first'
+		log_event('MANUAL_BLOCKED', nil, R.manual.message)
+		DEFAULT_CHAT_FRAME:AddMessage('|cffff6060[AutoSell]|r ' .. R.manual.message)
+		return false
+	end
+	if not auction_open() then
+		R.manual.message = 'Open Auction House'
+		log_event('MANUAL_BLOCKED', nil, R.manual.message)
+		return false
+	end
+	if R.action then
+		R.manual.message = 'AutoSell busy - wait'
+		log_event('MANUAL_BLOCKED', nil, R.manual.message)
+		return false
+	end
+
+	local seen = {}
+	local queue = {}
+	for i = 1, table.getn(R.owner or {}) do
+		local row = R.owner[i]
+		local key = tostring(row.item_key or '')
+		if key ~= '' and is_managed(row) and not pending_for(key) and
+		   tonumber(row.buyout_price or 0) > 0 and not seen[key] then
+			seen[key] = true
+			table.insert(queue, row)
+		end
+	end
+	R.manual.queue = queue
+	R.manual.index = 1
+	R.manual.total = table.getn(queue)
+	R.manual.checked = 0
+	R.manual.failed = 0
+	R.manual.nextAt = GetTime()
+	R.candidate = nil
+	if R.manual.total == 0 then
+		R.manual.message = 'No managed own auctions'
+		log_event('MANUAL_EMPTY', nil, R.manual.message)
+		DEFAULT_CHAT_FRAME:AddMessage('|cffffff00[AutoSell]|r ' .. R.manual.message)
+		return false
+	end
+	R.manual.active = true
+	R.manual.message = 'Checking 1/' .. tostring(R.manual.total)
+	log_event('MANUAL_START', nil, 'items=' .. tostring(R.manual.total))
+	DEFAULT_CHAT_FRAME:AddMessage('|cff60ff00[AutoSell]|r Check + decide: ' .. tostring(R.manual.total) .. ' item(s)')
+	diag_snapshot()
+	return true
+end
+
+local function manual_request()
+	ensure_db()
+	if R.manual.active or R.manual.waitOwner then return end
+	if AVM_DB.auxLoopEnabled then
+		R.manual.message = 'Stop Auto Loop first'
+		log_event('MANUAL_BLOCKED', nil, R.manual.message)
+		DEFAULT_CHAT_FRAME:AddMessage('|cffff6060[AutoSell]|r ' .. R.manual.message)
+		return
+	end
+	if not auction_open() then
+		R.manual.message = 'Open Auction House'
+		DEFAULT_CHAT_FRAME:AddMessage('|cffff6060[AutoSell]|r ' .. R.manual.message)
+		return
+	end
+	if R.ownerCapturePending then capture_owner_page() end
+	local ownerFresh = R.ownerAt > 0 and GetTime() - R.ownerAt <= 60
+	if not ownerFresh then
+		R.manual.waitOwner = true
+		R.manual.message = 'Refreshing own auctions...'
+		log_event('MANUAL_OWNER_REFRESH', nil, 'stale owner snapshot')
+		AS.RequestOwnerRefresh('manual-check-stale')
+		DEFAULT_CHAT_FRAME:AddMessage('|cffffff00[AutoSell]|r Refreshing own auctions...')
+		return
+	end
+	manual_start_sweep()
 end
 
 local function cancel_failed(key, why)
@@ -725,6 +913,7 @@ function AS.Tick(now)
 	ensure_db()
 	install_market_hooks()
 	now = tonumber(now) or GetTime()
+	if R.manual.active then return true end
 	if R.action then
 		if R.action.kind == 'OWNER_SCAN' and now - (tonumber(R.ownerRefreshAt) or now) > 15 then
 			R.action = nil
@@ -783,7 +972,7 @@ function AS.Tick(now)
 end
 
 function AS.IsBusy()
-	return R.action and true or false
+	return R.action and true or R.manual.active or R.manual.waitOwner or false
 end
 
 function AS.Status()
@@ -800,6 +989,10 @@ function AS.Status()
 		marketSeq = R.marketSeq,
 		ownerRefreshRequested = R.ownerRefreshRequested and true or false,
 		ownerRefreshReason = tostring(R.ownerRefreshReason or ''),
+		manualActive = R.manual.active and true or false,
+		manualIndex = tonumber(R.manual.index) or 0,
+		manualTotal = tonumber(R.manual.total) or 0,
+		manualMessage = tostring(R.manual.message or ''),
 	}
 end
 
@@ -818,10 +1011,18 @@ eventFrame:SetScript('OnEvent', function()
 		R.candidate = nil
 		R.ownerBuild = nil
 		R.ownerCapturePending = false
+		R.manual.active = false
+		R.manual.waitOwner = false
+		R.manual.queue = {}
+		R.manual.message = 'Ready'
 	end
 end)
 eventFrame:SetScript('OnUpdate', function()
 	if R.ownerCapturePending and GetTime() >= R.ownerCaptureAt then capture_owner_page() end
+	if R.manual.active and GetTime() >= (tonumber(R.manual.nextAt) or 0) then
+		manual_tick()
+		return
+	end
 	-- Owner refresh must progress even while the continuous loop is enabled but
 	-- currently between cycles. Tick will wait for safe_idle before claiming AUX.
 	if (R.ownerRefreshRequested or (R.action and R.action.kind == 'OWNER_SCAN')) and
@@ -844,7 +1045,7 @@ frame:SetAllPoints()
 frame:Hide()
 
 local controls = gui.panel(frame)
-controls:SetHeight(86)
+controls:SetHeight(112)
 controls:SetPoint('TOPLEFT', frame, 'TOPLEFT', 0, -8)
 controls:SetPoint('TOPRIGHT', frame, 'TOPRIGHT', 0, -8)
 
@@ -908,6 +1109,18 @@ local undercutLabel = gui.label(undercutBox, gui.font_size.small)
 undercutLabel:SetPoint('BOTTOMLEFT', undercutBox, 'TOPLEFT', 0, 2)
 undercutLabel:SetText('Undercut copper')
 
+local manualButton = gui.button(controls)
+manualButton:SetWidth(128)
+manualButton:SetPoint('TOPLEFT', 12, -84)
+manualButton:SetText('Check + decide')
+manualButton:SetScript('OnClick', manual_request)
+
+local manualLabel = gui.label(controls, gui.font_size.small)
+manualLabel:SetPoint('LEFT', manualButton, 'RIGHT', 8, 1)
+manualLabel:SetWidth(270)
+manualLabel:SetJustifyH('LEFT')
+manualLabel:SetText('Ready')
+
 local function commit_controls()
 	ensure_db()
 	AVM_DB.autoSellEnabled = enabledBox:GetChecked() and true or false
@@ -954,7 +1167,11 @@ local function ui_state(row)
 	if row.high_bidder or (tonumber(row.high_bid) or 0) > 0 then return 'HAS BID' end
 	if not is_managed(row) then return 'IGNORED' end
 	local market = tonumber(R.market[key]) or 0
-	if market <= 0 then return 'PRICE CHECK' end
+	if market <= 0 then
+		local checkedAt = tonumber(R.marketAt[key]) or 0
+		if checkedAt > 0 and GetTime() - checkedAt <= 180 then return 'NO MARKET' end
+		return 'PRICE CHECK'
+	end
 	local own = tonumber(row.unit_buyout_price) or 0
 	if own <= 0 then return 'NO BUYOUT' end
 	local gap = market < own and ((own-market)*100/own) or 0
@@ -976,6 +1193,12 @@ local function refresh_ui(force)
 	if not triggerBox.focused then triggerBox:SetText(tostring(AVM_DB.autoSellTriggerPct)) end
 	if not histBox.focused then histBox:SetText(tostring(AVM_DB.autoSellMinHistPct)) end
 	if not undercutBox.focused then undercutBox:SetText(tostring(AVM_DB.autoSellUndercutCopper)) end
+	if R.manual.active or R.manual.waitOwner then manualButton:Disable() else manualButton:Enable() end
+	if AVM_DB.auxLoopEnabled and not R.manual.active then
+		manualLabel:SetText('Stop Auto Loop first')
+	else
+		manualLabel:SetText(tostring(R.manual.message or 'Ready'))
+	end
 
 	local rows = T.acquire()
 	local shown = {}
@@ -1020,7 +1243,8 @@ local function refresh_ui(force)
 		' | cancels ' .. tostring(stats.cancels or 0) ..
 		' | reposts ' .. tostring(stats.reposts or 0) ..
 		(st.ownerRefreshRequested and ' | owner refresh queued' or '') ..
-		(st.action ~= '' and (' | ' .. st.action) or '')
+		(st.action ~= '' and (' | ' .. st.action) or '') ..
+		(st.manualActive and (' | check ' .. tostring(st.manualIndex) .. '/' .. tostring(st.manualTotal)) or '')
 	)
 end
 
@@ -1033,7 +1257,9 @@ end)
 function tab.OPEN()
 	ensure_db()
 	install_market_hooks()
-	AS.RequestOwnerRefresh('tab-open')
+	if R.ownerCapturePending then capture_owner_page() end
+	local ownerFresh = R.ownerAt > 0 and GetTime() - R.ownerAt <= 60
+	if not ownerFresh then AS.RequestOwnerRefresh('tab-open-stale') end
 	frame:Show()
 	refresh_ui(true)
 end
@@ -1047,11 +1273,13 @@ SlashCmdList['AVMAUTOSELL'] = function(msg)
 	elseif msg == 'off' then AVM_DB.autoSellEnabled = false
 	elseif msg == 'all on' then AVM_DB.autoSellManageAll = true
 	elseif msg == 'all off' then AVM_DB.autoSellManageAll = false
+	elseif msg == 'check' then manual_request()
 	end
 	local st = AS.Status()
 	DEFAULT_CHAT_FRAME:AddMessage('|cff60ff00[AutoSell]|r enabled=' .. tostring(st.enabled) ..
 		' manageAll=' .. tostring(st.manageAll) .. ' own=' .. tostring(st.owner) ..
-		' pending=' .. tostring(st.pending) .. ' action=' .. tostring(st.action))
+		' pending=' .. tostring(st.pending) .. ' action=' .. tostring(st.action) ..
+		' manual=' .. tostring(st.manualMessage))
 end
 
 ensure_db()
