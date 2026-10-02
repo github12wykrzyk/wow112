@@ -3984,7 +3984,7 @@
                 "evidence": "Report #70 exact parallel candidate: manual/ordinary ReloadUI SavedVariables flush at 08:06:42.975244Z was followed ~22.6ms later by ERROR #132 ACCESS_VIOLATION at WoW.exe 0x00483EFA. Exact EXE disassembly shows mov ecx,[esi+0x65B8] and the fault address equals ESI+0x65B8, consistent with a stale client object during reload teardown."
             },
             {
-                "kind": "diagnostic",
+                "kind": "binary",
                 "result": "failed",
                 "commit": "c1dd624d210fe1d5e91729fd368913080f9aff85",
                 "date": "2026-10-02",
