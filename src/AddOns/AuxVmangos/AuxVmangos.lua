@@ -791,7 +791,9 @@ end
 
 function AVM_AuxArbMarkConsumed(candidate)
 	local a = AVM and AVM.auxArb
-	if not a or not candidate or not avm_is_auxarb_candidate or not avm_is_auxarb_candidate(candidate) then return end
+	if not a or not candidate then return end
+	local mode = tostring(candidate.mode or "")
+	if mode ~= "auxarb_vendor" and mode ~= "auxarb_de" and mode ~= "auxarb_flip" then return end
 	if not a.consumedAuctionKeys then a.consumedAuctionKeys = {} end
 	local key = AVM_AuxArbConsumedKey(candidate)
 	if key == "" then return end
@@ -2353,6 +2355,7 @@ end
 
 local function avm_de_candidate_from_record(record, book)
 	if not record or not AVM_AUX_DE_OK or not AVM_AUX_DE then return nil, "no-de-module" end
+	if AVM_AuxArbWasConsumed(record) then return nil, "consumed" end
 	if record.signature and avm_recent(record.signature) then return nil, "recent" end
 	local raw = avm_de_raw_candidate(record)
 	if not raw then
