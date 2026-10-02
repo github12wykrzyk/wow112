@@ -58,3 +58,7 @@ Stable promotion additionally:
 `python tools/verify_repo.py`
 
 Never weaken a verifier merely to obtain PASS.
+
+## Operational latency
+
+Minimize time from an accepted change request to a verified test artifact. Use batch exact-SHA workflow checks, avoid per-job/per-step success polling, inspect logs only to diagnose failures, and let independent gates run concurrently. For a small already-understood one-module fix, 4–6 minutes is the operational target when runner capacity permits. Never skip or weaken verification to meet the target; `AGENTS.md` section 14 is authoritative.

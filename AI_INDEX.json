@@ -103,6 +103,7 @@
     "route new features via active experiment ownership and dependencies; keep parallel and work distinct",
     "ledger test/package evidence must identify exact commit; unknown results remain null",
     "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
-    "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded"
+    "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded",
+    "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates"
   ]
 }

@@ -31,6 +31,8 @@ Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or rec
 
 For a user-selected branch (including `parallel`), use that exact branch even if generic metadata names `work` as the default. Finish the smallest independent GitHub change first, confirm its commit SHA, and provide a short factual checkpoint. Do not perform unrelated edits or repeatedly query all Actions runs in one response. After interrupted streaming, recheck HEAD and workflow for the intended SHA before doing any write. See `AGENTS.md` section 14.
 
+Default latency path: batch the mandatory startup reads, make one focused atomic commit, check required feature workflows together at run level, integrate after PASS, then observe required `parallel` workflows together. **Do not inspect successful job/step progress or fetch logs on the success path.** Deep CI inspection is failure-driven. For a small already-understood one-module fix, aim for roughly 4–6 minutes end-to-end when runner capacity permits, without weakening any verification or package gate.
+
 ## Experiment routing
 
 After mandatory startup inspect `runtime/ai_experiments.json`, live branch heads and module/dependency ownership. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.

@@ -249,6 +249,28 @@ Keep ChatGPT transport troubleshooting separate from repository correctness. For
 - Documentation-only workflow edits need no game-test ZIP. Native/runtime changes still require all applicable verification and final package gates; never trade build integrity for shorter responses.
 - The user's default role is to describe desired behavior and test verified packages, never to manage branches, commits, or build tools. Keep active chats task-focused; do not require deletion of old conversations. Repository instructions cannot guarantee uninterrupted ChatGPT streaming.
 
+### Latency discipline for GitHub and CI
+
+Optimize **end-to-end user wait time**, not the number of progress messages. A small fix must not spend most of its wall-clock time on repeated repository/status reads.
+
+- On the normal success path, observe Actions at the **workflow/run level for the exact SHA**. Do not fetch individual jobs, steps, or logs merely to watch progress. Fetch jobs/steps/logs only after failure/cancelled, when a run is unexpectedly stuck, or when a specific gate must be diagnosed.
+- Batch independent GitHub reads/status checks into one tool operation when supported. Do not re-read unchanged entrypoint files, source files, branch metadata, or completed workflow details without a concrete decision that requires them.
+- After a feature commit, check all required feature workflows together. Once they PASS, verify the integration base once and integrate. Do not serially inspect each successful gate.
+- After integration, let independent required workflows run concurrently and check their exact-SHA conclusions together. Do not wait for ECONOMY and then separately observe STANDARD, or poll companion build steps one by one.
+- Progress reporting is tied to **meaningful durable state transitions** (commit created, preflight PASS/FAIL, integrated SHA, final artifact PASS/FAIL). A desire to report progress is not by itself a reason to issue extra GitHub API calls.
+- Documentation/process-only changes require only their relevant lightweight validation; do not wait for an unrelated game-test ZIP just because an unconditional workflow happened to start. Runtime/gameplay changes still require every package and attestation gate mandated elsewhere in this contract.
+- For a small, already-understood one-module fix, the operational objective is roughly **4–6 minutes from user approval to verified test artifact** when GitHub runner availability permits. This is a latency objective, never a reason to skip preflight, exact-SHA checks, FINAL_PACKAGE, provenance, or any safety gate.
+- If a required workflow is still running at a workflow-level check, avoid drilling into its successful substeps. Recheck coarsely only when needed to complete the task or after the user asks for current status.
+
+Preferred success path:
+
+```text
+startup batch -> focused analysis/edit -> one atomic commit ->
+batch feature-gate check -> one integration-head check -> integrate ->
+parallel workflows run concurrently -> batch exact-SHA conclusion check ->
+artifact/provenance check -> user test
+```
+
 ## 15. External technical research — autonomous and permitted
 
 AI may independently search the **entire publicly accessible internet** for technical knowledge relevant to a requested implementation, bug, or binary audit. No separate user authorization is required for ordinary public-source research. This includes public GitHub repositories, upstream source and changelogs, archived client documentation, technical forums, reverse-engineering notes, PE32/x86 and Win32 references, disassembly write-ups, issue trackers, and publicly available sample implementations. Search beyond this repository when current local evidence is insufficient or external evidence can materially improve a solution; do not limit research to GitHub or to sources already indexed in this repository.
