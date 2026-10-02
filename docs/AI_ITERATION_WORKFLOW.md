@@ -8,7 +8,13 @@ Minimize wall-clock time from a user request to a verified runnable artifact whi
 
 ## 1. Route, do not rediscover
 
-Read `AGENTS.md -> AI_START_HERE.md -> AI_INDEX.json -> CURRENT.json -> runtime/current.json`, then only the relevant source.
+For ordinary work use the verified startup snapshot path from `AGENTS.md`. After it is validated, start module work with:
+
+`python tools/ai_task_context.py --branch <selected-branch> --module <Module>`
+
+The task context is deliberately small: selected ref/HEAD when locally resolvable, recent active experiments in ledger order, source hints, applicable delivery profiles and the exact delivery lifecycle. It is advisory and read-only; live GitHub refs and canonical manifests remain authoritative before a write. Fall back to the full canonical startup sequence when required by `AGENTS.md`.
+
+Do not read the full `runtime/ai_experiments.json` merely to discover a branch. Use task context / compact indexes first and load full ledger evidence only when it must actually be inspected or updated.
 
 `main` must be an ancestor of `work` before work-branch edits; retain existing parallel divergence without forced integration. Route independent work as described in `docs/AI_EXPERIMENTS.md`.
 
@@ -21,8 +27,13 @@ For non-trivial `parallel` work, branch from the current verified `parallel` HEA
 3. Require any path-specific feature workflow, such as updater or AutoLogin, when it is triggered.
 4. Integrate the verified feature SHA into `parallel`.
 5. Require the full aggregate `Build work candidate` on the resulting exact `parallel` SHA, including final package verification and attestation.
-6. Hand off only that exact-SHA artifact for gameplay testing.
-7. Freeze an issued test SHA; unrelated work continues on another feature branch until the game result is recorded.
+6. If the affected module belongs to a delivery fast profile such as ECONOMY, require that exact-parallel-SHA profile workflow too.
+7. Hand off only the exact-SHA artifact after all required delivery workflows pass; feature `PREFLIGHT PASS` alone is never `TEST READY`.
+8. Freeze an issued test SHA; unrelated work continues on another feature branch until the game result is recorded.
+
+The expected state machine is therefore:
+
+`EDITING -> FEATURE PREFLIGHT -> INTEGRATED -> PARALLEL BUILD -> PROFILE BUILD (if applicable) -> TEST READY`
 
 Small documentation/metadata-only edits may remain direct, but an uncompiled native change must not advance `parallel` merely to obtain compiler feedback.
 
@@ -81,7 +92,7 @@ After `Pre-promote stable` passes:
 1. move `main` to the same verified SHA,
 2. require `Build stable candidate` to pass,
 3. preserve the previous stable baseline,
-4. integrate new main into `work` without destroying unrelated work-only experiments.
+4. integrate new main into work without destroying unrelated work-only experiments.
 
 ## 8. Repository hygiene
 

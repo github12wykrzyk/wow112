@@ -41,6 +41,14 @@ Default latency path: batch the mandatory startup reads, make one focused atomic
 
 After verified startup context inspect the compact `runtime/ai_experiment_index.json` first, then relevant live branch heads and module/dependency ownership. It is generated from `runtime/ai_experiments.json` and intentionally omits heavy notes/test evidence; read the full ledger only when compact routing is insufficient or evidence must be updated. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing and `python tools/ai_experiments.py index --check` verifies the fast index. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
 
+For ordinary module work, prefer one compact task-context read before opening source files:
+
+```text
+python tools/ai_task_context.py --branch parallel --module MODULE
+```
+
+The helper is read-only. It resolves the selected checkout/ref when available, shows the latest active experiments for that module in ledger order, canonical source hints, STANDARD/ECONOMY delivery eligibility, and the complete `feature preflight -> integrate -> exact parallel build -> profile build -> TEST READY` lifecycle. It exists specifically to prevent a successful feature preflight from being mistaken for delivered code. Live GitHub HEAD and the canonical manifests remain authoritative before every write.
+
 ## Fast TEST path
 
 ```text
@@ -52,6 +60,7 @@ verify_candidate_package -> artifact -> user test
 Useful commands:
 
 ```text
+python tools/ai_task_context.py --branch parallel --module MODULE
 python tools/ai_status.py
 python tools/verify_current.py
 python tools/verify_runtime_artifacts.py
