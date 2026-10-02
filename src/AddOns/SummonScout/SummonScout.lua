@@ -4,7 +4,7 @@
 
 SummonScoutDB = SummonScoutDB or {}
 
-local ADDON_VERSION = "1.57"
+local ADDON_VERSION = "1.58"
 local SS = {}
 SS.queue = {}
 SS.queued = {}
@@ -1396,7 +1396,10 @@ local function processPartySummon()
         return
     end
 
-    if (t - (SS.summonActiveQueuedAt or t)) > 30 then
+    -- Shared slave workers can legitimately be leased to another summoner first.
+    -- Keep this customer alive long enough for FIFO coordinator arbitration +
+    -- a full 30s character-switch preparation window.
+    if (t - (SS.summonActiveQueuedAt or t)) > 180 then
         chat("summon watchdog dropped -> " .. name)
         if SummonScoutDB.masterReportLifecycle then
             reportMaster("SUMMON FAIL", name .. " - transaction watchdog timeout")
@@ -1433,6 +1436,20 @@ local function processPartySummon()
                 or nativeStatus == "coord-failed") then
             SS.lastSummonError = nativeStatus
             retryActiveSummon(nativeStatus == "blocked-busy" and 0.20 or 0.35)
+            return
+        end
+
+        -- Generic coordinator V3 owns this exact request while both shared
+        -- slave accounts move to the configured destination slot. Do not
+        -- recycle the Lua request every 2.2s: that would cancel the native
+        -- lease before READY 2/2 can ever be reached.
+        if nativeStatus == "coord-wait" then return end
+
+        -- When a delayed coordinated request finally leaves coord-wait, give
+        -- the native cast-start observer its normal short window even though
+        -- the original request deadline may be long past.
+        if ackSeq == requestSeq and string.sub(nativeStatus or "", 1, 12) == "cast-issued:" then
+            SS.summonActiveExpires = t + 2.20
             return
         end
 

@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v24 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v25 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -131,8 +131,8 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define SUMMON_START_WATCH_MS        1600u
 
 #define SUMMON_COORD_MAGIC           0x41323157u
-#define SUMMON_COORD_VERSION         1u
-#define SUMMON_COORDINATOR_ENABLED   0u
+#define SUMMON_COORD_VERSION         2u
+#define SUMMON_COORDINATOR_ENABLED   1u
 #define PAGE_READWRITE_VALUE         0x00000004u
 #define FILE_MAP_ALL_ACCESS_VALUE    0x000F001Fu
 
@@ -145,8 +145,6 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define COORD_CANCELLED              6u
 
 #define COORD_DEST_NONE              0u
-#define COORD_DEST_HYJAL             1u
-#define COORD_DEST_HYDRAXIAN         2u
 
 typedef struct SummonCoordMapV1 {
     u32 magic;
@@ -293,11 +291,18 @@ static char *appendU32Dec(char *p,u32 value)
     return p;
 }
 
-static u32 coordinatorDestinationCode(const char *s)
+static u32 coordinatorDestinationKey(const char *s)
 {
-    if(asciiEq(s,"hyjal")) return COORD_DEST_HYJAL;
-    if(asciiEq(s,"hydraxian")) return COORD_DEST_HYDRAXIAN;
-    return COORD_DEST_NONE;
+    u32 hash=2166136261u;
+    u8 c;
+    if(!s||!s[0]) return COORD_DEST_NONE;
+    while(*s) {
+        c=(u8)*s++;
+        if(c>='A'&&c<='Z') c=(u8)(c+('a'-'A'));
+        hash^=(u32)c;
+        hash*=16777619u;
+    }
+    return hash?hash:1u;
 }
 
 static void coordinatorSetState(u32 state,u32 now)
@@ -821,12 +826,11 @@ static void pollNativeSummonBridge(u32 player,u32 now)
     seqText=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_REQUEST_SEQ",-1,0u);
     destText=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_DESTINATION",-1,0u);
     seq=parseDecimalU32(seqText);
-    dest=SUMMON_COORDINATOR_ENABLED ? coordinatorDestinationCode(destText) : COORD_DEST_NONE;
+    dest=SUMMON_COORDINATOR_ENABLED ? coordinatorDestinationKey(destText) : COORD_DEST_NONE;
 
-    /* Coordinator code remains compiled for later experiments, but current
-     * Parallel intentionally does not publish/gate Hyjal or Hydraxian requests
-     * through updater slave/account switching. Every destination uses the
-     * established direct native Ritual bridge while this flag is zero. */
+    /* Coordinator V3 treats destination as a deterministic key of the
+     * canonical SummonScout service id. Updater owns the id -> character-slot
+     * mapping, so adding a new service does not require another native enum. */
     if(dest!=COORD_DEST_NONE && seq!=0u) {
         if(g_coordRequestSeq!=seq) {
             g_coordRequestSeq=seq;
@@ -855,9 +859,9 @@ static void pollNativeSummonBridge(u32 player,u32 now)
         coordinatorSetState(COORD_READY,now);
     }
 
-    /* Do not pre-gate on CastingBarFrame/raw channel state. In current direct
-     * mode the exact request is consumed immediately; updater READY 2/2 is not
-     * consulted and account switching cannot block the Ritual. */
+    /* Once the updater grants READY 2/2, consume the exact request and issue
+     * Ritual on WoW's UI thread. Empty/multi-service destination ids retain the
+     * existing direct path because no unambiguous slave route can be selected. */
     ((FrameScriptExecuteFn)(ptr32)WOW_FRAMESCRIPT_EXECUTE)(consumeScript,"AutoSummonAssist");
     issued=((FrameScriptGetTextFn)(ptr32)WOW_FRAMESCRIPT_GETTEXT)("W112_AUTOSUMMON_NATIVE_ISSUED",-1,0u);
     if(issued && issued[0]=='1' && issued[1]==0) {

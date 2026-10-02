@@ -4095,6 +4095,31 @@
         "artifact_id": 11218507039
       },
       "notes": "Replace generic Vanilla AVM_VENDOR_VALUES with the exact ShaguTweaks Turtle WoW sell-value table from 7d670218a9b1e0a6a9a9062c0f458508398f2e48 (Turtle 1.18 update). Runtime priority becomes realm-learned AUX value > trusted Turtle DB > no value. No fallback to the old Vanilla table. Existing vendor min-profit/max-buyout/wallet/session/revalidation/purchase gates remain unchanged. Diagnostics retain legacy static* field names for compatibility but tag vendorDbSource and report turtle-db as the actual source. Integrated code SHA passed full candidate packaging. Gameplay test should confirm vendor candidates now route from turtle-db into the existing revalidation/buy path and that Turtle-specific sell values prevent the prior Serrated Petal mismatch."
+    },
+    {
+      "id": "summon-coordinator-v3-generic",
+      "branch": "feature/summon-coordinator-v3-generic",
+      "modules": [
+        "SummonScout",
+        "AutoSummonAssist",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel",
+        "updater-reload-worker-protocol-v2"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonAssist_<PID> coordinator map",
+        "Local\\\\WoW112_SummonWorker_<PID> shared worker maps",
+        "CharacterSwitchDiag FAST slot switch",
+        "SummonScout W112_AUTOSUMMON destination/request handshake"
+      ],
+      "status": "in_progress",
+      "observed_head": "9c03e79656019459f827ab98267c2ed4d8d30e71",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Generic Coordinator V3 experiment. Re-enable READY 2/2 gating, replace hard-coded Hyjal/Hydraxian destination enum with deterministic canonical-location keys, migrate updater config to arbitrary location=slot routes, add default winterspring=4, and keep multiple summoners queued oldest-first on one shared two-account slave pair. Gameplay evidence is intentionally absent until an exact packaged SHA is tested."
     }
   ]
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -11,13 +12,21 @@ using System.Windows.Forms;
 
 namespace WoW112Updater
 {
+    internal sealed class SummonCoordinatorRouteConfig
+    {
+        public string Id { get; set; }
+        public int Slot { get; set; }
+    }
+
     internal sealed class SummonCoordinatorConfig
     {
         public int Version { get; set; }
         public string WorkerAId { get; set; }
         public string WorkerBId { get; set; }
+        // Kept only so V1/V2 JSON can be migrated without losing the old slots.
         public int HyjalSlot { get; set; }
         public int HydraxianSlot { get; set; }
+        public List<SummonCoordinatorRouteConfig> Routes { get; set; }
         public bool AutoEnabled { get; set; }
     }
 
@@ -26,7 +35,7 @@ namespace WoW112Updater
         private const uint SummonWorkerMagic = 0x53323157u;
         private const uint SummonWorkerVersion = 2u;
         private const uint SummonAssistMagic = 0x41323157u;
-        private const uint SummonAssistVersion = 1u;
+        private const uint SummonAssistVersion = 2u;
         private const int SummonWorkerMapSize = 64;
         private const int SummonAssistMapSize = 64;
         private const int SummonPrepareTimeoutMs = 30000;
@@ -232,23 +241,140 @@ namespace WoW112Updater
             public SummonAssistSnapshot Snapshot;
         }
 
+        private static List<SummonCoordinatorRouteConfig> DefaultSummonRoutes()
+        {
+            return new List<SummonCoordinatorRouteConfig> {
+                new SummonCoordinatorRouteConfig { Id = "hyjal", Slot = 1 },
+                new SummonCoordinatorRouteConfig { Id = "hydraxian", Slot = 2 },
+                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 4 }
+            };
+        }
+
+        private static SummonCoordinatorConfig DefaultSummonCoordinatorConfig()
+        {
+            return new SummonCoordinatorConfig {
+                Version = 3, WorkerAId = "", WorkerBId = "",
+                Routes = DefaultSummonRoutes(), AutoEnabled = true
+            };
+        }
+
+        private static string NormalizeSummonRouteId(string value)
+        {
+            value = (value ?? "").Trim().ToLowerInvariant();
+            if (value.Length < 1 || value.Length > 32)
+                throw new InvalidDataException("Id lokalizacji musi mieć 1-32 znaki.");
+            foreach (var ch in value)
+            {
+                var ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+                if (!ok) throw new InvalidDataException("Id lokalizacji może zawierać tylko a-z, 0-9, _ i -.");
+            }
+            return value;
+        }
+
+        private static uint SummonDestinationKey(string value)
+        {
+            var id = NormalizeSummonRouteId(value);
+            unchecked
+            {
+                uint hash = 2166136261u;
+                foreach (var ch in id)
+                {
+                    hash ^= (byte)ch;
+                    hash *= 16777619u;
+                }
+                return hash == 0 ? 1u : hash;
+            }
+        }
+
+        private static void ValidateSummonRoutes(List<SummonCoordinatorRouteConfig> routes)
+        {
+            if (routes == null || routes.Count == 0)
+                throw new InvalidDataException("Coordinator wymaga co najmniej jednej trasy lokalizacja=slot.");
+            if (routes.Count > 32)
+                throw new InvalidDataException("Coordinator obsługuje maksymalnie 32 trasy.");
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            var keys = new HashSet<uint>();
+            foreach (var route in routes)
+            {
+                if (route == null) throw new InvalidDataException("Pusta trasa coordinatora.");
+                route.Id = NormalizeSummonRouteId(route.Id);
+                if (route.Slot < 1 || route.Slot > 10)
+                    throw new InvalidDataException("Slot coordinatora musi być w zakresie 1-10.");
+                if (!ids.Add(route.Id))
+                    throw new InvalidDataException("Powtórzona lokalizacja coordinatora: " + route.Id);
+                var key = SummonDestinationKey(route.Id);
+                if (!keys.Add(key))
+                    throw new InvalidDataException("Kolizja klucza tras coordinatora: " + route.Id);
+            }
+        }
+
+        private static SummonCoordinatorRouteConfig FindSummonRoute(SummonCoordinatorConfig cfg, uint destinationKey)
+        {
+            if (cfg == null || cfg.Routes == null || destinationKey == 0) return null;
+            foreach (var route in cfg.Routes)
+                if (route != null && SummonDestinationKey(route.Id) == destinationKey) return route;
+            return null;
+        }
+
+        private static string FormatSummonRoutes(List<SummonCoordinatorRouteConfig> routes)
+        {
+            var sb = new StringBuilder();
+            if (routes != null)
+            {
+                foreach (var route in routes)
+                {
+                    if (route == null) continue;
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(NormalizeSummonRouteId(route.Id)).Append('=').Append(route.Slot);
+                }
+            }
+            return sb.ToString();
+        }
+
+        private static List<SummonCoordinatorRouteConfig> ParseSummonRoutes(string text)
+        {
+            var routes = new List<SummonCoordinatorRouteConfig>();
+            foreach (var raw in (text ?? "").Replace("\r", "").Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                var parts = line.Split(new[] { '=' }, 2);
+                int slot;
+                if (parts.Length != 2 || !int.TryParse(parts[1].Trim(), out slot))
+                    throw new InvalidDataException("Trasa musi mieć format location=slot: " + line);
+                routes.Add(new SummonCoordinatorRouteConfig { Id = parts[0].Trim(), Slot = slot });
+            }
+            ValidateSummonRoutes(routes);
+            return routes;
+        }
+
         private SummonCoordinatorConfig LoadSummonCoordinatorConfig()
         {
-            var fallback = new SummonCoordinatorConfig { Version = 2, WorkerAId = "", WorkerBId = "", HyjalSlot = 1, HydraxianSlot = 2, AutoEnabled = true };
+            var fallback = DefaultSummonCoordinatorConfig();
             try
             {
                 var path = Path.Combine(configDir, "summon_coordinator.json");
                 if (!File.Exists(path)) return fallback;
                 if (new FileInfo(path).Length > 65536) return fallback;
                 var cfg = new JavaScriptSerializer().Deserialize<SummonCoordinatorConfig>(File.ReadAllText(path, Encoding.UTF8));
-                if (cfg == null || (cfg.Version != 1 && cfg.Version != 2)
-                    || cfg.HyjalSlot < 1 || cfg.HyjalSlot > 10 || cfg.HydraxianSlot < 1 || cfg.HydraxianSlot > 10)
-                    return fallback;
-                if (cfg.Version == 1)
+                if (cfg == null || cfg.Version < 1 || cfg.Version > 3) return fallback;
+
+                if (cfg.Version < 3)
                 {
-                    cfg.Version = 2;
-                    cfg.AutoEnabled = true;
+                    var oldVersion = cfg.Version;
+                    var hyjal = cfg.HyjalSlot >= 1 && cfg.HyjalSlot <= 10 ? cfg.HyjalSlot : 1;
+                    var hydraxian = cfg.HydraxianSlot >= 1 && cfg.HydraxianSlot <= 10 ? cfg.HydraxianSlot : 2;
+                    cfg.Routes = DefaultSummonRoutes();
+                    cfg.Routes[0].Slot = hyjal;
+                    cfg.Routes[1].Slot = hydraxian;
+                    cfg.Version = 3;
+                    if (oldVersion == 1) cfg.AutoEnabled = true;
                 }
+
+                if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
+                ValidateSummonRoutes(cfg.Routes);
+                cfg.WorkerAId = cfg.WorkerAId ?? "";
+                cfg.WorkerBId = cfg.WorkerBId ?? "";
                 return cfg;
             }
             catch { return fallback; }
@@ -257,9 +383,13 @@ namespace WoW112Updater
         private void SaveSummonCoordinatorConfig(SummonCoordinatorConfig cfg)
         {
             if (cfg == null) return;
-            cfg.Version = 2;
-            if (cfg.HyjalSlot < 1 || cfg.HyjalSlot > 10 || cfg.HydraxianSlot < 1 || cfg.HydraxianSlot > 10)
-                throw new InvalidDataException("Slot coordinatora musi być w zakresie 1-10.");
+            if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
+            ValidateSummonRoutes(cfg.Routes);
+            cfg.Version = 3;
+            var hyjal = cfg.Routes.FirstOrDefault(r => r != null && r.Id == "hyjal");
+            var hydraxian = cfg.Routes.FirstOrDefault(r => r != null && r.Id == "hydraxian");
+            cfg.HyjalSlot = hyjal == null ? 0 : hyjal.Slot;
+            cfg.HydraxianSlot = hydraxian == null ? 0 : hydraxian.Slot;
             var path = Path.Combine(configDir, "summon_coordinator.json");
             UpdaterSafety.WriteUtf8Atomic(path, new JavaScriptSerializer().Serialize(cfg), ".tmp", ".previous");
             summonCoordinatorConfig = cfg;
@@ -383,7 +513,7 @@ namespace WoW112Updater
                     {
                         if (channel == null) continue;
                         var s = channel.Read();
-                        if (!AssistHeartbeatFresh(s) || s.State != 1 || s.RequestSeq == 0 || (s.Destination != 1 && s.Destination != 2))
+                        if (!AssistHeartbeatFresh(s) || s.State != 1 || s.RequestSeq == 0 || s.Destination == 0)
                             continue;
                         var age = unchecked(now - s.RequestTick);
                         if (best == null || age > bestAge)
@@ -430,8 +560,9 @@ namespace WoW112Updater
             if (pending == null || pending.Snapshot == null || summonCoordinatorBusy) return;
             summonCoordinatorBusy = true;
             var requestSeq = pending.Snapshot.RequestSeq;
-            var destination = pending.Snapshot.Destination == 1 ? "HYJAL" : "HYDRAXIAN";
-            var slot = pending.Snapshot.Destination == 1 ? cfg.HyjalSlot : cfg.HydraxianSlot;
+            var route = FindSummonRoute(cfg, pending.Snapshot.Destination);
+            var destination = route == null ? ("KEY_" + pending.Snapshot.Destination) : route.Id.ToUpperInvariant();
+            var slot = route == null ? 0 : route.Slot;
             var requestId = "W" + pending.Pid + "-" + requestSeq;
 
             try
@@ -441,6 +572,13 @@ namespace WoW112Updater
                     if (warlock == null) return;
                     var current = warlock.Read();
                     if (!AssistHeartbeatFresh(current) || current.State != 1 || current.RequestSeq != requestSeq) return;
+                    if (route == null)
+                    {
+                        warlock.SetFail(requestSeq);
+                        CoordinatorLog("request_id=" + requestId + " destination_key=" + pending.Snapshot.Destination
+                            + " state=FAIL reason=route-unconfigured");
+                        return;
+                    }
 
                     var sa = FindLiveAccountSession(cfg.WorkerAId);
                     var sb = FindLiveAccountSession(cfg.WorkerBId);
@@ -710,8 +848,8 @@ namespace WoW112Updater
 
             var cfg = LoadSummonCoordinatorConfig();
             using (var dialog = new Form {
-                Text = "SLAVE COORDINATOR V2 — 2 shared workers",
-                ClientSize = new System.Drawing.Size(760, 390),
+                Text = "SLAVE COORDINATOR V3 — shared pair / generic routes",
+                ClientSize = new System.Drawing.Size(760, 515),
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false, MinimizeBox = false,
                 StartPosition = FormStartPosition.CenterParent,
@@ -734,24 +872,36 @@ namespace WoW112Updater
                 if (workerA.SelectedIndex < 0) workerA.SelectedIndex = 0;
                 if (workerB.SelectedIndex < 0) workerB.SelectedIndex = Math.Min(1, workerB.Items.Count - 1);
 
-                var hyjal = new NumericUpDown { Left = 142, Top = 97, Width = 70, Minimum = 1, Maximum = 10, Value = Math.Max(1, Math.Min(10, cfg.HyjalSlot)) };
-                var hydrax = new NumericUpDown { Left = 527, Top = 97, Width = 70, Minimum = 1, Maximum = 10, Value = Math.Max(1, Math.Min(10, cfg.HydraxianSlot)) };
-                var prepareHyjal = new Button { Text = "PREPARE HYJAL", Left = 20, Top = 137, Width = 335, Height = 38 };
-                var prepareHydrax = new Button { Text = "PREPARE HYDRAXIAN", Left = 405, Top = 137, Width = 335, Height = 38 };
-                var refresh = new Button { Text = "ODŚWIEŻ WORKERY", Left = 20, Top = 188, Width = 180, Height = 32 };
-                var auto = new CheckBox { Text = "AUTO: SummonScout → READY 2/2 → Ritual", Left = 220, Top = 193, Width = 360, Checked = cfg.AutoEnabled };
-                var close = new Button { Text = "Zamknij", Left = 620, Top = 188, Width = 120, Height = 32 };
-                var output = new TextBox { Left = 20, Top = 232, Width = 720, Height = 125, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
-                var controls = new Control[] { workerA, workerB, hyjal, hydrax, prepareHyjal, prepareHydrax, refresh, auto, close };
+                var routes = new TextBox {
+                    Left = 20, Top = 105, Width = 720, Height = 105,
+                    Multiline = true, ScrollBars = ScrollBars.Vertical,
+                    Text = FormatSummonRoutes(cfg.Routes)
+                };
+                var routePicker = new ComboBox { Left = 20, Top = 245, Width = 300, DropDownStyle = ComboBoxStyle.DropDownList };
+                var prepare = new Button { Text = "PREPARE WYBRANĄ TRASĘ", Left = 330, Top = 243, Width = 220, Height = 32 };
+                var refresh = new Button { Text = "ODŚWIEŻ WORKERY", Left = 20, Top = 288, Width = 180, Height = 32 };
+                var auto = new CheckBox { Text = "AUTO: FIFO → READY 2/2 → Ritual → clicks 2/2", Left = 220, Top = 293, Width = 390, Checked = cfg.AutoEnabled };
+                var close = new Button { Text = "Zamknij", Left = 620, Top = 288, Width = 120, Height = 32 };
+                var output = new TextBox { Left = 20, Top = 335, Width = 720, Height = 125, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+                var controls = new Control[] { workerA, workerB, routes, routePicker, prepare, refresh, auto, close };
+
+                Action refreshRoutePicker = delegate {
+                    var parsed = ParseSummonRoutes(routes.Text);
+                    routePicker.Items.Clear();
+                    foreach (var route in parsed)
+                        routePicker.Items.Add(route.Id + "=" + route.Slot);
+                    if (routePicker.Items.Count > 0) routePicker.SelectedIndex = 0;
+                };
 
                 dialog.Controls.AddRange(new Control[] {
                     new Label { Text = "Worker A — konto slave", Left = 20, Top = 20, Width = 250 },
                     new Label { Text = "Worker B — konto slave", Left = 405, Top = 20, Width = 250 },
                     workerA, workerB,
-                    new Label { Text = "HYJAL slot:", Left = 20, Top = 101, Width = 110 }, hyjal,
-                    new Label { Text = "HYDRAXIAN slot:", Left = 405, Top = 101, Width = 115 }, hydrax,
-                    prepareHyjal, prepareHydrax, refresh, auto, close, output,
-                    new Label { Text = "V2: AUTO arbitruje wspólną parę bez globalnej kolejki. Combat blokuje switch; Ritual jest odblokowany dopiero po READY 2/2.", Left = 20, Top = 365, Width = 720 }
+                    new Label { Text = "Trasy: canonical SummonScout location id = character slot (1-10), jedna na linię", Left = 20, Top = 82, Width = 700 },
+                    routes,
+                    new Label { Text = "Ręczny test trasy:", Left = 20, Top = 225, Width = 180 },
+                    routePicker, prepare, refresh, auto, close, output,
+                    new Label { Text = "V3: jedna wspólna para slave obsługuje dowolną liczbę summonerów FIFO. Default: hyjal=1, hydraxian=2, winterspring=4.", Left = 20, Top = 478, Width = 720 }
                 });
 
                 Action save = delegate {
@@ -759,23 +909,34 @@ namespace WoW112Updater
                     var b = SelectedCoordinatorAccount(workerB);
                     cfg.WorkerAId = a == null ? "" : a.Id;
                     cfg.WorkerBId = b == null ? "" : b.Id;
-                    cfg.HyjalSlot = (int)hyjal.Value;
-                    cfg.HydraxianSlot = (int)hydrax.Value;
+                    cfg.Routes = ParseSummonRoutes(routes.Text);
                     cfg.AutoEnabled = auto.Checked;
                     SaveSummonCoordinatorConfig(cfg);
+                    refreshRoutePicker();
                 };
+
+                refreshRoutePicker();
 
                 refresh.Click += async delegate {
                     try { save(); await RefreshSummonWorkersAsync(SelectedCoordinatorAccount(workerA), SelectedCoordinatorAccount(workerB), output, dialog); }
                     catch (Exception ex) { output.Text = "BŁĄD: " + ex.Message; }
                 };
-                prepareHyjal.Click += async delegate {
-                    try { save(); await PrepareSummonPairAsync("HYJAL", (int)hyjal.Value, SelectedCoordinatorAccount(workerA), SelectedCoordinatorAccount(workerB), output, controls, dialog); }
-                    catch (Exception ex) { output.Text += Environment.NewLine + "BŁĄD: " + ex.Message; CoordinatorLog("destination=HYJAL state=ERROR reason=" + SafeCoordinatorToken(ex.Message)); }
-                };
-                prepareHydrax.Click += async delegate {
-                    try { save(); await PrepareSummonPairAsync("HYDRAXIAN", (int)hydrax.Value, SelectedCoordinatorAccount(workerA), SelectedCoordinatorAccount(workerB), output, controls, dialog); }
-                    catch (Exception ex) { output.Text += Environment.NewLine + "BŁĄD: " + ex.Message; CoordinatorLog("destination=HYDRAXIAN state=ERROR reason=" + SafeCoordinatorToken(ex.Message)); }
+                prepare.Click += async delegate {
+                    try
+                    {
+                        var parsed = ParseSummonRoutes(routes.Text);
+                        if (routePicker.SelectedIndex < 0 || routePicker.SelectedIndex >= parsed.Count)
+                            throw new InvalidOperationException("Wybierz trasę do PREPARE.");
+                        var route = parsed[routePicker.SelectedIndex];
+                        save();
+                        await PrepareSummonPairAsync(route.Id.ToUpperInvariant(), route.Slot,
+                            SelectedCoordinatorAccount(workerA), SelectedCoordinatorAccount(workerB), output, controls, dialog);
+                    }
+                    catch (Exception ex)
+                    {
+                        output.Text += Environment.NewLine + "BŁĄD: " + ex.Message;
+                        CoordinatorLog("state=MANUAL_PREPARE_ERROR reason=" + SafeCoordinatorToken(ex.Message));
+                    }
                 };
                 close.Click += delegate { if (!summonCoordinatorBusy) dialog.Close(); };
                 dialog.FormClosing += delegate(object sender, FormClosingEventArgs e) {
