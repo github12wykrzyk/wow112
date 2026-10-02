@@ -4481,6 +4481,31 @@
       "tests": [],
       "package": null,
       "notes": "Attempt to satisfy both requirements simultaneously: instant-oriented slave rotation and zero login-server authentication. Worker fingerprints the existing 40-byte session key internally, disconnects only the world connection, waits for NetClient NS_INITIALIZED, verifies the same key survived, calls exact-build ClientServices::ConnectToSelectedServer, then selects the configured character slot. No session-key bytes/hashes are logged and there is no AutoLoginBridge or normal Logout fallback. Exact-build guards cover getter, Disconnect, ConnectToSelectedServer and NetClient::Connect. Requires in-game validation."
+    },
+    {
+      "id": "ah-bid-stack-arbitrage-v1",
+      "branch": "feature/ah-bid-stack-arbitrage-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-profit-loss-ledger-v1",
+        "ah-native-purchases-turtle-de",
+        "ah-turtle-vendor-db-live"
+      ],
+      "shared_resources": [
+        "AUX full-scan auction stream and exact filtered revalidation",
+        "Turtle vendor database and disenchant EV/depth model",
+        "AUX history and per-item flip exposure",
+        "PlaceAuctionBid list path and wallet-delta confirmation",
+        "native AUX Purchases/Profit-Loss UI carried from preflighted UI/exposure feature"
+      ],
+      "status": "in_progress",
+      "observed_head": "a2ee73c09e7403239158cff8938b4ec12b093a23",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Supersedes the unintegrated but preflight-passed ah-ui-ledger-de-exposure-v1 feature SHA 527e6611621d7d1a544638468663d557d3a99317 and carries its larger sortable AUX UI, 500-row Purchases retention and quantity/share-based DE exposure guard onto current verified parallel. Adds two default-on profit mechanisms. BID vendor/DE considers only bid-only auctions with GetAuctionItemTimeLeft duration <=1, never bids while already high bidder, revalidates an exact item/suffix through a fresh filtered query, bids only the current required amount, uses trusted vendor value with 20% margin or live DE net EV with >=40% margin, requires >=10s expected profit, caps one bid at 5g and at 10 placements/session, and records confirmed wallet-delta commitments separately from purchases. Stack-size arbitrage buys only large stacks >=75% of native max stack when small stacks <=25% have >=10 units of depth across >=3 sellers, caps exit by AUX historical unit value with >=2 history days, applies 5% AH cut plus 25% safety margin and >=10s expected profit, and reuses exact live filtered flip verification before buy. Existing vendor/DE/flip purchase behavior remains intact."
     }
   ]
 }

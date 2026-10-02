@@ -32,7 +32,7 @@ ledger:SetColInfo{
 }
 
 local status = gui.status_bar(frame)
-status:SetWidth(575)
+status:SetWidth(AVM_AUX_UI.BottomStatusWidth(225))
 status:SetHeight(25)
 status:SetPoint('TOPLEFT', aux.frame.content, 'BOTTOMLEFT', 0, -6)
 status:update_status(1, 1)
@@ -44,10 +44,12 @@ refresh:SetText('Refresh')
 
 local nextRefresh = 0
 local lastToken = ''
+local SALE_HISTORY_LIMIT = 500
 
 local function ensure_db()
 	AVM_DB = AVM_DB or {}
 	AVM_DB.saleHistory = AVM_DB.saleHistory or {}
+	while table.getn(AVM_DB.saleHistory)>SALE_HISTORY_LIMIT do table.remove(AVM_DB.saleHistory,1) end
 	AVM_DB.saleHistorySeq = tonumber(AVM_DB.saleHistorySeq) or 0
 	AVM_DB.saleMailLiveCounts = AVM_DB.saleMailLiveCounts or {}
 	if not AVM_DB.saleStats then
@@ -101,7 +103,7 @@ local function record_sale(sample)
 		source='AH mail',
 	}
 	table.insert(AVM_DB.saleHistory,row)
-	while table.getn(AVM_DB.saleHistory)>100 do table.remove(AVM_DB.saleHistory,1) end
+	while table.getn(AVM_DB.saleHistory)>SALE_HISTORY_LIMIT do table.remove(AVM_DB.saleHistory,1) end
 	AVM_DB.saleStats.confirmed=(tonumber(AVM_DB.saleStats.confirmed) or 0)+1
 	AVM_DB.saleStats.earned=(tonumber(AVM_DB.saleStats.earned) or 0)+row.money
 	if AVM_DB.diag then
@@ -122,9 +124,6 @@ end
 
 function AVM_AUX_LEDGER.ScanSaleMail()
 	if not GetInboxNumItems or not GetInboxInvoiceInfo or not GetInboxHeaderInfo then return end
-	-- Never mutate persistent invoice fingerprints from an unopened/stale inbox cache.
-	-- This prevents a Profit/Loss refresh after client restart from clearing the prior
-	-- live-count baseline and counting unchanged seller mail again when Mail is opened.
 	if not MailFrame or not MailFrame.IsShown or not MailFrame:IsShown() then return end
 	ensure_db()
 	local current,samples={},{}
@@ -153,6 +152,17 @@ function AVM_AUX_LEDGER.ScanSaleMail()
 	end
 	AVM_DB.saleMailLiveCounts=current
 end
+
+local sortSpecs={
+	{label='Time',key='at',defaultDescending=true},
+	{label='Type',key='kind'},
+	{label='Route',key='route'},
+	{label='Item',key='item'},
+	{label='Spent',key='spent',numeric=true,defaultDescending=true},
+	{label='Earned',key='earned',numeric=true,defaultDescending=true},
+	{label='Exp P/L',key='expected',numeric=true,defaultDescending=true},
+	{label='Source',key='source'},
+}
 
 local function refresh_ledger(force)
 	ensure_db()
@@ -186,15 +196,12 @@ local function refresh_ledger(force)
 		table.insert(combined,{
 			at=tostring(h.at or ''),seq=tonumber(h.seq) or 0,kind='SALE',
 			route='AH',item=tostring(h.item or ''),
-			spent=0,earned=tonumber(h.money) or 0,expected=nil,
+			spent=0,earned=tonumber(h.money) or 0,expected=0,
 			source=tostring(h.source or 'AH mail'),
 		})
 	end
-	table.sort(combined,function(a,b)
-		if a.at~=b.at then return a.at>b.at end
-		if a.kind~=b.kind then return a.kind>b.kind end
-		return (a.seq or 0)>(b.seq or 0)
-	end)
+	AVM_AUX_UI.SortRecords(combined,ledger)
+	AVM_AUX_UI.ApplySortLabels(ledger)
 
 	local rows=T.acquire()
 	for i=1,table.getn(combined) do
@@ -206,18 +213,20 @@ local function refresh_ledger(force)
 			T.map('value',h.item),
 			T.map('value',h.spent>0 and money.to_string(h.spent,true,true) or ''),
 			T.map('value',h.earned>0 and money.to_string(h.earned,true,true) or ''),
-			T.map('value',h.expected and signed_money(h.expected) or ''),
+			T.map('value',h.kind=='BUY' and signed_money(h.expected) or ''),
 			T.map('value',h.source)
 		),'record',h))
 	end
 	ledger:SetData(rows)
 	status:set_text(
 		'Spent '..money.to_string(spent,true,true)..
-		'  |  AH income '..money.to_string(earned,true,true)..
-		'  |  cash flow '..signed_money(earned-spent)..
-		'  |  expected buy P/L '..signed_money(expected)
+		' | Income '..money.to_string(earned,true,true)..
+		' | Cash '..signed_money(earned-spent)..
+		' | Expected '..signed_money(expected)
 	)
 end
+
+AVM_AUX_UI.InstallSortable(ledger,sortSpecs,function() refresh_ledger(true) end,1,true)
 
 refresh:SetScript('OnClick',function()
 	AVM_AUX_LEDGER.ScanSaleMail()
@@ -239,8 +248,6 @@ function tab.CLOSE()
 	frame:Hide()
 end
 
--- Count only paid seller invoices. seller_temp_invoice is intentionally ignored,
--- so the later paid invoice cannot be double-counted.
 local mailWatcher=CreateFrame('Frame','AuxVmangosProfitLossMailWatcher')
 mailWatcher:RegisterEvent('MAIL_SHOW')
 mailWatcher:RegisterEvent('MAIL_INBOX_UPDATE')
@@ -260,7 +267,7 @@ function AVM_AUX_LEDGER.UpdateAuctionsSummary(env)
 	if not env or not env.status_bar then return end
 	local text=env.status_bar.text and env.status_bar.text:GetText() or ''
 	if not string.find(text,'Scan complete',1,true) and
-	   not string.find(text,'Potential net',1,true) then return end
+	   not string.find(text,'Auctions ',1,true) then return end
 	local records=env.auction_records or {}
 	local gross,noBuyout=0,0
 	for i=1,table.getn(records) do
@@ -273,8 +280,8 @@ function AVM_AUX_LEDGER.UpdateAuctionsSummary(env)
 	local net=math.floor(gross*(100-cut)/100)
 	env.status_bar:set_text(
 		'Auctions '..tostring(table.getn(records))..
-		' | Potential net '..money.to_string(net,true,true)..
-		' | gross '..money.to_string(gross,true,true)..
+		' | Net '..money.to_string(net,true,true)..
+		' | Gross '..money.to_string(gross,true,true)..
 		' | cut '..tostring(cut)..'%'..
 		(noBuyout>0 and (' | no BO '..tostring(noBuyout)) or '')
 	)
@@ -293,7 +300,7 @@ local function install_auctions_summary()
 			AVM_AUX_LEDGER.UpdateAuctionsSummary(env)
 		end
 	end
-	if env.status_bar then env.status_bar:SetWidth(430) end
+	if env.status_bar then env.status_bar:SetWidth(AVM_AUX_UI.BottomStatusWidth(310)) end
 	AVM_AUX_LEDGER.UpdateAuctionsSummary(env)
 end
 

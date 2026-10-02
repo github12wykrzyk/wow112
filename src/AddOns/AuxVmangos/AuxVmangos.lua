@@ -2,7 +2,8 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.31-native-purchases-turtle-de"
+AVM_VERSION = "0.34-bid-stack-arbitrage"
+AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -12,6 +13,7 @@ AVM_TICK = 0.05
 AVM_WATCH_SLOTS = 16
 AVM_WATCH_MAX_PAGES = 100
 
+local AVM_AUX_CORE_OK, AVM_AUX_CORE = pcall(require, "aux")
 local AVM_AUX_INFO_OK, AVM_AUX_INFO = pcall(require, "aux.util.info")
 local AVM_AUX_DE_OK, AVM_AUX_DE = pcall(require, "aux.core.disenchant")
 local AVM_AUX_HISTORY_OK, AVM_AUX_HISTORY = pcall(require, "aux.core.history")
@@ -93,6 +95,13 @@ AVM = {
 		flipHistoryRejects = 0,
 		flipSellerRejects = 0,
 		flipExposureRejects = 0,
+		stackBest = nil,
+		stackCandidates = 0,
+		stackNoDepth = 0,
+		bidVendorBest = nil,
+		bidDeRawCandidates = {},
+		bidBest = nil,
+		bidCandidates = 0,
 		postscanCandidate = nil,
 		deMidScanHits = 0,
 		consumedAuctionKeys = {},
@@ -102,10 +111,29 @@ AVM = {
 	revalidatePos = 0,
 	pending = nil,
 	unknown = nil,
+	bidCandidate = nil,
+	bidPending = nil,
 	nextTick = 0,
 	sessionSpend = 0,
 	sessionBuys = 0,
+	sessionBids = 0,
 	itemExposure = {},
+	deExposure = {
+		active = false,
+		page = 0,
+		lastPage = 0,
+		requestedAt = 0,
+		settleAt = 0,
+		eventReady = false,
+		book = {},
+		scanBook = {},
+		ready = false,
+		updatedAt = 0,
+		syncedCycle = -1,
+		afterZeroConfig = false,
+		resumeLoop = false,
+		reason = "",
+	},
 	vendor = {
 		active = false,
 		requested = false,
@@ -201,11 +229,16 @@ AVM = {
 		auxArbDeCandidates = 0,
 		auxArbFlipCandidates = 0,
 		auxArbFlipVerifies = 0,
+		auxArbStackCandidates = 0,
+		auxArbBidCandidates = 0,
+		auxArbBidsPlaced = 0,
 		auxArbPauses = 0,
 		auxArbResumes = 0,
 	},
 	recent = {},
 }
+
+local avm_de_exposure_start, avm_de_exposure_tick, avm_de_exposure_event
 
 local function avm_diag_record(msg)
 	if not AVM_DB then return end
@@ -308,6 +341,7 @@ local function avm_purchase_route(c)
 	if c.mode == "vendor" or c.mode == "fastvendor" or c.mode == "auxarb_vendor" then return "vendor" end
 	if c.mode == "auxarb_de" then return "disenchant" end
 	if c.mode == "auxarb_flip" then return "flip" end
+	if c.mode == "auxarb_stack" then return "stack" end
 	return tostring(c.mode or "watch")
 end
 
@@ -316,6 +350,7 @@ local function avm_purchase_source(c, route)
 	if c.vendorSource and c.vendorSource ~= "" then return tostring(c.vendorSource) end
 	if route == "disenchant" then return tostring(c.deSource or "de-live") end
 	if route == "flip" then return "history+depth" end
+	if route == "stack" then return "history+small-stack-depth" end
 	return ""
 end
 
@@ -351,7 +386,7 @@ function AVM_RecordPurchase(c, confirmation)
 		itemKey = tostring(c.itemKey or ""),
 	}
 	table.insert(AVM_DB.purchaseHistory, row)
-	while table.getn(AVM_DB.purchaseHistory) > 50 do table.remove(AVM_DB.purchaseHistory, 1) end
+	while table.getn(AVM_DB.purchaseHistory) > AVM_PURCHASE_HISTORY_LIMIT do table.remove(AVM_DB.purchaseHistory, 1) end
 
 	AVM_DB.purchaseStats.confirmed = (tonumber(AVM_DB.purchaseStats.confirmed) or 0) + 1
 	AVM_DB.purchaseStats.spend = (tonumber(AVM_DB.purchaseStats.spend) or 0) + buyout
@@ -360,6 +395,40 @@ function AVM_RecordPurchase(c, confirmation)
 	if AVM_DB.diag then
 		AVM_DB.diag.purchaseHistory = AVM_DB.purchaseHistory
 		AVM_DB.diag.purchaseStats = AVM_DB.purchaseStats
+	end
+end
+
+
+function AVM_RecordBid(c, confirmation)
+	if not AVM_DB or not c then return end
+	AVM_DB.bidHistory = AVM_DB.bidHistory or {}
+	AVM_DB.bidStats = AVM_DB.bidStats or { placed = 0, committed = 0, expectedProfit = 0 }
+	AVM_DB.bidHistorySeq = (tonumber(AVM_DB.bidHistorySeq) or 0) + 1
+	local stamp = tostring(math.floor(GetTime() or 0))
+	if type(date) == "function" then stamp = date("%Y-%m-%d %H:%M:%S") end
+	local row = {
+		seq = AVM_DB.bidHistorySeq,
+		at = stamp,
+		confirmation = tostring(confirmation or "placed"),
+		route = tostring(c.route or "bid"),
+		name = tostring(c.name or ""),
+		itemId = tonumber(c.itemId or c.item_id) or 0,
+		count = tonumber(c.count or c.aux_quantity) or 0,
+		bid = tonumber(c.bidAmount or c.buyout) or 0,
+		maxBid = tonumber(c.maxBid) or 0,
+		value = tonumber(c.valuationTotal) or 0,
+		profit = tonumber(c.profit) or 0,
+		duration = tonumber(c.duration) or 0,
+		itemKey = tostring(c.itemKey or ""),
+	}
+	table.insert(AVM_DB.bidHistory, row)
+	while table.getn(AVM_DB.bidHistory) > 100 do table.remove(AVM_DB.bidHistory, 1) end
+	AVM_DB.bidStats.placed = (tonumber(AVM_DB.bidStats.placed) or 0) + 1
+	AVM_DB.bidStats.committed = (tonumber(AVM_DB.bidStats.committed) or 0) + row.bid
+	AVM_DB.bidStats.expectedProfit = (tonumber(AVM_DB.bidStats.expectedProfit) or 0) + row.profit
+	if AVM_DB.diag then
+		AVM_DB.diag.bidHistory = AVM_DB.bidHistory
+		AVM_DB.diag.bidStats = AVM_DB.bidStats
 	end
 end
 
@@ -416,6 +485,7 @@ local function avm_defaults()
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 0 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
 	if AVM_DB.purchaseHistory == nil then AVM_DB.purchaseHistory = {} end
+	while table.getn(AVM_DB.purchaseHistory) > AVM_PURCHASE_HISTORY_LIMIT do table.remove(AVM_DB.purchaseHistory, 1) end
 	if AVM_DB.purchaseHistorySeq == nil then AVM_DB.purchaseHistorySeq = 0 end
 	if AVM_DB.purchaseStats == nil then AVM_DB.purchaseStats = { confirmed = 0, spend = 0, expectedProfit = 0 } end
 	if AVM_DB.marketPacked == nil then AVM_DB.marketPacked = "" end
@@ -459,6 +529,16 @@ local function avm_defaults()
 	if AVM_DB.deDepthUnits == nil then AVM_DB.deDepthUnits = 3 end
 	if AVM_DB.deAhCutPct == nil then AVM_DB.deAhCutPct = 5 end
 	if AVM_DB.deSafetyMarginPct == nil then AVM_DB.deSafetyMarginPct = 25 end
+	if AVM_DB.deExposureGuard == nil then AVM_DB.deExposureGuard = true end
+	if AVM_DB.deExposureMinEvPct == nil then AVM_DB.deExposureMinEvPct = 15 end
+	if AVM_DB.deExposureShareSoftPct == nil then AVM_DB.deExposureShareSoftPct = 20 end
+	if AVM_DB.deExposureShareHardPct == nil then AVM_DB.deExposureShareHardPct = 35 end
+	if AVM_DB.deExposureBlockPct == nil then AVM_DB.deExposureBlockPct = 50 end
+	if AVM_DB.deExposureSoftMarginPct == nil then AVM_DB.deExposureSoftMarginPct = 30 end
+	if AVM_DB.deExposureHardMarginPct == nil then AVM_DB.deExposureHardMarginPct = 35 end
+	if AVM_DB.deExposureMaxOwnStacks == nil then AVM_DB.deExposureMaxOwnStacks = 2 end
+	-- Retired: absolute gold exposure is a poor saturation proxy for DE materials.
+	AVM_DB.deExposureValueCap = nil
 	if AVM_DB.flipRiskSchema == nil then
 		-- 0.20 replaces depth-only valuation with historical anchoring. Migrate only the old default.
 		if AVM_DB.flipDepthUnits == nil or AVM_DB.flipDepthUnits == 5 then AVM_DB.flipDepthUnits = 10 end
@@ -477,6 +557,27 @@ local function avm_defaults()
 	if AVM_DB.flipMinSellers == nil then AVM_DB.flipMinSellers = 3 end
 	if AVM_DB.flipMaxItemSpend == nil then AVM_DB.flipMaxItemSpend = 200000 end -- 20g/session/item
 	if AVM_DB.flipMaxItemBuys == nil then AVM_DB.flipMaxItemBuys = 3 end
+	if AVM_DB.stackArbEnabled == nil then AVM_DB.stackArbEnabled = true end
+	if AVM_DB.stackMinProfit == nil then AVM_DB.stackMinProfit = 1000 end
+	if AVM_DB.stackMaxBuyout == nil then AVM_DB.stackMaxBuyout = 100000 end
+	if AVM_DB.stackAhCutPct == nil then AVM_DB.stackAhCutPct = 5 end
+	if AVM_DB.stackSafetyMarginPct == nil then AVM_DB.stackSafetyMarginPct = 25 end
+	if AVM_DB.stackMinHistoryDays == nil then AVM_DB.stackMinHistoryDays = 2 end
+	if AVM_DB.stackLargePct == nil then AVM_DB.stackLargePct = 75 end
+	if AVM_DB.stackSmallPct == nil then AVM_DB.stackSmallPct = 25 end
+	if AVM_DB.stackSmallDepthUnits == nil then AVM_DB.stackSmallDepthUnits = 10 end
+	if AVM_DB.stackMinSmallSellers == nil then AVM_DB.stackMinSmallSellers = 3 end
+	if AVM_DB.bidArbEnabled == nil then AVM_DB.bidArbEnabled = true end
+	if AVM_DB.bidVendorMarginPct == nil then AVM_DB.bidVendorMarginPct = 20 end
+	if AVM_DB.bidDeMarginPct == nil then AVM_DB.bidDeMarginPct = 40 end
+	if AVM_DB.bidMinProfit == nil then AVM_DB.bidMinProfit = 1000 end
+	if AVM_DB.bidMaxAmount == nil then AVM_DB.bidMaxAmount = 50000 end
+	if AVM_DB.bidMaxDuration == nil then AVM_DB.bidMaxDuration = 1 end
+	if AVM_DB.bidMaxSessionPlacements == nil then AVM_DB.bidMaxSessionPlacements = 10 end
+	if AVM_DB.bidRecentSeconds == nil then AVM_DB.bidRecentSeconds = 30 end
+	if AVM_DB.bidHistory == nil then AVM_DB.bidHistory = {} end
+	if AVM_DB.bidHistorySeq == nil then AVM_DB.bidHistorySeq = 0 end
+	if AVM_DB.bidStats == nil then AVM_DB.bidStats = { placed = 0, committed = 0, expectedProfit = 0 } end
 	if AVM_DB.vendorTrustedOnly == nil then AVM_DB.vendorTrustedOnly = true end
 	if AVM_DB.vendorMeta == nil then AVM_DB.vendorMeta = {} end
 	if AVM_DB.diag == nil then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
@@ -557,12 +658,14 @@ end
 
 local function avm_postscan_transaction_active()
 	local a = AVM.auxArb or {}
-	if AVM.pending or AVM.unknown or AVM.candidate then return true end
+	if AVM.pending or AVM.unknown or AVM.candidate or AVM.bidPending or AVM.bidCandidate then return true end
 	if a.deVerify or a.flipVerify or a.postscanCandidate or a.paused or a.pausePending then return true end
 	return AVM.phase == "DE_MAT_REVALIDATE" or
 		AVM.phase == "FLIP_MARKET_REVALIDATE" or
 		AVM.phase == "REVALIDATE" or
 		AVM.phase == "BUY_PENDING" or
+		AVM.phase == "BID_REVALIDATE" or
+		AVM.phase == "BID_PENDING" or
 		AVM.phase == "UNKNOWN_HOLD"
 end
 
@@ -574,12 +677,18 @@ local function avm_loop_tick(now)
 	-- Never let a stale/duplicate loop wakeup replace a post-scan DE/flip
 	-- verification or an exact purchase revalidation. Report #62 proved this race.
 	if avm_postscan_transaction_active() then return false end
-	if AVM.pending or AVM.unknown or AVM.queryInFlight or
+	if AVM.pending or AVM.unknown or AVM.bidPending or AVM.bidCandidate or AVM.queryInFlight or
 	   AVM.market.active or AVM.market.requested or AVM.vendor.active or AVM.vendor.requested or
 	   AVM.auxArb.active or AVM.auxArb.paused then return false end
 	if AUXFAST_IsBusy then
 		local ok, isBusy = pcall(AUXFAST_IsBusy)
 		if ok and isBusy then return false end
+	end
+	local deExposure = AVM.deExposure
+	if AVM_DB.deExposureGuard and avm_de_exposure_start and deExposure and
+	   not deExposure.active and (tonumber(deExposure.syncedCycle) or -1) < (tonumber(AVM.auxLoop.cycles) or 0) then
+		AVM.auxLoop.nextAt = 0
+		if avm_de_exposure_start("loop-cycle", false, true) then return true end
 	end
 	AVM.auxLoop.nextAt = 0
 	if not AUXFAST_RestartSearch then
@@ -795,7 +904,7 @@ function AVM_AuxArbMarkConsumed(candidate)
 	local a = AVM and AVM.auxArb
 	if not a or not candidate then return end
 	local mode = tostring(candidate.mode or "")
-	if mode ~= "auxarb_vendor" and mode ~= "auxarb_de" and mode ~= "auxarb_flip" then return end
+	if mode ~= "auxarb_vendor" and mode ~= "auxarb_de" and mode ~= "auxarb_flip" and mode ~= "auxarb_stack" then return end
 	if not a.consumedAuctionKeys then a.consumedAuctionKeys = {} end
 	local key = AVM_AuxArbConsumedKey(candidate)
 	if key == "" then return end
@@ -1973,7 +2082,7 @@ avm_vendor_candidate_from_row = function(i)
 end
 
 avm_is_auxarb_candidate = function(c)
-	return c and (c.mode == "auxarb_vendor" or c.mode == "auxarb_de" or c.mode == "auxarb_flip")
+	return c and (c.mode == "auxarb_vendor" or c.mode == "auxarb_de" or c.mode == "auxarb_flip" or c.mode == "auxarb_stack")
 end
 
 local function avm_auxarb_candidate_better(a, b)
@@ -2402,10 +2511,15 @@ local function avm_de_candidate_from_record(record, book)
 
 	local depth = tonumber(AVM_DB.deDepthUnits) or 3
 	local cutPct = tonumber(AVM_DB.deAhCutPct) or 5
-	local marginPct = tonumber(AVM_DB.deSafetyMarginPct) or 25
+	local baseMarginPct = tonumber(AVM_DB.deSafetyMarginPct) or 25
 	if depth < 1 then depth = 1 end
 	if cutPct < 0 then cutPct = 0 elseif cutPct > 30 then cutPct = 30 end
-	if marginPct < 0 then marginPct = 0 elseif marginPct > 90 then marginPct = 90 end
+	if baseMarginPct < 0 then baseMarginPct = 0 elseif baseMarginPct > 90 then baseMarginPct = 90 end
+
+	local exposureGuard = AVM_DB.deExposureGuard and true or false
+	if exposureGuard and (not AVM.deExposure or not AVM.deExposure.ready) then
+		return nil, "exposure-unavailable"
+	end
 
 	local grossExpected, netExpected = 0, 0
 	local mats, seen = {}, {}
@@ -2419,14 +2533,71 @@ local function avm_de_candidate_from_record(record, book)
 		local p = tonumber(event.probability) or 0
 		local avgQty = ((tonumber(event.min_quantity) or 0) + (tonumber(event.max_quantity) or 0)) / 2
 		local netUnit = math.floor(floorPrice * (100 - cutPct) / 100)
-		grossExpected = grossExpected + p * avgQty * floorPrice
-		netExpected = netExpected + p * avgQty * netUnit
-		if not seen[matId] then
-			seen[matId] = true
+		local grossContribution = p * avgQty * floorPrice
+		local netContribution = p * avgQty * netUnit
+		grossExpected = grossExpected + grossContribution
+		netExpected = netExpected + netContribution
+		local matIndex = seen[matId]
+		if not matIndex then
 			table.insert(mats, {
 				itemId = matId, name = row.name, floor = floorPrice, net = netUnit,
-				probability = p, avgQty = avgQty,
+				probability = p, avgQty = avgQty, netContribution = netContribution,
 			})
+			seen[matId] = table.getn(mats)
+		else
+			mats[matIndex].netContribution = (tonumber(mats[matIndex].netContribution) or 0) + netContribution
+		end
+	end
+	if netExpected <= 0 then return nil, "no-value" end
+
+	local marginPct = baseMarginPct
+	local maxOwnSharePct = 0
+	local maxOwnUnits = 0
+	if exposureGuard then
+		local ownBook = AVM.deExposure.book or {}
+		local minEvPct = tonumber(AVM_DB.deExposureMinEvPct) or 15
+		local shareSoft = tonumber(AVM_DB.deExposureShareSoftPct) or 20
+		local shareHard = tonumber(AVM_DB.deExposureShareHardPct) or 35
+		local shareBlock = tonumber(AVM_DB.deExposureBlockPct) or 50
+		local marginSoft = tonumber(AVM_DB.deExposureSoftMarginPct) or 30
+		local marginHard = tonumber(AVM_DB.deExposureHardMarginPct) or 35
+		local maxOwnStacks = tonumber(AVM_DB.deExposureMaxOwnStacks) or 2
+		if maxOwnStacks < 1 then maxOwnStacks = 1 end
+		for i = 1, table.getn(mats) do
+			local mat = mats[i]
+			local marketRow = book and book[mat.itemId]
+			local own = ownBook[mat.itemId] or {}
+			local marketUnits = tonumber(marketRow and marketRow.units) or 0
+			local ownUnits = tonumber(own.units) or 0
+			local ownValue = tonumber(own.buyout) or 0
+			local maxStack = tonumber(own.maxStack) or 20
+			if maxStack < 1 then maxStack = 20 end
+			local ownUnitCap = math.max(1, math.floor(maxStack * maxOwnStacks))
+			local ownSharePct = 0
+			if marketUnits > 0 then ownSharePct = ownUnits * 100 / marketUnits end
+			if ownSharePct > 100 then ownSharePct = 100 end
+			local evSharePct = (tonumber(mat.netContribution) or 0) * 100 / netExpected
+			mat.evSharePct = evSharePct
+			mat.marketUnits = marketUnits
+			mat.ownUnits = ownUnits
+			mat.ownAuctions = tonumber(own.auctions) or 0
+			mat.ownAuctionValue = ownValue
+			mat.ownUnitCap = ownUnitCap
+			mat.ownSharePct = ownSharePct
+			if ownSharePct > maxOwnSharePct then maxOwnSharePct = ownSharePct end
+			if ownUnits > maxOwnUnits then maxOwnUnits = ownUnits end
+			if evSharePct >= minEvPct then
+				if ownUnits >= ownUnitCap then
+					return nil, "exposure-units:" .. tostring(mat.itemId)
+				end
+				if ownSharePct > shareBlock then
+					return nil, "exposure-share:" .. tostring(mat.itemId)
+				elseif ownSharePct >= shareHard then
+					if marginHard > marginPct then marginPct = marginHard end
+				elseif ownSharePct >= shareSoft then
+					if marginSoft > marginPct then marginPct = marginSoft end
+				end
+			end
 		end
 	end
 
@@ -2452,7 +2623,8 @@ local function avm_de_candidate_from_record(record, book)
 		signature = raw.signature or avm_signature_no_owner(raw.name, raw.count, raw.buyout, raw.quality, raw.level, raw.itemKey),
 		ignoreOwnerSignature = true, sourcePage = raw.sourcePage or 0,
 		affordable = raw.buyout <= money, missing = missing,
-		deDepthUnits = depth, deCutPct = cutPct, deMarginPct = marginPct,
+		deDepthUnits = depth, deCutPct = cutPct, deBaseMarginPct = baseMarginPct, deMarginPct = marginPct,
+		deExposureMaxSharePct = maxOwnSharePct, deExposureMaxOwnUnits = maxOwnUnits,
 		deMaxEntry = maxEntry, materials = mats,
 		deSource = deSource, disenchantId = disenchantId or 0,
 	}, nil
@@ -2550,6 +2722,7 @@ local function avm_flip_book_add(book, record)
 		row = {
 			name = raw.name, itemId = raw.itemId, bookKey = bookKey, maxStack = raw.maxStack,
 			levels = {}, units = 0, auctions = 0, cheapest = nil, sellers = {},
+			stackSmallOffers = {}, stackSmallSellers = {}, stackLargeCheapest = nil,
 		}
 		book[bookKey] = row
 	end
@@ -2562,6 +2735,25 @@ local function avm_flip_book_add(book, record)
 	if not old or raw.unitExact < old.unitExact or
 	   (raw.unitExact == old.unitExact and raw.buyout < old.buyout) then
 		row.cheapest = raw
+	end
+	local maxStack = tonumber(raw.maxStack) or 0
+	if maxStack >= 5 then
+		local smallPct = tonumber(AVM_DB.stackSmallPct) or 25
+		local largePct = tonumber(AVM_DB.stackLargePct) or 75
+		if smallPct < 1 then smallPct = 1 elseif smallPct > 50 then smallPct = 50 end
+		if largePct < 50 then largePct = 50 elseif largePct > 100 then largePct = 100 end
+		local smallMax = math.max(1, math.floor(maxStack * smallPct / 100))
+		local largeMin = math.max(2, math.floor((maxStack * largePct + 99) / 100))
+		if raw.count <= smallMax then
+			table.insert(row.stackSmallOffers, { unit = raw.unitExact, count = raw.count, owner = raw.owner })
+			if raw.owner and raw.owner ~= "" then row.stackSmallSellers[raw.owner] = true end
+		elseif raw.count >= largeMin then
+			local large = row.stackLargeCheapest
+			if not large or raw.unitExact < large.unitExact or
+			   (raw.unitExact == large.unitExact and raw.buyout < large.buyout) then
+				row.stackLargeCheapest = raw
+			end
+		end
 	end
 	return raw
 end
@@ -2607,7 +2799,7 @@ local function avm_flip_exposure_allows(raw)
 end
 
 local function avm_record_item_exposure(candidate)
-	if not candidate or candidate.route ~= "flip" then return end
+	if not candidate or (candidate.route ~= "flip" and candidate.route ~= "stack") then return end
 	local key = candidate.exposureKey or candidate.bookKey or candidate.historyKey or candidate.itemKey or tostring(candidate.itemId or 0)
 	local exposure = AVM.itemExposure[key]
 	if not exposure then
@@ -2710,6 +2902,318 @@ local function avm_flip_best_from_book(book)
 	return best, noDepth, candidates, bestLive
 end
 
+
+local function avm_stack_small_seller_count(row)
+	local n = 0
+	for _ in pairs(row and row.stackSmallSellers or {}) do n = n + 1 end
+	return n
+end
+
+local function avm_stack_reference_floor(row)
+	if not row or not row.stackSmallOffers then return nil, 0 end
+	local required = tonumber(AVM_DB.stackSmallDepthUnits) or 10
+	if required < 1 then required = 1 end
+	table.sort(row.stackSmallOffers, function(a,b)
+		if a.unit ~= b.unit then return a.unit < b.unit end
+		return a.count > b.count
+	end)
+	local units = 0
+	for i = 1, table.getn(row.stackSmallOffers) do
+		local offer = row.stackSmallOffers[i]
+		units = units + (tonumber(offer.count) or 0)
+		if units >= required then return tonumber(offer.unit), required end
+	end
+	return nil, required
+end
+
+local function avm_stack_candidate_from_raw(raw, book)
+	if not AVM_DB.stackArbEnabled or not raw or not book then return nil, "disabled" end
+	local row = book[raw.bookKey or tostring(raw.itemId or raw.item_id)]
+	if not row then return nil, "no-item-book" end
+	local maxStack = tonumber(raw.maxStack) or 0
+	if maxStack < 5 then return nil, "not-stackable" end
+	local largePct = tonumber(AVM_DB.stackLargePct) or 75
+	if largePct < 50 then largePct = 50 elseif largePct > 100 then largePct = 100 end
+	local largeMin = math.max(2, math.floor((maxStack * largePct + 99) / 100))
+	if (tonumber(raw.count) or 0) < largeMin then return nil, "not-large-stack" end
+	local maxBuyout = tonumber(AVM_DB.stackMaxBuyout) or 0
+	if maxBuyout > 0 and raw.buyout > maxBuyout then return nil, "max-buyout" end
+	if raw.signature and avm_recent(raw.signature) then return nil, "recent" end
+
+	local histValue = tonumber(raw.histValue) or 0
+	local histDays = tonumber(raw.histDays) or 0
+	local minHistoryDays = tonumber(AVM_DB.stackMinHistoryDays) or 2
+	if histValue <= 0 then return nil, "no-history" end
+	if histDays < minHistoryDays then return nil, "history-days" end
+
+	local sellerCount = avm_stack_small_seller_count(row)
+	local minSellers = tonumber(AVM_DB.stackMinSmallSellers) or 3
+	if sellerCount < minSellers then return nil, "small-seller-depth" end
+	local floor, required = avm_stack_reference_floor(row)
+	if not floor or floor <= 0 then return nil, "small-depth" end
+
+	local exposureOK, exposureKey = avm_flip_exposure_allows(raw)
+	if not exposureOK then return nil, exposureKey end
+
+	local cutPct = tonumber(AVM_DB.stackAhCutPct) or 5
+	local marginPct = tonumber(AVM_DB.stackSafetyMarginPct) or 25
+	if cutPct < 0 then cutPct = 0 elseif cutPct > 30 then cutPct = 30 end
+	if marginPct < 0 then marginPct = 0 elseif marginPct > 90 then marginPct = 90 end
+	local grossExitUnit = floor
+	if grossExitUnit > 1 then grossExitUnit = grossExitUnit - 1 end
+	local histCap = math.floor(histValue)
+	if histCap > 0 and grossExitUnit > histCap then grossExitUnit = histCap end
+	if grossExitUnit <= raw.unitExact then return nil, "no-upside" end
+	local netUnit = math.floor(grossExitUnit * (100 - cutPct) / 100)
+	local netExit = netUnit * raw.count
+	local profit = netExit - raw.buyout
+	local minProfit = tonumber(AVM_DB.stackMinProfit) or 0
+	local maxEntry = math.floor(netExit * (100 - marginPct) / 100)
+	if profit < minProfit then return nil, "min-profit" end
+	if raw.buyout > maxEntry then return nil, "safety-margin" end
+	local money = GetMoney()
+	local missing = raw.buyout - money
+	if missing < 0 then missing = 0 end
+	return {
+		mode = "auxarb_stack", route = "stack", name = raw.name,
+		itemId = raw.itemId, count = raw.count, buyout = raw.buyout,
+		unit = math.floor(raw.buyout / raw.count), unitExact = raw.unitExact,
+		quality = raw.quality, level = raw.level, maxStack = raw.maxStack,
+		owner = raw.owner, itemKey = raw.itemKey, signature = raw.signature,
+		historyKey = raw.historyKey, bookKey = raw.bookKey, exposureKey = exposureKey,
+		ignoreOwnerSignature = true, sourcePage = raw.sourcePage or 0,
+		affordable = raw.buyout <= money, missing = missing,
+		stackSmallFloor = math.floor(floor), stackGrossExitUnit = math.floor(grossExitUnit),
+		stackNetUnit = netUnit, stackSmallSellerCount = sellerCount,
+		stackRequiredDepth = required, stackHistoryValue = histCap, stackHistoryDays = histDays,
+		valuationTotal = netExit, profit = profit,
+		stackCutPct = cutPct, stackMarginPct = marginPct, stackMaxEntry = maxEntry,
+	}, nil
+end
+
+local function avm_stack_best_from_book(book)
+	local best, bestLive, noDepth, candidates = nil, nil, 0, 0
+	for _,row in pairs(book or {}) do
+		if row.stackLargeCheapest then
+			local c, reason = avm_stack_candidate_from_raw(row.stackLargeCheapest, book)
+			if c then
+				candidates = candidates + 1
+				if avm_auxarb_candidate_better(c, best) then best = c end
+				local liveOk = avm_auxarb_live_purchase_ok(c)
+				if liveOk and avm_auxarb_candidate_better(c, bestLive) then bestLive = c end
+			elseif reason == "small-depth" then
+				noDepth = noDepth + 1
+			end
+		end
+	end
+	return best, noDepth, candidates, bestLive
+end
+
+
+local function avm_bid_raw_from_record(record)
+	if not AVM_DB.bidArbEnabled or not record then return nil end
+	local buyout = tonumber(record.buyout_price or record.buyout) or 0
+	if buyout > 0 then return nil end
+	if record.owner and record.owner == UnitName("player") then return nil end
+	if record.high_bidder then return nil end
+	local duration = tonumber(record.duration) or 0
+	local maxDuration = tonumber(AVM_DB.bidMaxDuration) or 1
+	if duration <= 0 or duration > maxDuration then return nil end
+	local count = tonumber(record.count or record.aux_quantity) or 0
+	local itemId = tonumber(record.item_id or record.itemId)
+	local bidAmount = tonumber(record.bid_price or record.blizzard_bid or record.start_price) or 0
+	if count <= 0 or not itemId or bidAmount <= 0 then return nil end
+	local maxAmount = tonumber(AVM_DB.bidMaxAmount) or 0
+	if maxAmount > 0 and bidAmount > maxAmount then return nil end
+	local itemKey = avm_de_record_key(record, itemId)
+	local sig = "BID|" .. tostring(record.name or "") .. "|" .. tostring(count) .. "|" ..
+		tostring(bidAmount) .. "|" .. tostring(record.quality or -1) .. "|" .. tostring(record.level or 0) .. "|" .. itemKey
+	return {
+		name = tostring(record.name or ""), item_id = itemId, itemId = itemId,
+		count = count, aux_quantity = count, quality = record.quality, level = record.level,
+		slot = record.slot, owner = record.owner, itemKey = itemKey, duration = duration,
+		bidAmount = math.floor(bidAmount), buyout = math.floor(bidAmount),
+		maxStack = tonumber(record.max_stack or record.maxStack) or 0,
+		signature = sig, sourcePage = tonumber(record.page) or AVM.queryPage or 0,
+	}
+end
+
+local function avm_bid_candidate_from_raw(raw, kind, deBook)
+	if not raw or not AVM_DB.bidArbEnabled then return nil, "disabled" end
+	local amount = tonumber(raw.bidAmount) or 0
+	if amount <= 0 then return nil, "no-bid" end
+	local maxAmount = tonumber(AVM_DB.bidMaxAmount) or 0
+	if maxAmount > 0 and amount > maxAmount then return nil, "max-amount" end
+	local minProfit = tonumber(AVM_DB.bidMinProfit) or 0
+	local value, maxBid, source, de = 0, 0, "", nil
+	if kind == "vendor" then
+		local vendorUnit, vendorSource = avm_vendor_value(raw.itemId)
+		if vendorUnit <= 0 then return nil, "no-vendor" end
+		value = vendorUnit * raw.count
+		local margin = tonumber(AVM_DB.bidVendorMarginPct) or 20
+		if margin < 0 then margin = 0 elseif margin > 90 then margin = 90 end
+		maxBid = math.floor(value * (100 - margin) / 100)
+		source = vendorSource
+	elseif kind == "de" then
+		local fake = {
+			name=raw.name,item_id=raw.itemId,itemId=raw.itemId,count=raw.count,aux_quantity=raw.count,
+			buyout_price=amount,buyout=amount,quality=raw.quality,level=raw.level,slot=raw.slot,
+			owner=raw.owner,itemKey=raw.itemKey,signature=raw.signature,sourcePage=raw.sourcePage,
+		}
+		local reason
+		de, reason = avm_de_candidate_from_record(fake, deBook)
+		if not de then return nil, reason or "no-de-value" end
+		value = tonumber(de.deValue or de.valuationTotal) or 0
+		local margin = tonumber(AVM_DB.bidDeMarginPct) or 40
+		local deMargin = tonumber(de.deMarginPct) or 0
+		if deMargin > margin then margin = deMargin end
+		if margin < 0 then margin = 0 elseif margin > 90 then margin = 90 end
+		maxBid = math.floor(value * (100 - margin) / 100)
+		source = tostring(de.deSource or "de-live")
+	else
+		return nil, "unknown-kind"
+	end
+	local profit = value - amount
+	if value <= 0 or amount > maxBid then return nil, "margin" end
+	if profit < minProfit then return nil, "min-profit" end
+	local route = kind == "de" and "bid-de" or "bid-vendor"
+	local bidKey = "BIDRECENT|" .. route .. "|" .. tostring(raw.itemKey or raw.itemId)
+	if avm_recent(bidKey) then return nil, "recent" end
+	return {
+		mode = "auxarb_bid", route = route, bidKind = kind, name = raw.name,
+		itemId = raw.itemId, count = raw.count, bidAmount = amount, buyout = amount,
+		unit = math.floor(amount / raw.count), valuationTotal = value, profit = profit,
+		maxBid = maxBid, owner = raw.owner, quality = raw.quality, level = raw.level,
+		slot = raw.slot, itemKey = raw.itemKey, signature = raw.signature,
+		bidKey = bidKey, duration = raw.duration, sourcePage = raw.sourcePage or 0,
+		bidSource = source, materials = de and de.materials or nil,
+		deValue = de and de.deValue or nil, deSource = de and de.deSource or nil,
+	}, nil
+end
+
+local function avm_bid_live_ok(c)
+	if not c or not AVM_DB.auxArbLive or not AVM_DB.bidArbEnabled then return false, "live-off" end
+	if (tonumber(c.bidAmount) or 0) > (GetMoney() or 0) then return false, "wallet" end
+	local cap = tonumber(AVM_DB.bidMaxSessionPlacements) or 0
+	if cap > 0 and (tonumber(AVM.sessionBids) or 0) >= cap then return false, "session-bid-cap" end
+	if c.bidKey and avm_recent(c.bidKey) then return false, "recent" end
+	return true, "ok"
+end
+
+local function avm_bid_fail(reason)
+	local c = AVM.bidCandidate or (AVM.bidPending and AVM.bidPending.candidate)
+	AVM.bidCandidate = nil
+	AVM.bidPending = nil
+	AVM.phase = "IDLE"
+	AVM.revalidatePages = nil
+	AVM.revalidatePos = 0
+	avm_print("AUX_ARB_BID_REJECT " .. tostring(c and c.name or "?") .. " reason=" .. tostring(reason or "unknown"))
+	avm_loop_after_arb("bid rejected")
+end
+
+local function avm_bid_begin_revalidate(candidate)
+	if not candidate then return false end
+	local ok, reason = avm_bid_live_ok(candidate)
+	if not ok then
+		avm_print("AUX_ARB_BID_BLOCKED " .. tostring(candidate.name) .. " reason=" .. tostring(reason))
+		return false
+	end
+	AVM.bidCandidate = candidate
+	candidate.revalidatePage = 0
+	candidate.revalidateName = avm_auxarb_revalidate_query_name(candidate)
+	AVM.phase = "BID_REVALIDATE"
+	AVM.auxLoop.nextAt = 0
+	AVM.nextQueryAt = GetTime() + 0.05
+	avm_print("AUX_ARB_BID_VERIFY route=" .. tostring(candidate.route) ..
+		" " .. tostring(candidate.name) ..
+		" bid=" .. avm_money(candidate.bidAmount or 0) ..
+		" ceiling=" .. avm_money(candidate.maxBid or 0) ..
+		" value=" .. avm_money(candidate.valuationTotal or 0) ..
+		" duration=" .. tostring(candidate.duration or 0))
+	return true
+end
+
+local function avm_bid_revalidate_accept(page, total)
+	local c = AVM.bidCandidate
+	if not c then return end
+	local bestFresh, bestIndex = nil, nil
+	local n = GetNumAuctionItems("list") or 0
+	for i = 1, n do
+		local record = AVM_AUX_INFO_OK and AVM_AUX_INFO and AVM_AUX_INFO.auction(i, "list") or nil
+		if record then
+			record.index = i
+			record.page = page
+			local raw = avm_bid_raw_from_record(record)
+			if raw and tonumber(raw.itemId) == tonumber(c.itemId) and tostring(raw.itemKey or "") == tostring(c.itemKey or "") then
+				local fresh = avm_bid_candidate_from_raw(raw, c.bidKind, AVM.auxArb.deMaterialBook)
+				if fresh then
+					local liveOk = avm_bid_live_ok(fresh)
+					if liveOk and (not bestFresh or fresh.bidAmount < bestFresh.bidAmount) then
+						bestFresh, bestIndex = fresh, i
+					end
+				end
+			end
+		end
+	end
+	local lastPage = 0
+	if total and total > 0 then lastPage = math.floor((total - 1) / 50) end
+	if not bestFresh and page < lastPage then
+		c.revalidatePage = page + 1
+		AVM.nextQueryAt = GetTime() + 0.05
+		return
+	end
+	if not bestFresh or not bestIndex then
+		avm_bid_fail("auction-moved-or-over-ceiling")
+		return
+	end
+	local before = GetMoney() or 0
+	if bestFresh.bidAmount > before then
+		avm_bid_fail("wallet-changed")
+		return
+	end
+	local recentSeconds = tonumber(AVM_DB.bidRecentSeconds) or 30
+	if recentSeconds < 5 then recentSeconds = 5 end
+	AVM.recent[bestFresh.bidKey] = GetTime() + recentSeconds
+	PlaceAuctionBid("list", bestIndex, bestFresh.bidAmount)
+	AVM.bidCandidate = nil
+	AVM.bidPending = { candidate = bestFresh, moneyBefore = before, sentAt = GetTime() }
+	AVM.phase = "BID_PENDING"
+	avm_print("AUX_ARB_BID_SENT route=" .. tostring(bestFresh.route) ..
+		" " .. tostring(bestFresh.name) ..
+		" bid=" .. avm_money(bestFresh.bidAmount) ..
+		" ceiling=" .. avm_money(bestFresh.maxBid) ..
+		" expectedProfit=" .. avm_money(bestFresh.profit))
+end
+
+local function avm_tick_bid_pending(now)
+	local p = AVM.bidPending
+	if not p then return false end
+	local amount = tonumber(p.candidate and p.candidate.bidAmount) or 0
+	local delta = (tonumber(p.moneyBefore) or 0) - (GetMoney() or 0)
+	if amount > 0 and delta == amount then
+		AVM.sessionBids = (tonumber(AVM.sessionBids) or 0) + 1
+		AVM.stats.auxArbBidsPlaced = (tonumber(AVM.stats.auxArbBidsPlaced) or 0) + 1
+		AVM_RecordBid(p.candidate, "placed")
+		avm_print("AUX_ARB_BID_CONFIRMED route=" .. tostring(p.candidate.route) ..
+			" " .. tostring(p.candidate.name) ..
+			" bid=" .. avm_money(amount) ..
+			" expectedProfit=" .. avm_money(p.candidate.profit or 0))
+		AVM.bidPending = nil
+		AVM.phase = "IDLE"
+		avm_loop_after_arb("bid placed")
+		return true
+	end
+	if now - (tonumber(p.sentAt) or now) >= AVM_PENDING_TIMEOUT then
+		AVM.bidPending = nil
+		AVM.phase = "IDLE"
+		avm_print("AUX_ARB_BID_UNKNOWN " .. tostring(p.candidate and p.candidate.name or "?") ..
+			" no wallet delta; no automatic spend recorded")
+		avm_loop_after_arb("bid confirmation timeout")
+		return true
+	end
+	return true
+end
+
 local function avm_flip_fail_postscan(candidate, reason)
 	local a = AVM.auxArb
 	if candidate and candidate.signature then AVM.recent[candidate.signature] = GetTime() + 2 end
@@ -2773,7 +3277,12 @@ local function avm_flip_live_verify_accept(page, total)
 		avm_flip_fail_postscan(v.candidate, "auction-moved")
 		return
 	end
-	local fresh, reason = avm_flip_candidate_from_raw(v.found, v.book)
+	local fresh, reason
+	if v.candidate.mode == "auxarb_stack" then
+		fresh, reason = avm_stack_candidate_from_raw(v.found, v.book)
+	else
+		fresh, reason = avm_flip_candidate_from_raw(v.found, v.book)
+	end
 	if not fresh then
 		avm_flip_fail_postscan(v.candidate, "live-" .. tostring(reason or "valuation"))
 		return
@@ -2788,13 +3297,23 @@ local function avm_flip_live_verify_accept(page, total)
 	AVM.candidate = fresh
 	avm_prepare_revalidate(fresh)
 	AVM.phase = "REVALIDATE"
-	avm_print("AUX_ARB_FLIP_LIVE_OK " .. tostring(fresh.name) ..
-		" buy=" .. avm_money(fresh.buyout) ..
-		" floor=" .. avm_money(fresh.flipFloor or 0) ..
-		" targetUnit=" .. avm_money(fresh.flipGrossExitUnit or 0) ..
-		" netExit=" .. avm_money(fresh.valuationTotal or 0) ..
-		" maxEntry=" .. avm_money(fresh.flipMaxEntry or 0) ..
-		" profit=" .. avm_money(fresh.profit or 0))
+	if fresh.mode == "auxarb_stack" then
+		avm_print("AUX_ARB_STACK_LIVE_OK " .. tostring(fresh.name) ..
+			" buy=" .. avm_money(fresh.buyout) ..
+			" smallFloor=" .. avm_money(fresh.stackSmallFloor or 0) ..
+			" targetUnit=" .. avm_money(fresh.stackGrossExitUnit or 0) ..
+			" netExit=" .. avm_money(fresh.valuationTotal or 0) ..
+			" maxEntry=" .. avm_money(fresh.stackMaxEntry or 0) ..
+			" profit=" .. avm_money(fresh.profit or 0))
+	else
+		avm_print("AUX_ARB_FLIP_LIVE_OK " .. tostring(fresh.name) ..
+			" buy=" .. avm_money(fresh.buyout) ..
+			" floor=" .. avm_money(fresh.flipFloor or 0) ..
+			" targetUnit=" .. avm_money(fresh.flipGrossExitUnit or 0) ..
+			" netExit=" .. avm_money(fresh.valuationTotal or 0) ..
+			" maxEntry=" .. avm_money(fresh.flipMaxEntry or 0) ..
+			" profit=" .. avm_money(fresh.profit or 0))
+	end
 
 	-- The filtered live valuation has already proved the exact auction signature
 	-- on every result page. If the candidate is on the page currently loaded,
@@ -2898,7 +3417,9 @@ local function avm_de_begin_live_verify(candidate)
 		" mats=" .. tostring(table.getn(candidate.materials)) ..
 		" depth=" .. tostring(AVM_DB.deDepthUnits or 3) ..
 		" cut=" .. tostring(AVM_DB.deAhCutPct or 5) .. "%" ..
-		" margin=" .. tostring(AVM_DB.deSafetyMarginPct or 25) .. "%")
+		" margin=" .. tostring(candidate.deMarginPct or AVM_DB.deSafetyMarginPct or 25) .. "%" ..
+		" ownShare=" .. string.format("%.1f", tonumber(candidate.deExposureMaxSharePct) or 0) .. "%" ..
+		" ownUnits=" .. tostring(tonumber(candidate.deExposureMaxOwnUnits) or 0))
 	return true
 end
 
@@ -3064,6 +3585,13 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipHistoryRejects = 0
 		a.flipSellerRejects = 0
 		a.flipExposureRejects = 0
+		a.stackBest = nil
+		a.stackCandidates = 0
+		a.stackNoDepth = 0
+		a.bidVendorBest = nil
+		a.bidDeRawCandidates = {}
+		a.bidBest = nil
+		a.bidCandidates = 0
 		a.postscanCandidate = nil
 		a.deMidScanHits = 0
 		a.consumedAuctionKeys = {}
@@ -3118,6 +3646,15 @@ function AVM_AuxArbAuction(record)
 		avm_de_consider_live_raw(a, rawDe)
 	end
 	avm_flip_book_add(a.flipBook, record)
+
+	local bidRaw = avm_bid_raw_from_record(record)
+	if bidRaw then
+		table.insert(a.bidDeRawCandidates, bidRaw)
+		local bidVendor = avm_bid_candidate_from_raw(bidRaw, "vendor", a.deMaterialBook)
+		if bidVendor and avm_auxarb_candidate_better(bidVendor, a.bidVendorBest) then
+			a.bidVendorBest = bidVendor
+		end
+	end
 
 	local c = avm_auxarb_candidate_from_record(record, "auxarb_vendor")
 	if not c then return end
@@ -3294,6 +3831,31 @@ function AVM_AuxArbScanDone()
 		if avm_auxarb_candidate_better(bestFlip, a.bestSeen) then a.bestSeen = bestFlip end
 	end
 
+	local bestStack, stackNoDepth, stackCandidates, bestStackLive = avm_stack_best_from_book(a.flipBook)
+	a.stackBest = bestStack
+	a.stackNoDepth = stackNoDepth or 0
+	a.stackCandidates = stackCandidates or 0
+	if bestStack then
+		AVM.stats.auxArbCandidates = AVM.stats.auxArbCandidates + a.stackCandidates
+		AVM.stats.auxArbStackCandidates = AVM.stats.auxArbStackCandidates + a.stackCandidates
+		if avm_auxarb_candidate_better(bestStack, a.bestSeen) then a.bestSeen = bestStack end
+	end
+
+	local bestBid = a.bidVendorBest
+	for i = 1, table.getn(a.bidDeRawCandidates or {}) do
+		local bc = avm_bid_candidate_from_raw(a.bidDeRawCandidates[i], "de", a.deMaterialBook)
+		if bc then
+			a.bidCandidates = (a.bidCandidates or 0) + 1
+			AVM.stats.auxArbBidCandidates = (tonumber(AVM.stats.auxArbBidCandidates) or 0) + 1
+			if avm_auxarb_candidate_better(bc, bestBid) then bestBid = bc end
+		end
+	end
+	if a.bidVendorBest then
+		a.bidCandidates = (a.bidCandidates or 0) + 1
+		AVM.stats.auxArbBidCandidates = (tonumber(AVM.stats.auxArbBidCandidates) or 0) + 1
+	end
+	a.bidBest = bestBid
+
 	local best = a.bestSeen
 	if best then
 		avm_print("AUX_ARB_SCAN_DONE pages=" .. tostring(a.pages) ..
@@ -3304,20 +3866,27 @@ function AVM_AuxArbScanDone()
 			" vendorCandidates=" .. tostring(a.vendorCandidates) ..
 			" deCandidates=" .. tostring(a.deCandidates) ..
 			" flipCandidates=" .. tostring(a.flipCandidates or 0) ..
+			" stackCandidates=" .. tostring(a.stackCandidates or 0) ..
+			" bidCandidates=" .. tostring(a.bidCandidates or 0) ..
 			" deNoDepth=" .. tostring(a.deNoValue or 0) ..
 			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
+			" stackNoDepth=" .. tostring(a.stackNoDepth or 0) ..
 			" filteredRecords=" .. tostring(a.filteredRecords or 0))
 	else
 		avm_print("AUX_ARB_SCAN_DONE pages=" .. tostring(a.pages) ..
 			" no qualifying candidate deNoDepth=" .. tostring(a.deNoValue or 0) ..
 			" flipNoDepth=" .. tostring(a.flipNoDepth or 0) ..
+			" stackNoDepth=" .. tostring(a.stackNoDepth or 0) ..
+			" bidCandidates=" .. tostring(a.bidCandidates or 0) ..
 			" filteredRecords=" .. tostring(a.filteredRecords or 0))
 	end
 
 	local bestPost = bestDe
 	if bestFlip and avm_auxarb_candidate_better(bestFlip, bestPost) then bestPost = bestFlip end
+	if bestStack and avm_auxarb_candidate_better(bestStack, bestPost) then bestPost = bestStack end
 	local bestLive = bestDeLive
 	if bestFlipLive and avm_auxarb_candidate_better(bestFlipLive, bestLive) then bestLive = bestFlipLive end
+	if bestStackLive and avm_auxarb_candidate_better(bestStackLive, bestLive) then bestLive = bestStackLive end
 
 	if not AVM_DB.auxArbLive then
 		if bestPost then avm_print("AUX_ARB_POSTSCAN_SKIP live=false best=" .. tostring(bestPost.route) .. ":" .. tostring(bestPost.name)) end
@@ -3338,6 +3907,12 @@ function AVM_AuxArbScanDone()
 			local _, reason = avm_auxarb_live_purchase_ok(bestPost)
 			avm_print("AUX_ARB_POSTSCAN_BLOCKED best=" .. tostring(bestPost.route) .. ":" .. tostring(bestPost.name) ..
 				" buy=" .. avm_money(bestPost.buyout or 0) .. " reason=" .. tostring(reason or "not-live-eligible"))
+		end
+		if bestBid then
+			local bidOk, bidReason = avm_bid_live_ok(bestBid)
+			if bidOk and avm_bid_begin_revalidate(bestBid) then return end
+			avm_print("AUX_ARB_BID_BLOCKED best=" .. tostring(bestBid.route) .. ":" .. tostring(bestBid.name) ..
+				" reason=" .. tostring(bidReason or "not-live-eligible"))
 		end
 		avm_loop_after_arb("AUX_ARB no live-eligible candidate")
 		return
@@ -3402,7 +3977,7 @@ avm_try_postscan_candidate = function()
 	a.postscanCandidate = nil
 	a.candidate = c
 	local launched
-	if c.mode == "auxarb_flip" then
+	if c.mode == "auxarb_flip" or c.mode == "auxarb_stack" then
 		launched = avm_flip_begin_live_verify(c) and true or false
 	else
 		launched = avm_de_begin_live_verify(c) and true or false
@@ -4131,6 +4706,9 @@ avm_revalidate_candidate = function()
 					elseif c.mode == "auxarb_flip" then
 						local raw = record and avm_flip_record_candidate(record) or nil
 						fresh = raw and avm_flip_candidate_from_raw(raw, c.flipVerifiedBook) or nil
+					elseif c.mode == "auxarb_stack" then
+						local raw = record and avm_flip_record_candidate(record) or nil
+						fresh = raw and avm_stack_candidate_from_raw(raw, c.flipVerifiedBook) or nil
 					else
 						fresh = record and avm_auxarb_candidate_from_record(record, c.mode) or nil
 					end
@@ -4153,6 +4731,10 @@ avm_revalidate_candidate = function()
 					c.flipGrossExitUnit = fresh.flipGrossExitUnit or c.flipGrossExitUnit
 					c.flipNetUnit = fresh.flipNetUnit or c.flipNetUnit
 					c.flipMaxEntry = fresh.flipMaxEntry or c.flipMaxEntry
+					c.stackSmallFloor = fresh.stackSmallFloor or c.stackSmallFloor
+					c.stackGrossExitUnit = fresh.stackGrossExitUnit or c.stackGrossExitUnit
+					c.stackNetUnit = fresh.stackNetUnit or c.stackNetUnit
+					c.stackMaxEntry = fresh.stackMaxEntry or c.stackMaxEntry
 					c.affordable = fresh.affordable
 					c.missing = fresh.missing
 				end
@@ -4333,6 +4915,10 @@ local function avm_accept_result()
 	end
 	if kind == "FLIP_MARKET_REVALIDATE" then
 		avm_flip_live_verify_accept(page, total)
+		return
+	end
+	if kind == "BID_REVALIDATE" then
+		avm_bid_revalidate_accept(page, total)
 		return
 	end
 
@@ -4631,6 +5217,8 @@ local function avm_tick()
 	if AVM.hardStop then return end
 	local now = GetTime()
 
+	if avm_de_exposure_tick and avm_de_exposure_tick(now) then return end
+	if avm_tick_bid_pending(now) then return end
 	if avm_tick_pending(now) then return end
 	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
 	if avm_loop_tick(now) then return end
@@ -4659,6 +5247,9 @@ local function avm_tick()
 				return
 			elseif AVM.queryKind == "FLIP_MARKET_REVALIDATE" and AVM.auxArb.flipVerify then
 				avm_flip_fail_postscan(AVM.auxArb.flipVerify.candidate, "market-query-timeout")
+				return
+			elseif AVM.queryKind == "BID_REVALIDATE" and AVM.bidCandidate then
+				avm_bid_fail("query-timeout")
 				return
 			else
 				if AVM.queryKind == "REVALIDATE" and avm_is_auxarb_candidate(AVM.candidate) then
@@ -4714,6 +5305,10 @@ local function avm_tick()
 		else
 			avm_send_query("FLIP_MARKET_REVALIDATE", v.page or 0, v.candidate.name)
 		end
+		return
+	end
+	if AVM.phase == "BID_REVALIDATE" and AVM.bidCandidate then
+		avm_send_query("BID_REVALIDATE", AVM.bidCandidate.revalidatePage or 0, AVM.bidCandidate.revalidateName or AVM.bidCandidate.name)
 		return
 	end
 
@@ -4992,6 +5587,16 @@ local function avm_auxarb_slash(rest)
 		else
 			avm_print("demargin must be 0..90")
 		end
+	elseif sub == "stack" then
+		local v = string.lower(avm_trim(arg))
+		if v == "on" then AVM_DB.stackArbEnabled = true avm_print("AUX_ARB STACK ON")
+		elseif v == "off" then AVM_DB.stackArbEnabled = false avm_print("AUX_ARB STACK OFF")
+		else avm_print("usage: /avm auxarb stack on|off") end
+	elseif sub == "bid" then
+		local v = string.lower(avm_trim(arg))
+		if v == "on" then AVM_DB.bidArbEnabled = true avm_print("AUX_ARB BID vendor/DE ON")
+		elseif v == "off" then AVM_DB.bidArbEnabled = false avm_print("AUX_ARB BID vendor/DE OFF")
+		else avm_print("usage: /avm auxarb bid on|off") end
 	elseif sub == "flip" then
 		local v = string.lower(avm_trim(arg))
 		if v == "on" then AVM_DB.flipEnabled = true avm_print("AUX_ARB FLIP ON")
@@ -5069,8 +5674,21 @@ local function avm_auxarb_slash(rest)
 			tostring(a.flipHistoryRejects or 0) .. "/" ..
 			tostring(a.flipSellerRejects or 0) .. "/" ..
 			tostring(a.flipExposureRejects or 0))
+		avm_print("AUX_ARB STACK enabled=" .. tostring(AVM_DB.stackArbEnabled) ..
+			" candidates=" .. tostring(a.stackCandidates or 0) ..
+			" large/small=" .. tostring(AVM_DB.stackLargePct or 75) .. "%/" .. tostring(AVM_DB.stackSmallPct or 25) .. "%" ..
+			" smallDepth=" .. tostring(AVM_DB.stackSmallDepthUnits or 10) ..
+			" sellers>=" .. tostring(AVM_DB.stackMinSmallSellers or 3) ..
+			" margin=" .. tostring(AVM_DB.stackSafetyMarginPct or 25) .. "%")
+		avm_print("AUX_ARB BID enabled=" .. tostring(AVM_DB.bidArbEnabled) ..
+			" candidates=" .. tostring(a.bidCandidates or 0) ..
+			" placed=" .. tostring(AVM.sessionBids or 0) ..
+			" vendorMargin=" .. tostring(AVM_DB.bidVendorMarginPct or 20) .. "%" ..
+			" deMargin=" .. tostring(AVM_DB.bidDeMarginPct or 40) .. "%" ..
+			" maxDuration=" .. tostring(AVM_DB.bidMaxDuration or 1) ..
+			" maxBid=" .. avm_money(AVM_DB.bidMaxAmount or 0))
 	else
-		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g|dedepth 3|decut 5|demargin 25|flip on|off|flipmin 10s|flipmax 5g|flipdepth 10|flipcut 5|flipmargin 25|fliphistpct 70|fliphistdays 2|flipsellers 3|flipitembudget 20g|flipitembuys 3")
+		avm_print("/avm auxarb on|off|status|live on|off|stack on|off|bid on|off|demin 5s|demax 1g|dedepth 3|decut 5|demargin 25|flip on|off|flipmin 10s|flipmax 5g|flipdepth 10|flipcut 5|flipmargin 25|fliphistpct 70|fliphistdays 2|flipsellers 3|flipitembudget 20g|flipitembuys 3")
 	end
 end
 
@@ -5125,6 +5743,8 @@ local function avm_hard_stop(reason)
 	AVM.revalidatePos = 0
 	AVM.pending = nil
 	AVM.unknown = nil
+	AVM.bidCandidate = nil
+	AVM.bidPending = nil
 	AVM.queryInFlight = false
 	AVM.queryKind = ""
 	AVM.nextQueryAt = 0
@@ -5158,6 +5778,131 @@ local function avm_start_zero_config(reason)
 	avm_print("AH_ZERO_CONFIG_ACTIVE live=true loop=true autoMarket=false maxBuys=unlimited budget=unlimited")
 end
 
+
+local function avm_de_exposure_totals(book)
+	local mats, auctions, units, value = 0, 0, 0, 0
+	for _, row in pairs(book or {}) do
+		mats = mats + 1
+		auctions = auctions + (tonumber(row.auctions) or 0)
+		units = units + (tonumber(row.units) or 0)
+		value = value + (tonumber(row.buyout) or 0)
+	end
+	return mats, auctions, units, value
+end
+
+local function avm_de_exposure_request_page(page)
+	local d = AVM.deExposure
+	d.page = page
+	d.requestedAt = GetTime()
+	d.settleAt = d.requestedAt + 0.05
+	d.eventReady = false
+	GetOwnerAuctionItems(page)
+end
+
+local function avm_de_exposure_finish(success, why)
+	local d = AVM.deExposure
+	local afterZeroConfig = d.afterZeroConfig
+	local resumeLoop = d.resumeLoop
+	d.active = false
+	d.afterZeroConfig = false
+	d.resumeLoop = false
+	d.reason = tostring(why or "")
+	d.syncedCycle = tonumber(AVM.auxLoop.cycles) or 0
+	if success then
+		d.book = d.scanBook or {}
+		d.ready = true
+		d.updatedAt = GetTime()
+		local mats, auctions, units, value = avm_de_exposure_totals(d.book)
+		avm_print("DE_EXPOSURE_SYNC mats=" .. tostring(mats) ..
+			" auctions=" .. tostring(auctions) ..
+			" units=" .. tostring(units) ..
+			" value=" .. avm_money(value))
+	else
+		avm_print("DE_EXPOSURE_SYNC_FAILED reason=" .. tostring(why or "unknown") ..
+			" previousReady=" .. tostring(d.ready))
+	end
+	d.scanBook = {}
+	if afterZeroConfig and AVM.open then
+		avm_restart_boundary(false)
+		avm_start_zero_config("DE exposure synced")
+	elseif resumeLoop and AVM.open and AVM_DB.auxLoopEnabled then
+		AVM.auxLoop.nextAt = GetTime() + 0.10
+	end
+end
+
+avm_de_exposure_start = function(reason, afterZeroConfig, resumeLoop)
+	if not AVM.open or not AVM_DB.deExposureGuard or not GetOwnerAuctionItems or not GetNumAuctionItems then return false end
+	local d = AVM.deExposure
+	if d.active then return true end
+	d.active = true
+	d.page = 0
+	d.lastPage = 0
+	d.scanBook = {}
+	d.afterZeroConfig = afterZeroConfig and true or false
+	d.resumeLoop = resumeLoop and true or false
+	d.reason = tostring(reason or "")
+	avm_print("DE_EXPOSURE_SCAN start source=" .. d.reason)
+	avm_de_exposure_request_page(0)
+	return true
+end
+
+avm_de_exposure_event = function()
+	local d = AVM.deExposure
+	if not d or not d.active then return end
+	d.eventReady = true
+	d.settleAt = GetTime() + 0.05
+end
+
+avm_de_exposure_tick = function(now)
+	local d = AVM.deExposure
+	if not d or not d.active then return false end
+	if now - (tonumber(d.requestedAt) or now) > 5 then
+		avm_de_exposure_finish(false, "owner-query-timeout page=" .. tostring(d.page or 0))
+		return true
+	end
+	local pageReady = d.eventReady and true or false
+	if AVM_AUX_CORE_OK and AVM_AUX_CORE and AVM_AUX_CORE.current_owner_page then
+		local ok, currentPage = pcall(AVM_AUX_CORE.current_owner_page)
+		if ok and tonumber(currentPage) == tonumber(d.page) then pageReady = true end
+	end
+	if not pageReady or now < (tonumber(d.settleAt) or 0) then return true end
+
+	local _, total = GetNumAuctionItems("owner")
+	for i = 1, 50 do
+		local name,_,count,_,_,_,_,_,buyout = GetAuctionItemInfo("owner", i)
+		local link = GetAuctionItemLink("owner", i)
+		local _,_,itemIdText = string.find(tostring(link or ""), "item:(%d+)")
+		local itemId = tonumber(itemIdText)
+		local maxStack = nil
+		if link and GetItemInfo then
+			local _,_,_,_,_,_,_,stackCount = GetItemInfo(link)
+			maxStack = tonumber(stackCount)
+		end
+		count = tonumber(count) or 0
+		buyout = tonumber(buyout) or 0
+		if itemId and AVM_DE_MATERIAL_IDS[itemId] and count > 0 and buyout > 0 then
+			local row = d.scanBook[itemId]
+			if not row then
+				row = { name = tostring(name or ""), units = 0, auctions = 0, buyout = 0, maxStack = maxStack or 20 }
+				d.scanBook[itemId] = row
+			elseif maxStack and maxStack > 0 then
+				row.maxStack = maxStack
+			end
+			row.units = row.units + count
+			row.auctions = row.auctions + 1
+			row.buyout = row.buyout + buyout
+		end
+	end
+	total = tonumber(total) or 0
+	d.lastPage = total > 0 and math.floor((total - 1) / 50) or 0
+	if d.page < d.lastPage then
+		avm_de_exposure_request_page(d.page + 1)
+	else
+		avm_de_exposure_finish(true, "complete")
+	end
+	return true
+end
+
 local function avm_slash(msg)
 	avm_defaults()
 	msg = avm_trim(msg or "")
@@ -5169,7 +5914,8 @@ local function avm_slash(msg)
 		if not AVM.open then
 			avm_print("AH_START requires open Auction House")
 		else
-			avm_start_zero_config("manual-/avm-on")
+			local startedExposure = AVM_DB.deExposureGuard and avm_de_exposure_start and avm_de_exposure_start("manual-/avm-on", true, false)
+			if not startedExposure then avm_start_zero_config("manual-/avm-on") end
 		end
 	elseif cmd == "off" then
 		avm_hard_stop("manual-/avm-off")
@@ -5368,6 +6114,7 @@ AVM_WATCH_API = {
 			spend = tonumber(s.spend) or 0,
 			expectedProfit = tonumber(s.expectedProfit) or 0,
 			retained = table.getn(AVM_DB.purchaseHistory or {}),
+			limit = AVM_PURCHASE_HISTORY_LIMIT,
 		}
 	end,
 	GetState = function()
@@ -5401,6 +6148,7 @@ frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
 frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
+frame:RegisterEvent("AUCTION_OWNED_LIST_UPDATE")
 frame:RegisterEvent("CHAT_MSG_SYSTEM")
 frame:RegisterEvent("UI_INFO_MESSAGE")
 frame:RegisterEvent("UI_ERROR_MESSAGE")
@@ -5426,10 +6174,20 @@ frame:SetScript("OnEvent", function()
 		AVM.nextQueryAt = 0
 		AVM.pending = nil
 		AVM.unknown = nil
+		AVM.bidCandidate = nil
+		AVM.bidPending = nil
 		AVM.auxLoop.nextAt = 0
 		AVM.auxLoop.waitingForMarket = false
-		avm_restart_boundary(false)
-		avm_start_zero_config("AH-open")
+		AVM.deExposure.active = false
+		AVM.deExposure.ready = false
+		AVM.deExposure.book = {}
+		AVM.deExposure.scanBook = {}
+		AVM.deExposure.syncedCycle = -1
+		local startedExposure = AVM_DB.deExposureGuard and avm_de_exposure_start and avm_de_exposure_start("AH-open", true, false)
+		if not startedExposure then
+			avm_restart_boundary(false)
+			avm_start_zero_config("AH-open")
+		end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		AVM_DB.live = false
 		AVM_DB.auxArbLive = false
@@ -5467,15 +6225,23 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.flipBook = {}
 		AVM.auxArb.flipBest = nil
 		AVM.auxArb.flipVerify = nil
+		AVM.deExposure.active = false
+		AVM.deExposure.ready = false
+		AVM.deExposure.book = {}
+		AVM.deExposure.scanBook = {}
 		AVM_DB.live = false
 		AVM.queryInFlight = false
 		AVM.lastResultAt = 0
 		AVM.nextQueryAt = 0
 		AVM.pending = nil
 		AVM.unknown = nil
+		AVM.bidCandidate = nil
+		AVM.bidPending = nil
 		AVM.phase = "IDLE"
 	elseif event == "AUCTION_ITEM_LIST_UPDATE" then
 		avm_handle_list_update()
+	elseif event == "AUCTION_OWNED_LIST_UPDATE" then
+		if avm_de_exposure_event then avm_de_exposure_event() end
 	elseif (event == "CHAT_MSG_SYSTEM" or event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") and AVM.pending then
 		-- Raw event evidence only. Locale-specific text is deliberately not promoted to success.
 		avm_print("BUY_EVENT " .. event .. " " .. tostring(arg1))
