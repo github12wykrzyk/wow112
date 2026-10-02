@@ -4847,10 +4847,17 @@
           "commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
           "date": "2026-10-02",
           "evidence": "Report #82 motivates V14: native ChangeRealm detached NetClient to state 2 but did not tear down active world/OBJMGR, causing error 76."
+        },
+        {
+          "kind": "game",
+          "result": "inconclusive",
+          "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+          "date": "2026-10-02",
+          "evidence": "Report #86 proves V14 crossed the previously missing boundary: both workers instant-detached, local logout-complete returned with OBJMGR=0, realm reconnect reached NetClient state 6, and worker A reached SESSION_CHAR_SELECT after 4781ms then ENTER_SLOT 2 after 5156ms. PREPARE aborted ~3s later because the updater's global 3000ms heartbeat freshness rule expired while the game/UI thread was blocked loading the selected character. No WORLD_ENTERED/READY evidence was captured, so gameplay result remains inconclusive rather than passed."
         }
       ],
       "package": null,
-      "notes": "Exact candidate artifact 11225253885 was disassembled to recover the client logout-complete chain. RealmConnection SMSG_LOGOUT_COMPLETE dispatch at 0x005B4620 calls ClientConnection virtual 0x005AAEB0; that routine performs connection cleanup and calls 0x00401EE0 with charselect semantics. V14 first sets disconnectPending=1/reconnect=0 so NetDisconnectHandler consumes the world disconnect without LoginConnection()->Logoff or premature reconnect, then invokes 0x005AAEB0 locally after NS_INITIALIZED, waits for world teardown, reconnects only the realm/world connection with ConnectToSelectedServer, enumerates characters, selects the requested slot and enters world. Byte guards cover native entrypoints; no login-server fallback."
+      "notes": "Exact candidate artifact 11225253885 was disassembled to recover the client logout-complete chain. RealmConnection SMSG_LOGOUT_COMPLETE dispatch at 0x005B4620 calls ClientConnection virtual 0x005AAEB0; that routine performs connection cleanup and calls 0x00401EE0 with charselect semantics. V14 first sets disconnectPending=1/reconnect=0 so NetDisconnectHandler consumes the world disconnect without LoginConnection()->Logoff or premature reconnect, then invokes 0x005AAEB0 locally after NS_INITIALIZED, waits for world teardown, reconnects only the realm/world connection with ConnectToSelectedServer, enumerates characters, selects the requested slot and enters world. Byte guards cover native entrypoints; no login-server fallback. Report #86 validates local world teardown and at least one complete char-select/slot-selection transition without login screen; remaining observed PREPARE abort is updater heartbeat policy during loading, addressed by summon-switch-heartbeat-grace-v8."
     },
     {
       "id": "ah-resume-transaction-race-v1",
@@ -4954,6 +4961,35 @@
         "artifact_id": 11228425705
       },
       "notes": "Integrated to parallel after exact feature preflight and updater x86 build. The reporter no longer downloads up to 100 full open Issues for dedupe; it uses a bounded GitHub issue-title search and a 32 MiB serializer ceiling as a secondary guard. With an already stored report token and updater left open, AH state is checked every 60 s and uploads only when the Aux market content SHA changes; DIAG is checked at most every 5 min and uploads only when its signature changes. Successful/manual sends and server-side dedupe persist local SHA state. Manual report/AH buttons remain as fallback; no token keeps automatic sending dormant. Gameplay/user-flow validation is pending."
+    },
+    {
+      "id": "summon-switch-heartbeat-grace-v8",
+      "branch": "feature/summon-switch-heartbeat-grace-v8-clean",
+      "modules": [
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-local-logoutcomplete-v7"
+      ],
+      "shared_resources": [
+        "Local\\\\WoW112_SummonWorker_<PID> worker heartbeat",
+        "Updater manual/AUTO PREPARE state machine",
+        "WoW process liveness"
+      ],
+      "status": "in_progress",
+      "observed_head": "ac42590b89862b463e6def8fca90b7a1afcd98fb",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "inconclusive",
+          "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+          "date": "2026-10-02",
+          "evidence": "Report #86: worker A reached phase=2 SESSION_CHAR_SELECT at 4781ms and phase=3 ENTER_SLOT 2 at 5156ms; PREPARE then failed with 'Heartbeat workera zniknął' about 3s later. The existing updater considers every worker dead after 3000ms without heartbeat, even while WoW blocks the UI/timer thread during character loading."
+        }
+      ],
+      "package": null,
+      "notes": "Keep the normal worker heartbeat freshness at 3s. During PREPARE only, tolerate up to 30s stale heartbeat when the last snapshot is SWITCHING in CharacterSwitch phases 2/3/6/7 and the recorded WoW PID is still alive. This covers Glue/world loading pauses without masking an exited process. Overall PREPARE remains capped at 65s and explicit worker FAILED still aborts immediately. Apply in both manual PREPARE and AUTO coordinator paths."
     }
   ]
 }

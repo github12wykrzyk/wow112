@@ -43,6 +43,8 @@ namespace WoW112Updater
         private const int AutoLoginProfileMapSize = 32;
         private const int SummonPrepareTimeoutMs = 65000;
         private const int SummonClickTimeoutMs = 10000;
+        private const uint SummonWorkerHeartbeatMs = 3000u;
+        private const uint SummonWorkerSwitchHeartbeatGraceMs = 30000u;
         private bool summonCoordinatorBusy;
         private bool summonCoordinatorAutoTick;
         private System.Windows.Forms.Timer summonCoordinatorTimer;
@@ -491,7 +493,35 @@ namespace WoW112Updater
         {
             if (s == null || s.Heartbeat == 0) return false;
             var now = unchecked((uint)Environment.TickCount);
-            return unchecked(now - s.Heartbeat) <= 3000u;
+            return unchecked(now - s.Heartbeat) <= SummonWorkerHeartbeatMs;
+        }
+
+        private static bool SummonWorkerProcessAlive(uint pid)
+        {
+            if (pid == 0 || pid > int.MaxValue) return false;
+            try
+            {
+                using (var process = System.Diagnostics.Process.GetProcessById((int)pid))
+                    return !process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HeartbeatFreshForPrepare(SummonWorkerSnapshot s)
+        {
+            if (HeartbeatFresh(s)) return true;
+            if (s == null || s.Heartbeat == 0) return false;
+
+            var switchingPhase = s.State == 3 &&
+                (s.Phase == 2 || s.Phase == 3 || s.Phase == 6 || s.Phase == 7);
+            if (!switchingPhase) return false;
+
+            var now = unchecked((uint)Environment.TickCount);
+            var age = unchecked(now - s.Heartbeat);
+            return age <= SummonWorkerSwitchHeartbeatGraceMs && SummonWorkerProcessAlive(s.Pid);
         }
 
         private static string WorkerStateName(uint state)
@@ -849,7 +879,7 @@ namespace WoW112Updater
 
                             var a = workerA.Read();
                             var b = workerB.Read();
-                            if (!HeartbeatFresh(a) || !HeartbeatFresh(b))
+                            if (!HeartbeatFreshForPrepare(a) || !HeartbeatFreshForPrepare(b))
                             {
                                 warlock.SetFail(requestSeq);
                                 CoordinatorLog("request_id=" + requestId + " state=FAIL reason=worker-heartbeat");
@@ -1017,7 +1047,7 @@ namespace WoW112Updater
                     {
                         var aa = ca.Read();
                         var bb = cb.Read();
-                        if (!HeartbeatFresh(aa) || !HeartbeatFresh(bb))
+                        if (!HeartbeatFreshForPrepare(aa) || !HeartbeatFreshForPrepare(bb))
                             throw new InvalidOperationException("Heartbeat workera zniknął podczas PREPARE.");
 
                         var stateA = aa.State + "/" + aa.Phase + "/" + aa.AckSeq + "/" + aa.Error;
