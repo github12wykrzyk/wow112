@@ -775,6 +775,28 @@ static int install(void){
     }
     return 1;
 }
+/* Read-only in-process provider for consumers such as MarketWorker.
+ * No packet is sent and no service frame is touched by these exports. */
+__declspec(dllexport) u32 STDCALL W112_RSP_GetLearnedGuid(
+    u32 service,u32 *guidLo,u32 *guidHi,u32 *objectType,u32 *learnDist100)
+{
+    LearnedService *l;
+    if(service<1u||service>SERVICE_MAX)return 0u;
+    l=&g_learn[service];
+    if(!l->valid)return 0u;
+    if(guidLo)*guidLo=l->packet.guidLo;
+    if(guidHi)*guidHi=l->packet.guidHi;
+    if(objectType)*objectType=l->objectType;
+    if(learnDist100)*learnDist100=l->learnDist100;
+    return 1u;
+}
+__declspec(dllexport) u32 STDCALL W112_RSP_GetLearnedMask(void)
+{
+    u32 mask=0u,s;
+    for(s=1u;s<=SERVICE_MAX;s++)if(g_learn[s].valid)mask|=(1u<<(s-1u));
+    return mask;
+}
+
 static void uninstall(int terminating){
     u32 cur;
     g_installed=0u;
