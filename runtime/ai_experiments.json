@@ -4761,7 +4761,7 @@
       ],
       "status": "awaiting_game_test",
       "observed_head": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
-      "verified_commit": "5d1a12a49fe7c5eb76241e836fed6871154a2ef8",
+      "verified_commit": "c146cf5d342f999668d77af56ee95fb184e8e739",
       "tests": [
         {
           "kind": "ci",
