@@ -21,6 +21,7 @@ STATIC_GATES = [
     ["tools/verify_parallel_gui_contract.py"],
     ["tools/ai_experiments.py", "validate"],
     ["tools/verify_summonscout_lua_upvalues.py"],
+    ["tools/verify_target_aura_lazyscript_bridge.py"],
 ]
 
 def run(args):

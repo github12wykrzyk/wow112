@@ -365,7 +365,74 @@ end
 -- - the Tooltip title
 -- - a line found inside the body of the tooltip.
 --
+-- PARALLEL 5875 native hostile-target positive aura bridge.
+-- WoWTargetAuraReveal publishes all 32 positive UnitFields slots into
+-- W112NativeTargetBuffs. LazyScript checks this source before stock UnitBuff().
+local function W112NativeAuraTextureKey(texture)
+	if not texture then return nil end
+	local value = string.lower(texture)
+	local prefix = "interface\\icons\\"
+	if string.sub(value, 1, string.len(prefix)) == prefix then
+		value = string.sub(value, string.len(prefix) + 1)
+	end
+	return value
+end
+
+function lazyScript.masks.HasNativeTargetBuff(texture, ttTitle, ttBody, sayNothing)
+	local rows = W112NativeTargetBuffs
+	if (not rows) or rows.hostile ~= 1 then
+		return nil
+	end
+
+	local wantedTexture = W112NativeAuraTextureKey(texture)
+	for nativeIndex = 1, (rows.count or 0) do
+		local row = rows[nativeIndex]
+		if row then
+			local isMatch = true
+			if wantedTexture then
+				local nativeTexture = W112NativeAuraTextureKey(row.texture)
+				if nativeTexture ~= wantedTexture then
+					isMatch = false
+				end
+			end
+			if isMatch and ttTitle then
+				if (not row.name) or string.sub(row.name, 1, string.len(ttTitle)) ~= ttTitle then
+					isMatch = false
+				end
+			end
+			-- Current LazyScript positive-buff definitions do not use body text
+			-- to disambiguate target buffs; native spell name + icon are authoritative.
+			if isMatch then
+				if not sayNothing then
+					lazyScript.d("Native target buff: "..(row.name or "unknown").." spellId="..(row.spellId or 0))
+				end
+				return row.rawSlot + 1, row.applications or 1, row.spellId
+			end
+		end
+	end
+	return nil
+end
+
+function lazyScript.masks.GetNativeTargetBuffBySpellId(spellId)
+	local rows = W112NativeTargetBuffs
+	if not rows or rows.hostile ~= 1 or not rows.bySpell then return nil end
+	return rows.bySpell[tonumber(spellId)]
+end
+
+function lazyScript.masks.GetNativeTargetBuffByTitle(title)
+	local rows = W112NativeTargetBuffs
+	if not rows or rows.hostile ~= 1 or not rows.byName then return nil end
+	return rows.byName[title]
+end
+
 function lazyScript.masks.HasBuffOrDebuff(unitId, buffOrDebuff, texture, ttTitle, ttBody, sayNothing)
+	if unitId == "target" and buffOrDebuff == "buff" then
+		local nativeBuffId, nativeApplications = lazyScript.masks.HasNativeTargetBuff(texture, ttTitle, ttBody, sayNothing)
+		if nativeBuffId then
+			return nativeBuffId, nativeApplications
+		end
+	end
+
 	local buffId = 1
 
 	while true do

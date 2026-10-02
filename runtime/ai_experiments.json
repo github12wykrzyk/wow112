@@ -4484,24 +4484,28 @@
     },
     {
       "id": "target-aura-reveal-5875",
-      "branch": "feature/target-aura-reveal",
+      "branch": "feature/target-aura-lazyscript",
       "modules": [
-        "TargetAuraReveal"
+        "TargetAuraReveal",
+        "LazyScript"
       ],
       "dependencies": [],
       "shared_resources": [
         "WoW 1.12.1 build 5875 target GUID globals 0x00B4E2D8/0x00B4E2DC",
         "UnitFields aura slots: 32 positive + 16 negative",
+        "UnitFields auraApplications at +0x1AC",
         "client Spell.dbc / SpellIcon.dbc",
         "FrameScript_Execute 0x00704CD0",
-        "Blizzard TargetFrame MAX_TARGET_BUFFS / TargetFrameBuff1 anchor"
+        "Blizzard TargetFrame MAX_TARGET_BUFFS / TargetFrameBuff1 anchor",
+        "LazyScript ParseBuffs.lua HasBuffOrDebuff target-buff path",
+        "W112NativeTargetBuffs Lua bridge"
       ],
       "status": "awaiting_ci",
-      "observed_head": "a2ee73c09e7403239158cff8938b4ec12b093a23",
+      "observed_head": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "New isolated native companion based on current parallel HEAD. Reads hostile target positive aura slots, resolves locale-aware spell name/icon from client DBCs, and renders up to 32 TargetFrame-style buff icons while preserving stock debuffs and friendly-target stock buffs. Local direct clang/lld smoke produced PE32 i386 with no import directory; GitHub preflight/game behavior pending."
+      "notes": "Follow-up rebased onto current parallel. Native hostile target buffs are a first-class LazyScript input: DLL publishes target GUID words plus spellId, rawSlot, stack applications, locale-aware name/icon in W112NativeTargetBuffs; LazyScript target-buff masks consume native rows before stock UnitBuff and expose direct spellId/title lookup helpers. Exact-SHA preflight/gameplay pending."
     },
     {
       "id": "summon-switch-ui-fast-route-v4",
