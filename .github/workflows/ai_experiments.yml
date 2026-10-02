@@ -13,6 +13,16 @@ on:
       - 'tools/ai_experiments.py'
       - 'tools/test_ai_experiments.py'
       - '.github/workflows/ai_experiments.yml'
+      - 'AGENTS.md'
+      - 'AI_START_HERE.md'
+      - 'AI_INDEX.json'
+      - 'CURRENT.json'
+      - 'runtime/current.json'
+      - 'runtime/ai_startup_snapshot.json'
+      - 'tools/ai_startup_snapshot.py'
+      - 'tools/test_ai_startup_snapshot.py'
+      - 'PROJECT_INSTRUCTIONS.md'
+      - 'docs/AI_EXPERIMENTS.md'
   pull_request:
     branches:
       - main
@@ -24,6 +34,16 @@ on:
       - 'tools/ai_experiments.py'
       - 'tools/test_ai_experiments.py'
       - '.github/workflows/ai_experiments.yml'
+      - 'AGENTS.md'
+      - 'AI_START_HERE.md'
+      - 'AI_INDEX.json'
+      - 'CURRENT.json'
+      - 'runtime/current.json'
+      - 'runtime/ai_startup_snapshot.json'
+      - 'tools/ai_startup_snapshot.py'
+      - 'tools/test_ai_startup_snapshot.py'
+      - 'PROJECT_INSTRUCTIONS.md'
+      - 'docs/AI_EXPERIMENTS.md'
   workflow_dispatch:
 
 permissions:
@@ -43,8 +63,10 @@ jobs:
         run: python3 tools/ai_experiments.py validate
       - name: Verify compact experiment routing index
         run: python3 tools/ai_experiments.py index --check
-      - name: Test branch routing and test evidence
-        run: python3 -m unittest discover -s tools -p 'test_ai_experiments.py' -v
+      - name: Verify compact startup snapshot
+        run: python3 tools/ai_startup_snapshot.py --check
+      - name: Test AI routing and startup projections
+        run: python3 -m unittest discover -s tools -p 'test_ai_*.py' -v
       - name: Verify current runtime references
         run: python3 tools/verify_current.py
       - name: Verify recoverable runtime artifacts

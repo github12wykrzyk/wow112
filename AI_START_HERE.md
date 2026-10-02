@@ -4,7 +4,11 @@ This repository is optimized for repeated AI-assisted development of **World of 
 
 `AGENTS.md` is the operating contract. This file is the fast routing entrypoint after that contract has been read.
 
-## Read order for every task
+## Startup read path
+
+For ordinary non-promotion work, first read `runtime/ai_startup_snapshot.json` and verify its five `git_blob_sha1` identities against Git tree metadata from the live selected-branch HEAD. If all match, continue with `runtime/ai_experiment_index.json` and only the affected module.
+
+Fail closed to the full canonical order when the snapshot is missing/stale/unverifiable, when editing startup-contract files, during stable promotion, recovery after unknown state, or when authority is ambiguous:
 
 1. `AGENTS.md`
 2. `AI_START_HERE.md`
@@ -35,7 +39,7 @@ Default latency path: batch the mandatory startup reads, make one focused atomic
 
 ## Experiment routing
 
-After mandatory startup inspect the compact `runtime/ai_experiment_index.json` first, then relevant live branch heads and module/dependency ownership. It is generated from `runtime/ai_experiments.json` and intentionally omits heavy notes/test evidence; read the full ledger only when compact routing is insufficient or evidence must be updated. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing and `python tools/ai_experiments.py index --check` verifies the fast index. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
+After verified startup context inspect the compact `runtime/ai_experiment_index.json` first, then relevant live branch heads and module/dependency ownership. It is generated from `runtime/ai_experiments.json` and intentionally omits heavy notes/test evidence; read the full ledger only when compact routing is insufficient or evidence must be updated. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing and `python tools/ai_experiments.py index --check` verifies the fast index. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
 
 ## Fast TEST path
 

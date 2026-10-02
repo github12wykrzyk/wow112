@@ -4,9 +4,20 @@ This repository is operated primarily by AI agents. The human user should not be
 
 Target is permanently **World of Warcraft 1.12.1 build 5875, Windows x86** unless the user explicitly requests a comparison.
 
-## 1. Mandatory startup sequence
+## 1. Startup sequence
 
-Before editing anything, read in this order:
+### Verified fast path — default for ordinary tasks
+
+For ordinary diagnosis/implementation on `work`, `parallel` or `feature/**` that does not modify startup-contract files and is not a stable promotion or recovery from unknown state:
+
+1. Read `runtime/ai_startup_snapshot.json`.
+2. Resolve the live selected-branch HEAD and compare every `source_files[*].git_blob_sha1` in the snapshot with Git tree metadata from that **same HEAD**. This identity check must not rely on chat memory or the snapshot's own claims.
+3. If all five canonical startup-source blobs match, the verified snapshot satisfies the startup-context read. Then read `runtime/ai_experiment_index.json`, inspect relevant live branch refs, and open only the required module files.
+4. The snapshot is a generated cache only. Live GitHub refs and the canonical files remain authoritative.
+
+### Full startup fallback — fail closed
+
+Read these files in order whenever the snapshot is missing, stale, unverifiable, or the task falls outside the fast path:
 
 1. `AGENTS.md`
 2. `AI_START_HERE.md`
@@ -15,7 +26,7 @@ Before editing anything, read in this order:
 5. `runtime/current.json`
 6. only the source/evidence needed for the affected module.
 
-Do not reconstruct current state from chat history, old ZIP names, archives, or historical baselines when current GitHub metadata exists.
+Full startup is mandatory for stable promotion, changes to any of the five startup-source files or the startup snapshot/generator, recovery after an unknown/ambiguous write or transport failure, and authority/branch ambiguity that the snapshot cannot resolve. Do not reconstruct current state from chat history, old ZIP names, archives, or historical baselines when current GitHub metadata exists.
 
 ## 2. Authority and routing
 
@@ -225,7 +236,7 @@ A ChatGPT message-stream failure is **not evidence** that a GitHub write, build,
 
 ### Short, durable transaction boundaries
 
-- Read the mandatory five entrypoint files in order, then fetch only the affected module and minimal relevant workflow data. Prefer bounded file slices and compact summaries of CI/API results; never dump an entire workflow-run collection or large source tree into the conversation without a specific need.
+- Use the verified startup snapshot fast path when eligible; otherwise read the mandatory five entrypoint files in order. Then fetch only the affected module and minimal relevant workflow data. Prefer bounded file slices and compact summaries of CI/API results; never dump an entire workflow-run collection or large source tree into the conversation without a specific need.
 - Before each write, identify target branch, current branch HEAD, affected paths, and whether the intended change is already present. One logical change uses one commit, with a descriptive message and no unrelated file edits.
 - After the GitHub write, confirm the resulting branch HEAD/commit before moving on. Then inspect the workflow for **that exact SHA** and verify the final candidate/artifact as required; distinguish `queued`, `running`, `failed`, `passed`, and `not checked`. Never declare success or offer a runnable build merely because a write was attempted.
 - Report a compact durable checkpoint after a confirmed operation when useful: branch, short commit SHA, what changed, verification/build status, and artifact link only if verified. Do not paste large logs unless diagnosing a failure.
@@ -278,7 +289,7 @@ AI may independently search the **entire publicly accessible internet** for tech
 
 Research discipline:
 
-1. Read the five mandatory repository entrypoints first, then narrow the question to the affected module, observed behavior, and exact client/build. Public internet research **supplements**, never replaces, the current repository's authority for active paths, binaries, branch state, and provenance.
+1. Establish startup context through the verified snapshot fast path when eligible, otherwise read the five canonical repository entrypoints; then narrow the question to the affected module, observed behavior, and exact client/build. Public internet research **supplements**, never replaces, the current repository's authority for active paths, binaries, branch state, and provenance.
 2. Search targeted terms, symptoms, symbols, API signatures, and historical references. Broaden to other projects, mirrors, languages, and archived discussions when initial sources are inconclusive. Do not bulk-copy or scan unrelated material merely because research is permitted.
 3. Treat external code and claims as hypotheses, not as proof that a feature exists in **WoW 1.12.1 build 5875 / Windows x86**. Identify client vs server logic and version differences; never transplant offsets, structures, opcodes, spell data, hooks, APIs, or TBC/Wrath/Retail behavior without exact-build validation.
 4. Validate relevant discoveries against canonical current source, exact binary evidence, reproducible experiments, disassembly, diffs, or in-game results. Explicitly mark unsupported assumptions, remaining uncertainty, and any exact-build evidence that is missing; select a safer compatible approach rather than guessing.
@@ -290,7 +301,7 @@ Internet research is an available **problem-solving tool**, not a mandatory dela
 
 ## 16. Experiment routing, integration and evidence ledger
 
-- After the five mandatory entrypoints, read `runtime/ai_experiment_index.json` **before module source** when choosing a branch. It is a compact generated projection of the authoritative ledger and exists specifically to expose module -> experiment -> branch/status/SHA routing without loading the large evidence payload. Use it to identify existing feature branches first; then query live GitHub HEADs. Read the full `runtime/ai_experiments.json` only when the compact fields are insufficient or when recording/updating evidence. `python tools/ai_experiments.py index --check` must prove the projection is current; never hand-edit the generated index.
+- After verified startup context (snapshot fast path or full fallback), read `runtime/ai_experiment_index.json` **before module source** when choosing a branch. It is a compact generated projection of the authoritative ledger and exists specifically to expose module -> experiment -> branch/status/SHA routing without loading the large evidence payload. Use it to identify existing feature branches first; then query live GitHub HEADs. Read the full `runtime/ai_experiments.json` only when the compact fields are insufficient or when recording/updating evidence. `python tools/ai_experiments.py index --check` must prove the projection is current; never hand-edit the generated index.
 - `runtime/ai_experiments.json` remains the authoritative routing/evidence ledger, not a live Git ref, runtime manifest, binary inventory, or proof that a test passed. `tools/ai_experiments.py validate` checks its structure; `route --module <Module> [--branch parallel]` provides non-mutating advice. Query GitHub for the real branch HEAD and current files before every write.
 - New feature: determine the owner of the mechanism, not merely the matching DLL filename. Inspect active modules, source lineage, loader order, hook addresses, shared ABI and known dependency registries (notably `runtime/parallel_dependency_registry.json` on `parallel`). A related existing experiment may be continued only on its own branch. For independent or colliding work, create `feature/<short-purpose>` from the appropriate up-to-date verified development SHA; do not create permanent per-DLL branches. A set of cooperating DLLs is one experiment.
 - For each experiment record goal, branch, affected module names, dependencies and shared resources, lifecycle status, observed HEAD snapshot, exact-SHA verified/test evidence and verified package ID when known. Unverified or unreported outcomes remain null/unknown. Record user-reported game results only against the exact tested candidate SHA, with provenance; one passing module test does not accept an entire branch.

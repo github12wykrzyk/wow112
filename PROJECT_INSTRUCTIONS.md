@@ -4,9 +4,11 @@ Project scope is permanently **World of Warcraft 1.12.1 build 5875, Windows x86*
 
 This document is intentionally short. `AGENTS.md` is the authoritative operating contract; do not maintain a competing copy of the workflow here.
 
-## Mandatory startup
+## Startup
 
-Read:
+For ordinary non-promotion tasks, use the verified fast path: read `runtime/ai_startup_snapshot.json`, compare its five Git blob identities against tree metadata from the same live branch HEAD, then read `runtime/ai_experiment_index.json` and only the required module files.
+
+If the snapshot is missing/stale/unverifiable, startup files are being edited, stable promotion is involved, recovery state is ambiguous, or authority cannot be resolved, read the full canonical sequence:
 
 1. `AGENTS.md`
 2. `AI_START_HERE.md`
@@ -14,7 +16,7 @@ Read:
 4. `CURRENT.json`
 5. `runtime/current.json`
 
-Then open only the files needed for the requested module.
+The snapshot is generated cache only; it never replaces canonical authority.
 
 ## Canonical state
 

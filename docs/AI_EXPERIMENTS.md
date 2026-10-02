@@ -1,6 +1,6 @@
 # AI experiment lifecycle and GitHub recovery
 
-Read AGENTS.md, AI_START_HERE.md, AI_INDEX.json, CURRENT.json and runtime/current.json **in that order**. For routing, read the generated compact `runtime/ai_experiment_index.json` next and inspect relevant live branch refs **before opening module source**. The authoritative evidence ledger remains `runtime/ai_experiments.json`; load it only when compact routing is insufficient or evidence must be changed. Neither file is live HEAD, accepted binary identity or gameplay proof.
+For ordinary non-promotion work, first verify `runtime/ai_startup_snapshot.json` against the five canonical startup-source Git blob identities at the same live branch HEAD; when valid, it satisfies startup context. Fall back to AGENTS.md, AI_START_HERE.md, AI_INDEX.json, CURRENT.json and runtime/current.json **in that order** for promotion, startup-contract edits, recovery/ambiguity, or any snapshot mismatch. For routing, read the generated compact `runtime/ai_experiment_index.json` next and inspect relevant live branch refs **before opening module source**. The authoritative evidence ledger remains `runtime/ai_experiments.json`; load it only when compact routing is insufficient or evidence must be changed. Neither file is live HEAD, accepted binary identity or gameplay proof.
 
 ## Route and create experiments
 
