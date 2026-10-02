@@ -4954,6 +4954,41 @@
         "artifact_id": 11228425705
       },
       "notes": "Integrated to parallel after exact feature preflight and updater x86 build. The reporter no longer downloads up to 100 full open Issues for dedupe; it uses a bounded GitHub issue-title search and a 32 MiB serializer ceiling as a secondary guard. With an already stored report token and updater left open, AH state is checked every 60 s and uploads only when the Aux market content SHA changes; DIAG is checked at most every 5 min and uploads only when its signature changes. Successful/manual sends and server-side dedupe persist local SHA state. Manual report/AH buttons remain as fallback; no token keeps automatic sending dormant. Gameplay/user-flow validation is pending."
+    },
+    {
+      "id": "ah-owner-history-speed-v1",
+      "branch": "feature/ah-owner-history-speed-v1",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-owner-scan-arbitration-v1",
+        "ah-resume-transaction-race-v1",
+        "ah-history-age-diag-v1",
+        "updater-auto-report-stream-v1"
+      ],
+      "shared_resources": [
+        "aux.core.scan list/owner state machines",
+        "GetOwnerAuctionItems / AUCTION_OWNED_LIST_UPDATE",
+        "AUXFAST list-scan resume/restart occupancy",
+        "AUX_ARB pause/revalidate/buy/continuation lifecycle",
+        "AUX purchaseHistory and upstream aux.core.history"
+      ],
+      "status": "in_progress",
+      "observed_head": "ac42590b89862b463e6def8fca90b7a1afcd98fb",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
+          "date": "2026-10-02",
+          "evidence": "User screenshot plus report #85 identify the installed parallel candidate and show post-purchase continuation repeatedly deferred as bridge-busy until fallback, after which scanning stalls. The same user test reports Purchases buying is restored, native Auctions becomes empty again, and the earlier very fast scan cadence is gone."
+        }
+      ],
+      "package": null,
+      "notes": "Superseding AH follow-up on current parallel. Fixes native Auctions arbitration at the actual aux.tabs.auctions module environment (the prior write to require()'s read-only export proxy was inert); separates original Search list occupancy from independent owner/bidder scans so a native owner scan cannot poison AUXFAST resume/restart; reuses the just-consumed source page for mid-scan vendor revalidation instead of issuing a redundant server query; migrates only the old 2.0s automatic loop gap to the supported 0.5s floor; and snapshots upstream AUX historical unit value/days on each newly confirmed purchase so Purchases can show Paid as Hist%. Existing purchase confirmation, economics, DE/flip validation and native query/response correlation remain unchanged."
     }
   ]
 }

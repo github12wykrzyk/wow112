@@ -1,4 +1,4 @@
--- AuxFastBridge v3.5 service-handoff pause; upvalue-safe headless state; resumable busy-race diagnostics
+-- AuxFastBridge v3.6 list/owner busy separation; service-handoff pause; upvalue-safe headless state
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -23,6 +23,36 @@ local okSearchTab, searchTab = pcall(require, "aux.tabs.search")
 local auxCore = require "aux"
 
 local busy = 0
+
+-- "busy" intentionally remains the all-AUX-scan counter used by service handoff.
+-- Search continuation must not be blocked by an independent owner/bidder scan,
+-- because aux.core.scan keeps separate state machines per query type. Keep the
+-- list occupancy in global runtime state so M.start does not capture another
+-- file-scope upvalue (WoW 1.12 Lua has the 32-upvalue ceiling noted above).
+AUXFAST_RUNTIME = AUXFAST_RUNTIME or {}
+AUXFAST_RUNTIME.searchBusy = 0
+
+function AUXFAST_SearchBusy()
+	return tonumber(AUXFAST_RUNTIME.searchBusy) or 0
+end
+
+function AUXFAST_SearchScanEnter(scanType)
+	if scanType == "list" then
+		AUXFAST_RUNTIME.searchBusy = AUXFAST_SearchBusy() + 1
+	end
+end
+
+function AUXFAST_SearchScanLeave(scanType)
+	if scanType ~= "list" then return end
+	local n = AUXFAST_SearchBusy() - 1
+	if n < 0 then n = 0 end
+	AUXFAST_RUNTIME.searchBusy = n
+end
+
+function AUXFAST_IsSearchBusy()
+	return AUXFAST_SearchBusy() > 0
+end
+
 local startedAt = 0
 local hookInstalled = false
 
@@ -208,6 +238,8 @@ end
 function AUXFAST_Status()
 	return {
 		busy = busy > 0,
+		searchBusy = AUXFAST_SearchBusy() > 0,
+		searchBusyCount = AUXFAST_SearchBusy(),
 		uiEvents = uiEvents,
 		bypassChecks = bypassChecks,
 		queryCount = queryCount,
@@ -347,6 +379,7 @@ local function install_scan_hook()
 		local function release()
 			if released then return end
 			released = true
+			AUXFAST_SearchScanLeave(params.type)
 			if busy > 0 then busy = busy - 1 end
 			if busy == 0 then
 				AuxFastBridgeDB.lastUiEvents = uiEvents
@@ -416,6 +449,7 @@ local function install_scan_hook()
 		end
 
 		busy = busy + 1
+		AUXFAST_SearchScanEnter(params.type)
 		if fullSearchScan then detach_blizzard_browse() end
 		return originalStart(params)
 	end
@@ -555,9 +589,9 @@ function AUXFAST_ResumeSearch()
 		out("RESUME_SUPPRESSED reason=hard-stop source=resume")
 		return false, "hard-stop"
 	end
-	if busy > 0 then
-		out("resume deferred: original AUX scan is still busy")
-		return false, "bridge-busy"
+	if AUXFAST_SearchBusy() > 0 then
+		out("resume deferred: original AUX Search scan is still busy")
+		return false, "search-busy"
 	end
 	if not okSearchTab or not searchTab or not searchTab.execute then
 		out("resume failed: aux.tabs.search unavailable")
@@ -580,6 +614,12 @@ function AUXFAST_ResumeSearch()
 		out("resume failed: " .. tostring(err))
 		return false, "execute:" .. tostring(err)
 	end
+	if AUXFAST_SearchBusy() <= 0 then
+		resumeRequested = false
+		AUXFAST_ClearHeadlessArm()
+		out("resume did not start a Search (check current AUX filter)")
+		return false, "no-search"
+	end
 	out("resumed AVM search continuation headless")
 	return true, "ok"
 end
@@ -589,8 +629,8 @@ function AUXFAST_RestartSearch()
 		out("RESUME_SUPPRESSED reason=hard-stop source=restart")
 		return false
 	end
-	if busy > 0 then
-		out("restart deferred: original AUX scan is still busy")
+	if AUXFAST_SearchBusy() > 0 then
+		out("restart deferred: original AUX Search scan is still busy")
 		return false
 	end
 	if avm_busy() then
@@ -617,7 +657,7 @@ function AUXFAST_RestartSearch()
 		out("restart failed: " .. tostring(err))
 		return false
 	end
-	if busy <= 0 then
+	if AUXFAST_SearchBusy() <= 0 then
 		AUXFAST_ClearHeadlessArm()
 		out("restart did not start a Search (check current AUX filter)")
 		return false
@@ -676,4 +716,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AuxFastBridgeDB.lastHeadlessRecords or 0))
 end
 
-out("v3.5 loaded: safe MarketWorker service handoff + upvalue-safe headless resume; hook=" .. tostring(hookInstalled))
+out("v3.6 loaded: list/owner busy separation + safe service handoff + headless resume; hook=" .. tostring(hookInstalled))

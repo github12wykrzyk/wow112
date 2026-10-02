@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Fast AUX bridge; upvalue-safe headless routing with resumable busy-race diagnostics; no reload path.
+## Notes: Fast AUX bridge; list/owner busy separation, transaction-safe headless resume, no reload path.
 ## Author: github12wykrzyk/wow112
-## Version: 3.4
+## Version: 3.6
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB

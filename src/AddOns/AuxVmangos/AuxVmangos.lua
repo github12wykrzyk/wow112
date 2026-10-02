@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.39-resume-transaction-racefix"
+AVM_VERSION = "0.40-owner-history-fastresume"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -396,6 +396,43 @@ local function avm_purchase_source(c, route)
 	return ""
 end
 
+local function avm_purchase_history_snapshot(c, buyout, count)
+	if not c then return "", 0, 0, 0 end
+	local itemId = tonumber(c.itemId or c.item_id) or 0
+	local key = tostring(c.historyKey or "")
+	if key == "" and itemId > 0 then
+		local suffix = 0
+		local itemKey = tostring(c.itemKey or "")
+		local _,_,suffixText = string.find(itemKey, "^item:%d+:%-?%d+:(%-?%d+)")
+		if suffixText then suffix = tonumber(suffixText) or 0 end
+		key = tostring(itemId) .. ":" .. tostring(suffix)
+	end
+
+	local value = tonumber(c.flipHistoryValue or c.stackHistoryValue or c.historyValue) or 0
+	local days = tonumber(c.flipHistoryDays or c.stackHistoryDays or c.historyDays) or 0
+	if key ~= "" and AVM_AUX_HISTORY_OK and AVM_AUX_HISTORY then
+		if value <= 0 and AVM_AUX_HISTORY.value then
+			local ok, v = pcall(AVM_AUX_HISTORY.value, key)
+			if ok then value = tonumber(v) or 0 end
+		end
+		if days <= 0 and AVM_AUX_HISTORY.data_points then
+			local ok, points = pcall(AVM_AUX_HISTORY.data_points, key)
+			if ok and type(points) == "table" then days = table.getn(points) end
+		end
+	end
+
+	local pct = 0
+	count = tonumber(count) or 0
+	buyout = tonumber(buyout) or 0
+	-- AUX history.value can fall back to today's minimum. Hist% is intentionally
+	-- shown only after at least one closed daily point exists.
+	if value > 0 and days > 0 and count > 0 then
+		local paidUnit = buyout / count
+		pct = math.floor((paidUnit * 10000 / value) + 0.5) / 100
+	end
+	return key, math.floor(value), days, pct
+end
+
 function AVM_RecordPurchase(c, confirmation)
 	if not AVM_DB or not c then return end
 	if not AVM_DB.purchaseHistory then AVM_DB.purchaseHistory = {} end
@@ -406,6 +443,9 @@ function AVM_RecordPurchase(c, confirmation)
 	local buyout = tonumber(c.buyout) or 0
 	local value = tonumber(c.valuationTotal or c.vendorTotal or c.deValue) or 0
 	local profit = tonumber(c.profit) or (value - buyout)
+	local count = tonumber(c.count or c.aux_quantity) or 0
+	local historyKey, historyValue, historyDays, historyPct =
+		avm_purchase_history_snapshot(c, buyout, count)
 	local stamp = tostring(math.floor(GetTime() or 0))
 	if type(date) == "function" then stamp = date("%Y-%m-%d %H:%M:%S") end
 
@@ -416,10 +456,14 @@ function AVM_RecordPurchase(c, confirmation)
 		route = route,
 		name = tostring(c.name or ""),
 		itemId = tonumber(c.itemId or c.item_id) or 0,
-		count = tonumber(c.count or c.aux_quantity) or 0,
+		count = count,
 		buyout = buyout,
 		value = value,
 		profit = profit,
+		historyKey = historyKey,
+		historyValue = historyValue,
+		historyDays = historyDays,
+		historyPct = historyPct,
 		vendorUnit = tonumber(c.vendorUnit) or 0,
 		vendorTotal = tonumber(c.vendorTotal) or 0,
 		disenchantId = tonumber(c.disenchantId) or 0,
@@ -556,7 +600,7 @@ local function avm_defaults()
 	-- Full MARKET is manual-only. Legacy SavedVariables are forcibly inert on every defaults pass.
 	AVM_DB.marketAutoMinutes = 0
 	AVM_DB.auxLoopMarketEnabled = false
-	if AVM_DB.auxLoopDelaySeconds == nil then AVM_DB.auxLoopDelaySeconds = 2 end
+	if AVM_DB.auxLoopDelaySeconds == nil then AVM_DB.auxLoopDelaySeconds = 0.5 end
 	if AVM_DB.vendorMinProfit == nil then AVM_DB.vendorMinProfit = 1 end
 	if AVM_DB.vendorMaxBuyout == nil then AVM_DB.vendorMaxBuyout = 50000 end
 	if AVM_DB.vendorMaxPages == nil then AVM_DB.vendorMaxPages = 10 end -- legacy alias for HOT pages
@@ -633,7 +677,7 @@ local function avm_defaults()
 		AVM_DB.auxLoopEnabled = true
 		AVM_DB.auxLoopMarketEnabled = false
 		AVM_DB.marketAutoMinutes = 0
-		AVM_DB.auxLoopDelaySeconds = 2
+		AVM_DB.auxLoopDelaySeconds = 0.5
 		AVM_DB.maxSessionSpend = 0
 		AVM_DB.maxSessionBuys = 0
 		AVM_DB.vendorMinProfit = 1
@@ -657,6 +701,12 @@ local function avm_defaults()
 			AVM_DB.vendorMinProfit = 1
 		end
 		AVM_DB.zeroConfigAhSchema = 2
+	end
+	if AVM_DB.auxLoopFastGapSchema == nil then
+		-- The native bridge keeps the real query/response gate authoritative. Migrate
+		-- only the previous stock 2s inter-cycle pause; preserve explicit custom gaps.
+		if tonumber(AVM_DB.auxLoopDelaySeconds) == 2 then AVM_DB.auxLoopDelaySeconds = 0.5 end
+		AVM_DB.auxLoopFastGapSchema = 1
 	end
 end
 
@@ -3975,6 +4025,18 @@ function AVM_AuxArbPaused(page)
 	AVM_VendorDiagLifecycle("PAUSED", AVM.candidate, "revalidate")
 	avm_prepare_revalidate(AVM.candidate)
 	AVM.phase = "REVALIDATE"
+	-- Vendor hits are selected only after the whole source page has been consumed,
+	-- and AuxFastBridge aborts before submitting the next page. The loaded list is
+	-- therefore still the authoritative source page here: reuse it immediately
+	-- instead of issuing a redundant requery before PlaceAuctionBid.
+	if AVM.candidate.mode == "auxarb_vendor" and
+	   tonumber(page) == tonumber(AVM.candidate.sourcePage) then
+		AVM.nextQueryAt = 0
+		avm_print("AUX_ARB_PAUSED page=" .. tostring(page) ..
+			" revalidate=current-page")
+		avm_revalidate_candidate()
+		return
+	end
 	AVM.nextQueryAt = GetTime() + 0.05
 	avm_print("AUX_ARB_PAUSED page=" .. tostring(page) ..
 		" revalidatePage=" .. tostring(AVM.candidate.sourcePage))

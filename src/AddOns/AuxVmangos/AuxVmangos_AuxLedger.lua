@@ -356,7 +356,10 @@ local function install_auctions_summary()
 	if not env or env.AVM_PROFIT_LOSS_SUMMARY_HOOK then return end
 	env.AVM_PROFIT_LOSS_SUMMARY_HOOK=true
 
-	local originalScan=auctions.scan_auctions
+	-- require() exposes a read-only export proxy in upstream AUX. Replacing
+	-- auctions.scan_auctions is silently ignored; patch the real module environment
+	-- so tab.OPEN/Refresh actually pass through the owner-scan arbitration.
+	local originalScan=env.scan_auctions or auctions.scan_auctions
 	local originalUpdate=env.update_listing
 	local queuedNativeScan=false
 	local waiter=CreateFrame('Frame','AuxVmangosOwnerScanArbitration')
@@ -374,7 +377,7 @@ local function install_auctions_summary()
 		originalScan()
 	end
 
-	auctions.scan_auctions=function()
+	env.scan_auctions=function()
 		local exposureActive=AVM_OWNER_SCAN_BRIDGE and AVM_OWNER_SCAN_BRIDGE.IsExposureActive and AVM_OWNER_SCAN_BRIDGE.IsExposureActive()
 		if exposureActive then
 			queuedNativeScan=true

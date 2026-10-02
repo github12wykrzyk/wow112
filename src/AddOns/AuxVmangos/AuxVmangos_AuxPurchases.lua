@@ -104,13 +104,14 @@ panel:SetPoint('BOTTOMRIGHT', aux.frame.content, 'BOTTOMRIGHT', 0, 0)
 
 local history = listing_lib.new(panel)
 history:SetColInfo{
-	{name='Time',width=.11,align='CENTER'},
-	{name='Route',width=.09,align='CENTER'},
-	{name='Item',width=.30,align='LEFT'},
+	{name='Time',width=.10,align='CENTER'},
+	{name='Route',width=.08,align='CENTER'},
+	{name='Item',width=.26,align='LEFT'},
 	{name='Qty',width=.05,align='CENTER'},
-	{name='Paid',width=.12,align='RIGHT'},
-	{name='Value',width=.12,align='RIGHT'},
-	{name='Profit',width=.12,align='RIGHT'},
+	{name='Paid',width=.11,align='RIGHT'},
+	{name='Hist%',width=.09,align='RIGHT'},
+	{name='Value',width=.11,align='RIGHT'},
+	{name='Profit',width=.11,align='RIGHT'},
 	{name='Source',width=.09,align='CENTER'},
 }
 
@@ -141,12 +142,20 @@ local function short_time(v)
 	return v
 end
 
+local function history_pct_text(h)
+	local pct=tonumber(h and h.historyPct) or 0
+	local days=tonumber(h and h.historyDays) or 0
+	if pct<=0 or days<=0 then return '' end
+	return string.format('%.1f%%',pct)
+end
+
 local sortSpecs={
 	{label='Time',key='seq',numeric=true,defaultDescending=true},
 	{label='Route',key='route'},
 	{label='Item',key='name'},
 	{label='Qty',key='count',numeric=true,defaultDescending=true},
 	{label='Paid',key='buyout',numeric=true,defaultDescending=true},
+	{label='Hist%',key='historyPct',numeric=true,defaultDescending=true},
 	{label='Value',key='value',numeric=true,defaultDescending=true},
 	{label='Profit',key='profit',numeric=true,defaultDescending=true},
 	{label='Source',key='source'},
@@ -177,6 +186,7 @@ local function refresh_history(force)
 			T.map('value',tostring(h.name or '')),
 			T.map('value',tostring(h.count or 0)),
 			T.map('value',money.to_string(tonumber(h.buyout) or 0,true,true)),
+			T.map('value',history_pct_text(h)),
 			T.map('value',money.to_string(tonumber(h.value) or 0,true,true)),
 			T.map('value',money.to_string(tonumber(h.profit) or 0,true,true)),
 			T.map('value',tostring(h.source or ''))
