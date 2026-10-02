@@ -3787,7 +3787,7 @@
         "commit": "25506a93a9d2d058832f4e1f71e1dcc6b4f98423",
         "artifact_id": 11212057813
       },
-      "notes": "User correlates severe slowdown with visible Search result rows: the fast automated scan shows no item list, while the slow subsequent scan renders items. Pinned upstream AUX appends up to 2000 records in on_auction and calls search.table:SetDatabase() after every page. Candidate retires reload-per-scan, keeps all AVM cycles in-process, and explicitly arms headless mode for both AUXFAST_RestartSearch and AUXFAST_ResumeSearch so no automated scan can fall back into visible row insertion/SetDatabase. Manual Search clicks remain normal and visible. Gameplay must verify 10+ automatic cycles stay row-free and smooth. CI/package gates pass. Required gameplay test: at least 10 consecutive automatic scans with no visible Search item rows during automation and no progressive FPS degradation; manual Search should still populate visible results."
+      "notes": "User correlates severe slowdown with visible Search result rows: the fast automated scan shows no item list, while the slow subsequent scan renders items. Pinned upstream AUX appends up to 2000 records in on_auction and calls search.table:SetDatabase() after every page. Candidate retires reload-per-scan, keeps all AVM cycles in-process, and explicitly arms headless mode for both AUXFAST_RestartSearch and AUXFAST_ResumeSearch so no automated scan can fall back into visible row insertion/SetDatabase. Manual Search clicks remain normal and visible. Gameplay must verify 10+ automatic cycles stay row-free and smooth. CI/package gates pass. Required gameplay test: at least 10 consecutive automatic scans with no visible Search item rows during automation and no progressive FPS degradation; manual Search should still populate visible results. Follow-up user report says the running client still attempted reload instead of starting the next headless pass. Exact installed SHA was not independently established. The next candidate removes the entire reload implementation rather than relying on disabled flags."
     },
     {
       "id": "summon-role-nonlow-first-v2",
@@ -3860,6 +3860,29 @@
         "artifact_id": 11212526651
       },
       "notes": "Integrated generic terrain Tele E UI guard. Vanilla 1.12.1 UIParent panel manager (left/center/doublewide/fullscreen) blocks terrain E while major interaction panels are open, automatically covering MailFrame and AuctionFrame/AUX without per-window exceptions. Existing WorldMap E map-tele is evaluated first and remains intentional. External exact-interface evidence: MOUZU/Blizzard-WoW-Interface 1.12.1 FrameXML/UIParent.lua. Gameplay validation pending."
+    },
+    {
+      "id": "ah-remove-reload-code",
+      "branch": "feature/ah-remove-reload-code",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-auto-headless-all-scans"
+      ],
+      "shared_resources": [
+        "AVM continuous loop continuation",
+        "AUXFAST_RestartSearch",
+        "AUXFAST_ResumeSearch",
+        "legacy reload SavedVariables"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "8425d9267201cc00f2a8271b4c6c4551c82518b8",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User reports reload is still being attempted after a scan. Although 0.27 disabled reload by configuration, obsolete reload scheduler/trigger/restore code still existed in the active Lua. Candidate physically removes all executable reload code from AuxVmangos and reload helpers from AuxFastBridge. Legacy SavedVariables are only cleared. After a scan, the only AVM continuation path is in-process AUXFAST_RestartSearch; transaction continuation uses AUXFAST_ResumeSearch. Both are headless. If an already-running client has older Lua loaded in memory, it must load the updated addon code before this behavior can change."
     }
   ]
 }

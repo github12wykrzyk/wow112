@@ -1,3 +1,7 @@
+# AuxVmangos 0.27.1 — reload path physically removed
+
+The previous reload experiments are no longer merely disabled: their scheduler state, chat/console trigger, restore snapshot, OnUpdate handling and login/AH restore logic have been removed from active Lua. Continuous AVM automation can only continue in-process through the normal loop and AuxFastBridge headless restart/resume path. Legacy reload SavedVariables are cleared on load but cannot trigger anything.
+
 # AuxVmangos 0.27 — automatic scans always headless
 
 The reload-per-scan experiment is retired. Continuous AVM automation now stays in-process and relies on AuxFastBridge 3.0 to suppress **all automated AUX Search result rendering**, including restarts and resumes after guarded transactions. Automatic scans still feed every auction/page into vendor, disenchant, flip, revalidation and purchase logic, but they do not append rows to the visible AUX Search list and do not trigger upstream per-page `search.table:SetDatabase()` rebuild/sort work. Manual AUX Search remains normal and visible.

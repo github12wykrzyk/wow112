@@ -1,5 +1,7 @@
 # Aux FAST Bridge
 
+Version 3.1 physically removes the obsolete UI-reload helpers. AVM automation has only two continuation mechanisms now: headless restart from page 0 and headless resume after a guarded transaction. Manual AUX Search remains the only path that populates visible Search rows.
+
 Version 3.0 makes **every AVM-driven Search restart and resume headless**, including continuation after a guarded DE/flip/vendor transaction. The automatic path no longer calls upstream Search's visible-result `on_auction` callback and no longer calls its per-page `search.table:SetDatabase()` callback. Fresh rows still reach all AVM arbitrage callbacks and native response correlation. A user clicking AUX Search manually does not set the automation flag, so manual searches still populate the normal visible item list.
 
 Version 2.9 added the now-retired controlled UI-reload experiment for the continuous AH loop. Immediately before ReloadUI the bridge temporarily removes only AUX's frame OnHide handler, preventing AUX from calling CloseAuctionHouse during teardown. After reload, AuxVmangos can ask the bridge to reopen the Search tab, restore the saved filter, and start a normal fresh execute(false,false) pass. This intentionally treats every automatic post-reload scan like scan #1: the visible AUX results are rebuilt normally, while v2.8's execute(true)/headless path remains available only as fallback when reload-per-scan is disabled.

@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Fast AUX bridge; every AVM automated restart/resume is headless while manual AUX Search keeps normal visible results.
+## Notes: Fast AUX bridge; no reload helpers; every AVM automated restart/resume is headless while manual AUX Search remains visible.
 ## Author: github12wykrzyk/wow112
-## Version: 3.0
+## Version: 3.1
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
