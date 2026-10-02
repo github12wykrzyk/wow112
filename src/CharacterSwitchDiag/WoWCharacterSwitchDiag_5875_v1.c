@@ -1,20 +1,24 @@
 /*
- * WoWCharacterSwitchDiag 5875 v13 - native same-realm reconnect worker.
+ * WoWCharacterSwitchDiag 5875 v14 - controlled world detach + local logout-complete.
  *
- * Coordinator FAST switch uses the client's own CGlueMgr::ChangeRealm flow
- * with the currently selected realm:
- *   game -> ChangeRealm(current realm) -> native disconnectPending/reconnect
- *   -> world AccountLogin with the already authenticated login connection
- *   -> Character Select -> target slot -> EnterWorld.
+ * Report #82 proved the native ChangeRealm experiment can disconnect the realm
+ * connection (NetClient reaches NS_INITIALIZED) while the active world/object
+ * manager remains live, so waiting for OBJMGR==0 is the wrong transition.
  *
- * This deliberately avoids Logout(), ForceLogout(), direct ad-hoc reconnect,
- * AutoLoginBridge relogin and login-server SRP. In exact 5875, ChangeRealm sets
- * CGlueMgr::m_disconnectPending and m_reconnect before ClientServices::Disconnect;
- * NetDisconnectHandler then reconnects ClientServices::Connection without
- * calling LoginConnection()->Logoff().
+ * V14 follows the exact 5875 client logout-complete path without waiting for the
+ * server's 20-second CMSG_LOGOUT_REQUEST timer:
+ *   1) set CGlueMgr disconnectPending=1, reconnect=0;
+ *   2) ClientServices::Disconnect() the world socket immediately;
+ *   3) once NetDisconnectHandler consumed disconnectPending and NetClient is
+ *      NS_INITIALIZED, invoke ClientConnection logout-complete virtual 0x5AAEB0;
+ *   4) that exact client routine performs world teardown and calls 0x401EE0 with
+ *      charselect semantics;
+ *   5) reconnect only the realm/world connection via ConnectToSelectedServer,
+ *      then enumerate/select the requested slot and EnterWorld.
  *
- * Runtime byte guards cover GetSelectedRealm and ChangeRealm. If the patched
- * executable differs, the worker fails closed instead of guessing addresses.
+ * Because disconnectPending is set while reconnect=0, NetDisconnectHandler does
+ * not call LoginConnection()->Logoff(). There is no Logout(), ForceLogout(),
+ * AutoLoginBridge relogin, password/SRP flow or login-server fallback.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error WoWCharacterSwitchDiag requires x86.
@@ -26,8 +30,9 @@
 #define WOW_FRAMESCRIPT_GETTEXT 0x00703BF0u
 #define WOW_FRAMESCRIPT_EXECUTE 0x00704CD0u
 #define WOW_CLIENTSERVICES_GET        0x005AB490u
-#define WOW_GET_SELECTED_REALM        0x005AB9A0u
-#define WOW_GLUE_CHANGE_REALM         0x0046B210u
+#define WOW_CLIENTSERVICES_DISC       0x005AB1A0u
+#define WOW_CONNECT_SELECTED          0x005AB800u
+#define WOW_LOCAL_LOGOUT_COMPLETE     0x005AAEB0u
 #define WOW_GLUE_DISCONNECT_PENDING   0x00B41D98u
 #define WOW_GLUE_RECONNECT            0x00B41D9Cu
 #define WOW_GLUE_IDLE_STATE           0x00B41DA0u
@@ -39,7 +44,11 @@
 #define SELECT_SETTLE_MS 350u
 #define ENTER_TIMEOUT_MS 30000u
 #define FAST_DISCONNECT_TIMEOUT_MS 7000u
+#define FAST_LOCAL_TEARDOWN_TIMEOUT_MS 5000u
 #define FAST_RECONNECT_TIMEOUT_MS 35000u
+#define FAST_SERVER_SETTLE_MS 500u
+#define FAST_CONNECT_RETRY_MS 1500u
+#define FAST_CONNECT_MAX_ATTEMPTS 3u
 #define FAST_CHARLIST_RETRY_MS 2000u
 #define FAST_CHARLIST_MAX_ATTEMPTS 8u
 #define COMBAT_POLL_MS 250u
@@ -75,8 +84,9 @@ typedef struct WorkerMapV1 {
 typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
 typedef const char* (__fastcall *FrameScriptGetTextFn)(const char*,int,DWORD);
 typedef void* (__cdecl *GetClientServicesFn)(void);
-typedef const void* (__cdecl *GetSelectedRealmFn)(void);
-typedef void (__fastcall *GlueChangeRealmFn)(const void*);
+typedef int (__thiscall *ClientServicesDisconnectFn)(void*);
+typedef void (__thiscall *LocalLogoutCompleteFn)(void*);
+typedef void (__cdecl *ConnectToSelectedServerFn)(void);
 
 enum {
     PHASE_IDLE=0, PHASE_WAIT_LOGOUT=1, PHASE_CHAR_SELECT=2, PHASE_ENTERING=3,
@@ -89,8 +99,8 @@ static volatile DWORD g_lastError=0,g_world=0,g_glueVisible=0,g_fast=0;
 static volatile DWORD g_reloadInProgress=0;
 static UINT_PTR g_timer=0;
 static DWORD g_startedAt=0,g_glueAt=0,g_enterIssuedAt=0,g_lastUiRefresh=0,g_lastWorld=0;
-static DWORD g_fastConnection=0,g_fastNativeAt=0,g_fastConnectedAt=0,g_charListKickAt=0;
-static DWORD g_fastLastNetState=0xFFFFFFFFu,g_charListAttempts=0;
+static DWORD g_fastConnection=0,g_fastDisconnectAt=0,g_fastLocalAt=0,g_fastConnectAt=0,g_fastConnectedAt=0,g_charListKickAt=0;
+static DWORD g_fastLastNetState=0xFFFFFFFFu,g_charListAttempts=0,g_fastConnectAttempts=0,g_fastConnectIssued=0;
 static HANDLE g_workerMapHandle=0;
 static WorkerMapV1 *g_workerMap=0;
 static DWORD g_workerSeenSeq=0,g_workerState=WORKER_INIT,g_workerLastState=0xFFFFFFFFu;
@@ -167,8 +177,8 @@ static const char* gettextv(const char*n){return ((FrameScriptGetTextFn)(DWORD)W
 static void reset_run(void)
 {
     g_phase=PHASE_IDLE;g_targetSlot=0;g_elapsedToGlue=0;g_elapsedTotal=0;g_lastError=0;g_fast=0;
-    g_startedAt=g_glueAt=g_enterIssuedAt=0;g_fastConnection=0;g_fastNativeAt=0;
-    g_fastConnectedAt=g_charListKickAt=0;g_fastLastNetState=0xFFFFFFFFu;g_charListAttempts=0;
+    g_startedAt=g_glueAt=g_enterIssuedAt=0;g_fastConnection=0;g_fastDisconnectAt=0;g_fastLocalAt=0;g_fastConnectAt=0;
+    g_fastConnectedAt=g_charListKickAt=0;g_fastLastNetState=0xFFFFFFFFu;g_charListAttempts=0;g_fastConnectAttempts=0;g_fastConnectIssued=0;
 }
 static void ensure_ui(void)
 {
@@ -176,7 +186,7 @@ static void ensure_ui(void)
       "if not W112CSDFrame and UIParent and type(CreateFrame)=='function' then "
       "local f=CreateFrame('Frame','W112CSDFrame',UIParent);f:SetWidth(440);f:SetHeight(182);f:SetPoint('CENTER',UIParent,'CENTER',0,175);"
       "if f.SetBackdrop then f:SetBackdrop({bgFile='Interface\\\\Tooltips\\\\UI-Tooltip-Background',edgeFile='Interface\\\\Tooltips\\\\UI-Tooltip-Border',tile=true,tileSize=16,edgeSize=16,insets={left=4,right=4,top=4,bottom=4}});f:SetBackdropColor(0,0,0,.88) end;"
-      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V13');"
+      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V14');"
       "local st=f:CreateFontString('W112CSDStatus','OVERLAY','GameFontNormalSmall');st:SetPoint('TOPLEFT',f,'TOPLEFT',12,-36);st:SetWidth(416);st:SetJustifyH('LEFT');st:SetText('idle');"
       "local function B(n,x,y,w,txt,cmd)local b=CreateFrame('Button',n,f,'UIPanelButtonTemplate');b:SetWidth(w);b:SetHeight(24);b:SetPoint('BOTTOMLEFT',f,'BOTTOMLEFT',x,y);b:SetText(txt);b:SetScript('OnClick',function()W112_CSD_CMD=cmd end)end;"
       "B('W112CSDStock',12,42,92,'Stock logout','stock');B('W112CSDSlot1',112,42,92,'FAST slot 1','slot1');B('W112CSDSlot2',212,42,92,'FAST slot 2','slot2');"
@@ -191,7 +201,7 @@ static void update_ui(DWORD now)
     p=app(p," target=");p=appu(p,g_targetSlot);p=app(p," fast=");p=appu(p,g_fast);
     p=app(p," world=");p=appu(p,g_world);p=app(p," glue=");p=appu(p,g_glueVisible);
     p=app(p,"\\nworld_to_select_ms=");p=appu(p,g_elapsedToGlue);p=app(p," total_ms=");p=appu(p,g_elapsedTotal);
-    p=app(p," err=");p=appu(p,g_lastError);p=app(p,"\\nFAST=native same-realm reconnect; login connection preserved') end");*p=0;execs(b);
+    p=app(p," err=");p=appu(p,g_lastError);p=app(p,"\\nFAST=socket detach -> local logout-complete -> realm reconnect; login server untouched') end");*p=0;execs(b);
 }
 static void probe_glue(void)
 {
@@ -278,26 +288,26 @@ static void begin_stock(DWORD now,DWORD slot)
     reset_run();g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_WAIT_LOGOUT;log_line("STOCK_BEGIN",now,slot);
     execs("if type(Logout)=='function' then Logout() end");
 }
-static int native_reconnect_guard(void)
+static int fast_reconnect_guard(void)
 {
     static const BYTE getterSig[]={0xA1,0x28,0x81,0xC2,0x00,0xC3};
-    static const BYTE selectedSig[]={
-        0xA0,0x34,0x81,0xC2,0x00,0xF6,0xD8,0x1B,0xC0,
-        0x25,0xB8,0x7F,0xC2,0x00,0xC3
+    static const BYTE discSig[]={
+        0x56,0x8B,0xF1,0xE8,0x68,0xC7,0xF8,0xFF,
+        0xC7,0x86,0x00,0x1B,0x00,0x00,0x00,0x00,0x00,0x00
     };
-    static const BYTE changeRealmSig[]={
-        0x85,0xC9,0x74,0x6C,0x83,0xC1,0x09,
-        0xE8,0x94,0x05,0x14,0x00,
-        0xE8,0x6F,0x02,0x14,0x00,
-        0x8B,0x88,0x00,0x1B,0x00,0x00,
-        0x85,0xC9,0x74,0x1B,
-        0xB8,0x01,0x00,0x00,0x00,
-        0xA3,0x98,0x1D,0xB4,0x00,
-        0xA3,0x9C,0x1D,0xB4,0x00
+    static const BYTE connectSelectedSig[]={
+        0xA0,0x34,0x81,0xC2,0x00,0x84,0xC0,0x75,0x1A,
+        0xE8,0xE2,0xFE,0xFF,0xFF,0x84,0xC0,0x75,0x11
+    };
+    static const BYTE logoutCompleteSig[]={
+        0x56,0x8B,0xF1,0xE8,0x88,0x00,0x00,0x00,
+        0xE8,0xD3,0x05,0x00,0x00,0x3B,0xF0,0x75,0x0E,
+        0xBA,0x01,0x00,0x00,0x00,0x6A,0x00,0x8B,0xCA
     };
     return bytes_equal(WOW_CLIENTSERVICES_GET,getterSig,sizeof(getterSig)) &&
-           bytes_equal(WOW_GET_SELECTED_REALM,selectedSig,sizeof(selectedSig)) &&
-           bytes_equal(WOW_GLUE_CHANGE_REALM,changeRealmSig,sizeof(changeRealmSig));
+           bytes_equal(WOW_CLIENTSERVICES_DISC,discSig,sizeof(discSig)) &&
+           bytes_equal(WOW_CONNECT_SELECTED,connectSelectedSig,sizeof(connectSelectedSig)) &&
+           bytes_equal(WOW_LOCAL_LOGOUT_COMPLETE,logoutCompleteSig,sizeof(logoutCompleteSig));
 }
 static int fast_connection_state(void)
 {
@@ -309,50 +319,68 @@ static void fast_fail(DWORD now,DWORD error,const char*event)
     execs("W112_CSD_SESSION_SWITCH=nil");
     g_lastError=error;g_phase=PHASE_FAILED;log_line(event,now,(DWORD)fast_connection_state());
 }
+static void issue_local_logout_complete(DWORD now)
+{
+    LocalLogoutCompleteFn fn;
+    fn=(LocalLogoutCompleteFn)(DWORD)WOW_LOCAL_LOGOUT_COMPLETE;
+    log_line("LOCAL_LOGOUT_COMPLETE_CALL",now,WOW_LOCAL_LOGOUT_COMPLETE);
+    fn((void*)g_fastConnection);
+    g_fastLocalAt=GetTickCount();
+    g_phase=PHASE_FAST_RECONNECT;
+    log_line("LOCAL_LOGOUT_COMPLETE_RETURN",g_fastLocalAt,rd32(WOW_OBJMGR));
+    log_line("LOCAL_GLUE_IDLE_STATE",g_fastLocalAt,rd32(WOW_GLUE_IDLE_STATE));
+}
+static int issue_world_reconnect(DWORD now)
+{
+    ConnectToSelectedServerFn fn;
+    if(g_fastConnectAttempts>=FAST_CONNECT_MAX_ATTEMPTS)return 0;
+    g_fastConnectAttempts++;
+    g_fastConnectIssued=1;g_fastConnectAt=now;g_fastConnectedAt=0;
+    fn=(ConnectToSelectedServerFn)(DWORD)WOW_CONNECT_SELECTED;
+    log_line("REALM_RECONNECT_ATTEMPT",now,g_fastConnectAttempts);
+    fn();
+    log_line("REALM_RECONNECT_RETURN",GetTickCount(),(DWORD)fast_connection_state());
+    return 1;
+}
 static void begin_fast(DWORD now,DWORD slot)
 {
     GetClientServicesFn getServices;
-    GetSelectedRealmFn getRealm;
-    GlueChangeRealmFn changeRealm;
+    ClientServicesDisconnectFn disconnectFn;
     void*connection;
-    const void*realm;
     DWORD state;
 
     reset_run();g_fast=1;g_targetSlot=slot;g_startedAt=now;g_phase=PHASE_FAST_DISCONNECT;
-    log_line("NATIVE_RECONNECT_BEGIN",now,slot);
+    log_line("SESSION_DETACH_BEGIN",now,slot);
 
-    if(!native_reconnect_guard()){
-        g_lastError=72;g_phase=PHASE_FAILED;log_line("NATIVE_GUARD_FAIL",now,WOW_GLUE_CHANGE_REALM);return;
+    if(!fast_reconnect_guard()){
+        g_lastError=80;g_phase=PHASE_FAILED;log_line("SESSION_GUARD_FAIL",now,WOW_LOCAL_LOGOUT_COMPLETE);return;
     }
 
     getServices=(GetClientServicesFn)(DWORD)WOW_CLIENTSERVICES_GET;
     connection=getServices();
     if(!ptr_ok((DWORD)connection)){
-        g_lastError=73;g_phase=PHASE_FAILED;log_line("NATIVE_CONNECTION_NULL",now,(DWORD)connection);return;
+        g_lastError=81;g_phase=PHASE_FAILED;log_line("SESSION_CONNECTION_NULL",now,(DWORD)connection);return;
     }
     state=rd32((DWORD)connection+NET_STATE_OFFSET);
     if(state!=NET_STATE_CONNECTED){
-        g_lastError=74;g_phase=PHASE_FAILED;log_line("NATIVE_BAD_NET_STATE",now,state);return;
+        g_lastError=82;g_phase=PHASE_FAILED;log_line("SESSION_BAD_NET_STATE",now,state);return;
     }
 
-    getRealm=(GetSelectedRealmFn)(DWORD)WOW_GET_SELECTED_REALM;
-    realm=getRealm();
-    if(!ptr_ok((DWORD)realm)){
-        g_lastError=75;g_phase=PHASE_FAILED;log_line("NATIVE_SELECTED_REALM_NULL",now,(DWORD)realm);return;
-    }
-
-    g_fastConnection=(DWORD)connection;
-    g_fastNativeAt=now;
+    g_fastConnection=(DWORD)connection;g_fastDisconnectAt=now;
     execs("W112_CSD_SESSION_SWITCH='1'");
-    log_line("NATIVE_SELECTED_REALM",now,(DWORD)realm);
 
-    changeRealm=(GlueChangeRealmFn)(DWORD)WOW_GLUE_CHANGE_REALM;
-    log_line("NATIVE_CHANGE_REALM_CALL",now,WOW_GLUE_CHANGE_REALM);
-    changeRealm(realm);
-    log_line("NATIVE_CHANGE_REALM_RETURN",GetTickCount(),(DWORD)fast_connection_state());
-    log_line("NATIVE_DISCONNECT_PENDING",GetTickCount(),rd32(WOW_GLUE_DISCONNECT_PENDING));
-    log_line("NATIVE_RECONNECT_FLAG",GetTickCount(),rd32(WOW_GLUE_RECONNECT));
-    log_line("NATIVE_IDLE_STATE",GetTickCount(),rd32(WOW_GLUE_IDLE_STATE));
+    /* NetDisconnectHandler consumes disconnectPending. reconnect=0 is critical:
+       it suppresses the normal LoginConnection()->Logoff side effect without
+       starting a reconnect before local world teardown is complete. */
+    *(volatile DWORD*)WOW_GLUE_RECONNECT=0u;
+    *(volatile DWORD*)WOW_GLUE_DISCONNECT_PENDING=1u;
+    log_line("SESSION_DISCONNECT_PENDING_SET",now,rd32(WOW_GLUE_DISCONNECT_PENDING));
+    log_line("SESSION_RECONNECT_FLAG_SET",now,rd32(WOW_GLUE_RECONNECT));
+
+    disconnectFn=(ClientServicesDisconnectFn)(DWORD)WOW_CLIENTSERVICES_DISC;
+    log_line("SESSION_WORLD_DISCONNECT_CALL",now,WOW_CLIENTSERVICES_DISC);
+    disconnectFn(connection);
+    log_line("SESSION_WORLD_DISCONNECT_RETURN",GetTickCount(),(DWORD)fast_connection_state());
 }
 static void worker_command_fail(DWORD now,DWORD seq,DWORD error,const char*event)
 {
@@ -474,36 +502,63 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
             execs("W112_CSD_SESSION_SWITCH=nil");
             log_line("WORLD_ENTERED",now,g_elapsedTotal);worker_log_event("COORD_READY",now);
         }
-        if(g_phase==PHASE_FAST_DISCONNECT && g_startedAt && now-g_startedAt>FAST_DISCONNECT_TIMEOUT_MS){
-            fast_fail(now,76,"NATIVE_DISCONNECT_TIMEOUT");
+        if(g_phase==PHASE_FAST_DISCONNECT){
+            int state=fast_connection_state();
+            if(state==NET_STATE_INITIALIZED && rd32(WOW_GLUE_DISCONNECT_PENDING)==0u){
+                log_line("SESSION_WORLD_DETACHED",now,state);
+                issue_local_logout_complete(now);
+            }else if(g_startedAt && now-g_startedAt>FAST_DISCONNECT_TIMEOUT_MS){
+                fast_fail(now,83,"SESSION_DISCONNECT_TIMEOUT");
+            }
         }
     }else{
         /* Glue probing is needed only for an active switch. At idle this used
          * to call FrameScript every 50ms, including during ReloadUI teardown. */
         if(switching && g_phase!=PHASE_FAST_DISCONNECT)probe_glue();
         if(g_phase==PHASE_FAST_DISCONNECT){
-            g_phase=PHASE_FAST_RECONNECT;
-            g_fastConnectedAt=0;g_charListKickAt=0;g_charListAttempts=0;
-            log_line("NATIVE_WORLD_LEFT",now,(DWORD)fast_connection_state());
+            int state=fast_connection_state();
+            if(state==NET_STATE_INITIALIZED && rd32(WOW_GLUE_DISCONNECT_PENDING)==0u){
+                log_line("SESSION_WORLD_DETACHED",now,state);
+                issue_local_logout_complete(now);
+            }else if(g_startedAt && now-g_startedAt>FAST_DISCONNECT_TIMEOUT_MS){
+                fast_fail(now,83,"SESSION_DISCONNECT_TIMEOUT");
+            }
         }else if(g_phase==PHASE_FAST_RECONNECT){
             int state=fast_connection_state();
             if((DWORD)state!=g_fastLastNetState){
                 g_fastLastNetState=(DWORD)state;
-                log_line("NATIVE_NET_STATE",now,(DWORD)state);
+                log_line("SESSION_NET_STATE",now,(DWORD)state);
             }
-            if(state<0){
-                fast_fail(now,77,"NATIVE_CONNECTION_LOST");
-            }else{
-                if(state==NET_STATE_CONNECTED&&!g_fastConnectedAt){
+
+            probe_glue();
+
+            if(!g_fastConnectIssued){
+                if(world){
+                    if(g_fastLocalAt && now-g_fastLocalAt>FAST_LOCAL_TEARDOWN_TIMEOUT_MS)
+                        fast_fail(now,84,"LOCAL_TEARDOWN_TIMEOUT");
+                }else if(g_fastLocalAt && now-g_fastLocalAt>=FAST_SERVER_SETTLE_MS){
+                    if(!issue_world_reconnect(now))
+                        fast_fail(now,85,"REALM_RECONNECT_RETRY_EXHAUSTED");
+                }
+            }else if(state==NET_STATE_INITIALIZED && g_fastConnectAt &&
+                     now-g_fastConnectAt>=FAST_CONNECT_RETRY_MS){
+                g_fastConnectIssued=0;
+                if(g_fastConnectAttempts>=FAST_CONNECT_MAX_ATTEMPTS)
+                    fast_fail(now,85,"REALM_RECONNECT_RETRY_EXHAUSTED");
+            }else if(state<0){
+                fast_fail(now,86,"REALM_CONNECTION_LOST");
+            }else if(state==NET_STATE_CONNECTED){
+                if(!g_fastConnectedAt){
                     g_fastConnectedAt=now;
-                    log_line("NATIVE_WORLD_AUTH_CONNECTED",now,rd32(WOW_GLUE_IDLE_STATE));
+                    log_line("REALM_CONNECTED",now,rd32(WOW_GLUE_IDLE_STATE));
                 }
 
-                probe_glue();
-                if(g_glueVisible){
+                /* AccountLogin completion sets Glue idle back to NONE and
+                   charselect. Only then ask for character enumeration. */
+                if(rd32(WOW_GLUE_IDLE_STATE)==0u && g_glueVisible){
                     if(target_slot_available(g_targetSlot)){
                         g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
-                        select_slot(g_targetSlot);log_line("NATIVE_CHAR_SELECT",now,g_elapsedToGlue);
+                        select_slot(g_targetSlot);log_line("SESSION_CHAR_SELECT",now,g_elapsedToGlue);
                         execs("W112_CSD_SESSION_SWITCH=nil");
                     }else if((!g_charListKickAt||now-g_charListKickAt>=FAST_CHARLIST_RETRY_MS)&&
                              g_charListAttempts<FAST_CHARLIST_MAX_ATTEMPTS){
@@ -514,9 +569,9 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
 
             if(g_phase==PHASE_FAST_RECONNECT&&g_startedAt&&now-g_startedAt>FAST_RECONNECT_TIMEOUT_MS){
                 if(g_glueVisible&&g_charListAttempts>=FAST_CHARLIST_MAX_ATTEMPTS)
-                    fast_fail(now,79,"NATIVE_CHARLIST_TIMEOUT");
+                    fast_fail(now,88,"SESSION_CHARLIST_TIMEOUT");
                 else
-                    fast_fail(now,78,"NATIVE_RECONNECT_TIMEOUT");
+                    fast_fail(now,87,"SESSION_RECONNECT_TIMEOUT");
             }
         }else if(g_phase==PHASE_WAIT_LOGOUT && g_glueVisible){
             g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
@@ -526,7 +581,7 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
             if(target_slot_selected(g_targetSlot)){
                 enter_slot(g_targetSlot);g_enterIssuedAt=now;g_phase=PHASE_ENTERING;log_line("ENTER_SLOT",now,g_targetSlot);
             }else{
-                select_slot(g_targetSlot);g_glueAt=now;log_line("NATIVE_SLOT_SELECT_RETRY",now,g_targetSlot);
+                select_slot(g_targetSlot);g_glueAt=now;log_line("SESSION_SLOT_SELECT_RETRY",now,g_targetSlot);
             }
         }else if(g_phase==PHASE_ENTERING && g_enterIssuedAt && now-g_enterIssuedAt>ENTER_TIMEOUT_MS){
             g_lastError=30;g_phase=PHASE_FAILED;log_line("ENTER_TIMEOUT",now,g_targetSlot);
@@ -554,6 +609,6 @@ static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlMo
 __declspec(dllexport) const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_settings();return &mod;}
 BOOL WINAPI DllMain(HMODULE h,DWORD r,LPVOID x)
 {
-    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V13_NATIVE_REALM_RECONNECT",GetTickCount(),WOW_GLUE_CHANGE_REALM);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
+    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V14_LOCAL_LOGOUT_COMPLETE",GetTickCount(),WOW_LOCAL_LOGOUT_COMPLETE);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
     else if(r==DLL_PROCESS_DETACH){if(g_timer)KillTimer(NULL,g_timer);shutdown_worker_map();}return TRUE;
 }

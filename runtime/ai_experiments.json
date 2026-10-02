@@ -4737,12 +4737,38 @@
         "CGlueMgr::m_reconnect 0x00B41D9C",
         "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
       ],
-      "status": "in_progress",
-      "observed_head": "a0d840dd6dbae753a127755ab2e18c391cf359d2",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "Use exact 5875 native same-realm ChangeRealm flow rather than hand-assembled Disconnect/ConnectToSelectedServer. Exact binary disassembly confirms ChangeRealm selects the supplied realm, sets disconnectPending=1 and reconnect=1, then calls ClientServices::Disconnect; NetDisconnectHandler consumes those flags and calls the existing world Connection()->Connect path without LoginConnection()->Logoff. Worker passes the currently selected REALM_INFO from GetSelectedRealm, waits for native Character Select/character list, selects the requested slot and enters world. No Logout/ForceLogout, AutoLoginBridge relogin, password/SRP flow, or login-server fallback. Runtime byte guards fail closed if patched executable code differs."
+      "status": "rejected",
+      "observed_head": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+      "verified_commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 37005948572 passed before integration; integrated Build work candidate run 37006068686 passed FINAL_PACKAGE/provenance on exact SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11225253885 was produced for exact integrated SHA 2e2c18f7dd44cd191c922442d8faf568b88c703c."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+          "date": "2026-10-02",
+          "evidence": "Report #82: both workers entered native same-realm reconnect. ChangeRealm returned with disconnectPending=1/reconnect=1; NetClient subsequently reached state 2 (INITIALIZED), but OBJMGR/world remained live. Both timed out error=76 NATIVE_DISCONNECT_TIMEOUT. A later PREPARE immediately failed error=74 because the connection was still INITIALIZED. This proves ChangeRealm from active world does not perform the required world->Glue teardown."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+        "artifact_id": 11225253885
+      },
+      "notes": "Rejected by report #82. Native ChangeRealm correctly starts connection teardown but is a Glue-context operation; when invoked from active world it leaves the world/object manager live while NetClient reaches NS_INITIALIZED. Exact artifact disassembly identified the real SMSG_LOGOUT_COMPLETE client callback at 0x005AAEB0, which performs the missing world teardown and selects charselect without logging out the login connection."
     },
     {
       "id": "ah-history-age-diag-v1",
@@ -4791,6 +4817,40 @@
         "artifact_id": 11226062680
       },
       "notes": "Adds exact AUX history-age evidence without changing flip economics. For every unique flip history key seen in a completed full scan it records whether a current history value exists, buckets closed daily data_points into 0/1/2/3+, captures oldest/newest AUX history timestamps across the market plus the oldest item/key, and stores one sample per bucket in AVM_DB.diag. Report #80 already proves values exist for thousands of keys but most fail the >=2 closed-day gate. AH dump #83 is empty for AVM marketPacked and by design contains only AuxVmangos marketMeta/marketPacked, not upstream aux-addon faction history, so it cannot independently prove AUX history age. Report #83 AH dump was inspected: marketMeta is empty and marketPacked is only AVM3; by design that dump excludes upstream aux-addon faction history, so exact AUX history age must come from this new in-game diagnostic after a full scan."
+    },
+    {
+      "id": "summon-local-logoutcomplete-v7",
+      "branch": "feature/summon-local-logoutcomplete-v7-clean",
+      "modules": [
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-native-realm-reconnect-v6",
+        "summon-worker-profile-binding-v1"
+      ],
+      "shared_resources": [
+        "ClientServices::Disconnect 0x005AB1A0",
+        "ClientConnection logout-complete virtual 0x005AAEB0",
+        "ClientServices::ConnectToSelectedServer 0x005AB800",
+        "CGlueMgr::m_disconnectPending 0x00B41D98",
+        "CGlueMgr::m_reconnect 0x00B41D9C",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
+      ],
+      "status": "in_progress",
+      "observed_head": "e976dfa786df7e9181d643f93acfe1318c082d1a",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "2e2c18f7dd44cd191c922442d8faf568b88c703c",
+          "date": "2026-10-02",
+          "evidence": "Report #82 motivates V14: native ChangeRealm detached NetClient to state 2 but did not tear down active world/OBJMGR, causing error 76."
+        }
+      ],
+      "package": null,
+      "notes": "Exact candidate artifact 11225253885 was disassembled to recover the client logout-complete chain. RealmConnection SMSG_LOGOUT_COMPLETE dispatch at 0x005B4620 calls ClientConnection virtual 0x005AAEB0; that routine performs connection cleanup and calls 0x00401EE0 with charselect semantics. V14 first sets disconnectPending=1/reconnect=0 so NetDisconnectHandler consumes the world disconnect without LoginConnection()->Logoff or premature reconnect, then invokes 0x005AAEB0 locally after NS_INITIALIZED, waits for world teardown, reconnects only the realm/world connection with ConnectToSelectedServer, enumerates characters, selects the requested slot and enters world. Byte guards cover native entrypoints; no login-server fallback."
     }
   ]
 }
