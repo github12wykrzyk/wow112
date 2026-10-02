@@ -4791,6 +4791,32 @@
         "artifact_id": 11226062680
       },
       "notes": "Adds exact AUX history-age evidence without changing flip economics. For every unique flip history key seen in a completed full scan it records whether a current history value exists, buckets closed daily data_points into 0/1/2/3+, captures oldest/newest AUX history timestamps across the market plus the oldest item/key, and stores one sample per bucket in AVM_DB.diag. Report #80 already proves values exist for thousands of keys but most fail the >=2 closed-day gate. AH dump #83 is empty for AVM marketPacked and by design contains only AuxVmangos marketMeta/marketPacked, not upstream aux-addon faction history, so it cannot independently prove AUX history age. Report #83 AH dump was inspected: marketMeta is empty and marketPacked is only AVM3; by design that dump excludes upstream aux-addon faction history, so exact AUX history age must come from this new in-game diagnostic after a full scan."
+    },
+    {
+      "id": "market-worker-service-cycle-5875",
+      "branch": "feature/market-worker-service-cycle",
+      "modules": [
+        "MarketWorker",
+        "RemoteServiceProbe",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "remote-service-probe-5875",
+        "auction-sniper-vmangos"
+      ],
+      "shared_resources": [
+        "RemoteServiceProbe read-only learned service GUID export",
+        "wow5875 native object right-click 0x005F8660",
+        "FrameScript Execute/GetText 0x00704CD0/0x00703BF0",
+        "AuxFastBridge safe submit-boundary pause/release",
+        ".wow112_debug market_worker JSONL"
+      ],
+      "status": "in_progress",
+      "observed_head": "e976dfa786df7e9181d643f93acfe1318c082d1a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof."
     }
   ]
 }
