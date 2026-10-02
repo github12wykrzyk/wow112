@@ -3754,12 +3754,40 @@
         "AUXFAST_RestartSearch and AUXFAST_ResumeSearch",
         "AVM continuous AUX_ARB loop"
       ],
-      "status": "awaiting_ci",
+      "status": "awaiting_game_test",
       "observed_head": "8b73ab04105fec4676a9cd6861df3780c1561403",
-      "verified_commit": null,
-      "tests": [],
-      "package": null,
-      "notes": "User correlates severe slowdown with visible Search result rows: the fast automated scan shows no item list, while the slow subsequent scan renders items. Pinned upstream AUX appends up to 2000 records in on_auction and calls search.table:SetDatabase() after every page. Candidate retires reload-per-scan, keeps all AVM cycles in-process, and explicitly arms headless mode for both AUXFAST_RestartSearch and AUXFAST_ResumeSearch so no automated scan can fall back into visible row insertion/SetDatabase. Manual Search clicks remain normal and visible. Gameplay must verify 10+ automatic cycles stay row-free and smooth."
+      "verified_commit": "25506a93a9d2d058832f4e1f71e1dcc6b4f98423",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "25506a93a9d2d058832f4e1f71e1dcc6b4f98423",
+          "date": "2026-10-02",
+          "run_id": 36972119400,
+          "evidence": "Parallel feature preflight passed on exact feature SHA."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "25506a93a9d2d058832f4e1f71e1dcc6b4f98423",
+          "date": "2026-10-02",
+          "run_id": 36972167799,
+          "evidence": "Integrated Parallel Build work candidate passed on exact SHA, including FINAL_PACKAGE, repo-managed addon packaging and provenance attestation."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "25506a93a9d2d058832f4e1f71e1dcc6b4f98423",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11212057813 contains AuxFastBridge 3.0 and AuxVmangos 0.27-auto-headless."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "25506a93a9d2d058832f4e1f71e1dcc6b4f98423",
+        "artifact_id": 11212057813
+      },
+      "notes": "User correlates severe slowdown with visible Search result rows: the fast automated scan shows no item list, while the slow subsequent scan renders items. Pinned upstream AUX appends up to 2000 records in on_auction and calls search.table:SetDatabase() after every page. Candidate retires reload-per-scan, keeps all AVM cycles in-process, and explicitly arms headless mode for both AUXFAST_RestartSearch and AUXFAST_ResumeSearch so no automated scan can fall back into visible row insertion/SetDatabase. Manual Search clicks remain normal and visible. Gameplay must verify 10+ automatic cycles stay row-free and smooth. CI/package gates pass. Required gameplay test: at least 10 consecutive automatic scans with no visible Search item rows during automation and no progressive FPS degradation; manual Search should still populate visible results."
     }
   ]
 }
