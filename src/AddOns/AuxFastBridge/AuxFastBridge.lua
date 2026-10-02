@@ -1,17 +1,20 @@
--- AuxFastBridge v3.2 closure-safe headless state; reload code removed
+-- AuxFastBridge v3.3 upvalue-safe headless state; reload code removed
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
 AuxFastBridgeDB = AuxFastBridgeDB or {}
 
--- Keep automation routing in lexical state. install_scan_hook() enters
--- module("aux.core.scan"), whose environment would otherwise shadow globals.
-local repeatPending = false
-local pendingSource = ""
-local headlessActive = false
-local headlessRecords = 0
-local headlessPages = 0
-local scanSerial = 0
+-- Runtime routing stays behind helper functions so the large M.start closure
+-- does not capture extra file-scope locals. WoW 1.12 Lua has a hard 32-upvalue
+-- limit; v3.2 exceeded it after adding six lexical headless-state captures.
+local headlessState = {
+	pending = false,
+	source = "",
+	active = false,
+	records = 0,
+	pages = 0,
+	serial = 0,
+}
 
 local originalCanSendAuctionQuery = CanSendAuctionQuery
 local originalQueryAuctionItems = QueryAuctionItems
@@ -54,6 +57,61 @@ local function out(msg)
 	if DEFAULT_CHAT_FRAME then
 		DEFAULT_CHAT_FRAME:AddMessage("|cff66ff99[AUX FAST]|r " .. tostring(msg))
 	end
+end
+
+function AUXFAST_ArmHeadless(source)
+	headlessState.pending = true
+	headlessState.source = tostring(source or "auto")
+end
+
+function AUXFAST_ClearHeadlessArm()
+	headlessState.pending = false
+	headlessState.source = ""
+	headlessState.active = false
+end
+
+function AUXFAST_BeginScan(fullSearchScan, isResume)
+	local source = headlessState.source
+	local headless = fullSearchScan and headlessState.pending and true or false
+	headlessState.pending = false
+	headlessState.source = ""
+	headlessState.active = headless
+	if headless and not isResume then
+		headlessState.records = 0
+		headlessState.pages = 0
+	end
+	if fullSearchScan then
+		headlessState.serial = headlessState.serial + 1
+		out("SCAN_MODE id=" .. tostring(headlessState.serial) ..
+			" source=" .. tostring(source ~= "" and source or "manual") ..
+			" headless=" .. tostring(headless) ..
+			" resume=" .. tostring(isResume and true or false))
+	end
+	return headless, source, headlessState.serial
+end
+
+function AUXFAST_HeadlessRecord()
+	headlessState.records = (headlessState.records or 0) + 1
+end
+
+function AUXFAST_HeadlessPage()
+	headlessState.pages = (headlessState.pages or 0) + 1
+end
+
+function AUXFAST_EndScan(scanId, source, headless, aborted, paused)
+	AuxFastBridgeDB.lastScanId = tonumber(scanId) or 0
+	AuxFastBridgeDB.lastScanSource = source ~= "" and source or "manual"
+	AuxFastBridgeDB.lastScanHeadless = headless and true or false
+	AuxFastBridgeDB.lastHeadlessRecords = headlessState.records or 0
+	AuxFastBridgeDB.lastHeadlessPages = headlessState.pages or 0
+	out((aborted and "SCAN_ABORT" or "SCAN_DONE") ..
+		" id=" .. tostring(AuxFastBridgeDB.lastScanId) ..
+		" source=" .. tostring(AuxFastBridgeDB.lastScanSource) ..
+		" headless=" .. tostring(headless and true or false) ..
+		(aborted and (" pause=" .. tostring(paused and true or false)) or "") ..
+		" hPages=" .. tostring(headlessState.pages or 0) ..
+		" hRecords=" .. tostring(headlessState.records or 0))
+	headlessState.active = false
 end
 
 local function detach_blizzard_browse()
@@ -162,9 +220,9 @@ function AUXFAST_Status()
 		queryPage = queryPage,
 		startedAt = startedAt,
 		hookInstalled = hookInstalled,
-		headlessLoop = headlessActive and true or false,
-		headlessRecords = headlessRecords or 0,
-		headlessPages = headlessPages or 0,
+		headlessLoop = headlessState.active and true or false,
+		headlessRecords = headlessState.records or 0,
+		headlessPages = headlessState.pages or 0,
 	}
 end
 
@@ -207,23 +265,10 @@ local function install_scan_hook()
 		local auxArbAttached = fullSearchScan and AVM_DB and AVM_DB.auxArbEnabled and
 			AVM_AuxArbScanStart and AVM_AuxArbAuction and AVM_AuxArbPageDone and true or false
 		-- Every AVM-driven restart/resume is headless. Manual Search has no arm.
-		-- This is a one-shot lexical flag so module("aux.core.scan") cannot shadow it.
-		local armedSource = pendingSource
-		local headlessLoop = fullSearchScan and repeatPending and true or false
-		repeatPending = false
-		pendingSource = ""
-		headlessActive = headlessLoop
-		if headlessLoop and not resumeRequested then
-			headlessRecords = 0
-			headlessPages = 0
-		end
-		if fullSearchScan then
-			scanSerial = scanSerial + 1
-			out("SCAN_MODE id=" .. tostring(scanSerial) ..
-				" source=" .. tostring(armedSource ~= "" and armedSource or "manual") ..
-				" headless=" .. tostring(headlessLoop) ..
-				" resume=" .. tostring(resumeRequested and true or false))
-		end
+		-- AUXFAST_BeginScan is a global helper on purpose: after module("aux.core.scan")
+		-- this closure resolves it through _G without capturing more file-scope locals.
+		local headlessLoop, armedSource, scanId =
+			AUXFAST_BeginScan(fullSearchScan, resumeRequested)
 		if fullSearchScan then
 			params.ignore_owner = true
 		end
@@ -262,7 +307,7 @@ local function install_scan_hook()
 
 		params.on_auction = function(record)
 			if headlessLoop then
-				headlessRecords = (headlessRecords or 0) + 1
+				AUXFAST_HeadlessRecord()
 			elseif oldAuction then
 				oldAuction(record)
 			end
@@ -271,7 +316,7 @@ local function install_scan_hook()
 
 		params.on_page_scanned = function()
 			if headlessLoop then
-				headlessPages = (headlessPages or 0) + 1
+				AUXFAST_HeadlessPage()
 			elseif oldPageScanned then
 				oldPageScanned()
 			end
@@ -316,18 +361,8 @@ local function install_scan_hook()
 			if oldComplete then result = oldComplete() end
 			if auxArbAttached and AVM_AuxArbScanDone then pcall(AVM_AuxArbScanDone) end
 			if fullSearchScan then
-				AuxFastBridgeDB.lastScanId = scanSerial
-				AuxFastBridgeDB.lastScanSource = armedSource ~= "" and armedSource or "manual"
-				AuxFastBridgeDB.lastScanHeadless = headlessLoop and true or false
-				AuxFastBridgeDB.lastHeadlessRecords = headlessRecords or 0
-				AuxFastBridgeDB.lastHeadlessPages = headlessPages or 0
-				out("SCAN_DONE id=" .. tostring(scanSerial) ..
-					" source=" .. tostring(AuxFastBridgeDB.lastScanSource) ..
-					" headless=" .. tostring(headlessLoop) ..
-					" hPages=" .. tostring(headlessPages or 0) ..
-					" hRecords=" .. tostring(headlessRecords or 0))
+				AUXFAST_EndScan(scanId, armedSource, headlessLoop, false, false)
 			end
-			headlessActive = false
 			pauseRequested = false
 			pausePage = -1
 			return result
@@ -338,23 +373,11 @@ local function install_scan_hook()
 			local result
 			if oldAbort then result = oldAbort() end
 			if fullSearchScan then
-				AuxFastBridgeDB.lastScanId = scanSerial
-				AuxFastBridgeDB.lastScanSource = armedSource ~= "" and armedSource or "manual"
-				AuxFastBridgeDB.lastScanHeadless = headlessLoop and true or false
-				AuxFastBridgeDB.lastHeadlessRecords = headlessRecords or 0
-				AuxFastBridgeDB.lastHeadlessPages = headlessPages or 0
-				out("SCAN_ABORT id=" .. tostring(scanSerial) ..
-					" source=" .. tostring(AuxFastBridgeDB.lastScanSource) ..
-					" headless=" .. tostring(headlessLoop) ..
-					" pause=" .. tostring(arbPause and true or false) ..
-					" hPages=" .. tostring(headlessPages or 0) ..
-					" hRecords=" .. tostring(headlessRecords or 0))
+				AUXFAST_EndScan(scanId, armedSource, headlessLoop, true, arbPause)
 			end
 			pauseRequested = false
 			if arbPause and auxArbAttached and AVM_AuxArbPaused then
 				pcall(AVM_AuxArbPaused, pausePage)
-			else
-				headlessActive = false
 			end
 			pausePage = -1
 			return result
@@ -448,9 +471,7 @@ if not install_scan_hook() then
 end
 
 function AUXFAST_HardStop()
-	repeatPending = false
-	pendingSource = ""
-	headlessActive = false
+	AUXFAST_ClearHeadlessArm()
 	resumeRequested = false
 	pauseRequested = false
 	pausePage = -1
@@ -486,14 +507,11 @@ function AUXFAST_ResumeSearch()
 	-- Resume is AVM automation too. Re-arm headless explicitly so a post-scan
 	-- transaction cannot fall back into upstream result rendering after the prior
 	-- completed scan cleared headlessActive.
-	pendingSource = "resume"
-	repeatPending = true
+	AUXFAST_ArmHeadless("resume")
 	local ok, err = pcall(searchTab.execute, true)
 	if not ok then
 		resumeRequested = false
-		repeatPending = false
-		pendingSource = ""
-		headlessActive = false
+		AUXFAST_ClearHeadlessArm()
 		out("resume failed: " .. tostring(err))
 		return false
 	end
@@ -524,23 +542,18 @@ function AUXFAST_RestartSearch()
 		return false
 	end
 	resumeRequested = false
-	pendingSource = "restart"
-	repeatPending = true
+	AUXFAST_ArmHeadless("restart")
 	-- Upstream execute(true) preserves the completed Search result table. With no
 	-- continuation after a normal completion it still starts from page 0; the
 	-- bridge's headless callbacks keep that UI snapshot while AVM evaluates fresh rows.
 	local ok, err = pcall(searchTab.execute, true)
 	if not ok then
-		repeatPending = false
-		pendingSource = ""
-		headlessActive = false
+		AUXFAST_ClearHeadlessArm()
 		out("restart failed: " .. tostring(err))
 		return false
 	end
 	if busy <= 0 then
-		repeatPending = false
-		pendingSource = ""
-		headlessActive = false
+		AUXFAST_ClearHeadlessArm()
 		out("restart did not start a Search (check current AUX filter)")
 		return false
 	end
@@ -588,9 +601,9 @@ SlashCmdList["AUXFAST"] = function()
 		" uiIso=" .. tostring(browseDetached) ..
 		" elapsed=" .. string.format("%.1f", duration) .. "s" ..
 		" avmBusy=" .. tostring(avm_busy() and true or false) ..
-		" headless=" .. tostring(headlessActive and true or false) ..
-		" hPages=" .. tostring(headlessPages or 0) ..
-		" hRecords=" .. tostring(headlessRecords or 0))
+		" headless=" .. tostring(headlessState.active and true or false) ..
+		" hPages=" .. tostring(headlessState.pages or 0) ..
+		" hRecords=" .. tostring(headlessState.records or 0))
 	out("lastScan id=" .. tostring(AuxFastBridgeDB.lastScanId or 0) ..
 		" source=" .. tostring(AuxFastBridgeDB.lastScanSource or "none") ..
 		" headless=" .. tostring(AuxFastBridgeDB.lastScanHeadless and true or false) ..
@@ -598,4 +611,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AuxFastBridgeDB.lastHeadlessRecords or 0))
 end
 
-out("v3.2 loaded: closure-safe headless state; all AVM restart/resume cycles headless; no reload path; hook=" .. tostring(hookInstalled))
+out("v3.3 loaded: upvalue-safe headless state helpers; all AVM restart/resume cycles headless; no reload path; hook=" .. tostring(hookInstalled))

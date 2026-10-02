@@ -3927,12 +3927,34 @@
         "AUXFAST_ResumeSearch",
         "upstream Search visible callbacks"
       ],
-      "status": "awaiting_ci",
+      "status": "blocked",
       "observed_head": "9149dd5110b6b2d602f247faa8dc69357b4aa1c2",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Report #68 on exact 9149dd5 reproduces first-cycle headless then later visible table. Root cause: AUX custom module() changes function environment. Non-local bridge headless state writes inside M.start became aux.core.scan-owned shadows, while later RestartSearch/ResumeSearch wrote globals. Candidate converts all repeat/headless/counter state to lexical locals, consumes a one-shot restart/resume arm, and adds SCAN_MODE + SCAN_DONE/SCAN_ABORT diagnostics. No AVM economics, DE/flip/buy, native throttle or scheduler logic changed."
+      "notes": "Report #68 on exact 9149dd5 reproduces first-cycle headless then later visible table. Root cause: AUX custom module() changes function environment. Non-local bridge headless state writes inside M.start became aux.core.scan-owned shadows, while later RestartSearch/ResumeSearch wrote globals. Candidate converts all repeat/headless/counter state to lexical locals, consumes a one-shot restart/resume arm, and adds SCAN_MODE + SCAN_DONE/SCAN_ABORT diagnostics. No AVM economics, DE/flip/buy, native throttle or scheduler logic changed. User reports runtime load error 'AuxFastBridge.lua too many upvalues limit32' after the v3.2 candidate. Exact installed SHA is not independently established, so no exact-SHA game test record is added. This matches the previously documented WoW 1.12 32-upvalue ceiling: v3.2 added six new file-scope state captures to the already-large scan closure."
+    },
+    {
+      "id": "auxfast-headless-upvalue-fix-v2",
+      "branch": "feature/auxfast-headless-upvalue-fix-v2",
+      "modules": [
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "auxfast-headless-state-closure",
+        "auxfast-upvalue-limit-fix"
+      ],
+      "shared_resources": [
+        "WoW 1.12 Lua 32-upvalue ceiling",
+        "aux.core.scan module environment",
+        "headless restart/resume routing"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "136facb02d9a5cb8c1a4a285ff83ec90c3aec1ed",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "v3.2 fixed module-environment shadowing but added six lexical headless-state locals captured by the already-large M.start closure, reproducing the historical WoW 1.12 'too many upvalues (limit=32)' failure. Candidate v3.3 stores state in one private table and exposes small global helpers for arm/begin/counter/end. M.start calls helpers through _G after module('aux.core.scan') and therefore captures none of the new state locals. No AVM economics, scheduler, native throttle, DE/flip/buy or visible-manual-Search behavior is changed."
     }
   ]
 }

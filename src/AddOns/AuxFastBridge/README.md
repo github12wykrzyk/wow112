@@ -1,5 +1,7 @@
 # Aux FAST Bridge
 
+Version 3.3 fixes the WoW 1.12 Lua `too many upvalues (limit=32)` load failure introduced by 3.2. The 3.2 shadowing fix was correct conceptually but added six new file-scope locals that the already-large `M.start` scan closure captured, crossing the client's 32-upvalue ceiling. 3.3 collapses that runtime state into one private table and moves arm/begin/counter/end operations behind small global bridge helpers. Because `M.start` resolves those helpers through the AUX module environment's `__index=_G`, it no longer captures the new state locals at all. The first/second-cycle headless fix and SCAN_MODE/SCAN_DONE diagnostics are preserved.
+
 Version 3.2 fixes report #68's exact first-cycle-headless / next-cycle-visible failure. The bridge used global headless flags, but after `module("aux.core.scan")` assignments inside the hook were written into the module environment and shadowed later globals set by RestartSearch/ResumeSearch. All routing/counters are now lexical locals captured by the hook closure. Restart/resume arm a one-shot local source immediately before `execute(true)`; manual Search has no arm and remains visible. `SCAN_MODE` and `SCAN_DONE/SCAN_ABORT` now expose the actual mode and headless page/record counts.
 
 Version 3.1 physically removes the obsolete UI-reload helpers. AVM automation has only two continuation mechanisms now: headless restart from page 0 and headless resume after a guarded transaction. Manual AUX Search remains the only path that populates visible Search rows.
