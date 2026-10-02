@@ -7,7 +7,11 @@
  *   WOW112_AUTOLOGIN_BLOB    - DPAPI-protected password (base64)
  *   WOW112_AUTOCHAR_FIRST    - optional "1": select list index 1 and enter world
  *
- * V5 also supports a relogin-only one-time handoff:
+ * V6 also supports a relogin-only one-time handoff and publishes a non-secret
+ * per-process account fingerprint for strict updater worker binding:
+ *   Local\\WoW112_AutoLoginProfile_<pid>
+ *
+ * V5 introduced the relogin-only one-time handoff:
  *   WOW112_AUTOLOGIN_HANDOFF - random per-process nonce.
  * The updater writes login + already-DPAPI-protected blob under its APPDATA
  * directory after CreateProcess. Ordinary "Uruchom" therefore stays manual at
@@ -50,6 +54,20 @@
 #define HANDOFF_NONCE_CAP 80u
 #define HANDOFF_PATH_CAP  1024u
 #define HANDOFF_FILE_CAP  2304u
+#define PROFILE_MAGIC      0x50323157u /* W12P */
+#define PROFILE_VERSION    1u
+#define PROFILE_MAP_CAP    96u
+
+typedef struct AutoLoginProfileMapV1 {
+    volatile DWORD magic;
+    volatile DWORD version;
+    volatile DWORD pid;
+    volatile DWORD hash1;
+    volatile DWORD hash2;
+    volatile DWORD loaded;
+    volatile DWORD relogin_state;
+    volatile DWORD reserved;
+} AutoLoginProfileMapV1;
 
 typedef void (__fastcall *GlueLoginFn)(const char*, char*);
 typedef BOOL (__fastcall *FrameScriptExecuteFn)(const char*,const char*);
@@ -71,6 +89,8 @@ static char g_handoff_path_buf[HANDOFF_PATH_CAP];
 static char g_handoff_file_buf[HANDOFF_FILE_CAP];
 static HWND g_best=NULL;
 static DWORD g_best_area=0u;
+static HANDLE g_profile_map_handle=NULL;
+static AutoLoginProfileMapV1 *g_profile_map=NULL;
 
 static void wipe(void *p,DWORD n)
 {
@@ -131,6 +151,85 @@ static int append_text(char *dst,DWORD cap,DWORD *used,const char *src)
     }
     dst[*used]=0;
     return 1;
+}
+
+static int append_u32(char *dst,DWORD cap,DWORD *used,DWORD value)
+{
+    char tmp[11];
+    DWORD n=0u,i;
+    if(!dst||!used) return 0;
+    do { tmp[n++]=(char)('0'+(value%10u)); value/=10u; } while(value&&n<(DWORD)sizeof(tmp));
+    for(i=0u;i<n;i++) {
+        if(*used+1u>=cap) return 0;
+        dst[(*used)++]=tmp[n-1u-i];
+    }
+    dst[*used]=0;
+    return 1;
+}
+
+static BYTE profile_fold(BYTE c)
+{
+    if(c>='A'&&c<='Z') c=(BYTE)(c+('a'-'A'));
+    return c;
+}
+
+static DWORD profile_hash1(const char *s)
+{
+    DWORD h=2166136261u;
+    BYTE c;
+    if(!s) return 0u;
+    while(*s) { c=profile_fold((BYTE)*s++); h^=(DWORD)c; h*=16777619u; }
+    return h?h:1u;
+}
+
+static DWORD profile_hash2(const char *s)
+{
+    DWORD h=5381u;
+    BYTE c;
+    if(!s) return 0u;
+    while(*s) { c=profile_fold((BYTE)*s++); h=((h<<5)+h)^(DWORD)c; }
+    return h?h:1u;
+}
+
+static void init_profile_map(void)
+{
+    char name[PROFILE_MAP_CAP];
+    DWORD used=0u;
+    if(g_profile_map||!g_pid) return;
+    name[0]=0;
+    if(!append_text(name,PROFILE_MAP_CAP,&used,"Local\\WoW112_AutoLoginProfile_")) return;
+    if(!append_u32(name,PROFILE_MAP_CAP,&used,g_pid)) return;
+    g_profile_map_handle=CreateFileMappingA(INVALID_HANDLE_VALUE,NULL,PAGE_READWRITE,0,sizeof(AutoLoginProfileMapV1),name);
+    if(!g_profile_map_handle) return;
+    g_profile_map=(AutoLoginProfileMapV1*)MapViewOfFile(g_profile_map_handle,FILE_MAP_ALL_ACCESS,0,0,sizeof(AutoLoginProfileMapV1));
+    if(!g_profile_map) { CloseHandle(g_profile_map_handle); g_profile_map_handle=NULL; return; }
+    ZeroMemory((void*)g_profile_map,sizeof(AutoLoginProfileMapV1));
+    g_profile_map->magic=PROFILE_MAGIC;
+    g_profile_map->version=PROFILE_VERSION;
+    g_profile_map->pid=g_pid;
+}
+
+static void publish_profile_map(void)
+{
+    if(!g_profile_map) return;
+    g_profile_map->hash1=profile_hash1(g_account);
+    g_profile_map->hash2=profile_hash2(g_account);
+    g_profile_map->relogin_state=(DWORD)g_relogin_state;
+    MemoryBarrier();
+    g_profile_map->loaded=g_profile_loaded?1u:0u;
+}
+
+static void shutdown_profile_map(void)
+{
+    if(g_profile_map) {
+        g_profile_map->loaded=0u;
+        UnmapViewOfFile(g_profile_map);
+        g_profile_map=NULL;
+    }
+    if(g_profile_map_handle) {
+        CloseHandle(g_profile_map_handle);
+        g_profile_map_handle=NULL;
+    }
 }
 
 static int handoff_path(char *path,DWORD cap)
@@ -359,6 +458,7 @@ static DWORD WINAPI worker(LPVOID unused)
     int initialLogin=0;
     (void)unused;
     g_pid=GetCurrentProcessId();
+    init_profile_map();
 
     if(!load_profile(&initialLogin) && g_handoff_nonce[0]) {
         start=GetTickCount();
@@ -368,6 +468,7 @@ static DWORD WINAPI worker(LPVOID unused)
         }
     }
     if(!g_profile_loaded) return 0u;
+    publish_profile_map();
     if(!guard_ok()) { g_done=-1; wipe(g_blob,sizeof(g_blob)); wipe(g_account,sizeof(g_account)); return 0u; }
 
     if(initialLogin) {
@@ -412,6 +513,7 @@ __declspec(dllexport) int __stdcall W112_AutoLoginBridge_RequestRelogin(void)
 {
     if(!g_profile_loaded || g_relogin_state==1 || g_relogin_state==2) return 0;
     g_relogin_state=1;
+    if(g_profile_map) g_profile_map->relogin_state=1u;
     return 1;
 }
 
@@ -432,6 +534,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
     } else if(reason==DLL_PROCESS_DETACH) {
         g_stop=1;
         release_hook();
+        shutdown_profile_map();
         wipe(g_blob,sizeof(g_blob));
         wipe(g_account,sizeof(g_account));
         wipe(g_handoff_nonce,sizeof(g_handoff_nonce));
