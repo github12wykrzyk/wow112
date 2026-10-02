@@ -311,6 +311,19 @@ jobs:
             --output build/WoWRemoteServiceProbe_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel Remote Service Probe build/package failed" }
 
+      - name: Build and append Parallel Market Worker service cycle
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_marketworker_candidate.py `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --package-metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --build-metadata dist/marketworker_build.json `
+            --output build/WoWMarketWorker_5875_v1.dll
+          if ($LASTEXITCODE -ne 0) { throw "Parallel MarketWorker build/package failed" }
+
       - name: Build and append Parallel Character Switch diagnostic
         if: github.ref_name == 'parallel'
         shell: pwsh

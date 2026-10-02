@@ -1,4 +1,4 @@
--- AuxFastBridge v3.4 upvalue-safe headless state; resumable busy-race diagnostics
+-- AuxFastBridge v3.5 service-handoff pause; upvalue-safe headless state; resumable busy-race diagnostics
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -46,6 +46,14 @@ local gateBlockedChecks = 0
 local pauseRequested = false
 local pausePage = -1
 local resumeRequested = false
+
+-- MarketWorker service handoff is deliberately independent of the arbitrage
+-- candidate pause path. It pauses only at an AUX submit boundary, after the
+-- current real AH response has been consumed, so closing the AH cannot split
+-- a query/result pair.
+local servicePauseRequested = false
+local servicePaused = false
+local servicePauseHadScan = false
 
 local awaitNativeSeq = 0
 local querySentAt = 0
@@ -369,6 +377,7 @@ local function install_scan_hook()
 		end
 		params.on_abort = function()
 			local arbPause = pauseRequested
+			local workerPause = servicePauseRequested
 			release()
 			local result
 			if oldAbort then result = oldAbort() end
@@ -376,7 +385,13 @@ local function install_scan_hook()
 				AUXFAST_EndScan(scanId, armedSource, headlessLoop, true, arbPause)
 			end
 			pauseRequested = false
-			if arbPause and auxArbAttached and AVM_AuxArbPaused then
+			if workerPause then
+				servicePauseRequested = false
+				servicePaused = true
+				out("SERVICE_HANDOFF_PAUSED page=" .. tostring(queryPage) ..
+					" hadScan=" .. tostring(servicePauseHadScan and true or false))
+			end
+			if arbPause and not workerPause and auxArbAttached and AVM_AuxArbPaused then
 				pcall(AVM_AuxArbPaused, pausePage)
 			end
 			pausePage = -1
@@ -449,6 +464,11 @@ local function install_scan_hook()
 	-- save a correct continuation without invalidating the current scan stack.
 	local originalSubmitQuery = submit_query
 	submit_query = function()
+		if servicePauseRequested or servicePaused then
+			local state = get_state()
+			if state and state.id then abort(state.id) end
+			return
+		end
 		if avm_hard_stopped() then
 			local state = get_state()
 			if state and state.id then abort(state.id) end
@@ -470,10 +490,55 @@ if not install_scan_hook() then
 	out("ERROR: aux.core.scan unavailable; fast transport disabled")
 end
 
+function AUXFAST_ServiceWorkerPause()
+	if avm_hard_stopped() then return false, "hard-stop" end
+	if servicePaused then return true, "paused" end
+
+	-- Never tear down AH while a purchase/revalidation/AVM-owned transaction is
+	-- outside the original AUX Search scan. The worker retries until it reaches
+	-- a clean handoff point.
+	if busy <= 0 and avm_busy() then
+		return false, "avm-transaction"
+	end
+
+	if busy > 0 then
+		servicePauseHadScan = true
+		servicePauseRequested = true
+		return false, "pending-submit-boundary"
+	end
+
+	servicePauseHadScan = false
+	servicePauseRequested = false
+	servicePaused = true
+	out("SERVICE_HANDOFF_PAUSED idle=true")
+	return true, "idle"
+end
+
+function AUXFAST_ServiceWorkerStatus()
+	return {
+		paused = servicePaused and true or false,
+		pending = servicePauseRequested and true or false,
+		busy = busy > 0,
+		avmBusy = avm_busy() and true or false,
+		hadScan = servicePauseHadScan and true or false,
+	}
+end
+
+function AUXFAST_ServiceWorkerRelease()
+	servicePauseRequested = false
+	servicePaused = false
+	servicePauseHadScan = false
+	out("SERVICE_HANDOFF_RELEASED")
+	return true
+end
+
 function AUXFAST_HardStop()
 	AUXFAST_ClearHeadlessArm()
 	resumeRequested = false
 	pauseRequested = false
+	servicePauseRequested = false
+	servicePaused = false
+	servicePauseHadScan = false
 	pausePage = -1
 	local aborted = false
 	local state = get_state()
@@ -611,4 +676,4 @@ SlashCmdList["AUXFAST"] = function()
 		" hRecords=" .. tostring(AuxFastBridgeDB.lastHeadlessRecords or 0))
 end
 
-out("v3.3 loaded: upvalue-safe headless state helpers; all AVM restart/resume cycles headless; no reload path; hook=" .. tostring(hookInstalled))
+out("v3.5 loaded: safe MarketWorker service handoff + upvalue-safe headless resume; hook=" .. tostring(hookInstalled))
