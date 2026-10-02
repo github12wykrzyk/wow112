@@ -10,6 +10,9 @@
 #define THISCALL __thiscall
 #define STDCALL __stdcall
 #define NAKED __declspec(naked)
+/* Export stable undecorated ABI names for GetProcAddress consumers on x86. */
+#pragma comment(linker, "/EXPORT:W112_RSP_GetLearnedGuid=_W112_RSP_GetLearnedGuid@20")
+#pragma comment(linker, "/EXPORT:W112_RSP_GetLearnedMask=_W112_RSP_GetLearnedMask@0")
 #else
 #define FASTCALL __attribute__((fastcall))
 #define THISCALL __attribute__((thiscall))
@@ -428,8 +431,11 @@ static PacketRecord *choose_candidate(u32 svc,u32 now,u32 *objOut,u32 *typeOut,u
             obj=find_object(lo,hi);if(!ptr_ok(obj))continue;
             if(!snapshot_positions(obj,&type,&dist,&x,&y,&z,&a,&b,&c))continue;
             if(type!=3u&&type!=5u)continue;
-            score=100u;
-            if(type_matches(svc,type))score+=70u;
+            /* Service identity is a hard gate, not a scoring hint.
+             * MAIL_SHOW must never learn a nearby unit/AH GUID and AH/BANK
+             * must never learn a GameObject GUID. */
+            if(!type_matches(svc,type))continue;
+            score=170u;
             if(age<=180u)score+=60u;else if(age<=450u)score+=40u;else if(age<=900u)score+=20u;
             if(r->len<=32u)score+=30u;else if(r->len<=96u)score+=15u;
             if(off==4u)score+=10u;
@@ -783,7 +789,7 @@ __declspec(dllexport) u32 STDCALL W112_RSP_GetLearnedGuid(
     LearnedService *l;
     if(service<1u||service>SERVICE_MAX)return 0u;
     l=&g_learn[service];
-    if(!l->valid)return 0u;
+    if(!l->valid||!type_matches(service,l->objectType))return 0u;
     if(guidLo)*guidLo=l->packet.guidLo;
     if(guidHi)*guidHi=l->packet.guidHi;
     if(objectType)*objectType=l->objectType;

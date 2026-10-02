@@ -4891,7 +4891,7 @@
     },
     {
       "id": "market-worker-service-cycle-5875",
-      "branch": "feature/market-worker-service-cycle-v3",
+      "branch": "feature/market-worker-rsp-strict-mail-abi",
       "modules": [
         "MarketWorker",
         "RemoteServiceProbe",
@@ -4909,11 +4909,11 @@
         ".wow112_debug market_worker JSONL"
       ],
       "status": "in_progress",
-      "observed_head": "aff77db3af076bbb0ac82d9f25f1878f1794d440",
+      "observed_head": "a535bc4b7a51cfe9237a3f7e1b1a04308abf91d5",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof."
+      "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof. Follow-up: screenshot showed RSP falsely learned MAIL as AH opcode 0x0259 while MarketWorker saw no provider GUIDs. Fix makes service object type a hard RSP learn/export gate, publishes stable undecorated x86 exports, keeps decorated fallback in MarketWorker, and validates provider object type downstream."
     },
     {
       "id": "updater-auto-report-stream-v1",
@@ -5096,7 +5096,7 @@
         "AVM purchaseHistory and AUX history.value"
       ],
       "status": "in_progress",
-      "observed_head": "a535bc4b7a51cfe9237a3f7e1b1a04308abf91d5",
+      "observed_head": "154320fdd2b28303f8d6a4864a1e518ea1d8c4e0",
       "verified_commit": null,
       "tests": [],
       "package": null,
