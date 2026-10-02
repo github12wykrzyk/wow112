@@ -4087,6 +4087,13 @@
           "commit": "1476ec4b31ccf65c54ba03a37a055fd40b4b2675",
           "date": "2026-10-02",
           "evidence": "Verified aggregate candidate artifact 11218507039 (WoW112-WORK-CANDIDATE-1476ec4b31ccf65c54ba03a37a055fd40b4b2675) was produced by successful run 36988426164."
+        },
+        {
+          "kind": "game",
+          "result": "inconclusive",
+          "commit": "9c03e79656019459f827ab98267c2ed4d8d30e71",
+          "date": "2026-10-02",
+          "evidence": "Report #73 on exact parallel SHA 9c03e79656019459f827ab98267c2ed4d8d30e71 confirms AuxVmangos 0.29 loaded with Turtle DB schema 2 and 9 purchases confirmed by exact money delta, totaling 20620 copper session spend. This proves the live purchase path is active; per-item economic correctness remains pending because the 80-event ring no longer retained the individual transaction lines."
         }
       ],
       "package": {
@@ -4095,6 +4102,28 @@
         "artifact_id": 11218507039
       },
       "notes": "Replace generic Vanilla AVM_VENDOR_VALUES with the exact ShaguTweaks Turtle WoW sell-value table from 7d670218a9b1e0a6a9a9062c0f458508398f2e48 (Turtle 1.18 update). Runtime priority becomes realm-learned AUX value > trusted Turtle DB > no value. No fallback to the old Vanilla table. Existing vendor min-profit/max-buyout/wallet/session/revalidation/purchase gates remain unchanged. Diagnostics retain legacy static* field names for compatibility but tag vendorDbSource and report turtle-db as the actual source. Integrated code SHA passed full candidate packaging. Gameplay test should confirm vendor candidates now route from turtle-db into the existing revalidation/buy path and that Turtle-specific sell values prevent the prior Serrated Petal mismatch."
+    },
+    {
+      "id": "ah-purchase-history-ui",
+      "branch": "feature/ah-purchase-history-ui",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-turtle-vendor-db-live"
+      ],
+      "shared_resources": [
+        "AVM_DB SavedVariables purchase history",
+        "confirmed/confirmed-late purchase money-delta path",
+        "AVM WATCH in-game GUI",
+        "updater AuxVmangos diagnostics"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "9c03e79656019459f827ab98267c2ed4d8d30e71",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Persist the last 50 confirmed purchases only after exact money-delta confirmation. Store route, item id/name, stack count, buyout, valuation, expected profit, vendor unit/total when applicable and valuation source. Maintain cumulative confirmed/spend/expected-profit stats beyond the 50-row retention window. Mirror history/stats into diagnostics so updater reports retain exact transaction evidence. Add an in-game PURCHASES panel (15 rows/page, newest first) reachable from AVM WATCH and /avm history. No scan, pricing, candidate selection, revalidation or buy gating changes."
     }
   ]
 }

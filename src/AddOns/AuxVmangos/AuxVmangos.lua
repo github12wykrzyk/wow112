@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.29-turtle-vendor-live"
+AVM_VERSION = "0.30-purchase-history-ui"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -218,6 +218,8 @@ local function avm_diag_record(msg)
 
 	local v = AVM.vendor or {}
 	d.version = AVM_VERSION
+	d.purchaseHistory = AVM_DB.purchaseHistory or {}
+	d.purchaseStats = AVM_DB.purchaseStats or { confirmed = 0, spend = 0, expectedProfit = 0 }
 	d.state = {
 		open = AVM.open and true or false,
 		live = AVM_DB.live and true or false,
@@ -299,6 +301,65 @@ local function avm_money(copper)
 	return c .. "c"
 end
 
+local function avm_purchase_route(c)
+	if not c then return "unknown" end
+	if c.route and c.route ~= "" then return tostring(c.route) end
+	if c.mode == "vendor" or c.mode == "fastvendor" or c.mode == "auxarb_vendor" then return "vendor" end
+	if c.mode == "auxarb_de" then return "disenchant" end
+	if c.mode == "auxarb_flip" then return "flip" end
+	return tostring(c.mode or "watch")
+end
+
+local function avm_purchase_source(c, route)
+	if not c then return "" end
+	if c.vendorSource and c.vendorSource ~= "" then return tostring(c.vendorSource) end
+	if route == "disenchant" then return "de-live" end
+	if route == "flip" then return "history+depth" end
+	return ""
+end
+
+function AVM_RecordPurchase(c, confirmation)
+	if not AVM_DB or not c then return end
+	if not AVM_DB.purchaseHistory then AVM_DB.purchaseHistory = {} end
+	if not AVM_DB.purchaseStats then AVM_DB.purchaseStats = { confirmed = 0, spend = 0, expectedProfit = 0 } end
+	AVM_DB.purchaseHistorySeq = (tonumber(AVM_DB.purchaseHistorySeq) or 0) + 1
+
+	local route = avm_purchase_route(c)
+	local buyout = tonumber(c.buyout) or 0
+	local value = tonumber(c.valuationTotal or c.vendorTotal or c.deValue) or 0
+	local profit = tonumber(c.profit) or (value - buyout)
+	local stamp = tostring(math.floor(GetTime() or 0))
+	if type(date) == "function" then stamp = date("%Y-%m-%d %H:%M:%S") end
+
+	local row = {
+		seq = AVM_DB.purchaseHistorySeq,
+		at = stamp,
+		confirmation = tostring(confirmation or "confirmed"),
+		route = route,
+		name = tostring(c.name or ""),
+		itemId = tonumber(c.itemId or c.item_id) or 0,
+		count = tonumber(c.count or c.aux_quantity) or 0,
+		buyout = buyout,
+		value = value,
+		profit = profit,
+		vendorUnit = tonumber(c.vendorUnit) or 0,
+		vendorTotal = tonumber(c.vendorTotal) or 0,
+		source = avm_purchase_source(c, route),
+		itemKey = tostring(c.itemKey or ""),
+	}
+	table.insert(AVM_DB.purchaseHistory, row)
+	while table.getn(AVM_DB.purchaseHistory) > 50 do table.remove(AVM_DB.purchaseHistory, 1) end
+
+	AVM_DB.purchaseStats.confirmed = (tonumber(AVM_DB.purchaseStats.confirmed) or 0) + 1
+	AVM_DB.purchaseStats.spend = (tonumber(AVM_DB.purchaseStats.spend) or 0) + buyout
+	AVM_DB.purchaseStats.expectedProfit = (tonumber(AVM_DB.purchaseStats.expectedProfit) or 0) + profit
+
+	if AVM_DB.diag then
+		AVM_DB.diag.purchaseHistory = AVM_DB.purchaseHistory
+		AVM_DB.diag.purchaseStats = AVM_DB.purchaseStats
+	end
+end
+
 local function avm_parse_money(text)
 	if not text then return nil end
 	text = string.lower(text)
@@ -351,6 +412,9 @@ local function avm_defaults()
 	if AVM_DB.maxSessionSpend == nil then AVM_DB.maxSessionSpend = 0 end
 	if AVM_DB.maxSessionBuys == nil then AVM_DB.maxSessionBuys = 0 end
 	if AVM_DB.rules == nil then AVM_DB.rules = {} end
+	if AVM_DB.purchaseHistory == nil then AVM_DB.purchaseHistory = {} end
+	if AVM_DB.purchaseHistorySeq == nil then AVM_DB.purchaseHistorySeq = 0 end
+	if AVM_DB.purchaseStats == nil then AVM_DB.purchaseStats = { confirmed = 0, spend = 0, expectedProfit = 0 } end
 	if AVM_DB.marketPacked == nil then AVM_DB.marketPacked = "" end
 	if AVM_DB.marketMeta == nil then AVM_DB.marketMeta = {} end
 	if AVM_DB.marketRetention == nil then AVM_DB.marketRetention = 8 end
@@ -4396,6 +4460,7 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
+			AVM_RecordPurchase(p.candidate, "confirmed")
 			avm_record_item_exposure(p.candidate)
 			AVM.recent[p.candidate.signature] = now + 15
 			if avm_is_auxarb_candidate(p.candidate) then
@@ -4443,6 +4508,7 @@ local function avm_tick_pending(now)
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
+			AVM_RecordPurchase(u.candidate, "confirmed-late")
 			avm_record_item_exposure(u.candidate)
 			if avm_is_auxarb_candidate(u.candidate) then
 				avm_print("CONFIRMED_LATE AUX_ARB route=" .. tostring(u.candidate.route) .. " " .. u.candidate.name ..
@@ -5106,8 +5172,10 @@ local function avm_slash(msg)
 		avm_status()
 	elseif cmd == "gui" then
 		if AVM_WATCH_UI and AVM_WATCH_UI.Toggle then AVM_WATCH_UI.Toggle() else avm_print("WATCH GUI unavailable") end
+	elseif cmd == "history" then
+		if AVM_WATCH_UI and AVM_WATCH_UI.ToggleHistory then AVM_WATCH_UI.ToggleHistory() else avm_print("purchase history GUI unavailable") end
 	else
-		avm_print("/avm on|off | live on|off | status | gui | list | del N | pages N | budget 100g | maxbuys N")
+		avm_print("/avm on|off | live on|off | status | gui | history | list | del N | pages N | budget 100g | maxbuys N")
 		avm_print("/avm add exact;Black Lotus;60g;120g;1;20")
 		avm_print("/avm vendor start|stop|status|minprofit 5s|maxbuyout 1g|hotpages 10|seekradius 1|targets")
 		avm_print("/avm auxarb on|off|status|live on|off|demin 5s|demax 1g")
@@ -5192,6 +5260,28 @@ AVM_WATCH_API = {
 		AVM_DB.live = true
 		AVM.uiGeneration = AVM.uiGeneration + 1
 		return true
+	end,
+	GetPurchaseHistoryCount = function()
+		avm_defaults()
+		return table.getn(AVM_DB.purchaseHistory or {})
+	end,
+	GetPurchaseHistory = function(index)
+		avm_defaults()
+		local h = AVM_DB.purchaseHistory or {}
+		local n = table.getn(h)
+		index = math.floor(tonumber(index) or 0)
+		if index < 1 or index > n then return nil end
+		return h[n - index + 1]
+	end,
+	GetPurchaseHistorySummary = function()
+		avm_defaults()
+		local s = AVM_DB.purchaseStats or {}
+		return {
+			confirmed = tonumber(s.confirmed) or 0,
+			spend = tonumber(s.spend) or 0,
+			expectedProfit = tonumber(s.expectedProfit) or 0,
+			retained = table.getn(AVM_DB.purchaseHistory or {}),
+		}
 	end,
 	GetState = function()
 		local rule = avm_active_rule()
