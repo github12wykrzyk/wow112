@@ -5222,7 +5222,7 @@
         "AuxVmangos/AuxFastBridge/AHThrottleTest/aux-addon overlay",
         ".wow112_parallel_updater economy state and pending transaction"
       ],
-      "status": "preflight_passed",
+      "status": "awaiting_ci",
       "observed_head": "1047745e3d4c2e03519c3d41e2ea3a7397d0bfef",
       "verified_commit": "25f4b21b56d06032a6babbea4975073b3868ab08",
       "tests": [
