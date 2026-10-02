@@ -3957,42 +3957,42 @@
       "notes": "v3.2 fixed module-environment shadowing but added six lexical headless-state locals captured by the already-large M.start closure, reproducing the historical WoW 1.12 'too many upvalues (limit=32)' failure. Candidate v3.3 stores state in one private table and exposes small global helpers for arm/begin/counter/end. M.start calls helpers through _G after module('aux.core.scan') and therefore captures none of the new state locals. No AVM economics, scheduler, native throttle, DE/flip/buy or visible-manual-Search behavior is changed."
     },
     {
-        "id": "report70-reload-teardown-safety",
-        "branch": "feature/report70-reload-teardown-safety",
-        "modules": [
-            "CharacterSwitchDiag",
-            "AHThrottleNative"
-        ],
-        "dependencies": [
-            "updater-reload-worker-protocol-v2",
-            "ah-remove-reload-code"
-        ],
-        "shared_resources": [
-            "WoW 1.12.1 FrameScript_Execute 0x00704CD0 / ReloadUI lifecycle",
-            "CharacterSwitchDiag 50ms UI-thread worker timer",
-            "AHThrottleNative NetClient 0x00C28128 receive-handler table"
-        ],
-        "status": "awaiting_ci",
-        "observed_head": "c1dd624d210fe1d5e91729fd368913080f9aff85",
-        "verified_commit": null,
-        "tests": [
-            {
-                "kind": "game",
-                "result": "failed",
-                "commit": "c1dd624d210fe1d5e91729fd368913080f9aff85",
-                "date": "2026-10-02",
-                "evidence": "Report #70 exact parallel candidate: manual/ordinary ReloadUI SavedVariables flush at 08:06:42.975244Z was followed ~22.6ms later by ERROR #132 ACCESS_VIOLATION at WoW.exe 0x00483EFA. Exact EXE disassembly shows mov ecx,[esi+0x65B8] and the fault address equals ESI+0x65B8, consistent with a stale client object during reload teardown."
-            },
-            {
-                "kind": "binary",
-                "result": "failed",
-                "commit": "c1dd624d210fe1d5e91729fd368913080f9aff85",
-                "date": "2026-10-02",
-                "evidence": "The same report contains an earlier WER crash in WoWAHThrottleNative_5875_v8_FASTMARKET.dll at RVA 0x1599. Exact artifact disassembly maps RVA 0x1599 to restore_receive_hook reading NetClient+0x9E4 during DLL_PROCESS_DETACH after the NetClient global had become stale."
-            }
-        ],
-        "package": null,
-        "notes": "Minimal native lifecycle hardening. CharacterSwitchDiag no longer calls FrameScript_GetText/Execute from its idle 50ms timer; Lua probes occur only for a pending worker command or active switch, and controlled ReloadUI blocks nested timer re-entry until ReloadUI returns. AHThrottleNative skips all game-memory/hook restoration when DLL_PROCESS_DETACH is caused by process termination; explicit FreeLibrary unload still restores timer/send/receive/cooldown state. No AUX scan, buy, DE, flip, scheduler or pricing logic changes."
+      "id": "report70-reload-teardown-safety",
+      "branch": "feature/report70-reload-teardown-safety",
+      "modules": [
+        "CharacterSwitchDiag",
+        "AHThrottleNative"
+      ],
+      "dependencies": [
+        "updater-reload-worker-protocol-v2",
+        "ah-remove-reload-code"
+      ],
+      "shared_resources": [
+        "WoW 1.12.1 FrameScript_Execute 0x00704CD0 / ReloadUI lifecycle",
+        "CharacterSwitchDiag 50ms UI-thread worker timer",
+        "AHThrottleNative NetClient 0x00C28128 receive-handler table"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "c1dd624d210fe1d5e91729fd368913080f9aff85",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "c1dd624d210fe1d5e91729fd368913080f9aff85",
+          "date": "2026-10-02",
+          "evidence": "Report #70 exact parallel candidate: manual/ordinary ReloadUI SavedVariables flush at 08:06:42.975244Z was followed ~22.6ms later by ERROR #132 ACCESS_VIOLATION at WoW.exe 0x00483EFA. Exact EXE disassembly shows mov ecx,[esi+0x65B8] and the fault address equals ESI+0x65B8, consistent with a stale client object during reload teardown."
+        },
+        {
+          "kind": "binary",
+          "result": "failed",
+          "commit": "c1dd624d210fe1d5e91729fd368913080f9aff85",
+          "date": "2026-10-02",
+          "evidence": "The same report contains an earlier WER crash in WoWAHThrottleNative_5875_v8_FASTMARKET.dll at RVA 0x1599. Exact artifact disassembly maps RVA 0x1599 to restore_receive_hook reading NetClient+0x9E4 during DLL_PROCESS_DETACH after the NetClient global had become stale."
+        }
+      ],
+      "package": null,
+      "notes": "Minimal native lifecycle hardening. CharacterSwitchDiag no longer calls FrameScript_GetText/Execute from its idle 50ms timer; Lua probes occur only for a pending worker command or active switch, and controlled ReloadUI blocks nested timer re-entry until ReloadUI returns. AHThrottleNative skips all game-memory/hook restoration when DLL_PROCESS_DETACH is caused by process termination; explicit FreeLibrary unload still restores timer/send/receive/cooldown state. No AUX scan, buy, DE, flip, scheduler or pricing logic changes."
     },
     {
       "id": "ah-vendor-deep-diagnostics",
@@ -4013,12 +4013,70 @@
         "AUX_ARB revalidation and PlaceAuctionBid lifecycle",
         "Updater AuxVmangos SavedVariables issue diagnostics"
       ],
+      "status": "accepted",
+      "observed_head": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+      "verified_commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 36986267343 passed on exact feature SHA; integrated Build work candidate run 36986361989 passed FINAL_PACKAGE/addon/provenance gates on exact parallel SHA."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11218100351 (WoW112-WORK-CANDIDATE-a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a)."
+        },
+        {
+          "kind": "game",
+          "result": "passed",
+          "commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+          "date": "2026-10-02",
+          "evidence": "Report #71 (two chunks, diagnostic signature e31cc6fc36a6) captured two complete 1204-page scans of about 60.2k records each. Vendor audit reported learnedDbItems=0 and 29/32 static-shadow live-eligible opportunities, proving the learned-only trusted policy blocked vendor LIVE despite available opportunities."
+        }
+      ],
+      "package": {
+        "verified": true,
+        "commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+        "artifact_id": 11218100351
+      },
+      "notes": "Deep vendor audit without changing economics or buy policy. vendorTrustedOnly remains true and static Vanilla values remain shadow-only. Each fresh AUX_ARB scan records actionable coverage by learned/static/no-value source, unique item coverage, learned-vs-static mismatch buckets/top outliers, rejection reason counts, shadow static-only profitability/live eligibility, top learned/static-only/no-value rows, and a bounded vendor candidate lifecycle through discovery, pause, revalidation, buy, confirm/unknown/race. Updater extracts the complete bounded diag table instead of a blind 18k substring so one report should be sufficient to decide the next pricing algorithm. Report #71 validated the diagnostic path and identified the pricing root cause: AUX merchant_sell is not a full AH vendor database, so learned-only trusted valuation leaves vendor LIVE effectively disabled on a fresh account."
+    },
+    {
+      "id": "ah-turtle-vendor-db-live",
+      "branch": "feature/ah-turtle-vendor-db-live",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-vendor-deep-diagnostics",
+        "ah-flip-history-anchor-v20",
+        "ah-zero-config-live-defaults"
+      ],
+      "shared_resources": [
+        "AUX_ARB vendor valuation and live purchase path",
+        "realm-learned aux.account_data.merchant_sell override",
+        "ShaguTweaks Turtle WoW 1.18 vendor sell database",
+        "AuxVmangos deep vendor diagnostics"
+      ],
       "status": "awaiting_ci",
-      "observed_head": "25f65a3ac79abf50820c4e1e202015d4edb49fc3",
+      "observed_head": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "game",
+          "result": "passed",
+          "commit": "a6a593b62e7e7fb2e7ee5dbbc51e9acc27c4098a",
+          "date": "2026-10-02",
+          "evidence": "Report #71 root-cause evidence for this follow-up: two full scans found 29 and 32 vendor-profitable rows under the old static shadow path while learnedDbItems remained 0. The user approved replacing the old Vanilla fallback with a Turtle-specific trusted database."
+        }
+      ],
       "package": null,
-      "notes": "Deep vendor audit without changing economics or buy policy. vendorTrustedOnly remains true and static Vanilla values remain shadow-only. Each fresh AUX_ARB scan records actionable coverage by learned/static/no-value source, unique item coverage, learned-vs-static mismatch buckets/top outliers, rejection reason counts, shadow static-only profitability/live eligibility, top learned/static-only/no-value rows, and a bounded vendor candidate lifecycle through discovery, pause, revalidation, buy, confirm/unknown/race. Updater extracts the complete bounded diag table instead of a blind 18k substring so one report should be sufficient to decide the next pricing algorithm."
+      "notes": "Replace generic Vanilla AVM_VENDOR_VALUES with the exact ShaguTweaks Turtle WoW sell-value table from 7d670218a9b1e0a6a9a9062c0f458508398f2e48 (Turtle 1.18 update). Runtime priority becomes realm-learned AUX value > trusted Turtle DB > no value. No fallback to the old Vanilla table. Existing vendor min-profit/max-buyout/wallet/session/revalidation/purchase gates remain unchanged. Diagnostics retain legacy static* field names for compatibility but tag vendorDbSource and report turtle-db as the actual source."
     }
   ]
 }

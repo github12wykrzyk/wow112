@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Zero-config AUX live loop; deep vendor shadow diagnostics; no reload path; automated scans headless.
+## Notes: Zero-config AUX live loop; Turtle 1.18 vendor DB with realm-learned override; automated scans headless.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.28-vendor-deep-diag
+## Version: 0.29-turtle-vendor-live
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

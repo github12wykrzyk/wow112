@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.28-vendor-deep-diag"
+AVM_VERSION = "0.29-turtle-vendor-live"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1793,11 +1793,16 @@ local function avm_vendor_value(itemId)
 	if aux and aux.account_data and aux.account_data.merchant_sell then
 		learned = tonumber(aux.account_data.merchant_sell[itemId]) or 0
 	end
+	-- Realm-observed value wins whenever AUX has actually learned this item.
 	if learned > 0 then return learned, "aux-learned" end
-	if AVM_DB.vendorTrustedOnly then return 0, "trusted-missing" end
-	local static = AVM_VENDOR_VALUES and tonumber(AVM_VENDOR_VALUES[itemId]) or 0
-	if static > 0 then return static, "static" end
-	return 0, "none"
+
+	-- AVM_VENDOR_VALUES is now the Turtle WoW 1.18 sell-value database from
+	-- ShaguTweaks (exact upstream commit recorded in THIRD_PARTY_VENDOR_DATA.md).
+	-- It is a trusted realm-specific fallback, not the old Vanilla table.
+	local turtle = AVM_VENDOR_VALUES and tonumber(AVM_VENDOR_VALUES[itemId]) or 0
+	if turtle > 0 then return turtle, "turtle-db" end
+
+	return 0, AVM_DB.vendorTrustedOnly and "trusted-missing" or "none"
 end
 
 avm_vendor_candidate_from_row = function(i)
@@ -1922,8 +1927,8 @@ local function avm_de_record_key(record, itemId)
 	return itemKey
 end
 
--- Deep vendor diagnostics are shadow-only: they never change vendor valuation,
--- trustedOnly policy, candidate selection or purchase decisions.
+-- Deep vendor diagnostics mirror the active valuation pipeline. The trusted
+-- fallback is the Turtle WoW database; realm-learned AUX values override it.
 function AVM_VendorDiagPushTop(list, row, metric)
 	if not list or not row then return end
 	local value = tonumber(row[metric]) or 0
@@ -1950,7 +1955,8 @@ function AVM_VendorDiagNew(filterString)
 		if (tonumber(value) or 0) > 0 then staticDbItems = staticDbItems + 1 end
 	end
 	return {
-		schema = 1,
+		schema = 2,
+		vendorDbSource = "ShaguTweaks Turtle 1.18 @ 7d670218a9b1",
 		scanId = AVM_DB.diag.vendorAuditSeq,
 		startedAtMs = math.floor((GetTime() or 0) * 1000),
 		filter = string.sub(tostring(filterString or ""), 1, 240),
@@ -2077,10 +2083,7 @@ function AVM_VendorDiagAuction(record)
 		return
 	end
 
-	local source = learned > 0 and "learned" or "static-only"
-	if source == "static-only" and AVM_DB.vendorTrustedOnly then
-		reasons.trustedStaticBlocked = (reasons.trustedStaticBlocked or 0) + 1
-	end
+	local source = learned > 0 and "learned" or "turtle-db"
 	local vendorUnit = learned > 0 and learned or static
 	local vendorTotal = vendorUnit * count
 	local profit = vendorTotal - buyout
@@ -2118,7 +2121,7 @@ function AVM_VendorDiagAuction(record)
 		itemId = itemId, name = tostring(record.name or ""), count = count,
 		buyout = buyout, vendorUnit = vendorUnit, vendorTotal = vendorTotal,
 		profit = profit, page = tonumber(record.page) or AVM.queryPage or 0,
-		shadowGate = shadowGate,
+		vendorSource = source, shadowGate = shadowGate,
 	}
 	if source == "learned" then
 		t.learnedProfitable = (t.learnedProfitable or 0) + 1
@@ -2129,7 +2132,7 @@ function AVM_VendorDiagAuction(record)
 		t.staticProfitable = (t.staticProfitable or 0) + 1
 		if economic then t.staticEconomicQualify = (t.staticEconomicQualify or 0) + 1 end
 		if liveEligible then t.staticLiveEligible = (t.staticLiveEligible or 0) + 1 end
-		topRow.currentGate = AVM_DB.vendorTrustedOnly and "trusted-static-block" or shadowGate
+		topRow.currentGate = shadowGate
 		AVM_VendorDiagPushTop(d.topStaticOnly, topRow, "profit")
 	end
 end
@@ -2146,7 +2149,7 @@ function AVM_VendorDiagSnapshot(status)
 		}, "auctions")
 	end
 	AVM_DB.diag.vendorAudit = {
-		schema = d.schema, scanId = d.scanId, status = tostring(status or "snapshot"),
+		schema = d.schema, vendorDbSource = d.vendorDbSource, scanId = d.scanId, status = tostring(status or "snapshot"),
 		startedAtMs = d.startedAtMs, updatedAtMs = nowMs,
 		durationMs = nowMs - (tonumber(d.startedAtMs) or nowMs),
 		filter = d.filter, trustedOnly = d.trustedOnly,
@@ -3102,10 +3105,10 @@ function AVM_AuxArbScanDone()
 		avm_print("VENDOR_AUDIT records=" .. tostring(va.totals.records or 0) ..
 			" unique=" .. tostring(va.unique and va.unique.items or 0) ..
 			" learned=" .. tostring(va.totals.learnedAuctions or 0) ..
-			" staticOnly=" .. tostring(va.totals.staticOnlyAuctions or 0) ..
+			" turtleOnly=" .. tostring(va.totals.staticOnlyAuctions or 0) ..
 			" noValue=" .. tostring(va.totals.noValueAuctions or 0) ..
 			" learnedEligible=" .. tostring(va.totals.learnedLiveEligible or 0) ..
-			" staticShadowEligible=" .. tostring(va.totals.staticLiveEligible or 0) ..
+			" turtleEligible=" .. tostring(va.totals.staticLiveEligible or 0) ..
 			" mismatchGt20=" .. tostring((va.mismatchBuckets and ((va.mismatchBuckets.le50 or 0) + (va.mismatchBuckets.gt50 or 0))) or 0))
 	end
 	avm_print("AUX_SCAN_DONE pages=" .. tostring(a.pages or 0))
