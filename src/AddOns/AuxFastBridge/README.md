@@ -1,5 +1,7 @@
 # Aux FAST Bridge
 
+Version 3.2 fixes report #68's exact first-cycle-headless / next-cycle-visible failure. The bridge used global headless flags, but after `module("aux.core.scan")` assignments inside the hook were written into the module environment and shadowed later globals set by RestartSearch/ResumeSearch. All routing/counters are now lexical locals captured by the hook closure. Restart/resume arm a one-shot local source immediately before `execute(true)`; manual Search has no arm and remains visible. `SCAN_MODE` and `SCAN_DONE/SCAN_ABORT` now expose the actual mode and headless page/record counts.
+
 Version 3.1 physically removes the obsolete UI-reload helpers. AVM automation has only two continuation mechanisms now: headless restart from page 0 and headless resume after a guarded transaction. Manual AUX Search remains the only path that populates visible Search rows.
 
 Version 3.0 makes **every AVM-driven Search restart and resume headless**, including continuation after a guarded DE/flip/vendor transaction. The automatic path no longer calls upstream Search's visible-result `on_auction` callback and no longer calls its per-page `search.table:SetDatabase()` callback. Fresh rows still reach all AVM arbitrage callbacks and native response correlation. A user clicking AUX Search manually does not set the automation flag, so manual searches still populate the normal visible item list.
