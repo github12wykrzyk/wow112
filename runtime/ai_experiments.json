@@ -4521,6 +4521,39 @@
       "tests": [],
       "package": null,
       "notes": "Manual CharacterSwitchDiag UI still routed legacy commands slot1/slot2 through stock Logout(), which can show the realm's 20s logout countdown. This feature routes slot1/slot2 through begin_fast/direct world reconnect just like fast1/fast2. Only the explicit Stock logout button retains ordinary Logout(). Coordinator PREPARE already uses begin_fast and is unchanged."
+    },
+    {
+      "id": "ah-bid-stack-arbitrage-v2",
+      "branch": "feature/ah-bid-stack-arbitrage-v2",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-profit-loss-ledger-v1",
+        "ah-native-purchases-turtle-de",
+        "ah-turtle-vendor-db-live"
+      ],
+      "shared_resources": [
+        "AUX full-scan auction stream and exact filtered revalidation",
+        "Turtle vendor database and disenchant EV/depth model",
+        "AUX history and per-item flip exposure",
+        "PlaceAuctionBid list path and wallet-delta confirmation",
+        "native AUX Purchases/Profit-Loss UI and DE exposure guard"
+      ],
+      "status": "in_progress",
+      "observed_head": "a76b753b6146b9ba9c777b3f9236fcbf6309a6bd",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "4117f9adc2e3b1ce4e3b962c13d2120a12bc76ba",
+          "date": "2026-10-02",
+          "evidence": "Superseded v1 feature preflight run 37000992310 passed before parallel advanced with unrelated summon/TargetAuraReveal work; v2 rebases the same AuxVmangos source changes onto current parallel and requires a fresh exact-SHA preflight."
+        }
+      ],
+      "package": null,
+      "notes": "Rebased/superseding AH profit feature. Carries the preflighted larger sortable AUX UI, 500-row Purchases retention and quantity/share-based DE exposure guard. Adds two default-on mechanisms: (1) BID vendor/DE on bid-only auctions with duration<=1, exact item/suffix revalidation, current-required-bid only, trusted vendor 20% margin or DE net-EV >=40% margin, >=10s expected profit, 5g per-bid cap and 10 placements/session, tracked separately from purchases; (2) stack-size arbitrage buying stacks >=75% of native max stack only when <=25% small stacks have >=10 units depth across >=3 sellers, with AUX historical cap, 5% AH cut, 25% safety margin, >=10s expected profit and full live filtered revalidation. Existing vendor/DE/flip buyout behavior remains intact."
     }
   ]
 }
