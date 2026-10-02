@@ -31,9 +31,9 @@ local busy = 0
 -- file-scope upvalue (WoW 1.12 Lua has the 32-upvalue ceiling noted above).
 AUXFAST_RUNTIME = AUXFAST_RUNTIME or {}
 AUXFAST_RUNTIME.searchBusy = 0
-AUXFAST_RUNTIME.AUXFAST_RUNTIME.servicePauseRequested = false
-AUXFAST_RUNTIME.AUXFAST_RUNTIME.servicePaused = false
-AUXFAST_RUNTIME.AUXFAST_RUNTIME.servicePauseHadScan = false
+AUXFAST_RUNTIME.servicePauseRequested = false
+AUXFAST_RUNTIME.servicePaused = false
+AUXFAST_RUNTIME.servicePauseHadScan = false
 
 function AUXFAST_SearchBusy()
 	return tonumber(AUXFAST_RUNTIME.searchBusy) or 0
