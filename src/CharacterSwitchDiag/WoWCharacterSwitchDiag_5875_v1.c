@@ -75,6 +75,7 @@ enum {
 
 static volatile DWORD g_phase=PHASE_IDLE,g_targetSlot=0,g_elapsedToGlue=0,g_elapsedTotal=0;
 static volatile DWORD g_lastError=0,g_world=0,g_glueVisible=0,g_fast=0;
+static volatile DWORD g_reloadInProgress=0;
 static UINT_PTR g_timer=0;
 static DWORD g_startedAt=0,g_glueAt=0,g_enterIssuedAt=0,g_lastUiRefresh=0,g_lastWorld=0;
 static HANDLE g_workerMapHandle=0;
@@ -325,7 +326,12 @@ static void begin_reload_ui(DWORD now,DWORD seq)
      * written only after ReloadUI() returns, so the updater never kills on a
      * merely queued reload request. A timeout remains fail-closed upstream.
      */
+    /* ReloadUI may pump window messages while the Lua/UI state is being torn
+     * down. Block nested timer ticks from re-entering FrameScript during that
+     * interval; ACK remains post-return and therefore fail-closed. */
+    g_reloadInProgress=1;
     execs("W112_CSD_RELOAD_CAP=nil;ReloadUI()");
+    g_reloadInProgress=0;
     now=GetTickCount();
     if(g_workerMap){g_workerMap->ack_seq=seq;g_workerMap->last_event_tick=now;}
     g_workerState=WORKER_IDLE;
@@ -380,11 +386,34 @@ static void poll_cmd(DWORD now)
     if(eq(c,"stock"))begin_stock(now,0);else if(eq(c,"slot1"))begin_stock(now,1);else if(eq(c,"slot2"))begin_stock(now,2);
     else if(eq(c,"fast1"))begin_fast(now,1);else if(eq(c,"fast2"))begin_fast(now,2);
 }
+static int worker_command_pending(void)
+{
+    return g_workerMap && g_workerMap->command_seq && g_workerMap->command_seq!=g_workerSeenSeq;
+}
+static int switch_phase_active(void)
+{
+    return g_phase!=PHASE_IDLE && g_phase!=PHASE_COMPLETE && g_phase!=PHASE_FAILED;
+}
 static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
 {
-    DWORD world=rd32(WOW_OBJMGR)?1:0;(void)h;(void)m;(void)id;g_world=world;
+    DWORD world=rd32(WOW_OBJMGR)?1:0;
+    int pending=worker_command_pending();
+    int switching=switch_phase_active();
+    (void)h;(void)m;(void)id;g_world=world;
+
+    /* Report #70: an idle 50ms worker must not enter FrameScript while a
+     * manual /reload destroys and rebuilds the Lua/UI state. The worker map
+     * heartbeat remains native-only. */
+    if(g_reloadInProgress){
+        publish_worker(now);
+        g_lastWorld=world;
+        return;
+    }
+
     if(world){
-        g_glueVisible=0;probe_combat(now);poll_worker_cmd(now);
+        g_glueVisible=0;
+        if(pending || switching)probe_combat(now);
+        poll_worker_cmd(now);
         if(g_phase==PHASE_ENTERING && !g_lastWorld){
             g_elapsedTotal=g_startedAt?now-g_startedAt:0;g_phase=PHASE_COMPLETE;g_currentSlot=g_targetSlot;g_workerState=WORKER_READY;
             log_line("WORLD_ENTERED",now,g_elapsedTotal);worker_log_event("COORD_READY",now);
@@ -393,7 +422,9 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
             g_lastError=15;g_phase=PHASE_FAILED;log_line("WORLD_STILL_PRESENT_TIMEOUT",now,rd32(WOW_OBJMGR));
         }
     }else{
-        probe_glue();
+        /* Glue probing is needed only for an active switch. At idle this used
+         * to call FrameScript every 50ms, including during ReloadUI teardown. */
+        if(switching)probe_glue();
         if(g_phase==PHASE_FAST_DISCONNECT){
             int ok;g_elapsedToGlue=g_startedAt?now-g_startedAt:0;log_line("WORLD_CLEARED",now,g_elapsedToGlue);
             ok=request_relogin();if(!ok){g_lastError=20;g_phase=PHASE_FAILED;log_line("RELOGIN_REQUEST_REJECTED",now,(DWORD)bridge_state());}

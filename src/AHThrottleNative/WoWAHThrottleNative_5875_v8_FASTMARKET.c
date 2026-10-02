@@ -576,10 +576,27 @@ static int install(void){
     }
     g_installed=1u;return 1;
 }
-static void uninstall(void){
-    KillTimerFn kt=(KillTimerFn)iat(IAT_KILL);
-    u32 cur=decode_jump(ADDR_CLIENT_SEND);
+static void uninstall(int processTerminating){
+    KillTimerFn kt;
+    u32 cur;
     g_installed=0u;
+
+    /* Report #70 also captured an earlier exact-build crash at DLL+0x1599.
+       Exact artifact disassembly maps that RVA to restore_receive_hook reading
+       NetClient+0x9E4 after NetClient had already been destroyed. During
+       process termination the address space is going away, so touching game
+       globals or restoring hooks is both unnecessary and unsafe. */
+    if(processTerminating){
+        g_timer=0u;
+        g_fastActive=0u;g_fastArmed=0u;g_fastCaptured=0u;g_fastAwaiting=0u;
+        clear_rx_state();
+        g_ahCooldownPatched=0u;
+        reset_test();
+        return;
+    }
+
+    kt=(KillTimerFn)iat(IAT_KILL);
+    cur=decode_jump(ADDR_CLIENT_SEND);
     if(g_timer&&kt)kt(0,g_timer);g_timer=0u;
     if(cur==(u32)(void*)&SendWrapper&&g_nextSend)patch_jump(ADDR_CLIENT_SEND,g_nextSend);
     if(g_fastActive)fast_finish("UNLOAD");
@@ -588,8 +605,8 @@ static void uninstall(void){
     reset_test();
 }
 BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved){
-    (void)module;(void)reserved;
+    (void)module;
     if(reason==DLL_PROCESS_ATTACH)(void)install();
-    if(reason==DLL_PROCESS_DETACH)uninstall();
+    if(reason==DLL_PROCESS_DETACH)uninstall(reserved!=0);
     return 1;
 }
