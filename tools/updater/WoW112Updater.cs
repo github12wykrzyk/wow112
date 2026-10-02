@@ -33,10 +33,13 @@ namespace WoW112Updater
         private const string Repo = "wow112";
         private const string ApiRoot = "https://api.github.com/repos/" + Owner + "/" + Repo;
         private const string TestWorkflowName = "Build work candidate";
+        private const string EconomyWorkflowName = "Build parallel economy";
         private const string StableWorkflowName = "Build stable candidate";
         private const string TestArtifactPrefix = "WoW112-WORK-CANDIDATE-";
+        private const string EconomyArtifactPrefix = "WoW112-PARALLEL-ECONOMY-";
         private const string StableArtifactPrefix = "WoW112-STABLE-CANDIDATE-";
         private const string TestInnerZip = "WoW112_WORK_CANDIDATE.zip";
+        private const string EconomyInnerZip = "WoW112_PARALLEL_ECONOMY_OVERLAY.zip";
         private const string AngleInnerZip = "WoW112_PARALLEL_ROGUE_ANGLE_ONLY.zip";
         private const string AutoRearInnerZip = "WoW112_PARALLEL_ROGUE_AUTO_REAR.zip";
         private const string StableInnerZip = "WoW112_STABLE_CANDIDATE.zip";
@@ -90,15 +93,15 @@ namespace WoW112Updater
             RefreshLocalState();
 
             pendingApplyTimer.Interval = 2000;
-            pendingApplyTimer.Tick += delegate { TryFinalizePendingUpdate(); };
+            pendingApplyTimer.Tick += delegate { TryFinalizePendingUpdate(); TryFinalizeEconomyPendingUpdate(); };
             pendingApplyTimer.Start();
-            Shown += delegate { TryFinalizePendingUpdate(); };
+            Shown += delegate { TryFinalizePendingUpdate(); TryFinalizeEconomyPendingUpdate(); };
         }
 
         private void BuildUi()
         {
             channel.DropDownStyle = ComboBoxStyle.DropDownList;
-            channel.Items.AddRange(new object[] { "PARALLEL / STANDARD", "PARALLEL / ANGLE-ONLY PvE", "PARALLEL / AUTO-REAR PvE" });
+            channel.Items.AddRange(new object[] { "PARALLEL / STANDARD", "PARALLEL / ECONOMY", "PARALLEL / ANGLE-ONLY PvE", "PARALLEL / AUTO-REAR PvE" });
             channel.SelectedIndex = 0;
             rollbackChoice.DropDownStyle = ComboBoxStyle.DropDownList;
             token.UseSystemPasswordChar = true;
@@ -169,8 +172,9 @@ namespace WoW112Updater
                 var selected = GetString(root, "channel");
                 // This dedicated updater never adopts the original stable/work channel.
                 var variant = GetString(root, "package_variant");
-                channel.SelectedIndex = string.Equals(variant, "auto-rear", StringComparison.Ordinal) ? 2
-                    : string.Equals(variant, "angle-only", StringComparison.Ordinal) ? 1 : 0;
+                channel.SelectedIndex = string.Equals(variant, "auto-rear", StringComparison.Ordinal) ? 3
+                    : string.Equals(variant, "angle-only", StringComparison.Ordinal) ? 2
+                    : string.Equals(variant, "economy", StringComparison.Ordinal) ? 1 : 0;
                 LoadDllUpdatePreferences(root);
                 LoadDllInstallDisabled(root);
                 var protectedToken = GetString(root, "token_dpapi");
@@ -199,7 +203,7 @@ namespace WoW112Updater
                 var root = new Dictionary<string, object>();
                 root["game_dir"] = gameDir.Text.Trim();
                 root["channel"] = "parallel";
-                root["package_variant"] = IsAutoRear() ? "auto-rear" : IsAngleOnly() ? "angle-only" : "full";
+                root["package_variant"] = IsAutoRear() ? "auto-rear" : IsAngleOnly() ? "angle-only" : IsEconomy() ? "economy" : "full";
                 root["token_dpapi"] = protectedToken;
                 root["dll_update_enabled"] = GetDllUpdatePreferencesForSave();
                 root["dll_install_disabled"] = GetDllInstallDisabledForSave();
@@ -222,8 +226,13 @@ namespace WoW112Updater
             return false; // No route to main or work from this updater.
         }
 
-        private bool IsAngleOnly() { return channel.SelectedIndex == 1; }
-        private bool IsAutoRear() { return channel.SelectedIndex == 2; }
+        private bool IsEconomy() { return channel.SelectedIndex == 1; }
+        private bool IsAngleOnly() { return channel.SelectedIndex == 2; }
+        private bool IsAutoRear() { return channel.SelectedIndex == 3; }
+        private static bool IsEconomyPackage(string name)
+        {
+            return string.Equals(name, EconomyInnerZip, StringComparison.OrdinalIgnoreCase);
+        }
         private static bool IsAutoRearPackage(string name)
         {
             return string.Equals(name, AutoRearInnerZip, StringComparison.OrdinalIgnoreCase);
@@ -260,10 +269,8 @@ namespace WoW112Updater
                 var dllChanges = LastDllChangeCount;
                 var enabledDllChanges = LastEnabledDllChangeCount;
                 var skippedDllChanges = dllChanges - enabledDllChanges;
-                var exeChanged = lastExeInspection == null || lastExeInspection.HasChange;
-                // The addon archive is separately attested; compare its actual installed files,
-                // not only the candidate run ID or the EXE/DLL state.
-                var addonChanges = cachedVerifiedAddons.Count(addon =>
+                var exeChanged = !IsEconomy() && (lastExeInspection == null || lastExeInspection.HasChange);
+                var addonChanges = IsEconomy() ? lastEconomyAddonChangeCount : cachedVerifiedAddons.Count(addon =>
                 {
                     var path = SafeDestination(gameDir.Text.Trim(), addon.Name);
                     return !File.Exists(path) ||
@@ -271,13 +278,29 @@ namespace WoW112Updater
                 });
                 if (exeChanged || dllChanges > 0 || addonChanges > 0)
                 {
-                    status.Text = "EXE: " + (lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State)
-                        + " • DLL: " + enabledDllChanges + " do aktualizacji"
-                        + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty)
-                        + " • LS/LazyRogue: " + addonChanges + " plików do aktualizacji";
-                    Log("EXE " + (exeChanged ? "wymaga aktualizacji" : "jest aktualny")
-                        + "; DLL: " + dllChanges + " zmian, aktywne: " + enabledDllChanges
-                        + "; dodatki LS/LazyRogue: " + addonChanges + " plików do aktualizacji.");
+                    if (IsEconomy())
+                    {
+                        status.Text = "ECONOMY • DLL: " + enabledDllChanges + " do aktualizacji"
+                            + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty)
+                            + " • AddOny: " + addonChanges + " plików";
+                        Log("ECONOMY: DLL " + dllChanges + " zmian, aktywne: " + enabledDllChanges
+                            + "; AddOny: " + addonChanges + " plików do aktualizacji.");
+                    }
+                    else
+                    {
+                        status.Text = "EXE: " + (lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State)
+                            + " • DLL: " + enabledDllChanges + " do aktualizacji"
+                            + (skippedDllChanges > 0 ? " • " + skippedDllChanges + " pominiętych" : string.Empty)
+                            + " • LS/LazyRogue: " + addonChanges + " plików do aktualizacji";
+                        Log("EXE " + (exeChanged ? "wymaga aktualizacji" : "jest aktualny")
+                            + "; DLL: " + dllChanges + " zmian, aktywne: " + enabledDllChanges
+                            + "; dodatki LS/LazyRogue: " + addonChanges + " plików do aktualizacji.");
+                    }
+                }
+                else if (IsEconomy())
+                {
+                    status.Text = "ECONOMY jest aktualny • overlay " + ShortSha(lastRemote.HeadSha) + ".";
+                    Log("ECONOMY: wszystkie pliki overlayu odpowiadają najnowszemu artefaktowi.");
                 }
                 else if (installed != null && GetLong(installed, "run_id") == lastRemote.RunId && GetString(installed, "channel") == lastRemote.Channel)
                 {
@@ -318,7 +341,8 @@ namespace WoW112Updater
                 lastRemote = await FindLatestPackageAsync();
                 ShowRemotePackage();
                 var innerBytes = await GetVerifiedPackageBytesAsync(lastRemote);
-                InspectDllPackage(innerBytes, gameDir.Text.Trim());
+                if (IsEconomy()) InspectEconomyOverlay(innerBytes, gameDir.Text.Trim(), lastRemote.HeadSha);
+                else InspectDllPackage(innerBytes, gameDir.Text.Trim());
                 ShowRemoteDllSummary();
                 // A newer push can happen during download or while comparing local DLLs.
                 // Recheck immediately before applying any changes or writing a backup.
@@ -327,7 +351,9 @@ namespace WoW112Updater
                 var installRemote = lastRemote;
                 status.Text = "Instalowanie zweryfikowanych plików...";
                 var addonFiles = new List<UpdaterAddonAsset>(cachedVerifiedAddons);
-                var result = await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot, addonFiles));
+                var result = IsEconomy()
+                    ? await Task.Run(() => ApplyEconomyOverlay(innerBytes, installRemote, installRoot))
+                    : await Task.Run(() => ApplyPackage(innerBytes, installRemote, installRoot, addonFiles));
                 lastUpdateDeferredRuntime = result.Deferred > 0;
                 if (result.Deferred > 0)
                 {
@@ -337,9 +363,10 @@ namespace WoW112Updater
                 else
                 {
                     status.Text = result.Changed == 0
-                        ? "EXE i pozostałe pliki już były aktualne."
-                        : "Aktualizacja zakończona: " + result.Changed + " plików"
-                            + (result.ExeChanged ? " (w tym EXE)." : ".");
+                        ? (IsEconomy() ? "ECONOMY już był aktualny." : "EXE i pozostałe pliki już były aktualne.")
+                        : (IsEconomy() ? "ECONOMY zaktualizowany: " + result.Changed + " plików."
+                            : "Aktualizacja zakończona: " + result.Changed + " plików"
+                                + (result.ExeChanged ? " (w tym EXE)." : "."));
                 }
                 Log("Gotowe. Zmieniono teraz: " + result.Changed + ", oczekuje runtime: " + result.Deferred
                     + ", bez zmian: " + result.Unchanged
@@ -381,9 +408,9 @@ namespace WoW112Updater
         {
             var stable = IsStable();
             var branch = "parallel";
-            var workflowName = stable ? StableWorkflowName : TestWorkflowName;
-            var prefix = stable ? StableArtifactPrefix : TestArtifactPrefix;
-            var innerName = stable ? StableInnerZip : (IsAutoRear() ? AutoRearInnerZip
+            var workflowName = stable ? StableWorkflowName : (IsEconomy() ? EconomyWorkflowName : TestWorkflowName);
+            var prefix = stable ? StableArtifactPrefix : (IsEconomy() ? EconomyArtifactPrefix : TestArtifactPrefix);
+            var innerName = stable ? StableInnerZip : (IsEconomy() ? EconomyInnerZip : IsAutoRear() ? AutoRearInnerZip
                 : IsAngleOnly() ? AngleInnerZip : TestInnerZip);
 
             using (var client = CreateClient())
@@ -394,7 +421,9 @@ namespace WoW112Updater
                 // a TOCTOU race and can momentarily pick the previous successful package.
                 for (var attempt = 0; attempt < 3; attempt++)
                 {
-                    var chosen = await WaitForCurrentHeadSuccessfulRunAsync(client, workflowName, branch);
+                    var chosen = IsEconomy()
+                        ? await WaitForCurrentHeadEconomyRunAsync(client, branch)
+                        : await WaitForCurrentHeadSuccessfulRunAsync(client, workflowName, branch);
                     var runId = GetLong(chosen, "id");
                     var chosenSha = GetString(chosen, "head_sha");
 
@@ -849,6 +878,7 @@ namespace WoW112Updater
                         ClearPendingUpdate(root);
                         WriteInstalledState(root, remote, newManaged.ToList(), exeName);
                     }
+                    ClearEconomyOverlayState(root);
                 }
                 catch
                 {
@@ -876,6 +906,7 @@ namespace WoW112Updater
                 ApplyStaleFiles(root, stale);
                 WriteInstalledState(root, remote, newManaged.ToList(), exeName);
                 ClearPendingUpdate(root);
+                ClearEconomyOverlayState(root);
             }
             catch
             {
@@ -1227,6 +1258,7 @@ namespace WoW112Updater
             var pendingHead = ReadPendingHeadSha(root);
             if (!string.IsNullOrWhiteSpace(pendingHead))
                 localInfo.Text += " • RUNTIME OCZEKUJE " + ShortSha(pendingHead);
+            AppendEconomyLocalInfo(root);
 
             var backupRoot = Path.Combine(root, ".wow112_parallel_updater", "backups");
             if (Directory.Exists(backupRoot))

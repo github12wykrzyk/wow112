@@ -77,6 +77,9 @@ namespace WoW112Updater
                     ValidateGameAndToken();
                     SetBusy(true, "Weryfikacja zainstalowanej paczki...");
                     var root = Path.GetFullPath(host.GameDirectory);
+                    var economyState = Path.Combine(root, ".wow112_parallel_updater", "economy_installed.json");
+                    if (File.Exists(economyState))
+                        throw new InvalidOperationException("Aktywny jest overlay ECONOMY. VERIFY / REPAIR pełnego STANDARD jest zablokowany, żeby nie cofnąć plików ekonomicznych. Przełącz na STANDARD i wykonaj normalną aktualizację, aby świadomie zdjąć overlay.");
                     var installed = ReadInstalledState(root);
                     if (installed == null)
                         throw new InvalidOperationException("Brak .wow112_parallel_updater/installed.json. Najpierw wykonaj aktualizację updaterem.");

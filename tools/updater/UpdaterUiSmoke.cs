@@ -20,15 +20,17 @@ namespace WoW112Updater
             Show();
             System.Windows.Forms.Application.DoEvents();
             AssertGitHubBadgeSmoke();
-            if (channel.Items.Count != 3 || IsAngleOnly() || IsAutoRear() ||
-                !IsAnglePackage(AngleInnerZip) || !IsAutoRearPackage(AutoRearInnerZip))
-                throw new Exception("Rogue diagnostic package selectors were not initialized");
+            if (channel.Items.Count != 4 || IsEconomy() || IsAngleOnly() || IsAutoRear() ||
+                !IsEconomyPackage(EconomyInnerZip) || !IsAnglePackage(AngleInnerZip) || !IsAutoRearPackage(AutoRearInnerZip))
+                throw new Exception("Parallel package selectors were not initialized");
             channel.SelectedIndex = 1;
-            if (!IsAngleOnly() || IsAutoRear()) throw new Exception("Rogue angle-only selection did not activate");
+            if (!IsEconomy() || IsAngleOnly() || IsAutoRear()) throw new Exception("ECONOMY selection did not activate");
             channel.SelectedIndex = 2;
-            if (!IsAutoRear() || IsAngleOnly()) throw new Exception("Rogue real-movement selection did not activate");
+            if (!IsAngleOnly() || IsEconomy() || IsAutoRear()) throw new Exception("Rogue angle-only selection did not activate");
+            channel.SelectedIndex = 3;
+            if (!IsAutoRear() || IsEconomy() || IsAngleOnly()) throw new Exception("Rogue real-movement selection did not activate");
             channel.SelectedIndex = 0;
-            if (IsAngleOnly() || IsAutoRear()) throw new Exception("Full-stack selection did not restore");
+            if (IsEconomy() || IsAngleOnly() || IsAutoRear()) throw new Exception("Full-stack selection did not restore");
             ClientSize = new Size(1040, 680);
             AssertExeInspection(folder);
             AssertOriginalUpdaterDirectoryAllowed(folder);

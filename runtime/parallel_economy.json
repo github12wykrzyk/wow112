@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "branch": "parallel",
+  "profile": "ECONOMY",
+  "purpose": "Fast independent AH/economy overlay. It never contains the WoW EXE or dlls.txt and never deletes STANDARD files.",
+  "dlls": [
+    {
+      "runtime_name": "WoWAHThrottleNative_5875_v8_FASTMARKET.dll",
+      "source": "src/AHThrottleNative/WoWAHThrottleNative_5875_v8_FASTMARKET.c",
+      "profile": "clangcl_i686_crtless"
+    },
+    {
+      "runtime_name": "WoWRemoteServiceProbe_5875_v1.dll",
+      "source": "src/RemoteServiceProbe/WoWRemoteServiceProbe_5875_v1.c",
+      "profile": "clangcl_i686_win32imports"
+    },
+    {
+      "runtime_name": "WoWMarketWorker_5875_v1.dll",
+      "source": "src/MarketWorker/WoWMarketWorker_5875_v1.c",
+      "profile": "clangcl_i686_win32imports"
+    }
+  ],
+  "required_loader_order": [
+    "WoWAHThrottleNative_5875_v8_FASTMARKET.dll",
+    "WoWRemoteServiceProbe_5875_v1.dll",
+    "WoWMarketWorker_5875_v1.dll"
+  ],
+  "addons": {
+    "roots": [
+      "AuxVmangos",
+      "AHThrottleTest",
+      "AuxFastBridge"
+    ],
+    "external": [
+      {
+        "name": "aux-addon",
+        "repository": "shirsig/aux-addon-vanilla",
+        "commit": "6b56d0fec36eb2c4465b73727223aeaf547da6d7",
+        "destination": "aux-addon"
+      }
+    ]
+  },
+  "delivery": {
+    "workflow": ".github/workflows/build_parallel_economy.yml",
+    "artifact_prefix": "WoW112-PARALLEL-ECONOMY-",
+    "inner_zip": "WoW112_PARALLEL_ECONOMY_OVERLAY.zip",
+    "state_file": ".wow112_parallel_updater/economy_installed.json",
+    "overlay_only": true,
+    "allow_deletes": false
+  }
+}

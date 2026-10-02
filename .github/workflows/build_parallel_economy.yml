@@ -1,0 +1,84 @@
+name: Build parallel economy
+
+on:
+  push:
+    branches:
+      - parallel
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-parallel-economy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  economy-overlay:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout exact parallel revision
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify repository and ECONOMY contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/verify_current.py
+          if ($LASTEXITCODE -ne 0) { throw "verify_current failed" }
+          python tools/verify_runtime_artifacts.py
+          if ($LASTEXITCODE -ne 0) { throw "verify_runtime_artifacts failed" }
+          python tools/verify_verified_symbols.py
+          if ($LASTEXITCODE -ne 0) { throw "verify_verified_symbols failed" }
+          python tools/verify_parallel_dependency_registry.py
+          if ($LASTEXITCODE -ne 0) { throw "parallel dependency audit failed" }
+          python tools/verify_parallel_economy_manifest.py
+          if ($LASTEXITCODE -ne 0) { throw "ECONOMY manifest failed" }
+
+      - name: Compute ECONOMY fingerprints
+        id: fingerprint
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          python tools/parallel_economy_fingerprint.py --output dist/economy_fingerprint.json --github-output "$env:GITHUB_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { throw "ECONOMY fingerprint failed" }
+
+      - name: Restore native ECONOMY cache
+        id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: build/economy
+          key: economy-native-windows2022-${{ steps.fingerprint.outputs.native_fingerprint }}
+
+      - name: Compile ECONOMY native DLLs on cache miss
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path build/economy | Out-Null
+          python tools/build_parallel_companion.py --name WoWAHThrottleNative_5875_v8_FASTMARKET.dll --output build/economy/WoWAHThrottleNative_5875_v8_FASTMARKET.dll --metadata build/economy/aht.json
+          if ($LASTEXITCODE -ne 0) { throw "AHThrottleNative build failed" }
+          python tools/build_parallel_companion.py --name WoWRemoteServiceProbe_5875_v1.dll --output build/economy/WoWRemoteServiceProbe_5875_v1.dll --metadata build/economy/rsp.json
+          if ($LASTEXITCODE -ne 0) { throw "RemoteServiceProbe build failed" }
+          python tools/build_parallel_companion.py --name WoWMarketWorker_5875_v1.dll --output build/economy/WoWMarketWorker_5875_v1.dll --metadata build/economy/marketworker.json
+          if ($LASTEXITCODE -ne 0) { throw "MarketWorker build failed" }
+
+      - name: Package and attest no-delete ECONOMY overlay
+        shell: pwsh
+        run: |
+          python tools/package_parallel_economy_overlay.py --sha "${{ github.sha }}" --fingerprint dist/economy_fingerprint.json
+          if ($LASTEXITCODE -ne 0) { throw "ECONOMY package failed" }
+
+      - name: Upload ECONOMY overlay
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-PARALLEL-ECONOMY-${{ github.sha }}
+          path: |
+            dist/WoW112_PARALLEL_ECONOMY_OVERLAY.zip
+            dist/economy_metadata.json
+            dist/economy_attestation.json
+            dist/economy_fingerprint.json
+          if-no-files-found: error
+          compression-level: 0

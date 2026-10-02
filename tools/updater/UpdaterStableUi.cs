@@ -243,7 +243,7 @@ namespace WoW112Updater
         }
         private void ShowRemotePackage()
         {
-            remoteInfo.Text = (IsAutoRearPackage(lastRemote.InnerZipName) ? "PARALLEL / AUTO-REAR PvE" : IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL / ANGLE-ONLY PvE" : "PARALLEL / STANDARD")
+            remoteInfo.Text = (IsEconomyPackage(lastRemote.InnerZipName) ? "PARALLEL / ECONOMY" : IsAutoRearPackage(lastRemote.InnerZipName) ? "PARALLEL / AUTO-REAR PvE" : IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL / ANGLE-ONLY PvE" : "PARALLEL / STANDARD")
                 + " • " + ShortSha(lastRemote.HeadSha) + " • run " + lastRemote.RunId + "\nBuild zakończony pomyślnie";
             detailsTip.SetToolTip(remoteInfo, remoteInfo.Text);
         }

@@ -5204,6 +5204,30 @@
       ],
       "package": null,
       "notes": "User reports profitable DE auctions are not bought during the full AUX scan and are gone by the post-scan retry. Root cause: mid-scan DE preselection currently requires the same logical scan to have already accumulated depth for every expected dust/essence/shard; early equipment becomes a waiter and often only turns actionable near ScanDone. V1 seeds each fresh scan from a <=15 minute per-material depth-floor cache learned from prior scans, immediately supersedes cached rows when current-scan depth arrives, and uses the cache only to decide whether to pause. Every selected DE candidate still performs exact live material revalidation plus exact item requery before PlaceAuctionBid. DE depth, cut, profit, margin, exposure and purchase-confirmation rules are unchanged. Rebased by a two-parent feature merge onto parallel@41de9f65 without touching the concurrent updater change; the rebased exact SHA still requires its own preflight before integration."
+    },
+    {
+      "id": "parallel-economy-fastpath-v1",
+      "branch": "feature/parallel-economy-fastpath",
+      "modules": [
+        "ParallelEconomyPipeline",
+        "Updater"
+      ],
+      "dependencies": [
+        "ah-owner-history-speed-v1",
+        "updater-live-runtime-files-v1"
+      ],
+      "shared_resources": [
+        "parallel exact-HEAD delivery",
+        "AHThrottleNative -> RemoteServiceProbe -> MarketWorker loader order",
+        "AuxVmangos/AuxFastBridge/AHThrottleTest/aux-addon overlay",
+        ".wow112_parallel_updater economy state and pending transaction"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "1047745e3d4c2e03519c3d41e2ea3a7397d0bfef",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Introduces a separate PARALLEL / ECONOMY fast path. ECONOMY is a no-delete partial overlay: no EXE and no dlls.txt, exact-HEAD attestation, a deterministic profile fingerprint, native cache keyed by source/toolchain contract, and only the AH native trio plus economy addons. The updater requires an existing STANDARD loader order, keeps separate economy state/pending data, and blocks legacy full VERIFY/REPAIR while the overlay is active so it cannot silently roll economy files back. STANDARD remains the full candidate path; Rogue comparison builds are not on the ECONOMY critical path."
     }
   ]
 }

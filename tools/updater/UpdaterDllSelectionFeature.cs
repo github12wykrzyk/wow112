@@ -56,6 +56,8 @@ namespace WoW112Updater
             cachedVerifiedRunId = 0;
             cachedVerifiedChannel = string.Empty;
             cachedVerifiedInnerZip = string.Empty;
+            lastEconomyAddonChangeCount = 0;
+            cachedEconomyFingerprint = string.Empty;
         }
 
         private async Task<byte[]> GetVerifiedPackageBytesAsync(RemotePackageInfo remote)
@@ -74,13 +76,20 @@ namespace WoW112Updater
 
             byte[] innerBytes;
             string expectedPackageSha;
-            ExtractInnerPackage(outerBytes, remote.InnerZipName, remote.HeadSha, out innerBytes, out expectedPackageSha);
+            if (IsEconomyPackage(remote.InnerZipName))
+                ExtractEconomyPackage(outerBytes, remote.InnerZipName, remote.HeadSha, out innerBytes, out expectedPackageSha);
+            else
+                ExtractInnerPackage(outerBytes, remote.InnerZipName, remote.HeadSha, out innerBytes, out expectedPackageSha);
             var gotPackageSha = Sha256(innerBytes);
             if (!string.Equals(gotPackageSha, expectedPackageSha, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("SHA256 wewnętrznej paczki nie zgadza się z candidate_metadata.json.");
+                throw new InvalidOperationException("SHA256 wewnętrznej paczki nie zgadza się z metadanymi.");
 
-            var addonFiles = UpdaterAddons.ReadFromArtifact(outerBytes, true, remote.HeadSha);
-            Log("SHA256 paczki OK: " + gotPackageSha.Substring(0, 16) + "...; LS/LazyRogue: " + addonFiles.Count + " plików.");
+            var addonFiles = IsEconomyPackage(remote.InnerZipName)
+                ? new List<UpdaterAddonAsset>()
+                : UpdaterAddons.ReadFromArtifact(outerBytes, true, remote.HeadSha);
+            Log(IsEconomyPackage(remote.InnerZipName)
+                ? "SHA256 ECONOMY overlay OK: " + gotPackageSha.Substring(0, 16) + "..."
+                : "SHA256 paczki OK: " + gotPackageSha.Substring(0, 16) + "...; LS/LazyRogue: " + addonFiles.Count + " plików.");
             cachedVerifiedAddons = addonFiles;
             cachedVerifiedPackage = innerBytes;
             cachedVerifiedRunId = remote.RunId;
@@ -92,7 +101,10 @@ namespace WoW112Updater
         private async Task InspectRemoteDllsAsync(RemotePackageInfo remote)
         {
             var packageBytes = await GetVerifiedPackageBytesAsync(remote);
-            InspectDllPackage(packageBytes, gameDir.Text.Trim());
+            if (IsEconomyPackage(remote.InnerZipName))
+                InspectEconomyOverlay(packageBytes, gameDir.Text.Trim(), remote.HeadSha);
+            else
+                InspectDllPackage(packageBytes, gameDir.Text.Trim());
         }
 
         private void InspectDllPackage(byte[] packageBytes, string root)
@@ -184,15 +196,17 @@ namespace WoW112Updater
             var changed = LastDllChangeCount;
             var enabled = LastEnabledDllChangeCount;
             var held = changed - enabled;
-            var exeText = lastExeInspection == null ? "NIE SPRAWDZONO" : lastExeInspection.State;
-            remoteInfo.Text = (IsAutoRearPackage(lastRemote.InnerZipName) ? "PARALLEL AUTO-REAR PvE" : IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL ANGLE-ONLY PvE" : "PARALLEL STANDARD")
+            var exeText = lastExeInspection == null ? (IsEconomy() ? "BEZ ZMIAN" : "NIE SPRAWDZONO") : lastExeInspection.State;
+            remoteInfo.Text = (IsEconomyPackage(lastRemote.InnerZipName) ? "PARALLEL ECONOMY" : IsAutoRearPackage(lastRemote.InnerZipName) ? "PARALLEL AUTO-REAR PvE" : IsAnglePackage(lastRemote.InnerZipName) ? "PARALLEL ANGLE-ONLY PvE" : "PARALLEL STANDARD")
                 + " • " + ShortSha(lastRemote.HeadSha)
-                + " • run " + lastRemote.RunId + "\nEXE: " + exeText + " • DLL: " + enabled + " do aktualizacji";
+                + " • run " + lastRemote.RunId + "\nEXE: " + exeText + " • DLL: " + enabled + " do aktualizacji"
+                + (IsEconomy() ? " • AddOny: " + lastEconomyAddonChangeCount : string.Empty);
             detailsTip.SetToolTip(remoteInfo, remoteInfo.Text
                 + (lastExeInspection == null ? string.Empty : "\nEXE: " + lastExeInspection.Name
                     + "\nSHA256 paczki: " + lastExeInspection.RemoteSha)
                 + "\nDLL: " + changed + " zmian, aktywne " + enabled
-                + (held > 0 ? ", wstrzymane " + held : string.Empty));
+                + (held > 0 ? ", wstrzymane " + held : string.Empty)
+                + (IsEconomy() ? "\nECONOMY fingerprint: " + cachedEconomyFingerprint : string.Empty));
         }
 
         private async Task ShowDllUpdateDialogAsync()

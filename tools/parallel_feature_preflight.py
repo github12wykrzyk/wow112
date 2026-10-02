@@ -17,6 +17,7 @@ STATIC_GATES = [
     ["tools/verify_parallel_dependency_registry.py"],
     ["tools/verify_candidate_source_scope.py"],
     ["tools/verify_parallel_candidate_manifest.py"],
+    ["tools/verify_parallel_economy_manifest.py"],
     ["tools/verify_parallel_gui_abi.py"],
     ["tools/verify_parallel_gui_contract.py"],
     ["tools/ai_experiments.py", "validate"],
