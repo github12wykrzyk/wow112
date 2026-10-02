@@ -4851,6 +4851,27 @@
       ],
       "package": null,
       "notes": "Exact candidate artifact 11225253885 was disassembled to recover the client logout-complete chain. RealmConnection SMSG_LOGOUT_COMPLETE dispatch at 0x005B4620 calls ClientConnection virtual 0x005AAEB0; that routine performs connection cleanup and calls 0x00401EE0 with charselect semantics. V14 first sets disconnectPending=1/reconnect=0 so NetDisconnectHandler consumes the world disconnect without LoginConnection()->Logoff or premature reconnect, then invokes 0x005AAEB0 locally after NS_INITIALIZED, waits for world teardown, reconnects only the realm/world connection with ConnectToSelectedServer, enumerates characters, selects the requested slot and enters world. Byte guards cover native entrypoints; no login-server fallback."
+    },
+    {
+      "id": "updater-auto-report-stream-v1",
+      "branch": "feature/updater-auto-report-v1",
+      "modules": [
+        "UpdaterIssueReport",
+        "Updater"
+      ],
+      "dependencies": [],
+      "shared_resources": [
+        "GitHub Issues API",
+        "DPAPI report token",
+        "AuxVmangos SavedVariables marketPacked/marketDB",
+        "%APPDATA%\\WoW112ParallelUpdater\\report_auto_state.json"
+      ],
+      "status": "in_progress",
+      "observed_head": "5625ebd4d722dd2b7331d7a0b246122c93c1523a",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Updater reporter hardening and automation. Replaces the dedupe request that downloaded up to 100 full open Issues with a bounded GitHub issue-search query, raises the local JavaScriptSerializer ceiling to 32 MiB as a secondary guard, and adds silent automatic telemetry while the updater is open. With an already stored report token, AH dump state is checked every 60 s and uploaded only when the payload SHA changes; diagnostic reports are checked at most every 5 min and uploaded only when the diagnostic signature changes. Successful/manual sends and server-side dedupe persist local SHA state. Manual report/AH buttons remain as fallback; no token means automatic sending stays dormant."
     }
   ]
 }
