@@ -134,7 +134,8 @@ def main():
             "Trade window open", "Trade gold offered (copper)",
             "Trade accept attempts", "Trade payer accepted first",
             "Anti-AFK last action", "Anti-AFK SPACE keydown posts",
-            "Anti-AFK SPACE keyup posts"
+            "Anti-AFK SPACE keyup posts", "Summon role (0 NONE, 1 SLAVE, 2 MASTER)",
+            "Player level"
         ],
         "timings_ms": timing,
     }
@@ -210,6 +211,7 @@ def main():
         },
         "native_summon_busy_gate": "no pre-issue level gate; every sequenced request is consumed once and CastSpell is allowed to prove readiness, so stale cast/channel state cannot pin later customers",
         "native_summon_busy_source": "SummonScout SPELLCAST_START is authoritative for the exact request sequence; the native 1600ms watchdog reports no-start only when that sequence was not marked started",
+        "summon_role_policy": "level 1 is forced SLAVE with Anti-AFK ON; above level 1 SLAVE is unavailable, level 20 defaults MASTER but MASTER can be toggled to NONE",
         "native_summon_module_enabled_dependency": False,
         "native_summon_cast_path": "sequenced request -> target verification -> spellbook GetSpellName/CastSpell -> SpellTargetUnit fallback -> SummonScout SPELLCAST_START publishes exact started sequence -> retry/no-start watchdog",
         "native_summon_request_global": "W112_AUTOSUMMON_REQUEST",

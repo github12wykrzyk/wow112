@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v23 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v24 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -191,7 +191,9 @@ typedef struct SummonCoordMapV1 {
 static volatile UINT_PTR32 g_timer = 0u;
 static volatile u32 g_status = STATUS_DETACHED;
 static volatile u32 g_enabled = 1u;
-static volatile u32 g_forcedProfile = 0u; /* 0=manual, 1=SLAVE(level 1), 2=MASTER(level 20) */
+static volatile u32 g_summonRole = 0u; /* 0=NONE, 1=SLAVE, 2=MASTER */
+static volatile u32 g_roleUserSelected = 0u;
+static volatile u32 g_playerLevel = 0u;
 static volatile u32 g_heartbeat = 0u;
 static volatile u32 g_scanTicks = 0u;
 static volatile u32 g_candidatePresent = 0u;
@@ -246,7 +248,7 @@ static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
 
-static W112_ControlSettingV1 g_settings[31];
+static W112_ControlSettingV1 g_settings[33];
 static u32 g_descriptorReady = 0u;
 
 int _fltused = 0;
@@ -439,7 +441,9 @@ static void resetWorld(void)
     g_nearestEntry=0u;
     g_nearestType=0u;
     g_nearestDistance100=0u;
-    g_forcedProfile=0u;
+    g_summonRole=0u;
+    g_roleUserSelected=0u;
+    g_playerLevel=0u;
 }
 
 static int buildGuard(void)
@@ -558,16 +562,26 @@ static void antiAfkSetEnabled(u32 enabled)
 static void enforceLevelProfile(u32 player)
 {
     u32 level=playerLevel(player);
-    u32 role=(level==1u)?1u:((level==20u)?2u:0u);
-    g_forcedProfile=role;
+    g_playerLevel=level;
 
-    if(role==1u) {
+    /* SLAVE is a hard role only for the level-1 helper alt. It always keeps
+     * portal assist and Anti-AFK enabled; GUI/profile writes cannot turn them off. */
+    if(level==1u) {
+        g_summonRole=1u;
+        g_roleUserSelected=0u;
         if(!g_enabled) g_enabled=1u;
-    } else if(role==2u) {
-        if(g_enabled) {
-            g_enabled=0u;
-            resetPortal();
-        }
+        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+        return;
+    }
+
+    /* Above level 1 there is no SLAVE role. Level 20 keeps the historical
+     * MASTER default for a fresh world session, but the user may toggle it to
+     * NONE. Other levels default to NONE and may opt into MASTER. */
+    if(g_summonRole==1u) g_summonRole=0u;
+    if(!g_roleUserSelected) g_summonRole=(level==20u)?2u:0u;
+    if(g_enabled) {
+        g_enabled=0u;
+        resetPortal();
     }
 }
 
@@ -1066,9 +1080,8 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
         return;
     }
 
-    /* Summon role is deterministic for the fixed farm characters:
-     * level 1 is always SLAVE; level 20 is always MASTER.
-     * Other levels retain the saved/manual profile. */
+    /* Level 1 is a forced SLAVE with Anti-AFK ON. Above level 1, SLAVE is
+     * unavailable; level 20 starts as MASTER but may be toggled to NONE. */
     enforceLevelProfile(player);
 
     /* Re-register periodically so /reload cannot permanently lose the slash
@@ -1107,7 +1120,7 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
 static void initSettings(void)
 {
     u32 i;
-    static const char *keys[31]={
+    static const char *keys[33]={
         "enabled","scanner_alive","candidate_present","match_source",
         "candidate_entry","candidate_type","candidate_distance_x100",
         "candidate_guid_lo","candidate_guid_hi","native_pre_calls",
@@ -1117,9 +1130,9 @@ static void initSettings(void)
         "anti_afk_enabled","anti_afk_next_seconds","anti_afk_space_pulses",
         "anti_afk_channel_defers","trade_open","trade_gold_copper","trade_accepts",
         "trade_target_accepted","anti_afk_last_action","anti_afk_space_down_posts",
-        "anti_afk_space_up_posts"
+        "anti_afk_space_up_posts","summon_role","player_level"
     };
-    static const char *labels[31]={
+    static const char *labels[33]={
         "Enabled","Scanner alive","Ritual candidate","Match source",
         "Candidate entry","Candidate type","Candidate distance x100",
         "Candidate GUID low","Candidate GUID high","Native PRE calls",
@@ -1129,14 +1142,15 @@ static void initSettings(void)
         "Anti-AFK SPACE 100-120s","Anti-AFK next seconds","Anti-AFK space pulses",
         "Anti-AFK channel defers","Trade window open","Trade gold offered (copper)",
         "Trade accept attempts","Trade payer accepted first","Anti-AFK last action",
-        "Anti-AFK SPACE keydown posts","Anti-AFK SPACE keyup posts"
+        "Anti-AFK SPACE keydown posts","Anti-AFK SPACE keyup posts",
+        "Summon role (0 NONE, 1 SLAVE, 2 MASTER)","Player level"
     };
 
     if(g_descriptorReady) return;
 
-    for(i=0u;i<31u;i++) {
+    for(i=0u;i<33u;i++) {
         W112_ControlSettingV1 *s=&g_settings[i];
-        int writableBool=(i==0u||i==20u);
+        int writable=(i==0u||i==20u||i==31u);
         s->struct_size=sizeof(*s);
         s->setting_id=i+1u;
         s->key=keys[i];
@@ -1144,9 +1158,9 @@ static void initSettings(void)
         s->type=(i<=2u||i==20u||i==24u||i==27u||i==29u) ? W112_CTL_BOOL:W112_CTL_INT;
         s->default_value.u32=(i==0u||i==20u)?1u:0u;
         s->min_value.u32=0u;
-        s->max_value.u32=(i<=2u||i==20u||i==24u||i==27u||i==29u)?1u:2147483647u;
+        s->max_value.u32=(i==31u)?2u:((i<=2u||i==20u||i==24u||i==27u||i==29u)?1u:2147483647u);
         s->step.u32=1u;
-        s->flags=writableBool?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
+        s->flags=writable?W112_CTL_LIVE:(W112_CTL_READ_ONLY|W112_CTL_LIVE);
         s->enum_options=0;
         s->enum_option_count=0u;
     }
@@ -1188,20 +1202,45 @@ static int W112_CTL_STDCALL getValue(w112_u32 id,W112_ControlValueV1 *v)
     else if(id==29u) v->u32=g_antiAfkLastAction;
     else if(id==30u) v->u32=g_antiAfkDownPosts;
     else if(id==31u) v->u32=g_antiAfkUpPosts;
+    else if(id==32u) v->u32=g_summonRole;
+    else if(id==33u) v->u32=g_playerLevel;
     else return 0;
     return 1;
 }
 
 static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
 {
-    if(!v||v->u32>1u) return 0;
+    if(!v) return 0;
+    if(id==32u) {
+        if(v->u32>2u) return 0;
+        if(g_playerLevel==1u) {
+            g_summonRole=1u;
+            g_roleUserSelected=0u;
+            if(!g_enabled) g_enabled=1u;
+            if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+            return 1;
+        }
+        if(v->u32==1u) return 0;
+        g_summonRole=v->u32;
+        g_roleUserSelected=1u;
+        if(g_enabled) {
+            g_enabled=0u;
+            resetPortal();
+        }
+        return 1;
+    }
+    if(v->u32>1u) return 0;
     if(id==1u){
-        u32 wanted=(g_forcedProfile==1u)?1u:((g_forcedProfile==2u)?0u:v->u32);
+        u32 wanted=(g_playerLevel==1u)?1u:0u;
         g_enabled=wanted;
         if(!g_enabled) resetPortal();
         return 1;
     }
     if(id==21u){
+        if(g_playerLevel==1u||g_summonRole==1u) {
+            if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+            return 1;
+        }
         if(g_antiAfkEnabled!=v->u32) antiAfkSetEnabled(v->u32);
         return 1;
     }
@@ -1213,8 +1252,8 @@ static const W112_ControlModuleV1 g_module={
     sizeof(W112_ControlModuleV1),
     "autosummonassist",
     "AutoSummon Assist",
-    0x00120000u,
-    31u,
+    0x00130000u,
+    33u,
     g_settings,
     getValue,
     setValue

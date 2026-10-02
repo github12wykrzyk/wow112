@@ -3735,6 +3735,31 @@
       "tests": [],
       "package": null,
       "notes": "Direct ReloadUI() and direct ConsoleExec('reloadui') both returned without reloading in the automatic scan-completion context. The user has a working manual /reload shortcut. Candidate now discovers a live /reload (or /reloadui,/rl) alias and submits it through the same ChatFrameEditBox + ChatEdit_SendText slash-command path; if none is registered it submits stock '/console reloadui' through the chat parser. Reload waits while the user is typing in chat, remains single-shot with the existing two-second watchdog, and preserves all transaction-idle/session-state/AUX-GUI restore logic."
+    },
+    {
+      "id": "summon-role-nonlow-first",
+      "branch": "feature/summon-role-nonlow-first",
+      "modules": [
+        "AutoSummonAssist",
+        "WoWPlayerESP",
+        "UpdaterMultibox"
+      ],
+      "dependencies": [
+        "autosummon-assist-parallel",
+        "multibox-auto-first-character-parallel",
+        "autologin-multibox-stagger-v2"
+      ],
+      "shared_resources": [
+        "AutoSummonAssist W112_CONTROL_API_V1 summon role and Anti-AFK state",
+        "Parallel PlayerESP SUMMON GUI",
+        "multibox process creation cadence and LOW profile flag"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "8b73ab04105fec4676a9cd6861df3780c1561403",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User-requested combined MULTIBOX/SUMMON iteration. Level-1 helper is a forced SLAVE and cannot disable Anti-AFK; above level 1 SLAVE is unavailable, MASTER can be toggled off so NONE is representable. Multibox launch order is stable-partitioned so all non-LOW accounts start before LOW accounts while preserving the existing 3000 ms process stagger and relative account order."
     }
   ]
 }
