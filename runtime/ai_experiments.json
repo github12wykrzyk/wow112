@@ -4193,6 +4193,13 @@
           "commit": "e5726df96c4b85801a8e04d2753d3fab2ff2a8db",
           "date": "2026-10-02",
           "evidence": "Verified aggregate candidate artifact 11219633243 (WoW112-WORK-CANDIDATE-e5726df96c4b85801a8e04d2753d3fab2ff2a8db), digest sha256:ba4631b4c41e6d9340719093f3b0889ed7f85f2a5815db241dbebe432f27a823."
+        },
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "c17da3d0f2448b2c202eb917a188f71076aea61f",
+          "date": "2026-10-02",
+          "evidence": "User feedback: purchase history is useful but the UI is too deep (Blizzard AH -> AVM WATCH -> PURCHASES). Required placement is a native top-level AUX tab matching Search/Post/Auctions/Bids; persistence/confirmation logic is retained."
         }
       ],
       "package": {
@@ -4221,6 +4228,30 @@
       "tests": [],
       "package": null,
       "notes": "Correct real layout to hydraxian/Azshara=1, hyjal=2, winterspring=3. Schema V4 migrates only the untouched shipped V3 default; customized V3 routes are preserved. Manual PREPARE only switches both slave workers to the selected slot and waits for READY 2/2; it does not cast Ritual or click a portal."
+    },
+    {
+      "id": "ah-native-purchases-turtle-de",
+      "branch": "feature/ah-native-purchases-turtle-de",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-purchase-history-ui",
+        "ah-turtle-vendor-db-live"
+      ],
+      "shared_resources": [
+        "native aux.tab / aux.gui.listing UI",
+        "AVM_DB confirmed purchase history",
+        "Turtle item_template.disenchant_id",
+        "Turtle disenchant_loot_template",
+        "AUX_ARB DE valuation/revalidation"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "3c1e147a98e9e3b0682194082e8dae81b632fc67",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Native AUX Purchases tab plus exact Turtle disenchant routing from tortoise-wow/tortoise-wow@d94947b0db60c33e7248523ad0ba7f58af97fd09. Known positive IDs use exact loot table, known deID=0 equip items fail closed, unknown future IDs retain AUX fallback. Material-depth pricing, AH cut, safety margin, wallet/session gates and final auction revalidation are unchanged."
     }
   ]
 }
