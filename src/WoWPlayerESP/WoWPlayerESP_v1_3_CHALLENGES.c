@@ -1891,7 +1891,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "SUMMON / AUTOMATION",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "Lvl 1 = forced SLAVE + Anti-AFK ON. Lvl >1: SLAVE unavailable; MASTER optional, both unchecked = NONE. Background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
+        "Lvl 1 = forced SLAVE + Anti-AFK ON. Lvl >1: SLAVE unavailable; MASTER optional, both unchecked = NONE. background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
         42,181,665,32,FALSE));
     g_ui_summon_master_profile=ui_button(g_parallel_ui_hwnd,
         "MASTER / CASTER",46,221,321,36,233u,TRUE);
