@@ -887,13 +887,54 @@ namespace WoW112Updater
                 return null;
             }
 
+            private static string DiagPid(string path)
+            {
+                var name = Path.GetFileNameWithoutExtension(path) ?? string.Empty;
+                var parts = name.Split('_');
+                if (parts.Length >= 5 &&
+                    string.Equals(parts[0], "remote", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(parts[1], "service", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(parts[2], "probe", StringComparison.OrdinalIgnoreCase))
+                    return parts[3];
+                if (parts.Length >= 4 &&
+                    string.Equals(parts[0], "market", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(parts[1], "worker", StringComparison.OrdinalIgnoreCase))
+                    return parts[2];
+                return string.Empty;
+            }
+
             private static string[] GetRecentDiagFiles(string root)
             {
                 var debugDir = Path.Combine(root, ".wow112_debug");
                 if (!Directory.Exists(debugDir)) return new string[0];
-                return Directory.GetFiles(debugDir, "*.jsonl")
+                var all = Directory.GetFiles(debugDir, "*.jsonl")
                     .OrderByDescending(File.GetLastWriteTimeUtc)
-                    .Take(3)
+                    .ToArray();
+                var chosen = new List<string>(all.Take(4));
+
+                // Keep RSP and MarketWorker evidence paired by PID. A busy
+                // multibox session can otherwise push the worker log just
+                // outside the global newest-three window.
+                foreach (var seed in chosen.ToArray())
+                {
+                    var pid = DiagPid(seed);
+                    if (string.IsNullOrEmpty(pid)) continue;
+                    var mate = all.FirstOrDefault(p =>
+                    {
+                        var n = Path.GetFileName(p);
+                        return (n.StartsWith("market_worker_" + pid + "_", StringComparison.OrdinalIgnoreCase) ||
+                                n.StartsWith("remote_service_probe_" + pid + "_", StringComparison.OrdinalIgnoreCase)) &&
+                               !string.Equals(p, seed, StringComparison.OrdinalIgnoreCase);
+                    });
+                    if (!string.IsNullOrEmpty(mate)) chosen.Add(mate);
+                }
+
+                chosen.AddRange(all.Where(p => Path.GetFileName(p).StartsWith("market_worker_", StringComparison.OrdinalIgnoreCase)).Take(2));
+                chosen.AddRange(all.Where(p => Path.GetFileName(p).StartsWith("remote_service_probe_", StringComparison.OrdinalIgnoreCase)).Take(2));
+                return chosen
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Take(8)
                     .ToArray();
             }
 

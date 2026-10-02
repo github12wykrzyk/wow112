@@ -35,6 +35,7 @@ typedef const char* (__fastcall *FrameScriptGetTextFn)(const char*,int,u32);
 typedef u32 (__fastcall *GetObjectByGuidFn)(u64);
 typedef void (__thiscall *RightClickObjectFn)(void*,int);
 typedef u32 (__stdcall *RspGetGuidFn)(u32,u32*,u32*,u32*,u32*);
+typedef u32 (__stdcall *RspReplayLocalFn)(u32,u32);
 
 #define ADDR_FRAME_EXECUTE      0x00704CD0u
 #define ADDR_FRAME_GETTEXT      0x00703BF0u
@@ -76,6 +77,7 @@ static u32 g_ahLo=0u,g_ahHi=0u,g_mailLo=0u,g_mailHi=0u;
 static u32 g_ahLearned=0u,g_mailLearned=0u,g_ahLoaded=0u,g_mailLoaded=0u;
 static u32 g_ahType=0u,g_mailType=0u,g_pauseRequested=0u,g_releaseIssued=0u;
 static u32 g_auxCyclesBefore=0u,g_failures=0u,g_successes=0u;
+static u32 g_ahNativeTried=0u,g_ahReplayAttempts=0u;
 static char g_lastFailure[160];
 static char g_logPath[MAX_PATH];
 
@@ -180,6 +182,24 @@ static RspGetGuidFn rsp_provider(void){
     if(!f)f=(RspGetGuidFn)GetProcAddress(m,"_W112_RSP_GetLearnedGuid@20");
     return f;
 }
+
+static RspReplayLocalFn rsp_replay_provider(void){
+    HMODULE m=GetModuleHandleA("WoWRemoteServiceProbe_5875_v1.dll");
+    RspReplayLocalFn f;
+    if(!m)return 0;
+    f=(RspReplayLocalFn)GetProcAddress(m,"W112_RSP_ReplayLocalOpener");
+    if(!f)f=(RspReplayLocalFn)GetProcAddress(m,"_W112_RSP_ReplayLocalOpener@8");
+    return f;
+}
+static u32 replay_local_ah(u32 now){
+    RspReplayLocalFn f=rsp_replay_provider();u32 rc;char d[180];
+    g_lastActionAt=now;
+    if(!f){log_event("replay_ah","RSP local replay export missing");return 0u;}
+    rc=f(SERVICE_AH,600u);
+    wsprintfA(d,"RSP local AH opener rc=%lu attempt=%lu",rc,g_ahReplayAttempts);
+    log_event(rc==1u?"replay_ah":"replay_ah_blocked",d);
+    return rc;
+}
 static void refresh_services(void){
     RspGetGuidFn f=rsp_provider();u32 lo=0u,hi=0u,t=0u,d=0u,obj;
     g_ahLearned=g_mailLearned=0u;g_ahLoaded=g_mailLoaded=0u;g_ahType=g_mailType=0u;
@@ -228,6 +248,7 @@ static void close_mail(void){
 }
 static void set_state(u32 st,u32 now,const char*why){
     g_state=st;g_stateAt=now;g_lastActionAt=0u;
+    if(st==ST_OPEN_AH||st==ST_RECOVER_AH){g_ahNativeTried=0u;g_ahReplayAttempts=0u;}
     log_event("state",why?why:"");
 }
 static void fail_cycle(const char*why,u32 now){
@@ -267,7 +288,14 @@ static void recover_tick(u32 now){
         set_state(ST_IDLE,now,"recovered AH home");
         return;
     }
-    if(g_ahLearned&&g_ahLoaded)click_service(SERVICE_AH,now);
+    if(g_ahLearned&&g_ahLoaded){
+        if(!g_ahNativeTried){
+            if(click_service(SERVICE_AH,now))g_ahNativeTried=1u;
+        } else if((u32)(now-g_stateAt)>=900u && g_ahReplayAttempts<3u &&
+                  (u32)(now-g_lastActionAt)>=900u){
+            ++g_ahReplayAttempts;(void)replay_local_ah(now);
+        }
+    }
     if((u32)(now-g_stateAt)>OPEN_TIMEOUT_MS+4000u){
         if(!g_releaseIssued)release_aux();
         g_state=ST_IDLE;g_stateAt=now;log_event("recovery_timeout","AH not restored");
@@ -312,7 +340,16 @@ static void cycle_tick(u32 now){
             release_aux();set_state(ST_WAIT_AUX,now,"AH restored -> release AUX");
             return;
         }
-        click_service(SERVICE_AH,now);
+        /* 0x005F8660 is proven for GameObjects (mail/ritual portal) but the
+         * auctioneer is a unit. Try it once for compatibility, then use the
+         * exact learned 0x0259 opener through RSP, fail-closed to loaded unit
+         * + <=6yd. */
+        if(!g_ahNativeTried){
+            if(click_service(SERVICE_AH,now))g_ahNativeTried=1u;
+        } else if((u32)(now-g_stateAt)>=900u && g_ahReplayAttempts<3u &&
+                  (u32)(now-g_lastActionAt)>=900u){
+            ++g_ahReplayAttempts;(void)replay_local_ah(now);
+        }
         if((u32)(now-g_stateAt)>OPEN_TIMEOUT_MS){fail_cycle("cycle FAIL: auctioneer did not reopen AH",now);return;}
         return;
     }

@@ -4891,7 +4891,7 @@
     },
     {
       "id": "market-worker-service-cycle-5875",
-      "branch": "feature/market-worker-rsp-strict-mail-abi",
+      "branch": "feature/market-worker-local-ah-reopen",
       "modules": [
         "MarketWorker",
         "RemoteServiceProbe",
@@ -4909,11 +4909,19 @@
         ".wow112_debug market_worker JSONL"
       ],
       "status": "in_progress",
-      "observed_head": "a535bc4b7a51cfe9237a3f7e1b1a04308abf91d5",
+      "observed_head": "98f108a30a0e8ce6f6d0959911f08c31ce8c767d",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "gameplay",
+          "result": "failed",
+          "commit": "154320fdd2b28303f8d6a4864a1e518ea1d8c4e0",
+          "date": "2026-10-02",
+          "evidence": "Screenshot after /mw cycle: AH/Mail learned+loaded 1/1, AUX safe-paused at page 302, cycle failed only at MAIL->AH with 'auctioneer did not reopen AH'. RSP calibration was correct (mail 0x023A type5, AH 0x0259 type3)."
+        }
+      ],
       "package": null,
-      "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof. Follow-up: screenshot showed RSP falsely learned MAIL as AH opcode 0x0259 while MarketWorker saw no provider GUIDs. Fix makes service object type a hard RSP learn/export gate, publishes stable undecorated x86 exports, keeps decorated fallback in MarketWorker, and validates provider object type downstream."
+      "notes": "Milestone 1 only: worker physically parked within normal range of Booty Bay auctioneer+mailbox. After one normal AH/mail calibration, /mw cycle safely pauses AUX at a query boundary, closes AH, native-clicks mailbox, holds 2.5s, closes mail, native-clicks auctioneer, releases AUX and requires scan restart evidence. /mw on keeps AH as home service. No buy/bid/cancel, no mail take/send, no movement/teleport/position spoof. Follow-up: screenshot showed RSP falsely learned MAIL as AH opcode 0x0259 while MarketWorker saw no provider GUIDs. Fix makes service object type a hard RSP learn/export gate, publishes stable undecorated x86 exports, keeps decorated fallback in MarketWorker, and validates provider object type downstream. Follow-up adds local-only <=6yd RSP replay of the exact learned AH opener after one native unit interaction attempt; no movement/teleport/position spoof. Updater diagnostics now pair MarketWorker/RSP logs by PID."
     },
     {
       "id": "updater-auto-report-stream-v1",

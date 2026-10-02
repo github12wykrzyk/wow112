@@ -13,6 +13,7 @@
 /* Export stable undecorated ABI names for GetProcAddress consumers on x86. */
 #pragma comment(linker, "/EXPORT:W112_RSP_GetLearnedGuid=_W112_RSP_GetLearnedGuid@20")
 #pragma comment(linker, "/EXPORT:W112_RSP_GetLearnedMask=_W112_RSP_GetLearnedMask@0")
+#pragma comment(linker, "/EXPORT:W112_RSP_ReplayLocalOpener=_W112_RSP_ReplayLocalOpener@8")
 #else
 #define FASTCALL __attribute__((fastcall))
 #define THISCALL __attribute__((thiscall))
@@ -801,6 +802,30 @@ __declspec(dllexport) u32 STDCALL W112_RSP_GetLearnedMask(void)
     u32 mask=0u,s;
     for(s=1u;s<=SERVICE_MAX;s++)if(g_learn[s].valid)mask|=(1u<<(s-1u));
     return mask;
+}
+
+/* Local-only opener fallback for MarketWorker. This is intentionally restricted
+ * to the auctioneer service and normal melee interaction range. It never moves
+ * the player or spoofs coordinates; it only replays the exact opener learned
+ * while the same loaded auctioneer object is physically in range. */
+__declspec(dllexport) u32 STDCALL W112_RSP_ReplayLocalOpener(u32 service,u32 maxDist100)
+{
+    LearnedService *l;u32 loaded=0u,type=0u,dist=0u,bucket; s32 px,py,pz,tx,ty,tz;char d[260];
+    if(service!=SERVICE_AH)return 2u;
+    if(maxDist100==0u||maxDist100>600u)maxDist100=600u;
+    l=&g_learn[service];
+    if(!l->valid||!type_matches(service,l->objectType))return 3u;
+    if(!g_hookHealthy||decode_jump(ADDR_CLIENT_SEND)!=(u32)(void*)&SendWrapper||!g_nextSend)return 4u;
+    bucket=distance_bucket(service,&loaded,&type,&dist,&px,&py,&pz,&tx,&ty,&tz);
+    if(!loaded||type!=3u)return 5u;
+    if(dist>maxDist100)return 6u;
+    refresh_context();
+    if(service_visible(service))return 7u;
+    replay_learned(service);
+    wsprintfA(d,"local worker opener replay bucket=%lu dist100=%lu max=%lu type=%lu",bucket,dist,maxDist100,type);
+    log_line("local_replay",service,0u,l->packet.opcode,l->packet.len,l->packet.guidLo,l->packet.guidHi,
+             loaded,type,dist,px,py,pz,tx,ty,tz,d);
+    return 1u;
 }
 
 static void uninstall(int terminating){
