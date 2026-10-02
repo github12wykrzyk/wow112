@@ -311,6 +311,19 @@ jobs:
             --output build/WoWCharacterSwitchDiag_5875_v1.dll
           if ($LASTEXITCODE -ne 0) { throw "Parallel CharacterSwitchDiag build/package failed" }
 
+      - name: Build and append Parallel Remote Service Probe
+        if: github.ref_name == 'parallel'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_remoteserviceprobe_candidate.py \
+            --package dist/WoW112_WORK_CANDIDATE.zip \
+            --package-metadata dist/candidate_metadata.json \
+            --summary dist/candidate_summary.json \
+            --build-metadata dist/remoteserviceprobe_build.json \
+            --output build/WoWRemoteServiceProbe_5875_v1.dll
+          if ($LASTEXITCODE -ne 0) { throw "Parallel RemoteServiceProbe build/package failed" }
+
       - name: Patch Parallel TEST EXE farclip ceiling 777 to 1554
         if: github.ref_name == 'parallel'
         shell: pwsh

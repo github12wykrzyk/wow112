@@ -4651,6 +4651,28 @@
       ],
       "package": null,
       "notes": "Rebased current-parallel version. Removes floating AVM WATCH launcher while retaining /avm gui. Repairs Profit/Loss mail ingestion with seller-invoice plus localized sold-subject/money fallback and bounded mailbox cache retries; adds mail-ledger diagnostics. Adds exact per-reason flip rejection counts and representative samples without changing flip economics. Auto-sell/Sell Rules remains planned but is not implemented in this bugfix."
+    },
+    {
+      "id": "remote-service-probe-5875",
+      "branch": "feature/remote-service-probe-v3",
+      "modules": [
+        "RemoteServiceProbe"
+      ],
+      "dependencies": [
+        "ah-native-throttle-diagnostic"
+      ],
+      "shared_resources": [
+        "ClientServices::Send 0x005AB630 dynamically chained after existing owner",
+        "FrameScript events BANKFRAME_OPENED/MAIL_SHOW/AUCTION_HOUSE_SHOW",
+        "ObjectManager GUID/object lookup 0x00464870",
+        ".wow112_debug diagnostics"
+      ],
+      "status": "in_progress",
+      "observed_head": "1a6028f5a72c7c8596bc06b6ec39b107769ae764",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Deep one-pass BANK/MAIL/AH remote-feasibility diagnostic rebased onto current parallel. Learns the exact live-realm outbound service handshake after a normal nearby open, keeps a 64-packet timeline, records opcode/length/GUID/object visibility/distance/zone/subzone/UI+system errors, and replays only that learned handshake. No movement, position spoof, item transfer, mail send, auction bid/buy/cancel or guessed opcode. Companion chains the pre-existing ClientServices::Send JMP target and restores only if still current."
     }
   ]
 }

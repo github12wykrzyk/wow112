@@ -91,6 +91,7 @@
   "exclusions": [
     "Exact-binary and transient companion modules without source-backed hook declarations are not certified by this registry.",
     "The verifier cannot prove real runtime load order, Windows subclass ownership or in-game movement arbitration.",
-    "Consolidated candidate builder must replace MovementCore with embedded rear; active legacy PositionalSpoof and independent PVERear360 are prohibited."
+    "Consolidated candidate builder must replace MovementCore with embedded rear; active legacy PositionalSpoof and independent PVERear360 are prohibited.",
+    "RemoteServiceProbe is a transient parallel companion and therefore not certified as an active owner by this registry; its ClientServices::Send hook chains the pre-existing JMP target and restores only when it remains the current owner."
   ]
 }
