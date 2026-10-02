@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Zero-config AUX live loop; no reload path; all automated scans headless via AuxFastBridge v3.1; manual AUX Search remains visible.
+## Notes: Zero-config AUX live loop; deep vendor shadow diagnostics; no reload path; automated scans headless.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.27.1-no-reload
+## Version: 0.28-vendor-deep-diag
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos.lua

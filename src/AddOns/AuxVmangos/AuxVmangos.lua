@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.27.1-no-reload"
+AVM_VERSION = "0.28-vendor-deep-diag"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -1922,6 +1922,248 @@ local function avm_de_record_key(record, itemId)
 	return itemKey
 end
 
+-- Deep vendor diagnostics are shadow-only: they never change vendor valuation,
+-- trustedOnly policy, candidate selection or purchase decisions.
+function AVM_VendorDiagPushTop(list, row, metric)
+	if not list or not row then return end
+	local value = tonumber(row[metric]) or 0
+	local n = table.getn(list)
+	local pos = n + 1
+	for i = 1, n do
+		if value > (tonumber(list[i][metric]) or 0) then pos = i break end
+	end
+	table.insert(list, pos, row)
+	while table.getn(list) > 20 do table.remove(list, 21) end
+end
+
+function AVM_VendorDiagNew(filterString)
+	if not AVM_DB.diag then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
+	AVM_DB.diag.vendorAuditSeq = (tonumber(AVM_DB.diag.vendorAuditSeq) or 0) + 1
+	local learnedDbItems = 0
+	if aux and aux.account_data and aux.account_data.merchant_sell then
+		for _, value in pairs(aux.account_data.merchant_sell) do
+			if (tonumber(value) or 0) > 0 then learnedDbItems = learnedDbItems + 1 end
+		end
+	end
+	local staticDbItems = 0
+	for _, value in pairs(AVM_VENDOR_VALUES or {}) do
+		if (tonumber(value) or 0) > 0 then staticDbItems = staticDbItems + 1 end
+	end
+	return {
+		schema = 1,
+		scanId = AVM_DB.diag.vendorAuditSeq,
+		startedAtMs = math.floor((GetTime() or 0) * 1000),
+		filter = string.sub(tostring(filterString or ""), 1, 240),
+		trustedOnly = AVM_DB.vendorTrustedOnly and true or false,
+		vendorMinProfit = tonumber(AVM_DB.vendorMinProfit) or 0,
+		vendorMaxBuyout = tonumber(AVM_DB.vendorMaxBuyout) or 0,
+		maxSessionSpend = tonumber(AVM_DB.maxSessionSpend) or 0,
+		maxSessionBuys = tonumber(AVM_DB.maxSessionBuys) or 0,
+		moneyStart = GetMoney() or 0,
+		sessionBuysStart = AVM.sessionBuys or 0,
+		sessionSpendStart = AVM.sessionSpend or 0,
+		learnedDbItems = learnedDbItems,
+		staticDbItems = staticDbItems,
+		totals = {
+			records = 0, zeroCount = 0, noBuyout = 0, ownAuction = 0, grey = 0, noItemId = 0,
+			learnedAuctions = 0, staticAuctions = 0, bothAuctions = 0,
+			learnedOnlyAuctions = 0, staticOnlyAuctions = 0, noValueAuctions = 0,
+			learnedProfitable = 0, learnedEconomicQualify = 0, learnedLiveEligible = 0,
+			staticProfitable = 0, staticEconomicQualify = 0, staticLiveEligible = 0,
+		},
+		unique = { items = 0, both = 0, learnedOnly = 0, staticOnly = 0, noValue = 0 },
+		reasons = {
+			trustedStaticBlocked = 0, profitBelowMin = 0, maxBuyout = 0, recent = 0,
+			purchaseLimit = 0, wallet = 0, sessionBudget = 0,
+		},
+		mismatchBuckets = { exact = 0, le5 = 0, le20 = 0, le50 = 0, gt50 = 0 },
+		pipelineCounts = {},
+		topStaticOnly = {}, topLearned = {}, topMismatch = {}, lifecycle = {},
+		_seen = {}, _noValue = {},
+	}
+end
+
+function AVM_VendorDiagIsCandidate(c)
+	return c and (c.mode == "auxarb_vendor" or c.mode == "vendor" or c.mode == "fastvendor")
+end
+
+function AVM_VendorDiagLifecycle(stage, c, reason)
+	if c and not AVM_VendorDiagIsCandidate(c) then return end
+	local d = AVM.auxArb and AVM.auxArb.vendorDiag
+	if not d then return end
+	stage = tostring(stage or "UNKNOWN")
+	d.pipelineCounts[stage] = (tonumber(d.pipelineCounts[stage]) or 0) + 1
+	table.insert(d.lifecycle, {
+		atMs = math.floor((GetTime() or 0) * 1000),
+		stage = stage, reason = tostring(reason or ""),
+		itemId = c and tonumber(c.itemId) or 0,
+		name = c and tostring(c.name or "") or "",
+		buyout = c and (tonumber(c.buyout) or 0) or 0,
+		profit = c and (tonumber(c.profit) or 0) or 0,
+		page = c and (tonumber(c.sourcePage) or 0) or 0,
+	})
+	while table.getn(d.lifecycle) > 40 do table.remove(d.lifecycle, 1) end
+	local snap = AVM_DB.diag and AVM_DB.diag.vendorAudit
+	if snap and tonumber(snap.scanId) == tonumber(d.scanId) then
+		snap.lifecycle = d.lifecycle
+		snap.pipelineCounts = d.pipelineCounts
+		snap.updatedAtMs = math.floor((GetTime() or 0) * 1000)
+	end
+end
+
+function AVM_VendorDiagAuction(record)
+	local d = AVM.auxArb and AVM.auxArb.vendorDiag
+	if not d or not record then return end
+	local t, reasons = d.totals, d.reasons
+	t.records = (t.records or 0) + 1
+	local count = tonumber(record.count or record.aux_quantity) or 0
+	local buyout = tonumber(record.buyout_price) or 0
+	if count <= 0 then t.zeroCount = (t.zeroCount or 0) + 1 return end
+	if buyout <= 0 then t.noBuyout = (t.noBuyout or 0) + 1 return end
+	if record.owner and record.owner == UnitName("player") then
+		t.ownAuction = (t.ownAuction or 0) + 1
+		return
+	end
+	local itemId = tonumber(record.item_id)
+	if not itemId then t.noItemId = (t.noItemId or 0) + 1 return end
+	if record.quality == 0 then t.grey = (t.grey or 0) + 1 return end
+
+	local learned = 0
+	if aux and aux.account_data and aux.account_data.merchant_sell then
+		learned = tonumber(aux.account_data.merchant_sell[itemId]) or 0
+	end
+	local static = AVM_VENDOR_VALUES and tonumber(AVM_VENDOR_VALUES[itemId]) or 0
+	if learned > 0 then t.learnedAuctions = (t.learnedAuctions or 0) + 1 end
+	if static > 0 then t.staticAuctions = (t.staticAuctions or 0) + 1 end
+	if learned > 0 and static > 0 then
+		t.bothAuctions = (t.bothAuctions or 0) + 1
+	elseif learned > 0 then
+		t.learnedOnlyAuctions = (t.learnedOnlyAuctions or 0) + 1
+	elseif static > 0 then
+		t.staticOnlyAuctions = (t.staticOnlyAuctions or 0) + 1
+	else
+		t.noValueAuctions = (t.noValueAuctions or 0) + 1
+	end
+
+	if not d._seen[itemId] then
+		d._seen[itemId] = true
+		d.unique.items = (d.unique.items or 0) + 1
+		if learned > 0 and static > 0 then
+			d.unique.both = (d.unique.both or 0) + 1
+			local diff = math.abs(static - learned)
+			local pct = learned > 0 and (diff * 100 / learned) or 0
+			if diff == 0 then d.mismatchBuckets.exact = d.mismatchBuckets.exact + 1
+			elseif pct <= 5 then d.mismatchBuckets.le5 = d.mismatchBuckets.le5 + 1
+			elseif pct <= 20 then d.mismatchBuckets.le20 = d.mismatchBuckets.le20 + 1
+			elseif pct <= 50 then d.mismatchBuckets.le50 = d.mismatchBuckets.le50 + 1
+			else d.mismatchBuckets.gt50 = d.mismatchBuckets.gt50 + 1 end
+			AVM_VendorDiagPushTop(d.topMismatch, {
+				itemId = itemId, name = tostring(record.name or ""),
+				learnedUnit = learned, staticUnit = static,
+				diffCopper = diff, diffPct = math.floor(pct * 10 + 0.5) / 10,
+			}, "diffPct")
+		elseif learned > 0 then d.unique.learnedOnly = d.unique.learnedOnly + 1
+		elseif static > 0 then d.unique.staticOnly = d.unique.staticOnly + 1
+		else d.unique.noValue = d.unique.noValue + 1 end
+	end
+
+	if learned <= 0 and static <= 0 then
+		local row = d._noValue[itemId]
+		if not row then
+			row = { itemId = itemId, name = tostring(record.name or ""), auctions = 0 }
+			d._noValue[itemId] = row
+		end
+		row.auctions = row.auctions + 1
+		return
+	end
+
+	local source = learned > 0 and "learned" or "static-only"
+	if source == "static-only" and AVM_DB.vendorTrustedOnly then
+		reasons.trustedStaticBlocked = (reasons.trustedStaticBlocked or 0) + 1
+	end
+	local vendorUnit = learned > 0 and learned or static
+	local vendorTotal = vendorUnit * count
+	local profit = vendorTotal - buyout
+	local minProfit = tonumber(AVM_DB.vendorMinProfit) or 0
+	local maxBuyout = tonumber(AVM_DB.vendorMaxBuyout) or 0
+	if profit < minProfit then
+		reasons.profitBelowMin = (reasons.profitBelowMin or 0) + 1
+		return
+	end
+
+	local itemKey = avm_de_record_key(record, itemId)
+	local sig = avm_signature_no_owner(record.name, count, buyout, record.quality, record.level, itemKey)
+	local maxBlocked = maxBuyout > 0 and buyout > maxBuyout
+	local recentBlocked = avm_recent(sig)
+	if maxBlocked then reasons.maxBuyout = (reasons.maxBuyout or 0) + 1 end
+	if recentBlocked then reasons.recent = (reasons.recent or 0) + 1 end
+	local economic = not maxBlocked and not recentBlocked
+	local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
+	local purchaseBlocked = economic and maxBuys > 0 and (AVM.sessionBuys or 0) >= maxBuys
+	local walletBlocked = economic and buyout > (GetMoney() or 0)
+	local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
+	local budgetBlocked = economic and maxSpend > 0 and (AVM.sessionSpend or 0) + buyout > maxSpend
+	if purchaseBlocked then reasons.purchaseLimit = (reasons.purchaseLimit or 0) + 1 end
+	if walletBlocked then reasons.wallet = (reasons.wallet or 0) + 1 end
+	if budgetBlocked then reasons.sessionBudget = (reasons.sessionBudget or 0) + 1 end
+	local liveEligible = economic and not purchaseBlocked and not walletBlocked and not budgetBlocked
+	local shadowGate = "eligible"
+	if maxBlocked then shadowGate = "max-buyout"
+	elseif recentBlocked then shadowGate = "recent"
+	elseif purchaseBlocked then shadowGate = "purchase-limit"
+	elseif walletBlocked then shadowGate = "wallet"
+	elseif budgetBlocked then shadowGate = "session-budget" end
+
+	local topRow = {
+		itemId = itemId, name = tostring(record.name or ""), count = count,
+		buyout = buyout, vendorUnit = vendorUnit, vendorTotal = vendorTotal,
+		profit = profit, page = tonumber(record.page) or AVM.queryPage or 0,
+		shadowGate = shadowGate,
+	}
+	if source == "learned" then
+		t.learnedProfitable = (t.learnedProfitable or 0) + 1
+		if economic then t.learnedEconomicQualify = (t.learnedEconomicQualify or 0) + 1 end
+		if liveEligible then t.learnedLiveEligible = (t.learnedLiveEligible or 0) + 1 end
+		AVM_VendorDiagPushTop(d.topLearned, topRow, "profit")
+	else
+		t.staticProfitable = (t.staticProfitable or 0) + 1
+		if economic then t.staticEconomicQualify = (t.staticEconomicQualify or 0) + 1 end
+		if liveEligible then t.staticLiveEligible = (t.staticLiveEligible or 0) + 1 end
+		topRow.currentGate = AVM_DB.vendorTrustedOnly and "trusted-static-block" or shadowGate
+		AVM_VendorDiagPushTop(d.topStaticOnly, topRow, "profit")
+	end
+end
+
+function AVM_VendorDiagSnapshot(status)
+	local d = AVM.auxArb and AVM.auxArb.vendorDiag
+	if not d then return end
+	if not AVM_DB.diag then AVM_DB.diag = { seq = 0, events = {}, state = {} } end
+	local nowMs = math.floor((GetTime() or 0) * 1000)
+	local topNoValue = {}
+	for _, row in pairs(d._noValue or {}) do
+		AVM_VendorDiagPushTop(topNoValue, {
+			itemId = row.itemId, name = row.name, auctions = row.auctions,
+		}, "auctions")
+	end
+	AVM_DB.diag.vendorAudit = {
+		schema = d.schema, scanId = d.scanId, status = tostring(status or "snapshot"),
+		startedAtMs = d.startedAtMs, updatedAtMs = nowMs,
+		durationMs = nowMs - (tonumber(d.startedAtMs) or nowMs),
+		filter = d.filter, trustedOnly = d.trustedOnly,
+		vendorMinProfit = d.vendorMinProfit, vendorMaxBuyout = d.vendorMaxBuyout,
+		maxSessionSpend = d.maxSessionSpend, maxSessionBuys = d.maxSessionBuys,
+		moneyStart = d.moneyStart, moneyNow = GetMoney() or 0,
+		sessionBuysStart = d.sessionBuysStart, sessionBuysNow = AVM.sessionBuys or 0,
+		sessionSpendStart = d.sessionSpendStart, sessionSpendNow = AVM.sessionSpend or 0,
+		learnedDbItems = d.learnedDbItems, staticDbItems = d.staticDbItems,
+		pages = AVM.auxArb.pages or 0, lastPage = AVM.auxArb.lastPage or 0,
+		totals = d.totals, unique = d.unique, reasons = d.reasons,
+		mismatchBuckets = d.mismatchBuckets, pipelineCounts = d.pipelineCounts,
+		topStaticOnly = d.topStaticOnly, topLearned = d.topLearned,
+		topMismatch = d.topMismatch, topNoValue = topNoValue, lifecycle = d.lifecycle,
+	}
+end
+
 local function avm_flip_history_key(record, itemId)
 	if record and record.item_key and record.item_key ~= "" then return tostring(record.item_key) end
 	local suffixId = tonumber(record and (record.suffix_id or record.suffixId)) or 0
@@ -2674,6 +2916,8 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipExposureRejects = 0
 		a.postscanCandidate = nil
 		a.deMidScanHits = 0
+		a.vendorDiag = AVM_VendorDiagNew(a.filterString)
+		AVM_VendorDiagSnapshot("scan-start")
 	end
 	if a.active then
 		avm_print("AUX_SCAN_START resume=" .. tostring(keepScanBook and true or false))
@@ -2699,6 +2943,7 @@ function AVM_AuxArbAuction(record)
 	-- Thus GUI Filter Builder components are already an upstream allow-list for AUX_ARB.
 	-- Named/exact Blizzard queries are valid too; DE remains fail-closed on missing material depth.
 	a.filteredRecords = (a.filteredRecords or 0) + 1
+	AVM_VendorDiagAuction(record)
 
 	avm_de_book_add(a.deMaterialBook, record.item_id, record.name,
 		record.count or record.aux_quantity, record.buyout_price)
@@ -2725,6 +2970,7 @@ function AVM_AuxArbAuction(record)
 
 	local c = avm_auxarb_candidate_from_record(record, "auxarb_vendor")
 	if not c then return end
+	AVM_VendorDiagLifecycle("DISCOVERED", c, c.vendorSource or "")
 	AVM.stats.auxArbCandidates = AVM.stats.auxArbCandidates + 1
 	a.vendorCandidates = a.vendorCandidates + 1
 	AVM.stats.auxArbVendorCandidates = AVM.stats.auxArbVendorCandidates + 1
@@ -2769,8 +3015,13 @@ function AVM_AuxArbPageDone(page, lastPage)
 	-- Vendor remains first priority because those opportunities disappear fastest.
 	local selected = nil
 	if vendor then
-		local vendorOk = avm_auxarb_live_purchase_ok(vendor)
-		if vendorOk then selected = vendor end
+		AVM_VendorDiagLifecycle("PAGE_SELECTED", vendor, "")
+		local vendorOk, vendorReason = avm_auxarb_live_purchase_ok(vendor)
+		if vendorOk then
+			selected = vendor
+		else
+			AVM_VendorDiagLifecycle("LIVE_GATE_REJECT", vendor, vendorReason)
+		end
 	end
 	if not selected and pageDe then
 		pageDe.midScan = true
@@ -2794,6 +3045,7 @@ function AVM_AuxArbPageDone(page, lastPage)
 			" profit=" .. avm_money(selected.profit or 0) ..
 			" -> interrupt now after current page/live material verify")
 	else
+		AVM_VendorDiagLifecycle("PAUSE_REQUEST", selected, "")
 		avm_print("AUX_ARB_VENDOR_HIT page=" .. tostring(selected.sourcePage) ..
 			" profit=" .. avm_money(selected.profit or 0) .. " -> interrupt after current page/revalidate/buy")
 	end
@@ -2825,6 +3077,7 @@ function AVM_AuxArbPaused(page)
 		avm_de_begin_live_verify(AVM.candidate)
 		return
 	end
+	AVM_VendorDiagLifecycle("PAUSED", AVM.candidate, "revalidate")
 	avm_prepare_revalidate(AVM.candidate)
 	AVM.phase = "REVALIDATE"
 	AVM.nextQueryAt = GetTime() + 0.05
@@ -2843,6 +3096,18 @@ function AVM_AuxArbScanDone()
 	end
 	if not a.active then return end
 	a.active = false
+	AVM_VendorDiagSnapshot("scan-done")
+	local va = AVM_DB.diag and AVM_DB.diag.vendorAudit
+	if va and va.totals then
+		avm_print("VENDOR_AUDIT records=" .. tostring(va.totals.records or 0) ..
+			" unique=" .. tostring(va.unique and va.unique.items or 0) ..
+			" learned=" .. tostring(va.totals.learnedAuctions or 0) ..
+			" staticOnly=" .. tostring(va.totals.staticOnlyAuctions or 0) ..
+			" noValue=" .. tostring(va.totals.noValueAuctions or 0) ..
+			" learnedEligible=" .. tostring(va.totals.learnedLiveEligible or 0) ..
+			" staticShadowEligible=" .. tostring(va.totals.staticLiveEligible or 0) ..
+			" mismatchGt20=" .. tostring((va.mismatchBuckets and ((va.mismatchBuckets.le50 or 0) + (va.mismatchBuckets.gt50 or 0))) or 0))
+	end
 	avm_print("AUX_SCAN_DONE pages=" .. tostring(a.pages or 0))
 	if not AVM_DB.auxLoopEnabled then
 		AVM.phase = "IDLE"
@@ -3719,6 +3984,7 @@ avm_revalidate_candidate = function()
 						fresh = record and avm_auxarb_candidate_from_record(record, c.mode) or nil
 					end
 					if not fresh or fresh.signature ~= c.signature then
+						AVM_VendorDiagLifecycle("REVALIDATE_REJECT", c, "value-or-signature-changed")
 						AVM.stats.failed = AVM.stats.failed + 1
 						AVM.recent[c.signature] = GetTime() + 2
 						avm_print("AUX_ARB_REVALIDATE_REJECT " .. tostring(c.name) .. " route=" .. tostring(c.route))
@@ -3742,8 +4008,10 @@ avm_revalidate_candidate = function()
 				c.index = i
 				c.revalidatedAt = GetTime()
 				AVM.stats.revalidations = AVM.stats.revalidations + 1
+				AVM_VendorDiagLifecycle("REVALIDATE_FOUND", c, "")
 
 				if not avm_candidate_live(c) then
+					AVM_VendorDiagLifecycle("LIVE_DISABLED", c, "")
 					AVM.recent[c.signature] = GetTime() + 3
 					local wallet = " affordable=true"
 					if not c.affordable then
@@ -3769,11 +4037,13 @@ avm_revalidate_candidate = function()
 				end
 
 				if AVM.unknown then
+					AVM_VendorDiagLifecycle("UNKNOWN_HOLD", c, "previous-purchase-unknown")
 					AVM.phase = "UNKNOWN_HOLD"
 					return
 				end
 
 				if c.buyout > GetMoney() then
+					AVM_VendorDiagLifecycle("WALLET_BLOCK", c, "insufficient-money")
 					AVM.stats.walletBlocks = AVM.stats.walletBlocks + 1
 					AVM.recent[c.signature] = GetTime() + 3
 					avm_print("LIVE_BLOCKED no money for " .. c.name ..
@@ -3785,6 +4055,7 @@ avm_revalidate_candidate = function()
 
 				local maxBuys = tonumber(AVM_DB.maxSessionBuys) or 0
 				if maxBuys > 0 and AVM.sessionBuys >= maxBuys then
+					AVM_VendorDiagLifecycle("PURCHASE_LIMIT", c, tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys))
 					avm_disarm_candidate_live(c)
 					avm_print((avm_is_auxarb_candidate(c) and "AUX_ARB_LIVE_AUTO_OFF" or "LIVE_AUTO_OFF") .. " purchase limit reached (" ..
 						tostring(AVM.sessionBuys) .. "/" .. tostring(maxBuys) .. ")")
@@ -3794,6 +4065,7 @@ avm_revalidate_candidate = function()
 
 				local maxSpend = tonumber(AVM_DB.maxSessionSpend) or 0
 				if maxSpend > 0 and AVM.sessionSpend + c.buyout > maxSpend then
+					AVM_VendorDiagLifecycle("SESSION_BUDGET", c, tostring(AVM.sessionSpend) .. "+" .. tostring(c.buyout) .. ">" .. tostring(maxSpend))
 					avm_print("session spend limit blocks " .. c.name)
 					AVM.recent[c.signature] = GetTime() + 10
 					avm_resume_after_candidate(c, false)
@@ -3802,6 +4074,7 @@ avm_revalidate_candidate = function()
 
 				local before = GetMoney()
 				if c.buyout > before then
+					AVM_VendorDiagLifecycle("WALLET_CHANGED", c, "before-buy")
 					AVM.stats.walletBlocks = AVM.stats.walletBlocks + 1
 					avm_print("LIVE_BLOCKED wallet changed before buy " .. c.name)
 					avm_resume_after_candidate(c, false)
@@ -3809,6 +4082,7 @@ avm_revalidate_candidate = function()
 				end
 				AVM.recent[c.signature] = GetTime() + AVM_UNKNOWN_HOLD
 				PlaceAuctionBid("list", i, c.buyout)
+				AVM_VendorDiagLifecycle("BUY_SENT", c, "")
 				AVM.stats.buySent = AVM.stats.buySent + 1
 				AVM.pending = {
 					candidate = c,
@@ -3857,6 +4131,7 @@ avm_revalidate_candidate = function()
 	AVM.stats.failed = AVM.stats.failed + 1
 	AVM.recent[c.signature] = GetTime() + 2
 	if avm_is_auxarb_candidate(c) then
+		AVM_VendorDiagLifecycle("RACE", c, "auction-moved-or-disappeared")
 		local detail = ""
 		if c.revalidateFiltered then
 			detail = " filteredQuery='" .. tostring(c.revalidateName or "") .. "'"
@@ -4114,6 +4389,7 @@ local function avm_tick_pending(now)
 		local p = AVM.pending
 		local delta = p.moneyBefore - GetMoney()
 		if delta == p.candidate.buyout then
+			AVM_VendorDiagLifecycle("CONFIRMED", p.candidate, "money-delta")
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + p.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1
@@ -4140,6 +4416,7 @@ local function avm_tick_pending(now)
 		end
 
 		if now - p.sentAt >= AVM_PENDING_TIMEOUT then
+			AVM_VendorDiagLifecycle("UNKNOWN", p.candidate, "confirmation-timeout")
 			AVM.stats.unknown = AVM.stats.unknown + 1
 			AVM.unknown = {
 				candidate = p.candidate,
@@ -4159,6 +4436,7 @@ local function avm_tick_pending(now)
 		local u = AVM.unknown
 		local delta = u.moneyBefore - GetMoney()
 		if delta == u.candidate.buyout then
+			AVM_VendorDiagLifecycle("CONFIRMED_LATE", u.candidate, "money-delta-after-unknown")
 			AVM.stats.confirmed = AVM.stats.confirmed + 1
 			AVM.sessionSpend = AVM.sessionSpend + u.candidate.buyout
 			AVM.sessionBuys = AVM.sessionBuys + 1

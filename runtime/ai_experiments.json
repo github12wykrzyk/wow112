@@ -3993,6 +3993,32 @@
         ],
         "package": null,
         "notes": "Minimal native lifecycle hardening. CharacterSwitchDiag no longer calls FrameScript_GetText/Execute from its idle 50ms timer; Lua probes occur only for a pending worker command or active switch, and controlled ReloadUI blocks nested timer re-entry until ReloadUI returns. AHThrottleNative skips all game-memory/hook restoration when DLL_PROCESS_DETACH is caused by process termination; explicit FreeLibrary unload still restores timer/send/receive/cooldown state. No AUX scan, buy, DE, flip, scheduler or pricing logic changes."
+    },
+    {
+      "id": "ah-vendor-deep-diagnostics",
+      "branch": "feature/ah-vendor-deep-diagnostics",
+      "modules": [
+        "AuxVmangos",
+        "ParallelUpdater"
+      ],
+      "dependencies": [
+        "ah-flip-history-anchor-v20",
+        "ah-zero-config-live-defaults",
+        "ah-remove-reload-code"
+      ],
+      "shared_resources": [
+        "AUX_ARB filtered auction stream",
+        "realm-learned aux.account_data.merchant_sell",
+        "embedded AVM_VENDOR_VALUES shadow valuation",
+        "AUX_ARB revalidation and PlaceAuctionBid lifecycle",
+        "Updater AuxVmangos SavedVariables issue diagnostics"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "25f65a3ac79abf50820c4e1e202015d4edb49fc3",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Deep vendor audit without changing economics or buy policy. vendorTrustedOnly remains true and static Vanilla values remain shadow-only. Each fresh AUX_ARB scan records actionable coverage by learned/static/no-value source, unique item coverage, learned-vs-static mismatch buckets/top outliers, rejection reason counts, shadow static-only profitability/live eligibility, top learned/static-only/no-value rows, and a bounded vendor candidate lifecycle through discovery, pause, revalidation, buy, confirm/unknown/race. Updater extracts the complete bounded diag table instead of a blind 18k substring so one report should be sufficient to decide the next pricing algorithm."
     }
   ]
 }

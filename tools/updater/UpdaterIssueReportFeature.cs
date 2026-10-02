@@ -445,7 +445,7 @@ namespace WoW112Updater
                         sb.AppendLine();
                         sb.AppendLine("#### AuxVmangos.lua (UTC " + File.GetLastWriteTimeUtc(file).ToString("o") + ")");
                         sb.AppendLine("```text");
-                        sb.AppendLine(Sanitize(ExtractAuxVmangosDiagnostics(file, 18000), root, 18000));
+                        sb.AppendLine(Sanitize(ExtractAuxVmangosDiagnostics(file, 70000), root, 18000));
                         sb.AppendLine("```");
                     }
                 }
@@ -738,14 +738,13 @@ namespace WoW112Updater
                 {
                     var text = File.ReadAllText(path, Encoding.UTF8);
                     if (string.IsNullOrEmpty(text)) return "<empty AuxVmangos SavedVariables>";
-                    var marker = "[\"diag\"]";
-                    var index = text.IndexOf(marker, StringComparison.Ordinal);
-                    if (index < 0)
-                        return "AuxVmangos SavedVariables found, but no 0.11 diagnostic ring has been flushed yet.\n" +
+                    var diag = ExtractLuaTableField(text, "diag");
+                    if (string.IsNullOrEmpty(diag))
+                        return "AuxVmangos SavedVariables found, but no diagnostic table has been flushed yet.\n" +
                             TailText(text, Math.Min(maxChars, 4000));
-                    var start = Math.Max(0, index - 120);
-                    var count = Math.Min(maxChars, text.Length - start);
-                    return text.Substring(start, count);
+                    if (diag.Length <= maxChars) return diag;
+                    return diag.Substring(0, maxChars) +
+                        "\n<AuxVmangos diag table truncated after " + maxChars + " chars>";
                 }
                 catch (Exception ex)
                 {
