@@ -5280,6 +5280,27 @@
       "tests": [],
       "package": null,
       "notes": "Reduce ChatGPT-side deployment latency without weakening repository gates. Success-path CI observation is workflow-level and batched by exact SHA; individual jobs/steps/logs are failure-driven only. Independent gates are observed together, progress reporting is tied to durable state changes rather than extra API polling, and small already-understood one-module fixes have a 4-6 minute operational latency objective when runner capacity permits. Documentation/process-only changes do not require waiting for an unrelated game-test ZIP."
+    },
+    {
+      "id": "updater-delivery-lifecycle-v1",
+      "branch": "feature/updater-delivery-lifecycle-v1",
+      "modules": [
+        "UpdaterMultibox"
+      ],
+      "dependencies": [
+        "parallel-economy-fastpath-v1"
+      ],
+      "shared_resources": [
+        "GitHub monitor feature/preflight badge",
+        "parallel exact-HEAD Build work candidate and ECONOMY workflow state",
+        "local STANDARD/ECONOMY installed-state manifests"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "f51e96bc6987dd166930c4b1bc4f02fbc5f9c847",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Updater v2.10-parallel.2 fixes delivery-state UX. Successful feature preflight is amber VERIFIED, not green ready. The monitor distinguishes WAITING INTEGRATION, BUILDING PARALLEL/ECONOMY, TEST READY IN selected profile and INSTALLED / READY TO TEST using exact parallel ancestry, exact-HEAD workflows and local installed-state SHA."
     }
   ]
 }

@@ -82,6 +82,9 @@ namespace WoW112Updater
             public string Status;
             public string Text;
             public string Detail;
+            public string FocusBranch;
+            public string FocusHead;
+            public bool FocusIsPromote;
         }
 
         // Work/parallel require an authoritative run on the exact HEAD. Main keeps the
@@ -240,8 +243,8 @@ namespace WoW112Updater
             var focus = items[0];
             var anyFail = items.Exists(x => x.Status == "FAIL");
             var anyActive = items.Exists(x => x.Status == "RUNNING" || x.Status == "PENDING");
-            var overall = anyFail ? "FAIL" : anyActive ? "RUNNING" : "PASS";
             var isFocusPromote = focus.Branch.StartsWith("promote/", StringComparison.OrdinalIgnoreCase);
+            var overall = anyFail ? "FAIL" : anyActive ? "RUNNING" : isFocusPromote ? "PASS" : "VERIFIED";
             var leaf = focus.Branch.Substring(focus.Branch.IndexOf('/') + 1);
             var text = (isFocusPromote ? "PROMOTE " : "FEATURE ") + MonitorShort(leaf, 24) + "   " +
                 (isFocusPromote ? "PRE-PROMOTE " : "PREFLIGHT ") + focus.Status + "   " + MonitorShort(focus.Head, 8);
@@ -253,7 +256,129 @@ namespace WoW112Updater
                 detail.AppendLine(x.Branch + "  " + x.Status + "  " + MonitorShort(x.Head, 12) +
                     "  run " + x.RunId + "  [" + x.Workflow + "]");
             detail.Append("Feature/promote są tylko podglądem; updater instaluje wyłącznie zweryfikowany Parallel.");
-            return new PipelineBadgeState { Status = overall, Text = text, Detail = detail.ToString() };
+            return new PipelineBadgeState
+            {
+                Status = overall,
+                Text = text,
+                Detail = detail.ToString(),
+                FocusBranch = focus.Branch,
+                FocusHead = focus.Head,
+                FocusIsPromote = isFocusPromote
+            };
+        }
+
+        private static string MonitorExactWorkflowState(string runsJson, string workflowName, string branch, string head)
+        {
+            var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+            var root = AsDictionary(serializer.DeserializeObject(runsJson));
+            foreach (var item in AsArray(GetValue(root, "workflow_runs")))
+            {
+                var run = item as Dictionary<string, object>;
+                if (run == null) continue;
+                if (!string.Equals(GetString(run, "name"), workflowName, StringComparison.Ordinal)) continue;
+                if (!string.Equals(GetString(run, "head_branch"), branch, StringComparison.Ordinal)) continue;
+                if (!string.Equals(GetString(run, "head_sha"), head, StringComparison.OrdinalIgnoreCase)) continue;
+                var runStatus = GetString(run, "status");
+                var conclusion = GetString(run, "conclusion");
+                if (!string.Equals(runStatus, "completed", StringComparison.OrdinalIgnoreCase)) return "BUILDING";
+                if (IsFailedConclusion(conclusion)) return "FAIL";
+                if (string.Equals(conclusion, "success", StringComparison.OrdinalIgnoreCase)) return "READY";
+                return "WAITING";
+            }
+            return "WAITING";
+        }
+
+        private static bool MonitorFeatureIsIntegrated(string compareJson, string featureHead)
+        {
+            var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+            var root = AsDictionary(serializer.DeserializeObject(compareJson));
+            var mergeBase = GetString(AsDictionary(GetValue(root, "merge_base_commit")), "sha");
+            return string.Equals(mergeBase, featureHead, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(GetString(root, "status"), "identical", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool MonitorSelectedDeliveryInstalled(string parallelHead)
+        {
+            try
+            {
+                var root = gameDir.Text.Trim();
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return false;
+                var statePath = IsEconomy() ? EconomyStatePath(root) : InstalledStatePath(root);
+                var pendingPath = IsEconomy() ? EconomyPendingManifestPath(root) : PendingManifestPath(root);
+                if (!File.Exists(statePath) || File.Exists(pendingPath)) return false;
+                var state = AsDictionary(json.DeserializeObject(File.ReadAllText(statePath, Encoding.UTF8)));
+                return string.Equals(GetString(state, "head_sha"), parallelHead, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        private async Task<PipelineBadgeState> EnrichFeatureDeliveryAsync(HttpClient client, PipelineBadgeState pipeline, string parallelHead, string allRunsJson)
+        {
+            if (pipeline == null || pipeline.FocusIsPromote || pipeline.Status != "VERIFIED" ||
+                string.IsNullOrWhiteSpace(pipeline.FocusHead) || string.IsNullOrWhiteSpace(parallelHead))
+                return pipeline;
+
+            var leaf = pipeline.FocusBranch.Substring(pipeline.FocusBranch.IndexOf('/') + 1);
+            var compareJson = await GetStringAsync(client, ApiRoot + "/compare/" + pipeline.FocusHead + "..." + parallelHead);
+            if (!MonitorFeatureIsIntegrated(compareJson, pipeline.FocusHead))
+            {
+                pipeline.Status = "WAITING";
+                pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   VERIFIED " + MonitorShort(pipeline.FocusHead, 8) + "   | WAITING INTEGRATION";
+                pipeline.Detail += "\n\nDOSTARCZENIE: PREFLIGHT PASS, ale feature nie jest jeszcze w aktualnym PARALLEL " +
+                    MonitorShort(parallelHead, 12) + ". NIE JEST GOTOWY DO TESTU.";
+                return pipeline;
+            }
+
+            var full = MonitorExactWorkflowState(allRunsJson, TestWorkflowName, "parallel", parallelHead);
+            if (full == "FAIL")
+            {
+                pipeline.Status = "FAIL";
+                pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   INTEGRATED   | PARALLEL BUILD FAIL";
+                pipeline.Detail += "\n\nDOSTARCZENIE: feature jest w PARALLEL, ale exact-HEAD Build work candidate nie przeszedł.";
+                return pipeline;
+            }
+            if (full != "READY")
+            {
+                pipeline.Status = "BUILDING";
+                pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   INTEGRATED   | BUILDING PARALLEL";
+                pipeline.Detail += "\n\nDOSTARCZENIE: feature jest w PARALLEL; czekam na exact-HEAD Build work candidate.";
+                return pipeline;
+            }
+
+            var profile = "STANDARD";
+            if (IsEconomy())
+            {
+                profile = "ECONOMY";
+                var economy = MonitorExactWorkflowState(allRunsJson, EconomyWorkflowName, "parallel", parallelHead);
+                if (economy == "FAIL")
+                {
+                    pipeline.Status = "FAIL";
+                    pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   INTEGRATED   | ECONOMY BUILD FAIL";
+                    pipeline.Detail += "\n\nDOSTARCZENIE: pełny PARALLEL przeszedł, ale ECONOMY exact-HEAD nie przeszedł.";
+                    return pipeline;
+                }
+                if (economy != "READY")
+                {
+                    pipeline.Status = "BUILDING";
+                    pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   INTEGRATED   | BUILDING ECONOMY";
+                    pipeline.Detail += "\n\nDOSTARCZENIE: pełny PARALLEL przeszedł; czekam na ECONOMY exact-HEAD.";
+                    return pipeline;
+                }
+            }
+
+            if (MonitorSelectedDeliveryInstalled(parallelHead))
+            {
+                pipeline.Status = "INSTALLED";
+                pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   INSTALLED / READY TO TEST   " + MonitorShort(parallelHead, 8);
+                pipeline.Detail += "\n\nDOSTARCZENIE: " + profile + " dla exact PARALLEL HEAD jest zweryfikowany i zainstalowany lokalnie.";
+            }
+            else
+            {
+                pipeline.Status = "READY";
+                pipeline.Text = "FEATURE " + MonitorShort(leaf, 24) + "   TEST READY IN " + profile + "   " + MonitorShort(parallelHead, 8);
+                pipeline.Detail += "\n\nDOSTARCZENIE: " + profile + " dla exact PARALLEL HEAD jest zweryfikowany. Aktualizacja nie jest jeszcze zainstalowana lokalnie.";
+            }
+            return pipeline;
         }
 
         private void SetGitHubMonitorBadge(string branch, string state, string head, string detail)
@@ -280,7 +405,10 @@ namespace WoW112Updater
         private void SetGitHubPipelineBadge(string state, string text, string detail)
         {
             if (githubPipelineBadge.IsDisposed) return;
-            bool green = state == "PASS", yellow = state == "PENDING" || state == "RUNNING", red = state == "FAIL";
+            bool green = state == "PASS" || state == "READY" || state == "INSTALLED";
+            bool yellow = state == "PENDING" || state == "RUNNING" || state == "VERIFIED" ||
+                state == "WAITING" || state == "BUILDING";
+            bool red = state == "FAIL";
             githubPipelineBadge.BackColor = green ? Color.FromArgb(32, 77, 50)
                 : yellow ? Color.FromArgb(96, 74, 31)
                 : red ? Color.FromArgb(96, 39, 43) : Color.FromArgb(45, 49, 58);
@@ -417,6 +545,7 @@ namespace WoW112Updater
                 result.AppendLine("Kontrola co 10 s przy uruchomionym updaterze. Brak aktywności GH nie wyklucza pracy AI poza repo.");
                 result.AppendLine();
                 bool failed = false;
+                string parallelHead = string.Empty;
                 using (var client = CreateClient())
                 {
                     client.Timeout = TimeSpan.FromSeconds(18);
@@ -427,6 +556,7 @@ namespace WoW112Updater
                             var branchData = await GetStringAsync(client, ApiRoot + "/branches/" + branch);
                             var runData = await GetStringAsync(client, ApiRoot + "/actions/runs?branch=" + branch + "&per_page=30");
                             var badge = MonitorBranchBadge(branch, branchData, runData);
+                            if (string.Equals(branch, "parallel", StringComparison.OrdinalIgnoreCase)) parallelHead = badge.Head;
                             SetGitHubMonitorBadge(branch, badge.Status, badge.Head, badge.Detail);
                             result.AppendLine(MonitorBranchLine(branch, branchData, runData));
                         }
@@ -448,6 +578,20 @@ namespace WoW112Updater
                         var branchesJson = await GetStringAsync(client, ApiRoot + "/branches?per_page=100");
                         var allRunsJson = await GetStringAsync(client, ApiRoot + "/actions/runs?per_page=100");
                         var pipeline = MonitorPipelineBadge(branchesJson, allRunsJson);
+                        if (pipeline.Status == "VERIFIED" && !pipeline.FocusIsPromote)
+                        {
+                            try
+                            {
+                                pipeline = await EnrichFeatureDeliveryAsync(client, pipeline, parallelHead, allRunsJson);
+                            }
+                            catch (Exception ex)
+                            {
+                                pipeline.Status = "VERIFIED";
+                                pipeline.Text += "   | DELIVERY UNKNOWN";
+                                pipeline.Detail += "\n\nNie udało się potwierdzić integracji/dostarczenia: " + MonitorShort(ex.Message, 180) +
+                                    "\nStan pozostaje niezielony: sam PREFLIGHT PASS nie oznacza gotowości do testu.";
+                            }
+                        }
                         SetGitHubPipelineBadge(pipeline.Status, pipeline.Text, pipeline.Detail);
                         result.AppendLine();
                         result.AppendLine(pipeline.Detail);

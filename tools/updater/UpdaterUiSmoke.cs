@@ -159,8 +159,19 @@ namespace WoW112Updater
             var featureRuns = "{\"workflow_runs\":[{\"name\":\"Parallel feature preflight\",\"head_branch\":\"feature/smoke-two-bars\",\"head_sha\":\"" +
                 sha + "\",\"status\":\"completed\",\"conclusion\":\"success\",\"id\":30}]}";
             var pipeline = MonitorPipelineBadge(featureBranches, featureRuns);
-            if (pipeline.Status != "PASS" || pipeline.Text.IndexOf("PREFLIGHT PASS", StringComparison.Ordinal) < 0)
+            if (pipeline.Status != "VERIFIED" || pipeline.Text.IndexOf("PREFLIGHT PASS", StringComparison.Ordinal) < 0 ||
+                pipeline.FocusBranch != "feature/smoke-two-bars" || pipeline.FocusHead != sha)
                 throw new Exception("Feature pipeline badge parser failed");
+            var compareIntegrated = "{\"status\":\"ahead\",\"merge_base_commit\":{\"sha\":\"" + sha + "\"}}";
+            if (!MonitorFeatureIsIntegrated(compareIntegrated, sha) ||
+                MonitorFeatureIsIntegrated(compareIntegrated, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+                throw new Exception("Feature integration parser failed");
+            var deliveryRuns = "{\"workflow_runs\":[{\"name\":\"Build work candidate\",\"head_branch\":\"parallel\",\"head_sha\":\"" + sha +
+                "\",\"status\":\"completed\",\"conclusion\":\"success\"},{\"name\":\"Build parallel economy\",\"head_branch\":\"parallel\",\"head_sha\":\"" + sha +
+                "\",\"status\":\"in_progress\",\"conclusion\":\"\"}]}";
+            if (MonitorExactWorkflowState(deliveryRuns, TestWorkflowName, "parallel", sha) != "READY" ||
+                MonitorExactWorkflowState(deliveryRuns, EconomyWorkflowName, "parallel", sha) != "BUILDING")
+                throw new Exception("Feature delivery workflow parser failed");
             SetGitHubPipelineBadge(pipeline.Status, pipeline.Text, pipeline.Detail);
 
             SetGitHubMonitorBadge("work", "SUCCESS", sha, "Offline mock");
