@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.36-owner-scan-arbitration"
+AVM_VERSION = "0.37-resume-retry"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -71,6 +71,11 @@ AVM = {
 		paused = false,
 		pausePending = false,
 		resumePending = false,
+		resumeRetryAt = 0,
+		resumeRetryUntil = 0,
+		resumeRetryAttempts = 0,
+		resumeRetryReason = "",
+		resumeRetryDetail = "",
 		pageBest = nil,
 		bestSeen = nil,
 		candidate = nil,
@@ -324,6 +329,9 @@ local function avm_diag_record(msg)
 		deExposureReady = AVM.deExposure and AVM.deExposure.ready and true or false,
 		deExposurePage = AVM.deExposure and AVM.deExposure.page or 0,
 		ownerNativeVisible = avm_owner_native_visible and avm_owner_native_visible() or false,
+		auxResumePending = AVM.auxArb and AVM.auxArb.resumePending and true or false,
+		auxResumeRetryAttempts = AVM.auxArb and AVM.auxArb.resumeRetryAttempts or 0,
+		auxResumeRetryDetail = AVM.auxArb and AVM.auxArb.resumeRetryDetail or "",
 		auxLoopEnabled = AVM_DB.auxLoopEnabled and true or false,
 		auxLoopMarketMinutes = AVM_DB.auxLoopMarketMinutes or 60,
 		auxLoopMarketEnabled = AVM_DB.auxLoopMarketEnabled and true or false,
@@ -685,7 +693,7 @@ end
 local function avm_postscan_transaction_active()
 	local a = AVM.auxArb or {}
 	if AVM.pending or AVM.unknown or AVM.candidate or AVM.bidPending or AVM.bidCandidate then return true end
-	if a.deVerify or a.flipVerify or a.postscanCandidate or a.paused or a.pausePending then return true end
+	if a.deVerify or a.flipVerify or a.postscanCandidate or a.paused or a.pausePending or a.resumePending then return true end
 	return AVM.phase == "DE_MAT_REVALIDATE" or
 		AVM.phase == "FLIP_MARKET_REVALIDATE" or
 		AVM.phase == "REVALIDATE" or
@@ -3551,13 +3559,36 @@ local function avm_de_live_verify_accept(page, total)
 		" requery='" .. tostring(fresh.revalidateName or "") .. "'")
 end
 
+local function avm_auxarb_clear_resume_retry()
+	local a = AVM.auxArb
+	a.resumePending = false
+	a.resumeRetryAt = 0
+	a.resumeRetryUntil = 0
+	a.resumeRetryAttempts = 0
+	a.resumeRetryReason = ""
+	a.resumeRetryDetail = ""
+end
+
+local function avm_auxarb_try_bridge_resume(reason)
+	if not AUXFAST_ResumeSearch then return false, "bridge-unavailable" end
+	local ok, resumed, detail = pcall(AUXFAST_ResumeSearch)
+	if ok and resumed then
+		AVM.stats.auxArbResumes = AVM.stats.auxArbResumes + 1
+		avm_print("AUX_RESUME reason=" .. tostring(reason or "continue"))
+		avm_print("AUX_ARB_RESUME " .. tostring(reason or "continue"))
+		return true, tostring(detail or "ok")
+	end
+	if not ok then return false, "pcall:" .. tostring(resumed) end
+	return false, tostring(detail or "bridge-returned-false")
+end
+
 avm_auxarb_resume_search = function(reason)
 	local a = AVM.auxArb
 	if AVM.hardStop or not AVM_DB.auxLoopEnabled then
 		a.active = false
 		a.paused = false
 		a.pausePending = false
-		a.resumePending = false
+		avm_auxarb_clear_resume_retry()
 		a.candidate = nil
 		AVM.candidate = nil
 		AVM.revalidatePages = nil
@@ -3572,7 +3603,6 @@ avm_auxarb_resume_search = function(reason)
 	a.active = false
 	a.paused = false
 	a.pausePending = false
-	a.resumePending = false
 	a.pageBest = nil
 	a.bestSeen = nil
 	a.candidate = nil
@@ -3582,18 +3612,55 @@ avm_auxarb_resume_search = function(reason)
 	AVM.phase = "IDLE"
 	AVM.queryInFlight = false
 	AVM.nextQueryAt = GetTime() + 0.05
-	if AUXFAST_ResumeSearch then
-		local ok, resumed = pcall(AUXFAST_ResumeSearch)
-		if ok and resumed then
-			AVM.stats.auxArbResumes = AVM.stats.auxArbResumes + 1
-			avm_print("AUX_RESUME reason=" .. tostring(reason or "continue"))
-			avm_print("AUX_ARB_RESUME " .. tostring(reason or "continue"))
-		else
-			avm_print("AUX_ARB_RESUME_FAILED " .. tostring(reason or "continue"))
-		end
-	else
-		avm_print("AUX_ARB_RESUME_FAILED bridge unavailable")
+	local resumed, detail = avm_auxarb_try_bridge_resume(reason)
+	if resumed then
+		avm_auxarb_clear_resume_retry()
+		return
 	end
+	local now = GetTime()
+	a.resumePending = true
+	a.resumeRetryAt = now + 0.15
+	a.resumeRetryUntil = now + 4.0
+	a.resumeRetryAttempts = 0
+	a.resumeRetryReason = tostring(reason or "continue")
+	a.resumeRetryDetail = tostring(detail or "unknown")
+	avm_print("AUX_ARB_RESUME_DEFERRED reason=" .. a.resumeRetryReason ..
+		" detail=" .. a.resumeRetryDetail .. " retry=0.15s")
+end
+
+local function avm_auxarb_resume_retry_tick(now)
+	local a = AVM.auxArb
+	if not a or not a.resumePending then return false end
+	if AVM.hardStop or not AVM_DB.auxLoopEnabled then
+		avm_auxarb_clear_resume_retry()
+		return false
+	end
+	if now < (tonumber(a.resumeRetryAt) or 0) then return true end
+	a.resumeRetryAttempts = (tonumber(a.resumeRetryAttempts) or 0) + 1
+	local resumed, detail = avm_auxarb_try_bridge_resume(a.resumeRetryReason)
+	if resumed then
+		local attempts = a.resumeRetryAttempts
+		avm_auxarb_clear_resume_retry()
+		avm_print("AUX_ARB_RESUME_RECOVERED attempts=" .. tostring(attempts))
+		return true
+	end
+	a.resumeRetryDetail = tostring(detail or "unknown")
+	if now >= (tonumber(a.resumeRetryUntil) or 0) then
+		local attempts = a.resumeRetryAttempts
+		local why = a.resumeRetryReason
+		local lastDetail = a.resumeRetryDetail
+		avm_auxarb_clear_resume_retry()
+		avm_print("AUX_ARB_RESUME_FALLBACK attempts=" .. tostring(attempts) ..
+			" detail=" .. tostring(lastDetail) .. " -> fresh-loop")
+		avm_loop_after_arb("resume fallback: " .. tostring(why))
+		return true
+	end
+	a.resumeRetryAt = now + 0.15
+	if a.resumeRetryAttempts == 1 or math.mod(a.resumeRetryAttempts, 5) == 0 then
+		avm_print("AUX_ARB_RESUME_WAIT attempts=" .. tostring(a.resumeRetryAttempts) ..
+			" detail=" .. a.resumeRetryDetail)
+	end
+	return true
 end
 
 function AVM_AuxArbScanStart(resume, filterString)
@@ -3607,7 +3674,7 @@ function AVM_AuxArbScanStart(resume, filterString)
 	a.active = AVM_DB.auxArbEnabled and true or false
 	a.paused = false
 	a.pausePending = false
-	a.resumePending = false
+	avm_auxarb_clear_resume_retry()
 	a.pageBest = nil
 	a.dePageRawCandidates = {}
 	a.deReadyPageBest = nil
@@ -5300,6 +5367,7 @@ local function avm_tick()
 	if avm_de_exposure_tick and avm_de_exposure_tick(now) then return end
 	if avm_tick_bid_pending(now) then return end
 	if avm_tick_pending(now) then return end
+	if avm_auxarb_resume_retry_tick(now) then return end
 	if AVM.auxArb.postscanCandidate and avm_try_postscan_candidate() then return end
 	if avm_loop_tick(now) then return end
 
@@ -5810,7 +5878,7 @@ local function avm_hard_stop(reason)
 	a.active = false
 	a.paused = false
 	a.pausePending = false
-	a.resumePending = false
+	avm_auxarb_clear_resume_retry()
 	a.pageBest = nil
 	a.candidate = nil
 	a.deVerify = nil
@@ -6372,7 +6440,7 @@ frame:SetScript("OnEvent", function()
 		AVM.auxArb.active = false
 		AVM.auxArb.paused = false
 		AVM.auxArb.pausePending = false
-		AVM.auxArb.resumePending = false
+		avm_auxarb_clear_resume_retry()
 		AVM.auxArb.deRawCandidates = {}
 		AVM.auxArb.deMaterialBook = {}
 		AVM.auxArb.deVerify = nil

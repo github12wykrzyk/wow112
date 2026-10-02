@@ -4674,6 +4674,30 @@
       "tests": [],
       "package": null,
       "notes": "User reports native AUX Auctions tab empty after adding DE exposure scanning. Root cause is competing owner-query producers: the DE exposure guard directly calls GetOwnerAuctionItems while upstream AUX Auctions runs its own aux.core.scan owner state machine over the same global owner page/event channel. This feature gives native Auctions priority: opening/refreshing Auctions requests exposure takeover, the DE owner scan stops issuing owner queries, native scan starts after takeover completes, and DE exposure is then refreshed from the completed native Auctions records instead of issuing a competing query. Exposure scans are also deferred while the native Auctions frame is visible. Adds owner-scan diagnostics; auction economics are unchanged."
+    },
+    {
+      "id": "ah-resume-retry-v1",
+      "branch": "feature/ah-owner-scan-arbitration-v1",
+      "modules": [
+        "AuxVmangos",
+        "AuxFastBridge"
+      ],
+      "dependencies": [
+        "ah-owner-scan-arbitration-v1",
+        "auxfast-headless-upvalue-fix-v2"
+      ],
+      "shared_resources": [
+        "AUXFAST_ResumeSearch post-purchase continuation",
+        "AuxFastBridge original Search busy counter",
+        "AVM AUX_ARB pause/revalidate/buy/resume lifecycle",
+        "AVM continuous headless loop scheduler"
+      ],
+      "status": "in_progress",
+      "observed_head": "06f3579a0532dfa4946660d4820b99b465beab96",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "User reports every confirmed purchase now ends at AUX_ARB_RESUME_FAILED. Source inspection shows the bridge intentionally returns false while its original AUX scan busy counter is still >0, but AVM treated that transient busy result as terminal and scheduled no retry, leaving automation stopped. Fix makes ResumeSearch return a precise failure reason, retries continuation every 150ms for up to 4s, suppresses competing loop work while retry is pending, and falls back to a fresh headless loop instead of stopping if continuation still cannot start. No pricing, candidate, buy or exposure economics change."
     }
   ]
 }

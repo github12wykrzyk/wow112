@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle arbitrage with owner-scan arbitration, native ledger UI, deep flip diagnostics, DE exposure guard, bid and stack arbitrage.
+## Notes: Turtle arbitrage with owner-scan arbitration, resilient post-buy resume, native ledger UI and deep diagnostics.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.36-owner-scan-arbitration
+## Version: 0.37-resume-retry
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua

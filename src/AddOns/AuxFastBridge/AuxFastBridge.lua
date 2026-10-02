@@ -1,4 +1,4 @@
--- AuxFastBridge v3.3 upvalue-safe headless state; reload code removed
+-- AuxFastBridge v3.4 upvalue-safe headless state; resumable busy-race diagnostics
 -- Original AUX GUI/state machine with native 0x025C response correlation.
 -- The next list query is allowed only after the previous real server response has
 -- passed through the verified WoW 5875 auction result handler.
@@ -488,20 +488,20 @@ end
 function AUXFAST_ResumeSearch()
 	if avm_hard_stopped() then
 		out("RESUME_SUPPRESSED reason=hard-stop source=resume")
-		return false
+		return false, "hard-stop"
 	end
 	if busy > 0 then
 		out("resume deferred: original AUX scan is still busy")
-		return false
+		return false, "bridge-busy"
 	end
 	if not okSearchTab or not searchTab or not searchTab.execute then
 		out("resume failed: aux.tabs.search unavailable")
-		return false
+		return false, "search-unavailable"
 	end
 	local stateOk, stateErr = ensure_search_resume_filter()
 	if not stateOk then
 		out("resume failed: " .. tostring(stateErr))
-		return false
+		return false, "filter:" .. tostring(stateErr)
 	end
 	resumeRequested = true
 	-- Resume is AVM automation too. Re-arm headless explicitly so a post-scan
@@ -513,10 +513,10 @@ function AUXFAST_ResumeSearch()
 		resumeRequested = false
 		AUXFAST_ClearHeadlessArm()
 		out("resume failed: " .. tostring(err))
-		return false
+		return false, "execute:" .. tostring(err)
 	end
 	out("resumed AVM search continuation headless")
-	return true
+	return true, "ok"
 end
 
 function AUXFAST_RestartSearch()

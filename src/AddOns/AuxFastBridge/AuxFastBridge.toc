@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Fast AUX bridge; WoW 1.12 upvalue-safe headless routing helpers; no reload path; manual Search remains visible.
+## Notes: Fast AUX bridge; upvalue-safe headless routing with resumable busy-race diagnostics; no reload path.
 ## Author: github12wykrzyk/wow112
-## Version: 3.3
+## Version: 3.4
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
