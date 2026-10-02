@@ -4659,7 +4659,7 @@
         "RemoteServiceProbe"
       ],
       "dependencies": [
-        "ah-native-throttle"
+        "ah-native-throttle-diagnostic"
       ],
       "shared_resources": [
         "ClientServices::Send 0x005AB630 ordered chain",
@@ -4668,11 +4668,11 @@
         ".wow112_debug diagnostics"
       ],
       "status": "in_progress",
-      "observed_head": "433052da79d020a7f31f84449cde99469739fc48",
+      "observed_head": "476de575bc0d1c00a5f90dfc41b73b500e20df7f",
       "verified_commit": null,
       "tests": [],
       "package": null,
-      "notes": "Deep one-pass diagnostic for remote BANK/MAIL/AH feasibility. Learns exact live-realm outbound handshake from a normal nearby interaction, records candidate packet timeline/GUID/object/distance/zone/errors, then replays only the learned open/list packet from arbitrary positions. No movement, position spoof, item transfer, mail send or auction bid/buy/cancel."
+      "notes": "Deep one-pass diagnostic for remote BANK/MAIL/AH feasibility. Learns exact live-realm outbound handshake from a normal nearby interaction, records candidate packet timeline/GUID/object/distance/zone/errors, then replays only the learned open/list packet from arbitrary positions. No movement, position spoof, item transfer, mail send or auction bid/buy/cancel. Dependency registry remains active-runtime-only; this transient companion documents its chain behavior in source and ledger instead of weakening the active-owner verifier."
     }
   ]
 }
