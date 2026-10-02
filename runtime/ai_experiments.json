@@ -4993,7 +4993,7 @@
     },
     {
       "id": "ah-owner-history-speed-v1",
-      "branch": "feature/ah-owner-history-speed-v1",
+      "branch": "parallel",
       "modules": [
         "AuxVmangos",
         "AuxFastBridge"
@@ -5011,9 +5011,9 @@
         "AUX_ARB pause/revalidate/buy/continuation lifecycle",
         "AUX purchaseHistory and upstream aux.core.history"
       ],
-      "status": "in_progress",
-      "observed_head": "86d8352499036fa9b8cd40e634182ca9853eb59e",
-      "verified_commit": null,
+      "status": "awaiting_game_test",
+      "observed_head": "8f751f488ef8641916469569f0a9776a1ad41d07",
+      "verified_commit": "8f751f488ef8641916469569f0a9776a1ad41d07",
       "tests": [
         {
           "kind": "game",
@@ -5021,10 +5021,35 @@
           "commit": "445ea37d5a53ae3542bb9735cddd511ebebd6a17",
           "date": "2026-10-02",
           "evidence": "User screenshot plus report #85 identify the installed parallel candidate and show post-purchase continuation repeatedly deferred as bridge-busy until fallback, after which scanning stalls. The same user test reports Purchases buying is restored, native Auctions becomes empty again, and the earlier very fast scan cadence is gone."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "8f751f488ef8641916469569f0a9776a1ad41d07",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 37013882724 and Verify AI experiment registry run 37013882274 passed on exact feature/integration SHA 8f751f488ef8641916469569f0a9776a1ad41d07 after rebasing onto current parallel 86d8352499036fa9b8cd40e634182ca9853eb59e."
+        },
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "8f751f488ef8641916469569f0a9776a1ad41d07",
+          "date": "2026-10-02",
+          "evidence": "Integrated Build work candidate run 37013979384 and registry run 37013979530 passed on exact parallel SHA; final fail-closed runnable ZIP, repo-managed addon attestation, branch/commit provenance and candidate packaging all passed."
+        },
+        {
+          "kind": "package",
+          "result": "passed",
+          "commit": "8f751f488ef8641916469569f0a9776a1ad41d07",
+          "date": "2026-10-02",
+          "evidence": "Verified aggregate candidate artifact 11228719576 (WoW112-WORK-CANDIDATE-8f751f488ef8641916469569f0a9776a1ad41d07) was produced by successful exact-SHA run 37013979384."
         }
       ],
-      "package": null,
-      "notes": "Superseding AH follow-up on current parallel. Fixes native Auctions arbitration at the actual aux.tabs.auctions module environment (the prior write to require()'s read-only export proxy was inert); separates original Search list occupancy from independent owner/bidder scans so a native owner scan cannot poison AUXFAST resume/restart; reuses the just-consumed source page on the next AVM tick for mid-scan vendor revalidation instead of issuing a redundant server query; migrates only the old 2.0s automatic loop gap to the supported 0.5s floor; and snapshots upstream AUX historical unit value/days on each newly confirmed purchase so Purchases can show Paid as Hist%. Existing purchase confirmation, economics, DE/flip validation and native query/response correlation remain unchanged."
+      "package": {
+        "verified": true,
+        "commit": "8f751f488ef8641916469569f0a9776a1ad41d07",
+        "artifact_id": 11228719576
+      },
+      "notes": "Superseding AH follow-up on current parallel. Fixes native Auctions arbitration at the actual aux.tabs.auctions module environment (the prior write to require()'s read-only export proxy was inert); separates original Search list occupancy from independent owner/bidder scans so a native owner scan cannot poison AUXFAST resume/restart; reuses the just-consumed source page on the next AVM tick for mid-scan vendor revalidation instead of issuing a redundant server query; migrates only the old 2.0s automatic loop gap to the supported 0.5s floor; and snapshots upstream AUX historical unit value/days on each newly confirmed purchase so Purchases can show Paid as Hist%. Existing purchase confirmation, economics, DE/flip validation and native query/response correlation remain unchanged. Exact integrated SHA passed full parallel candidate/package gates and is ready for gameplay validation."
     }
   ]
 }
