@@ -5280,6 +5280,39 @@
       "tests": [],
       "package": null,
       "notes": "Reduce ChatGPT-side deployment latency without weakening repository gates. Success-path CI observation is workflow-level and batched by exact SHA; individual jobs/steps/logs are failure-driven only. Independent gates are observed together, progress reporting is tied to durable state changes rather than extra API polling, and small already-understood one-module fixes have a 4-6 minute operational latency objective when runner capacity permits. Documentation/process-only changes do not require waiting for an unrelated game-test ZIP."
+    },
+    {
+      "id": "ah-autosell-owner-refresh-v1",
+      "branch": "feature/ah-autosell-owner-refresh-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-autosell-reprice-v1",
+        "ah-autosell-ui-focus-fix-v1",
+        "ah-owner-scan-arbitration-v1",
+        "parallel-economy-fastpath-v1"
+      ],
+      "shared_resources": [
+        "AUX native Auctions owner scan arbiter",
+        "AUCTION_OWNED_LIST_UPDATE owner snapshots",
+        "AutoSell owner rows and cancel confirmation",
+        "PARALLEL ECONOMY AuxVmangos overlay"
+      ],
+      "status": "awaiting_ci",
+      "observed_head": "f51e96bc6987dd166930c4b1bc4f02fbc5f9c847",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "fbda6e93c41e15e0984f06817dd5183af515d88a",
+          "date": "2026-10-02",
+          "evidence": "User reports the native AUX AutoSell tab renders its GUI but contains no auction rows. Source audit shows AutoSell only passively consumed owner scans and tab.OPEN did not request one."
+        }
+      ],
+      "package": null,
+      "notes": "AutoSell owner-data plumbing fix rebased onto current parallel. Opening AutoSell queues a safe owner snapshot through the existing native Auctions arbitration instead of calling GetOwnerAuctionItems independently. The native Auctions hook can service a bridge-requested owner scan while its frame is hidden, then feeds the completed record set directly to AutoSell. Cancel/post completion requests a fresh snapshot. No repricing thresholds, floor calculations, cancel safety or repost economics are changed."
     }
   ]
 }
