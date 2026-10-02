@@ -4579,6 +4579,29 @@
       "tests": [],
       "package": null,
       "notes": "Gameplay screenshot on current Parallel reports AuxVmangos_AuxPurchases.lua:37 invalid order function for sorting; Purchases and Profit/Loss both call the shared AVM_AUX_UI.SortRecords helper. Root cause is Lua boolean pseudo-ternary 'descending and a>b or a<b': when descending=true, a<b also returns true through the 'or' branch, so comparator(a,b) and comparator(b,a) can both be true. Fix uses explicit descending/ascending branches and returns false for exact ties, restoring a strict comparator without changing ledger data or economics."
+    },
+    {
+      "id": "ah-mail-flipdiag-watchui-v1",
+      "branch": "feature/ah-mail-flipdiag-watchui-v1",
+      "modules": [
+        "AuxVmangos"
+      ],
+      "dependencies": [
+        "ah-sort-order-fix-v1",
+        "ah-bid-stack-arbitrage-v2",
+        "ah-profit-loss-ledger-v1"
+      ],
+      "shared_resources": [
+        "native AUX Profit/Loss mailbox income ledger",
+        "legacy AVM WATCH launcher and /avm gui",
+        "AUX_ARB flip post-scan candidate evaluation and diagnostics"
+      ],
+      "status": "in_progress",
+      "observed_head": "9ab31464d7539bf5393c666972f1bd0b94738704",
+      "verified_commit": null,
+      "tests": [],
+      "package": null,
+      "notes": "Fixes three user-observed issues without changing flip economics. Removes the floating AVM WATCH launcher from the Auction House; legacy WATCH remains reachable only via /avm gui. Profit/Loss seller-mail ingestion now accepts authoritative seller invoices and, when invoice details are not cached yet, a localized AUCTION_SOLD_MAIL_SUBJECT + positive attached-money fallback; mailbox open/update is rescanned for a short bounded window and diagnostics record invoice/fallback/zero-money counts. Flip diagnostics now classify every cheapest-per-history-key evaluation by exact rejection reason (no-history, history-days, history-entry, seller-depth, no-depth, no-upside, min-profit, safety-margin, max-buyout, recent, exposure, unknown), store one representative sample per reason, and persist a compact scan summary so one diagnostic report can distinguish a broken history path from simply conservative filters. Auto-sell/Sell Rules is not implemented in this bugfix feature."
     }
   ]
 }

@@ -401,17 +401,6 @@ local function create_panel()
 	refresh_status()
 end
 
-local function create_launcher()
-	if launcher then return end
-	launcher = CreateFrame("Button", "AuxVmangosWatchLauncher", UIParent, "GameMenuButtonTemplate")
-	launcher:SetWidth(92)
-	launcher:SetHeight(24)
-	launcher:SetText("AVM WATCH")
-	launcher:SetFrameStrata("DIALOG")
-	launcher:SetScript("OnClick", function() AVM_WATCH_UI.Toggle() end)
-	launcher:Hide()
-end
-
 function AVM_WATCH_UI.Toggle()
 	create_panel()
 	if panel:IsShown() then
@@ -432,16 +421,9 @@ eventFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
 eventFrame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 eventFrame:SetScript("OnEvent", function()
 	if event == "AUCTION_HOUSE_SHOW" then
-		create_launcher()
-		launcher:ClearAllPoints()
-		if AuctionFrame then
-			launcher:SetPoint("TOPRIGHT", AuctionFrame, "TOPRIGHT", -70, -38)
-		else
-			launcher:SetPoint("TOP", UIParent, "TOP", 0, -70)
-		end
-		launcher:Show()
+		-- Legacy WATCH remains available through /avm gui only.
+		-- Do not create a floating launcher over the native AUX interface.
 	elseif event == "AUCTION_HOUSE_CLOSED" then
-		if launcher then launcher:Hide() end
 		if panel then panel:Hide() end
 		if historyPanel then historyPanel:Hide() end
 	end

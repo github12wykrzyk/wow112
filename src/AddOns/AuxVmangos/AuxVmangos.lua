@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.34-bid-stack-arbitrage"
+AVM_VERSION = "0.35-flipdiag-mailfix"
 AVM_PURCHASE_HISTORY_LIMIT = 500
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
@@ -95,6 +95,9 @@ AVM = {
 		flipHistoryRejects = 0,
 		flipSellerRejects = 0,
 		flipExposureRejects = 0,
+		flipEvaluated = 0,
+		flipRejectReasons = {},
+		flipRejectSamples = {},
 		stackBest = nil,
 		stackCandidates = 0,
 		stackNoDepth = 0,
@@ -254,6 +257,12 @@ local function avm_diag_record(msg)
 	d.version = AVM_VERSION
 	d.purchaseHistory = AVM_DB.purchaseHistory or {}
 	d.purchaseStats = AVM_DB.purchaseStats or { confirmed = 0, spend = 0, expectedProfit = 0 }
+	d.flipDiag = {
+		evaluated = AVM.auxArb and AVM.auxArb.flipEvaluated or 0,
+		candidates = AVM.auxArb and AVM.auxArb.flipCandidates or 0,
+		reasons = AVM.auxArb and AVM.auxArb.flipRejectReasons or {},
+		samples = AVM.auxArb and AVM.auxArb.flipRejectSamples or {},
+	}
 	d.state = {
 		open = AVM.open and true or false,
 		live = AVM_DB.live and true or false,
@@ -298,6 +307,19 @@ local function avm_diag_record(msg)
 		flipDepthUnits = AVM_DB.flipDepthUnits or 10,
 		flipAhCutPct = AVM_DB.flipAhCutPct or 5,
 		flipSafetyMarginPct = AVM_DB.flipSafetyMarginPct or 25,
+		flipEvaluated = AVM.auxArb and AVM.auxArb.flipEvaluated or 0,
+		flipRejectNoHistory = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["no-history"] or 0) or 0,
+		flipRejectHistoryDays = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["history-days"] or 0) or 0,
+		flipRejectHistoryEntry = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["history-entry"] or 0) or 0,
+		flipRejectSellerDepth = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["seller-depth"] or 0) or 0,
+		flipRejectNoDepth = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["no-depth"] or 0) or 0,
+		flipRejectNoUpside = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["no-upside"] or 0) or 0,
+		flipRejectMinProfit = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["min-profit"] or 0) or 0,
+		flipRejectSafetyMargin = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["safety-margin"] or 0) or 0,
+		flipRejectMaxBuyout = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["max-buyout"] or 0) or 0,
+		flipRejectRecent = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["recent"] or 0) or 0,
+		flipRejectItemBudget = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["item-budget"] or 0) or 0,
+		flipRejectItemBuyCap = AVM.auxArb and AVM.auxArb.flipRejectReasons and (AVM.auxArb.flipRejectReasons["item-buy-cap"] or 0) or 0,
 		auxLoopEnabled = AVM_DB.auxLoopEnabled and true or false,
 		auxLoopMarketMinutes = AVM_DB.auxLoopMarketMinutes or 60,
 		auxLoopMarketEnabled = AVM_DB.auxLoopMarketEnabled and true or false,
@@ -2880,28 +2902,54 @@ local function avm_flip_best_from_book(book)
 	local bestLive = nil
 	local noDepth = 0
 	local candidates = 0
+	local a = AVM.auxArb
+	a.flipEvaluated = 0
+	a.flipRejectReasons = {}
+	a.flipRejectSamples = {}
 	for _,row in pairs(book or {}) do
 		if row.cheapest then
-			local fc, reason = avm_flip_candidate_from_raw(row.cheapest, book)
+			a.flipEvaluated = a.flipEvaluated + 1
+			local raw = row.cheapest
+			local fc, reason = avm_flip_candidate_from_raw(raw, book)
 			if fc then
 				candidates = candidates + 1
 				if avm_auxarb_candidate_better(fc, best) then best = fc end
 				local liveOk = avm_auxarb_live_purchase_ok(fc)
 				if liveOk and avm_auxarb_candidate_better(fc, bestLive) then bestLive = fc end
-			elseif reason == "no-depth" then
-				noDepth = noDepth + 1
-			elseif reason == "no-history" or reason == "history-days" or reason == "history-entry" then
-				AVM.auxArb.flipHistoryRejects = (AVM.auxArb.flipHistoryRejects or 0) + 1
-			elseif reason == "seller-depth" then
-				AVM.auxArb.flipSellerRejects = (AVM.auxArb.flipSellerRejects or 0) + 1
-			elseif reason == "item-budget" or reason == "item-buy-cap" then
-				AVM.auxArb.flipExposureRejects = (AVM.auxArb.flipExposureRejects or 0) + 1
+			else
+				reason = tostring(reason or "unknown")
+				a.flipRejectReasons[reason] = (tonumber(a.flipRejectReasons[reason]) or 0) + 1
+				if not a.flipRejectSamples[reason] then
+					a.flipRejectSamples[reason] = {
+						name = tostring(raw.name or ""),
+						itemId = tonumber(raw.itemId or raw.item_id) or 0,
+						itemKey = tostring(raw.itemKey or ""),
+						historyKey = tostring(raw.historyKey or ""),
+						buyout = tonumber(raw.buyout) or 0,
+						count = tonumber(raw.count) or 0,
+						unit = tonumber(raw.unitExact) or 0,
+						histValue = tonumber(raw.histValue) or 0,
+						histDays = tonumber(raw.histDays) or 0,
+						sellers = avm_flip_seller_count(row),
+						marketUnits = tonumber(row.units) or 0,
+						marketAuctions = tonumber(row.auctions) or 0,
+						maxStack = tonumber(raw.maxStack) or 0,
+					}
+				end
+				if reason == "no-depth" then
+					noDepth = noDepth + 1
+				elseif reason == "no-history" or reason == "history-days" or reason == "history-entry" then
+					a.flipHistoryRejects = (a.flipHistoryRejects or 0) + 1
+				elseif reason == "seller-depth" then
+					a.flipSellerRejects = (a.flipSellerRejects or 0) + 1
+				elseif reason == "item-budget" or reason == "item-buy-cap" then
+					a.flipExposureRejects = (a.flipExposureRejects or 0) + 1
+				end
 			end
 		end
 	end
 	return best, noDepth, candidates, bestLive
 end
-
 
 local function avm_stack_small_seller_count(row)
 	local n = 0
@@ -3585,6 +3633,9 @@ function AVM_AuxArbScanStart(resume, filterString)
 		a.flipHistoryRejects = 0
 		a.flipSellerRejects = 0
 		a.flipExposureRejects = 0
+		a.flipEvaluated = 0
+		a.flipRejectReasons = {}
+		a.flipRejectSamples = {}
 		a.stackBest = nil
 		a.stackCandidates = 0
 		a.stackNoDepth = 0
@@ -3879,6 +3930,31 @@ function AVM_AuxArbScanDone()
 			" stackNoDepth=" .. tostring(a.stackNoDepth or 0) ..
 			" bidCandidates=" .. tostring(a.bidCandidates or 0) ..
 			" filteredRecords=" .. tostring(a.filteredRecords or 0))
+	end
+
+	local fr = a.flipRejectReasons or {}
+	avm_print("AUX_ARB_FLIP_DIAG evaluated=" .. tostring(a.flipEvaluated or 0) ..
+		" candidates=" .. tostring(a.flipCandidates or 0) ..
+		" no-history=" .. tostring(fr["no-history"] or 0) ..
+		" history-days=" .. tostring(fr["history-days"] or 0) ..
+		" history-entry=" .. tostring(fr["history-entry"] or 0) ..
+		" seller-depth=" .. tostring(fr["seller-depth"] or 0) ..
+		" no-depth=" .. tostring(fr["no-depth"] or 0) ..
+		" no-upside=" .. tostring(fr["no-upside"] or 0) ..
+		" min-profit=" .. tostring(fr["min-profit"] or 0) ..
+		" safety-margin=" .. tostring(fr["safety-margin"] or 0) ..
+		" max-buyout=" .. tostring(fr["max-buyout"] or 0) ..
+		" recent=" .. tostring(fr["recent"] or 0) ..
+		" item-budget=" .. tostring(fr["item-budget"] or 0) ..
+		" item-buy-cap=" .. tostring(fr["item-buy-cap"] or 0) ..
+		" unknown=" .. tostring(fr["unknown"] or 0))
+	if AVM_DB.diag then
+		AVM_DB.diag.flipDiag = {
+			evaluated = a.flipEvaluated or 0,
+			candidates = a.flipCandidates or 0,
+			reasons = a.flipRejectReasons or {},
+			samples = a.flipRejectSamples or {},
+		}
 	end
 
 	local bestPost = bestDe

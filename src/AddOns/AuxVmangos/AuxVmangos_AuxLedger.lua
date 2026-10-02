@@ -45,6 +45,9 @@ refresh:SetText('Refresh')
 local nextRefresh = 0
 local lastToken = ''
 local SALE_HISTORY_LIMIT = 500
+local mailScanAt = 0
+local mailScanUntil = 0
+local mailScanPass = 0
 
 local function ensure_db()
 	AVM_DB = AVM_DB or {}
@@ -113,6 +116,24 @@ local function record_sale(sample)
 	lastToken=''
 end
 
+local function sold_subject_item(subject)
+	subject=tostring(subject or '')
+	local fmt=tostring(AUCTION_SOLD_MAIL_SUBJECT or 'Auction successful: %s')
+	local p=string.find(fmt,'%s',1,true)
+	if not p then return nil end
+	local prefix=string.sub(fmt,1,p-1)
+	local suffix=string.sub(fmt,p+2)
+	if prefix~='' and string.sub(subject,1,string.len(prefix))~=prefix then return nil end
+	if suffix~='' then
+		if string.len(subject)<string.len(prefix)+string.len(suffix) then return nil end
+		if string.sub(subject,-string.len(suffix))~=suffix then return nil end
+	end
+	local last=string.len(subject)-string.len(suffix)
+	local item=string.sub(subject,string.len(prefix)+1,last)
+	if item=='' then return nil end
+	return item
+end
+
 local function mail_signature(item,buyer,subject,mailMoney,bid,buyout,deposit,consignment)
 	return table.concat({
 		tostring(item or ''),tostring(buyer or ''),tostring(subject or ''),
@@ -123,23 +144,36 @@ local function mail_signature(item,buyer,subject,mailMoney,bid,buyout,deposit,co
 end
 
 function AVM_AUX_LEDGER.ScanSaleMail()
-	if not GetInboxNumItems or not GetInboxInvoiceInfo or not GetInboxHeaderInfo then return end
-	if not MailFrame or not MailFrame.IsShown or not MailFrame:IsShown() then return end
+	if not GetInboxNumItems or not GetInboxInvoiceInfo or not GetInboxHeaderInfo then return 0 end
+	if not MailFrame or not MailFrame.IsShown or not MailFrame:IsShown() then return 0 end
 	ensure_db()
 	local current,samples={},{}
 	local count=GetInboxNumItems() or 0
+	local sellerInvoices,soldHeaderFallback,moneyZero,invoiceUnavailable,recorded=0,0,0,0,0
 	for i=1,count do
+		local _,_,sender,subject,mailMoney=GetInboxHeaderInfo(i)
+		mailMoney=tonumber(mailMoney) or 0
 		local invoiceType,itemName,playerName,bid,buyout,deposit,consignment=GetInboxInvoiceInfo(i)
-		if invoiceType=='seller' then
-			local _,_,_,subject,mailMoney=GetInboxHeaderInfo(i)
-			mailMoney=tonumber(mailMoney) or 0
+		local soldItem=sold_subject_item(subject)
+		local isSeller=invoiceType=='seller'
+		if isSeller then sellerInvoices=sellerInvoices+1 end
+		if not invoiceType and soldItem then invoiceUnavailable=invoiceUnavailable+1 end
+		if not isSeller and soldItem and mailMoney>0 then
+			isSeller=true
+			itemName=itemName or soldItem
+			playerName=playerName or sender
+			soldHeaderFallback=soldHeaderFallback+1
+		end
+		if isSeller then
 			if mailMoney>0 then
-				local sig=mail_signature(itemName,playerName,subject,mailMoney,bid,buyout,deposit,consignment)
+				local sig=mail_signature(itemName or soldItem,playerName,subject,mailMoney,bid,buyout,deposit,consignment)
 				current[sig]=(current[sig] or 0)+1
 				samples[sig]={
-					item=itemName,buyer=playerName,subject=subject,money=mailMoney,
+					item=itemName or soldItem or subject,buyer=playerName,subject=subject,money=mailMoney,
 					bid=bid,buyout=buyout,deposit=deposit,consignment=consignment,
 				}
+			else
+				moneyZero=moneyZero+1
 			end
 		end
 	end
@@ -147,10 +181,24 @@ function AVM_AUX_LEDGER.ScanSaleMail()
 	for sig,n in pairs(current) do
 		local old=tonumber(previous[sig]) or 0
 		if n>old then
-			for k=1,n-old do record_sale(samples[sig]) end
+			for k=1,n-old do record_sale(samples[sig]); recorded=recorded+1 end
 		end
 	end
 	AVM_DB.saleMailLiveCounts=current
+	mailScanPass=mailScanPass+1
+	if AVM_DB.diag then
+		AVM_DB.diag.mailLedger={
+			pass=mailScanPass,inbox=count,sellerInvoices=sellerInvoices,
+			soldHeaderFallback=soldHeaderFallback,invoiceUnavailable=invoiceUnavailable,
+			moneyZero=moneyZero,recorded=recorded,trackedSignatures=0,
+		}
+		for _ in pairs(current) do
+			AVM_DB.diag.mailLedger.trackedSignatures=AVM_DB.diag.mailLedger.trackedSignatures+1
+		end
+		AVM_DB.diag.saleHistory=AVM_DB.saleHistory
+		AVM_DB.diag.saleStats=AVM_DB.saleStats
+	end
+	return recorded
 end
 
 local sortSpecs={
@@ -251,16 +299,30 @@ end
 local mailWatcher=CreateFrame('Frame','AuxVmangosProfitLossMailWatcher')
 mailWatcher:RegisterEvent('MAIL_SHOW')
 mailWatcher:RegisterEvent('MAIL_INBOX_UPDATE')
-local mailScanAt=0
+mailWatcher:RegisterEvent('MAIL_CLOSED')
 mailWatcher:SetScript('OnEvent',function()
+	if event=='MAIL_CLOSED' then
+		mailScanAt=0
+		mailScanUntil=0
+		return
+	end
 	if event=='MAIL_SHOW' and CheckInbox then CheckInbox() end
-	mailScanAt=GetTime()+.35
+	local now=GetTime()
+	mailScanAt=now+.15
+	local untilAt=now+(event=='MAIL_SHOW' and 6 or 2)
+	if untilAt>mailScanUntil then mailScanUntil=untilAt end
 end)
 mailWatcher:SetScript('OnUpdate',function()
 	if mailScanAt<=0 or GetTime()<mailScanAt then return end
-	mailScanAt=0
+	local now=GetTime()
 	AVM_AUX_LEDGER.ScanSaleMail()
 	refresh_ledger(true)
+	if MailFrame and MailFrame.IsShown and MailFrame:IsShown() and now<mailScanUntil then
+		mailScanAt=now+.50
+	else
+		mailScanAt=0
+		mailScanUntil=0
+	end
 end)
 
 function AVM_AUX_LEDGER.UpdateAuctionsSummary(env)

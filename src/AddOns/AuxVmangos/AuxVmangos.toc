@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle arbitrage with sortable ledger UI, DE exposure guard, bid sniping and stack-size arbitrage.
+## Notes: Turtle arbitrage with native ledger UI, deep flip diagnostics, DE exposure guard, bid and stack arbitrage.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.34-bid-stack-arbitrage
+## Version: 0.35-flipdiag-mailfix
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
