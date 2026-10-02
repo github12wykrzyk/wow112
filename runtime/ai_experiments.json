@@ -4475,12 +4475,20 @@
         "NetClient LoginData session key +0x48",
         "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
       ],
-      "status": "in_progress",
-      "observed_head": "aa7214becdfb4733b28a4fc1de01e1725708afb5",
+      "status": "blocked",
+      "observed_head": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
       "verified_commit": null,
-      "tests": [],
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
+          "date": "2026-10-02",
+          "evidence": "Report #78: both workers disconnected instantly, preserved the internal session-key fingerprint and called ConnectToSelectedServer. One worker reached NetClient state 6 and the other later returned to state 2, but neither entered Character Select; both timed out with error 67. This isolates the remaining failure to post-reconnect Glue/character-list recovery rather than the disconnect or session-key preservation steps."
+        }
+      ],
       "package": null,
-      "notes": "Attempt to satisfy both requirements simultaneously: instant-oriented slave rotation and zero login-server authentication. Worker fingerprints the existing 40-byte session key internally, disconnects only the world connection, waits for NetClient NS_INITIALIZED, verifies the same key survived, calls exact-build ClientServices::ConnectToSelectedServer, then selects the configured character slot. No session-key bytes/hashes are logged and there is no AutoLoginBridge or normal Logout fallback. Exact-build guards cover getter, Disconnect, ConnectToSelectedServer and NetClient::Connect. Requires in-game validation."
+      "notes": "Transport half validated by report #78: instant world disconnect, preserved session-key fingerprint and direct world reconnect call all execute without AutoLoginBridge. Remaining defect: successful/recovering NetClient connection does not automatically restore Glue Character Select or request a fresh character enumeration. Follow-up summon-world-reconnect-charselect-v5 explicitly restores that flow and adds bounded direct-connect retry."
     },
     {
       "id": "target-aura-reveal-5875",
@@ -4579,6 +4587,39 @@
       "tests": [],
       "package": null,
       "notes": "Gameplay screenshot on current Parallel reports AuxVmangos_AuxPurchases.lua:37 invalid order function for sorting; Purchases and Profit/Loss both call the shared AVM_AUX_UI.SortRecords helper. Root cause is Lua boolean pseudo-ternary 'descending and a>b or a<b': when descending=true, a<b also returns true through the 'or' branch, so comparator(a,b) and comparator(b,a) can both be true. Fix uses explicit descending/ascending branches and returns false for exact ties, restoring a strict comparator without changing ledger data or economics."
+    },
+    {
+      "id": "summon-world-reconnect-charselect-v5",
+      "branch": "feature/summon-world-reconnect-charselect-v5",
+      "modules": [
+        "CharacterSwitchDiag",
+        "UpdaterSummonCoordinator"
+      ],
+      "dependencies": [
+        "summon-world-reconnect-session-v3",
+        "summon-switch-ui-fast-route-v4"
+      ],
+      "shared_resources": [
+        "ClientServices::ConnectToSelectedServer 0x005AB800",
+        "Glue SetCurrentScreen",
+        "Glue GetCharacterListUpdate",
+        "CharacterSelect slot/EnterWorld flow",
+        "Local\\\\WoW112_SummonWorker_<PID> worker protocol"
+      ],
+      "status": "in_progress",
+      "observed_head": "9ab31464d7539bf5393c666972f1bd0b94738704",
+      "verified_commit": null,
+      "tests": [
+        {
+          "kind": "game",
+          "result": "failed",
+          "commit": "563ea1bd92508a23ccad444f8b7dd1e6ccd2d708",
+          "date": "2026-10-02",
+          "evidence": "Report #78 motivates this iteration: instant disconnect and preserved session key worked; direct reconnect started, but Glue never rebuilt Character Select and worker ended error 67."
+        }
+      ],
+      "package": null,
+      "notes": "After direct world reconnect reaches the connected NetClient state, wait a short auth-settle interval, explicitly SetCurrentScreen('charselect') and GetCharacterListUpdate(), retry character enumeration with a bounded cadence, require GetNumCharacters() to contain the target slot before selection, require selectedIndex confirmation before EnterWorld, and retry ConnectToSelectedServer up to three times if the world connection falls back to INITIALIZED. No Logout(), AutoLoginBridge relogin, password/SRP flow or login-server fallback is used."
     }
   ]
 }

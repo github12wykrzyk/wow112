@@ -1,5 +1,5 @@
 /*
- * WoWCharacterSwitchDiag 5875 v11 - direct world reconnect summon worker.
+ * WoWCharacterSwitchDiag 5875 v12 - direct world reconnect + Glue char-list recovery.
  *
  * Coordinator FAST switch is both instant-oriented and login-server independent:
  *   world Disconnect -> preserve LoginData/session key -> ConnectToSelectedServer
@@ -8,6 +8,11 @@
  * It does NOT send the normal delayed Logout request and does NOT invoke
  * AutoLoginBridge relogin/SRP. The existing 40-byte world session key stays in
  * NetClient LoginData and is reused by the normal 5875 CMSG_AUTH_SESSION path.
+ *
+ * Report #78 proved the transport half works: both workers disconnect instantly,
+ * the 40-byte session key survives and ConnectToSelectedServer starts, but Glue
+ * never enters Character Select by itself. V12 explicitly restores the Glue
+ * char-select screen and requests a fresh character list after world reconnect.
  *
  * Fail closed: exact-build byte guards, NetClient state checks and an internal
  * session-key fingerprint must all match. There is no auth-server fallback.
@@ -35,7 +40,12 @@
 #define SELECT_SETTLE_MS 350u
 #define ENTER_TIMEOUT_MS 30000u
 #define FAST_DISCONNECT_TIMEOUT_MS 7000u
-#define FAST_RECONNECT_TIMEOUT_MS 20000u
+#define FAST_RECONNECT_TIMEOUT_MS 35000u
+#define FAST_AUTH_SETTLE_MS 1200u
+#define FAST_CHARLIST_RETRY_MS 2000u
+#define FAST_CHARLIST_MAX_ATTEMPTS 8u
+#define FAST_CONNECT_RETRY_MS 1000u
+#define FAST_CONNECT_MAX_ATTEMPTS 3u
 #define COMBAT_POLL_MS 250u
 #define WORKER_MAGIC 0x53323157u
 #define WORKER_VERSION 2u
@@ -84,6 +94,8 @@ static volatile DWORD g_reloadInProgress=0;
 static UINT_PTR g_timer=0;
 static DWORD g_startedAt=0,g_glueAt=0,g_enterIssuedAt=0,g_lastUiRefresh=0,g_lastWorld=0;
 static DWORD g_fastConnection=0,g_sessionHash1=0,g_sessionHash2=0,g_fastConnectAt=0;
+static DWORD g_fastConnectedAt=0,g_charListKickAt=0,g_fastLastNetState=0xFFFFFFFFu;
+static DWORD g_charListAttempts=0,g_fastConnectAttempts=0;
 static HANDLE g_workerMapHandle=0;
 static WorkerMapV1 *g_workerMap=0;
 static DWORD g_workerSeenSeq=0,g_workerState=WORKER_INIT,g_workerLastState=0xFFFFFFFFu;
@@ -164,6 +176,7 @@ static void reset_run(void)
 {
     g_phase=PHASE_IDLE;g_targetSlot=0;g_elapsedToGlue=0;g_elapsedTotal=0;g_lastError=0;g_fast=0;
     g_startedAt=g_glueAt=g_enterIssuedAt=0;g_fastConnection=0;g_sessionHash1=0;g_sessionHash2=0;g_fastConnectAt=0;
+    g_fastConnectedAt=g_charListKickAt=0;g_fastLastNetState=0xFFFFFFFFu;g_charListAttempts=0;g_fastConnectAttempts=0;
 }
 static void ensure_ui(void)
 {
@@ -171,7 +184,7 @@ static void ensure_ui(void)
       "if not W112CSDFrame and UIParent and type(CreateFrame)=='function' then "
       "local f=CreateFrame('Frame','W112CSDFrame',UIParent);f:SetWidth(440);f:SetHeight(182);f:SetPoint('CENTER',UIParent,'CENTER',0,175);"
       "if f.SetBackdrop then f:SetBackdrop({bgFile='Interface\\\\Tooltips\\\\UI-Tooltip-Background',edgeFile='Interface\\\\Tooltips\\\\UI-Tooltip-Border',tile=true,tileSize=16,edgeSize=16,insets={left=4,right=4,top=4,bottom=4}});f:SetBackdropColor(0,0,0,.88) end;"
-      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V11');"
+      "local t=f:CreateFontString(nil,'OVERLAY','GameFontNormal');t:SetPoint('TOP',f,'TOP',0,-12);t:SetText('Character Switch Diagnostic V12');"
       "local st=f:CreateFontString('W112CSDStatus','OVERLAY','GameFontNormalSmall');st:SetPoint('TOPLEFT',f,'TOPLEFT',12,-36);st:SetWidth(416);st:SetJustifyH('LEFT');st:SetText('idle');"
       "local function B(n,x,y,w,txt,cmd)local b=CreateFrame('Button',n,f,'UIPanelButtonTemplate');b:SetWidth(w);b:SetHeight(24);b:SetPoint('BOTTOMLEFT',f,'BOTTOMLEFT',x,y);b:SetText(txt);b:SetScript('OnClick',function()W112_CSD_CMD=cmd end)end;"
       "B('W112CSDStock',12,42,92,'Stock logout','stock');B('W112CSDSlot1',112,42,92,'FAST slot 1','slot1');B('W112CSDSlot2',212,42,92,'FAST slot 2','slot2');"
@@ -202,6 +215,41 @@ static void enter_slot(DWORD slot)
 {
     char b[260],*p=b;p=app(p,"if CharacterSelect and CharacterSelect.selectedIndex==");p=appu(p,slot);
     p=app(p," and type(CharacterSelect_EnterWorld)=='function' then CharacterSelect_EnterWorld() end");*p=0;execs(b);
+}
+
+static int target_slot_available(DWORD slot)
+{
+    const char*v;char b[300],*p=b;
+    p=app(p,"W112_CSD_SLOT_AVAILABLE='0';if type(GetNumCharacters)=='function' and GetNumCharacters()>=");
+    p=appu(p,slot);p=app(p," then W112_CSD_SLOT_AVAILABLE='1' end");*p=0;execs(b);
+    v=gettextv("W112_CSD_SLOT_AVAILABLE");
+    if(v&&v[0]=='1'&&!v[1]){execs("W112_CSD_SLOT_AVAILABLE=nil");return 1;}
+    execs("W112_CSD_SLOT_AVAILABLE=nil");return 0;
+}
+static int target_slot_selected(DWORD slot)
+{
+    const char*v;char b[300],*p=b;
+    p=app(p,"W112_CSD_SLOT_SELECTED='0';if CharacterSelect and CharacterSelect.selectedIndex==");
+    p=appu(p,slot);p=app(p," then W112_CSD_SLOT_SELECTED='1' end");*p=0;execs(b);
+    v=gettextv("W112_CSD_SLOT_SELECTED");
+    if(v&&v[0]=='1'&&!v[1]){execs("W112_CSD_SLOT_SELECTED=nil");return 1;}
+    execs("W112_CSD_SLOT_SELECTED=nil");return 0;
+}
+static int request_charlist_update(DWORD now)
+{
+    const char*v;
+    execs("W112_CSD_CHARLIST_CAP='0';if type(SetCurrentScreen)=='function' and type(GetCharacterListUpdate)=='function' then W112_CSD_CHARLIST_CAP='1';SetCurrentScreen('charselect');GetCharacterListUpdate() end");
+    v=gettextv("W112_CSD_CHARLIST_CAP");
+    if(v&&v[0]=='1'&&!v[1]){
+        g_charListAttempts++;g_charListKickAt=now;
+        log_line("DIRECT_CHARLIST_REQUEST",now,g_charListAttempts);
+        execs("W112_CSD_CHARLIST_CAP=nil");
+        return 1;
+    }
+    g_charListAttempts++;g_charListKickAt=now;
+    log_line("DIRECT_CHARLIST_API_WAIT",now,g_charListAttempts);
+    execs("W112_CSD_CHARLIST_CAP=nil");
+    return 0;
 }
 static void probe_combat(DWORD now)
 {
@@ -276,6 +324,24 @@ static void fast_fail(DWORD now,DWORD error,const char*event)
 {
     if(g_world)execs("W112_CSD_SESSION_SWITCH=nil");
     g_lastError=error;g_phase=PHASE_FAILED;log_line(event,now,(DWORD)fast_connection_state());
+}
+
+static int fast_connect_selected(DWORD now)
+{
+    ConnectToSelectedServerFn connectFn;
+    if(g_fastConnectAttempts>=FAST_CONNECT_MAX_ATTEMPTS)return 0;
+    if(!fast_session_key_matches()){
+        fast_fail(now,64,"DIRECT_SESSION_KEY_CHANGED");
+        return 0;
+    }
+    g_fastConnectAttempts++;
+    g_fastConnectAt=now;g_fastConnectedAt=0;g_charListKickAt=0;g_charListAttempts=0;
+    log_line("DIRECT_CONNECT_ATTEMPT",now,g_fastConnectAttempts);
+    connectFn=(ConnectToSelectedServerFn)(DWORD)WOW_CONNECT_SELECTED;
+    log_line("DIRECT_CONNECT_SELECTED_CALL",now,WOW_CONNECT_SELECTED);
+    connectFn();
+    log_line("DIRECT_CONNECT_SELECTED_RETURN",GetTickCount(),(DWORD)fast_connection_state());
+    return 1;
 }
 static void begin_fast(DWORD now,DWORD slot)
 {
@@ -448,16 +514,13 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
         if(g_phase==PHASE_FAST_DISCONNECT){
             int state=fast_connection_state();
             if(state==NET_STATE_INITIALIZED){
-                ConnectToSelectedServerFn connectFn;
                 if(!fast_session_key_matches()){
                     fast_fail(now,64,"DIRECT_SESSION_KEY_CHANGED");
                 }else{
                     log_line("DIRECT_SESSION_KEY_PRESERVED",now,1);
-                    connectFn=(ConnectToSelectedServerFn)(DWORD)WOW_CONNECT_SELECTED;
-                    g_fastConnectAt=now;g_phase=PHASE_FAST_RECONNECT;
-                    log_line("DIRECT_CONNECT_SELECTED_CALL",now,WOW_CONNECT_SELECTED);
-                    connectFn();
-                    log_line("DIRECT_CONNECT_SELECTED_RETURN",GetTickCount(),(DWORD)fast_connection_state());
+                    g_phase=PHASE_FAST_RECONNECT;
+                    if(!fast_connect_selected(now)&&g_phase!=PHASE_FAILED)
+                        fast_fail(now,70,"DIRECT_CONNECT_RETRY_EXHAUSTED");
                 }
             }else if(state<0){
                 fast_fail(now,66,"DIRECT_CONNECTION_LOST");
@@ -465,20 +528,57 @@ static VOID CALLBACK tick(HWND h,UINT m,UINT_PTR id,DWORD now)
                 fast_fail(now,65,"DIRECT_NET_INIT_TIMEOUT");
             }
         }else if(g_phase==PHASE_FAST_RECONNECT){
+            int state=fast_connection_state();
+            if((DWORD)state!=g_fastLastNetState){
+                g_fastLastNetState=(DWORD)state;
+                log_line("DIRECT_NET_STATE",now,(DWORD)state);
+            }
+
             probe_glue();
-            if(g_glueVisible){
-                g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
-                select_slot(g_targetSlot);log_line("DIRECT_CHAR_SELECT",now,g_elapsedToGlue);
-                execs("W112_CSD_SESSION_SWITCH=nil");
-            }else if(g_fastConnectAt && now-g_fastConnectAt>FAST_RECONNECT_TIMEOUT_MS){
-                fast_fail(now,67,"DIRECT_RECONNECT_TIMEOUT");
+
+            if(state==NET_STATE_CONNECTED){
+                if(!g_fastConnectedAt){
+                    g_fastConnectedAt=now;
+                    log_line("DIRECT_WORLD_CONNECTED",now,g_fastConnectAttempts);
+                }
+
+                if(now-g_fastConnectedAt>=FAST_AUTH_SETTLE_MS &&
+                   (!g_charListKickAt || now-g_charListKickAt>=FAST_CHARLIST_RETRY_MS) &&
+                   g_charListAttempts<FAST_CHARLIST_MAX_ATTEMPTS){
+                    request_charlist_update(now);
+                }
+
+                probe_glue();
+                if(g_glueVisible && target_slot_available(g_targetSlot)){
+                    g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
+                    select_slot(g_targetSlot);log_line("DIRECT_CHAR_SELECT",now,g_elapsedToGlue);
+                    execs("W112_CSD_SESSION_SWITCH=nil");
+                }
+            }else if(state==NET_STATE_INITIALIZED && g_fastConnectAt &&
+                     now-g_fastConnectAt>=FAST_CONNECT_RETRY_MS){
+                if(!fast_connect_selected(now)&&g_phase!=PHASE_FAILED)
+                    fast_fail(now,70,"DIRECT_CONNECT_RETRY_EXHAUSTED");
+            }else if(state<0){
+                fast_fail(now,66,"DIRECT_CONNECTION_LOST");
+            }
+
+            if(g_phase==PHASE_FAST_RECONNECT && g_startedAt &&
+               now-g_startedAt>FAST_RECONNECT_TIMEOUT_MS){
+                if(g_charListAttempts>=FAST_CHARLIST_MAX_ATTEMPTS)
+                    fast_fail(now,69,"DIRECT_CHARLIST_TIMEOUT");
+                else
+                    fast_fail(now,67,"DIRECT_RECONNECT_TIMEOUT");
             }
         }else if(g_phase==PHASE_WAIT_LOGOUT && g_glueVisible){
             g_elapsedToGlue=g_startedAt?now-g_startedAt:0;g_glueAt=now;g_phase=PHASE_CHAR_SELECT;
             if(g_targetSlot)select_slot(g_targetSlot);
             log_line("STOCK_CHAR_SELECT",now,g_elapsedToGlue);
         }else if(g_phase==PHASE_CHAR_SELECT && g_targetSlot && g_glueVisible && now-g_glueAt>=SELECT_SETTLE_MS){
-            enter_slot(g_targetSlot);g_enterIssuedAt=now;g_phase=PHASE_ENTERING;log_line("ENTER_SLOT",now,g_targetSlot);
+            if(target_slot_selected(g_targetSlot)){
+                enter_slot(g_targetSlot);g_enterIssuedAt=now;g_phase=PHASE_ENTERING;log_line("ENTER_SLOT",now,g_targetSlot);
+            }else{
+                select_slot(g_targetSlot);g_glueAt=now;log_line("DIRECT_SLOT_SELECT_RETRY",now,g_targetSlot);
+            }
         }else if(g_phase==PHASE_ENTERING && g_enterIssuedAt && now-g_enterIssuedAt>ENTER_TIMEOUT_MS){
             g_lastError=30;g_phase=PHASE_FAILED;log_line("ENTER_TIMEOUT",now,g_targetSlot);
         }
@@ -505,6 +605,6 @@ static const W112_ControlModuleV1 mod={W112_CONTROL_API_V1,sizeof(W112_ControlMo
 __declspec(dllexport) const W112_ControlModuleV1* W112_CTL_STDCALL W112_Control_GetModuleV1(void){init_settings();return &mod;}
 BOOL WINAPI DllMain(HMODULE h,DWORD r,LPVOID x)
 {
-    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V11_DIRECT_WORLD_RECONNECT",GetTickCount(),WOW_CONNECT_SELECTED);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
+    (void)x;if(r==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(h);reset_run();g_lastWorld=rd32(WOW_OBJMGR)?1:0;g_world=g_lastWorld;init_worker_map();log_line("LOAD_V12_DIRECT_CHARLIST_RECOVERY",GetTickCount(),WOW_CONNECT_SELECTED);g_timer=SetTimer(NULL,0,TIMER_MS,tick);}
     else if(r==DLL_PROCESS_DETACH){if(g_timer)KillTimer(NULL,g_timer);shutdown_worker_map();}return TRUE;
 }
