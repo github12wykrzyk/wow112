@@ -2,7 +2,7 @@
 -- Independent implementation for WoW 1.12.1 / vMaNGOS.
 -- Default mode is DRY-RUN. LIVE purchase mode requires an explicit /avm live on.
 
-AVM_VERSION = "0.30-purchase-history-ui"
+AVM_VERSION = "0.31-native-purchases-turtle-de"
 AVM_QUERY_TIMEOUT = 5.0
 AVM_PENDING_TIMEOUT = 3.0
 AVM_UNKNOWN_HOLD = 10.0
@@ -314,7 +314,7 @@ end
 local function avm_purchase_source(c, route)
 	if not c then return "" end
 	if c.vendorSource and c.vendorSource ~= "" then return tostring(c.vendorSource) end
-	if route == "disenchant" then return "de-live" end
+	if route == "disenchant" then return tostring(c.deSource or "de-live") end
 	if route == "flip" then return "history+depth" end
 	return ""
 end
@@ -345,6 +345,8 @@ function AVM_RecordPurchase(c, confirmation)
 		profit = profit,
 		vendorUnit = tonumber(c.vendorUnit) or 0,
 		vendorTotal = tonumber(c.vendorTotal) or 0,
+		disenchantId = tonumber(c.disenchantId) or 0,
+		deSource = tostring(c.deSource or ""),
 		source = avm_purchase_source(c, route),
 		itemKey = tostring(c.itemKey or ""),
 	}
@@ -2338,6 +2340,7 @@ local function avm_de_raw_candidate(record)
 	local count = tonumber(record.count or record.aux_quantity) or 0
 	local itemId = tonumber(record.item_id)
 	if buyout <= 0 or count <= 0 or not itemId then return nil end
+	if AVM_TURTLE_DISENCHANT_BLOCK and AVM_TURTLE_DISENCHANT_BLOCK[itemId] then return nil end
 	local maxBuyout = tonumber(AVM_DB.deMaxBuyout) or 0
 	if maxBuyout > 0 and buyout > maxBuyout then return nil end
 	local itemKey = avm_de_record_key(record, itemId)
@@ -2351,6 +2354,26 @@ local function avm_de_raw_candidate(record)
 		page = tonumber(record.page) or AVM.queryPage or 0,
 		sourcePage = tonumber(record.page) or AVM.queryPage or 0,
 	}
+end
+
+local function avm_de_distribution(raw)
+	local itemId = tonumber(raw and (raw.itemId or raw.item_id))
+	if itemId and AVM_TURTLE_DISENCHANT_IDS then
+		local deId = tonumber(AVM_TURTLE_DISENCHANT_IDS[itemId])
+		if deId and deId > 0 then
+			local dist = AVM_TURTLE_DISENCHANT_LOOT and AVM_TURTLE_DISENCHANT_LOOT[deId]
+			if dist and table.getn(dist) > 0 then return dist, "turtle-db", deId, nil end
+			return nil, "turtle-db", deId, "turtle-loot-missing"
+		end
+		if AVM_TURTLE_DISENCHANT_BLOCK and AVM_TURTLE_DISENCHANT_BLOCK[itemId] then
+			return nil, "turtle-db", 0, "turtle-not-disenchantable"
+		end
+	end
+	-- Compatibility fallback only for item IDs absent from the pinned Turtle snapshot.
+	local ok, dist = pcall(AVM_AUX_DE.distribution, raw.slot, raw.quality, raw.level or 0, raw.itemId)
+	if not ok then return nil, "aux-fallback", 0, "fallback-error" end
+	if not dist or table.getn(dist) == 0 then return nil, "aux-fallback", 0, "no-distribution" end
+	return dist, "aux-fallback", 0, nil
 end
 
 local function avm_de_candidate_from_record(record, book)
@@ -2374,8 +2397,8 @@ local function avm_de_candidate_from_record(record, book)
 		}
 	end
 
-	local ok, dist = pcall(AVM_AUX_DE.distribution, raw.slot, raw.quality, raw.level or 0, raw.itemId)
-	if not ok or not dist or table.getn(dist) == 0 then return nil, "no-distribution" end
+	local dist, deSource, disenchantId, distReason = avm_de_distribution(raw)
+	if not dist then return nil, distReason or "no-distribution" end
 
 	local depth = tonumber(AVM_DB.deDepthUnits) or 3
 	local cutPct = tonumber(AVM_DB.deAhCutPct) or 5
@@ -2431,6 +2454,7 @@ local function avm_de_candidate_from_record(record, book)
 		affordable = raw.buyout <= money, missing = missing,
 		deDepthUnits = depth, deCutPct = cutPct, deMarginPct = marginPct,
 		deMaxEntry = maxEntry, materials = mats,
+		deSource = deSource, disenchantId = disenchantId or 0,
 	}, nil
 end
 

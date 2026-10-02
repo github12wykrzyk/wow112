@@ -1,4 +1,4 @@
--- AuxVmangos 0.9 WATCH + PURCHASE HISTORY GUI for WoW 1.12.1.
+-- AuxVmangos WATCH GUI for WoW 1.12.1. Purchase history is a native AUX tab.
 -- Presentation only: all scanner/purchase state transitions remain owned by AuxVmangos.lua.
 
 AVM_WATCH_UI = AVM_WATCH_UI or {}
@@ -310,17 +310,10 @@ local function create_panel()
 		refresh_status()
 	end)
 
-	local historyButton = CreateFrame("Button", "AuxVmangosWatchHistoryButton", panel, "GameMenuButtonTemplate")
-	historyButton:SetWidth(88)
-	historyButton:SetHeight(24)
-	historyButton:SetPoint("LEFT", liveButton, "RIGHT", 6, 0)
-	historyButton:SetText("PURCHASES")
-	historyButton:SetScript("OnClick", function() AVM_WATCH_UI.ToggleHistory() end)
-
 	local refreshButton = CreateFrame("Button", "AuxVmangosWatchRefreshButton", panel, "GameMenuButtonTemplate")
-	refreshButton:SetWidth(58)
+	refreshButton:SetWidth(80)
 	refreshButton:SetHeight(24)
-	refreshButton:SetPoint("LEFT", historyButton, "RIGHT", 6, 0)
+	refreshButton:SetPoint("LEFT", liveButton, "RIGHT", 8, 0)
 	refreshButton:SetText("Refresh")
 	refreshButton:SetScript("OnClick", function() refresh_rows(); refresh_status() end)
 
@@ -431,14 +424,7 @@ function AVM_WATCH_UI.Toggle()
 end
 
 function AVM_WATCH_UI.ToggleHistory()
-	create_history_panel()
-	if historyPanel:IsShown() then
-		historyPanel:Hide()
-	else
-		historyPage = 1
-		refresh_history()
-		historyPanel:Show()
-	end
+	if AVM_AUX_PURCHASES and AVM_AUX_PURCHASES.Show then AVM_AUX_PURCHASES.Show() end
 end
 
 local eventFrame = CreateFrame("Frame", "AuxVmangosWatchUIEvent")

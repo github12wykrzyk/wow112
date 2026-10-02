@@ -1,10 +1,12 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle 1.18 live arbitrage with persistent confirmed purchase history and in-game purchase log.
+## Notes: Turtle-specific vendor + disenchant arbitrage; purchase history is a native AUX tab.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.30-purchase-history-ui
+## Version: 0.31-native-purchases-turtle-de
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
+AuxVmangos_DisenchantData.lua
 AuxVmangos.lua
+AuxVmangos_AuxPurchases.lua
 AuxVmangos_WatchUI.lua
