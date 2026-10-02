@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle arbitrage with AutoSell repricing, owner-scan arbitration, transaction-safe fast resume and native ledger UI.
+## Notes: Turtle arbitrage with AutoSell repricing, manual exact price decisions, owner-scan arbitration, transaction-safe fast resume and native ledger UI.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.42-de-midscan-warm-v1
+## Version: 0.43-autosell-manual-stack1
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
@@ -11,4 +11,6 @@ AuxVmangos.lua
 AuxVmangos_AuxPurchases.lua
 AuxVmangos_AuxLedger.lua
 AuxVmangos_AutoSell.lua
+AuxVmangos_AutoSellForce.lua
+AuxVmangos_PostDefaults.lua
 AuxVmangos_WatchUI.lua
