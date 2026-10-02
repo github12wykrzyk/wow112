@@ -4366,12 +4366,20 @@
         "native AUX tabs/listing/status bar",
         "AUX Auctions owner-scan records"
       ],
-      "status": "in_progress",
-      "observed_head": "578baa5daee5ae1dbbac38288f219543e29fdd9c",
-      "verified_commit": null,
-      "tests": [],
+      "status": "awaiting_ci",
+      "observed_head": "f74e9763e9858b1df9962a72eb4d34dc5dc8f017",
+      "verified_commit": "f74e9763e9858b1df9962a72eb4d34dc5dc8f017",
+      "tests": [
+        {
+          "kind": "ci",
+          "result": "passed",
+          "commit": "f74e9763e9858b1df9962a72eb4d34dc5dc8f017",
+          "date": "2026-10-02",
+          "evidence": "Parallel feature preflight run 36996899794 and Verify AI experiment registry run 36996899835 passed on exact feature SHA f74e9763e9858b1df9962a72eb4d34dc5dc8f017."
+        }
+      ],
       "package": null,
-      "notes": "Adds a native top-level Profit/Loss AUX tab. Confirmed AVM purchases are cash-out; observed paid AH seller invoices are cash-in; cash flow and expected purchase P/L are shown separately so projected arbitrage economics are not mislabeled as realized profit. Seller-mail fingerprints are updated only while MailFrame is actually open, preventing stale inbox state after restart from duplicating income. Also extends the native Auctions bottom status bar with total current buyout exposure and potential net proceeds after the configured AH cut. No scanner, candidate, valuation, revalidation or buy-gating behavior is changed."
+      "notes": "Adds a native top-level Profit/Loss AUX tab. Confirmed AVM purchases are cash-out; observed paid AH seller invoices are cash-in; cash flow and expected purchase P/L are shown separately so projected arbitrage economics are not mislabeled as realized profit. Seller-mail fingerprints are updated only while MailFrame is actually open, preventing stale inbox state after restart from duplicating income. Also extends the native Auctions bottom status bar with total current buyout exposure and potential net proceeds after the configured AH cut. No scanner, candidate, valuation, revalidation or buy-gating behavior is changed. Feature preflight is PASS; integrated parallel candidate build/package is pending."
     }
   ]
 }
