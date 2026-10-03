@@ -1,26 +1,33 @@
--- SummonScout unknown-whisper confirmation + advert interval companion.
--- WoW 1.12.1 / Lua 5.0 compatible; keeps the existing core invite/summon flow intact.
+-- SummonScout hot-swappable whisper confirmation + advert timing + service-alias module.
+-- WoW 1.12.1 / Lua 5.0 compatible. Runtime state is owned by SummonScout_HotHost.
+-- No private event frame and no permanent InviteByName wrapper are created here.
 
-local WC_VERSION = "1"
+local H = W112_SUMMONSCOUT_HOT
+if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
+    return
+end
+
+local WC_VERSION = "2-hot1"
 local WC_PENDING_SECONDS = 60
 local WC_PROBE_COOLDOWN = 120
 local WC_STARTUP_SPAM_MIN = 300
 local WC_STARTUP_SPAM_MAX = 400
+local WC_CANDIDATE_DELAY = 0.65
+local LEGACY_VERSION = W112_SUMMONSCOUT_WHISPER_CONFIRM_SPAM_VERSION
+local BIND_TOKEN = {}
 
-local WC = {
-    pending = {},
-    candidates = {},
-    confirmations = {},
-    probedAt = {},
-    inviteIssuedAt = {},
-    inviteWrapped = false,
-    originalInviteByName = nil,
-    startupSpamScheduled = false,
-    startupSpamDelay = 0,
-    guiAttached = false,
-    intervalEdit = nil,
-    nextGuiRefreshAt = 0
-}
+local WC = H.GetState("whisperconfirm")
+WC.pending = WC.pending or {}
+WC.candidates = WC.candidates or {}
+WC.confirmations = WC.confirmations or {}
+WC.probedAt = WC.probedAt or {}
+WC.inviteIssuedAt = WC.inviteIssuedAt or {}
+WC.startupSpamScheduled = WC.startupSpamScheduled and true or false
+WC.startupSpamDelay = tonumber(WC.startupSpamDelay) or 0
+WC.nextGuiRefreshAt = tonumber(WC.nextGuiRefreshAt) or 0
+
+local OWN_CORE_WRAPPER = nil
+local OWN_CORE_BASE = nil
 
 local POSITIVE = {
     ["yes"] = true, ["yea"] = true, ["yeah"] = true, ["y"] = true,
@@ -87,6 +94,12 @@ local function wcNormalize(s)
     s = string.gsub(s, "[%p%c]", " ")
     s = string.gsub(s, "%s+", " ")
     return wcTrim(s)
+end
+
+local function wcPhraseHas(s, phrase)
+    local p = wcNormalize(phrase)
+    if p == "" then return false end
+    return string.find(" " .. s .. " ", " " .. p .. " ", 1, true) ~= nil
 end
 
 local function wcChat(text)
@@ -219,15 +232,163 @@ local function wcLooksLikeSeller(message)
     return false
 end
 
-local function wcInstallInviteObserver()
-    if WC.inviteWrapped or type(InviteByName) ~= "function" then return end
-    WC.originalInviteByName = InviteByName
-    InviteByName = function(name)
-        local key = wcKey(name)
-        if key ~= "" then WC.inviteIssuedAt[key] = wcNow() end
-        return WC.originalInviteByName(name)
+local function wcServiceHas(service, id)
+    local s = "," .. wcLower(wcTrim(service or "")) .. ","
+    return string.find(s, "," .. id .. ",", 1, true) ~= nil
+end
+
+local function wcExtendedServiceForMessage(message)
+    if not SummonScoutDB then return nil end
+
+    local service = wcLower(wcTrim(SummonScoutDB.service or "all"))
+    if service == "" or service == "all" then return nil end
+
+    local servesWinterspring = wcServiceHas(service, "winterspring")
+    local servesEverlook = wcServiceHas(service, "everlook")
+    if not servesWinterspring and not servesEverlook then return nil end
+
+    local s = wcNormalize(message or "")
+    local mentionsWinterspring = wcPhraseHas(s, "winterspring")
+    local mentionsEverlook = wcPhraseHas(s, "everlook")
+
+    if mentionsEverlook and servesWinterspring and not servesEverlook then
+        return SummonScoutDB.service .. ",everlook", "Everlook=>Winterspring"
     end
-    WC.inviteWrapped = true
+    if mentionsWinterspring and servesEverlook and not servesWinterspring then
+        return SummonScoutDB.service .. ",winterspring", "Winterspring=>Everlook"
+    end
+    return nil
+end
+
+local function wcDebugGetUpvalue(fn, index)
+    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then return nil, nil end
+    if pcall then
+        local ok, name, value = pcall(debug.getupvalue, fn, index)
+        if ok then return name, value end
+        return nil, nil
+    end
+    return debug.getupvalue(fn, index)
+end
+
+local function wcTryRestoreLegacyInviteWrapper()
+    if type(InviteByName) ~= "function" then return false end
+    local i
+    for i = 1, 16 do
+        local name, value = wcDebugGetUpvalue(InviteByName, i)
+        if not name then break end
+        if type(value) == "table" and type(value.originalInviteByName) == "function"
+            and value.inviteWrapped then
+            InviteByName = value.originalInviteByName
+            WC.legacyInviteUnwrapped = true
+            return true
+        end
+    end
+    return false
+end
+
+local function wcTryRecoverLegacyCoreHandler(current)
+    if type(current) ~= "function" then return nil end
+    local i
+    for i = 1, 16 do
+        local name, value = wcDebugGetUpvalue(current, i)
+        if not name then break end
+        if name == "originalOnEvent" and type(value) == "function" then
+            return value
+        end
+    end
+    return nil
+end
+
+local function wcDisableLegacyFrame()
+    local legacy = getglobal and getglobal("SummonScoutWhisperConfirmSpamFrame") or nil
+    if not legacy then return end
+    if legacy.UnregisterAllEvents then
+        legacy:UnregisterAllEvents()
+    else
+        if legacy.UnregisterEvent then
+            legacy:UnregisterEvent("PLAYER_LOGIN")
+            legacy:UnregisterEvent("CHAT_MSG_WHISPER")
+        end
+    end
+    if legacy.SetScript then
+        legacy:SetScript("OnEvent", nil)
+        legacy:SetScript("OnUpdate", nil)
+    end
+    if legacy.Hide then legacy:Hide() end
+    WC.legacyFrameDisabled = true
+end
+
+local function wcDetachPreviousManagedCoreHook()
+    local frame = SummonScoutFrame
+    if not frame or not frame.GetScript or not frame.SetScript then return end
+    if WC.coreWrapper and WC.coreOriginalOnEvent and frame:GetScript("OnEvent") == WC.coreWrapper then
+        frame:SetScript("OnEvent", WC.coreOriginalOnEvent)
+    end
+end
+
+local function wcAttachCoreAliasHook()
+    local frame = SummonScoutFrame
+    if not frame or not frame.GetScript or not frame.SetScript then return false end
+
+    wcDetachPreviousManagedCoreHook()
+
+    local current = frame:GetScript("OnEvent")
+    local recovered = wcTryRecoverLegacyCoreHandler(current)
+    if recovered then
+        current = recovered
+        frame:SetScript("OnEvent", current)
+        WC.legacyAliasUnwrapped = true
+    end
+    if type(current) ~= "function" then return false end
+
+    OWN_CORE_BASE = current
+    OWN_CORE_WRAPPER = function()
+        local restoreService = nil
+        local bridgeReason = nil
+
+        if event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_WHISPER" then
+            local extended, reason = wcExtendedServiceForMessage(arg1 or "")
+            if extended then
+                restoreService = SummonScoutDB.service
+                SummonScoutDB.service = extended
+                bridgeReason = reason
+            end
+        end
+
+        local ok, err = true, nil
+        if pcall then
+            ok, err = pcall(OWN_CORE_BASE)
+        else
+            OWN_CORE_BASE()
+        end
+
+        if restoreService ~= nil then
+            SummonScoutDB.service = restoreService
+            if SummonScoutDB.debug then
+                wcChat("Winterspring/Everlook alias: " .. tostring(bridgeReason or "matched"))
+            end
+        end
+
+        if not ok then error(err) end
+    end
+
+    frame:SetScript("OnEvent", OWN_CORE_WRAPPER)
+    WC.coreOriginalOnEvent = current
+    WC.coreWrapper = OWN_CORE_WRAPPER
+    return true
+end
+
+local function wcShutdownCoreAliasHook()
+    local frame = SummonScoutFrame
+    if frame and frame.GetScript and frame.SetScript
+        and OWN_CORE_WRAPPER and OWN_CORE_BASE
+        and frame:GetScript("OnEvent") == OWN_CORE_WRAPPER then
+        frame:SetScript("OnEvent", OWN_CORE_BASE)
+    end
+    if WC.coreWrapper == OWN_CORE_WRAPPER then
+        WC.coreWrapper = nil
+        WC.coreOriginalOnEvent = nil
+    end
 end
 
 local function wcSendProbe(sender)
@@ -242,13 +403,13 @@ local function wcQueueUnknownProbe(sender, message)
     local key = wcKey(sender)
     local t = wcNow()
     local lastProbe = WC.probedAt[key]
-    if WC.pending[key] then return end
+    if WC.pending[key] or WC.candidates[key] then return end
     if lastProbe and (t - lastProbe) < WC_PROBE_COOLDOWN then return end
 
     WC.candidates[key] = {
         sender = wcTrim(sender),
         seenAt = t,
-        dueAt = t + 0.20
+        dueAt = t + WC_CANDIDATE_DELAY
     }
 end
 
@@ -270,7 +431,6 @@ local function wcHandlePendingReply(sender, message)
         return true
     end
     if answer ~= "yes" then
-        -- Keep the one outstanding question alive until timeout, but never spam it again.
         return true
     end
 
@@ -291,7 +451,7 @@ local function wcProcessCandidates()
             WC.candidates[key] = nil
             local invitedAt = WC.inviteIssuedAt[key]
             local alreadyInvited = invitedAt and invitedAt >= ((item.seenAt or t) - 0.05)
-            if not alreadyInvited and wcEligible(item.sender) then
+            if not alreadyInvited and not wcInGroup(item.sender) and wcEligible(item.sender) then
                 if wcSendProbe(item.sender) then
                     WC.probedAt[key] = t
                     WC.pending[key] = { expiresAt = t + WC_PENDING_SECONDS }
@@ -313,6 +473,7 @@ local function wcProcessConfirmations()
             local invitedAt = WC.inviteIssuedAt[key]
             local coreAlreadyInvited = invitedAt and invitedAt >= ((item.seenAt or t) - 0.05)
             if not coreAlreadyInvited and wcEligible(item.sender) and InviteByName then
+                WC.inviteIssuedAt[key] = t
                 InviteByName(item.sender)
                 if SummonScoutDB.debug then
                     wcChat("confirm YES -> invite " .. item.sender .. " [" .. tostring(wcServiceLabel()) .. "]")
@@ -330,6 +491,15 @@ local function wcExpirePending()
     end
 end
 
+local function wcNoteSystemInvite(line)
+    line = wcTrim(line or "")
+    local _, _, invitedName = string.find(line, "^You have invited (.+) to join your group%.?$")
+    invitedName = wcTrim(invitedName or "")
+    if invitedName ~= "" then
+        WC.inviteIssuedAt[wcKey(invitedName)] = wcNow()
+    end
+end
+
 local function wcClampSpamInterval(value)
     local seconds = math.floor(tonumber(value) or 120)
     if seconds < 30 then seconds = 30 end
@@ -344,7 +514,7 @@ local function wcCoreSetSpamInterval(seconds)
         slash("spamsec " .. tostring(seconds))
         return true
     end
-    SummonScoutDB.spamInterval = seconds
+    if SummonScoutDB then SummonScoutDB.spamInterval = seconds end
     return false
 end
 
@@ -355,9 +525,6 @@ local function wcScheduleStartupSpam()
     SummonScoutDB.spamInterval = recurring
     local delay = math.random(WC_STARTUP_SPAM_MIN, WC_STARTUP_SPAM_MAX)
 
-    -- Reuse the core slash handler because it owns SS.nextSpamAt. Then restore
-    -- the recurring interval in SavedVariables: only the first post-login advert
-    -- gets the randomized 300-400s delay; later adverts use the GUI interval.
     if wcCoreSetSpamInterval(delay) then
         SummonScoutDB.spamInterval = recurring
         WC.startupSpamDelay = delay
@@ -371,75 +538,128 @@ local function wcSaveInterval()
     local seconds = tonumber(wcTrim(WC.intervalEdit:GetText() or ""))
     if not seconds or seconds < 30 or seconds > 3600 then
         wcChat("spam interval must be 30-3600 seconds")
-        WC.intervalEdit:SetText(tostring(wcClampSpamInterval(SummonScoutDB.spamInterval)))
+        WC.intervalEdit:SetText(tostring(wcClampSpamInterval(SummonScoutDB and SummonScoutDB.spamInterval)))
         return
     end
     wcCoreSetSpamInterval(math.floor(seconds))
 end
 
 local function wcAttachGui()
-    if WC.guiAttached or not SummonScoutOptionsFrame or not SummonScoutOptionsFrame.CreateFontString then return end
     local parent = SummonScoutOptionsFrame
+    if not parent or not parent.CreateFontString then return end
+    if WC.guiBindToken == BIND_TOKEN and WC.intervalEdit then return end
 
-    local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("TOPLEFT", parent, "TOPLEFT", 28, -421)
-    label:SetText("Advert every:")
+    local edit = getglobal and getglobal("SummonScoutAdvertIntervalEdit") or nil
+    local button = getglobal and getglobal("SummonScoutAdvertIntervalSet") or nil
 
-    local edit = CreateFrame("EditBox", "SummonScoutAdvertIntervalEdit", parent, "InputBoxTemplate")
-    edit:SetPoint("TOPLEFT", parent, "TOPLEFT", 100, -413)
-    edit:SetWidth(52)
-    edit:SetHeight(22)
-    edit:SetAutoFocus(false)
-    edit:SetMaxLetters(4)
-    edit:SetText(tostring(wcClampSpamInterval(SummonScoutDB.spamInterval)))
+    if not edit then
+        local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetPoint("TOPLEFT", parent, "TOPLEFT", 28, -421)
+        label:SetText("Advert every:")
+
+        edit = CreateFrame("EditBox", "SummonScoutAdvertIntervalEdit", parent, "InputBoxTemplate")
+        edit:SetPoint("TOPLEFT", parent, "TOPLEFT", 100, -413)
+        edit:SetWidth(52)
+        edit:SetHeight(22)
+        edit:SetAutoFocus(false)
+        edit:SetMaxLetters(4)
+
+        local secondsLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        secondsLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", 157, -421)
+        secondsLabel:SetText("sec")
+    end
+
+    edit:SetText(tostring(wcClampSpamInterval(SummonScoutDB and SummonScoutDB.spamInterval)))
     edit.ssFocused = false
     edit:SetScript("OnEditFocusGained", function() edit.ssFocused = true end)
     edit:SetScript("OnEditFocusLost", function() edit.ssFocused = false end)
     edit:SetScript("OnEscapePressed", function() edit:ClearFocus() end)
     edit:SetScript("OnEnterPressed", function() wcSaveInterval(); edit:ClearFocus() end)
 
-    local secondsLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    secondsLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", 157, -421)
-    secondsLabel:SetText("sec")
-
-    local button = CreateFrame("Button", "SummonScoutAdvertIntervalSet", parent, "UIPanelButtonTemplate")
-    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 184, -413)
-    button:SetWidth(46)
-    button:SetHeight(22)
-    button:SetText("Set")
+    if not button then
+        button = CreateFrame("Button", "SummonScoutAdvertIntervalSet", parent, "UIPanelButtonTemplate")
+        button:SetPoint("TOPLEFT", parent, "TOPLEFT", 184, -413)
+        button:SetWidth(46)
+        button:SetHeight(22)
+        button:SetText("Set")
+    end
     button:SetScript("OnClick", wcSaveInterval)
 
     WC.intervalEdit = edit
-    WC.guiAttached = true
+    WC.guiButton = button
+    WC.guiBindToken = BIND_TOKEN
 end
 
 local function wcRefreshGui()
-    if not WC.guiAttached or not WC.intervalEdit or WC.intervalEdit.ssFocused then return end
-    WC.intervalEdit:SetText(tostring(wcClampSpamInterval(SummonScoutDB.spamInterval)))
+    if not WC.intervalEdit or WC.intervalEdit.ssFocused then return end
+    WC.intervalEdit:SetText(tostring(wcClampSpamInterval(SummonScoutDB and SummonScoutDB.spamInterval)))
 end
 
-local frame = CreateFrame("Frame", "SummonScoutWhisperConfirmSpamFrame")
-frame:RegisterEvent("PLAYER_LOGIN")
-frame:RegisterEvent("CHAT_MSG_WHISPER")
-frame:SetScript("OnEvent", function()
-    if event == "PLAYER_LOGIN" then
-        wcInstallInviteObserver()
+local function wcResetSessionState()
+    WC.pending = {}
+    WC.candidates = {}
+    WC.confirmations = {}
+    WC.inviteIssuedAt = {}
+    WC.startupSpamScheduled = false
+    WC.startupSpamDelay = 0
+    WC.nextGuiRefreshAt = 0
+end
+
+local M = {}
+
+function M.Init()
+    wcDisableLegacyFrame()
+    wcTryRestoreLegacyInviteWrapper()
+    wcAttachCoreAliasHook()
+
+    -- A live hot migration from v1 inherits the core's already scheduled first
+    -- advert. Do not schedule a second 300-400s startup advert in that session.
+    if LEGACY_VERSION and LEGACY_VERSION ~= WC_VERSION and not WC.moduleVersion then
+        WC.startupSpamScheduled = true
+    end
+
+    H.RegisterEvent("PLAYER_LOGIN")
+    H.RegisterEvent("CHAT_MSG_WHISPER")
+    H.RegisterEvent("CHAT_MSG_SYSTEM")
+
+    wcAttachGui()
+    WC.moduleVersion = WC_VERSION
+    W112_SUMMONSCOUT_WHISPER_CONFIRM_SPAM_VERSION = WC_VERSION
+    W112_SUMMONSCOUT_COREHOT_VERSION = WC_VERSION
+    W112_SUMMONSCOUT_WINTERSPRING_EVERLOOK_BRIDGE = "integrated-" .. WC_VERSION
+end
+
+function M.Shutdown()
+    wcShutdownCoreAliasHook()
+end
+
+function M.OnEvent(ev, a1, a2)
+    if ev == "PLAYER_LOGIN" then
+        wcResetSessionState()
+        wcAttachCoreAliasHook()
+        WC.moduleVersion = WC_VERSION
         W112_SUMMONSCOUT_WHISPER_CONFIRM_SPAM_VERSION = WC_VERSION
+        W112_SUMMONSCOUT_COREHOT_VERSION = WC_VERSION
+        W112_SUMMONSCOUT_WINTERSPRING_EVERLOOK_BRIDGE = "integrated-" .. WC_VERSION
         return
     end
 
-    if event == "CHAT_MSG_WHISPER" then
-        local message = arg1 or ""
-        local sender = wcTrim(arg2 or "")
+    if ev == "CHAT_MSG_SYSTEM" then
+        wcNoteSystemInvite(a1 or "")
+        return
+    end
+
+    if ev == "CHAT_MSG_WHISPER" then
+        local message = a1 or ""
+        local sender = wcTrim(a2 or "")
         if sender == "" or not wcEligible(sender) then return end
 
         if wcHandlePendingReply(sender, message) then return end
         wcQueueUnknownProbe(sender, message)
     end
-end)
+end
 
-frame:SetScript("OnUpdate", function()
-    wcInstallInviteObserver()
+function M.OnUpdate()
     wcScheduleStartupSpam()
     wcProcessCandidates()
     wcProcessConfirmations()
@@ -451,4 +671,6 @@ frame:SetScript("OnUpdate", function()
         WC.nextGuiRefreshAt = t + 0.50
         wcRefreshGui()
     end
-end)
+end
+
+H.Register("whisperconfirm", M, WC_VERSION)
