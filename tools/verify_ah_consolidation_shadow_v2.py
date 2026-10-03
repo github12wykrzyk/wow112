@@ -18,6 +18,7 @@ REMOVED_DE_GUARD = ROOT / "src" / "AddOns" / "AuxVmangos" / "AuxVmangos_DEPriceG
 PACKAGER = ROOT / "tools" / "package_lazyrogue_addons.py"
 HOT_HOST_SOURCE = ROOT / "src" / "AddOns" / "SummonScout" / HOST_NAME
 
+BRIDGE_MODULE = "AuxEconomyShadow_ParityBridge.lua"
 MODULES = [
     "AuxEconomyShadow_Contracts.lua",
     "AuxEconomyShadow_MarketBook.lua",
@@ -33,12 +34,14 @@ MODULES = [
     "AuxEconomyShadow_AutoSell.lua",
     "AuxEconomyShadow_Ledger.lua",
     "AuxEconomyShadow_Parity.lua",
+    BRIDGE_MODULE,
 ]
 REQUIRED = [TASK, MANIFEST, SHADOW / "README.md", SHADOW / "AuxEconomyShadow.toc",
             SHADOW / "AuxEconomyShadow_Anchor.lua", SHADOW / "AuxEconomyShadow_HotPayload.lua",
             PACKAGER, HOT_HOST_SOURCE, ROOT / "tools" / "ah_shadow_hot_bundle.py"] + [SHADOW / x for x in MODULES]
 FORBIDDEN_ACTIONS = ("PlaceAuctionBid", "CancelAuction", "PostAuction", "QueryAuctionItems", "UseContainerItem")
 FORBIDDEN_RUNTIME = ("GetAuctionItemInfo", "GetNumAuctionItems", "GetMoney(", "UnitName(", "CreateFrame(", "RegisterEvent(", "SetScript(\"OnUpdate\"")
+BRIDGE_FORBIDDEN = ("GetAuctionItemInfo", "GetNumAuctionItems", "CreateFrame(", "RegisterEvent(", "SetScript(\"OnUpdate\"", "AUXFAST_RestartSearch", "AUXFAST_ResumeSearch")
 DE_FORBIDDEN = ("AVM_AUX_HISTORY", "aux.core.history", "history.value", "data_points", "AVM_DE_PRICE_GUARD_HISTORY", "deHistoryCapHits")
 
 
@@ -96,10 +99,21 @@ def main() -> None:
     if hot_cfg.get("native_live_executor_status") != "reuse_existing_watcher": fail("hot executor must reuse existing watcher")
     if hot_cfg.get("new_native_binary_required") is not False: fail("AH hot routing unexpectedly requires a new native binary")
     if hot_cfg.get("bundle_host") != "Interface/AddOns/SummonScout/" + HOST_NAME: fail("hot bundle host mismatch")
+    if "src/AddOns/AuxEconomyShadow/" + BRIDGE_MODULE not in hot_cfg.get("watch_files", []): fail("parity bridge is not hot-routed")
 
     for key in ("enabled", "active_parallel_candidate", "active_economy_overlay", "updater_visible", "cutover_allowed"):
         if manifest.get("delivery", {}).get(key) is not False:
             fail("delivery flag must remain false: " + key)
+    safety = manifest.get("safety", {})
+    if safety.get("production_ah_untouched") is not True: fail("production AH safety flag changed")
+    if safety.get("may_send_ah_queries") is not False: fail("shadow may not send AH queries")
+    if safety.get("may_submit_transactions") is not False: fail("shadow may not submit transactions")
+    if safety.get("may_patch_global_ah_api") is not False: fail("shadow may not patch Blizzard AH API")
+    if safety.get("passive_project_callback_wrapping") is not True: fail("passive callback bridge safety declaration missing")
+    if safety.get("wrapper_preserves_original_return") is not True: fail("callback wrapper must preserve active return")
+    expected_callbacks = {"AVM_AuxArbScanStart", "AVM_AuxArbAuction", "AVM_AuxArbPageDone", "AVM_AuxArbScanDone"}
+    if set(safety.get("wrapped_project_callbacks", [])) != expected_callbacks: fail("unexpected passive callback set")
+
     if "AuxEconomyShadow" in roots(parallel) or "AuxEconomyShadow" in roots(economy): fail("shadow addon became active")
     if "SummonScout" not in roots(parallel): fail("watched hot host addon is not in parallel candidate")
     if REMOVED_DE_GUARD.exists(): fail("removed DE price guard was reintroduced")
@@ -122,8 +136,23 @@ def main() -> None:
     for name in MODULES:
         text = (SHADOW / name).read_text(encoding="utf-8")
         if "ReplaceModule" not in text: fail(name + " is not hot-replaceable")
-        for token in FORBIDDEN_RUNTIME:
-            if token in text: fail(f"{name} uses runtime/game primitive {token}")
+        if name != BRIDGE_MODULE:
+            for token in FORBIDDEN_RUNTIME:
+                if token in text: fail(f"{name} uses runtime/game primitive {token}")
+
+    bridge = require_tokens(SHADOW / BRIDGE_MODULE,
+                            ("AVM_AuxArbScanStart", "AVM_AuxArbAuction", "AVM_AuxArbPageDone", "AVM_AuxArbScanDone",
+                             "function api.install", "function api.uninstall", "HooksIntact", "RecordDecision", "CutoverGate",
+                             "GetMoney(", "UnitName(", "pcall(observeStart", "pcall(observeAuction", "pcall(observePageDone", "pcall(observeScanDone"),
+                            "passive parity bridge")
+    for token in BRIDGE_FORBIDDEN:
+        if token in bridge: fail("passive parity bridge owns forbidden runtime primitive: " + token)
+    for token in FORBIDDEN_ACTIONS:
+        if token in bridge: fail("passive parity bridge owns forbidden AH action: " + token)
+    if bridge.count("state.originals.scanStart(resume, filterString)") != 1: fail("scan-start wrapper does not call original exactly once")
+    if bridge.count("state.originals.auction(raw)") != 1: fail("auction wrapper does not call original exactly once")
+    if bridge.count("state.originals.pageDone(page, lastPage)") != 1: fail("page-done wrapper does not call original exactly once")
+    if bridge.count("state.originals.scanDone()") != 1: fail("scan-done wrapper does not call original exactly once")
 
     contracts = require_tokens(SHADOW / "AuxEconomyShadow_Contracts.lua",
                                ("NormalizeAuction", "NormalizeListing", "bidAmount", "BetterCandidate"), "contracts")
@@ -138,8 +167,8 @@ def main() -> None:
     vendor_text = (SHADOW / "AuxEconomyShadow_Vendor.lua").read_text(encoding="utf-8")
     if vendor_text.find('"aux-learned"') > vendor_text.find('"turtle-db"'): fail("vendor priority changed")
 
-    market = require_tokens(SHADOW / "AuxEconomyShadow_MarketBook.lua",
-                            ("NormalizeListing", "ItemOffers", "ItemListings", "bidOnlyCount", "Snapshot"), "market book")
+    require_tokens(SHADOW / "AuxEconomyShadow_MarketBook.lua",
+                   ("NormalizeListing", "ItemOffers", "ItemListings", "bidOnlyCount", "Snapshot"), "market book")
 
     flip = require_tokens(SHADOW / "AuxEconomyShadow_Flip.lua",
                           ("ReferenceFloor", "flipDepthUnits", "flipHistMaxPct", "flipMinSellers", "flipMaxItemSpend", "historyByKey", 'route = "flip"'),
@@ -151,13 +180,13 @@ def main() -> None:
                            "stack evaluator")
     if "aux.core.history" in stack: fail("stack evaluator directly binds AUX history runtime")
 
-    bid = require_tokens(SHADOW / "AuxEconomyShadow_Bid.lua",
-                         ("bidVendorMarginPct", "bidDeMarginPct", "bidMaxAmount", "bidMaxDuration", "bidMaxSessionPlacements", "has-buyout", "high-bidder", 'route = route'),
-                         "bid evaluator")
+    require_tokens(SHADOW / "AuxEconomyShadow_Bid.lua",
+                   ("bidVendorMarginPct", "bidDeMarginPct", "bidMaxAmount", "bidMaxDuration", "bidMaxSessionPlacements", "has-buyout", "high-bidder", 'route = route'),
+                   "bid evaluator")
 
-    pipeline = require_tokens(SHADOW / "AuxEconomyShadow_CandidatePipeline.lua",
-                              ('"vendor"', '"disenchant"', '"flip"', '"stack"', '"bid"', "BetterCandidate", "EvaluateBook", "postscanBestAffordable", "bid-fallback"),
-                              "candidate pipeline")
+    require_tokens(SHADOW / "AuxEconomyShadow_CandidatePipeline.lua",
+                   ('"vendor"', '"disenchant"', '"flip"', '"stack"', '"bid"', "BetterCandidate", "EvaluateBook", "postscanBestAffordable", "bid-fallback"),
+                   "candidate pipeline")
 
     coord = (SHADOW / "AuxEconomyShadow_Coordinator.lua").read_text(encoding="utf-8")
     for state in ("IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"):
@@ -221,8 +250,7 @@ def main() -> None:
     print("flip=pure-readonly-history-live-depth")
     print("stack=pure-small-large-depth")
     print("bid=pure-vendor-de-fallback")
-    print("coordinator=single-state-machine")
-    print("aux_adapter=observation-only")
+    print("parity_bridge=passive-readonly-original-return-preserved")
     print("transaction_guard=real-actions-hard-locked")
     print("autosell=pure-intents-only")
     print("ledger=pure-bounded-event-store")

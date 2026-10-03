@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-parity-bridge-v1",
+  "goal": "Hot-install a passive read-only active-vs-shadow parity observer around project-owned AVM arbitrage callbacks without changing production AH decisions, queries or transactions.",
+  "branch": "feature/ah-consolidation-parity-bridge-v1",
+  "base_parallel_sha": "3b2cab37e996303cf4cdcb677373d2a01cdd2907",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-consolidation-strategies-v1"
+  ],
+  "shared_resources": [
+    "ah-consolidation-shadow-source",
+    "auction-house-economy-model",
+    "hot-lua-runtime",
+    "aux-observer-callbacks"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-consolidation-parity-bridge-v1",
+    "acquired_at": "2026-10-03T22:25:00Z",
+    "heartbeat_at": "2026-10-03T22:25:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxEconomyShadow",
+      "resource:aux-observer-callbacks"
+    ]
+  },
+  "notes": "Passive evidence stage only. Original AVM callbacks are called exactly once and their return values are preserved. Observer errors are pcall-contained. No AH query/action primitives, no frame/event/OnUpdate owner, no production cutover, TransactionGuard remains hard-locked."
+}

@@ -30,6 +30,7 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AutoSell.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Ledger.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Parity.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityBridge.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": "WoWAutoLoginBridge_5875_v1.dll",
@@ -57,6 +58,7 @@
     "autosell": "pure cancel-return-reprice-post-reconcile lifecycle emitting intents only",
     "ledger": "persistent bounded economy event ledger with summary aggregation",
     "parity": "pure comparison store for active-vs-shadow decisions and lifecycle states",
+    "parity_bridge": "passive hot-reload observer around project-owned AVM_AuxArb callbacks; original callbacks run exactly once and retain their return values",
     "states": ["IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"]
   },
   "delivery": {
@@ -71,7 +73,10 @@
     "may_send_ah_queries": false,
     "may_submit_transactions": false,
     "may_patch_global_ah_api": false,
+    "passive_project_callback_wrapping": true,
+    "wrapped_project_callbacks": ["AVM_AuxArbScanStart","AVM_AuxArbAuction","AVM_AuxArbPageDone","AVM_AuxArbScanDone"],
+    "wrapper_preserves_original_return": true,
     "real_actions_hard_locked": true
   },
-  "stage": "full_strategy_model_ready_for_passive_parity"
+  "stage": "passive_parity_bridge_ready"
 }
