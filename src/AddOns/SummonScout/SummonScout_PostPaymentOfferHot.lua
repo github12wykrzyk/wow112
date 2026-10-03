@@ -7,7 +7,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local POSTPAY_VERSION = "4-hot1"
+local POSTPAY_VERSION = "4-hot2"
 local PP = H.GetState("postpay")
 PP.pending = PP.pending or {}
 PP.lastMessageIndex = tonumber(PP.lastMessageIndex) or 0
