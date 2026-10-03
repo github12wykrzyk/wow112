@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-postpay-retry-v1",
+  "goal": "Make the post-payment thank-you and destination offer reliable by confirming the outgoing whisper and retrying once when no outgoing confirmation is observed.",
+  "branch": "feature/summonscout-postpay-retry-v1",
+  "base_parallel_sha": "5b126691daea46e5d397c22e0a8655d13be6bd2b",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout trusted payment ledger",
+    "SummonScout post-payment whisper queue",
+    "SummonScout hot payload composition"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "notes": "Post-payment only. Preserve the existing trusted wallet-delta payment trigger and payer resolution. Hold each marketing whisper until CHAT_MSG_WHISPER_INFORM confirms the exact recipient/message; retry once after a bounded delay, then fail closed to avoid duplicate spam. No summon, invite, trade-accounting, native DLL or AH behavior is changed."
+}
