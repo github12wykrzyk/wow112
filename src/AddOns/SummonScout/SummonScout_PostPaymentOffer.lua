@@ -4,7 +4,7 @@
 -- ledger. The core records a payment after a real positive wallet delta, so
 -- cancelled/zero trades cannot trigger a customer thank-you message here.
 
-local POSTPAY_VERSION = "2"
+local POSTPAY_VERSION = "3"
 
 local POSTPAY_MESSAGES = {
     "Thank you! I also offer summons to Hyjal, Hydraxis and Winterspring.",
@@ -35,7 +35,6 @@ local PP = {
     lastMessageIndex = 0,
     nextPollAt = 0,
     pending = {},
-    unresolved = {},
     guiCheck = nil,
     tradeRequestedBy = nil,
     tradePartner = nil,
@@ -108,9 +107,10 @@ local function ppResolvePaymentName(payment)
     local name = ppTrim(payment.player or "")
     if ppValidName(name) then return name end
 
-    name = ppRefreshTradePartner()
-    if not ppValidName(name)
-        and ppValidName(PP.recentClosedPartner)
+    -- The trusted ledger is written only after TRADE_CLOSED. Use only the
+    -- partner captured for that just-closed trade. Never consult a new/live
+    -- trade here: two quick customers must not be cross-attributed.
+    if ppValidName(PP.recentClosedPartner)
         and (ppNow() - (PP.recentClosedAt or 0)) <= 5.0 then
         name = PP.recentClosedPartner
     end
@@ -189,35 +189,10 @@ local function ppQueuePayment(payment)
         return
     end
 
-    -- Trade UI/name propagation can lag the wallet delta by a few frames on
-    -- 1.12/custom servers. Do not permanently lose the customer just because
-    -- the trusted ledger initially recorded UNKNOWN; retry briefly instead.
-    PP.unresolved[table.getn(PP.unresolved) + 1] = {
-        payment = payment,
-        expiresAt = ppNow() + 2.0
-    }
+    -- No safe identity evidence exists. Failing closed is preferable to
+    -- whispering a subsequent trade partner by mistake.
     if SummonScoutDB.debug then
-        ppChat("post-payment payer unresolved; retrying")
-    end
-end
-
-local function ppProcessUnresolved()
-    if table.getn(PP.unresolved) == 0 then return end
-
-    local t = ppNow()
-    local i
-    for i = table.getn(PP.unresolved), 1, -1 do
-        local item = PP.unresolved[i]
-        local name = ppResolvePaymentName(item.payment)
-        if ppValidName(name) then
-            table.remove(PP.unresolved, i)
-            ppQueueName(name)
-        elseif t >= (item.expiresAt or 0) then
-            table.remove(PP.unresolved, i)
-            if SummonScoutDB.debug then
-                ppChat("post-payment skipped -> unresolved payer")
-            end
-        end
+        ppChat("post-payment skipped -> unresolved payer")
     end
 end
 
@@ -237,7 +212,6 @@ local function ppObserveLedger()
         -- Trusted ledger was cleared/reset.
         PP.lastPaymentCount = current
         PP.pending = {}
-        PP.unresolved = {}
         return
     end
 
@@ -286,7 +260,6 @@ local function ppAttachGuiToggle()
         SummonScoutDB.postPaymentOfferEnabled = check:GetChecked() and true or false
         if not SummonScoutDB.postPaymentOfferEnabled then
             PP.pending = {}
-            PP.unresolved = {}
         end
         ppChat("post-payment thank-you + offer -> "
             .. (SummonScoutDB.postPaymentOfferEnabled and "ON" or "OFF"))
@@ -340,6 +313,9 @@ frame:SetScript("OnEvent", function()
         if ppValidName(name) then
             PP.recentClosedPartner = ppTrim(name)
             PP.recentClosedAt = ppNow()
+        else
+            PP.recentClosedPartner = nil
+            PP.recentClosedAt = ppNow()
         end
         PP.tradeRequestedBy = nil
         PP.tradePartner = nil
@@ -350,7 +326,6 @@ end)
 frame:SetScript("OnUpdate", function()
     local t = ppNow()
     if t < (PP.nextPollAt or 0) then
-        ppProcessUnresolved()
         ppProcessPending()
         return
     end
@@ -365,6 +340,5 @@ frame:SetScript("OnUpdate", function()
 
     ppAttachGuiToggle()
     ppObserveLedger()
-    ppProcessUnresolved()
     ppProcessPending()
 end)
