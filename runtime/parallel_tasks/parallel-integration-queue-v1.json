@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "parallel-integration-queue-v1",
+  "goal": "Add explicit opt-in automatic feature-to-parallel integration with serialized non-force CAS retries while independent feature development and preflight stay parallel.",
+  "branch": "feature/parallel-integration-queue-v1",
+  "base_parallel_sha": "4b8322c03e1739fba999f2f07a6dbaafe45a7f01",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments"
+  ],
+  "dependencies": [
+    "parallel-concurrency-qol-v1"
+  ],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "ai-task-coordination",
+    "github-actions-parallel-queue"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Bootstrap task for the queue itself. auto_integrate stays false because the queue cannot safely bootstrap its own integration before the workflow exists on parallel; integrate this feature manually after exact-SHA preflight PASS."
+}
