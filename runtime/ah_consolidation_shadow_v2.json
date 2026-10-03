@@ -15,9 +15,20 @@
     "close_game_required_for_lua_fix": false,
     "reload_ui_required_for_lua_fix": false,
     "persistent_anchor": "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Anchor.lua",
-    "replaceable_payload": "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua",
+    "watch_files": [
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Contracts.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Vendor.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Disenchant.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
+    ],
     "native_live_executor": null,
-    "native_live_executor_status": "planned_isolated_stage"
+    "native_live_executor_status": "planned_isolated_stage",
+    "replacement_protocol": "W112_AH_SHADOW.ReplaceModule"
+  },
+  "evaluators": {
+    "contracts": "normalized auction records and candidate ordering",
+    "vendor": "realm-learned merchant_sell first, Turtle DB fallback",
+    "disenchant": "live/depth material book with AH cut, safety margin and exposure guard; no history price cap"
   },
   "delivery": {
     "enabled": false,
@@ -32,5 +43,5 @@
     "may_submit_transactions": false,
     "may_patch_global_ah_api": false
   },
-  "stage": "hot_runtime_contract"
+  "stage": "pure_vendor_and_de_evaluators"
 }

@@ -19,6 +19,9 @@ REQUIRED = [
     SHADOW / "README.md",
     SHADOW / "AuxEconomyShadow.toc",
     SHADOW / "AuxEconomyShadow_Anchor.lua",
+    SHADOW / "AuxEconomyShadow_Contracts.lua",
+    SHADOW / "AuxEconomyShadow_Vendor.lua",
+    SHADOW / "AuxEconomyShadow_Disenchant.lua",
     SHADOW / "AuxEconomyShadow_HotPayload.lua",
 ]
 
@@ -28,6 +31,22 @@ FORBIDDEN_ACTIONS = (
     "PostAuction",
     "QueryAuctionItems",
     "UseContainerItem",
+)
+PURE_STRATEGY_FORBIDDEN = (
+    "GetAuctionItemInfo",
+    "GetNumAuctionItems",
+    "GetMoney(",
+    "UnitName(",
+    "CreateFrame(",
+    "RegisterEvent(",
+)
+DE_FORBIDDEN = (
+    "AVM_AUX_HISTORY",
+    "aux.core.history",
+    "history.value",
+    "data_points",
+    "history-cap",
+    "history cap",
 )
 
 
@@ -95,25 +114,63 @@ def main() -> None:
     if "AuxVmangos_DEPriceGuard.lua" in aux_toc:
         fail("active AuxVmangos.toc reintroduced DE price/history guard")
 
-    lua_text = "\n".join(path.read_text(encoding="utf-8") for path in SHADOW.glob("*.lua"))
+    lua_files = list(SHADOW.glob("*.lua"))
+    lua_text = "\n".join(path.read_text(encoding="utf-8") for path in lua_files)
     for token in FORBIDDEN_ACTIONS:
         if token in lua_text:
             fail(f"shadow contains forbidden AH action primitive: {token}")
 
     anchor = (SHADOW / "AuxEconomyShadow_Anchor.lua").read_text(encoding="utf-8")
-    hot = (SHADOW / "AuxEconomyShadow_HotPayload.lua").read_text(encoding="utf-8")
     for token in ("W112_AH_SHADOW", "ReplaceModule", "BeginHotPayload", "EndHotPayload"):
         if token not in anchor:
             fail(f"persistent anchor missing hot contract token: {token}")
+
+    for name in ("AuxEconomyShadow_Contracts.lua", "AuxEconomyShadow_Vendor.lua", "AuxEconomyShadow_Disenchant.lua"):
+        text = (SHADOW / name).read_text(encoding="utf-8")
+        if "ReplaceModule" not in text:
+            fail(f"hot module does not use ReplaceModule: {name}")
+        for token in PURE_STRATEGY_FORBIDDEN:
+            if token in text:
+                fail(f"pure strategy {name} uses game/runtime primitive: {token}")
+
+    de_text = (SHADOW / "AuxEconomyShadow_Disenchant.lua").read_text(encoding="utf-8")
+    for token in DE_FORBIDDEN:
+        if token.lower() in de_text.lower():
+            fail(f"DE evaluator reintroduced forbidden historical price anchor: {token}")
+    if "DepthPrice" not in de_text or "deSafetyMarginPct" not in de_text or "deAhCutPct" not in de_text:
+        fail("DE evaluator missing live-depth/cut/margin contract")
+
+    vendor_text = (SHADOW / "AuxEconomyShadow_Vendor.lua").read_text(encoding="utf-8")
+    if vendor_text.find('"aux-learned"') > vendor_text.find('"turtle-db"'):
+        fail("vendor source priority changed: aux-learned must remain before Turtle fallback")
+
+    hot = (SHADOW / "AuxEconomyShadow_HotPayload.lua").read_text(encoding="utf-8")
     if "CreateFrame(" in hot or "RegisterEvent(" in hot or "ADDON_LOADED" in hot:
         fail("hot payload may not create unmanaged frame/event ownership")
-    if "AVM_SHADOW_DB" not in (SHADOW / "AuxEconomyShadow.toc").read_text(encoding="utf-8"):
+
+    toc = (SHADOW / "AuxEconomyShadow.toc").read_text(encoding="utf-8")
+    if "AVM_SHADOW_DB" not in toc:
         fail("shadow SavedVariables namespace is not isolated")
+    expected_order = [
+        "AuxEconomyShadow_Anchor.lua",
+        "AuxEconomyShadow_Contracts.lua",
+        "AuxEconomyShadow_Vendor.lua",
+        "AuxEconomyShadow_Disenchant.lua",
+        "AuxEconomyShadow_HotPayload.lua",
+    ]
+    pos = -1
+    for name in expected_order:
+        next_pos = toc.find(name)
+        if next_pos <= pos:
+            fail("shadow TOC hot module order is invalid")
+        pos = next_pos
 
     print("AH_CONSOLIDATION_SHADOW_V2: PASS")
     print(f"base_parallel_sha={manifest['base_parallel_sha']}")
     print("delivery=inactive")
-    print("hot_reload_contract=persistent-anchor+replaceable-payload")
+    print("hot_reload_contract=persistent-anchor+replaceable-modules")
+    print("vendor_evaluator=pure")
+    print("de_evaluator=pure-live-depth-no-history-cap")
     print("de_rollback_guard=preserved")
 
 

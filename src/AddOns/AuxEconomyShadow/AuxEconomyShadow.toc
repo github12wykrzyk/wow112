@@ -1,10 +1,13 @@
 ## Interface: 11200
 ## Title: Aux Economy Shadow
-## Notes: Inactive side-by-side AH consolidation runtime; persistent anchor plus hot payload.
+## Notes: Inactive side-by-side AH consolidation runtime; persistent hot-replace modules.
 ## Author: github12wykrzyk/wow112
-## Version: 0.2-shadow-hot
+## Version: 0.3-shadow-evaluators
 ## Dependencies: aux-addon
 ## SavedVariables: AVM_SHADOW_DB
 
 AuxEconomyShadow_Anchor.lua
+AuxEconomyShadow_Contracts.lua
+AuxEconomyShadow_Vendor.lua
+AuxEconomyShadow_Disenchant.lua
 AuxEconomyShadow_HotPayload.lua
