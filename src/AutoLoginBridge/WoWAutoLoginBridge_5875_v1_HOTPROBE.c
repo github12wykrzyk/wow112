@@ -21,7 +21,7 @@
 #define HOT_STABLE_MS        250u
 #define HOT_PAYLOAD_CAP      65536u
 #define HOT_PATH_CAP         1024u
-#define HOT_FILE_COUNT       1u
+#define HOT_FILE_COUNT       2u
 
 #define HOT_STATUS_DETACHED       0u
 #define HOT_STATUS_WAIT_WORLD     1u
@@ -40,10 +40,12 @@
 #define RETRY_DELAY_SPAN_MS   2000u
 
 static const char *g_hot_suffixes[HOT_FILE_COUNT]={
-    "Interface\\AddOns\\SummonScout\\SummonScout_PostPaymentOfferHot.lua"
+    "Interface\\AddOns\\SummonScout\\SummonScout_PostPaymentOfferHot.lua",
+    "Interface\\AddOns\\SummonScout\\SummonScout_WhisperConfirmSpam.lua"
 };
 static const char *g_hot_source_names[HOT_FILE_COUNT]={
-    "SummonScout/SummonScout_PostPaymentOfferHot.lua"
+    "SummonScout/SummonScout_PostPaymentOfferHot.lua",
+    "SummonScout/SummonScout_WhisperConfirmSpam.lua"
 };
 
 static UINT_PTR g_hot_timer=0u;

@@ -9,7 +9,10 @@ SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c"
 DLL_NAME="WoWAutoLoginBridge_5875_v1.dll"
 DLL_LIST="dlls.txt"
 PROFILE="clangcl_i686_win32imports"
-HOT_PAYLOADS=("Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",)
+HOT_PAYLOADS=(
+    "Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",
+    "Interface/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua",
+)
 HOT_PAYLOAD=HOT_PAYLOADS[0]
 
 def repack(package,dll):
@@ -62,7 +65,7 @@ def main():
       "hot_lua_execute":"0x00704CD0",
       "hot_lua_payload":HOT_PAYLOAD,
       "hot_lua_payloads":list(HOT_PAYLOADS),
-      "hot_lua_scope":"SummonScout post-payment module",
+      "hot_lua_scope":"SummonScout hot modules: post-payment + whisper-confirm",
       "hot_lua_poll_ms":250,
       "timings_ms":timing
     }
@@ -97,7 +100,7 @@ def main():
             "hot_lua_execute":"0x00704CD0",
             "hot_lua_payload":HOT_PAYLOAD,
             "hot_lua_payloads":list(HOT_PAYLOADS),
-            "hot_lua_scope":"SummonScout post-payment module",
+            "hot_lua_scope":"SummonScout hot modules: post-payment + whisper-confirm",
             "hot_lua_poll_ms":250
         }
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
