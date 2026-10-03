@@ -29,6 +29,18 @@ def file_rows(paths):
     return out
 
 
+def root_rows(paths):
+    out = []
+    for value in paths:
+        root = ROOT / value
+        if not root.is_dir():
+            raise SystemExit("missing fingerprint root: " + value)
+        for p in root.rglob("*"):
+            if p.is_file():
+                out.append((str(p.relative_to(ROOT)).replace("\\", "/"), p.read_bytes()))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--output", default="dist/economy_fingerprint.json")
@@ -54,6 +66,10 @@ def main():
                 addon_rows.append((str(p.relative_to(ROOT)).replace("\\", "/"), p.read_bytes()))
     for item in data["addons"].get("external", []):
         addon_rows.append(("external:" + item["destination"], (item["repository"] + "@" + item["commit"]).encode("utf-8")))
+    for item in data.get("hot_hosts", []):
+        addon_rows.extend(file_rows([item["source"]] + list(item.get("fingerprint_files", []))))
+        addon_rows.extend(root_rows(item.get("fingerprint_roots", [])))
+        addon_rows.append(("hot-host-runtime:" + item["runtime_path"], json.dumps(item.get("transforms", []), separators=(",", ":")).encode("utf-8")))
     addon = digest_rows(addon_rows)
     profile = digest_rows([
         ("native", native.encode("ascii")),

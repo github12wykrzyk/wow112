@@ -4,10 +4,18 @@ import json
 import re
 from pathlib import Path
 
+from ah_shadow_hot_bundle import BUNDLE_MARKER, HOST_NAME, transform_summonscout_host
+from summonscout_hot_transform import transform_file as transform_summonscout_file
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "runtime/parallel_economy.json"
 PARALLEL = ROOT / "runtime/parallel_candidate.json"
 SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+EXPECTED_HOT_RUNTIME = "Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua"
+EXPECTED_HOT_SOURCE = "src/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua"
+EXPECTED_TRANSFORMS = ["summonscout_hot_transform", "ah_shadow_hot_bundle"]
+EXPECTED_FP_FILES = ["tools/summonscout_hot_transform.py", "tools/ah_shadow_hot_bundle.py"]
+EXPECTED_FP_ROOTS = ["src/AddOns/AuxEconomyShadow"]
 
 
 def fail(msg):
@@ -55,7 +63,47 @@ def main():
     row = ext[0]
     if row.get("destination") != "aux-addon" or row.get("repository") != "shirsig/aux-addon-vanilla" or not SHA.fullmatch(str(row.get("commit") or "")):
         fail("invalid external aux pin")
+
+    hot_hosts = data.get("hot_hosts")
+    if not isinstance(hot_hosts, list) or len(hot_hosts) != 1:
+        fail("expected exactly one ECONOMY hot host")
+    hot = hot_hosts[0]
+    if hot.get("runtime_path") != EXPECTED_HOT_RUNTIME or hot.get("source") != EXPECTED_HOT_SOURCE:
+        fail("unexpected ECONOMY hot host path/source")
+    if hot.get("transforms") != EXPECTED_TRANSFORMS:
+        fail("unexpected ECONOMY hot host transform chain")
+    if hot.get("fingerprint_files") != EXPECTED_FP_FILES or hot.get("fingerprint_roots") != EXPECTED_FP_ROOTS:
+        fail("hot host fingerprint coverage drift")
+    if not isinstance(hot.get("purpose"), str) or not hot.get("purpose"):
+        fail("hot host purpose missing")
+    source_path = ROOT / EXPECTED_HOT_SOURCE
+    if not source_path.is_file() or source_path.name != HOST_NAME:
+        fail("hot host source missing or filename drifted")
+    for path in EXPECTED_FP_FILES:
+        if not (ROOT / path).is_file():
+            fail("hot host fingerprint file missing: " + path)
+    for path in EXPECTED_FP_ROOTS:
+        if not (ROOT / path).is_dir():
+            fail("hot host fingerprint root missing: " + path)
+
+    auto = [x for x in full.get("companions", []) if x.get("runtime_name") == "WoWAutoLoginBridge_5875_v1.dll"]
+    if len(auto) != 1 or len(auto[0].get("sources", [])) != 1:
+        fail("exact AutoLoginBridge hot watcher declaration missing")
+    watcher_path = ROOT / auto[0]["sources"][0]
+    watcher_text = watcher_path.read_text(encoding="utf-8")
+    if "SummonScout\\\\SummonScout_PostPaymentOfferHot.lua" not in watcher_text:
+        fail("AutoLoginBridge no longer watches ECONOMY hot host")
+
+    packed = transform_summonscout_file(HOST_NAME, source_path.read_bytes())
+    packed = transform_summonscout_host(HOST_NAME, packed)
+    if packed.count(BUNDLE_MARKER) != 1:
+        fail("transformed ECONOMY hot host does not contain exactly one AH bundle")
+    if len(packed) >= 262144:
+        fail("transformed ECONOMY hot host exceeds native watcher payload cap")
+
     print("PARALLEL_ECONOMY_MANIFEST: PASS")
+    print("hot_host=" + EXPECTED_HOT_RUNTIME)
+    print("hot_fix_requires_close=false reload=false")
     return 0
 
 

@@ -28,6 +28,24 @@
       }
     ]
   },
+  "hot_hosts": [
+    {
+      "runtime_path": "Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",
+      "source": "src/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",
+      "transforms": [
+        "summonscout_hot_transform",
+        "ah_shadow_hot_bundle"
+      ],
+      "fingerprint_files": [
+        "tools/summonscout_hot_transform.py",
+        "tools/ah_shadow_hot_bundle.py"
+      ],
+      "fingerprint_roots": [
+        "src/AddOns/AuxEconomyShadow"
+      ],
+      "purpose": "Reuse the existing AutoLoginBridge watched Lua path for ECONOMY-only AuxEconomyShadow hot fixes without closing WoW or /reload."
+    }
+  ],
   "delivery": {
     "workflow": ".github/workflows/build_parallel_economy.yml",
     "artifact_prefix": "WoW112-PARALLEL-ECONOMY-",

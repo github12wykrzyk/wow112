@@ -11,9 +11,13 @@ import tempfile
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from ah_shadow_hot_bundle import transform_summonscout_host
+from summonscout_hot_transform import transform_file as transform_summonscout_file
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "runtime/parallel_economy.json"
 ALLOWED_ADDON_EXT = {".lua", ".toc", ".xml", ".tga", ".blp", ".ttf", ".txt", ".md", ".wav", ".mp3", ".ogg", ".jpg", ".jpeg", ".png"}
+EXPECTED_HOT_TRANSFORMS = ["summonscout_hot_transform", "ah_shadow_hot_bundle"]
 
 
 def sha(data):
@@ -72,6 +76,31 @@ def safe_addon_files(root_name, source):
     return out
 
 
+def safe_hot_host(item):
+    runtime_path = item.get("runtime_path")
+    source_name = item.get("source")
+    transforms = item.get("transforms")
+    if not isinstance(runtime_path, str) or not runtime_path.startswith("Interface/AddOns/"):
+        raise SystemExit("invalid ECONOMY hot host runtime path")
+    if "\\" in runtime_path or ":" in runtime_path or ".." in Path(runtime_path).parts:
+        raise SystemExit("unsafe ECONOMY hot host runtime path")
+    if Path(runtime_path).suffix.lower() not in ALLOWED_ADDON_EXT:
+        raise SystemExit("unsupported ECONOMY hot host extension")
+    if not isinstance(source_name, str) or not source_name.startswith("src/AddOns/"):
+        raise SystemExit("invalid ECONOMY hot host source")
+    if transforms != EXPECTED_HOT_TRANSFORMS:
+        raise SystemExit("unsupported ECONOMY hot host transform chain")
+    source = ROOT / source_name
+    if not source.is_file():
+        raise SystemExit("missing ECONOMY hot host source: " + source_name)
+    data = source.read_bytes()
+    data = transform_summonscout_file(source.name, data)
+    data = transform_summonscout_host(source.name, data)
+    if len(data) >= 262144:
+        raise SystemExit("ECONOMY hot host exceeds native watcher payload cap")
+    return runtime_path, data, "addon"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sha", required=True)
@@ -105,6 +134,8 @@ def main():
         rows.extend(safe_addon_files(name, ROOT / "src/AddOns" / name))
     for item in cfg["addons"].get("external", []):
         rows.extend(safe_addon_files(item["destination"], checkout_external(item)))
+    for item in cfg.get("hot_hosts", []):
+        rows.append(safe_hot_host(item))
 
     names = [x[0] for x in rows]
     if len(names) != len({x.lower() for x in names}):

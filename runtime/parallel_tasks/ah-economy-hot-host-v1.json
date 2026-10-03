@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "ah-economy-hot-host-v1",
+  "goal": "Deliver the already watched SummonScout Lua hot host as an explicit ECONOMY overlay asset so AuxEconomyShadow Lua fixes can apply with WoW running and without /reload, without adding a new native watcher.",
+  "branch": "feature/ah-economy-hot-host-v1",
+  "base_parallel_sha": "5b126691daea46e5d397c22e0a8655d13be6bd2b",
+  "modules": [
+    "AuxEconomyShadow",
+    "ECONOMY",
+    "SummonScout"
+  ],
+  "dependencies": [
+    "ah-consolidation-hotreload-v2"
+  ],
+  "shared_resources": [
+    "economy-addon-packaging",
+    "SummonScout hot payload composition",
+    "hot-lua-runtime",
+    "addon-packager-transform"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "notes": "Feature code passed exact-SHA preflight at 7a5689ae764a09275a7a84b29b414c04ff339053. ECONOMY gains one manifest-declared Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua asset built from the exact parallel SummonScout source plus the existing AH shadow bundle transform. Updater applies addon paths live and AutoLoginBridge already watches this exact path. Queue integration remains non-force and profile-gated.",
+  "integrated_feature_sha": "2d394320c989c67491632d722557a501ed766a72"
+}
