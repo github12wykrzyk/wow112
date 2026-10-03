@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "ah-buy-blacklist-stack1-v1",
+  "goal": "Add an account-wide native AUX blacklist for all AuxVmangos automatic BUY/BID paths while preserving manual AUX purchases, and verify the existing post default remains stack size 1 for every character.",
+  "branch": "feature/ah-buy-blacklist-stack1-v1",
+  "base_parallel_sha": "c4e35928deab3b07e667b94631c61dc63510d9a6",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "auction-house-auto-purchase",
+    "aux-native-tabs",
+    "aux-post-defaults"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "STANDARD",
+    "ECONOMY"
+  ],
+  "notes": "Blacklist is stored in account-wide AVM_DB, filters AUX_ARB rows before candidate creation, and wraps PlaceAuctionBid only when the auction row matches an AVM automatic candidate. Existing AuxVmangos_PostDefaults already resets the selected Post stack-size slider to 1 after upstream item selection on every character, so no duplicate stack-default implementation is added."
+}
