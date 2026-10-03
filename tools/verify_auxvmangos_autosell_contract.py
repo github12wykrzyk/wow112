@@ -68,7 +68,7 @@ def main() -> int:
     require(lifecycle, "p.ownerGone = false", "repost withheld before mail evidence")
 
     # Iteration A: state-machine hardening must remain present as one overlay.
-    require(lifecycle, "p.lastProbeOutcome = 'aborted'", "aborted probe evidence")
+    require(lifecycle, "current.lastProbeOutcome = 'aborted'", "aborted probe evidence")
     require(lifecycle, "p.state = 'WAIT_REPRICE'", "retry state after unsafe/incomplete probe")
     require(lifecycle, "p.state = 'POST_RECOVER'", "reload recovery for interrupted post")
     require(lifecycle, "post-found-on-owner-snapshot", "owner reconciliation after interrupted post")
