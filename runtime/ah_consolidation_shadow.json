@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "experiment": "ah-consolidation-shadow-v1",
+  "branch": "feature/ah-consolidation-shadow-v1",
+  "base_branch": "parallel",
+  "base_commit": "3c48d8a740af2621310c79b7e4e2efeb01a8c4a7",
+  "source_root": "src/AddOns/AuxEconomyShadow",
+  "purpose": "Side-by-side staging area for consolidating project-owned Auction House behavior without changing the currently working AH stack.",
+  "delivery": {
+    "enabled": false,
+    "active_parallel_candidate": false,
+    "active_economy_overlay": false,
+    "updater_visible": false
+  },
+  "safety": {
+    "must_not_modify_active_ah": true,
+    "must_not_wrap_global_ah_api": true,
+    "must_not_send_ah_queries": true,
+    "must_not_submit_transactions": true,
+    "must_not_be_listed_in_active_addon_roots": true
+  },
+  "target_modules": [
+    "Coordinator",
+    "AuxAdapter",
+    "VendorStrategy",
+    "DisenchantStrategy",
+    "FlipStrategy",
+    "StackBidStrategy",
+    "TransactionGuard",
+    "AutoSell",
+    "LedgerUI"
+  ],
+  "cutover_gate": "No production manifest switch until behavior-equivalence evidence, feature preflight, exact parallel build/package/provenance gates and explicit in-game acceptance all pass."
+}

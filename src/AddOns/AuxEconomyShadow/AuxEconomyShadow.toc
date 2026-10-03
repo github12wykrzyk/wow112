@@ -1,0 +1,10 @@
+## Interface: 11200
+## Title: AuxEconomyShadow
+## Notes: Read-only AH consolidation staging module. Not delivered by active manifests.
+## Author: github12wykrzyk/wow112
+## Version: 0.1-shadow
+## Dependencies: aux-addon
+## SavedVariables: AVM_SHADOW_DB
+AuxEconomyShadow_Contracts.lua
+AuxEconomyShadow_Coordinator.lua
+AuxEconomyShadow_AuxAdapter.lua
