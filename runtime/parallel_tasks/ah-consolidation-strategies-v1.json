@@ -10,5 +10,16 @@
   "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": ["economy"],
+  "lease": {
+    "owner": "chatgpt:ah-strategies-v1",
+    "acquired_at": "2026-10-03T20:51:30Z",
+    "heartbeat_at": "2026-10-03T20:51:30Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxEconomyShadow",
+      "resource:ah-consolidation-shadow-source",
+      "resource:auction-house-economy-model"
+    ]
+  },
   "notes": "Shadow-only strategy parity stage. Production AuxVmangos remains owner. No AH queries, purchases, posts, cancels or global API patching. DE rollback remains preserved; history is allowed only for Flip/Stack parity and is supplied read-only through context."
 }
