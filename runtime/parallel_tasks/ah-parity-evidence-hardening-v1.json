@@ -4,33 +4,13 @@
   "goal": "Make passive AH parity evidence reliable by resolving active postscan/bid candidates after active consumption and ordering the cold-start hot host after AuxVmangos when present.",
   "branch": "feature/ah-parity-evidence-hardening-v1",
   "base_parallel_sha": "be342e9ef615c67a8f2a169080e5af496c1d53ac",
-  "modules": [
-    "AuxEconomyShadow",
-    "SummonScout"
-  ],
-  "dependencies": [
-    "ah-consolidation-parity-bridge-v1"
-  ],
-  "shared_resources": [
-    "aux-observer-callbacks",
-    "addon-load-order",
-    "parity-evidence"
-  ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
-  "delivery_profiles": [
-    "economy"
-  ],
-  "lease": {
-    "owner": "chatgpt:ah-parity-evidence-hardening-v1",
-    "acquired_at": "2026-10-03T23:16:00Z",
-    "heartbeat_at": "2026-10-03T23:27:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "resource:addon-load-order",
-      "resource:parity-evidence"
-    ]
-  },
-  "notes": "Evidence-only hardening. Production AuxVmangos still owns all AH decisions/actions. ScanDone resolves active candidates from postscanCandidate/auxArb.candidate/AVM.candidate/AVM.bidCandidate and compares pipeline result.selected so bid fallback is included. SummonScout OptionalDeps: AuxVmangos makes cold-start ordering deterministic when both addons are present. No transaction/query primitive added. Exact feature SHA 16e5b40e4c6b4142ce64ef4d1db8cb9a0810b1cc passed preflight run 37161661205 and ECONOMY run 37161727603, artifact 11287428773; this successor opts into serialized integration."
+  "modules": ["AuxEconomyShadow", "SummonScout"],
+  "dependencies": ["ah-consolidation-parity-bridge-v1"],
+  "shared_resources": ["aux-observer-callbacks", "addon-load-order", "parity-evidence"],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": ["economy"],
+  "lease": null,
+  "integrated_feature_sha": "f493d371fc244c2c763491290b9594f61127655d",
+  "notes": "Integrated to parallel cfa1db3518fd2474293d026d76257571371b5311. Exact queue run 37161789142 passed. Integrated STANDARD run 37161881819 artifact 11288216049 and ECONOMY run 37161886585 artifact 11288201083 passed. Lease released after integration. Production AuxVmangos remains AH owner; evidence observer only."
 }
