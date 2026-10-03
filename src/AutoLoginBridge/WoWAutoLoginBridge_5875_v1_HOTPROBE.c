@@ -266,8 +266,17 @@ static DWORD hot_tick_file(DWORD index,DWORD now)
         return HOT_STATUS_READ_FAILED;
     }
 
-    if(g_hot_have_last[index] &&
-       hash==g_hot_last_hash[index] &&
+    /* Cold seed: files already loaded by the TOC establish the baseline only.
+       The watcher executes Lua only after a real on-disk change from this hash. */
+    if(!g_hot_have_last[index]) {
+        g_hot_last_hash[index]=hash;
+        g_hot_last_size[index]=size;
+        g_hot_have_last[index]=1;
+        g_hot_have_candidate[index]=0;
+        return HOT_STATUS_WATCHING;
+    }
+
+    if(hash==g_hot_last_hash[index] &&
        size==g_hot_last_size[index]) {
         g_hot_have_candidate[index]=0;
         return HOT_STATUS_WATCHING;
