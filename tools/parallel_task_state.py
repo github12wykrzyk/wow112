@@ -15,7 +15,7 @@ IDENT = re.compile(r"[a-z0-9][a-z0-9-]{1,79}\Z")
 MODULE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{1,79}\Z")
 PROFILE = re.compile(r"[a-z][a-z0-9-]{1,39}\Z")
 RESOLVED_DEPENDENCY_STATUSES = {"integrated", "test_ready", "done"}
-HISTORICAL_STATUSES = RESOLVED_DEPENDENCY_STATUSES | {"superseded"}
+LEGACY_PROFILE_ALIASES = {"STANDARD", "ECONOMY", "UPDATER", "AUTOLOGINBRIDGE", "AUTOLOGIN_BRIDGE"}
 
 
 def require(condition, message):
@@ -101,10 +101,12 @@ def validate_task(task, policy, filename=None):
     require(isinstance(profiles, list) and len(set(profiles)) == len(profiles)
             and all(isinstance(item, str) and item.strip() for item in profiles),
             "delivery_profiles must be unique non-empty strings")
-    if status not in HISTORICAL_STATUSES:
-        supported = set(policy["delivery_profiles"])
+    supported = set(policy["delivery_profiles"])
+    require(all(item in supported or item in LEGACY_PROFILE_ALIASES for item in profiles),
+            "unsupported delivery profile names")
+    if auto_integrate:
         require(all(item in supported for item in profiles),
-                "active delivery_profiles must use supported profile names")
+                "auto-integrating delivery_profiles must use canonical supported profile names")
     notes = task.get("notes")
     require(notes is None or isinstance(notes, str), "notes must be a string when present")
     return task
