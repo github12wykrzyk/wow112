@@ -29,6 +29,7 @@ MODULES = [
     "AuxEconomyShadow_TransactionGuard.lua",
     "AuxEconomyShadow_AutoSell.lua",
     "AuxEconomyShadow_Ledger.lua",
+    "AuxEconomyShadow_Parity.lua",
 ]
 REQUIRED = [TASK, MANIFEST, SHADOW / "README.md", SHADOW / "AuxEconomyShadow.toc",
             SHADOW / "AuxEconomyShadow_Anchor.lua", SHADOW / "AuxEconomyShadow_HotPayload.lua",
@@ -153,6 +154,10 @@ def main() -> None:
     for token in ("Record", "Recent", "Summary", "SetMaxRows"):
         if token not in ledger: fail("ledger missing " + token)
 
+    parity = (SHADOW / "AuxEconomyShadow_Parity.lua").read_text(encoding="utf-8")
+    for token in ("RecordDecision", "RecordLifecycle", "RuntimeSnapshot", "decisionMatchPct", "shadow-miss", "shadow-extra", "different-candidate"):
+        if token not in parity: fail("parity diagnostics missing " + token)
+
     hot = (SHADOW / "AuxEconomyShadow_HotPayload.lua").read_text(encoding="utf-8")
     if any(x in hot for x in ("CreateFrame(", "RegisterEvent(", "ADDON_LOADED")):
         fail("hot payload owns unmanaged frame/event")
@@ -190,6 +195,7 @@ def main() -> None:
     print("transaction_guard=real-actions-hard-locked")
     print("autosell=pure-intents-only")
     print("ledger=pure-bounded-event-store")
+    print("parity=pure-active-vs-shadow-comparator")
     print("de_rollback_guard=preserved")
 
 

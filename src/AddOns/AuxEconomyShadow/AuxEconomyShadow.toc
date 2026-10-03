@@ -2,7 +2,7 @@
 ## Title: Aux Economy Shadow
 ## Notes: Inactive side-by-side AH consolidation runtime; persistent hot-replace modules.
 ## Author: github12wykrzyk/wow112
-## Version: 0.7-shadow-autosell-ledger
+## Version: 0.8-shadow-parity
 ## Dependencies: aux-addon
 ## SavedVariables: AVM_SHADOW_DB
 
@@ -17,4 +17,5 @@ AuxEconomyShadow_AuxAdapter.lua
 AuxEconomyShadow_TransactionGuard.lua
 AuxEconomyShadow_AutoSell.lua
 AuxEconomyShadow_Ledger.lua
+AuxEconomyShadow_Parity.lua
 AuxEconomyShadow_HotPayload.lua

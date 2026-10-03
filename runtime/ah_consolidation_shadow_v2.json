@@ -26,6 +26,7 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_TransactionGuard.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AutoSell.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Ledger.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Parity.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": "WoWAutoLoginBridge_5875_v1.dll",
@@ -49,6 +50,7 @@
     "transaction_guard": "single future transaction authority; real actions hard-locked in shadow",
     "autosell": "pure cancel-return-reprice-post-reconcile lifecycle emitting intents only",
     "ledger": "persistent bounded economy event ledger with summary aggregation",
+    "parity": "pure comparison store for active-vs-shadow decisions and lifecycle states",
     "states": ["IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"]
   },
   "delivery": {
@@ -65,5 +67,5 @@
     "may_patch_global_ah_api": false,
     "real_actions_hard_locked": true
   },
-  "stage": "existing_hot_watcher_bundle_routing"
+  "stage": "parity_diagnostics_ready"
 }

@@ -23,6 +23,7 @@ ORDER = (
     "AuxEconomyShadow_TransactionGuard.lua",
     "AuxEconomyShadow_AutoSell.lua",
     "AuxEconomyShadow_Ledger.lua",
+    "AuxEconomyShadow_Parity.lua",
     "AuxEconomyShadow_HotPayload.lua",
 )
 
