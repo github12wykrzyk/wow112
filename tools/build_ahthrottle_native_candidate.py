@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Build the production-safe AH companion and append it to the verified parallel candidate ZIP."""
+"""Build AH native throttle diagnostic and append it to the verified parallel candidate ZIP."""
 import argparse, json, os, tempfile, time, zipfile
 from pathlib import Path
 from build_active_module import build_one, sha256_file
 
 ROOT=Path(__file__).resolve().parents[1]
-SOURCE=ROOT/"src/AHThrottleNative/WoWAHThrottleNative_5875_v9_PRODUCTION_SAFE.c"
+SOURCE=ROOT/"src/AHThrottleNative/WoWAHThrottleNative_5875_v8_FASTMARKET.c"
 DLL_NAME="WoWAHThrottleNative_5875_v8_FASTMARKET.dll"
 DLL_LIST_NAME="dlls.txt"
 PROFILE="clangcl_i686_crtless"
@@ -58,24 +58,24 @@ def main():
     if summary.get("result")!="PASS" or not summary.get("ready_for_test"): raise SystemExit("base candidate not READY_FOR_TEST")
     timing,pe=build_one(PROFILE,SOURCE,output.with_suffix(".obj"),output)
     if pe.get("machine_hex")!="0x014C" or pe.get("entrypoint_rva")==0 or pe.get("has_import_directory"):
-        raise SystemExit("AH production-safe companion PE32/x86/crtless verification failed")
+        raise SystemExit("AH native diagnostic PE32/x86/crtless verification failed")
     module={
       "name":DLL_NAME,"source_path":str(SOURCE.relative_to(ROOT)).replace("\\","/"),
       "source_sha256":sha256_file(SOURCE),"build_profile":PROFILE,"toolchain_mode":timing.get("mode"),
       "sha256":sha256_file(output),"size":output.stat().st_size,"pe_machine":pe.get("machine_hex"),
       "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
-      "module_id":"ahthrottle_native","settings":["production-safe inert AH companion","legacy runtime filename retained for updater replacement","no hooks","no timers","no FrameScript callbacks","no QueryAuctionItems cooldown patch","F5/F2 native probe excluded from production runtime","no bid/buy"]
+      "module_id":"ahthrottle_native","settings":["diagnostic-only","F5 trigger","10 alternating stages x500","75ms vs 125ms repeatability","native SMSG 0x025C receive probe","AUX native response correlation callback","AUX real outbound CMSG counter","exact-build QueryAuctionItems cooldown 5000ms->25ms with unload restore","F2 response-paced full-market scan","one in-flight query","no bid/buy"]
     }
     expected=deterministic_repack(package,output)
     with zipfile.ZipFile(package) as z:
         names=z.namelist(); loader=[x.strip() for x in z.read(DLL_LIST_NAME).decode("ascii").splitlines() if x.strip()]
-    if DLL_NAME not in names or DLL_NAME not in loader or loader!=expected: raise SystemExit("AH production-safe companion packaging mismatch")
+    if DLL_NAME not in names or DLL_NAME not in loader or loader!=expected: raise SystemExit("AH native diagnostic packaging mismatch")
     if {x.lower() for x in names if x.lower().endswith(".dll")}!={x.lower() for x in loader}: raise SystemExit("dlls.txt mismatch")
     psha=sha256_file(package);psz=package.stat().st_size
     extras=append_extra(meta.get("candidate_extra_dlls"),module)
-    pilot={"module":DLL_NAME,"branch":"parallel","mode":"production-safe-inert","trigger":"none in production runtime",
-           "capture":"disabled","receive_probe":"disabled; no NetClient handler hook","fast_market":"disabled in production runtime; historical v8 source remains in repo for isolated diagnostic work","aux_query_cooldown":"stock WoW 5875 behavior untouched; no memory patch","intervals_ms":[],"stage_sends":0,
-           "chain":"none","safety":"no game-memory hooks, timers, packet replay or Lua callbacks; legacy DLL filename is retained only so updater replaces older hooking builds",
+    pilot={"module":DLL_NAME,"branch":"parallel","trigger":"F5 while AH open and CanSendAuctionQuery=true",
+           "capture":"exact outbound opcode 0x258 at ClientServices::Send","receive_probe":"NetClient handler table opcode 0x25C -> verified 0x004CC7F0, passive wrapper counts calls and sanity-checks auction count","fast_market":"F2 baseline capture; one request in flight; next page only after native 0x25C handler + Lua aggregation; 25ms settle; 1500ms fail-closed timeout","aux_query_cooldown":"exact WoW 5875 QueryAuctionItems add eax,0x1388 at 0x004CEC47; immediate at 0x004CEC48 runtime-patched to 25ms after signature check and restored on unload","intervals_ms":[75,125,75,125,75,125,75,125,75,125],"stage_sends":500,
+           "chain":"replay through pre-existing send hook target","safety":"only captured CMSG_AUCTION_LIST_ITEMS is replayed; listfrom is the only mutated payload field; no auction bid/buy opcode",
            "game_runtime_tested":False}
     meta.update({"zip_root_entries":names,"package_sha256":psha,"package_size":psz,
                  "candidate_extra_dll_count":len(extras),"candidate_extra_dlls":extras,
@@ -93,6 +93,6 @@ def main():
                    "loader_manifest":meta["loader_manifest"],"process_total_ms":(time.perf_counter()-t0)*1000.0})
     bm.write_text(json.dumps(module,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(module,indent=2))
-    if not summary["ready_for_test"]: raise SystemExit("AH production-safe candidate not READY_FOR_TEST")
+    if not summary["ready_for_test"]: raise SystemExit("AH native candidate not READY_FOR_TEST")
     return 0
 if __name__=="__main__": raise SystemExit(main())

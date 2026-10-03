@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-rollback-pre-de-history-v2",
+  "goal": "Restore the current parallel AH/economy stack to the exact pre-DE-history behavior from f8246abf8d8cebbbe25abc21e687a8e5e25d5c4c while preserving unrelated modern parallel modules.",
+  "branch": "feature/ah-rollback-pre-de-history-v2",
+  "base_parallel_sha": "c87df73ffacd5484f7a4b4aa159497d3d26f2a7d",
+  "modules": [
+    "AuxVmangos",
+    "AuxFastBridge",
+    "AHThrottleNative"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "auction-house-query-runtime",
+    "aux-fast-bridge",
+    "aux-de-valuation"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "STANDARD",
+    "ECONOMY"
+  ],
+  "notes": "Rollback scope is intentionally limited to AH/economy files changed after f8246abf. Summon, Movement, Login and parallel workflow/concurrency infrastructure remain at the current parallel baseline."
+}
