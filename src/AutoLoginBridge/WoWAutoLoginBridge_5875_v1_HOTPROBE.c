@@ -21,6 +21,7 @@
 #define HOT_STABLE_MS        250u
 #define HOT_PAYLOAD_CAP      65536u
 #define HOT_PATH_CAP         1024u
+#define HOT_FILE_COUNT       1u
 
 #define HOT_STATUS_DETACHED       0u
 #define HOT_STATUS_WAIT_WORLD     1u
@@ -37,6 +38,13 @@
 #define RETRY_FALLBACK_MS     8000u
 #define RETRY_DELAY_MIN_MS    2500u
 #define RETRY_DELAY_SPAN_MS   2000u
+
+static const char *g_hot_suffixes[HOT_FILE_COUNT]={
+    "Interface\\AddOns\\SummonScout\\SummonScout_PostPaymentOfferHot.lua"
+};
+static const char *g_hot_source_names[HOT_FILE_COUNT]={
+    "SummonScout/SummonScout_PostPaymentOfferHot.lua"
+};
 
 static UINT_PTR g_hot_timer=0u;
 static volatile DWORD g_hot_status=HOT_STATUS_DETACHED;
@@ -75,7 +83,7 @@ static int hot_build_path(void)
 {
     DWORD n=GetModuleFileNameA(NULL,g_hot_path,HOT_PATH_CAP);
     DWORD i,used;
-    static const char suffix[]="Interface\\AddOns\\SummonScout\\SummonScout_PostPaymentOfferHot.lua";
+    const char *suffix=g_hot_suffixes[0];
     if(n==0u || n>=HOT_PATH_CAP) return 0;
     for(i=n;i>0u;i--) {
         if(g_hot_path[i-1u]=='\\' || g_hot_path[i-1u]=='/') {
@@ -289,7 +297,7 @@ static VOID CALLBACK hot_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD no
     ++g_hot_attempts;
     ok=((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(
         g_hot_payload,
-        "SummonScout/SummonScout_PostPaymentOfferHot.lua"
+        g_hot_source_names[0]
     );
     g_hot_last_hash=hash;
     g_hot_last_size=size;
