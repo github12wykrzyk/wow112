@@ -51,14 +51,14 @@ static volatile DWORD g_hot_status=HOT_STATUS_DETACHED;
 static volatile DWORD g_hot_generation=0u;
 static volatile DWORD g_hot_attempts=0u;
 static volatile DWORD g_hot_last_result=0u;
-static DWORD g_hot_candidate_hash=0u;
-static DWORD g_hot_candidate_size=0u;
-static DWORD g_hot_candidate_since=0u;
-static DWORD g_hot_last_hash=0u;
-static DWORD g_hot_last_size=0u;
-static int g_hot_have_candidate=0;
-static int g_hot_have_last=0;
-static char g_hot_path[HOT_PATH_CAP];
+static DWORD g_hot_candidate_hash[HOT_FILE_COUNT];
+static DWORD g_hot_candidate_size[HOT_FILE_COUNT];
+static DWORD g_hot_candidate_since[HOT_FILE_COUNT];
+static DWORD g_hot_last_hash[HOT_FILE_COUNT];
+static DWORD g_hot_last_size[HOT_FILE_COUNT];
+static int g_hot_have_candidate[HOT_FILE_COUNT];
+static int g_hot_have_last[HOT_FILE_COUNT];
+static char g_hot_paths[HOT_FILE_COUNT][HOT_PATH_CAP];
 static char g_hot_payload[HOT_PAYLOAD_CAP];
 
 static UINT_PTR g_retry_timer=0u;
@@ -79,21 +79,30 @@ static DWORD hot_hash(const char *data,DWORD size)
     return h?h:1u;
 }
 
-static int hot_build_path(void)
+static int hot_build_path(DWORD index)
 {
-    DWORD n=GetModuleFileNameA(NULL,g_hot_path,HOT_PATH_CAP);
+    DWORD n=GetModuleFileNameA(NULL,g_hot_paths[index],HOT_PATH_CAP);
     DWORD i,used;
-    const char *suffix=g_hot_suffixes[0];
-    if(n==0u || n>=HOT_PATH_CAP) return 0;
+    const char *suffix=g_hot_suffixes[index];
+    if(index>=HOT_FILE_COUNT || n==0u || n>=HOT_PATH_CAP) return 0;
     for(i=n;i>0u;i--) {
-        if(g_hot_path[i-1u]=='\\' || g_hot_path[i-1u]=='/') {
-            g_hot_path[i]=0;
+        if(g_hot_paths[index][i-1u]=='\\' || g_hot_paths[index][i-1u]=='/') {
+            g_hot_paths[index][i]=0;
             break;
         }
     }
     if(i==0u) return 0;
     used=i;
-    if(!append_text(g_hot_path,HOT_PATH_CAP,&used,suffix)) return 0;
+    if(!append_text(g_hot_paths[index],HOT_PATH_CAP,&used,suffix)) return 0;
+    return 1;
+}
+
+static int hot_build_paths(void)
+{
+    DWORD i;
+    for(i=0u;i<HOT_FILE_COUNT;i++) {
+        if(!hot_build_path(i)) return 0;
+    }
     return 1;
 }
 
@@ -198,14 +207,14 @@ static VOID CALLBACK retry_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD 
     }
 }
 
-static int hot_read_payload(DWORD *size_out,DWORD *hash_out)
+static int hot_read_payload(DWORD index,DWORD *size_out,DWORD *hash_out)
 {
     HANDLE h;
     DWORD size,got=0u,hash;
-    if(!size_out || !hash_out || !g_hot_path[0]) return -1;
+    if(index>=HOT_FILE_COUNT || !size_out || !hash_out || !g_hot_paths[index][0]) return -1;
 
     h=CreateFileA(
-        g_hot_path,
+        g_hot_paths[index],
         GENERIC_READ,
         FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
         NULL,
@@ -237,11 +246,66 @@ static int hot_read_payload(DWORD *size_out,DWORD *hash_out)
     return 1;
 }
 
-static VOID CALLBACK hot_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD now)
+static DWORD hot_tick_file(DWORD index,DWORD now)
 {
     DWORD size=0u,hash=0u;
     int readResult;
     BOOL ok;
+
+    readResult=hot_read_payload(index,&size,&hash);
+    if(readResult==0) {
+        g_hot_have_candidate[index]=0;
+        return HOT_STATUS_FILE_MISSING;
+    }
+    if(readResult==-2) {
+        g_hot_have_candidate[index]=0;
+        return HOT_STATUS_TOO_LARGE;
+    }
+    if(readResult<0) {
+        g_hot_have_candidate[index]=0;
+        return HOT_STATUS_READ_FAILED;
+    }
+
+    if(g_hot_have_last[index] &&
+       hash==g_hot_last_hash[index] &&
+       size==g_hot_last_size[index]) {
+        g_hot_have_candidate[index]=0;
+        return HOT_STATUS_WATCHING;
+    }
+
+    if(!g_hot_have_candidate[index] ||
+       hash!=g_hot_candidate_hash[index] ||
+       size!=g_hot_candidate_size[index]) {
+        g_hot_candidate_hash[index]=hash;
+        g_hot_candidate_size[index]=size;
+        g_hot_candidate_since[index]=now;
+        g_hot_have_candidate[index]=1;
+        return HOT_STATUS_WATCHING;
+    }
+
+    if((DWORD)(now-g_hot_candidate_since[index])<HOT_STABLE_MS)
+        return HOT_STATUS_WATCHING;
+
+    ++g_hot_attempts;
+    ok=((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(
+        g_hot_payload,
+        g_hot_source_names[index]
+    );
+    g_hot_last_hash[index]=hash;
+    g_hot_last_size[index]=size;
+    g_hot_have_last[index]=1;
+    g_hot_have_candidate[index]=0;
+    g_hot_last_result=ok?1u:0u;
+    if(ok) {
+        ++g_hot_generation;
+        return HOT_STATUS_APPLIED;
+    }
+    return HOT_STATUS_EXEC_FAILED;
+}
+
+static VOID CALLBACK hot_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD now)
+{
+    DWORD i,status,aggregate=HOT_STATUS_WATCHING;
     (void)hwnd;
     (void)msg;
     (void)timerId;
@@ -255,61 +319,15 @@ static VOID CALLBACK hot_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD no
         return;
     }
 
-    readResult=hot_read_payload(&size,&hash);
-    if(readResult==0) {
-        g_hot_status=HOT_STATUS_FILE_MISSING;
-        g_hot_have_candidate=0;
-        return;
+    for(i=0u;i<HOT_FILE_COUNT;i++) {
+        status=hot_tick_file(i,now);
+        if(status==HOT_STATUS_APPLIED) {
+            aggregate=HOT_STATUS_APPLIED;
+        } else if(status>=HOT_STATUS_FILE_MISSING && aggregate!=HOT_STATUS_APPLIED) {
+            aggregate=status;
+        }
     }
-    if(readResult==-2) {
-        g_hot_status=HOT_STATUS_TOO_LARGE;
-        g_hot_have_candidate=0;
-        return;
-    }
-    if(readResult<0) {
-        g_hot_status=HOT_STATUS_READ_FAILED;
-        g_hot_have_candidate=0;
-        return;
-    }
-
-    if(g_hot_have_last && hash==g_hot_last_hash && size==g_hot_last_size) {
-        g_hot_status=HOT_STATUS_WATCHING;
-        g_hot_have_candidate=0;
-        return;
-    }
-
-    if(!g_hot_have_candidate ||
-       hash!=g_hot_candidate_hash ||
-       size!=g_hot_candidate_size) {
-        g_hot_candidate_hash=hash;
-        g_hot_candidate_size=size;
-        g_hot_candidate_since=now;
-        g_hot_have_candidate=1;
-        g_hot_status=HOT_STATUS_WATCHING;
-        return;
-    }
-
-    if((DWORD)(now-g_hot_candidate_since)<HOT_STABLE_MS) {
-        g_hot_status=HOT_STATUS_WATCHING;
-        return;
-    }
-
-    ++g_hot_attempts;
-    ok=((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(
-        g_hot_payload,
-        g_hot_source_names[0]
-    );
-    g_hot_last_hash=hash;
-    g_hot_last_size=size;
-    g_hot_have_last=1;
-    g_hot_have_candidate=0;
-    g_hot_last_result=ok?1u:0u;
-    if(ok) {
-        ++g_hot_generation;
-        g_hot_status=HOT_STATUS_APPLIED;
-    } else {
-        g_hot_status=HOT_STATUS_EXEC_FAILED;
-    }
+    g_hot_status=aggregate;
 }
 
 #if defined(_MSC_VER)
@@ -342,6 +360,7 @@ __declspec(dllexport) DWORD __stdcall W112_HotLuaProbe_GetLastResult(void)
 BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
 {
     BOOL baseResult;
+    DWORD i;
 
     if(reason==DLL_PROCESS_ATTACH) {
         g_hot_timer=0u;
@@ -349,10 +368,17 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
         g_hot_generation=0u;
         g_hot_attempts=0u;
         g_hot_last_result=0u;
-        g_hot_have_candidate=0;
-        g_hot_have_last=0;
-        g_hot_path[0]=0;
         g_hot_payload[0]=0;
+        for(i=0u;i<HOT_FILE_COUNT;i++) {
+            g_hot_candidate_hash[i]=0u;
+            g_hot_candidate_size[i]=0u;
+            g_hot_candidate_since[i]=0u;
+            g_hot_last_hash[i]=0u;
+            g_hot_last_size[i]=0u;
+            g_hot_have_candidate[i]=0;
+            g_hot_have_last[i]=0;
+            g_hot_paths[i][0]=0;
+        }
 
         g_retry_timer=0u;
         g_retry_attempts=0u;
@@ -364,7 +390,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
 
         baseResult=AutoLoginBridge_BaseDllMain(module,reason,reserved);
         if(!baseResult) return FALSE;
-        if(!hot_build_path()) {
+        if(!hot_build_paths()) {
             g_hot_status=HOT_STATUS_PATH_FAILED;
         } else {
             g_hot_timer=SetTimer(NULL,0u,HOT_POLL_MS,hot_timer_tick);
@@ -381,7 +407,8 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
         g_hot_timer=0u;
         g_hot_status=HOT_STATUS_DETACHED;
         wipe(g_hot_payload,HOT_PAYLOAD_CAP);
-        wipe(g_hot_path,HOT_PATH_CAP);
+        for(i=0u;i<HOT_FILE_COUNT;i++)
+            wipe(g_hot_paths[i],HOT_PATH_CAP);
         return AutoLoginBridge_BaseDllMain(module,reason,reserved);
     }
 
