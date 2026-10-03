@@ -1,9 +1,10 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Fast AUX bridge; GUI-toggle manual headless Search, per-scan speed diagnostics, transaction-safe resume.
+## Notes: TURBO full-search headless bridge; GUI toggle, AVM-safe purchase/resume, per-scan speed diagnostics.
 ## Author: github12wykrzyk/wow112
-## Version: 3.7
+## Version: 3.9
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
 AuxFastBridge.lua
+AuxFastBridge_TurboRouting.lua
