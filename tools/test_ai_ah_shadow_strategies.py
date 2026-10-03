@@ -87,13 +87,17 @@ class AHShadowStrategyParityTests(unittest.TestCase):
         for name in STRATEGY_FILES:
             self.assertIn(("-- BEGIN " + name).encode("ascii"), bundle)
 
-    def test_task_is_economy_gated_and_not_auto_integrated(self):
+    def test_task_is_economy_gated_and_queue_ready(self):
         task = json.loads(TASK.read_text(encoding="utf-8"))
         self.assertEqual(task["branch"], "feature/ah-consolidation-strategies-v1")
         self.assertEqual(task["base_parallel_sha"], "3eb8ea2008c3889944409c907af207e820c69216")
-        self.assertEqual(task["status"], "coding")
-        self.assertFalse(task["auto_integrate"])
+        self.assertEqual(task["status"], "ready_for_integration")
+        self.assertTrue(task["auto_integrate"])
         self.assertEqual(task["delivery_profiles"], ["economy"])
+        lease = task.get("lease") or {}
+        self.assertEqual(lease.get("owner"), "chatgpt:ah-strategies-v1")
+        self.assertIn("module:AuxEconomyShadow", lease.get("scopes", []))
+        self.assertNotIn("resource:hot-lua-runtime", lease.get("scopes", []))
 
 
 if __name__ == "__main__":
