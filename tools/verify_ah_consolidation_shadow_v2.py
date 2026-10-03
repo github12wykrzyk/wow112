@@ -23,6 +23,9 @@ MODULES = [
     "AuxEconomyShadow_MarketBook.lua",
     "AuxEconomyShadow_Vendor.lua",
     "AuxEconomyShadow_Disenchant.lua",
+    "AuxEconomyShadow_Flip.lua",
+    "AuxEconomyShadow_Stack.lua",
+    "AuxEconomyShadow_Bid.lua",
     "AuxEconomyShadow_CandidatePipeline.lua",
     "AuxEconomyShadow_Coordinator.lua",
     "AuxEconomyShadow_AuxAdapter.lua",
@@ -60,6 +63,14 @@ def roots(data: dict) -> set[str]:
         if isinstance(values, list):
             out.update(x for x in values if isinstance(x, str))
     return out
+
+
+def require_tokens(path: Path, tokens: tuple[str, ...], label: str) -> str:
+    text = path.read_text(encoding="utf-8")
+    for token in tokens:
+        if token not in text:
+            fail(label + " missing " + token)
+    return text
 
 
 def main() -> None:
@@ -114,6 +125,10 @@ def main() -> None:
         for token in FORBIDDEN_RUNTIME:
             if token in text: fail(f"{name} uses runtime/game primitive {token}")
 
+    contracts = require_tokens(SHADOW / "AuxEconomyShadow_Contracts.lua",
+                               ("NormalizeAuction", "NormalizeListing", "bidAmount", "BetterCandidate"), "contracts")
+    if "blizzard_bid" not in contracts or "start_price" not in contracts: fail("contracts missing active bid-price aliases")
+
     de_text = (SHADOW / "AuxEconomyShadow_Disenchant.lua").read_text(encoding="utf-8")
     for token in DE_FORBIDDEN:
         if token.lower() in de_text.lower(): fail("DE evaluator restored historical price anchor: " + token)
@@ -123,13 +138,26 @@ def main() -> None:
     vendor_text = (SHADOW / "AuxEconomyShadow_Vendor.lua").read_text(encoding="utf-8")
     if vendor_text.find('"aux-learned"') > vendor_text.find('"turtle-db"'): fail("vendor priority changed")
 
-    market = (SHADOW / "AuxEconomyShadow_MarketBook.lua").read_text(encoding="utf-8")
-    for token in ("NormalizeAuction", "ItemOffers", "Snapshot"):
-        if token not in market: fail("market book missing " + token)
+    market = require_tokens(SHADOW / "AuxEconomyShadow_MarketBook.lua",
+                            ("NormalizeListing", "ItemOffers", "ItemListings", "bidOnlyCount", "Snapshot"), "market book")
 
-    pipeline = (SHADOW / "AuxEconomyShadow_CandidatePipeline.lua").read_text(encoding="utf-8")
-    for token in ('"vendor"', '"disenchant"', "BetterCandidate", "EvaluateBook"):
-        if token not in pipeline: fail("candidate pipeline missing " + token)
+    flip = require_tokens(SHADOW / "AuxEconomyShadow_Flip.lua",
+                          ("ReferenceFloor", "flipDepthUnits", "flipHistMaxPct", "flipMinSellers", "flipMaxItemSpend", "historyByKey", 'route = "flip"'),
+                          "flip evaluator")
+    if "aux.core.history" in flip: fail("flip evaluator directly binds AUX history runtime")
+
+    stack = require_tokens(SHADOW / "AuxEconomyShadow_Stack.lua",
+                           ("stackSmallPct", "stackLargePct", "stackSmallDepthUnits", "stackMinSmallSellers", "smallSellers", 'route = "stack"'),
+                           "stack evaluator")
+    if "aux.core.history" in stack: fail("stack evaluator directly binds AUX history runtime")
+
+    bid = require_tokens(SHADOW / "AuxEconomyShadow_Bid.lua",
+                         ("bidVendorMarginPct", "bidDeMarginPct", "bidMaxAmount", "bidMaxDuration", "bidMaxSessionPlacements", "has-buyout", "high-bidder", 'route = route'),
+                         "bid evaluator")
+
+    pipeline = require_tokens(SHADOW / "AuxEconomyShadow_CandidatePipeline.lua",
+                              ('"vendor"', '"disenchant"', '"flip"', '"stack"', '"bid"', "BetterCandidate", "EvaluateBook", "postscanBestAffordable", "bid-fallback"),
+                              "candidate pipeline")
 
     coord = (SHADOW / "AuxEconomyShadow_Coordinator.lua").read_text(encoding="utf-8")
     for state in ("IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"):
@@ -188,8 +216,11 @@ def main() -> None:
     print("hot_reload=existing-autologinbridge-watcher")
     print("hot_bundle_host=SummonScout_PostPaymentOfferHot.lua")
     print("hot_fix_requires_close=false reload=false")
-    print("marketbook=pure pipeline=pure")
+    print("marketbook=pure-listings pipeline=pure-full-strategies")
     print("de=pure-live-depth-no-history-cap")
+    print("flip=pure-readonly-history-live-depth")
+    print("stack=pure-small-large-depth")
+    print("bid=pure-vendor-de-fallback")
     print("coordinator=single-state-machine")
     print("aux_adapter=observation-only")
     print("transaction_guard=real-actions-hard-locked")

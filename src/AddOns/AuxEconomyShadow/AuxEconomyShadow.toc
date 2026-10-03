@@ -2,7 +2,7 @@
 ## Title: Aux Economy Shadow
 ## Notes: Inactive side-by-side AH consolidation runtime; persistent hot-replace modules.
 ## Author: github12wykrzyk/wow112
-## Version: 0.8-shadow-parity
+## Version: 0.9-shadow-full-strategies
 ## Dependencies: aux-addon
 ## SavedVariables: AVM_SHADOW_DB
 
@@ -11,6 +11,9 @@ AuxEconomyShadow_Contracts.lua
 AuxEconomyShadow_MarketBook.lua
 AuxEconomyShadow_Vendor.lua
 AuxEconomyShadow_Disenchant.lua
+AuxEconomyShadow_Flip.lua
+AuxEconomyShadow_Stack.lua
+AuxEconomyShadow_Bid.lua
 AuxEconomyShadow_CandidatePipeline.lua
 AuxEconomyShadow_Coordinator.lua
 AuxEconomyShadow_AuxAdapter.lua

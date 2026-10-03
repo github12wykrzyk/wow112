@@ -20,6 +20,9 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_MarketBook.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Vendor.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Disenchant.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Flip.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Stack.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Bid.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_CandidatePipeline.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Coordinator.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AuxAdapter.lua",
@@ -38,11 +41,14 @@
     "new_native_binary_required": false
   },
   "evaluators": {
-    "contracts": "normalized auction records and candidate ordering",
-    "marketbook": "persistent normalized per-scan book with item/page indexes",
+    "contracts": "normalized auction/listing records and candidate ordering, including bid-only listings",
+    "marketbook": "persistent normalized per-scan book with item/page indexes and separate buyout/bid-only counts",
     "vendor": "realm-learned merchant_sell first, Turtle DB fallback",
     "disenchant": "live/depth material book with AH cut, safety margin and exposure guard; no history price cap",
-    "pipeline": "pure vendor+DE candidate aggregation and deterministic best-candidate selection"
+    "flip": "read-only AUX history anchor plus live market depth, seller depth, item exposure, AH cut and safety margin",
+    "stack": "small-stack live depth versus large-stack entry with read-only history cap, seller depth, exposure and margin",
+    "bid": "bid-only vendor/DE valuation with duration, amount, profit, safety-margin and session-placement guards",
+    "pipeline": "pure Vendor/DE page evaluation plus DE/Flip/Stack postscan arbitration and Bid fallback"
   },
   "coordination": {
     "coordinator": "single shadow state machine",
@@ -67,5 +73,5 @@
     "may_patch_global_ah_api": false,
     "real_actions_hard_locked": true
   },
-  "stage": "parity_diagnostics_ready"
+  "stage": "full_strategy_model_ready_for_passive_parity"
 }

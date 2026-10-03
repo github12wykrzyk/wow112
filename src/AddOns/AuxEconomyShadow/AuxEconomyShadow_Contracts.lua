@@ -3,38 +3,62 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow contracts require persistent anchor")
 end
 
-local REVISION = "1-normalized-auction"
+local REVISION = "2-normalized-listing"
 local ok = R.ReplaceModule("contracts", REVISION, function(state)
     state.normalized = tonumber(state.normalized) or 0
+    state.listings = tonumber(state.listings) or 0
     local api = {}
     api.revision = REVISION
 
-    function api.NormalizeAuction(raw)
+    local function normalize(raw, allowBidOnly)
         if type(raw) ~= "table" then return nil, "no-record" end
         local itemId = tonumber(raw.itemId or raw.item_id)
         local count = tonumber(raw.count or raw.aux_quantity) or 0
         local buyout = tonumber(raw.buyout or raw.buyout_price) or 0
+        local bidAmount = tonumber(raw.bidAmount or raw.bid_amount or raw.bid_price or raw.blizzard_bid or raw.start_price or raw.bid) or 0
         if not itemId then return nil, "no-item-id" end
         if count <= 0 then return nil, "no-count" end
-        if buyout <= 0 then return nil, "no-buyout" end
+        if buyout <= 0 and (not allowBidOnly or bidAmount <= 0) then
+            return nil, allowBidOnly and "no-price" or "no-buyout"
+        end
+        local itemKey = tostring(raw.itemKey or raw.item_key or ("item:" .. tostring(itemId)))
         local out = {
             name = tostring(raw.name or ""),
             itemId = itemId,
             count = count,
             buyout = buyout,
+            bidAmount = bidAmount,
             quality = tonumber(raw.quality),
             level = tonumber(raw.level) or 0,
             slot = raw.slot,
             owner = raw.owner,
-            itemKey = tostring(raw.itemKey or raw.item_key or ("item:" .. tostring(itemId))),
+            itemKey = itemKey,
+            historyKey = tostring(raw.historyKey or raw.history_key or itemKey),
+            suffixId = tonumber(raw.suffixId or raw.suffix_id) or 0,
             signature = raw.signature,
             sourcePage = tonumber(raw.sourcePage or raw.page) or 0,
             maxStack = tonumber(raw.maxStack or raw.max_stack) or 0,
+            duration = tonumber(raw.duration) or 0,
+            highBidder = raw.highBidder or raw.high_bidder,
         }
-        out.unit = math.floor(buyout / count)
-        out.unitExact = tonumber(raw.unitExact or raw.unit_buyout_price) or (buyout / count)
+        if buyout > 0 then
+            out.unit = math.floor(buyout / count)
+            out.unitExact = tonumber(raw.unitExact or raw.unit_buyout_price) or (buyout / count)
+        else
+            out.unit = 0
+            out.unitExact = 0
+        end
         state.normalized = state.normalized + 1
+        if allowBidOnly then state.listings = state.listings + 1 end
         return out, nil
+    end
+
+    function api.NormalizeListing(raw)
+        return normalize(raw, true)
+    end
+
+    function api.NormalizeAuction(raw)
+        return normalize(raw, false)
     end
 
     function api.Signature(record, includeOwner)
@@ -58,7 +82,7 @@ local ok = R.ReplaceModule("contracts", REVISION, function(state)
     end
 
     function api.stats()
-        return { normalized = state.normalized }
+        return { normalized = state.normalized, listings = state.listings }
     end
 
     return api
