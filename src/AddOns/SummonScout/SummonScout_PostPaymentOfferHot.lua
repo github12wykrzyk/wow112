@@ -7,13 +7,31 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local POSTPAY_VERSION = "4-hot-ping1"
+local POSTPAY_VERSION = "5-direct-prefix1"
 local PP = H.GetState("postpay")
 PP.pending = PP.pending or {}
 PP.lastMessageIndex = tonumber(PP.lastMessageIndex) or 0
 PP.nextPollAt = tonumber(PP.nextPollAt) or 0
 PP.recentClosedAt = tonumber(PP.recentClosedAt) or 0
 PP.groupedNoticeRecent = PP.groupedNoticeRecent or {}
+PP.directInvitePending = PP.directInvitePending or {}
+PP.directInviteRecent = PP.directInviteRecent or {}
+
+-- Direct-whisper roots intentionally use token-prefix matching. This keeps the
+-- parser tolerant of shorthand / suffix typos such as invv, invvv, portt,
+-- taxii, buying or wtbb without changing the broader World/seller dictionaries.
+local DIRECT_INVITE_ROOTS = {
+    "inv", "port", "taxi", "buy", "wtb"
+}
+
+local DIRECT_INVITE_DELAY = 0.65
+local DIRECT_INVITE_DEDUPE = 2.0
+
+local DIRECT_INVITE_HARD_BLACKLIST = {
+    ["hydraone"] = true,
+    ["hydratwo"] = true,
+    ["bolthyjal"] = true
+}
 
 local POSTPAY_MESSAGES = {
     "Thank you! I also offer summons to Hyjal, Hydraxis and Winterspring.",
@@ -50,15 +68,136 @@ local function ppTrim(s)
     return s
 end
 
+local function ppNormalize(s)
+    s = string.lower(s or "")
+    s = string.gsub(s, "|c%x%x%x%x%x%x%x%x", " ")
+    s = string.gsub(s, "|r", " ")
+    s = string.gsub(s, "|H.-|h(.-)|h", "%1")
+    s = string.gsub(s, "[%p%c]", " ")
+    s = string.gsub(s, "%s+", " ")
+    return ppTrim(s)
+end
+
 local function ppValidName(name)
     name = ppTrim(name)
     return name ~= "" and string.upper(name) ~= "UNKNOWN"
+end
+
+local function ppSamePlayer(a, b)
+    a = string.lower(ppTrim(a or ""))
+    b = string.lower(ppTrim(b or ""))
+    return a ~= "" and a == b
+end
+
+local function ppInGroup(name)
+    local i
+    for i = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+        if ppSamePlayer(UnitName("party" .. i), name) then return true end
+    end
+    if GetNumRaidMembers and GetRaidRosterInfo then
+        for i = 1, GetNumRaidMembers() do
+            local raidName = GetRaidRosterInfo(i)
+            if ppSamePlayer(raidName, name) then return true end
+        end
+    end
+    return false
+end
+
+local function ppInviteBlacklisted(name)
+    local key = string.lower(ppTrim(name or ""))
+    if key == "" or DIRECT_INVITE_HARD_BLACKLIST[key] then return true end
+    local list = SummonScoutDB and SummonScoutDB.inviteBlacklist
+    return type(list) == "table" and list[key] ~= nil
+end
+
+local function ppCountSoulShards()
+    local total = 0
+    local bag, slot
+    if not GetContainerNumSlots or not GetContainerItemLink then return -1 end
+    for bag = 0, 4 do
+        for slot = 1, (GetContainerNumSlots(bag) or 0) do
+            local link = GetContainerItemLink(bag, slot)
+            if link and string.find(link, "item:6265:", 1, true) then
+                local _, count = GetContainerItemInfo(bag, slot)
+                total = total + (tonumber(count) or 1)
+            end
+        end
+    end
+    return total
+end
+
+local function ppShardBlocked()
+    if not SummonScoutDB or not SummonScoutDB.shardGuardEnabled then return false end
+    local shards = ppCountSoulShards()
+    if shards < 0 then return false end
+    local threshold = math.floor(tonumber(SummonScoutDB.shardGuardMin) or 5)
+    if threshold < 1 then threshold = 1 end
+    return shards < threshold
 end
 
 local function ppChat(text)
     if DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffSummonScout:|r " .. tostring(text or ""))
     end
+end
+
+local function ppHasDirectInviteRoot(message)
+    local s = ppNormalize(message)
+    local token, i
+    if s == "" then return false, nil end
+
+    for token in string.gfind(s, "%S+") do
+        for i = 1, table.getn(DIRECT_INVITE_ROOTS) do
+            local root = DIRECT_INVITE_ROOTS[i]
+            if string.len(token) >= string.len(root)
+                and string.sub(token, 1, string.len(root)) == root then
+                return true, root
+            end
+        end
+    end
+    return false, nil
+end
+
+local function ppDirectInviteEligible(name)
+    if not SummonScoutDB or not SummonScoutDB.enabled or not SummonScoutDB.whisperAutoInvite then
+        return false
+    end
+    if not ppValidName(name) or ppSamePlayer(name, UnitName("player")) then return false end
+    if ppInGroup(name) or ppInviteBlacklisted(name) or ppShardBlocked() then return false end
+    return true
+end
+
+local function ppQueueDirectInvite(sender, message)
+    local matched, root = ppHasDirectInviteRoot(message)
+    if not matched or not ppDirectInviteEligible(sender) then return false end
+
+    local name = ppTrim(sender)
+    local key = string.lower(name)
+    local t = ppNow()
+    local recent = tonumber(PP.directInviteRecent[key]) or -100000
+    if (t - recent) < DIRECT_INVITE_DEDUPE then return true end
+
+    PP.directInvitePending[key] = {
+        sender = name,
+        root = root,
+        dueAt = t + DIRECT_INVITE_DELAY
+    }
+    if SummonScoutDB.debug then
+        ppChat("direct prefix " .. tostring(root) .. "* -> pending " .. name)
+    end
+    return true
+end
+
+local function ppNoteInviteSuccess(line)
+    line = ppTrim(line or "")
+    local _, _, name = string.find(line, "^You have invited (.+) to join your group%.?$")
+    name = ppTrim(name or "")
+    if not ppValidName(name) then return false end
+
+    local key = string.lower(name)
+    PP.directInviteRecent[key] = ppNow()
+    PP.directInvitePending[key] = nil
+    return true
 end
 
 local function ppGroupedName(line)
@@ -81,6 +220,9 @@ local function ppNotifyGrouped(line)
 
     local key = string.lower(name)
     local t = ppNow()
+    PP.directInvitePending[key] = nil
+    PP.directInviteRecent[key] = t
+
     local last = tonumber(PP.groupedNoticeRecent[key]) or -100000
     if (t - last) < 5 then return true end
     PP.groupedNoticeRecent[key] = t
@@ -97,6 +239,26 @@ local function ppNotifyGrouped(line)
         ppChat("already-grouped whisper -> " .. name)
     end
     return true
+end
+
+local function ppProcessDirectInvites()
+    local t = ppNow()
+    local key, item
+    for key, item in pairs(PP.directInvitePending) do
+        if t >= (item.dueAt or 0) then
+            PP.directInvitePending[key] = nil
+            local recent = tonumber(PP.directInviteRecent[key]) or -100000
+            if (t - recent) >= DIRECT_INVITE_DEDUPE
+                and ppDirectInviteEligible(item.sender)
+                and InviteByName then
+                PP.directInviteRecent[key] = t
+                InviteByName(item.sender)
+                if SummonScoutDB.debug then
+                    ppChat("direct prefix " .. tostring(item.root or "?") .. "* -> invite " .. item.sender)
+                end
+            end
+        end
+    end
 end
 
 local function ppEnabled()
@@ -120,6 +282,8 @@ local function ppResetSessionCursor()
     PP.recentClosedAt = 0
     PP.nextPollAt = 0
     PP.groupedNoticeRecent = {}
+    PP.directInvitePending = {}
+    PP.directInviteRecent = {}
 end
 
 local function ppLiveTradePartner()
@@ -322,12 +486,14 @@ function M.Init()
     H.RegisterEvent("TRADE_ACCEPT_UPDATE")
     H.RegisterEvent("TRADE_CLOSED")
     H.RegisterEvent("CHAT_MSG_SYSTEM")
+    H.RegisterEvent("CHAT_MSG_WHISPER")
     ppAttachGuiToggle()
     W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
     W112_SUMMONSCOUT_GROUPED_NOTICE_VERSION = "1"
+    W112_SUMMONSCOUT_DIRECT_PREFIX_VERSION = "1"
 end
 
-function M.OnEvent(ev, a1)
+function M.OnEvent(ev, a1, a2)
     if ev == "PLAYER_LOGIN" then
         ppSetDefaults()
         ppResetSessionCursor()
@@ -335,11 +501,18 @@ function M.OnEvent(ev, a1)
         PP.initialized = true
         W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
         W112_SUMMONSCOUT_GROUPED_NOTICE_VERSION = "1"
+        W112_SUMMONSCOUT_DIRECT_PREFIX_VERSION = "1"
         return
     end
 
     if ev == "CHAT_MSG_SYSTEM" then
+        ppNoteInviteSuccess(a1 or "")
         ppNotifyGrouped(a1 or "")
+        return
+    end
+
+    if ev == "CHAT_MSG_WHISPER" then
+        ppQueueDirectInvite(a2 or "", a1 or "")
         return
     end
 
@@ -379,6 +552,7 @@ end
 
 function M.OnUpdate()
     local t = ppNow()
+    ppProcessDirectInvites()
     if t < (PP.nextPollAt or 0) then
         ppProcessPending()
         return
@@ -391,5 +565,5 @@ end
 
 H.Register("postpay", M, POSTPAY_VERSION)
 if DEFAULT_CHAT_FRAME then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r grouped-whisper hot-test received")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r direct-prefix hot-test received")
 end
