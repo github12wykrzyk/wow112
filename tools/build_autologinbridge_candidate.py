@@ -9,7 +9,8 @@ SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c"
 DLL_NAME="WoWAutoLoginBridge_5875_v1.dll"
 DLL_LIST="dlls.txt"
 PROFILE="clangcl_i686_win32imports"
-HOT_PAYLOAD="Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua"
+HOT_PAYLOADS=("Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",)
+HOT_PAYLOAD=HOT_PAYLOADS[0]
 
 def repack(package,dll):
     with zipfile.ZipFile(package,"r") as src:
@@ -60,6 +61,7 @@ def main():
       "hot_lua_probe":True,
       "hot_lua_execute":"0x00704CD0",
       "hot_lua_payload":HOT_PAYLOAD,
+      "hot_lua_payloads":list(HOT_PAYLOADS),
       "hot_lua_scope":"SummonScout post-payment module",
       "hot_lua_poll_ms":250,
       "timings_ms":timing
@@ -94,6 +96,7 @@ def main():
             "hot_lua_probe":True,
             "hot_lua_execute":"0x00704CD0",
             "hot_lua_payload":HOT_PAYLOAD,
+            "hot_lua_payloads":list(HOT_PAYLOADS),
             "hot_lua_scope":"SummonScout post-payment module",
             "hot_lua_poll_ms":250
         }
