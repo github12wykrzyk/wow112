@@ -1,0 +1,61 @@
+name: Parallel control plane reconcile
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+  push:
+    branches:
+      - parallel
+    paths:
+      - 'runtime/parallel_thread_policy.json'
+      - 'runtime/parallel_control_plane_v1.marker'
+      - 'tools/parallel_task_state.py'
+      - 'tools/parallel_control_plane.py'
+      - '.github/workflows/parallel_control_plane_reconcile.yml'
+      - '.github/workflows/parallel_feature_preflight.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parallel-control-plane-reconcile
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout current parallel
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch live feature refs
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/feature/*:refs/remotes/origin/feature/*' --prune
+
+      - name: Validate task-state contract
+        run: |
+          set -euo pipefail
+          python tools/parallel_task_state.py validate
+
+      - name: Reconcile live feature leases
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python tools/parallel_control_plane.py reconcile \
+            --output dist/parallel_control_plane.json \
+            --summary-output dist/parallel_control_plane.md
+          cat dist/parallel_control_plane.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload control-plane report
+        uses: actions/upload-artifact@v4
+        with:
+          name: Parallel-Control-Plane-${{ github.sha }}
+          path: |
+            dist/parallel_control_plane.json
+            dist/parallel_control_plane.md
+          if-no-files-found: error
+          compression-level: 0

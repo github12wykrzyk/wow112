@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "parallel-control-plane-reconciler-v1",
+  "goal": "Extend the existing Parallel task coordination layer with scoped TTL leases, deterministic conflict ownership, live feature-branch reconciliation, and fail-closed lease checks before preflight/integration.",
+  "branch": "feature/parallel-control-plane-reconciler-v1",
+  "base_parallel_sha": "f3458ace47ee3144940c85cb74e429c3e8ba9bee",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "ai-task-coordination"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "integrated_feature_sha": "e49d2418aef46ed34e8ac2377e38dc754c51091e",
+  "notes": "Infrastructure-only control plane. Exact feature SHA passed Parallel feature preflight against live parallel 1665bd308c3fd4a23aeb1727404c06777d751375. Workflow-token push was blocked solely by missing workflows permission; integration completed through Git-data CAS without force. No WoW runtime payload changes."
+}
