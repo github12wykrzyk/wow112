@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "parallel-task-enforcement-v1",
+  "goal": "Enforce per-feature parallel task records for new branches without breaking legacy in-flight features, and close auto-integrated task state inside the merge commit.",
+  "branch": "feature/parallel-task-enforcement-v1",
+  "base_parallel_sha": "55641b3b8504e44f786e2bd2ada40c1751db878c",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments"
+  ],
+  "dependencies": [
+    "parallel-integration-queue-v1"
+  ],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "ai-task-coordination",
+    "github-actions-parallel-queue"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "notes": "Migration boundary is marker-based: feature branches whose merge-base predates the marker remain grandfathered; new feature branches based on marked parallel must own exactly one task record. This task is the first end-to-end queue lifecycle test."
+}
