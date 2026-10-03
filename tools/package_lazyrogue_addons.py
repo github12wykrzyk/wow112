@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from ah_shadow_hot_bundle import transform_summonscout_host
 from summonscout_hot_transform import transform_file as transform_summonscout_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +141,7 @@ def package_bytes(folder, path):
     data = path.read_bytes()
     if folder.lower() == "summonscout":
         data = transform_summonscout_file(path.name, data)
+        data = transform_summonscout_host(path.name, data)
     return data
 
 

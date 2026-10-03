@@ -28,9 +28,13 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Ledger.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
-    "native_live_executor": null,
-    "native_live_executor_status": "planned_isolated_stage",
-    "replacement_protocol": "W112_AH_SHADOW.ReplaceModule"
+    "native_live_executor": "WoWAutoLoginBridge_5875_v1.dll",
+    "native_live_executor_status": "reuse_existing_watcher",
+    "bundle_builder": "tools/ah_shadow_hot_bundle.py",
+    "packager_transform": "tools/package_lazyrogue_addons.py",
+    "bundle_host": "Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",
+    "replacement_protocol": "W112_AH_SHADOW.ReplaceModule",
+    "new_native_binary_required": false
   },
   "evaluators": {
     "contracts": "normalized auction records and candidate ordering",
@@ -61,5 +65,5 @@
     "may_patch_global_ah_api": false,
     "real_actions_hard_locked": true
   },
-  "stage": "pure_autosell_lifecycle_and_ledger"
+  "stage": "existing_hot_watcher_bundle_routing"
 }

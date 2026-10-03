@@ -5,17 +5,20 @@
   "branch": "feature/ah-consolidation-hotreload-v2",
   "base_parallel_sha": "c4e35928deab3b07e667b94631c61dc63510d9a6",
   "modules": [
-    "AuxEconomyShadow"
+    "AuxEconomyShadow",
+    "SummonScout"
   ],
   "dependencies": [],
   "shared_resources": [
     "ah-consolidation-shadow-source",
     "aux-de-valuation",
     "auction-house-scan-loop",
-    "hot-lua-runtime"
+    "hot-lua-runtime",
+    "SummonScout hot payload composition",
+    "addon-packager-transform"
   ],
   "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "notes": "Shadow-only consolidation from the live post-rollback parallel baseline. Do not restore AuxVmangos_DEPriceGuard/history-cap logic. Current AH manifests and updater delivery remain untouched. Hot-fix design uses a persistent anchor plus replaceable payload; native live execution is a later isolated stage before any cutover."
+  "notes": "Shadow-only consolidation from the live post-rollback parallel baseline. Do not restore AuxVmangos_DEPriceGuard/history-cap logic. Current AH manifests and updater delivery remain untouched. Hot-fix routing reuses the existing AutoLoginBridge watcher by appending the full shadow bundle to the already watched SummonScout_PostPaymentOfferHot.lua package payload; no new native watcher or DLL is introduced."
 }
