@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "parallel-concurrency-qol-v1",
+  "goal": "Introduce branch-local per-task coordination records so independent ChatGPT feature threads can develop and preflight concurrently without using one shared progress file.",
+  "branch": "feature/parallel-concurrency-qol-v1",
+  "base_parallel_sha": "121cb0d9771ec5ed48d50b122c33e2b9a07fa71e",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "ai-task-coordination"
+  ],
+  "status": "coding",
+  "delivery_profiles": [],
+  "notes": "Infrastructure-only first stage. No game runtime, addon, DLL or updater payload behavior is changed by this task."
+}

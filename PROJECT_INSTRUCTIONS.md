@@ -38,6 +38,21 @@ Machine-readable routing wins over stale prose.
 
 Route new requests through the compact generated `runtime/ai_experiment_index.json` first, then live GitHub branch inspection. Use the full `runtime/ai_experiments.json` only for evidence/detail fallback or updates; `tools/ai_experiments.py index --check` prevents the compact view from drifting. Respect explicit `parallel`; do not transfer unaccepted state between branches. See `docs/AI_EXPERIMENTS.md`.
 
+### Parallel multi-thread mode
+
+The normal UX is that the user may discuss unrelated functions in many ChatGPT threads at the same time. Independent work must therefore be concurrent by default:
+
+- create a dedicated `feature/<purpose>` branch from the current verified `parallel` HEAD for each independent request;
+- keep a uniquely named coordination record at `runtime/parallel_tasks/<task-id>.json` on that feature branch;
+- allow independent coding, commits, preflights and module-specific builds to run concurrently;
+- declare shared mechanisms/hook/API ownership in `shared_resources`; overlap means ordered integration or arbitration, not a global development lock;
+- do not use `runtime/ai_experiments.json` as per-message scratch state from many concurrent sessions; keep transient progress in the task record and update the central evidence ledger at durable milestones;
+- before starting a potentially overlapping change, inspect relevant live `feature/**` branches/task records in addition to the compact experiment index;
+- serialize only the final `parallel` ref movement through `runtime/parallel_integration_policy.json` compare-and-swap rules;
+- expose task lifecycle as `WORKING / PREFLIGHT / WAITING INTEGRATION / PARALLEL BUILD / READY TO TEST / BLOCKED` rather than treating every green CI state as delivered.
+
+Validate coordination records with `python tools/parallel_task_state.py validate`; use `summary` or `route --module <Module>` for compact routing/conflict context. These records are coordination metadata only and never replace exact-SHA CI, package/provenance, updater delivery or gameplay evidence.
+
 Do not push an unverified promotion directly to `main`. The exact `promote/**` SHA must first pass `.github/workflows/pre_promote_stable.yml`.
 
 ## Stable byte identity
