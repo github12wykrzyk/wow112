@@ -1,0 +1,8 @@
+## Interface: 11200
+## Title: AUX Turbo Probe
+## Notes: Isolated one-shot TURBO experiment; does not patch or wrap AuxFastBridge production paths.
+## Author: github12wykrzyk/wow112
+## Version: 1.0
+## Dependencies: aux-addon, AuxFastBridge
+## SavedVariables: AuxTurboProbeDB
+AuxTurboProbe.lua
