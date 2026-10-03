@@ -9,6 +9,7 @@ TOC = ADDON / "AuxVmangos.toc"
 AUTOSELL = ADDON / "AuxVmangos_AutoSell.lua"
 FORCE = ADDON / "AuxVmangos_AutoSellForce.lua"
 POST_DEFAULTS = ADDON / "AuxVmangos_PostDefaults.lua"
+AH_SESSION = ADDON / "AuxVmangos_AutoSellAHSession.lua"
 
 
 def fail(message: str) -> None:
@@ -22,16 +23,18 @@ def require(text: str, needle: str, label: str) -> None:
 
 
 def main() -> int:
-    if not TOC.is_file() or not AUTOSELL.is_file() or not POST_DEFAULTS.is_file():
+    if not TOC.is_file() or not AUTOSELL.is_file() or not POST_DEFAULTS.is_file() or not AH_SESSION.is_file():
         fail("required AuxVmangos files are missing")
     if FORCE.exists():
         fail("obsolete AuxVmangos_AutoSellForce.lua must not exist in the active source tree")
 
     toc = TOC.read_text(encoding="utf-8")
     autosell = AUTOSELL.read_text(encoding="utf-8")
+    ah_session = AH_SESSION.read_text(encoding="utf-8")
 
     require(toc, "AuxVmangos_AutoSell.lua", "AutoSell TOC entry")
     require(toc, "AuxVmangos_PostDefaults.lua", "PostDefaults TOC entry")
+    require(toc, "AuxVmangos_AutoSellAHSession.lua", "AutoSell AH-session compatibility TOC entry")
     if "AuxVmangos_AutoSellForce.lua" in toc:
         fail("duplicate AutoSellForce engine is still loaded by TOC")
 
@@ -46,6 +49,11 @@ def main() -> int:
     require(autosell, "tab-open-stale", "fresh-owner guarded tab open")
     require(autosell, "if R.ownerCapturePending then capture_owner_page() end", "owner snapshot reuse")
     require(autosell, "stage = manualFresh and 'CANCEL_READY' or 'VERIFY_PRICE'", "manual result decision reuse")
+
+    require(ah_session, "if not (AVM and AVM.open) then return false end", "canonical AVM.open session gate")
+    require(ah_session, "tostring(tab.name or '') == 'AutoSell'", "AutoSell-only visibility scope")
+    require(ah_session, "C.originalIsVisible = AuctionFrame.IsVisible", "original AuctionFrame visibility preservation")
+    require(ah_session, "return C.originalIsVisible(self)", "non-AutoSell visibility fallback")
 
     if "AS.RequestOwnerRefresh('tab-open')" in autosell:
         fail("AutoSell tab still performs unconditional owner refresh")
