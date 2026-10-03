@@ -45,12 +45,9 @@ namespace WoW112Updater
             var timer = new Timer { Interval = 1200 };
             timer.Tick += async delegate
             {
-                MainForm form = null;
-                foreach (Form open in Application.OpenForms)
-                {
-                    form = open as MainForm;
-                    if (form != null) break;
-                }
+                var mainHandle = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle;
+                var form = mainHandle == IntPtr.Zero ? null : Control.FromHandle(mainHandle) as MainForm;
+                if (form == null) form = Form.ActiveForm as MainForm;
                 if (form == null || form.IsDisposed || form.Disposing) return;
                 timer.Interval = 10000;
                 await form.RefreshGitHubLiveOverviewAsync();
@@ -296,7 +293,6 @@ namespace WoW112Updater
                             waiting.Add(new GitHubLiveWaitItem { Kind = "READY→PARALLEL", Branch = branch, Head = head, RunId = GetLong(gate, "id") });
                     }
 
-                    var readyUpdate = false;
                     if (!string.IsNullOrWhiteSpace(parallelHead))
                     {
                         var fullRun = GitHubLiveFindRun(latestRuns, TestWorkflowName, "parallel", parallelHead);
@@ -307,8 +303,7 @@ namespace WoW112Updater
                             var economyRun = GitHubLiveFindRun(latestRuns, EconomyWorkflowName, "parallel", parallelHead);
                             profileReady = GitHubLiveRunState(economyRun) == "PASS";
                         }
-                        readyUpdate = profileReady && !MonitorSelectedDeliveryInstalled(parallelHead);
-                        if (readyUpdate)
+                        if (profileReady && !MonitorSelectedDeliveryInstalled(parallelHead))
                             waiting.Add(new GitHubLiveWaitItem
                             {
                                 Kind = IsEconomy() ? "READY→UPDATE ECONOMY" : "READY→UPDATE STANDARD",
