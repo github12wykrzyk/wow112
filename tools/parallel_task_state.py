@@ -13,6 +13,7 @@ TASK_DIR = ROOT / "runtime" / "parallel_tasks"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 IDENT = re.compile(r"[a-z0-9][a-z0-9-]{1,79}\Z")
 MODULE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{1,79}\Z")
+PROFILE = re.compile(r"[a-z][a-z0-9-]{1,39}\Z")
 RESOLVED_DEPENDENCY_STATUSES = {"integrated", "test_ready", "done"}
 
 
@@ -39,6 +40,18 @@ def load_policy(path=POLICY):
     require(enforcement.get("mode") == "merge_base_marker", "unsupported task record enforcement mode")
     require(isinstance(marker, str) and marker.startswith("runtime/") and ".." not in marker,
             "invalid task record enforcement marker_path")
+    profiles = data.get("delivery_profiles")
+    require(isinstance(profiles, dict) and profiles, "delivery_profiles policy is required")
+    for name, config in profiles.items():
+        require(isinstance(name, str) and PROFILE.fullmatch(name), "invalid delivery profile name")
+        require(isinstance(config, dict), "delivery profile config must be an object")
+        workflow = config.get("workflow")
+        paths = config.get("required_paths")
+        require(isinstance(workflow, str) and workflow.endswith(".yml") and "/" not in workflow,
+                "invalid delivery profile workflow for " + name)
+        require(isinstance(paths, list) and paths and len(set(paths)) == len(paths)
+                and all(isinstance(item, str) and item and ".." not in item for item in paths),
+                "invalid required_paths for delivery profile " + name)
     return data
 
 
@@ -84,9 +97,10 @@ def validate_task(task, policy, filename=None):
             and all(isinstance(item, str) and item.strip() for item in resources),
             "shared_resources must be unique non-empty strings")
     profiles = task.get("delivery_profiles")
+    supported = set(policy["delivery_profiles"])
     require(isinstance(profiles, list) and len(set(profiles)) == len(profiles)
-            and all(isinstance(item, str) and item.strip() for item in profiles),
-            "delivery_profiles must be unique strings")
+            and all(isinstance(item, str) and item in supported for item in profiles),
+            "delivery_profiles must contain unique supported profile names")
     notes = task.get("notes")
     require(notes is None or isinstance(notes, str), "notes must be a string when present")
     return task
@@ -154,6 +168,7 @@ def route(tasks, policy, module):
                 "auto_integrate": task.get("auto_integrate", False),
                 "base_parallel_sha": task["base_parallel_sha"],
                 "shared_resources": list(task["shared_resources"]),
+                "delivery_profiles": list(task["delivery_profiles"]),
             }
             for task in matches
         ],
@@ -169,6 +184,7 @@ def queue_check(tasks, branch):
             "eligible": False,
             "task_id": "",
             "reason": "no_task_record",
+            "delivery_profiles": [],
         }
     task = matches[0]
     if task["status"] != "ready_for_integration":
@@ -176,32 +192,31 @@ def queue_check(tasks, branch):
             "eligible": False,
             "task_id": task["id"],
             "reason": "status_" + task["status"],
+            "delivery_profiles": list(task["delivery_profiles"]),
         }
     if not task.get("auto_integrate", False):
         return {
             "eligible": False,
             "task_id": task["id"],
             "reason": "auto_integrate_disabled",
-        }
-    if task["delivery_profiles"]:
-        return {
-            "eligible": False,
-            "task_id": task["id"],
-            "reason": "profile_gate_requires_manual",
+            "delivery_profiles": list(task["delivery_profiles"]),
         }
     by_id = {item["id"]: item for item in tasks}
     for dep in task["dependencies"]:
+        require(dep in by_id, "missing queue dependency " + dep)
         dep_status = by_id[dep]["status"]
         if dep_status not in RESOLVED_DEPENDENCY_STATUSES:
             return {
                 "eligible": False,
                 "task_id": task["id"],
                 "reason": "dependency_pending_" + dep,
+                "delivery_profiles": list(task["delivery_profiles"]),
             }
     return {
         "eligible": True,
         "task_id": task["id"],
         "reason": "opt_in_ready",
+        "delivery_profiles": list(task["delivery_profiles"]),
     }
 
 
@@ -242,6 +257,49 @@ def feature_check(tasks, policy, branch, merge_base, marker_present=None):
     }
 
 
+def path_matches_rule(path, rule):
+    path = path.replace("\\", "/")
+    rule = rule.replace("\\", "/")
+    return path.startswith(rule) if rule.endswith("/") else path == rule
+
+
+def required_profiles_for_paths(policy, changed_paths):
+    required = []
+    normalized = sorted({str(path).replace("\\", "/") for path in changed_paths if str(path).strip()})
+    for name, config in policy["delivery_profiles"].items():
+        if any(path_matches_rule(path, rule)
+               for path in normalized
+               for rule in config["required_paths"]):
+            required.append(name)
+    return sorted(required)
+
+
+def profile_check(tasks, policy, branch, merge_base, changed_paths, marker_present=None):
+    record = feature_check(tasks, policy, branch, merge_base, marker_present=marker_present)
+    if not record["required"]:
+        return {
+            "required": False,
+            "task_id": "",
+            "required_profiles": [],
+            "declared_profiles": [],
+            "reason": record["reason"],
+        }
+    task = next(item for item in tasks if item["id"] == record["task_id"])
+    required_profiles = required_profiles_for_paths(policy, changed_paths)
+    declared = sorted(task["delivery_profiles"])
+    missing = sorted(set(required_profiles) - set(declared))
+    require(not missing,
+            "feature %s touches profile-routed paths but task %s is missing delivery_profiles: %s"
+            % (branch, task["id"], ",".join(missing)))
+    return {
+        "required": True,
+        "task_id": task["id"],
+        "required_profiles": required_profiles,
+        "declared_profiles": declared,
+        "reason": "profile_routes_satisfied",
+    }
+
+
 def mark_integrated(tasks, policy, task_id, feature_sha, task_dir=TASK_DIR):
     require(isinstance(feature_sha, str) and SHA.fullmatch(feature_sha),
             "feature_sha must be a full SHA")
@@ -266,6 +324,7 @@ def write_github_output(path, result):
         "eligible=" + ("true" if result["eligible"] else "false"),
         "task_id=" + result["task_id"],
         "reason=" + result["reason"],
+        "delivery_profiles=" + ",".join(result.get("delivery_profiles", [])),
     ]
     with Path(path).open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
@@ -284,6 +343,10 @@ def main():
     f = sub.add_parser("feature-check")
     f.add_argument("--branch", required=True)
     f.add_argument("--merge-base", required=True)
+    p = sub.add_parser("profile-check")
+    p.add_argument("--branch", required=True)
+    p.add_argument("--merge-base", required=True)
+    p.add_argument("--changed-json", required=True)
     m = sub.add_parser("mark-integrated")
     m.add_argument("--task-id", required=True)
     m.add_argument("--feature-sha", required=True)
@@ -305,6 +368,13 @@ def main():
         elif args.command == "feature-check":
             print(json.dumps(
                 feature_check(tasks, policy, args.branch, args.merge_base),
+                sort_keys=True,
+            ))
+        elif args.command == "profile-check":
+            changed = json.loads(args.changed_json)
+            require(isinstance(changed, list), "changed-json must decode to a list")
+            print(json.dumps(
+                profile_check(tasks, policy, args.branch, args.merge_base, changed),
                 sort_keys=True,
             ))
         else:

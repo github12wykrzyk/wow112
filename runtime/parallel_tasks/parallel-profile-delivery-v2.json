@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "parallel-profile-delivery-v2",
+  "goal": "Complete the concurrency workflow by enforcing profile routing and requiring exact-SHA ECONOMY, updater and AutoLoginBridge gates before and after automatic integration.",
+  "branch": "feature/parallel-profile-delivery-v2",
+  "base_parallel_sha": "3c48d8a740af2621310c79b7e4e2efeb01a8c4a7",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments",
+    "UpdaterMultibox",
+    "AutoLoginBridge",
+    "AHThrottleNative"
+  ],
+  "dependencies": [
+    "parallel-post-integration-standard-v1"
+  ],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "github-actions-parallel-queue",
+    "parallel-profile-delivery",
+    "parallel-standard-delivery"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy",
+    "updater",
+    "autologinbridge"
+  ],
+  "notes": "Final infrastructure stage. It also repairs lifecycle regression tests so they do not assume that already-integrated foundation tasks remain active. The feature deliberately declares all supported profiles so the new exact-SHA profile dispatch path is exercised end-to-end before this task integrates."
+}
