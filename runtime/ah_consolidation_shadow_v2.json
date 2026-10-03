@@ -19,6 +19,8 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Contracts.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Vendor.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Disenchant.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Coordinator.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AuxAdapter.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": null,
@@ -29,6 +31,21 @@
     "contracts": "normalized auction records and candidate ordering",
     "vendor": "realm-learned merchant_sell first, Turtle DB fallback",
     "disenchant": "live/depth material book with AH cut, safety margin and exposure guard; no history price cap"
+  },
+  "coordination": {
+    "coordinator": "single read-only shadow state machine",
+    "aux_adapter": "observation-only boundary accepting normalized AUX callbacks",
+    "states": [
+      "IDLE",
+      "SCANNING",
+      "PAUSE_REQUESTED",
+      "PAUSED",
+      "VERIFYING",
+      "TRANSACTION_PENDING",
+      "UNKNOWN_HOLD",
+      "RESUME_PENDING",
+      "STOPPED"
+    ]
   },
   "delivery": {
     "enabled": false,
@@ -43,5 +60,5 @@
     "may_submit_transactions": false,
     "may_patch_global_ah_api": false
   },
-  "stage": "pure_vendor_and_de_evaluators"
+  "stage": "readonly_coordinator_and_aux_adapter"
 }
