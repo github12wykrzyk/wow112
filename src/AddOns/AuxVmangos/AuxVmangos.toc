@@ -3,11 +3,12 @@
 ## Notes: Turtle arbitrage with single-state AutoSell repricing, manual exact price decisions, owner-scan arbitration, transaction-safe fast resume and native ledger UI.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.46-buy-blacklist
+## Version: 0.47-de-profit-floor50
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
 AuxVmangos.lua
+AuxVmangos_DEProfitFloor.lua
 AuxVmangos_BuyBlacklist.lua
 AuxVmangos_AuxPurchases.lua
 AuxVmangos_AuxLedger.lua
