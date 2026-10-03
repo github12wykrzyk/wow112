@@ -3,7 +3,7 @@
 ## Notes: Turtle arbitrage with single-state AutoSell repricing, manual exact price decisions, owner-scan arbitration, transaction-safe fast resume and native ledger UI.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.46-de-spike-guard
+## Version: 0.47-de-own-filter
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
