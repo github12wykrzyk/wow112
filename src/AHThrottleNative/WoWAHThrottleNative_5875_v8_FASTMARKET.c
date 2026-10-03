@@ -11,10 +11,7 @@
  * then replays mutated copies using distinct listfrom values.
  *
  * Repeatability stages: alternating 75 ms and 125 ms, five runs each.
- * V8 keeps passive AUX receive/outbound probes but preserves the stock 5000 ms
- * QueryAuctionItems cooldown for normal AUX scans. F2 FAST MARKET is disabled;
- * full MARKET is manual-only through /avm market start. The F5 benchmark remains
- * an explicit probe and replays its captured packets without changing stock pacing.
+ * V8 keeps passive AUX receive/outbound probes and the exact-build 25 ms QueryAuctionItems cooldown patch. F2 FAST MARKET is disabled; full MARKET is manual-only through /avm market start.
  * After the native 0x025C handler finishes, Lua consumes that exact page, then the
  * next page is sent after a short 25 ms settle. This avoids page-correlation drift.
  * Each stage sends 500 distinct pages and allows 10 seconds to drain responses.
@@ -128,7 +125,7 @@ typedef int (FASTCALL *InboundHandlerFn)(void*,u32,void*,InboundStore5875*);
 #define FAST_PAGE_TIMEOUT_MS 1500u
 #define FAST_MAX_PAGE     2000u
 #define AH_QUERY_COOLDOWN_ORIGINAL_MS 5000u
-#define AH_QUERY_COOLDOWN_FAST_MS     5000u
+#define AH_QUERY_COOLDOWN_FAST_MS       25u
 #define STAGE_SENDS      500u
 #define STAGE_COUNT      10u
 #define FIRST_TEST_PAGE  20u
@@ -262,10 +259,11 @@ static int safe_build(void){
 }
 
 static int install_ah_query_cooldown_patch(void){
-    /* Production AUX must keep the stock 5875 gate. Validate the exact-build
-       immediate but never mutate it here; F5 remains the isolated turbo probe. */
+    u32 fast=AH_QUERY_COOLDOWN_FAST_MS;
     if(read32(ADDR_AH_QUERY_COOLDOWN_IMM)!=AH_QUERY_COOLDOWN_ORIGINAL_MS)return 0;
-    g_ahCooldownPatched=0u;
+    if(!write_mem((void*)(u32)ADDR_AH_QUERY_COOLDOWN_IMM,&fast,4u))return 0;
+    if(read32(ADDR_AH_QUERY_COOLDOWN_IMM)!=AH_QUERY_COOLDOWN_FAST_MS)return 0;
+    g_ahCooldownPatched=1u;
     return 1;
 }
 
