@@ -38,7 +38,7 @@ def ref_has_path(commit, path):
     return proc.returncode == 0
 
 
-def branch_task_records(commit, policy):
+def branch_task_records(commit, policy, branch):
     prefix = policy["task_dir"].rstrip("/") + "/"
     names = run_git(["ls-tree", "-r", "--name-only", commit, prefix], check=False).splitlines()
     rows = []
@@ -46,7 +46,10 @@ def branch_task_records(commit, policy):
         if not name.startswith(prefix) or not name.endswith(".json"):
             continue
         raw = run_git(["show", commit + ":" + name])
-        task = pts.validate_task(json.loads(raw), policy, Path(name).name)
+        data = json.loads(raw)
+        if data.get("branch") != branch:
+            continue
+        task = pts.validate_task(data, policy, Path(name).name)
         rows.append(task)
     return rows
 
@@ -89,7 +92,7 @@ def reconcile(policy, now=None):
     live_scope_owners = {}
 
     for item in remote_feature_refs(policy):
-        records = branch_task_records(item["sha"], policy)
+        records = branch_task_records(item["sha"], policy, item["branch"])
         task = pick_task_for_branch(records, item["branch"])
         if task is None:
             rows.append({
