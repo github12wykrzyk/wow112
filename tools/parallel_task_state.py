@@ -15,6 +15,7 @@ IDENT = re.compile(r"[a-z0-9][a-z0-9-]{1,79}\Z")
 MODULE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{1,79}\Z")
 PROFILE = re.compile(r"[a-z][a-z0-9-]{1,39}\Z")
 RESOLVED_DEPENDENCY_STATUSES = {"integrated", "test_ready", "done"}
+HISTORICAL_STATUSES = RESOLVED_DEPENDENCY_STATUSES | {"superseded"}
 
 
 def require(condition, message):
@@ -97,10 +98,13 @@ def validate_task(task, policy, filename=None):
             and all(isinstance(item, str) and item.strip() for item in resources),
             "shared_resources must be unique non-empty strings")
     profiles = task.get("delivery_profiles")
-    supported = set(policy["delivery_profiles"])
     require(isinstance(profiles, list) and len(set(profiles)) == len(profiles)
-            and all(isinstance(item, str) and item in supported for item in profiles),
-            "delivery_profiles must contain unique supported profile names")
+            and all(isinstance(item, str) and item.strip() for item in profiles),
+            "delivery_profiles must be unique non-empty strings")
+    if status not in HISTORICAL_STATUSES:
+        supported = set(policy["delivery_profiles"])
+        require(all(item in supported for item in profiles),
+                "active delivery_profiles must use supported profile names")
     notes = task.get("notes")
     require(notes is None or isinstance(notes, str), "notes must be a string when present")
     return task
@@ -180,81 +184,38 @@ def queue_check(tasks, branch):
     matches = [task for task in tasks if task["branch"] == branch]
     require(len(matches) <= 1, "multiple task records own branch " + branch)
     if not matches:
-        return {
-            "eligible": False,
-            "task_id": "",
-            "reason": "no_task_record",
-            "delivery_profiles": [],
-        }
+        return {"eligible": False, "task_id": "", "reason": "no_task_record", "delivery_profiles": []}
     task = matches[0]
     if task["status"] != "ready_for_integration":
-        return {
-            "eligible": False,
-            "task_id": task["id"],
-            "reason": "status_" + task["status"],
-            "delivery_profiles": list(task["delivery_profiles"]),
-        }
+        return {"eligible": False, "task_id": task["id"], "reason": "status_" + task["status"], "delivery_profiles": list(task["delivery_profiles"])}
     if not task.get("auto_integrate", False):
-        return {
-            "eligible": False,
-            "task_id": task["id"],
-            "reason": "auto_integrate_disabled",
-            "delivery_profiles": list(task["delivery_profiles"]),
-        }
+        return {"eligible": False, "task_id": task["id"], "reason": "auto_integrate_disabled", "delivery_profiles": list(task["delivery_profiles"])}
     by_id = {item["id"]: item for item in tasks}
     for dep in task["dependencies"]:
         require(dep in by_id, "missing queue dependency " + dep)
-        dep_status = by_id[dep]["status"]
-        if dep_status not in RESOLVED_DEPENDENCY_STATUSES:
-            return {
-                "eligible": False,
-                "task_id": task["id"],
-                "reason": "dependency_pending_" + dep,
-                "delivery_profiles": list(task["delivery_profiles"]),
-            }
-    return {
-        "eligible": True,
-        "task_id": task["id"],
-        "reason": "opt_in_ready",
-        "delivery_profiles": list(task["delivery_profiles"]),
-    }
+        if by_id[dep]["status"] not in RESOLVED_DEPENDENCY_STATUSES:
+            return {"eligible": False, "task_id": task["id"], "reason": "dependency_pending_" + dep, "delivery_profiles": list(task["delivery_profiles"])}
+    return {"eligible": True, "task_id": task["id"], "reason": "opt_in_ready", "delivery_profiles": list(task["delivery_profiles"])}
 
 
 def marker_present_at(policy, merge_base):
-    require(isinstance(merge_base, str) and SHA.fullmatch(merge_base),
-            "merge-base must be a full SHA")
+    require(isinstance(merge_base, str) and SHA.fullmatch(merge_base), "merge-base must be a full SHA")
     marker = policy["task_record_enforcement"]["marker_path"]
-    result = subprocess.run(
-        ["git", "cat-file", "-e", merge_base + ":" + marker],
-        cwd=ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    result = subprocess.run(["git", "cat-file", "-e", merge_base + ":" + marker], cwd=ROOT,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return result.returncode == 0
 
 
 def feature_check(tasks, policy, branch, merge_base, marker_present=None):
-    require(isinstance(branch, str) and branch.startswith("feature/"),
-            "feature-check requires feature branch")
+    require(isinstance(branch, str) and branch.startswith("feature/"), "feature-check requires feature branch")
     if marker_present is None:
         marker_present = marker_present_at(policy, merge_base)
     if not marker_present:
-        return {
-            "required": False,
-            "task_id": "",
-            "reason": "legacy_merge_base_without_marker",
-        }
+        return {"required": False, "task_id": "", "reason": "legacy_merge_base_without_marker"}
     matches = [task for task in tasks if task["branch"] == branch]
-    require(
-        len(matches) == 1,
-        "feature %s requires exactly one runtime/parallel_tasks/<task-id>.json record because its merge-base contains the concurrency enforcement marker; found %d"
-        % (branch, len(matches)),
-    )
-    return {
-        "required": True,
-        "task_id": matches[0]["id"],
-        "reason": "task_record_enforced",
-    }
+    require(len(matches) == 1,
+            "feature %s requires exactly one runtime/parallel_tasks/<task-id>.json record because its merge-base contains the concurrency enforcement marker; found %d" % (branch, len(matches)))
+    return {"required": True, "task_id": matches[0]["id"], "reason": "task_record_enforced"}
 
 
 def path_matches_rule(path, rule):
@@ -267,9 +228,7 @@ def required_profiles_for_paths(policy, changed_paths):
     required = []
     normalized = sorted({str(path).replace("\\", "/") for path in changed_paths if str(path).strip()})
     for name, config in policy["delivery_profiles"].items():
-        if any(path_matches_rule(path, rule)
-               for path in normalized
-               for rule in config["required_paths"]):
+        if any(path_matches_rule(path, rule) for path in normalized for rule in config["required_paths"]):
             required.append(name)
     return sorted(required)
 
@@ -277,39 +236,24 @@ def required_profiles_for_paths(policy, changed_paths):
 def profile_check(tasks, policy, branch, merge_base, changed_paths, marker_present=None):
     record = feature_check(tasks, policy, branch, merge_base, marker_present=marker_present)
     if not record["required"]:
-        return {
-            "required": False,
-            "task_id": "",
-            "required_profiles": [],
-            "declared_profiles": [],
-            "reason": record["reason"],
-        }
+        return {"required": False, "task_id": "", "required_profiles": [], "declared_profiles": [], "reason": record["reason"]}
     task = next(item for item in tasks if item["id"] == record["task_id"])
     required_profiles = required_profiles_for_paths(policy, changed_paths)
     declared = sorted(task["delivery_profiles"])
     missing = sorted(set(required_profiles) - set(declared))
     require(not missing,
-            "feature %s touches profile-routed paths but task %s is missing delivery_profiles: %s"
-            % (branch, task["id"], ",".join(missing)))
-    return {
-        "required": True,
-        "task_id": task["id"],
-        "required_profiles": required_profiles,
-        "declared_profiles": declared,
-        "reason": "profile_routes_satisfied",
-    }
+            "feature %s touches profile-routed paths but task %s is missing delivery_profiles: %s" % (branch, task["id"], ",".join(missing)))
+    return {"required": True, "task_id": task["id"], "required_profiles": required_profiles,
+            "declared_profiles": declared, "reason": "profile_routes_satisfied"}
 
 
 def mark_integrated(tasks, policy, task_id, feature_sha, task_dir=TASK_DIR):
-    require(isinstance(feature_sha, str) and SHA.fullmatch(feature_sha),
-            "feature_sha must be a full SHA")
+    require(isinstance(feature_sha, str) and SHA.fullmatch(feature_sha), "feature_sha must be a full SHA")
     matches = [task for task in tasks if task["id"] == task_id]
     require(len(matches) == 1, "cannot resolve task for integration: " + task_id)
     task = dict(matches[0])
-    require(task["status"] == "ready_for_integration",
-            "mark-integrated requires ready_for_integration task")
-    require(task.get("auto_integrate", False),
-            "mark-integrated requires auto_integrate=true task")
+    require(task["status"] == "ready_for_integration", "mark-integrated requires ready_for_integration task")
+    require(task.get("auto_integrate", False), "mark-integrated requires auto_integrate=true task")
     task["status"] = "integrated"
     task["auto_integrate"] = False
     task["integrated_feature_sha"] = feature_sha
@@ -320,12 +264,9 @@ def mark_integrated(tasks, policy, task_id, feature_sha, task_dir=TASK_DIR):
 
 
 def write_github_output(path, result):
-    lines = [
-        "eligible=" + ("true" if result["eligible"] else "false"),
-        "task_id=" + result["task_id"],
-        "reason=" + result["reason"],
-        "delivery_profiles=" + ",".join(result.get("delivery_profiles", [])),
-    ]
+    lines = ["eligible=" + ("true" if result["eligible"] else "false"),
+             "task_id=" + result["task_id"], "reason=" + result["reason"],
+             "delivery_profiles=" + ",".join(result.get("delivery_profiles", []))]
     with Path(path).open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
@@ -335,25 +276,14 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("validate")
     sub.add_parser("summary")
-    r = sub.add_parser("route")
-    r.add_argument("--module", required=True)
-    q = sub.add_parser("queue-check")
-    q.add_argument("--branch", required=True)
-    q.add_argument("--github-output")
-    f = sub.add_parser("feature-check")
-    f.add_argument("--branch", required=True)
-    f.add_argument("--merge-base", required=True)
-    p = sub.add_parser("profile-check")
-    p.add_argument("--branch", required=True)
-    p.add_argument("--merge-base", required=True)
-    p.add_argument("--changed-json", required=True)
-    m = sub.add_parser("mark-integrated")
-    m.add_argument("--task-id", required=True)
-    m.add_argument("--feature-sha", required=True)
+    r = sub.add_parser("route"); r.add_argument("--module", required=True)
+    q = sub.add_parser("queue-check"); q.add_argument("--branch", required=True); q.add_argument("--github-output")
+    f = sub.add_parser("feature-check"); f.add_argument("--branch", required=True); f.add_argument("--merge-base", required=True)
+    p = sub.add_parser("profile-check"); p.add_argument("--branch", required=True); p.add_argument("--merge-base", required=True); p.add_argument("--changed-json", required=True)
+    m = sub.add_parser("mark-integrated"); m.add_argument("--task-id", required=True); m.add_argument("--feature-sha", required=True)
     args = parser.parse_args()
     try:
-        policy = load_policy()
-        tasks = load_tasks(policy)
+        policy = load_policy(); tasks = load_tasks(policy)
         if args.command == "validate":
             print("PARALLEL_TASK_STATE: PASS (%d tasks)" % len(tasks))
         elif args.command == "summary":
@@ -362,28 +292,16 @@ def main():
             print(json.dumps(route(tasks, policy, args.module), indent=2, sort_keys=True))
         elif args.command == "queue-check":
             result = queue_check(tasks, args.branch)
-            if args.github_output:
-                write_github_output(args.github_output, result)
+            if args.github_output: write_github_output(args.github_output, result)
             print(json.dumps(result, sort_keys=True))
         elif args.command == "feature-check":
-            print(json.dumps(
-                feature_check(tasks, policy, args.branch, args.merge_base),
-                sort_keys=True,
-            ))
+            print(json.dumps(feature_check(tasks, policy, args.branch, args.merge_base), sort_keys=True))
         elif args.command == "profile-check":
-            changed = json.loads(args.changed_json)
-            require(isinstance(changed, list), "changed-json must decode to a list")
-            print(json.dumps(
-                profile_check(tasks, policy, args.branch, args.merge_base, changed),
-                sort_keys=True,
-            ))
+            changed = json.loads(args.changed_json); require(isinstance(changed, list), "changed-json must decode to a list")
+            print(json.dumps(profile_check(tasks, policy, args.branch, args.merge_base, changed), sort_keys=True))
         else:
             task = mark_integrated(tasks, policy, args.task_id, args.feature_sha)
-            print(json.dumps({
-                "task_id": task["id"],
-                "status": task["status"],
-                "integrated_feature_sha": task["integrated_feature_sha"],
-            }, sort_keys=True))
+            print(json.dumps({"task_id": task["id"], "status": task["status"], "integrated_feature_sha": task["integrated_feature_sha"]}, sort_keys=True))
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print("PARALLEL_TASK_STATE: FAIL: " + str(exc), file=sys.stderr)
         return 1
