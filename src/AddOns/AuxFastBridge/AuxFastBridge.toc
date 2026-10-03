@@ -1,9 +1,10 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Fast AUX bridge; GUI-toggle manual headless Search, per-scan speed diagnostics, transaction-safe resume.
+## Notes: AUX bridge; production uses stock list-result wait, with headless Search diagnostics and transaction-safe resume.
 ## Author: github12wykrzyk/wow112
-## Version: 3.7
+## Version: 3.8
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
+AuxFastBridgeProductionStockWait.lua
 AuxFastBridge.lua
