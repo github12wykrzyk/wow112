@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-active-cast-roster-guard-v1",
+  "goal": "Protect an already-started Ritual of Summoning from transient party/raid roster churn when another player joins.",
+  "branch": "feature/summonscout-active-cast-roster-guard-v1",
+  "base_parallel_sha": "3c48d8a740af2621310c79b7e4e2efeb01a8c4a7",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout active summon state",
+    "SummonScout party/raid roster synchronization",
+    "SummonScout hot core transform"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Package-time fail-closed transform moves native/event cast-start recognition and the summonActiveStarted guard before roster-presence checks. STOP/FAILED/INTERRUPTED and the existing completion watchdog remain authoritative after Ritual starts. No queue, invite, counter or native DLL behavior is changed.",
+  "integrated_feature_sha": "77302e1f06b737c3746432f37cd485383b2468bb"
+}
