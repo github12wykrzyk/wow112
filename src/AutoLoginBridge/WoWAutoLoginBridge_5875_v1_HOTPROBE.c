@@ -19,7 +19,7 @@
 
 #define HOT_POLL_MS          250u
 #define HOT_STABLE_MS        250u
-#define HOT_PAYLOAD_CAP      65536u
+#define HOT_PAYLOAD_CAP      262144u
 #define HOT_PATH_CAP         1024u
 #define HOT_FILE_COUNT       2u
 
