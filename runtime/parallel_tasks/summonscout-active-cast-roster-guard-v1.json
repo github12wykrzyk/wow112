@@ -7,15 +7,13 @@
   "modules": [
     "SummonScout"
   ],
-  "dependencies": [
-    "autosummon-assist-parallel"
-  ],
+  "dependencies": [],
   "shared_resources": [
     "SummonScout active summon state",
     "SummonScout party/raid roster synchronization",
     "SummonScout hot core transform"
   ],
-  "status": "in_progress",
+  "status": "preflight",
   "auto_integrate": false,
   "delivery_profiles": [],
   "notes": "Package-time fail-closed transform moves native/event cast-start recognition and the summonActiveStarted guard before roster-presence checks. STOP/FAILED/INTERRUPTED and the existing completion watchdog remain authoritative after Ritual starts. No queue, invite, counter or native DLL behavior is changed."
