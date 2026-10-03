@@ -3,13 +3,15 @@
  * Experimental PARALLEL feature for build 5875 x86.
  *
  * The canonical AutoLoginBridge source remains unchanged and is included below.
- * This wrapper adds one isolated hot-Lua watcher:
- * - polls Interface\AddOns\SummonScout\SummonScout_PostPaymentOfferHot.lua every 250 ms,
- * - requires the payload bytes to remain unchanged for >=250 ms,
- * - executes a changed payload through the already-proven
- *   FrameScript_Execute 0x00704CD0 primitive,
- * - runs the execution from a Win32 SetTimer callback, matching the
- *   main-thread pattern already used by AutoSummonAssist.
+ * This wrapper adds two isolated helpers:
+ * - hot-Lua watcher for SummonScout post-payment messaging,
+ * - resilient AutoLogin retry after transient login-server disconnects.
+ *
+ * The retry path arms only after the normal native AutoLogin has fired once.
+ * It never changes the handoff-only CharacterSwitch startup behavior. When the
+ * client returns to an idle login screen without reaching the world (or after
+ * losing an established world session), it retries the same DPAPI-backed
+ * profile. A per-process jitter prevents synchronized multibox retry bursts.
  */
 #define DllMain AutoLoginBridge_BaseDllMain
 #include "WoWAutoLoginBridge_5875_v1.c"
@@ -31,6 +33,11 @@
 #define HOT_STATUS_TOO_LARGE      8u
 #define HOT_STATUS_PATH_FAILED    9u
 
+#define RETRY_POLL_MS         250u
+#define RETRY_FALLBACK_MS     8000u
+#define RETRY_DELAY_MIN_MS    2500u
+#define RETRY_DELAY_SPAN_MS   2000u
+
 static UINT_PTR g_hot_timer=0u;
 static volatile DWORD g_hot_status=HOT_STATUS_DETACHED;
 static volatile DWORD g_hot_generation=0u;
@@ -45,6 +52,14 @@ static int g_hot_have_candidate=0;
 static int g_hot_have_last=0;
 static char g_hot_path[HOT_PATH_CAP];
 static char g_hot_payload[HOT_PAYLOAD_CAP];
+
+static UINT_PTR g_retry_timer=0u;
+static volatile DWORD g_retry_attempts=0u;
+static int g_retry_armed=0;
+static int g_retry_saw_busy=0;
+static int g_retry_had_world=0;
+static DWORD g_retry_last_attempt=0u;
+static DWORD g_retry_next_at=0u;
 
 static DWORD hot_hash(const char *data,DWORD size)
 {
@@ -78,6 +93,101 @@ static int hot_world_ready(void)
 {
     DWORD mgr=*(volatile DWORD*)(DWORD)WOW_OBJMGR;
     return mgr>=0x00010000u && mgr<=0x7FFE0000u && !(mgr&3u);
+}
+
+static DWORD retry_delay_ms(void)
+{
+    DWORD mix=g_pid ^ GetTickCount() ^ (g_retry_attempts*1103515245u);
+    return RETRY_DELAY_MIN_MS + (mix % RETRY_DELAY_SPAN_MS);
+}
+
+static VOID retry_reset_glue_state(void)
+{
+    static const char resetScript[]=
+        "if GlueDialog and GlueDialog.Hide then GlueDialog:Hide() end;"
+        "W112_AUTOCHAR_FIRST_SELECTED=nil;W112_AUTOCHAR_FIRST_DONE=nil";
+    ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(resetScript,"WoW112AutoLoginRetryReset");
+}
+
+static VOID retry_autochar_tick(void)
+{
+    static const char autoCharScript[]=
+        "if CharacterSelectUI and CharacterSelectUI.IsVisible and CharacterSelectUI:IsVisible() "
+        "and CharacterSelect and type(GetNumCharacters)=='function' and GetNumCharacters()>0 "
+        "and type(CharacterSelect_SelectCharacter)=='function' "
+        "and type(CharacterSelect_EnterWorld)=='function' then "
+        "if not W112_AUTOCHAR_FIRST_SELECTED then "
+        "CharacterSelect_SelectCharacter(1,1);W112_AUTOCHAR_FIRST_SELECTED=true "
+        "elseif not W112_AUTOCHAR_FIRST_DONE and CharacterSelect.selectedIndex==1 then "
+        "W112_AUTOCHAR_FIRST_DONE=true;CharacterSelect_EnterWorld() end end";
+    ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(autoCharScript,"WoW112AutoLoginRetryAutoChar");
+}
+
+static VOID CALLBACK retry_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD now)
+{
+    int ready;
+    (void)hwnd;
+    (void)msg;
+    (void)timerId;
+
+    if(!guard_ok() || !g_profile_loaded) return;
+
+    /* A handoff-only profile never sets g_done through WM_AUTOLOGIN, so this
+       arms only ordinary Multibox AutoLogin sessions after their first attempt. */
+    if(!g_retry_armed) {
+        if(g_done==1) {
+            g_retry_armed=1;
+            g_retry_last_attempt=now;
+            g_retry_next_at=0u;
+            g_retry_saw_busy=0;
+            g_retry_had_world=0;
+        }
+        return;
+    }
+
+    if(hot_world_ready()) {
+        g_retry_had_world=1;
+        g_retry_saw_busy=0;
+        g_retry_next_at=0u;
+        return;
+    }
+
+    /* Do not race the explicit CharacterSwitch relogin request while it owns
+       the native login primitive. Once that request is complete, normal retry
+       protection can take over again if the server rejects it. */
+    if(g_relogin_state==1 || g_relogin_state==2) return;
+
+    if(g_done<0) return;
+
+    if(g_autochar && g_done==1)
+        retry_autochar_tick();
+
+    ready=glue_ready();
+    if(!ready) {
+        g_retry_saw_busy=1;
+        g_retry_next_at=0u;
+        return;
+    }
+
+    if(g_retry_next_at==0u) {
+        if(g_retry_had_world || g_retry_saw_busy) {
+            g_retry_next_at=now+retry_delay_ms();
+        } else if((DWORD)(now-g_retry_last_attempt)>=RETRY_FALLBACK_MS) {
+            /* Some immediate "Unable to connect" paths do not expose a useful
+               busy transition. Fall back to a bounded timed retry. */
+            g_retry_next_at=now+retry_delay_ms();
+        }
+    }
+
+    if(g_retry_next_at!=0u && (LONG)(now-g_retry_next_at)>=0) {
+        retry_reset_glue_state();
+        ++g_retry_attempts;
+        g_done=native_login()?1:-2;
+        g_retry_last_attempt=now;
+        g_retry_next_at=0u;
+        g_retry_saw_busy=0;
+        g_retry_had_world=0;
+    }
 }
 
 static int hot_read_payload(DWORD *size_out,DWORD *hash_out)
@@ -236,18 +346,29 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
         g_hot_path[0]=0;
         g_hot_payload[0]=0;
 
+        g_retry_timer=0u;
+        g_retry_attempts=0u;
+        g_retry_armed=0;
+        g_retry_saw_busy=0;
+        g_retry_had_world=0;
+        g_retry_last_attempt=0u;
+        g_retry_next_at=0u;
+
         baseResult=AutoLoginBridge_BaseDllMain(module,reason,reserved);
         if(!baseResult) return FALSE;
         if(!hot_build_path()) {
             g_hot_status=HOT_STATUS_PATH_FAILED;
-            return TRUE;
+        } else {
+            g_hot_timer=SetTimer(NULL,0u,HOT_POLL_MS,hot_timer_tick);
+            g_hot_status=g_hot_timer?HOT_STATUS_WAIT_WORLD:HOT_STATUS_PATH_FAILED;
         }
-        g_hot_timer=SetTimer(NULL,0u,HOT_POLL_MS,hot_timer_tick);
-        g_hot_status=g_hot_timer?HOT_STATUS_WAIT_WORLD:HOT_STATUS_PATH_FAILED;
+        g_retry_timer=SetTimer(NULL,0u,RETRY_POLL_MS,retry_timer_tick);
         return TRUE;
     }
 
     if(reason==DLL_PROCESS_DETACH) {
+        if(g_retry_timer) KillTimer(NULL,g_retry_timer);
+        g_retry_timer=0u;
         if(g_hot_timer) KillTimer(NULL,g_hot_timer);
         g_hot_timer=0u;
         g_hot_status=HOT_STATUS_DETACHED;
