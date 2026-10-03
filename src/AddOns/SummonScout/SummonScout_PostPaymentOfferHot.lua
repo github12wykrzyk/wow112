@@ -13,6 +13,7 @@ PP.pending = PP.pending or {}
 PP.lastMessageIndex = tonumber(PP.lastMessageIndex) or 0
 PP.nextPollAt = tonumber(PP.nextPollAt) or 0
 PP.recentClosedAt = tonumber(PP.recentClosedAt) or 0
+PP.groupedNoticeRecent = PP.groupedNoticeRecent or {}
 
 local POSTPAY_MESSAGES = {
     "Thank you! I also offer summons to Hyjal, Hydraxis and Winterspring.",
@@ -60,6 +61,44 @@ local function ppChat(text)
     end
 end
 
+local function ppGroupedName(line)
+    line = ppTrim(line or "")
+    local _, _, name = string.find(line, "^(.+) is already in a group%.?$")
+    if not name then
+        _, _, name = string.find(line, "^(.+) is already grouped%.?$")
+    end
+    if not name then
+        _, _, name = string.find(line, "^(.+) is already in group%.?$")
+    end
+    name = ppTrim(name or "")
+    if ppValidName(name) then return name end
+    return nil
+end
+
+local function ppNotifyGrouped(line)
+    local name = ppGroupedName(line)
+    if not name or not SendChatMessage then return false end
+
+    local key = string.lower(name)
+    local t = ppNow()
+    local last = tonumber(PP.groupedNoticeRecent[key]) or -100000
+    if (t - last) < 5 then return true end
+    PP.groupedNoticeRecent[key] = t
+
+    local message = "You are already grouped. Leave your group and whisper me again for an invite."
+    if pcall then
+        local ok = pcall(SendChatMessage, message, "WHISPER", nil, name)
+        if not ok then return false end
+    else
+        SendChatMessage(message, "WHISPER", nil, name)
+    end
+
+    if SummonScoutDB and SummonScoutDB.debug then
+        ppChat("already-grouped whisper -> " .. name)
+    end
+    return true
+end
+
 local function ppEnabled()
     return SummonScoutDB and SummonScoutDB.postPaymentOfferEnabled == true
 end
@@ -80,6 +119,7 @@ local function ppResetSessionCursor()
     PP.recentClosedPartner = nil
     PP.recentClosedAt = 0
     PP.nextPollAt = 0
+    PP.groupedNoticeRecent = {}
 end
 
 local function ppLiveTradePartner()
@@ -281,8 +321,10 @@ function M.Init()
     H.RegisterEvent("TRADE_MONEY_CHANGED")
     H.RegisterEvent("TRADE_ACCEPT_UPDATE")
     H.RegisterEvent("TRADE_CLOSED")
+    H.RegisterEvent("CHAT_MSG_SYSTEM")
     ppAttachGuiToggle()
     W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
+    W112_SUMMONSCOUT_GROUPED_NOTICE_VERSION = "1"
 end
 
 function M.OnEvent(ev, a1)
@@ -292,6 +334,12 @@ function M.OnEvent(ev, a1)
         PP.moduleVersion = POSTPAY_VERSION
         PP.initialized = true
         W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
+        W112_SUMMONSCOUT_GROUPED_NOTICE_VERSION = "1"
+        return
+    end
+
+    if ev == "CHAT_MSG_SYSTEM" then
+        ppNotifyGrouped(a1 or "")
         return
     end
 
@@ -343,5 +391,5 @@ end
 
 H.Register("postpay", M, POSTPAY_VERSION)
 if DEFAULT_CHAT_FRAME then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r hot-ping1 received")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r grouped-whisper hot-test received")
 end
