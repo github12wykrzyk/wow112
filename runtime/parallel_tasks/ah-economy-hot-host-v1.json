@@ -18,10 +18,10 @@
     "hot-lua-runtime",
     "addon-packager-transform"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [
     "economy"
   ],
-  "notes": "No active AH ownership change. ECONOMY gains one manifest-declared Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua asset built from the exact parallel SummonScout source plus the existing AH shadow bundle transform. Updater already applies addon paths live; AutoLoginBridge already watches this exact path."
+  "notes": "Feature code passed exact-SHA preflight at 7a5689ae764a09275a7a84b29b414c04ff339053. ECONOMY gains one manifest-declared Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua asset built from the exact parallel SummonScout source plus the existing AH shadow bundle transform. Updater applies addon paths live and AutoLoginBridge already watches this exact path. Queue integration remains non-force and profile-gated."
 }
