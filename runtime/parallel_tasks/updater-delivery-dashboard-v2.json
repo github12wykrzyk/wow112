@@ -4,7 +4,7 @@
   "goal": "Turn the loader ready queue into an explicit delivery-to-game lifecycle bar: waiting for integration, ready for local update, installed/ready to test, or no ready changes.",
   "branch": "feature/updater-delivery-dashboard-v2",
   "base_parallel_sha": "83df17940433ec599210669dc331067e179fa40d",
-  "status": "awaiting_ci",
+  "status": "ready_for_integration",
   "auto_integrate": true,
   "modules": [
     "Updater"
