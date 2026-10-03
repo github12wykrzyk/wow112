@@ -21,6 +21,7 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Disenchant.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Coordinator.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AuxAdapter.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_TransactionGuard.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": null,
@@ -33,19 +34,10 @@
     "disenchant": "live/depth material book with AH cut, safety margin and exposure guard; no history price cap"
   },
   "coordination": {
-    "coordinator": "single read-only shadow state machine",
+    "coordinator": "single shadow state machine",
     "aux_adapter": "observation-only boundary accepting normalized AUX callbacks",
-    "states": [
-      "IDLE",
-      "SCANNING",
-      "PAUSE_REQUESTED",
-      "PAUSED",
-      "VERIFYING",
-      "TRANSACTION_PENDING",
-      "UNKNOWN_HOLD",
-      "RESUME_PENDING",
-      "STOPPED"
-    ]
+    "transaction_guard": "single future transaction authority; real actions hard-locked in shadow",
+    "states": ["IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"]
   },
   "delivery": {
     "enabled": false,
@@ -58,7 +50,8 @@
     "production_ah_untouched": true,
     "may_send_ah_queries": false,
     "may_submit_transactions": false,
-    "may_patch_global_ah_api": false
+    "may_patch_global_ah_api": false,
+    "real_actions_hard_locked": true
   },
-  "stage": "readonly_coordinator_and_aux_adapter"
+  "stage": "fail_closed_transaction_authority"
 }
