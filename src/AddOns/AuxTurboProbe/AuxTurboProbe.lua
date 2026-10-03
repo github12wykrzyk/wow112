@@ -1,4 +1,4 @@
--- AUX Turbo Probe v2.0
+-- AUX Turbo Probe v2.1
 -- Completely separate raw AH throughput probe.
 -- It does not call aux.core.scan, search.execute, AUXFAST_ResumeSearch or AVM buying.
 -- AuxFastBridge is used read-only for the verified native 0x025C sequence counter.
@@ -10,6 +10,7 @@ AUXTURBO_RUNTIME = AUXTURBO_RUNTIME or {}
 
 local MAX_PAGE = 2000
 local RESPONSE_TIMEOUT = 2.0
+local MIN_SEND_INTERVAL = 0.025
 
 local function out(msg)
 	if DEFAULT_CHAT_FRAME then
@@ -25,6 +26,7 @@ local function reset_runtime()
 	AUXTURBO_RUNTIME.received = 0
 	AUXTURBO_RUNTIME.expectedSeq = 0
 	AUXTURBO_RUNTIME.sentAt = 0
+	AUXTURBO_RUNTIME.nextSendAt = 0
 	AUXTURBO_RUNTIME.startedAt = 0
 	AUXTURBO_RUNTIME.total = 0
 	AUXTURBO_RUNTIME.lastPage = -1
@@ -126,22 +128,18 @@ local function finish(reason)
 		" p95=" .. string.format("%.1f", p95) .. "ms")
 end
 
-local function gate_ready()
-	if not CanSendAuctionQuery then return true end
-	local ok, ready = pcall(CanSendAuctionQuery)
-	if not ok then return false end
-	return ready and true or false
-end
-
 local function send_page()
 	if not AUXTURBO_RUNTIME.active or AUXTURBO_RUNTIME.phase ~= "gate" then return end
-	if not gate_ready() then return end
+	local now = GetTime and GetTime() or 0
+	if now < (tonumber(AUXTURBO_RUNTIME.nextSendAt) or 0) then return end
+
 	local s = fast_status()
 	if not s then finish("NO_NATIVE_STATUS") return end
 
 	local page = tonumber(AUXTURBO_RUNTIME.page) or 0
 	AUXTURBO_RUNTIME.expectedSeq = tonumber(s.nativeSeq) or 0
-	AUXTURBO_RUNTIME.sentAt = GetTime and GetTime() or 0
+	AUXTURBO_RUNTIME.sentAt = now
+	AUXTURBO_RUNTIME.nextSendAt = now + MIN_SEND_INTERVAL
 	AUXTURBO_RUNTIME.phase = "response"
 	AUXTURBO_RUNTIME.sent = (tonumber(AUXTURBO_RUNTIME.sent) or 0) + 1
 
@@ -175,7 +173,7 @@ local function accept_response(s)
 			finish("NATIVE_25MS_UNCONFIRMED")
 			return
 		end
-		out("native cooldown confirmed: 25ms; raw measurement active")
+		out("native cooldown confirmed: 25ms; self-driven raw scan active")
 	end
 
 	local now = GetTime and GetTime() or 0
@@ -198,6 +196,13 @@ local function accept_response(s)
 
 	AUXTURBO_RUNTIME.page = page + 1
 	AUXTURBO_RUNTIME.phase = "gate"
+	-- Do not consult CanSendAuctionQuery here. The stock Lua gate can remain false
+	-- even though the verified native client cooldown is patched to 25 ms. The probe
+	-- is response-paced: one in-flight query only, then the next page is sent as soon
+	-- as the real 0x025C response is observed and the 25 ms client interval elapsed.
+	if now > (tonumber(AUXTURBO_RUNTIME.nextSendAt) or 0) then
+		AUXTURBO_RUNTIME.nextSendAt = now
+	end
 end
 
 function AUXTURBO_Run()
@@ -229,6 +234,7 @@ function AUXTURBO_Run()
 	AUXTURBO_RUNTIME.active = true
 	AUXTURBO_RUNTIME.phase = "gate"
 	AUXTURBO_RUNTIME.startedAt = GetTime and GetTime() or 0
+	AUXTURBO_RUNTIME.nextSendAt = AUXTURBO_RUNTIME.startedAt
 	AuxTurboProbeDB.runs = (tonumber(AuxTurboProbeDB.runs) or 0) + 1
 	AuxTurboProbeDB.lastResult = "running"
 	detach_browse()
@@ -237,7 +243,7 @@ function AUXTURBO_Run()
 		out("native cooldown status unprimed; page 0 will bootstrap exact 25ms verification")
 	end
 	out("RAW run=" .. tostring(AuxTurboProbeDB.runs) ..
-		" started; page-by-page native-correlated scan, AUX Search/AVM untouched")
+		" started; self-driven response-paced scan, AUX Search/AVM untouched")
 	return true, "started"
 end
 
@@ -310,4 +316,4 @@ SlashCmdList.AUXTURBOPROBE = function(msg)
 	out("commands: /atp run | /atp status | /atp stop")
 end
 
-out("v2.0 loaded; inert until /atp run; raw scanner does not drive AUX Search")
+out("v2.1 loaded; inert until /atp run; self-driven raw scanner does not drive AUX Search")
