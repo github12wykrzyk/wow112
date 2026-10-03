@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-critical-hardening-v1-r2",
+  "goal": "Harden AuxEconomyShadow before cutover while preserving the current Lua 5.0 bundle compatibility fix and enforcing exact feature-SHA ECONOMY validation without automatic integration.",
+  "branch": "feature/ah-consolidation-critical-hardening-v1-r2",
+  "base_parallel_sha": "ef8dc204e8f2f8e7b808a38b2aa3a4b776fd9116",
+  "modules": [
+    "AuxEconomyShadow",
+    "SummonScout",
+    "ParallelWorkflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-consolidation-shadow-source",
+    "hot-lua-runtime",
+    "SummonScout hot payload composition",
+    "addon-packager-transform",
+    "parallel-feature-preflight-workflow",
+    "parallel-delivery-profile-routing"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "integrated_feature_sha": "89e2d4b06d436b05bea6a3f45a624a7c6ba253cc",
+  "notes": "Successor to feature/ah-consolidation-critical-hardening-v1 after parallel advanced with ah-shadow-lua50-lengthfix-v1. Exact feature SHA passed Parallel feature preflight run 37147752828 and ECONOMY run 37147784278, artifact 11282886806. Manual integration preserves auto_integrate=false. AuxVmangos remains production owner; no cutover is enabled."
+}
