@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-strategies-v1",
+  "goal": "Add pure hot-reloadable Flip, Stack and Bid shadow strategies matching current AuxVmangos economics before passive parity/cutover work.",
+  "branch": "feature/ah-consolidation-strategies-v1",
+  "base_parallel_sha": "3eb8ea2008c3889944409c907af207e820c69216",
+  "modules": ["AuxEconomyShadow"],
+  "dependencies": [],
+  "shared_resources": ["ah-consolidation-shadow-source", "auction-house-economy-model", "hot-lua-runtime", "aux-history-readonly"],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": ["economy"],
+  "notes": "Shadow-only strategy parity stage. Production AuxVmangos remains owner. No AH queries, purchases, posts, cancels or global API patching. DE rollback remains preserved; history is allowed only for Flip/Stack parity and is supplied read-only through context."
+}

@@ -22,6 +22,9 @@ ORDER = (
     "AuxEconomyShadow_MarketBook.lua",
     "AuxEconomyShadow_Vendor.lua",
     "AuxEconomyShadow_Disenchant.lua",
+    "AuxEconomyShadow_Flip.lua",
+    "AuxEconomyShadow_Stack.lua",
+    "AuxEconomyShadow_Bid.lua",
     "AuxEconomyShadow_CandidatePipeline.lua",
     "AuxEconomyShadow_Coordinator.lua",
     "AuxEconomyShadow_AuxAdapter.lua",
@@ -70,8 +73,6 @@ def build_bundle() -> bytes:
 
     rows = [b"-- " + BUNDLE_MARKER]
 
-    # The persistent anchor defines the replacement protocol. All replaceable
-    # modules below it stage first and commit as one generation.
     anchor = ORDER[0]
     rows.append(("-- BEGIN " + anchor).encode("ascii"))
     rows.append(b"do")

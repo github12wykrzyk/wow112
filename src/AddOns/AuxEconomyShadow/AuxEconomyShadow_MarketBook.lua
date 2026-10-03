@@ -3,7 +3,7 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow market book requires persistent anchor")
 end
 
-local REVISION = "1-normalized-market-book"
+local REVISION = "2-listings-market-book"
 local ok = R.ReplaceModule("marketbook", REVISION, function(state)
     state.books = type(state.books) == "table" and state.books or {}
     state.nextGeneration = tonumber(state.nextGeneration) or 0
@@ -25,6 +25,8 @@ local ok = R.ReplaceModule("marketbook", REVISION, function(state)
             byItem = {},
             pages = {},
             count = 0,
+            buyoutCount = 0,
+            bidOnlyCount = 0,
             totalUnits = 0,
         }
         state.books[name] = book
@@ -46,7 +48,7 @@ local ok = R.ReplaceModule("marketbook", REVISION, function(state)
         if not book then return nil, "book-unavailable" end
         local contracts = R.GetModule("contracts")
         if not contracts then return nil, "contracts-unavailable" end
-        local record, reason = contracts.NormalizeAuction(raw)
+        local record, reason = contracts.NormalizeListing(raw)
         if not record then return nil, reason end
         if not record.signature or record.signature == "" then
             record.signature = contracts.Signature(record, true)
@@ -56,15 +58,20 @@ local ok = R.ReplaceModule("marketbook", REVISION, function(state)
         book.count = book.count + 1
         book.totalUnits = book.totalUnits + record.count
         book.pages[record.sourcePage] = (tonumber(book.pages[record.sourcePage]) or 0) + 1
+        if record.buyout > 0 then book.buyoutCount = book.buyoutCount + 1
+        else book.bidOnlyCount = book.bidOnlyCount + 1 end
 
         local row = book.byItem[record.itemId]
         if not row then
-            row = { itemId = record.itemId, offers = {}, units = 0, sorted = true }
+            row = { itemId = record.itemId, listings = {}, offers = {}, units = 0, sorted = true }
             book.byItem[record.itemId] = row
         end
-        table.insert(row.offers, record)
-        row.units = row.units + record.count
-        row.sorted = false
+        table.insert(row.listings, record)
+        if record.buyout > 0 then
+            table.insert(row.offers, record)
+            row.units = row.units + record.count
+            row.sorted = false
+        end
         return record, nil
     end
 
@@ -84,6 +91,13 @@ local ok = R.ReplaceModule("marketbook", REVISION, function(state)
         return row.offers, row.units
     end
 
+    function api.ItemListings(bookOrName, itemId)
+        local book = resolve(bookOrName)
+        if not book then return nil end
+        local row = book.byItem[tonumber(itemId)]
+        return row and row.listings or nil
+    end
+
     function api.Records(bookOrName)
         local book = resolve(bookOrName)
         return book and book.records or nil
@@ -100,6 +114,8 @@ local ok = R.ReplaceModule("marketbook", REVISION, function(state)
             name = book.name,
             generation = book.generation,
             count = book.count,
+            buyoutCount = book.buyoutCount,
+            bidOnlyCount = book.bidOnlyCount,
             totalUnits = book.totalUnits,
             itemKinds = itemKinds,
             pages = pageKinds,
