@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "ah-de-minprofit-50s-v1",
+  "goal": "Raise the default absolute minimum expected profit for AuxVmangos disenchant purchases from 10s to 50s while preserving the existing 25% safety margin and intentional custom thresholds.",
+  "branch": "feature/ah-de-minprofit-50s-v1",
+  "base_parallel_sha": "00babc9c128c95b46563ce44541347d691121927",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "auction-house-auto-purchase",
+    "aux-de-economics"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "notes": "Keep deSafetyMarginPct at 25%. Migrate only nil or the historical default deMinProfit=1000 copper to 5000 copper, preserve non-default user values, and keep /avm reset aligned with the new 50s default via a small post-core policy module.",
+  "integrated_feature_sha": "21f139c9826496552c69c9a96227163ca51e34c5"
+}
