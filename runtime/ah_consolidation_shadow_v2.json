@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "id": "ah-consolidation-hotreload-v2",
+  "branch": "feature/ah-consolidation-hotreload-v2",
+  "base_parallel_sha": "c4e35928deab3b07e667b94631c61dc63510d9a6",
+  "rollback_lineage": {
+    "restore_pre_de_history_commit": "3c48d8a740af2621310c79b7e4e2efeb01a8c4a7",
+    "pre_de_price_guard_parent": "1891af1e7da0fe1acdbfa85e411df0244a509037",
+    "forbidden_legacy_component": "src/AddOns/AuxVmangos/AuxVmangos_DEPriceGuard.lua",
+    "rule": "Do not reintroduce DE history-cap/price-guard valuation logic into the consolidation baseline."
+  },
+  "source_root": "src/AddOns/AuxEconomyShadow",
+  "hot_reload": {
+    "required": true,
+    "close_game_required_for_lua_fix": false,
+    "reload_ui_required_for_lua_fix": false,
+    "persistent_anchor": "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Anchor.lua",
+    "replaceable_payload": "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua",
+    "native_live_executor": null,
+    "native_live_executor_status": "planned_isolated_stage"
+  },
+  "delivery": {
+    "enabled": false,
+    "active_parallel_candidate": false,
+    "active_economy_overlay": false,
+    "updater_visible": false,
+    "cutover_allowed": false
+  },
+  "safety": {
+    "production_ah_untouched": true,
+    "may_send_ah_queries": false,
+    "may_submit_transactions": false,
+    "may_patch_global_ah_api": false
+  },
+  "stage": "hot_runtime_contract"
+}

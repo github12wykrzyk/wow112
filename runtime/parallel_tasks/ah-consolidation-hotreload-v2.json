@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-hotreload-v2",
+  "goal": "Build a side-by-side consolidated AH/economy implementation from the current post-rollback parallel state, with live Lua hot-fix support that does not require closing WoW or /reload after the one-time runtime cutover.",
+  "branch": "feature/ah-consolidation-hotreload-v2",
+  "base_parallel_sha": "c4e35928deab3b07e667b94631c61dc63510d9a6",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-consolidation-shadow-source",
+    "aux-de-valuation",
+    "auction-house-scan-loop",
+    "hot-lua-runtime"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Shadow-only consolidation from the live post-rollback parallel baseline. Do not restore AuxVmangos_DEPriceGuard/history-cap logic. Current AH manifests and updater delivery remain untouched. Hot-fix design uses a persistent anchor plus replaceable payload; native live execution is a later isolated stage before any cutover."
+}
