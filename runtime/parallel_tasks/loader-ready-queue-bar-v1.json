@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "loader-ready-queue-bar-v1",
+  "goal": "Add a dedicated loader GUI bar that highlights verified delivery items waiting for integration or local game update.",
+  "branch": "feature/loader-ready-queue-bar",
+  "base_parallel_sha": "4a0205fbc8091e8d172b0da6537d5ac8366e446c",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "Updater"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "updater-github-live-header"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "notes": "UI-only observer bar. Uses existing GitHub LIVE readiness evidence; does not alter installation or gameplay gates.",
+  "integrated_feature_sha": "821d62799a3aed20ce7b039918694e02d22d12d9"
+}
