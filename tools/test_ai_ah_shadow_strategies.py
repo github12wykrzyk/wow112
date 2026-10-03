@@ -81,23 +81,25 @@ class AHShadowStrategyParityTests(unittest.TestCase):
             self.assertIn("src/AddOns/AuxEconomyShadow/" + name, watches)
             self.assertIn(name, toc)
             self.assertIn(name, ORDER)
-        self.assertEqual(manifest["stage"], "full_strategy_model_ready_for_passive_parity")
+        bridge = "AuxEconomyShadow_ParityBridge.lua"
+        self.assertIn("src/AddOns/AuxEconomyShadow/" + bridge, watches)
+        self.assertIn(bridge, toc)
+        self.assertIn(bridge, ORDER)
+        self.assertEqual(manifest["stage"], "passive_parity_bridge_ready")
         self.assertFalse(manifest["delivery"]["cutover_allowed"])
         bundle = build_bundle()
-        for name in STRATEGY_FILES:
+        for name in STRATEGY_FILES + (bridge,):
             self.assertIn(("-- BEGIN " + name).encode("ascii"), bundle)
 
-    def test_task_is_economy_gated_and_queue_ready(self):
+    def test_task_is_economy_gated_and_integrated(self):
         task = json.loads(TASK.read_text(encoding="utf-8"))
         self.assertEqual(task["branch"], "feature/ah-consolidation-strategies-v1")
         self.assertEqual(task["base_parallel_sha"], "3eb8ea2008c3889944409c907af207e820c69216")
-        self.assertEqual(task["status"], "ready_for_integration")
-        self.assertTrue(task["auto_integrate"])
+        self.assertEqual(task["status"], "integrated")
+        self.assertFalse(task["auto_integrate"])
         self.assertEqual(task["delivery_profiles"], ["economy"])
-        lease = task.get("lease") or {}
-        self.assertEqual(lease.get("owner"), "chatgpt:ah-strategies-v1")
-        self.assertIn("module:AuxEconomyShadow", lease.get("scopes", []))
-        self.assertNotIn("resource:hot-lua-runtime", lease.get("scopes", []))
+        self.assertEqual(task["integrated_feature_sha"], "ed4f1ac8769ce1e665b690a792eb3b06f926eba1")
+        self.assertIsNone(task.get("lease"))
 
 
 if __name__ == "__main__":

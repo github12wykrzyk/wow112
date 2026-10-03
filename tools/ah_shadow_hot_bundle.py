@@ -12,7 +12,7 @@ BUNDLE_MARKER = b"W112_AH_SHADOW_HOT_BUNDLE_BEGIN:v1"
 BUNDLE_END = b"W112_AH_SHADOW_HOT_BUNDLE_END:v1"
 ATOMIC_BEGIN_MARKER = b"W112_AH_SHADOW_ATOMIC_BATCH_BEGIN:v1"
 ATOMIC_END_MARKER = b"W112_AH_SHADOW_ATOMIC_BATCH_END:v1"
-BUNDLE_PROTOCOL_REVISION = "v3-atomic-critical-hardening"
+BUNDLE_PROTOCOL_REVISION = "v4-passive-parity-bridge"
 MAX_BUNDLE_BYTES = 196608
 LUA51_LENGTH_OPERATOR = re.compile(rb"#\s*[A-Za-z_(]")
 
@@ -32,6 +32,7 @@ ORDER = (
     "AuxEconomyShadow_AutoSell.lua",
     "AuxEconomyShadow_Ledger.lua",
     "AuxEconomyShadow_Parity.lua",
+    "AuxEconomyShadow_ParityBridge.lua",
     "AuxEconomyShadow_HotPayload.lua",
 )
 
