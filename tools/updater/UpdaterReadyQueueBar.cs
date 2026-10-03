@@ -30,6 +30,8 @@ namespace WoW112Updater
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
 
             PrepareLabel(githubReadyQueueBadge);
+            githubReadyQueueBadge.Name = "githubReadyQueueBadge";
+            githubReadyQueueBadge.AccessibleName = "Gotowe do wrzucenia do gry";
             githubReadyQueueBadge.Font = new Font("Segoe UI", 8.4F, FontStyle.Bold);
             githubReadyQueueBadge.Margin = new Padding(3, 1, 3, 1);
             githubReadyQueueBadge.Padding = new Padding(6, 0, 3, 0);
