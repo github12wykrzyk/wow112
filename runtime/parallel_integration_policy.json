@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "branch": "parallel",
+  "mode": "optimistic_compare_and_swap",
+  "purpose": "Prevent concurrent AI sessions from integrating against a stale parallel HEAD without serializing independent feature development or preflight.",
+  "preconditions": [
+    "feature/** exact SHA has a successful Parallel feature preflight",
+    "feature exact SHA and current parallel HEAD are re-read from live GitHub immediately before integration",
+    "all required module-specific workflows for the feature SHA have passed"
+  ],
+  "integration_transaction": {
+    "base_ref": "parallel",
+    "merge_commit_parents": [
+      "exact current parallel HEAD",
+      "exact preflighted feature SHA"
+    ],
+    "ref_update": {
+      "target": "parallel",
+      "force": false,
+      "expected_behavior": "fast-forward only"
+    }
+  },
+  "on_ref_rejected_or_head_changed": [
+    "do not force-update parallel",
+    "discard the stale integration commit",
+    "re-read current parallel HEAD",
+    "re-run parallel feature preflight against the new parallel HEAD",
+    "create a fresh merge commit with the new HEAD as first parent",
+    "retry the non-forced ref update"
+  ],
+  "parallelism": {
+    "allowed": [
+      "independent feature coding",
+      "independent feature commits",
+      "feature preflight workflows",
+      "module-specific feature workflows"
+    ],
+    "serialized_by_atomic_ref_update": [
+      "final parallel ref movement"
+    ]
+  },
+  "prohibitions": [
+    "direct force push to parallel",
+    "integrating a feature whose preflight evidence belongs to a different feature SHA",
+    "reusing a merge commit after parallel HEAD changed",
+    "treating an old successful parallel build as evidence for the new HEAD"
+  ]
+}
