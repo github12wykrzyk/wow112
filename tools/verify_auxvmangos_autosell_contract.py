@@ -67,6 +67,19 @@ def main() -> int:
     require(lifecycle, "p.mailBagDelta >= count", "repost bag delta gate")
     require(lifecycle, "p.ownerGone = false", "repost withheld before mail evidence")
 
+    # Iteration A: state-machine hardening must remain present as one overlay.
+    require(lifecycle, "current.lastProbeOutcome = 'aborted'", "aborted probe evidence")
+    require(lifecycle, "p.state = 'WAIT_REPRICE'", "retry state after unsafe/incomplete probe")
+    require(lifecycle, "p.state = 'POST_RECOVER'", "reload recovery for interrupted post")
+    require(lifecycle, "post-found-on-owner-snapshot", "owner reconciliation after interrupted post")
+    require(lifecycle, "FLOOR_RETRY_SECONDS = 30", "floor retry cooldown")
+    require(lifecycle, "AVM_DB.autoSellStats.cancelRequests", "cancel request accounting")
+    require(lifecycle, "AVM_DB.autoSellStats.cancelConfirmed", "confirmed cancel accounting")
+    require(lifecycle, "p.cancelRequestEpoch = now_epoch()", "persistent cancel epoch")
+    require(lifecycle, "p.cancelAt = GetTime() - age", "monotonic cancel timeout reconstruction")
+    require(lifecycle, "pendingRows = pending_diag_rows()", "compact pending diagnostic snapshot")
+    require(lifecycle, "probeRetries", "probe retry diagnostics")
+
     if "AS.RequestOwnerRefresh('tab-open')" in autosell:
         fail("AutoSell tab still performs unconditional owner refresh")
     if "AVM_AUTOSELL_FORCE" in autosell:
