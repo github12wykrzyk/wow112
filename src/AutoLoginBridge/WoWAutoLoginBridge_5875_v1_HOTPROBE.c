@@ -1,17 +1,15 @@
 /*
- * WoWAutoLoginBridge 5875 v1 + HOT LUA PROBE wrapper.
+ * WoWAutoLoginBridge 5875 v1 + SummonScout HOT LUA wrapper.
  * Experimental PARALLEL feature for build 5875 x86.
  *
  * The canonical AutoLoginBridge source remains unchanged and is included below.
- * This wrapper adds one isolated probe:
- * - polls Interface\AddOns\W112HotProbe\HotPayload.lua every 250 ms,
+ * This wrapper adds one isolated hot-Lua watcher:
+ * - polls Interface\AddOns\SummonScout\SummonScout_PostPaymentOfferHot.lua every 250 ms,
  * - requires the payload bytes to remain unchanged for >=250 ms,
  * - executes a changed payload through the already-proven
  *   FrameScript_Execute 0x00704CD0 primitive,
  * - runs the execution from a Win32 SetTimer callback, matching the
  *   main-thread pattern already used by AutoSummonAssist.
- *
- * The probe never writes gameplay state, sends input, or reloads the client.
  */
 #define DllMain AutoLoginBridge_BaseDllMain
 #include "WoWAutoLoginBridge_5875_v1.c"
@@ -62,7 +60,7 @@ static int hot_build_path(void)
 {
     DWORD n=GetModuleFileNameA(NULL,g_hot_path,HOT_PATH_CAP);
     DWORD i,used;
-    static const char suffix[]="Interface\\AddOns\\W112HotProbe\\HotPayload.lua";
+    static const char suffix[]="Interface\\AddOns\\SummonScout\\SummonScout_PostPaymentOfferHot.lua";
     if(n==0u || n>=HOT_PATH_CAP) return 0;
     for(i=n;i>0u;i--) {
         if(g_hot_path[i-1u]=='\\' || g_hot_path[i-1u]=='/') {
@@ -181,7 +179,7 @@ static VOID CALLBACK hot_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD no
     ++g_hot_attempts;
     ok=((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(
         g_hot_payload,
-        "W112HotProbe/HotPayload.lua"
+        "SummonScout/SummonScout_PostPaymentOfferHot.lua"
     );
     g_hot_last_hash=hash;
     g_hot_last_size=size;
