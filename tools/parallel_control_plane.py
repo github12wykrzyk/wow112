@@ -4,7 +4,6 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import parallel_task_state as pts
@@ -38,7 +37,30 @@ def ref_has_path(commit, path):
     return proc.returncode == 0
 
 
+def _compat_list(value):
+    return list(value) if isinstance(value, list) else []
+
+
+def _legacy_task(data, branch, filename, error):
+    ident = data.get("id")
+    if not isinstance(ident, str) or not pts.IDENT.fullmatch(ident):
+        ident = Path(filename).stem
+    return {
+        "id": ident,
+        "branch": branch,
+        "status": str(data.get("status") or "legacy"),
+        "modules": [x for x in _compat_list(data.get("modules")) if isinstance(x, str)],
+        "shared_resources": [x for x in _compat_list(data.get("shared_resources")) if isinstance(x, str)],
+        "delivery_profiles": [x for x in _compat_list(data.get("delivery_profiles")) if isinstance(x, str)],
+        "auto_integrate": data.get("auto_integrate") is True,
+        "lease": None,
+        "_strict_valid": False,
+        "_validation_error": str(error),
+    }
+
+
 def branch_task_records(commit, policy, branch):
+    """Read only records that claim this branch; tolerate old schemas for reporting."""
     prefix = policy["task_dir"].rstrip("/") + "/"
     names = run_git(["ls-tree", "-r", "--name-only", commit, prefix], check=False).splitlines()
     rows = []
@@ -49,7 +71,12 @@ def branch_task_records(commit, policy, branch):
         data = json.loads(raw)
         if data.get("branch") != branch:
             continue
-        task = pts.validate_task(data, policy, Path(name).name)
+        try:
+            task = dict(pts.validate_task(data, policy, Path(name).name))
+            task["_strict_valid"] = True
+            task["_validation_error"] = None
+        except ValueError as exc:
+            task = _legacy_task(data, branch, name, exc)
         rows.append(task)
     return rows
 
@@ -65,8 +92,7 @@ def remote_feature_refs(policy):
         ref, sha = line.split(None, 1)
         if not pts.SHA.fullmatch(sha):
             continue
-        short = ref[len(prefix):]
-        branch = "feature/" + short
+        branch = "feature/" + ref[len(prefix):]
         rows.append({"ref": ref, "branch": branch, "sha": sha})
     return sorted(rows, key=lambda row: row["branch"])
 
@@ -97,64 +123,71 @@ def reconcile(policy, now=None):
         if task is None:
             rows.append({
                 "branch": item["branch"], "sha": item["sha"], "task_id": None,
-                "status": "untracked", "lease_state": "missing", "owner": None,
-                "scopes": [], "expires_at": None,
+                "status": "untracked", "strict_valid": False,
+                "validation_error": None, "lease_state": "missing", "owner": None,
+                "scopes": [], "expires_at": None, "requires_lease": False,
             })
             continue
-        state = pts.lease_state(task, policy, now)
+
+        strict_valid = bool(task.get("_strict_valid"))
+        if strict_valid:
+            state = pts.lease_state(task, policy, now)
+        else:
+            state = {"state": "legacy", "owner": None, "scopes": [], "expires_at": None}
+        requires_lease = strict_valid and task["status"] in required_states
         row = {
             "branch": item["branch"], "sha": item["sha"], "task_id": task["id"],
-            "status": task["status"], "lease_state": state["state"],
-            "owner": state.get("owner"), "scopes": state.get("scopes", []),
-            "expires_at": state.get("expires_at"),
-            "requires_lease": task["status"] in required_states,
+            "status": task["status"], "strict_valid": strict_valid,
+            "validation_error": task.get("_validation_error"),
+            "lease_state": state["state"], "owner": state.get("owner"),
+            "scopes": state.get("scopes", []), "expires_at": state.get("expires_at"),
+            "requires_lease": requires_lease,
             "auto_integrate": task.get("auto_integrate", False),
             "delivery_profiles": list(task.get("delivery_profiles", [])),
             "modules": list(task.get("modules", [])),
             "shared_resources": list(task.get("shared_resources", [])),
         }
         rows.append(row)
-        if task["status"] in active_states and state["state"] == "active":
+        if strict_valid and task["status"] in active_states and state["state"] == "active":
             for scope in state["scopes"]:
                 live_scope_owners.setdefault(scope, []).append(task)
 
     winners = {}
     conflicts = {}
     for scope, tasks in sorted(live_scope_owners.items()):
-        if len(tasks) < 2:
-            winners[scope] = tasks[0]["id"]
-            continue
         ordered = sorted(tasks, key=lease_priority)
         winners[scope] = ordered[0]["id"]
-        conflicts[scope] = {
-            "winner": ordered[0]["id"],
-            "contenders": [task["id"] for task in ordered],
-            "policy": "oldest_live_lease_then_branch_then_task_id",
-        }
+        if len(ordered) > 1:
+            conflicts[scope] = {
+                "winner": ordered[0]["id"],
+                "contenders": [task["id"] for task in ordered],
+                "policy": "oldest_live_lease_then_branch_then_task_id",
+            }
 
-    stale = []
-    missing_required = []
-    for row in rows:
-        if row.get("task_id") is None:
-            continue
-        if row.get("requires_lease") and row["lease_state"] != "active":
-            missing_required.append(row["task_id"])
-        if row["lease_state"] == "expired":
-            stale.append(row["task_id"])
+    stale = sorted(row["task_id"] for row in rows
+                   if row.get("task_id") and row["lease_state"] == "expired")
+    missing_required = sorted(row["task_id"] for row in rows
+                              if row.get("task_id") and row.get("requires_lease")
+                              and row["lease_state"] != "active")
+    legacy = sorted(row["task_id"] for row in rows
+                    if row.get("task_id") and not row.get("strict_valid"))
 
     return {
         "schema_version": 1,
         "generated_at": pts.utc_text(now),
         "feature_branch_count": len(rows),
         "tracked_task_count": sum(1 for row in rows if row.get("task_id")),
+        "strict_task_count": sum(1 for row in rows if row.get("strict_valid")),
+        "legacy_task_count": len(legacy),
         "active_lease_count": sum(1 for row in rows if row.get("lease_state") == "active"),
         "expired_lease_count": len(stale),
         "missing_required_lease_count": len(missing_required),
         "scope_conflict_count": len(conflicts),
         "scope_winners": winners,
         "scope_conflicts": conflicts,
-        "stale_tasks": sorted(stale),
-        "missing_required_leases": sorted(missing_required),
+        "stale_tasks": stale,
+        "legacy_tasks": legacy,
+        "missing_required_leases": missing_required,
         "tasks": rows,
     }
 
@@ -172,6 +205,8 @@ def branch_gate(report, branch, feature_commit, merge_base_sha, policy):
     pts.require(len(rows) == 1, "control plane could not resolve exactly one live row for " + branch)
     row = rows[0]
     pts.require(row.get("task_id"), "feature branch has no task coordination record: " + branch)
+    pts.require(row.get("strict_valid"),
+                "current feature task is not valid under control-plane schema: %s" % (row.get("validation_error") or "unknown error"))
 
     if row.get("requires_lease"):
         pts.require(row["lease_state"] == "active",
@@ -198,10 +233,11 @@ def write_json(path, payload):
 
 def markdown_summary(report):
     lines = [
-        "# Parallel Control Plane",
-        "",
+        "# Parallel Control Plane", "",
         "- feature branches: %d" % report["feature_branch_count"],
         "- tracked tasks: %d" % report["tracked_task_count"],
+        "- strict current-schema tasks: %d" % report["strict_task_count"],
+        "- legacy task records: %d" % report["legacy_task_count"],
         "- active leases: %d" % report["active_lease_count"],
         "- expired leases: %d" % report["expired_lease_count"],
         "- missing required leases: %d" % report["missing_required_lease_count"],
@@ -214,38 +250,41 @@ def markdown_summary(report):
                          (scope, item["winner"], ", ".join("`%s`" % x for x in item["contenders"])))
     if report["stale_tasks"]:
         lines += ["", "## Expired leases", "- " + ", ".join("`%s`" % x for x in report["stale_tasks"])]
+    if report["legacy_tasks"]:
+        lines += ["", "## Legacy records", "- reported only; they never acquire or block a lease"]
     return "\n".join(lines) + "\n"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-
     rec = sub.add_parser("reconcile")
     rec.add_argument("--output")
     rec.add_argument("--summary-output")
-
     gate = sub.add_parser("gate")
     gate.add_argument("--branch", required=True)
     gate.add_argument("--base", default="origin/parallel")
     gate.add_argument("--output")
-
     args = parser.parse_args()
+
     try:
         policy = pts.load_policy()
-        report = reconcile(policy)
         if args.command == "reconcile":
+            report = reconcile(policy)
             if args.output:
                 write_json(args.output, report)
             if args.summary_output:
                 Path(args.summary_output).write_text(markdown_summary(report), encoding="utf-8")
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
-            feature_ref = "HEAD"
-            feature_commit = resolve_commit(feature_ref)
+            feature_commit = resolve_commit("HEAD")
             base_commit = resolve_commit(args.base)
-            mb = merge_base(feature_ref, args.base)
-            result = branch_gate(report, args.branch, feature_commit, mb, policy)
+            mb = merge_base("HEAD", args.base)
+            if not ref_has_path(mb, policy["lease_policy"]["marker_path"]):
+                result = branch_gate(None, args.branch, feature_commit, mb, policy)
+            else:
+                report = reconcile(policy)
+                result = branch_gate(report, args.branch, feature_commit, mb, policy)
             result["base_commit"] = base_commit
             result["feature_commit"] = feature_commit
             if args.output:
