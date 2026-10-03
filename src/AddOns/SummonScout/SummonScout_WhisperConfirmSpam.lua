@@ -7,7 +7,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local WC_VERSION = "2-hot1"
+local WC_VERSION = "2-hot2-manualchat-safe1"
 local WC_PENDING_SECONDS = 60
 local WC_PROBE_COOLDOWN = 120
 local WC_STARTUP_SPAM_MIN = 300
@@ -346,6 +346,11 @@ local function wcAttachCoreAliasHook()
         local restoreService = nil
         local bridgeReason = nil
 
+        if event == "CHAT_MSG_WHISPER" and H.IsManualChatLocked and H.IsManualChatLocked(arg2 or "") then
+            if H.ManualChatLock then H.ManualChatLock(arg2 or "", true) end
+            return
+        end
+
         if event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_WHISPER" then
             local extended, reason = wcExtendedServiceForMessage(arg1 or "")
             if extended then
@@ -621,6 +626,7 @@ function M.Init()
     H.RegisterEvent("PLAYER_LOGIN")
     H.RegisterEvent("CHAT_MSG_WHISPER")
     H.RegisterEvent("CHAT_MSG_SYSTEM")
+    H.RegisterEvent("CHAT_MSG_WHISPER_INFORM")
 
     wcAttachGui()
     WC.moduleVersion = WC_VERSION
@@ -644,6 +650,13 @@ function M.OnEvent(ev, a1, a2)
         return
     end
 
+    if ev == "CHAT_MSG_WHISPER_INFORM" then
+        if H.ManualChatObserveOutgoing then
+            H.ManualChatObserveOutgoing(a1 or "", a2 or "")
+        end
+        return
+    end
+
     if ev == "CHAT_MSG_SYSTEM" then
         wcNoteSystemInvite(a1 or "")
         return
@@ -652,14 +665,22 @@ function M.OnEvent(ev, a1, a2)
     if ev == "CHAT_MSG_WHISPER" then
         local message = a1 or ""
         local sender = wcTrim(a2 or "")
-        if sender == "" or not wcEligible(sender) then return end
+        if sender == "" then return end
 
+        if H.IsManualChatLocked and H.IsManualChatLocked(sender) then
+            if H.ManualChatLock then H.ManualChatLock(sender, true) end
+            return
+        end
+
+        if not wcEligible(sender) then return end
         if wcHandlePendingReply(sender, message) then return end
         wcQueueUnknownProbe(sender, message)
     end
 end
 
 function M.OnUpdate()
+    if H.ManualChatSweep then H.ManualChatSweep() end
+
     wcScheduleStartupSpam()
     wcProcessCandidates()
     wcProcessConfirmations()
@@ -673,219 +694,197 @@ function M.OnUpdate()
     end
 end
 
-H.Register("whisperconfirm", M, WC_VERSION)
+-- Safe manual-conversation lock. It deliberately avoids wrapping the HotHost
+-- frame, SendChatMessage, InviteByName or OnUpdate. The previous v1 overlay did
+-- so and could stack wrappers across hot reloads. This migration peels those
+-- legacy wrappers before registering the new module.
+local MC = H.GetState("manualchat")
+local MC_LOCK_SECONDS = 300
+MC.lockedUntil = MC.lockedUntil or {}
 
--- Manual conversation lock overlay. A real outgoing whisper typed by the user
--- temporarily suppresses SummonScout whisper automation for that player only.
--- Automatic SummonScout messages are recognized and never create the lock.
-do
-    local MC = H.GetState("manualchat")
-    local MC_LOCK_SECONDS = 300
-    MC.lockedUntil = MC.lockedUntil or {}
+local function mcKey(name)
+    return wcLower(wcTrim(name or ""))
+end
 
-    local function mcKey(name)
-        return wcLower(wcTrim(name or ""))
-    end
-
-    local function mcIsLocked(name)
-        local key = mcKey(name)
-        if key == "" then return false end
-        local untilAt = tonumber(MC.lockedUntil[key]) or 0
-        if untilAt <= wcNow() then
-            MC.lockedUntil[key] = nil
-            return false
-        end
-        return true
-    end
-
-    local function mcCancelPending(name)
-        local key = mcKey(name)
-        if key == "" then return end
-
-        WC.pending[key] = nil
-        WC.candidates[key] = nil
-        WC.confirmations[key] = nil
-
-        local pp = H.GetState("postpay")
-        if type(pp) == "table" then
-            if type(pp.directInvitePending) == "table" then
-                pp.directInvitePending[key] = nil
-            end
-            if type(pp.pending) == "table" then
-                local i
-                for i = table.getn(pp.pending), 1, -1 do
-                    local item = pp.pending[i]
-                    if type(item) == "table" and mcKey(item.name) == key then
-                        table.remove(pp.pending, i)
-                    end
-                end
+local function mcUnwrapNamed(fn, nameA, nameB)
+    local current = fn
+    local depth = 0
+    while type(current) == "function" and depth < 32 do
+        local nextFn = nil
+        local i
+        for i = 1, 24 do
+            local upName, upValue = wcDebugGetUpvalue(current, i)
+            if not upName then break end
+            if (upName == nameA or (nameB and upName == nameB))
+                and type(upValue) == "function" then
+                nextFn = upValue
+                break
             end
         end
+        if not nextFn or nextFn == current then break end
+        current = nextFn
+        depth = depth + 1
     end
+    return current
+end
 
-    local function mcLock(name, quiet)
-        local key = mcKey(name)
-        if key == "" or wcSamePlayer(name, UnitName("player")) then return false end
-        MC.lockedUntil[key] = wcNow() + MC_LOCK_SECONDS
-        mcCancelPending(name)
-        if not quiet and SummonScoutDB and SummonScoutDB.debug then
-            wcChat("manual whisper conversation -> automation muted for " .. wcTrim(name) .. " (5m)")
-        end
-        return true
-    end
-
-    local function mcLooksAutomatic(message)
-        local raw = wcTrim(message or "")
-        local s = wcLower(raw)
-        if raw == "" then return false end
-
-        if string.sub(raw, 1, 5) == "[SSI " then return true end
-        if string.sub(raw, 1, 17) == "Summoning you to " then return true end
-        if string.sub(raw, 1, 12) == "Do you need "
-            and string.len(raw) >= 8
-            and string.sub(raw, -8) == " summon?" then
-            return true
-        end
-        if raw == "You are already grouped. Leave your group and whisper me again for an invite." then
-            return true
-        end
-
-        local thankLead = string.sub(s, 1, 6) == "thank "
-            or string.sub(s, 1, 7) == "thanks "
-            or string.sub(s, 1, 11) == "many thanks"
-            or string.sub(s, 1, 16) == "much appreciated"
-            or string.sub(s, 1, 7) == "cheers,"
-        if thankLead
-            and string.find(s, "hyjal", 1, true)
-            and string.find(s, "hydraxis", 1, true)
-            and string.find(s, "winterspring", 1, true) then
-            return true
-        end
-        return false
-    end
-
-    local function mcHandleOutgoing(message, target)
-        target = wcTrim(target or "")
-        if target == "" or wcSamePlayer(target, UnitName("player")) then return end
-        if mcLooksAutomatic(message) then return end
-        mcLock(target, false)
-    end
-
-    local function mcRunGuarded(fn)
-        if type(fn) ~= "function" then return true end
-
-        local originalSendChatMessage = SendChatMessage
-        local originalInviteByName = InviteByName
-
-        if type(originalSendChatMessage) == "function" then
-            SendChatMessage = function(text, chatType, language, target)
-                if chatType == "WHISPER" and mcIsLocked(target) then
-                    if SummonScoutDB and SummonScoutDB.debug then
-                        wcChat("manual chat lock suppressed auto whisper -> " .. wcTrim(target or "?"))
-                    end
-                    return
-                end
-                return originalSendChatMessage(text, chatType, language, target)
-            end
-        end
-
-        if type(originalInviteByName) == "function" then
-            InviteByName = function(name)
-                if mcIsLocked(name) then
-                    if SummonScoutDB and SummonScoutDB.debug then
-                        wcChat("manual chat lock suppressed auto invite -> " .. wcTrim(name or "?"))
-                    end
-                    return
-                end
-                return originalInviteByName(name)
-            end
-        end
-
-        local ok, err = true, nil
-        if pcall then
-            ok, err = pcall(fn)
-        else
-            fn()
-        end
-
-        SendChatMessage = originalSendChatMessage
-        InviteByName = originalInviteByName
-
-        if not ok then error(err) end
-        return true
-    end
-
-    H.IsManualChatLocked = mcIsLocked
-    H.ManualChatLock = mcLock
-    H.ManualChatLockSeconds = MC_LOCK_SECONDS
-
+local function mcCleanupLegacyWrappers()
     if H.frame and H.frame.GetScript and H.frame.SetScript then
-        if MC.hostEventWrapper and MC.hostOriginalOnEvent
-            and H.frame:GetScript("OnEvent") == MC.hostEventWrapper then
+        local hostEvent = H.frame:GetScript("OnEvent")
+        local cleanHostEvent = mcUnwrapNamed(hostEvent, "hostOriginalOnEvent")
+        if cleanHostEvent ~= hostEvent then
+            H.frame:SetScript("OnEvent", cleanHostEvent)
+        elseif MC.hostEventWrapper and MC.hostOriginalOnEvent
+            and hostEvent == MC.hostEventWrapper then
             H.frame:SetScript("OnEvent", MC.hostOriginalOnEvent)
         end
-        if MC.hostUpdateWrapper and MC.hostOriginalOnUpdate
-            and H.frame:GetScript("OnUpdate") == MC.hostUpdateWrapper then
+
+        local hostUpdate = H.frame:GetScript("OnUpdate")
+        local cleanHostUpdate = mcUnwrapNamed(hostUpdate, "hostOriginalOnUpdate")
+        if cleanHostUpdate ~= hostUpdate then
+            H.frame:SetScript("OnUpdate", cleanHostUpdate)
+        elseif MC.hostUpdateWrapper and MC.hostOriginalOnUpdate
+            and hostUpdate == MC.hostUpdateWrapper then
             H.frame:SetScript("OnUpdate", MC.hostOriginalOnUpdate)
         end
-
-        local hostOriginalOnEvent = H.frame:GetScript("OnEvent")
-        local hostEventWrapper = function()
-            if event == "CHAT_MSG_WHISPER_INFORM" then
-                mcHandleOutgoing(arg1 or "", arg2 or "")
-            elseif event == "CHAT_MSG_WHISPER" and mcIsLocked(arg2 or "") then
-                mcLock(arg2 or "", true)
-                return
-            end
-            mcRunGuarded(hostOriginalOnEvent)
-        end
-        H.frame:SetScript("OnEvent", hostEventWrapper)
-        MC.hostOriginalOnEvent = hostOriginalOnEvent
-        MC.hostEventWrapper = hostEventWrapper
-
-        local hostOriginalOnUpdate = H.frame:GetScript("OnUpdate")
-        local hostUpdateWrapper = function()
-            mcRunGuarded(hostOriginalOnUpdate)
-        end
-        H.frame:SetScript("OnUpdate", hostUpdateWrapper)
-        MC.hostOriginalOnUpdate = hostOriginalOnUpdate
-        MC.hostUpdateWrapper = hostUpdateWrapper
-        H.RegisterEvent("CHAT_MSG_WHISPER_INFORM")
     end
 
     local core = SummonScoutFrame
     if core and core.GetScript and core.SetScript then
-        if MC.coreEventWrapper and MC.coreOriginalOnEvent
-            and core:GetScript("OnEvent") == MC.coreEventWrapper then
+        local coreEvent = core:GetScript("OnEvent")
+        local cleanCoreEvent = mcUnwrapNamed(coreEvent, "originalOnEvent", "OWN_CORE_BASE")
+        if cleanCoreEvent ~= coreEvent then
+            core:SetScript("OnEvent", cleanCoreEvent)
+        elseif MC.coreEventWrapper and MC.coreOriginalOnEvent
+            and coreEvent == MC.coreEventWrapper then
             core:SetScript("OnEvent", MC.coreOriginalOnEvent)
         end
-        if MC.coreUpdateWrapper and MC.coreOriginalOnUpdate
-            and core:GetScript("OnUpdate") == MC.coreUpdateWrapper then
+
+        local coreUpdate = core:GetScript("OnUpdate")
+        local cleanCoreUpdate = mcUnwrapNamed(coreUpdate, "coreOriginalOnUpdate")
+        if cleanCoreUpdate ~= coreUpdate then
+            core:SetScript("OnUpdate", cleanCoreUpdate)
+        elseif MC.coreUpdateWrapper and MC.coreOriginalOnUpdate
+            and coreUpdate == MC.coreUpdateWrapper then
             core:SetScript("OnUpdate", MC.coreOriginalOnUpdate)
         end
-
-        -- Keep this upvalue name exact: the existing hot migration code knows
-        -- how to unwrap wrappers that capture an `originalOnEvent` function.
-        local originalOnEvent = core:GetScript("OnEvent")
-        local coreEventWrapper = function()
-            if event == "CHAT_MSG_WHISPER" and mcIsLocked(arg2 or "") then
-                mcLock(arg2 or "", true)
-                return
-            end
-            mcRunGuarded(originalOnEvent)
-        end
-        core:SetScript("OnEvent", coreEventWrapper)
-        MC.coreOriginalOnEvent = originalOnEvent
-        MC.coreEventWrapper = coreEventWrapper
-
-        local coreOriginalOnUpdate = core:GetScript("OnUpdate")
-        local coreUpdateWrapper = function()
-            mcRunGuarded(coreOriginalOnUpdate)
-        end
-        core:SetScript("OnUpdate", coreUpdateWrapper)
-        MC.coreOriginalOnUpdate = coreOriginalOnUpdate
-        MC.coreUpdateWrapper = coreUpdateWrapper
     end
 
-    W112_SUMMONSCOUT_MANUAL_CHAT_LOCK_VERSION = "1"
+    MC.hostEventWrapper = nil
+    MC.hostOriginalOnEvent = nil
+    MC.hostUpdateWrapper = nil
+    MC.hostOriginalOnUpdate = nil
+    MC.coreEventWrapper = nil
+    MC.coreOriginalOnEvent = nil
+    MC.coreUpdateWrapper = nil
+    MC.coreOriginalOnUpdate = nil
+end
+
+local function mcIsLocked(name)
+    local key = mcKey(name)
+    if key == "" then return false end
+    local untilAt = tonumber(MC.lockedUntil[key]) or 0
+    if untilAt <= wcNow() then
+        MC.lockedUntil[key] = nil
+        return false
+    end
+    return true
+end
+
+local function mcCancelPending(name)
+    local key = mcKey(name)
+    if key == "" then return end
+
+    WC.pending[key] = nil
+    WC.candidates[key] = nil
+    WC.confirmations[key] = nil
+
+    local pp = H.GetState("postpay")
+    if type(pp) == "table" then
+        if type(pp.directInvitePending) == "table" then
+            pp.directInvitePending[key] = nil
+        end
+        if type(pp.directInviteRecent) == "table" then
+            pp.directInviteRecent[key] = wcNow()
+        end
+        if type(pp.pending) == "table" then
+            local i
+            for i = table.getn(pp.pending), 1, -1 do
+                local item = pp.pending[i]
+                if type(item) == "table" and mcKey(item.name) == key then
+                    table.remove(pp.pending, i)
+                end
+            end
+        end
+    end
+end
+
+local function mcLock(name, quiet)
+    local key = mcKey(name)
+    if key == "" or wcSamePlayer(name, UnitName("player")) then return false end
+    MC.lockedUntil[key] = wcNow() + MC_LOCK_SECONDS
+    mcCancelPending(name)
+    if not quiet and SummonScoutDB and SummonScoutDB.debug then
+        wcChat("manual whisper conversation -> automation muted for " .. wcTrim(name) .. " (5m)")
+    end
+    return true
+end
+
+local function mcLooksAutomatic(message)
+    local raw = wcTrim(message or "")
+    local s = wcLower(raw)
+    if raw == "" then return false end
+
+    if string.sub(raw, 1, 5) == "[SSI " then return true end
+    if string.sub(raw, 1, 17) == "Summoning you to " then return true end
+    if string.sub(raw, 1, 12) == "Do you need "
+        and string.len(raw) >= 8
+        and string.sub(raw, -8) == " summon?" then
+        return true
+    end
+    if raw == "You are already grouped. Leave your group and whisper me again for an invite." then
+        return true
+    end
+
+    local thankLead = string.sub(s, 1, 6) == "thank "
+        or string.sub(s, 1, 7) == "thanks "
+        or string.sub(s, 1, 11) == "many thanks"
+        or string.sub(s, 1, 16) == "much appreciated"
+        or string.sub(s, 1, 7) == "cheers,"
+    if thankLead
+        and string.find(s, "hyjal", 1, true)
+        and string.find(s, "hydraxis", 1, true)
+        and string.find(s, "winterspring", 1, true) then
+        return true
+    end
+    return false
+end
+
+local function mcObserveOutgoing(message, target)
+    target = wcTrim(target or "")
+    if target == "" or wcSamePlayer(target, UnitName("player")) then return end
+    if mcLooksAutomatic(message) then return end
+    mcLock(target, false)
+end
+
+local function mcSweep()
+    local key
+    for key in pairs(MC.lockedUntil) do
+        if mcIsLocked(key) then
+            mcCancelPending(key)
+        end
+    end
+end
+
+mcCleanupLegacyWrappers()
+H.IsManualChatLocked = mcIsLocked
+H.ManualChatLock = mcLock
+H.ManualChatObserveOutgoing = mcObserveOutgoing
+H.ManualChatSweep = mcSweep
+H.ManualChatLockSeconds = MC_LOCK_SECONDS
+W112_SUMMONSCOUT_MANUAL_CHAT_LOCK_VERSION = "2-safe"
+
+H.Register("whisperconfirm", M, WC_VERSION)
+if DEFAULT_CHAT_FRAME then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r manual-chat safe hotfix loaded")
 end
