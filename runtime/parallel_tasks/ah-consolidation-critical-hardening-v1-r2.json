@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-critical-hardening-v1-r2",
+  "goal": "Harden AuxEconomyShadow before cutover while preserving the current Lua 5.0 bundle compatibility fix and enforcing exact feature-SHA ECONOMY validation without automatic integration.",
+  "branch": "feature/ah-consolidation-critical-hardening-v1-r2",
+  "base_parallel_sha": "ef8dc204e8f2f8e7b808a38b2aa3a4b776fd9116",
+  "modules": [
+    "AuxEconomyShadow",
+    "SummonScout",
+    "ParallelWorkflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-consolidation-shadow-source",
+    "hot-lua-runtime",
+    "SummonScout hot payload composition",
+    "addon-packager-transform",
+    "parallel-feature-preflight-workflow",
+    "parallel-delivery-profile-routing"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "notes": "Successor to feature/ah-consolidation-critical-hardening-v1 after parallel advanced with ah-shadow-lua50-lengthfix-v1. Keeps the Lua 5.0 guard, adds atomic module-generation replacement, generation-scoped transient state, AutoSell starvation protection, pending-state coordinator guards, strict parity cutover gating, and fixes profile-gate execution for non-auto-integrating features. AuxVmangos remains production owner; no cutover is enabled."
+}

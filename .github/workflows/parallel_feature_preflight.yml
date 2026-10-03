@@ -53,7 +53,7 @@ jobs:
   profile_gates:
     name: Verify declared delivery profiles
     needs: preflight
-    if: github.event_name == 'push' && needs.preflight.outputs.auto_integrate == 'true'
+    if: github.event_name == 'push' && needs.preflight.outputs.delivery_profiles != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: read

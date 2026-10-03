@@ -42,7 +42,11 @@
         "addons/AHThrottleTest/",
         "AuxFastBridge/",
         "addons/AuxFastBridge/",
+        "src/AddOns/AuxEconomyShadow/",
+        "runtime/ah_consolidation_shadow_v2.json",
         "runtime/parallel_economy.json",
+        "tools/ah_shadow_hot_bundle.py",
+        "tools/verify_ah_consolidation_shadow_v2.py",
         "tools/package_parallel_economy_overlay.py",
         "tools/parallel_economy_fingerprint.py",
         ".github/workflows/build_parallel_economy.yml"
