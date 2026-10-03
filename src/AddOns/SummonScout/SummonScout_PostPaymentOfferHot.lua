@@ -7,7 +7,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local POSTPAY_VERSION = "4-hot2"
+local POSTPAY_VERSION = "4-hot3"
 local PP = H.GetState("postpay")
 PP.pending = PP.pending or {}
 PP.lastMessageIndex = tonumber(PP.lastMessageIndex) or 0
@@ -69,6 +69,17 @@ local function ppSetDefaults()
     if SummonScoutDB.postPaymentOfferEnabled == nil then
         SummonScoutDB.postPaymentOfferEnabled = false
     end
+end
+
+local function ppResetSessionCursor()
+    local current = math.floor(tonumber(SummonScoutDB and SummonScoutDB.paymentCount) or 0)
+    PP.lastPaymentCount = current
+    PP.pending = {}
+    PP.tradeRequestedBy = nil
+    PP.tradePartner = nil
+    PP.recentClosedPartner = nil
+    PP.recentClosedAt = 0
+    PP.nextPollAt = 0
 end
 
 local function ppLiveTradePartner()
@@ -257,7 +268,10 @@ local M = {}
 
 function M.Init()
     ppSetDefaults()
-    if PP.lastPaymentCount == nil then
+    if PP.moduleVersion ~= POSTPAY_VERSION then
+        ppResetSessionCursor()
+        PP.moduleVersion = POSTPAY_VERSION
+    elseif PP.lastPaymentCount == nil then
         PP.lastPaymentCount = math.floor(tonumber(SummonScoutDB.paymentCount) or 0)
     end
     PP.initialized = true
@@ -274,9 +288,8 @@ end
 function M.OnEvent(ev, a1)
     if ev == "PLAYER_LOGIN" then
         ppSetDefaults()
-        if PP.lastPaymentCount == nil then
-            PP.lastPaymentCount = math.floor(tonumber(SummonScoutDB.paymentCount) or 0)
-        end
+        ppResetSessionCursor()
+        PP.moduleVersion = POSTPAY_VERSION
         PP.initialized = true
         W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
         return
