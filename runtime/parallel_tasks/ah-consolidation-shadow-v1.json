@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-shadow-v1",
+  "goal": "Build a side-by-side consolidated AH architecture without modifying, packaging, replacing or interrupting the currently working parallel AH/economy stack.",
+  "branch": "feature/ah-consolidation-shadow-v1",
+  "base_parallel_sha": "3c48d8a740af2621310c79b7e4e2efeb01a8c4a7",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-consolidation-shadow-source"
+  ],
+  "status": "in_progress",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Shadow-only consolidation. runtime/parallel_candidate.json and runtime/parallel_economy.json remain untouched; AuxEconomyShadow is not an active addon root and must not perform AH actions before an explicit cutover phase."
+}
