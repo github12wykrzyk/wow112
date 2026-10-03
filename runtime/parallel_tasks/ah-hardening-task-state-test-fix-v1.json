@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "ah-hardening-task-state-test-fix-v1",
+  "goal": "Align the AH critical-hardening regression test with the already integrated task state and exact integrated feature SHA, restoring the AI registry workflow without changing gameplay code.",
+  "branch": "feature/ah-hardening-task-state-test-fix-v1",
+  "base_parallel_sha": "acede96fdd5550b189d243fb5ac6f63be9a4db25",
+  "modules": [
+    "AI-workflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-test-suite"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "integrated_feature_sha": "3ccaaad0722fef9841625a4f4e57417b5c298958",
+  "notes": "Metadata/test-only follow-up after parallel-control-plane-reconciler-v1. Exact feature SHA passed Verify AI experiment registry run 37149246567 and Parallel feature preflight run 37149246545. The new control-plane lease gate was exercised on a post-marker feature and passed."
+}
