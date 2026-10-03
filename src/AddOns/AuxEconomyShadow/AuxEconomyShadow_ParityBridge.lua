@@ -3,7 +3,7 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow parity bridge requires persistent anchor")
 end
 
-local REVISION = "1-passive-avm-callback-parity"
+local REVISION = "2-scan-done-evidence-hardening"
 local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
     local hotGeneration = tonumber(R.hotPayloadGeneration) or 0
     if tonumber(state.bridgeHotGeneration) ~= hotGeneration then
@@ -11,6 +11,7 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         state.installed = false
         state.originals = nil
         state.wrappers = nil
+        state.statusWrapper = nil
         state.previousStatus = nil
         state.scanning = false
         state.book = nil
@@ -27,6 +28,8 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         state.observerErrors = 0
         state.lastError = ""
         state.lastNote = "hot-generation-reset"
+        state.lastActiveSource = ""
+        state.lastShadowSource = ""
     end
 
     state.waitByMat = type(state.waitByMat) == "table" and state.waitByMat or {}
@@ -39,6 +42,8 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
     state.observerErrors = tonumber(state.observerErrors) or 0
     state.lastError = tostring(state.lastError or "")
     state.lastNote = tostring(state.lastNote or "")
+    state.lastActiveSource = tostring(state.lastActiveSource or "")
+    state.lastShadowSource = tostring(state.lastShadowSource or "")
 
     local api = {}
     api.revision = REVISION
@@ -116,12 +121,9 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         if type(recent) ~= "table" or type(record) ~= "table" then return false end
         local itemKey = tostring(record.itemKey or record.item_key or "")
         if itemKey == "" then return false end
-        local vendorKey = "BIDRECENT|bid-vendor|" .. itemKey
-        local deKey = "BIDRECENT|bid-de|" .. itemKey
-        local v = tonumber(recent[vendorKey]) or 0
-        local d = tonumber(recent[deKey]) or 0
         local t = now()
-        return v > t or d > t
+        return (tonumber(recent["BIDRECENT|bid-vendor|" .. itemKey]) or 0) > t or
+            (tonumber(recent["BIDRECENT|bid-de|" .. itemKey]) or 0) > t
     end
 
     local function history(record)
@@ -216,8 +218,7 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
 
     local function setWait(raw, reason)
         clearWait(raw)
-        local text = tostring(reason or "")
-        local _, _, matText = string.find(text, "^no%-depth:(%d+)$")
+        local _, _, matText = string.find(tostring(reason or ""), "^no%-depth:(%d+)$")
         local matId = tonumber(matText)
         if not matId then return false end
         local serial = tostring(raw and raw._shadowSerial or "")
@@ -269,11 +270,9 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         local de = R.GetModule("disenchant")
         if de and type(de.AddMaterialOffer) == "function" and type(state.materialBook) == "table" then
             de.AddMaterialOffer(state.materialBook,
-                tonumber(snap.itemId or snap.item_id),
-                snap.name,
+                tonumber(snap.itemId or snap.item_id), snap.name,
                 tonumber(snap.count or snap.aux_quantity) or 0,
-                tonumber(snap.buyout or snap.buyout_price) or 0,
-                nil)
+                tonumber(snap.buyout or snap.buyout_price) or 0, nil)
             wakeMaterial(tonumber(snap.itemId or snap.item_id))
         end
 
@@ -314,11 +313,19 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
 
     local function shadowPageDecision()
         if not activeCanBuy() then return nil end
-        local vendor = state.pageVendorBest
-        if vendor and vendor.affordable then return vendor end
-        local de = state.pageDeBest
-        if de and de.affordable then return de end
+        if state.pageVendorBest and state.pageVendorBest.affordable then return state.pageVendorBest end
+        if state.pageDeBest and state.pageDeBest.affordable then return state.pageDeBest end
         return nil
+    end
+
+    local function activeScanDoneDecision()
+        local avm = type(AVM) == "table" and AVM or nil
+        local arb = avm and type(avm.auxArb) == "table" and avm.auxArb or nil
+        if arb and arb.postscanCandidate then return arb.postscanCandidate, "postscanCandidate" end
+        if arb and arb.candidate then return arb.candidate, "auxArb.candidate" end
+        if avm and avm.candidate then return avm.candidate, "AVM.candidate" end
+        if avm and avm.bidCandidate then return avm.bidCandidate, "AVM.bidCandidate" end
+        return nil, "none"
     end
 
     local function publish(note)
@@ -326,9 +333,7 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         local parity = R.GetModule("parity")
         local summary = parity and type(parity.Summary) == "function" and parity.Summary() or {}
         local ready, reason = false, "parity-unavailable"
-        if parity and type(parity.CutoverGate) == "function" then
-            ready, reason = parity.CutoverGate()
-        end
+        if parity and type(parity.CutoverGate) == "function" then ready, reason = parity.CutoverGate() end
         if type(AVM_DB) == "table" then
             AVM_DB.diag = type(AVM_DB.diag) == "table" and AVM_DB.diag or {}
             AVM_DB.diag.shadowParity = {
@@ -341,6 +346,8 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
                 observerErrors = state.observerErrors,
                 lastError = state.lastError,
                 lastNote = state.lastNote,
+                lastActiveSource = state.lastActiveSource,
+                lastShadowSource = state.lastShadowSource,
                 decisionCompared = tonumber(summary.decisionCompared) or 0,
                 decisionMatched = tonumber(summary.decisionMatched) or 0,
                 decisionMatchPct = tonumber(summary.decisionMatchPct) or 0,
@@ -360,11 +367,7 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
 
     local function observeStart(resume, filterString)
         local active = AVM and AVM.auxArb and AVM.auxArb.active
-        if not active then
-            state.scanning = false
-            publish("scan-inactive")
-            return
-        end
+        if not active then state.scanning = false publish("scan-inactive") return end
         resetLogicalScan(resume and true or false, filterString)
         publish(resume and "scan-resume" or "scan-start")
     end
@@ -391,10 +394,14 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         local shadowCandidate = nil
         if pipeline and type(pipeline.EvaluateBook) == "function" and state.book then
             local result = pipeline.EvaluateBook(state.book, context())
-            if type(result) == "table" then shadowCandidate = result.selectedPostscan end
+            if type(result) == "table" then
+                shadowCandidate = result.selected
+                state.lastShadowSource = tostring(result.selectionSource or "none")
+            end
         end
-        if not activeCanBuy() then shadowCandidate = nil end
-        local activeCandidate = AVM and AVM.auxArb and AVM.auxArb.postscanCandidate or nil
+        if not activeCanBuy() then shadowCandidate = nil state.lastShadowSource = "active-live-disabled" end
+        local activeCandidate, activeSource = activeScanDoneDecision()
+        state.lastActiveSource = activeSource
         local parity = R.GetModule("parity")
         if parity and type(parity.RecordDecision) == "function" then
             parity.RecordDecision(activeCandidate, shadowCandidate, now(), "scan-done")
@@ -425,6 +432,8 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
             observerErrors = state.observerErrors,
             lastError = state.lastError,
             lastNote = state.lastNote,
+            lastActiveSource = state.lastActiveSource,
+            lastShadowSource = state.lastShadowSource,
             parity = parity and type(parity.Summary) == "function" and parity.Summary() or nil,
         }
     end
@@ -446,7 +455,6 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
             scanDone = AVM_AuxArbScanDone,
         }
         state.wrappers = {}
-
         state.wrappers.scanStart = function(resume, filterString)
             local result = state.originals.scanStart(resume, filterString)
             local okObserve, errObserve = pcall(observeStart, resume, filterString)
@@ -477,7 +485,8 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
         AVM_AuxArbPageDone = state.wrappers.pageDone
         AVM_AuxArbScanDone = state.wrappers.scanDone
         state.previousStatus = W112_AH_SHADOW_PARITY_STATUS
-        W112_AH_SHADOW_PARITY_STATUS = function() return api.Status() end
+        state.statusWrapper = function() return api.Status() end
+        W112_AH_SHADOW_PARITY_STATUS = state.statusWrapper
         state.installed = true
         state.lastError = ""
         state.lastNote = "installed:" .. tostring(reason or "")
@@ -494,9 +503,7 @@ local ok = R.ReplaceModule("parity_bridge", REVISION, function(state)
             if AVM_AuxArbPageDone == state.wrappers.pageDone then AVM_AuxArbPageDone = state.originals.pageDone end
             if AVM_AuxArbScanDone == state.wrappers.scanDone then AVM_AuxArbScanDone = state.originals.scanDone end
         end
-        if W112_AH_SHADOW_PARITY_STATUS and type(state.previousStatus) ~= "nil" then
-            if W112_AH_SHADOW_PARITY_STATUS then W112_AH_SHADOW_PARITY_STATUS = state.previousStatus end
-        end
+        if W112_AH_SHADOW_PARITY_STATUS == state.statusWrapper then W112_AH_SHADOW_PARITY_STATUS = state.previousStatus end
         state.installed = false
         state.scanning = false
         state.lastNote = "uninstalled:" .. tostring(reason or "")

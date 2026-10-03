@@ -4,6 +4,7 @@
 ## Author: wow112
 ## Version: 1.60
 ## SavedVariables: SummonScoutDB
+## OptionalDeps: AuxVmangos
 
 SummonScout.lua
 SummonScout_HotHost.lua
