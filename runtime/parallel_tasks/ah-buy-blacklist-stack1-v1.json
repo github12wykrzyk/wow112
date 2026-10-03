@@ -16,8 +16,7 @@
   "status": "ready_for_integration",
   "auto_integrate": true,
   "delivery_profiles": [
-    "STANDARD",
-    "ECONOMY"
+    "economy"
   ],
   "notes": "Blacklist is stored in account-wide AVM_DB, filters AUX_ARB rows before candidate creation, and wraps PlaceAuctionBid only when the auction row matches an AVM automatic candidate. Existing AuxVmangos_PostDefaults already resets the selected Post stack-size slider to 1 after upstream item selection on every character, so no duplicate stack-default implementation is added."
 }
