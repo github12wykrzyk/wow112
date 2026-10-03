@@ -3,7 +3,7 @@
 ## Notes: Turtle arbitrage with single-state AutoSell repricing, manual exact price decisions, owner-scan arbitration, transaction-safe fast resume and native ledger UI.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.45-autosell-lifecycle
+## Version: 0.46-blacklist-stack1
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
@@ -15,3 +15,4 @@ AuxVmangos_AutoSell.lua
 AuxVmangos_AutoSellLifecycle.lua
 AuxVmangos_PostDefaults.lua
 AuxVmangos_WatchUI.lua
+AuxVmangos_AuxBlacklist.lua
