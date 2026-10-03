@@ -51,7 +51,7 @@
       "runtime_name": "WoWAutoLoginBridge_5875_v1.dll",
       "builder": "tools/build_autologinbridge_candidate.py",
       "sources": [
-        "src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1.c"
+        "src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c"
       ],
       "profile": "clangcl_i686_win32imports"
     },
@@ -113,7 +113,8 @@
       "LazyWarlock",
       "SummonScout",
       "AHThrottleTest",
-      "AuxFastBridge"
+      "AuxFastBridge",
+      "W112HotProbe"
     ],
     "external": [
       {

@@ -1,0 +1,7 @@
+## Interface: 11200
+## Title: W112 Hot Probe
+## Notes: Anchor only. HotPayload.lua is intentionally not listed in the TOC; the native probe executes it from disk.
+## Author: wow112 AI
+## Version: 0.1-probe
+
+W112HotProbe_Anchor.lua

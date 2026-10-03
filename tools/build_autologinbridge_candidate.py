@@ -5,7 +5,7 @@ from pathlib import Path
 from build_active_module import build_one, sha256_file
 
 ROOT=Path(__file__).resolve().parents[1]
-SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1.c"
+SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c"
 DLL_NAME="WoWAutoLoginBridge_5875_v1.dll"
 DLL_LIST="dlls.txt"
 PROFILE="clangcl_i686_win32imports"
@@ -56,6 +56,10 @@ def main():
       "entrypoint_rva":pe.get("entrypoint_rva"),"has_import_directory":pe.get("has_import_directory"),
       "module_id":"autologinbridge","keyboard_input":False,"foreground_dependency":False,
       "native_login":"0x0046AFB0","credential_transport":"child environment; password remains DPAPI-protected",
+      "hot_lua_probe":True,
+      "hot_lua_execute":"0x00704CD0",
+      "hot_lua_payload":"Interface/AddOns/W112HotProbe/HotPayload.lua",
+      "hot_lua_poll_ms":250,
       "timings_ms":timing
     }
     if a.compile_only:
@@ -79,7 +83,17 @@ def main():
         obj["package_sha256"]=module["candidate_package_sha256"]; obj["package_size"]=module["candidate_package_size"]
         obj["zip_root_entries"]=names
         obj["loader_manifest"]={"name":DLL_LIST,"generated_from_candidate_zip":True,"dll_count":len(actual),"dlls":actual,"contains_autologinbridge":True}
-        obj["autologinbridge_pilot"]={"module":DLL_NAME,"keyboard_input":False,"foreground_dependency":False,"native_login":"0x0046AFB0","credential_storage":"DPAPI vault; encrypted child environment"}
+        obj["autologinbridge_pilot"]={
+            "module":DLL_NAME,
+            "keyboard_input":False,
+            "foreground_dependency":False,
+            "native_login":"0x0046AFB0",
+            "credential_storage":"DPAPI vault; encrypted child environment",
+            "hot_lua_probe":True,
+            "hot_lua_execute":"0x00704CD0",
+            "hot_lua_payload":"Interface/AddOns/W112HotProbe/HotPayload.lua",
+            "hot_lua_poll_ms":250
+        }
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
     summary["result"]="PASS" if summary["ready_for_test"] else "FAIL"
     pm.write_text(json.dumps(package_meta,indent=2)+"\n",encoding="utf-8")
