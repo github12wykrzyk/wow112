@@ -114,6 +114,7 @@
       "SummonScout",
       "AHThrottleTest",
       "AuxFastBridge",
+      "AuxTurboProbe",
       "W112HotProbe"
     ],
     "external": [
