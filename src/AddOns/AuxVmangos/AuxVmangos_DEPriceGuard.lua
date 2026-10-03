@@ -10,11 +10,12 @@
 -- 4) a genuinely deep but temporarily absurd live material market can still be
 --    many multiples above AUX history, making DE expected value economically fake.
 
-AVM_DE_PRICE_GUARD_VERSION = 4
+AVM_DE_PRICE_GUARD_VERSION = 5
 AVM_DE_PRICE_GUARD_MIN_DEPTH = 10
 AVM_DE_PRICE_GUARD_EXACT_TTL = 2
 AVM_DE_PRICE_GUARD_HISTORY_CAP_PCT = 200
 AVM_DE_PRICE_GUARD_HISTORY_MIN_POINTS = 2
+AVM_DE_PRICE_GUARD_HISTORY_CACHE_TTL = 60
 
 local AVM_DE_PRICE_GUARD_PRINTED = false
 local AVM_DE_PRICE_GUARD_OLD_SLASH = nil
@@ -24,6 +25,7 @@ local AVM_DE_PRICE_GUARD_GET_AUCTION_ITEM_INFO = nil
 local AVM_DE_PRICE_GUARD_ORIG_AUXARB_AUCTION = nil
 local AVM_DE_PRICE_GUARD_AUXARB_AUCTION = nil
 local AVM_DE_PRICE_GUARD_HISTORY_OK, AVM_DE_PRICE_GUARD_HISTORY = pcall(require, "aux.core.history")
+local AVM_DE_PRICE_GUARD_HISTORY_CACHE = {}
 
 local function avm_de_price_guard_is_player_owner(owner)
 	if not owner or owner == "" or type(UnitName) ~= "function" then return false end
@@ -33,6 +35,7 @@ local function avm_de_price_guard_is_player_owner(owner)
 end
 
 local function avm_de_price_guard_clear_caches()
+	AVM_DE_PRICE_GUARD_HISTORY_CACHE = {}
 	if type(AVM_DB) == "table" then
 		AVM_DB.deWarmMaterialBook = {}
 	end
@@ -70,46 +73,90 @@ local function avm_de_price_guard_hide_own_list_row(listType, owner)
 	return false
 end
 
+local function avm_de_price_guard_now()
+	if type(GetTime) == "function" then return tonumber(GetTime()) or 0 end
+	return 0
+end
+
+local function avm_de_price_guard_active_material_id()
+	if type(AVM) ~= "table" or tostring(AVM.phase or "") ~= "DE_MAT_REVALIDATE" then return nil end
+	local a = AVM.auxArb
+	local v = a and a.deVerify
+	local mat = v and v.materials and v.materials[v.index]
+	local itemId = mat and tonumber(mat.itemId)
+	if itemId and itemId > 0 then return itemId end
+	return nil
+end
+
+local function avm_de_price_guard_history_snapshot(itemId)
+	itemId = tonumber(itemId)
+	if not itemId or itemId <= 0 then return 0, 0, 0 end
+
+	local now = avm_de_price_guard_now()
+	local cached = AVM_DE_PRICE_GUARD_HISTORY_CACHE[itemId]
+	if cached and ((tonumber(cached.expiresAt) or 0) == 0 or (tonumber(cached.expiresAt) or 0) > now) then
+		if type(AVM_DB) == "table" then
+			AVM_DB.deHistoryCacheHits = (tonumber(AVM_DB.deHistoryCacheHits) or 0) + 1
+		end
+		return tonumber(cached.historyUnit) or 0, tonumber(cached.capUnit) or 0, tonumber(cached.points) or 0
+	end
+
+	if type(AVM_DB) == "table" then
+		AVM_DB.deHistoryCacheMisses = (tonumber(AVM_DB.deHistoryCacheMisses) or 0) + 1
+	end
+
+	local historyUnit, capUnit, points = 0, 0, 0
+	if AVM_DE_PRICE_GUARD_HISTORY_OK and AVM_DE_PRICE_GUARD_HISTORY and
+	   type(AVM_DE_PRICE_GUARD_HISTORY.value) == "function" then
+		local key = tostring(itemId) .. ":0"
+		local okValue, histValue = pcall(AVM_DE_PRICE_GUARD_HISTORY.value, key)
+		histValue = okValue and tonumber(histValue) or 0
+		if histValue > 0 then
+			historyUnit = math.floor(histValue)
+			if type(AVM_DE_PRICE_GUARD_HISTORY.data_points) == "function" then
+				local okPoints, rows = pcall(AVM_DE_PRICE_GUARD_HISTORY.data_points, key)
+				if okPoints and type(rows) == "table" then points = table.getn(rows) end
+			end
+			if points >= AVM_DE_PRICE_GUARD_HISTORY_MIN_POINTS then
+				capUnit = math.floor(histValue * AVM_DE_PRICE_GUARD_HISTORY_CAP_PCT / 100)
+			end
+		end
+	end
+
+	AVM_DE_PRICE_GUARD_HISTORY_CACHE[itemId] = {
+		historyUnit = historyUnit,
+		capUnit = capUnit,
+		points = points,
+		expiresAt = now > 0 and (now + AVM_DE_PRICE_GUARD_HISTORY_CACHE_TTL) or 0,
+	}
+	return historyUnit, capUnit, points
+end
+
 local function avm_de_price_guard_history_cap(listType, index, count, buyoutPrice)
 	if listType ~= "list" or type(AVM) ~= "table" then return buyoutPrice end
 	if tostring(AVM.phase or "") ~= "DE_MAT_REVALIDATE" then return buyoutPrice end
 	count = tonumber(count) or 0
 	buyoutPrice = tonumber(buyoutPrice) or 0
 	if count <= 0 or buyoutPrice <= 0 then return buyoutPrice end
-	if not AVM_DE_PRICE_GUARD_HISTORY_OK or not AVM_DE_PRICE_GUARD_HISTORY or
-	   type(AVM_DE_PRICE_GUARD_HISTORY.value) ~= "function" then
-		return buyoutPrice
-	end
-	if type(GetAuctionItemLink) ~= "function" then return buyoutPrice end
 
-	local link = GetAuctionItemLink(listType, index)
-	if not link then return buyoutPrice end
-	local _, _, itemIdText = string.find(tostring(link), "item:(%d+):")
-	local itemId = tonumber(itemIdText)
+	-- DE_MAT_REVALIDATE already knows the logical material being queried. Use
+	-- that ID directly instead of reparsing every auction-row link, and resolve
+	-- AUX history at most once per material per cache TTL. GetAuctionItemInfo is
+	-- a hot path: history.value/data_points must never run once per returned row.
+	local itemId = avm_de_price_guard_active_material_id()
 	if not itemId then return buyoutPrice end
-
-	local key = tostring(itemId) .. ":0"
-	local okValue, histValue = pcall(AVM_DE_PRICE_GUARD_HISTORY.value, key)
-	histValue = okValue and tonumber(histValue) or 0
-	if histValue <= 0 then return buyoutPrice end
-
-	local points = 0
-	if type(AVM_DE_PRICE_GUARD_HISTORY.data_points) == "function" then
-		local okPoints, rows = pcall(AVM_DE_PRICE_GUARD_HISTORY.data_points, key)
-		if okPoints and type(rows) == "table" then points = table.getn(rows) end
-	end
-	if points < AVM_DE_PRICE_GUARD_HISTORY_MIN_POINTS then return buyoutPrice end
+	local historyUnit, capUnit, points = avm_de_price_guard_history_snapshot(itemId)
+	if capUnit <= 0 or points < AVM_DE_PRICE_GUARD_HISTORY_MIN_POINTS then return buyoutPrice end
 
 	local liveUnit = math.floor(buyoutPrice / count)
-	local capUnit = math.floor(histValue * AVM_DE_PRICE_GUARD_HISTORY_CAP_PCT / 100)
-	if capUnit <= 0 or liveUnit <= capUnit then return buyoutPrice end
+	if liveUnit <= capUnit then return buyoutPrice end
 
 	if type(AVM_DB) == "table" then
 		AVM_DB.deHistoryCapHits = (tonumber(AVM_DB.deHistoryCapHits) or 0) + 1
 		AVM_DB.deHistoryCapLast = {
 			itemId = itemId,
 			liveUnit = liveUnit,
-			historyUnit = math.floor(histValue),
+			historyUnit = historyUnit,
 			capUnit = capUnit,
 			points = points,
 		}
@@ -201,9 +248,12 @@ local function avm_de_price_guard_apply(verbose)
 	AVM_DB.dePriceGuardExactTtl = AVM_DE_PRICE_GUARD_EXACT_TTL
 	AVM_DB.deHistoryCapPct = AVM_DE_PRICE_GUARD_HISTORY_CAP_PCT
 	AVM_DB.deHistoryCapMinPoints = AVM_DE_PRICE_GUARD_HISTORY_MIN_POINTS
+	AVM_DB.deHistoryCacheTtl = AVM_DE_PRICE_GUARD_HISTORY_CACHE_TTL
 	AVM_DB.deOwnAuctionFilter = true
 	if AVM_DB.deOwnAuctionSkips == nil then AVM_DB.deOwnAuctionSkips = 0 end
 	if AVM_DB.deHistoryCapHits == nil then AVM_DB.deHistoryCapHits = 0 end
+	if AVM_DB.deHistoryCacheHits == nil then AVM_DB.deHistoryCacheHits = 0 end
+	if AVM_DB.deHistoryCacheMisses == nil then AVM_DB.deHistoryCacheMisses = 0 end
 
 	if verbose and not AVM_DE_PRICE_GUARD_PRINTED and DEFAULT_CHAT_FRAME then
 		AVM_DE_PRICE_GUARD_PRINTED = true
@@ -212,7 +262,8 @@ local function avm_de_price_guard_apply(verbose)
 			tostring(AVM_DE_PRICE_GUARD_MIN_DEPTH) ..
 			", exact cache " .. tostring(AVM_DE_PRICE_GUARD_EXACT_TTL) ..
 			"s, hist cap " .. tostring(AVM_DE_PRICE_GUARD_HISTORY_CAP_PCT) ..
-			"%, own auctions excluded"
+			"%, hist cache " .. tostring(AVM_DE_PRICE_GUARD_HISTORY_CACHE_TTL) ..
+			"s, own auctions excluded"
 		)
 	end
 end
