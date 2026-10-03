@@ -19,6 +19,10 @@ concurrency:
 jobs:
   preflight:
     runs-on: windows-2022
+    outputs:
+      auto_integrate: ${{ steps.queue.outputs.eligible }}
+      task_id: ${{ steps.queue.outputs.task_id }}
+      queue_reason: ${{ steps.queue.outputs.reason }}
     steps:
       - name: Checkout exact feature revision
         uses: actions/checkout@v5
@@ -35,3 +39,77 @@ jobs:
           $ErrorActionPreference = 'Stop'
           python tools/parallel_feature_preflight.py --base origin/parallel
           if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
+
+      - name: Resolve explicit auto-integration opt-in
+        id: queue
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/parallel_task_state.py queue-check --branch "${{ github.ref_name }}" --github-output "$env:GITHUB_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { throw "parallel task queue check failed" }
+
+  integrate:
+    name: Integrate opted-in feature
+    needs: preflight
+    if: github.event_name == 'push' && needs.preflight.outputs.auto_integrate == 'true'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    concurrency:
+      group: parallel-integration-queue
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact preflighted feature revision
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Revalidate against live parallel and integrate with non-force retry
+        shell: pwsh
+        env:
+          FEATURE_SHA: ${{ github.sha }}
+          FEATURE_BRANCH: ${{ github.ref_name }}
+          TASK_ID: ${{ needs.preflight.outputs.task_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name "wow112-ai-integration"
+          git config user.email "github12wykrzyk@users.noreply.github.com"
+
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Host "Integration attempt $attempt/$maxAttempts for $env:TASK_ID @ $env:FEATURE_SHA"
+
+            git checkout --detach $env:FEATURE_SHA
+            if ($LASTEXITCODE -ne 0) { throw "cannot restore exact feature SHA" }
+
+            git fetch origin +refs/heads/parallel:refs/remotes/origin/parallel
+            if ($LASTEXITCODE -ne 0) { throw "cannot fetch current parallel" }
+            $base = (git rev-parse refs/remotes/origin/parallel).Trim()
+            Write-Host "Current parallel base: $base"
+
+            python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel
+            if ($LASTEXITCODE -ne 0) {
+              throw "feature no longer passes preflight against current parallel $base"
+            }
+
+            git checkout -B __parallel_integrate refs/remotes/origin/parallel
+            if ($LASTEXITCODE -ne 0) { throw "cannot create integration worktree" }
+
+            git merge --no-ff $env:FEATURE_SHA -m "merge(queue): $env:TASK_ID"
+            if ($LASTEXITCODE -ne 0) {
+              git merge --abort 2>$null
+              throw "merge conflict while integrating $env:TASK_ID; manual arbitration required"
+            }
+
+            git push origin HEAD:refs/heads/parallel
+            if ($LASTEXITCODE -eq 0) {
+              $integrated = (git rev-parse HEAD).Trim()
+              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated"
+              exit 0
+            }
+
+            Write-Host "Parallel moved before push; retrying from fresh HEAD."
+          }
+
+          throw "parallel integration CAS retry limit exceeded; feature remains safe on $env:FEATURE_BRANCH"

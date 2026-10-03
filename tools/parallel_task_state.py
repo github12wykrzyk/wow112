@@ -49,6 +49,11 @@ def validate_task(task, policy, filename=None):
     base = task.get("base_parallel_sha")
     require(isinstance(base, str) and SHA.fullmatch(base), "base_parallel_sha must be a full SHA")
     require(task.get("status") in policy["statuses"], "invalid task status")
+    auto_integrate = task.get("auto_integrate", False)
+    require(isinstance(auto_integrate, bool), "auto_integrate must be boolean")
+    if auto_integrate:
+        require(task.get("status") == "ready_for_integration",
+                "auto_integrate=true requires ready_for_integration status")
     modules = task.get("modules")
     require(isinstance(modules, list) and modules and len(set(modules)) == len(modules)
             and all(isinstance(mod, str) and MODULE.fullmatch(mod) for mod in modules),
@@ -75,10 +80,13 @@ def load_tasks(policy, task_dir=TASK_DIR):
         return []
     tasks = []
     seen = set()
+    branches = set()
     for path in sorted(task_dir.glob("*.json")):
         task = validate_task(json.loads(path.read_text(encoding="utf-8")), policy, path.name)
         require(task["id"] not in seen, "duplicate task id: " + task["id"])
+        require(task["branch"] not in branches, "duplicate task branch: " + task["branch"])
         seen.add(task["id"])
+        branches.add(task["branch"])
         tasks.append(task)
     ids = {task["id"] for task in tasks}
     for task in tasks:
@@ -126,12 +134,59 @@ def route(tasks, policy, module):
                 "id": task["id"],
                 "branch": task["branch"],
                 "status": task["status"],
+                "auto_integrate": task.get("auto_integrate", False),
                 "base_parallel_sha": task["base_parallel_sha"],
                 "shared_resources": list(task["shared_resources"]),
             }
             for task in matches
         ],
     }
+
+
+def queue_check(tasks, branch):
+    require(isinstance(branch, str) and branch.startswith("feature/"), "queue-check requires feature branch")
+    matches = [task for task in tasks if task["branch"] == branch]
+    require(len(matches) <= 1, "multiple task records own branch " + branch)
+    if not matches:
+        return {
+            "eligible": False,
+            "task_id": "",
+            "reason": "no_task_record",
+        }
+    task = matches[0]
+    if task["status"] != "ready_for_integration":
+        return {
+            "eligible": False,
+            "task_id": task["id"],
+            "reason": "status_" + task["status"],
+        }
+    if not task.get("auto_integrate", False):
+        return {
+            "eligible": False,
+            "task_id": task["id"],
+            "reason": "auto_integrate_disabled",
+        }
+    if task["delivery_profiles"]:
+        return {
+            "eligible": False,
+            "task_id": task["id"],
+            "reason": "profile_gate_requires_manual",
+        }
+    return {
+        "eligible": True,
+        "task_id": task["id"],
+        "reason": "opt_in_ready",
+    }
+
+
+def write_github_output(path, result):
+    lines = [
+        "eligible=" + ("true" if result["eligible"] else "false"),
+        "task_id=" + result["task_id"],
+        "reason=" + result["reason"],
+    ]
+    with Path(path).open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
 
 
 def main():
@@ -141,6 +196,9 @@ def main():
     sub.add_parser("summary")
     r = sub.add_parser("route")
     r.add_argument("--module", required=True)
+    q = sub.add_parser("queue-check")
+    q.add_argument("--branch", required=True)
+    q.add_argument("--github-output")
     args = parser.parse_args()
     try:
         policy = load_policy()
@@ -149,8 +207,13 @@ def main():
             print("PARALLEL_TASK_STATE: PASS (%d tasks)" % len(tasks))
         elif args.command == "summary":
             print(json.dumps(summarize(tasks, policy), indent=2, sort_keys=True))
-        else:
+        elif args.command == "route":
             print(json.dumps(route(tasks, policy, args.module), indent=2, sort_keys=True))
+        else:
+            result = queue_check(tasks, args.branch)
+            if args.github_output:
+                write_github_output(args.github_output, result)
+            print(json.dumps(result, sort_keys=True))
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print("PARALLEL_TASK_STATE: FAIL: " + str(exc), file=sys.stderr)
         return 1

@@ -25,13 +25,25 @@
     "test_ready",
     "blocked"
   ],
+  "auto_integration": {
+    "enabled": true,
+    "opt_in_field": "auto_integrate",
+    "ready_status": "ready_for_integration",
+    "queue_concurrency_group": "parallel-integration-queue",
+    "cas_retry_limit": 3,
+    "profile_gate_policy": "Tasks declaring delivery_profiles stay manual until their profile/module-specific exact-SHA gates are explicitly verified."
+  },
   "rules": [
     "Each independent user request gets its own feature branch from the current verified parallel HEAD.",
     "Each feature owns exactly one uniquely named runtime/parallel_tasks/<task-id>.json coordination record; unrelated feature threads must not edit one another's task files.",
     "Independent coding, commits, preflights and module-specific builds may run concurrently.",
     "shared_resources declare mechanisms that require ordered integration or explicit arbitration; a conflict is a scheduling signal, not a reason to block independent development.",
+    "auto_integrate defaults to false. Automatic integration is allowed only for an explicitly opted-in task in ready_for_integration state with no outstanding delivery profile gate.",
+    "The integration queue is globally serialized, re-runs Parallel feature preflight against the live parallel HEAD immediately before each merge attempt, and pushes parallel without force.",
+    "If parallel moves before the queued push, the queue fetches the new HEAD, re-runs preflight and retries from the fresh base; merge conflicts fail closed for explicit arbitration.",
     "Final movement of parallel remains serialized by the optimistic compare-and-swap integration policy with force=false.",
-    "runtime/ai_experiments.json remains the evidence/routing ledger, but transient per-step progress belongs in the per-task record; ledger updates should be made at durable evidence milestones rather than every intermediate action.",
+    "runtime/ai_experiments.json remains the evidence/routing ledger; per-task records carry durable coordination intent instead of every transient workflow observation.",
+    "A task file status is declared branch-local intent. Live updater status must be derived from live branch/workflow/artifact evidence; a merged task record alone never proves READY TO TEST.",
     "A task marked test_ready must still be backed by the exact integrated parallel SHA and the required package/profile gates outside this coordination file.",
     "Task records never replace exact-SHA CI, provenance, candidate manifest, dependency registry, loader/update delivery gates or gameplay evidence."
   ],
