@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""Fail-closed hot-reload transform for the SummonScout core runtime.
+"""Fail-closed hot-reload transform for the SummonScout runtime.
 
 Canonical Lua stays readable and cold-load oriented under src/AddOns/SummonScout.
-The parallel addon packager applies only the minimum structural changes needed
-for executing SummonScout.lua again inside an already-running WoW 1.12.1 client.
-No service, pricing, destination or automation behaviour is changed here.
+The parallel addon packager applies the minimum structural changes needed for
+executing SummonScout.lua again inside an already-running WoW 1.12.1 client.
+A small canonical timing module is also appended to an already watched hot
+payload so timing-only changes can be delivered without adding another native
+watch slot. Service, pricing and destination logic remain untouched here.
 """
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
 CORE_NAME = "SummonScout.lua"
+TIMING_NAME = "SummonScout_TimingHot.lua"
+TIMING_HOST_NAME = "SummonScout_PostPaymentOfferHot.lua"
+TIMING_SOURCE = ROOT / "src/AddOns/SummonScout" / TIMING_NAME
+TIMING_MARKER = b'local TIMING_VERSION = "1-random-spam-counter1"'
 
 
 def _text(data: bytes) -> str:
@@ -117,7 +125,20 @@ def transform_core(data: bytes) -> bytes:
     return s.encode("utf-8")
 
 
+def append_timing_module(data: bytes) -> bytes:
+    if not TIMING_SOURCE.is_file():
+        raise RuntimeError("SummonScout hot transform: timing module source missing")
+    timing = TIMING_SOURCE.read_bytes()
+    if TIMING_MARKER not in timing:
+        raise RuntimeError("SummonScout hot transform: timing module marker missing")
+    if TIMING_MARKER in data:
+        raise RuntimeError("SummonScout hot transform: timing module already appended")
+    return data.rstrip(b"\r\n") + b"\n\n-- Packaged hot timing module follows.\n" + timing
+
+
 def transform_file(name: str, data: bytes) -> bytes:
     if name == CORE_NAME:
         return transform_core(data)
+    if name == TIMING_HOST_NAME:
+        return append_timing_module(data)
     return data

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-random-spam-counter1-v1",
+  "goal": "Desynchronize SummonScout adverts with a per-summoner random 200-500 second cadence and migrate the stock competitor counter delay to exactly 1 second.",
+  "branch": "feature/summonscout-random-spam-counter1-v1",
+  "base_parallel_sha": "c87df73ffacd5484f7a4b4aa159497d3d26f2a7d",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout advert scheduler",
+    "SummonScout competitor counter timing",
+    "SummonScout hot payload composition"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "notes": "Timing logic is isolated in a canonical hot module and packaged into the already watched PostPaymentOfferHot payload; no native watcher slot or core summon/invite logic is changed. Per-player name salt avoids synchronized sequences across clients."
+}
