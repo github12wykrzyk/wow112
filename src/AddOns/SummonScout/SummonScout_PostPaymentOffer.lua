@@ -4,7 +4,7 @@
 -- ledger. The core records a payment after a real positive wallet delta, so
 -- cancelled/zero trades cannot trigger a customer thank-you message here.
 
-local POSTPAY_VERSION = "1"
+local POSTPAY_VERSION = "2"
 
 local POSTPAY_MESSAGES = {
     "Thank you! I also offer summons to Hyjal, Hydraxis and Winterspring.",
@@ -35,7 +35,12 @@ local PP = {
     lastMessageIndex = 0,
     nextPollAt = 0,
     pending = {},
-    guiCheck = nil
+    unresolved = {},
+    guiCheck = nil,
+    tradeRequestedBy = nil,
+    tradePartner = nil,
+    recentClosedPartner = nil,
+    recentClosedAt = 0
 }
 
 local function ppNow()
@@ -48,6 +53,11 @@ local function ppTrim(s)
     s = string.gsub(s, "^%s+", "")
     s = string.gsub(s, "%s+$", "")
     return s
+end
+
+local function ppValidName(name)
+    name = ppTrim(name)
+    return name ~= "" and string.upper(name) ~= "UNKNOWN"
 end
 
 local function ppChat(text)
@@ -65,6 +75,55 @@ local function ppSetDefaults()
     if SummonScoutDB.postPaymentOfferEnabled == nil then
         SummonScoutDB.postPaymentOfferEnabled = false
     end
+end
+
+local function ppLiveTradePartner()
+    local name
+    if UnitName then
+        name = UnitName("NPC")
+        if ppValidName(name) then return ppTrim(name) end
+    end
+    if TradeFrameRecipientNameText and TradeFrameRecipientNameText.GetText then
+        name = TradeFrameRecipientNameText:GetText()
+        if ppValidName(name) then return ppTrim(name) end
+    end
+    return nil
+end
+
+local function ppRefreshTradePartner()
+    local name = ppLiveTradePartner()
+    if not ppValidName(name) and ppValidName(PP.tradeRequestedBy) then
+        name = PP.tradeRequestedBy
+    end
+    if ppValidName(name) then
+        PP.tradePartner = ppTrim(name)
+        return PP.tradePartner
+    end
+    return nil
+end
+
+local function ppResolvePaymentName(payment)
+    if type(payment) ~= "table" then return nil end
+
+    local name = ppTrim(payment.player or "")
+    if ppValidName(name) then return name end
+
+    name = ppRefreshTradePartner()
+    if not ppValidName(name)
+        and ppValidName(PP.recentClosedPartner)
+        and (ppNow() - (PP.recentClosedAt or 0)) <= 5.0 then
+        name = PP.recentClosedPartner
+    end
+
+    if ppValidName(name) then
+        name = ppTrim(name)
+        payment.player = name
+        if SummonScoutDB and SummonScoutDB.debug then
+            ppChat("post-payment payer recovered -> " .. name)
+        end
+        return name
+    end
+    return nil
 end
 
 local function ppChooseMessage()
@@ -89,7 +148,7 @@ end
 
 local function ppSend(name)
     name = ppTrim(name)
-    if name == "" or name == "UNKNOWN" or not ppEnabled() or not SendChatMessage then
+    if not ppValidName(name) or not ppEnabled() or not SendChatMessage then
         return false
     end
 
@@ -112,15 +171,54 @@ local function ppSend(name)
     return true
 end
 
-local function ppQueuePayment(payment)
-    if not ppEnabled() or type(payment) ~= "table" then return end
-    local name = ppTrim(payment.player or "")
-    if name == "" or name == "UNKNOWN" then return end
-
+local function ppQueueName(name)
+    if not ppEnabled() or not ppValidName(name) then return false end
     PP.pending[table.getn(PP.pending) + 1] = {
-        name = name,
+        name = ppTrim(name),
         dueAt = ppNow() + 0.35 + (table.getn(PP.pending) * 0.35)
     }
+    return true
+end
+
+local function ppQueuePayment(payment)
+    if not ppEnabled() or type(payment) ~= "table" then return end
+
+    local name = ppResolvePaymentName(payment)
+    if ppValidName(name) then
+        ppQueueName(name)
+        return
+    end
+
+    -- Trade UI/name propagation can lag the wallet delta by a few frames on
+    -- 1.12/custom servers. Do not permanently lose the customer just because
+    -- the trusted ledger initially recorded UNKNOWN; retry briefly instead.
+    PP.unresolved[table.getn(PP.unresolved) + 1] = {
+        payment = payment,
+        expiresAt = ppNow() + 2.0
+    }
+    if SummonScoutDB.debug then
+        ppChat("post-payment payer unresolved; retrying")
+    end
+end
+
+local function ppProcessUnresolved()
+    if table.getn(PP.unresolved) == 0 then return end
+
+    local t = ppNow()
+    local i
+    for i = table.getn(PP.unresolved), 1, -1 do
+        local item = PP.unresolved[i]
+        local name = ppResolvePaymentName(item.payment)
+        if ppValidName(name) then
+            table.remove(PP.unresolved, i)
+            ppQueueName(name)
+        elseif t >= (item.expiresAt or 0) then
+            table.remove(PP.unresolved, i)
+            if SummonScoutDB.debug then
+                ppChat("post-payment skipped -> unresolved payer")
+            end
+        end
+    end
 end
 
 local function ppObserveLedger()
@@ -139,6 +237,7 @@ local function ppObserveLedger()
         -- Trusted ledger was cleared/reset.
         PP.lastPaymentCount = current
         PP.pending = {}
+        PP.unresolved = {}
         return
     end
 
@@ -187,6 +286,7 @@ local function ppAttachGuiToggle()
         SummonScoutDB.postPaymentOfferEnabled = check:GetChecked() and true or false
         if not SummonScoutDB.postPaymentOfferEnabled then
             PP.pending = {}
+            PP.unresolved = {}
         end
         ppChat("post-payment thank-you + offer -> "
             .. (SummonScoutDB.postPaymentOfferEnabled and "ON" or "OFF"))
@@ -201,18 +301,56 @@ end
 
 local frame = CreateFrame("Frame", "SummonScoutPostPaymentOfferFrame")
 frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("TRADE_REQUEST")
+frame:RegisterEvent("TRADE_SHOW")
+frame:RegisterEvent("TRADE_MONEY_CHANGED")
+frame:RegisterEvent("TRADE_ACCEPT_UPDATE")
+frame:RegisterEvent("TRADE_CLOSED")
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         ppSetDefaults()
         PP.lastPaymentCount = math.floor(tonumber(SummonScoutDB.paymentCount) or 0)
         PP.initialized = true
         W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
+        return
+    end
+
+    if event == "TRADE_REQUEST" then
+        local name = ppTrim(arg1 or "")
+        PP.tradeRequestedBy = ppValidName(name) and name or nil
+        return
+    end
+
+    if event == "TRADE_SHOW" then
+        PP.tradePartner = nil
+        ppRefreshTradePartner()
+        return
+    end
+
+    if event == "TRADE_MONEY_CHANGED" or event == "TRADE_ACCEPT_UPDATE" then
+        ppRefreshTradePartner()
+        return
+    end
+
+    if event == "TRADE_CLOSED" then
+        local name = ppRefreshTradePartner()
+        if not ppValidName(name) and ppValidName(PP.tradePartner) then
+            name = PP.tradePartner
+        end
+        if ppValidName(name) then
+            PP.recentClosedPartner = ppTrim(name)
+            PP.recentClosedAt = ppNow()
+        end
+        PP.tradeRequestedBy = nil
+        PP.tradePartner = nil
+        return
     end
 end)
 
 frame:SetScript("OnUpdate", function()
     local t = ppNow()
     if t < (PP.nextPollAt or 0) then
+        ppProcessUnresolved()
         ppProcessPending()
         return
     end
@@ -227,5 +365,6 @@ frame:SetScript("OnUpdate", function()
 
     ppAttachGuiToggle()
     ppObserveLedger()
+    ppProcessUnresolved()
     ppProcessPending()
 end)
