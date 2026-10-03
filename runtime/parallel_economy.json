@@ -17,8 +17,7 @@
     "roots": [
       "AuxVmangos",
       "AHThrottleTest",
-      "AuxFastBridge",
-      "AuxTurboProbe"
+      "AuxFastBridge"
     ],
     "external": [
       {

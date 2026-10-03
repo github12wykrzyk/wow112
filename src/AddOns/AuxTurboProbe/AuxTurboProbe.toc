@@ -1,8 +1,0 @@
-## Interface: 11200
-## Title: AUX Turbo Probe
-## Notes: Isolated raw AH throughput probe; native-correlated page scanner, no AUX Search/AVM routing.
-## Author: github12wykrzyk/wow112
-## Version: 2.0
-## Dependencies: AuxFastBridge
-## SavedVariables: AuxTurboProbeDB
-AuxTurboProbe.lua
