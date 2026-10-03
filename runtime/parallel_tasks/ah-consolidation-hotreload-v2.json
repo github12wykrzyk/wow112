@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-hotreload-v2",
+  "goal": "Build a side-by-side consolidated AH/economy implementation from the current post-rollback parallel state, with live Lua hot-fix support that does not require closing WoW or /reload after the one-time runtime cutover.",
+  "branch": "feature/ah-consolidation-hotreload-v2",
+  "base_parallel_sha": "c4e35928deab3b07e667b94631c61dc63510d9a6",
+  "modules": [
+    "AuxEconomyShadow",
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-consolidation-shadow-source",
+    "aux-de-valuation",
+    "auction-house-scan-loop",
+    "hot-lua-runtime",
+    "SummonScout hot payload composition",
+    "addon-packager-transform"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Exact feature SHA stages passed preflight through parity diagnostics and existing-watcher hot routing. Integration is side-by-side only: current AuxVmangos remains production owner, DE history-cap guard remains removed, shadow real actions stay hard-locked, and no updater/cutover flag is enabled. Opted into the serialized non-force parallel integration queue.",
+  "integrated_feature_sha": "ea2797da22c6539e007e66313c4c34562e2771f3"
+}
