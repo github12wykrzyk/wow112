@@ -3,7 +3,9 @@
 
 Used by the serialized Parallel integration flow both before merge (profile gates
 on the exact feature SHA) and after merge (STANDARD + declared profiles on the
-exact integrated parallel SHA).
+exact integrated parallel SHA). All selected workflows are dispatched first so
+independent profile builds run concurrently; the caller returns only after every
+exact-SHA gate succeeds.
 """
 import argparse
 import json
@@ -85,8 +87,7 @@ def workflow_runs(token, repo, workflow, ref):
     return list((data or {}).get("workflow_runs", []))
 
 
-def dispatch_and_wait(token, repo, workflow, label, ref, sha,
-                      materialize_timeout=120, completion_timeout=1800):
+def dispatch_exact(token, repo, workflow, label, ref, sha, materialize_timeout=120):
     before = {str(run["id"]) for run in workflow_runs(token, repo, workflow, ref)}
     api_request(
         token,
@@ -98,36 +99,33 @@ def dispatch_and_wait(token, repo, workflow, label, ref, sha,
           (label, workflow, ref, sha), flush=True)
 
     deadline = time.monotonic() + materialize_timeout
-    run = None
     while time.monotonic() < deadline:
         for candidate in workflow_runs(token, repo, workflow, ref):
             if (candidate.get("head_sha") == sha
                     and candidate.get("head_branch") == ref
                     and str(candidate.get("id")) not in before):
-                run = candidate
-                break
-        if run:
-            break
+                run_id = int(candidate["id"])
+                print("PARALLEL_CI_DISPATCH: materialized %s run=%s" %
+                      (label, run_id), flush=True)
+                return run_id
         time.sleep(2)
-    if not run:
-        raise RuntimeError("%s dispatch did not materialize on exact SHA %s" % (label, sha))
+    raise RuntimeError("%s dispatch did not materialize on exact SHA %s" % (label, sha))
 
-    run_id = int(run["id"])
-    print("PARALLEL_CI_DISPATCH: materialized %s run=%s" % (label, run_id), flush=True)
+
+def wait_exact(token, repo, label, run_id, ref, sha, completion_timeout=1800):
     deadline = time.monotonic() + completion_timeout
     while time.monotonic() < deadline:
         current = api_request(token, "GET", "/repos/%s/actions/runs/%s" % (repo, run_id))
         if current.get("head_sha") != sha or current.get("head_branch") != ref:
             raise RuntimeError("%s run provenance changed unexpectedly" % label)
-        status = current.get("status")
-        if status == "completed":
+        if current.get("status") == "completed":
             conclusion = current.get("conclusion")
             if conclusion != "success":
                 raise RuntimeError("%s exact-SHA gate failed: run=%s conclusion=%s" %
                                    (label, run_id, conclusion))
             print("PARALLEL_CI_DISPATCH: PASS %s run=%s sha=%s" %
                   (label, run_id, sha), flush=True)
-            return run_id
+            return
         time.sleep(5)
     raise RuntimeError("%s exact-SHA gate timed out: run=%s" % (label, run_id))
 
@@ -160,9 +158,11 @@ def main():
         selected = selected_workflows(args.standard, profiles)
         results = {}
         for label, workflow in selected:
-            results[label] = dispatch_and_wait(
+            results[label] = dispatch_exact(
                 token, args.repo, workflow, label, args.ref, args.sha
             )
+        for label, _workflow in selected:
+            wait_exact(token, args.repo, label, results[label], args.ref, args.sha)
         write_outputs(args.github_output, results)
         print("PARALLEL_CI_DISPATCH: PASS " + json.dumps(results, sort_keys=True))
         return 0
