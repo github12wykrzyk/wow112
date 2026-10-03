@@ -22,11 +22,13 @@ MODULES = [
     "AuxEconomyShadow_Coordinator.lua",
     "AuxEconomyShadow_AuxAdapter.lua",
     "AuxEconomyShadow_TransactionGuard.lua",
+    "AuxEconomyShadow_AutoSell.lua",
+    "AuxEconomyShadow_Ledger.lua",
 ]
 REQUIRED = [TASK, MANIFEST, SHADOW / "README.md", SHADOW / "AuxEconomyShadow.toc",
             SHADOW / "AuxEconomyShadow_Anchor.lua", SHADOW / "AuxEconomyShadow_HotPayload.lua"] + [SHADOW / x for x in MODULES]
 FORBIDDEN_ACTIONS = ("PlaceAuctionBid", "CancelAuction", "PostAuction", "QueryAuctionItems", "UseContainerItem")
-FORBIDDEN_RUNTIME = ("GetAuctionItemInfo", "GetNumAuctionItems", "GetMoney(", "UnitName(", "CreateFrame(", "RegisterEvent(")
+FORBIDDEN_RUNTIME = ("GetAuctionItemInfo", "GetNumAuctionItems", "GetMoney(", "UnitName(", "CreateFrame(", "RegisterEvent(", "SetScript(\"OnUpdate\"")
 DE_FORBIDDEN = ("AVM_AUX_HISTORY", "aux.core.history", "history.value", "data_points", "AVM_DE_PRICE_GUARD_HISTORY", "deHistoryCapHits")
 
 
@@ -123,6 +125,16 @@ def main() -> None:
         if token not in tx: fail("transaction guard missing fail-closed token " + token)
     if "realActionsEnabled = true" in tx: fail("transaction guard armed real actions")
 
+    autosell = (SHADOW / "AuxEconomyShadow_AutoSell.lua").read_text(encoding="utf-8")
+    for state_name in ("OWNED", "CANCEL_REQUESTED", "WAIT_RETURN", "WAIT_REPRICE", "POST_READY", "POST_PENDING", "POST_RECOVER", "DONE", "BLOCKED"):
+        if state_name not in autosell: fail("autosell missing state " + state_name)
+    for token in ("RequestCancel", "ObserveOwnerSnapshot", "ObserveReturnedToBag", "SetReprice", "MarkPostStarted", "ObservePosted", "NextIntent"):
+        if token not in autosell: fail("autosell missing lifecycle API " + token)
+
+    ledger = (SHADOW / "AuxEconomyShadow_Ledger.lua").read_text(encoding="utf-8")
+    for token in ("Record", "Recent", "Summary", "SetMaxRows"):
+        if token not in ledger: fail("ledger missing " + token)
+
     hot = (SHADOW / "AuxEconomyShadow_HotPayload.lua").read_text(encoding="utf-8")
     if any(x in hot for x in ("CreateFrame(", "RegisterEvent(", "ADDON_LOADED")):
         fail("hot payload owns unmanaged frame/event")
@@ -144,6 +156,8 @@ def main() -> None:
     print("coordinator=single-state-machine")
     print("aux_adapter=observation-only")
     print("transaction_guard=real-actions-hard-locked")
+    print("autosell=pure-intents-only")
+    print("ledger=pure-bounded-event-store")
     print("de_rollback_guard=preserved")
 
 

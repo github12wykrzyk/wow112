@@ -24,6 +24,8 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Coordinator.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AuxAdapter.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_TransactionGuard.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AutoSell.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Ledger.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": null,
@@ -41,6 +43,8 @@
     "coordinator": "single shadow state machine",
     "aux_adapter": "observation-only boundary accepting normalized AUX callbacks",
     "transaction_guard": "single future transaction authority; real actions hard-locked in shadow",
+    "autosell": "pure cancel-return-reprice-post-reconcile lifecycle emitting intents only",
+    "ledger": "persistent bounded economy event ledger with summary aggregation",
     "states": ["IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"]
   },
   "delivery": {
@@ -57,5 +61,5 @@
     "may_patch_global_ah_api": false,
     "real_actions_hard_locked": true
   },
-  "stage": "marketbook_pipeline_plus_fail_closed_transaction_guard"
+  "stage": "pure_autosell_lifecycle_and_ledger"
 }
