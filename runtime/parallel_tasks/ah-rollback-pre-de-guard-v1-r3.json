@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "ah-rollback-pre-de-guard-v1-r3",
+  "goal": "Restore AuxVmangos to the exact pre-DE-price-guard state from 1891af1e7da0fe1acdbfa85e411df0244a509037 after the f8246 rollback still reproduced the AH loop freeze.",
+  "branch": "feature/ah-rollback-pre-de-guard-v1-r3",
+  "base_parallel_sha": "3c48d8a740af2621310c79b7e4e2efeb01a8c4a7",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "aux-de-valuation",
+    "auction-house-scan-loop"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "STANDARD",
+    "ECONOMY"
+  ],
+  "notes": "Targeted rollback removes AuxVmangos_DEPriceGuard.lua entirely and restores AuxVmangos.toc byte-for-byte to commit 1891af1e, the parent before the initial 'guard DE valuations against thin price spikes' change. Native AH and AuxFastBridge already match that earlier lineage from the previous rollback; unrelated modern parallel modules remain untouched."
+}
