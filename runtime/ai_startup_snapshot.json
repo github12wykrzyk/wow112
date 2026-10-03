@@ -31,7 +31,8 @@
       "one logical iteration uses one coherent commit when possible",
       "never force-push or destructively reset unique work",
       "exact-SHA CI/package gates and updater delivery rules are unchanged",
-      "fast startup never weakens runtime, package, provenance or promotion verification"
+      "fast startup never weakens runtime, package, provenance or promotion verification",
+      "parallel integration is compare-and-swap: exact preflighted feature SHA plus current parallel parent, force=false ref update, retry from fresh HEAD on rejection"
     ],
     "schema_version": 1,
     "snapshot": "runtime/ai_startup_snapshot.json",
@@ -61,7 +62,7 @@
       "git_blob_sha1": "df4877629d66e1a07b4eed7876372557f8939175"
     },
     "AI_INDEX.json": {
-      "git_blob_sha1": "88ab1820f3a469437447d80730a67903233faa4f"
+      "git_blob_sha1": "2eb984d98b3962c4816f7a3fa959de18b27696c2"
     },
     "AI_START_HERE.md": {
       "git_blob_sha1": "04c9f174a2c68733468b84af489ab1a313b97974"

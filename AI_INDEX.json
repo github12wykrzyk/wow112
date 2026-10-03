@@ -49,6 +49,7 @@
     "experiment_workflow": ".github/workflows/ai_experiments.yml",
     "parallel_candidate_manifest": "runtime/parallel_candidate.json",
     "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml",
+    "parallel_integration_policy": "runtime/parallel_integration_policy.json",
     "experiment_fast_index": "runtime/ai_experiment_index.json",
     "startup_snapshot": "runtime/ai_startup_snapshot.json",
     "startup_snapshot_generator": "tools/ai_startup_snapshot.py"
@@ -111,6 +112,7 @@
     "route new features via active experiment ownership and dependencies; keep parallel and work distinct",
     "ledger test/package evidence must identify exact commit; unknown results remain null",
     "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
+    "feature -> parallel integration uses optimistic CAS: after exact feature preflight PASS, re-read current parallel HEAD, create one merge commit whose first parent is that exact HEAD and second parent is the exact feature SHA, then update parallel with force=false; if parallel moved or the ref update is rejected, discard the merge commit, re-run preflight against the new HEAD and retry",
     "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded",
     "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates",
     "read compact experiment index and live branch refs before module-source analysis; full experiment ledger is evidence/detail fallback",
@@ -155,7 +157,8 @@
       "one logical iteration uses one coherent commit when possible",
       "never force-push or destructively reset unique work",
       "exact-SHA CI/package gates and updater delivery rules are unchanged",
-      "fast startup never weakens runtime, package, provenance or promotion verification"
+      "fast startup never weakens runtime, package, provenance or promotion verification",
+      "parallel integration is compare-and-swap: exact preflighted feature SHA plus current parallel parent, force=false ref update, retry from fresh HEAD on rejection"
     ]
   }
 }
