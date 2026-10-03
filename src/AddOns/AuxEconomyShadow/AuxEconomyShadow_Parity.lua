@@ -116,7 +116,7 @@ local ok = R.ReplaceModule("parity", REVISION, function(state)
         local out = {}
         local first = table.getn(state.rows) - limit + 1
         if first < 1 then first = 1 end
-        for i = first, table.getn(state.rows) do out[#out + 1] = state.rows[i] end
+        for i = first, table.getn(state.rows) do out[table.getn(out) + 1] = state.rows[i] end
         return out
     end
 

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "ah-shadow-lua50-lengthfix-v1",
+  "goal": "Fix the Lua 5.0 parse failure in the AuxEconomyShadow bundle hosted by SummonScout and fail closed if a Lua 5.1 length operator enters that hot bundle again.",
+  "branch": "feature/ah-shadow-lua50-lengthfix-v1",
+  "base_parallel_sha": "4a0205fbc8091e8d172b0da6537d5ac8366e446c",
+  "modules": [
+    "AuxEconomyShadow",
+    "SummonScout",
+    "ECONOMY"
+  ],
+  "dependencies": [
+    "ah-economy-hot-host-v1"
+  ],
+  "shared_resources": [
+    "SummonScout hot payload composition",
+    "hot-lua-runtime",
+    "addon-packager-transform"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "notes": "Gameplay screenshot exposed parser error at packaged SummonScout_PostPaymentOfferHot.lua:2439 near '#'. Exact packaged bundle contains one Lua 5.1 length operator in AuxEconomyShadow_Parity.lua. Replace it with table.getn and add a fail-closed Lua 5.0 compatibility check to the AH hot-bundle builder. Preserve the intentional watched SummonScout host architecture."
+}
