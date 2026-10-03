@@ -59,7 +59,44 @@ jobs:
           python tools/verify_candidate_source_scope.py
           if ($LASTEXITCODE -ne 0) { throw "candidate source-fingerprint scope failed" }
 
+      - name: Compute work-candidate native-base fingerprint
+        id: base-fingerprint
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          python tools/work_candidate_base_fingerprint.py --output dist/work_candidate_base_fingerprint.json --github-output "$env:GITHUB_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { throw "work-candidate base fingerprint failed" }
+
+      - name: Restore verified work-candidate native base
+        id: base-cache
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            dist/WoW112_WORK_CANDIDATE.zip
+            dist/candidate_metadata.json
+            dist/candidate_summary.json
+          key: work-candidate-base-windows2022-${{ steps.base-fingerprint.outputs.base_fingerprint }}
+
+      - name: Rehydrate verified native base on cache hit
+        if: github.event_name != 'workflow_dispatch' && steps.base-cache.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '${{ github.event.before }}'
+          if (-not $base -or $base -match '^0+$') {
+            $base = (git rev-parse HEAD^)
+          }
+          python tools/rehydrate_work_candidate_base.py `
+            --base "$base" `
+            --package dist/WoW112_WORK_CANDIDATE.zip `
+            --metadata dist/candidate_metadata.json `
+            --summary dist/candidate_summary.json `
+            --fingerprint dist/work_candidate_base_fingerprint.json
+          if ($LASTEXITCODE -ne 0) { throw "cached work-candidate base validation failed" }
+
       - name: Build changed active modules and package candidate
+        if: github.event_name == 'workflow_dispatch' || steps.base-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -75,6 +112,16 @@ jobs:
             --package-metadata dist/candidate_metadata.json `
             --summary dist/candidate_summary.json
           if ($LASTEXITCODE -ne 0) { throw "candidate build failed" }
+
+      - name: Save verified work-candidate native base
+        if: github.event_name != 'workflow_dispatch' && steps.base-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            dist/WoW112_WORK_CANDIDATE.zip
+            dist/candidate_metadata.json
+            dist/candidate_summary.json
+          key: work-candidate-base-windows2022-${{ steps.base-fingerprint.outputs.base_fingerprint }}
 
       - name: Full active-stack build/package audit
         if: github.event_name == 'workflow_dispatch'
@@ -334,7 +381,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "final package verification failed" }
 
       - name: Build and verify real-movement Rogue AutoRear PvE variant
-        if: github.ref_name == 'parallel'
+        if: github.ref_name == 'parallel' && github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -390,7 +437,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "candidate provenance/verification attestation failed" }
 
       - name: Build and verify orientation-only Rogue PvE comparison
-        if: github.ref_name == 'parallel'
+        if: github.ref_name == 'parallel' && github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
