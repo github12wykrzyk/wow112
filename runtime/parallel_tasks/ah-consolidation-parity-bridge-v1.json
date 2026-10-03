@@ -24,12 +24,12 @@
   "lease": {
     "owner": "chatgpt:ah-consolidation-parity-bridge-v1",
     "acquired_at": "2026-10-03T22:25:00Z",
-    "heartbeat_at": "2026-10-03T22:25:00Z",
+    "heartbeat_at": "2026-10-03T23:05:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:AuxEconomyShadow",
       "resource:aux-observer-callbacks"
     ]
   },
-  "notes": "Passive evidence stage only. Original AVM callbacks are called exactly once and their return values are preserved. Observer errors are pcall-contained. No AH query/action primitives, no frame/event/OnUpdate owner, no production cutover, TransactionGuard remains hard-locked."
+  "notes": "Passive evidence stage only. Original AVM callbacks are called exactly once and their return values are preserved. Observer errors are pcall-contained. No AH query/action primitives, no frame/event/OnUpdate owner, no production cutover, TransactionGuard remains hard-locked. Previous integrated strategy lease was released before this retry."
 }
