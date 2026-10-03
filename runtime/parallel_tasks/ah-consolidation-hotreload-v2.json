@@ -17,8 +17,8 @@
     "SummonScout hot payload composition",
     "addon-packager-transform"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
-  "notes": "Shadow-only consolidation from the live post-rollback parallel baseline. Do not restore AuxVmangos_DEPriceGuard/history-cap logic. Current AH manifests and updater delivery remain untouched. Hot-fix routing reuses the existing AutoLoginBridge watcher by appending the full shadow bundle to the already watched SummonScout_PostPaymentOfferHot.lua package payload; no new native watcher or DLL is introduced."
+  "notes": "Exact feature SHA stages passed preflight through parity diagnostics and existing-watcher hot routing. Integration is side-by-side only: current AuxVmangos remains production owner, DE history-cap guard remains removed, shadow real actions stay hard-locked, and no updater/cutover flag is enabled. Opted into the serialized non-force parallel integration queue."
 }
