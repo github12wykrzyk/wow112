@@ -37,7 +37,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python tools/parallel_feature_preflight.py --base origin/parallel
+          python tools/parallel_feature_preflight.py --base origin/parallel --branch "${{ github.head_ref || github.ref_name }}"
           if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
 
       - name: Resolve explicit auto-integration opt-in
@@ -88,7 +88,7 @@ jobs:
             $base = (git rev-parse refs/remotes/origin/parallel).Trim()
             Write-Host "Current parallel base: $base"
 
-            python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel
+            python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel --branch "$env:FEATURE_BRANCH"
             if ($LASTEXITCODE -ne 0) {
               throw "feature no longer passes preflight against current parallel $base"
             }
@@ -101,6 +101,13 @@ jobs:
               git merge --abort 2>$null
               throw "merge conflict while integrating $env:TASK_ID; manual arbitration required"
             }
+
+            python tools/parallel_task_state.py mark-integrated --task-id "$env:TASK_ID" --feature-sha "$env:FEATURE_SHA"
+            if ($LASTEXITCODE -ne 0) { throw "cannot mark integrated task state" }
+            git add "runtime/parallel_tasks/$env:TASK_ID.json"
+            if ($LASTEXITCODE -ne 0) { throw "cannot stage integrated task state" }
+            git commit --amend --no-edit
+            if ($LASTEXITCODE -ne 0) { throw "cannot amend integration commit with task state" }
 
             git push origin HEAD:refs/heads/parallel
             if ($LASTEXITCODE -eq 0) {
