@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "updater-delivery-dashboard-v2",
+  "goal": "Turn the loader ready queue into an explicit delivery-to-game lifecycle bar: waiting for integration, ready for local update, installed/ready to test, or no ready changes.",
+  "branch": "feature/updater-delivery-dashboard-v2",
+  "base_parallel_sha": "83df17940433ec599210669dc331067e179fa40d",
+  "status": "awaiting_ci",
+  "auto_integrate": true,
+  "modules": [
+    "Updater"
+  ],
+  "dependencies": [
+    "loader-ready-queue-bar-v1"
+  ],
+  "shared_resources": [
+    "updater-github-live-header",
+    "updater-ready-queue-bar"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "notes": "UI-only observer/dashboard refinement. STANDARD/ECONOMY installed state is declared green only from the exact local installed-state manifest; comparison profiles remain conservative. Includes an offline --ui-smoke parser/visibility assertion and does not weaken build, package or delivery gates."
+}
