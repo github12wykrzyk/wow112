@@ -68,6 +68,7 @@ jobs:
             tools\updater\UpdaterUiSmoke.cs `
             tools\updater\UpdaterHost.cs `
             tools\updater\UpdaterGitHubMonitor.cs `
+            tools\updater\UpdaterReadyQueueBar.cs `
             tools\updater\UpdaterDllSelectionFeature.cs `
             tools\updater\UpdaterDllCleanupFeature.cs `
             tools\updater\UpdaterSafety.cs `
@@ -194,4 +195,3 @@ jobs:
             dist/README_UPDATER.md
           if-no-files-found: error
           compression-level: 0
-
