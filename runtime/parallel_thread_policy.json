@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "branch": "parallel",
+  "purpose": "Concurrency-safe coordination for many independent ChatGPT feature threads without serializing development or using the central experiment ledger as per-step scratch state.",
+  "task_dir": "runtime/parallel_tasks",
+  "task_branch_prefix": "feature/",
+  "integration_policy": "runtime/parallel_integration_policy.json",
+  "statuses": [
+    "coding",
+    "preflight",
+    "ready_for_integration",
+    "integrating",
+    "parallel_ci",
+    "test_ready",
+    "blocked",
+    "done",
+    "superseded"
+  ],
+  "active_statuses": [
+    "coding",
+    "preflight",
+    "ready_for_integration",
+    "integrating",
+    "parallel_ci",
+    "test_ready",
+    "blocked"
+  ],
+  "rules": [
+    "Each independent user request gets its own feature branch from the current verified parallel HEAD.",
+    "Each feature owns exactly one uniquely named runtime/parallel_tasks/<task-id>.json coordination record; unrelated feature threads must not edit one another's task files.",
+    "Independent coding, commits, preflights and module-specific builds may run concurrently.",
+    "shared_resources declare mechanisms that require ordered integration or explicit arbitration; a conflict is a scheduling signal, not a reason to block independent development.",
+    "Final movement of parallel remains serialized by the optimistic compare-and-swap integration policy with force=false.",
+    "runtime/ai_experiments.json remains the evidence/routing ledger, but transient per-step progress belongs in the per-task record; ledger updates should be made at durable evidence milestones rather than every intermediate action.",
+    "A task marked test_ready must still be backed by the exact integrated parallel SHA and the required package/profile gates outside this coordination file.",
+    "Task records never replace exact-SHA CI, provenance, candidate manifest, dependency registry, loader/update delivery gates or gameplay evidence."
+  ],
+  "updater_states": {
+    "coding": "WORKING",
+    "preflight": "PREFLIGHT",
+    "ready_for_integration": "WAITING INTEGRATION",
+    "integrating": "INTEGRATING",
+    "parallel_ci": "PARALLEL BUILD",
+    "test_ready": "READY TO TEST",
+    "blocked": "BLOCKED",
+    "done": "DONE",
+    "superseded": "SUPERSEDED"
+  }
+}
