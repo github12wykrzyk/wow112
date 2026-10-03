@@ -16,20 +16,20 @@
     "hot-lua-runtime",
     "aux-observer-callbacks"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [
     "economy"
   ],
   "lease": {
     "owner": "chatgpt:ah-consolidation-parity-bridge-v1",
     "acquired_at": "2026-10-03T22:25:00Z",
-    "heartbeat_at": "2026-10-03T23:05:00Z",
+    "heartbeat_at": "2026-10-03T23:11:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:AuxEconomyShadow",
       "resource:aux-observer-callbacks"
     ]
   },
-  "notes": "Passive evidence stage only. Original AVM callbacks are called exactly once and their return values are preserved. Observer errors are pcall-contained. No AH query/action primitives, no frame/event/OnUpdate owner, no production cutover, TransactionGuard remains hard-locked. Previous integrated strategy lease was released before this retry."
+  "notes": "Passive evidence stage only. Original AVM callbacks are called exactly once and their return values are preserved. Observer errors are pcall-contained. No AH query/action primitives, no frame/event/OnUpdate owner, no production cutover, TransactionGuard remains hard-locked. Previous integrated strategy lease was released. Exact SHA bc79a166699973bf83107e58769c85c8ffcf035b passed preflight run 37160852951 and ECONOMY run 37160887461, artifact 11287129551; queue opt-in follows on this metadata successor."
 }
