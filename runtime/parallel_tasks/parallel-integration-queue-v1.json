@@ -16,8 +16,9 @@
     "ai-task-coordination",
     "github-actions-parallel-queue"
   ],
-  "status": "ready_for_integration",
+  "status": "integrated",
   "auto_integrate": false,
+  "integrated_feature_sha": "62fb94415068ce69eca6aab59b043d94edb17c7d",
   "delivery_profiles": [],
-  "notes": "Bootstrap task for the queue itself. auto_integrate stays false because the queue cannot safely bootstrap its own integration before the workflow exists on parallel; integrate this feature manually after exact-SHA preflight PASS."
+  "notes": "Integrated on parallel by merge 152895b82bc3c319a887481c0bf9887e5508422a; exact feature head 62fb94415068ce69eca6aab59b043d94edb17c7d. Build work candidate for the merge completed successfully."
 }

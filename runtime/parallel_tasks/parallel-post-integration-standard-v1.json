@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "parallel-post-integration-standard-v1",
+  "goal": "Dispatch the full STANDARD Build work candidate for the exact auto-integrated parallel merge SHA before releasing the serialized integration queue.",
+  "branch": "feature/parallel-post-integration-standard-v1",
+  "base_parallel_sha": "95819071b1c4d839fefeb89d4b9136f3caa55c5d",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments"
+  ],
+  "dependencies": [
+    "parallel-task-enforcement-v1"
+  ],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "github-actions-parallel-queue",
+    "parallel-standard-delivery"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "notes": "Infrastructure-only stage. After a successful non-force parallel push, the integration job dispatches Build work candidate while holding the integration queue and verifies that a new workflow_dispatch run exists with head_branch=parallel and head_sha equal to the exact integrated merge SHA."
+}

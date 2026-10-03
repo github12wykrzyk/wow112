@@ -37,7 +37,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python tools/parallel_feature_preflight.py --base origin/parallel
+          python tools/parallel_feature_preflight.py --base origin/parallel --branch "${{ github.head_ref || github.ref_name }}"
           if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
 
       - name: Resolve explicit auto-integration opt-in
@@ -56,21 +56,27 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: write
+      actions: write
     concurrency:
       group: parallel-integration-queue
       cancel-in-progress: false
+    outputs:
+      parallel_sha: ${{ steps.integrate.outputs.parallel_sha }}
+      standard_run_id: ${{ steps.integrate.outputs.standard_run_id }}
     steps:
       - name: Checkout exact preflighted feature revision
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Revalidate against live parallel and integrate with non-force retry
+      - name: Revalidate, integrate and dispatch exact STANDARD build
+        id: integrate
         shell: pwsh
         env:
           FEATURE_SHA: ${{ github.sha }}
           FEATURE_BRANCH: ${{ github.ref_name }}
           TASK_ID: ${{ needs.preflight.outputs.task_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           git config user.name "wow112-ai-integration"
@@ -88,7 +94,7 @@ jobs:
             $base = (git rev-parse refs/remotes/origin/parallel).Trim()
             Write-Host "Current parallel base: $base"
 
-            python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel
+            python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel --branch "$env:FEATURE_BRANCH"
             if ($LASTEXITCODE -ne 0) {
               throw "feature no longer passes preflight against current parallel $base"
             }
@@ -102,10 +108,50 @@ jobs:
               throw "merge conflict while integrating $env:TASK_ID; manual arbitration required"
             }
 
+            python tools/parallel_task_state.py mark-integrated --task-id "$env:TASK_ID" --feature-sha "$env:FEATURE_SHA"
+            if ($LASTEXITCODE -ne 0) { throw "cannot mark integrated task state" }
+            git add "runtime/parallel_tasks/$env:TASK_ID.json"
+            if ($LASTEXITCODE -ne 0) { throw "cannot stage integrated task state" }
+            git commit --amend --no-edit
+            if ($LASTEXITCODE -ne 0) { throw "cannot amend integration commit with task state" }
+
             git push origin HEAD:refs/heads/parallel
             if ($LASTEXITCODE -eq 0) {
               $integrated = (git rev-parse HEAD).Trim()
-              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated"
+              $remoteHead = ((git ls-remote origin refs/heads/parallel) -split "`t")[0].Trim()
+              if ($remoteHead -ne $integrated) {
+                throw "parallel moved before downstream dispatch; expected $integrated got $remoteHead"
+              }
+
+              $repo = "${{ github.repository }}"
+              $workflow = "build_work_candidate.yml"
+              $before = gh api "repos/$repo/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=parallel&per_page=20" | ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) { throw "cannot list prior STANDARD dispatch runs" }
+              $beforeIds = @($before.workflow_runs | ForEach-Object { [string]$_.id })
+
+              gh workflow run $workflow --repo $repo --ref parallel
+              if ($LASTEXITCODE -ne 0) { throw "cannot dispatch STANDARD Build work candidate" }
+
+              $run = $null
+              for ($probe = 0; $probe -lt 15 -and -not $run; $probe++) {
+                Start-Sleep -Seconds 2
+                $runs = gh api "repos/$repo/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=parallel&per_page=20" | ConvertFrom-Json
+                if ($LASTEXITCODE -ne 0) { throw "cannot resolve dispatched STANDARD run" }
+                $run = $runs.workflow_runs |
+                  Where-Object { $_.head_sha -eq $integrated -and $beforeIds -notcontains [string]$_.id } |
+                  Sort-Object id -Descending |
+                  Select-Object -First 1
+              }
+              if (-not $run) {
+                throw "STANDARD dispatch did not materialize on exact integrated SHA $integrated"
+              }
+              if ($run.head_branch -ne "parallel") {
+                throw "STANDARD dispatch provenance branch mismatch: $($run.head_branch)"
+              }
+
+              "parallel_sha=$integrated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+              "standard_run_id=$($run.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated standard_run=$($run.id)"
               exit 0
             }
 

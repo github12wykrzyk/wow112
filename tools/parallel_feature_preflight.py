@@ -2,6 +2,7 @@
 """Run fast gates and compile native sources changed relative to parallel."""
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,7 @@ STATIC_GATES = [
     ["tools/verify_target_aura_lazyscript_bridge.py"],
 ]
 
+
 def run(args):
     cmd = [sys.executable, *args]
     print("RUN:", " ".join(cmd))
@@ -33,22 +35,47 @@ def run(args):
     if result.returncode:
         raise SystemExit(result.returncode)
 
+
 def diff_paths(base):
     merge_base = subprocess.check_output(["git", "merge-base", base, "HEAD"], cwd=ROOT, text=True).strip()
     raw = subprocess.check_output(["git", "diff", "--name-only", merge_base, "HEAD"], cwd=ROOT, text=True)
     return sorted({x.strip().replace("\\", "/") for x in raw.splitlines() if x.strip()}), merge_base
 
+
+def resolve_branch(explicit):
+    if explicit:
+        return explicit
+    env_branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME")
+    if env_branch:
+        return env_branch
+    return subprocess.check_output(
+        ["git", "branch", "--show-current"], cwd=ROOT, text=True
+    ).strip()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="origin/parallel")
+    ap.add_argument("--branch")
     args = ap.parse_args()
 
     changed, merge_base = diff_paths(args.base)
+    branch = resolve_branch(args.branch)
     print("PARALLEL_FEATURE_PREFLIGHT: merge_base=" + merge_base)
+    print("PARALLEL_FEATURE_PREFLIGHT: branch=" + (branch or "<detached>"))
     print("PARALLEL_FEATURE_PREFLIGHT: changed=" + json.dumps(changed))
+
+    if branch.startswith("feature/"):
+        run([
+            "tools/parallel_task_state.py",
+            "feature-check",
+            "--branch", branch,
+            "--merge-base", merge_base,
+        ])
 
     for gate in STATIC_GATES:
         run(gate)
+
     runtime = json.loads(RUNTIME.read_text(encoding="utf-8"))
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     force_active = any(
@@ -97,6 +124,7 @@ def main():
         + f"(active_builds={len(active)}, companion_builds={len(companions)})"
     )
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
