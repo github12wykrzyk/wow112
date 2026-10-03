@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "delivery_pointer_branch": "parallel-testpoint",
+  "build_branch": "parallel",
+  "purpose": "Freeze the exact user-testable Parallel SHA while development and integration continue independently on parallel.",
+  "publication_requirements": [
+    "candidate commit is reachable from parallel",
+    "required exact-SHA Build work candidate completed successfully",
+    "FINAL_PACKAGE: PASS and candidate provenance/attestation are present for STANDARD",
+    "Build parallel economy completed successfully when the ECONOMY profile is intended for this test point",
+    "artifact IDs and workflow run IDs are recorded before the pointer is advertised as ready"
+  ],
+  "pointer_rules": [
+    "parallel-testpoint is a delivery pointer only and is not a development or integration branch",
+    "do not build alternative source lineage on parallel-testpoint",
+    "do not advance the pointer merely because parallel HEAD advanced",
+    "keep the issued pointer frozen while its gameplay result is awaiting evidence unless the user explicitly supersedes it",
+    "before advancing, re-read the live pointer and the candidate exact SHA; never force-push an unrelated or non-parallel commit",
+    "the updater resolves the desired commit through parallel-testpoint but validates and downloads artifacts produced with head_branch parallel"
+  ],
+  "failure_behavior": [
+    "if an exact-SHA build was cancelled or failed, do not publish that SHA",
+    "if required artifacts or attestations are missing or expired, do not publish that SHA",
+    "if a newer parallel commit appears during publication, it does not invalidate an already verified candidate; publication remains tied to the chosen exact SHA"
+  ]
+}

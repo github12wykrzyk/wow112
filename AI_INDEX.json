@@ -13,6 +13,7 @@
     "development": "work",
     "promotion_pattern": "promote/**",
     "alternative": "parallel",
+    "delivery_pointer": "parallel-testpoint",
     "feature_pattern": "feature/**"
   },
   "read_order": [
@@ -50,6 +51,7 @@
     "parallel_candidate_manifest": "runtime/parallel_candidate.json",
     "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml",
     "parallel_integration_policy": "runtime/parallel_integration_policy.json",
+    "parallel_testpoint_policy": "runtime/parallel_testpoint_policy.json",
     "experiment_fast_index": "runtime/ai_experiment_index.json",
     "startup_snapshot": "runtime/ai_startup_snapshot.json",
     "startup_snapshot_generator": "tools/ai_startup_snapshot.py"
@@ -113,6 +115,9 @@
     "ledger test/package evidence must identify exact commit; unknown results remain null",
     "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
     "feature -> parallel integration uses optimistic CAS: after exact feature preflight PASS, re-read current parallel HEAD, create one merge commit whose first parent is that exact HEAD and second parent is the exact feature SHA, then update parallel with force=false; if parallel moved or the ref update is rejected, discard the merge commit, re-run preflight against the new HEAD and retry",
+    "parallel-testpoint is the frozen user-delivery pointer; it may point only at an exact parallel commit whose required STANDARD/ECONOMY workflow, FINAL_PACKAGE/provenance and relevant artifact gates have passed",
+    "do not advance parallel-testpoint merely because parallel moved; keep the issued test SHA frozen until its gameplay result is recorded or the user explicitly supersedes that test point",
+    "updater delivery resolves the desired SHA from parallel-testpoint but consumes workflow artifacts whose original head_branch remains parallel, preserving exact build provenance",
     "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded",
     "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates",
     "read compact experiment index and live branch refs before module-source analysis; full experiment ledger is evidence/detail fallback",
@@ -158,7 +163,8 @@
       "never force-push or destructively reset unique work",
       "exact-SHA CI/package gates and updater delivery rules are unchanged",
       "fast startup never weakens runtime, package, provenance or promotion verification",
-      "parallel integration is compare-and-swap: exact preflighted feature SHA plus current parallel parent, force=false ref update, retry from fresh HEAD on rejection"
+      "parallel integration is compare-and-swap: exact preflighted feature SHA plus current parallel parent, force=false ref update, retry from fresh HEAD on rejection",
+      "parallel-testpoint is a frozen delivery pointer and may advance only to a fully verified exact parallel SHA; development may continue independently on parallel"
     ]
   }
 }
