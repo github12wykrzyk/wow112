@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "chat-progress-heartbeat-policy-v1",
+  "goal": "Make long ChatGPT repository tasks emit concise truthful progress updates during active work so the user is not left with prolonged silence, without adding wasteful GitHub or CI polling solely for pings.",
+  "branch": "feature/chat-progress-heartbeat-policy-v1",
+  "base_parallel_sha": "83df17940433ec599210669dc331067e179fa40d",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AI-workflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-startup-routing",
+    "chat-progress-policy"
+  ],
+  "delivery_profiles": [],
+  "notes": "Process-only change. Updates AI_INDEX startup rules and the generated startup snapshot; no gameplay runtime, DLL, addon, updater payload or delivery profile is changed.",
+  "integrated_feature_sha": "3e12691a41e133768e4b864047097e1087d7a662"
+}
