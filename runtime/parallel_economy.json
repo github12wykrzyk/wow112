@@ -6,7 +6,7 @@
   "dlls": [
     {
       "runtime_name": "WoWAHThrottleNative_5875_v8_FASTMARKET.dll",
-      "source": "src/AHThrottleNative/WoWAHThrottleNative_5875_v9_PRODUCTION_SAFE.c",
+      "source": "src/AHThrottleNative/WoWAHThrottleNative_5875_v8_FASTMARKET.c",
       "profile": "clangcl_i686_crtless"
     }
   ],
