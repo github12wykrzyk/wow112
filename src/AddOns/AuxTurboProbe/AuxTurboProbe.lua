@@ -163,7 +163,21 @@ local function response_ready()
 	return false, s
 end
 
-local function accept_response()
+local function accept_response(s)
+	-- nativeCooldownMs/nativeCooldownPatched are published only after the native
+	-- companion observes a real outbound stock query. Therefore page 0 doubles as
+	-- the bootstrap probe when status starts at cooldown=-1. Do not trust or count
+	-- that first response until the exact native 25 ms patch is confirmed.
+	if (tonumber(AUXTURBO_RUNTIME.received) or 0) == 0 then
+		local cooldown = tonumber(s and s.nativeCooldownMs) or -1
+		local patched = s and s.nativeCooldownPatched and true or false
+		if cooldown ~= 25 or not patched then
+			finish("NATIVE_25MS_UNCONFIRMED")
+			return
+		end
+		out("native cooldown confirmed: 25ms; raw measurement active")
+	end
+
 	local now = GetTime and GetTime() or 0
 	local elapsedMs = AUXTURBO_RUNTIME.sentAt > 0 and (now - AUXTURBO_RUNTIME.sentAt) * 1000 or 0
 	table.insert(AUXTURBO_RUNTIME.samples, elapsedMs)
@@ -200,8 +214,14 @@ function AUXTURBO_Run()
 		out("blocked: AUX/AVM is busy; finish current AH work first")
 		return false, "ah-busy"
 	end
-	if tonumber(s.nativeCooldownMs) ~= 25 or not s.nativeCooldownPatched then
-		out("blocked: native 25ms cooldown patch not confirmed (cooldown=" .. tostring(s.nativeCooldownMs) .. ")")
+
+	-- cooldown=-1 is an unprimed status, not a failure. The native DLL publishes
+	-- the exact patch state only after observing the first outbound AH list query.
+	-- Known non-25ms state still fails closed immediately; unknown state is allowed
+	-- to bootstrap with page 0 and is validated on that exact native response.
+	local cooldown = tonumber(s.nativeCooldownMs) or -1
+	if cooldown >= 0 and (cooldown ~= 25 or not s.nativeCooldownPatched) then
+		out("blocked: native cooldown is known non-25ms (cooldown=" .. tostring(cooldown) .. ")")
 		return false, "native-25ms-unconfirmed"
 	end
 
@@ -213,6 +233,9 @@ function AUXTURBO_Run()
 	AuxTurboProbeDB.lastResult = "running"
 	detach_browse()
 
+	if cooldown < 0 then
+		out("native cooldown status unprimed; page 0 will bootstrap exact 25ms verification")
+	end
 	out("RAW run=" .. tostring(AuxTurboProbeDB.runs) ..
 		" started; page-by-page native-correlated scan, AUX Search/AVM untouched")
 	return true, "started"
@@ -248,9 +271,9 @@ monitor:SetScript("OnUpdate", function()
 		return
 	end
 	if AUXTURBO_RUNTIME.phase == "response" then
-		local ready = response_ready()
+		local ready, s = response_ready()
 		if ready then
-			accept_response()
+			accept_response(s)
 			return
 		end
 		local now = GetTime and GetTime() or 0
