@@ -1,11 +1,9 @@
 ## Interface: 11200
 ## Title: Aux FAST Bridge
-## Notes: Legacy AUX fast path preserved; TURBO is an isolated optional full-search override with separate GUI state.
+## Notes: Fast AUX bridge; GUI-toggle manual headless Search, per-scan speed diagnostics, transaction-safe resume.
 ## Author: github12wykrzyk/wow112
-## Version: 3.10
+## Version: 3.7
 ## Dependencies: aux-addon
 ## OptionalDeps: AuxVmangos
 ## SavedVariables: AuxFastBridgeDB
 AuxFastBridge.lua
-AuxFastBridge_TurboRouting.lua
-AuxFastBridge_TurboIsolation.lua
