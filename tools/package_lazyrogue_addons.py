@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from summonscout_hot_transform import transform_file as transform_summonscout_file
+
 ROOT = Path(__file__).resolve().parents[1]
 LAZY_BASE = ROOT / "src/LazyScript/upstream/Addons"
 LOCAL_BASE = ROOT / "src/AddOns"
@@ -134,6 +136,13 @@ def discover_addons():
     return sources
 
 
+def package_bytes(folder, path):
+    data = path.read_bytes()
+    if folder.lower() == "summonscout":
+        data = transform_summonscout_file(path.name, data)
+    return data
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--output", default="dist/WoW112_LAZYROGUE_HYBRID_ADDONS.zip")
@@ -162,7 +171,7 @@ def main():
             arc = "Interface/AddOns/" + folder + "/" + path.relative_to(root).as_posix()
             info = ZipInfo(arc, (2026, 9, 20, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
-            z.writestr(info, path.read_bytes())
+            z.writestr(info, package_bytes(folder, path))
 
     with ZipFile(output) as z:
         names = z.namelist()
