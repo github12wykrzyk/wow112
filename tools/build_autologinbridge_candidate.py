@@ -9,7 +9,12 @@ SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c"
 DLL_NAME="WoWAutoLoginBridge_5875_v1.dll"
 DLL_LIST="dlls.txt"
 PROFILE="clangcl_i686_win32imports"
-HOT_PAYLOAD="Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua"
+HOT_PAYLOADS=[
+    "Interface/AddOns/SummonScout/SummonScout.lua",
+    "Interface/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua",
+    "Interface/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua",
+]
+HOT_PAYLOAD_CAP=262144
 
 def repack(package,dll):
     with zipfile.ZipFile(package,"r") as src:
@@ -59,9 +64,12 @@ def main():
       "native_login":"0x0046AFB0","credential_transport":"child environment; password remains DPAPI-protected",
       "hot_lua_probe":True,
       "hot_lua_execute":"0x00704CD0",
-      "hot_lua_payload":HOT_PAYLOAD,
-      "hot_lua_scope":"SummonScout post-payment module",
+      "hot_lua_payloads":HOT_PAYLOADS,
+      "hot_lua_watch_count":len(HOT_PAYLOADS),
+      "hot_lua_payload_cap":HOT_PAYLOAD_CAP,
+      "hot_lua_scope":"SummonScout full active Lua runtime",
       "hot_lua_poll_ms":250,
+      "hot_lua_cold_seed":True,
       "timings_ms":timing
     }
     if a.compile_only:
@@ -93,9 +101,12 @@ def main():
             "credential_storage":"DPAPI vault; encrypted child environment",
             "hot_lua_probe":True,
             "hot_lua_execute":"0x00704CD0",
-            "hot_lua_payload":HOT_PAYLOAD,
-            "hot_lua_scope":"SummonScout post-payment module",
-            "hot_lua_poll_ms":250
+            "hot_lua_payloads":HOT_PAYLOADS,
+            "hot_lua_watch_count":len(HOT_PAYLOADS),
+            "hot_lua_payload_cap":HOT_PAYLOAD_CAP,
+            "hot_lua_scope":"SummonScout full active Lua runtime",
+            "hot_lua_poll_ms":250,
+            "hot_lua_cold_seed":True
         }
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
     summary["result"]="PASS" if summary["ready_for_test"] else "FAIL"
