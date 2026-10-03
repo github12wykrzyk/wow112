@@ -17,8 +17,10 @@
     "persistent_anchor": "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Anchor.lua",
     "watch_files": [
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Contracts.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_MarketBook.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Vendor.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Disenchant.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_CandidatePipeline.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Coordinator.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_AuxAdapter.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_TransactionGuard.lua",
@@ -30,8 +32,10 @@
   },
   "evaluators": {
     "contracts": "normalized auction records and candidate ordering",
+    "marketbook": "persistent normalized per-scan book with item/page indexes",
     "vendor": "realm-learned merchant_sell first, Turtle DB fallback",
-    "disenchant": "live/depth material book with AH cut, safety margin and exposure guard; no history price cap"
+    "disenchant": "live/depth material book with AH cut, safety margin and exposure guard; no history price cap",
+    "pipeline": "pure vendor+DE candidate aggregation and deterministic best-candidate selection"
   },
   "coordination": {
     "coordinator": "single shadow state machine",
@@ -53,5 +57,5 @@
     "may_patch_global_ah_api": false,
     "real_actions_hard_locked": true
   },
-  "stage": "fail_closed_transaction_authority"
+  "stage": "marketbook_pipeline_plus_fail_closed_transaction_guard"
 }
