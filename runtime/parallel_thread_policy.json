@@ -31,6 +31,39 @@
     "marker_path": "runtime/parallel_task_enforcement_v1.marker",
     "legacy_policy": "Feature branches whose merge-base predates the marker are grandfathered. Feature branches based on a parallel revision containing the marker must own exactly one task record."
   },
+  "delivery_profiles": {
+    "economy": {
+      "workflow": "build_parallel_economy.yml",
+      "required_paths": [
+        "src/AHThrottleNative/",
+        "AuxVmangos/",
+        "addons/AuxVmangos/",
+        "AHThrottleTest/",
+        "addons/AHThrottleTest/",
+        "AuxFastBridge/",
+        "addons/AuxFastBridge/",
+        "runtime/parallel_economy.json",
+        "tools/package_parallel_economy_overlay.py",
+        "tools/parallel_economy_fingerprint.py",
+        ".github/workflows/build_parallel_economy.yml"
+      ]
+    },
+    "updater": {
+      "workflow": "build_updater.yml",
+      "required_paths": [
+        "tools/updater/",
+        ".github/workflows/build_updater.yml"
+      ]
+    },
+    "autologinbridge": {
+      "workflow": "build_autologinbridge.yml",
+      "required_paths": [
+        "src/AutoLoginBridge/",
+        "tools/build_autologinbridge_candidate.py",
+        ".github/workflows/build_autologinbridge.yml"
+      ]
+    }
+  },
   "auto_integration": {
     "enabled": true,
     "opt_in_field": "auto_integrate",
@@ -38,7 +71,7 @@
     "integrated_status": "integrated",
     "queue_concurrency_group": "parallel-integration-queue",
     "cas_retry_limit": 3,
-    "profile_gate_policy": "Tasks declaring delivery_profiles stay manual until their profile/module-specific exact-SHA gates are explicitly verified."
+    "profile_gate_policy": "Profile-routed file changes must declare the matching delivery_profiles. Declared profile workflows must pass on the exact feature SHA before integration and again on the exact integrated parallel SHA before the serialized queue is released."
   },
   "rules": [
     "Each independent user request gets its own feature branch from the current verified parallel HEAD.",
@@ -46,10 +79,13 @@
     "After the enforcement marker exists on parallel, a new feature preflight fails closed unless exactly one task record owns that feature branch. Existing feature branches based before the marker are grandfathered until they finish.",
     "Independent coding, commits, preflights and module-specific builds may run concurrently.",
     "shared_resources declare mechanisms that require ordered integration or explicit arbitration; a conflict is a scheduling signal, not a reason to block independent development.",
-    "auto_integrate defaults to false. Automatic integration is allowed only for an explicitly opted-in task in ready_for_integration state with no outstanding delivery profile gate and no unresolved declared task dependency.",
+    "delivery_profiles are fail-closed routing declarations. A feature touching ECONOMY, updater or AutoLoginBridge profile paths cannot integrate without declaring the corresponding profile.",
+    "auto_integrate defaults to false. Automatic integration is allowed only for an explicitly opted-in task in ready_for_integration state with no unresolved declared task dependency.",
+    "Declared delivery profile workflows run and must PASS on the exact feature SHA before the integration queue can merge that feature.",
     "The integration queue is globally serialized, re-runs Parallel feature preflight against the live parallel HEAD immediately before each merge attempt, and pushes parallel without force.",
     "If parallel moves before the queued push, the queue fetches the new HEAD, re-runs preflight and retries from the fresh base; merge conflicts fail closed for explicit arbitration.",
     "A successful queued merge records integrated status and the exact integrated feature SHA inside the merge commit, avoiding a follow-up metadata-only parallel commit.",
+    "After a queued merge, the exact integrated parallel SHA must PASS STANDARD Build work candidate and every declared delivery profile workflow before the queue releases the next integration.",
     "Final movement of parallel remains serialized by the optimistic compare-and-swap integration policy with force=false.",
     "runtime/ai_experiments.json remains the evidence/routing ledger; per-task records carry durable coordination intent instead of every transient workflow observation.",
     "A task file status is declared branch-local intent. Live updater status must be derived from live branch/workflow/artifact evidence; a merged task record alone never proves READY TO TEST.",

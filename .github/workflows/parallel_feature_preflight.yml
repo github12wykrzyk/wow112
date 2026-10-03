@@ -23,6 +23,7 @@ jobs:
       auto_integrate: ${{ steps.queue.outputs.eligible }}
       task_id: ${{ steps.queue.outputs.task_id }}
       queue_reason: ${{ steps.queue.outputs.reason }}
+      delivery_profiles: ${{ steps.queue.outputs.delivery_profiles }}
     steps:
       - name: Checkout exact feature revision
         uses: actions/checkout@v5
@@ -49,10 +50,40 @@ jobs:
           python tools/parallel_task_state.py queue-check --branch "${{ github.ref_name }}" --github-output "$env:GITHUB_OUTPUT"
           if ($LASTEXITCODE -ne 0) { throw "parallel task queue check failed" }
 
-  integrate:
-    name: Integrate opted-in feature
+  profile_gates:
+    name: Verify declared delivery profiles
     needs: preflight
     if: github.event_name == 'push' && needs.preflight.outputs.auto_integrate == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout exact preflighted feature revision
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Run exact feature-SHA profile gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEATURE_SHA: ${{ github.sha }}
+          FEATURE_BRANCH: ${{ github.ref_name }}
+          DELIVERY_PROFILES: ${{ needs.preflight.outputs.delivery_profiles }}
+        run: |
+          set -euo pipefail
+          python tools/parallel_ci_dispatch.py \
+            --repo "${{ github.repository }}" \
+            --ref "$FEATURE_BRANCH" \
+            --sha "$FEATURE_SHA" \
+            --profiles "$DELIVERY_PROFILES"
+
+  integrate:
+    name: Integrate opted-in feature
+    needs:
+      - preflight
+      - profile_gates
+    if: github.event_name == 'push' && needs.preflight.outputs.auto_integrate == 'true' && needs.profile_gates.result == 'success'
     runs-on: windows-2022
     permissions:
       contents: write
@@ -63,19 +94,24 @@ jobs:
     outputs:
       parallel_sha: ${{ steps.integrate.outputs.parallel_sha }}
       standard_run_id: ${{ steps.integrate.outputs.standard_run_id }}
+      economy_run_id: ${{ steps.integrate.outputs.economy_run_id }}
+      updater_run_id: ${{ steps.integrate.outputs.updater_run_id }}
+      autologinbridge_run_id: ${{ steps.integrate.outputs.autologinbridge_run_id }}
+      delivery_run_ids: ${{ steps.integrate.outputs.delivery_run_ids }}
     steps:
       - name: Checkout exact preflighted feature revision
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Revalidate, integrate and dispatch exact STANDARD build
+      - name: Revalidate, integrate and verify exact parallel delivery
         id: integrate
         shell: pwsh
         env:
           FEATURE_SHA: ${{ github.sha }}
           FEATURE_BRANCH: ${{ github.ref_name }}
           TASK_ID: ${{ needs.preflight.outputs.task_id }}
+          DELIVERY_PROFILES: ${{ needs.preflight.outputs.delivery_profiles }}
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -123,35 +159,19 @@ jobs:
                 throw "parallel moved before downstream dispatch; expected $integrated got $remoteHead"
               }
 
-              $repo = "${{ github.repository }}"
-              $workflow = "build_work_candidate.yml"
-              $before = gh api "repos/$repo/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=parallel&per_page=20" | ConvertFrom-Json
-              if ($LASTEXITCODE -ne 0) { throw "cannot list prior STANDARD dispatch runs" }
-              $beforeIds = @($before.workflow_runs | ForEach-Object { [string]$_.id })
-
-              gh workflow run $workflow --repo $repo --ref parallel
-              if ($LASTEXITCODE -ne 0) { throw "cannot dispatch STANDARD Build work candidate" }
-
-              $run = $null
-              for ($probe = 0; $probe -lt 15 -and -not $run; $probe++) {
-                Start-Sleep -Seconds 2
-                $runs = gh api "repos/$repo/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=parallel&per_page=20" | ConvertFrom-Json
-                if ($LASTEXITCODE -ne 0) { throw "cannot resolve dispatched STANDARD run" }
-                $run = $runs.workflow_runs |
-                  Where-Object { $_.head_sha -eq $integrated -and $beforeIds -notcontains [string]$_.id } |
-                  Sort-Object id -Descending |
-                  Select-Object -First 1
-              }
-              if (-not $run) {
-                throw "STANDARD dispatch did not materialize on exact integrated SHA $integrated"
-              }
-              if ($run.head_branch -ne "parallel") {
-                throw "STANDARD dispatch provenance branch mismatch: $($run.head_branch)"
-              }
-
               "parallel_sha=$integrated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-              "standard_run_id=$($run.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated standard_run=$($run.id)"
+              python tools/parallel_ci_dispatch.py `
+                --repo "${{ github.repository }}" `
+                --ref parallel `
+                --sha "$integrated" `
+                --standard `
+                --profiles "$env:DELIVERY_PROFILES" `
+                --github-output "$env:GITHUB_OUTPUT"
+              if ($LASTEXITCODE -ne 0) {
+                throw "exact integrated parallel delivery gates failed for $integrated"
+              }
+
+              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated profiles=$env:DELIVERY_PROFILES"
               exit 0
             }
 

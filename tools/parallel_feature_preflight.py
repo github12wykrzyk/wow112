@@ -72,6 +72,15 @@ def main():
             "--branch", branch,
             "--merge-base", merge_base,
         ])
+        run([
+            "tools/parallel_task_state.py",
+            "profile-check",
+            "--branch", branch,
+            "--merge-base", merge_base,
+            "--changed-json", json.dumps(changed, separators=(",", ":")),
+        ])
+
+    run(["-m", "unittest", "discover", "-s", "tools", "-p", "test_ai_*.py", "-v"])
 
     for gate in STATIC_GATES:
         run(gate)
