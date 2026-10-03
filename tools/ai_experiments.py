@@ -124,6 +124,41 @@ def render_index(data, entries):
     return json.dumps(build_index(data, entries), indent=2, sort_keys=True) + "\n"
 
 
+def audit(entries):
+    """Summarize routing noise without mutating or guessing experiment state."""
+    modules = {}
+    for exp in entries:
+        if exp["status"] not in ACTIVE:
+            continue
+        for module in exp["modules"]:
+            modules.setdefault(module, []).append(exp)
+
+    same_branch_multi = {}
+    cross_branch_conflicts = {}
+    for module, rows in sorted(modules.items()):
+        if len(rows) < 2:
+            continue
+        branches = sorted({row["branch"] for row in rows})
+        record = {
+            "branches": branches,
+            "experiments": sorted(row["id"] for row in rows),
+        }
+        if len(branches) == 1:
+            same_branch_multi[module] = record
+        else:
+            cross_branch_conflicts[module] = record
+
+    return {
+        "active_experiment_count": sum(1 for exp in entries if exp["status"] in ACTIVE),
+        "active_module_count": len(modules),
+        "same_branch_multi_count": len(same_branch_multi),
+        "cross_branch_conflict_count": len(cross_branch_conflicts),
+        "same_branch_multi": same_branch_multi,
+        "cross_branch_conflicts": cross_branch_conflicts,
+        "note": "Same-branch multiplicity is routing noise, not a branch-selection conflict. No ledger status is changed automatically.",
+    }
+
+
 def route(entries, module, explicit=None):
     require(bool(MODULE.fullmatch(module)), "invalid module")
     require(explicit is None or explicit in ("work", "parallel") or
@@ -138,8 +173,12 @@ def route(entries, module, explicit=None):
         return {"decision": "continue_existing", "branch": active[0]["branch"],
                 "experiments": [active[0]["id"]]}
     if len(active) > 1:
+        branches = sorted({e["branch"] for e in active})
+        if len(branches) == 1:
+            return {"decision": "inspect_same_branch", "branch": branches[0],
+                    "experiments": sorted(e["id"] for e in active)}
         return {"decision": "ambiguous", "branch": None,
-                "experiments": [e["id"] for e in active]}
+                "branches": branches, "experiments": sorted(e["id"] for e in active)}
     slug = re.sub(r"[^a-z0-9-]", "-", module.lower()).strip("-")
     return {"decision": "new_feature", "branch": None, "suggested_branch": "feature/" + slug,
             "possible_base": "work", "experiments": []}
@@ -149,6 +188,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("validate")
+    sub.add_parser("audit")
     i = sub.add_parser("index")
     i.add_argument("--check", action="store_true", help="fail if compact index is stale")
     i.add_argument("--output", type=Path, default=INDEX)
@@ -169,6 +209,8 @@ def main():
         entries = validate(data)
         if args.command == "validate":
             print("AI_EXPERIMENTS: PASS (" + str(len(entries)) + " experiments)")
+        elif args.command == "audit":
+            print(json.dumps(audit(entries), indent=2, sort_keys=True))
         elif args.command == "index":
             rendered = render_index(data, entries)
             if args.check:
