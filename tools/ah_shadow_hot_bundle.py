@@ -2,6 +2,7 @@
 """Build the inert AuxEconomyShadow Lua bundle for an already watched hot host."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +11,7 @@ HOST_NAME = "SummonScout_PostPaymentOfferHot.lua"
 BUNDLE_MARKER = b"W112_AH_SHADOW_HOT_BUNDLE_BEGIN:v1"
 BUNDLE_END = b"W112_AH_SHADOW_HOT_BUNDLE_END:v1"
 MAX_BUNDLE_BYTES = 196608
+LUA51_LENGTH_OPERATOR = re.compile(rb"#\s*[A-Za-z_(]")
 
 ORDER = (
     "AuxEconomyShadow_Anchor.lua",
@@ -28,6 +30,16 @@ ORDER = (
 )
 
 
+def _assert_lua50_compatible(name: str, data: bytes) -> None:
+    for number, raw in enumerate(data.splitlines(), 1):
+        code = raw.split(b"--", 1)[0]
+        if LUA51_LENGTH_OPERATOR.search(code):
+            raise RuntimeError(
+                "AH shadow hot bundle uses Lua 5.1 length operator in "
+                + name + ":" + str(number)
+            )
+
+
 def _read(name: str) -> bytes:
     path = SHADOW / name
     if not path.is_file():
@@ -37,6 +49,7 @@ def _read(name: str) -> bytes:
         raise RuntimeError("AH shadow hot bundle empty source: " + name)
     if b"\x00" in data:
         raise RuntimeError("AH shadow hot bundle NUL byte: " + name)
+    _assert_lua50_compatible(name, data)
     return data.rstrip(b"\n")
 
 
