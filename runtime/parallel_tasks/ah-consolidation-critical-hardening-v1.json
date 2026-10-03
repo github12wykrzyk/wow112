@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "ah-consolidation-critical-hardening-v1",
+  "goal": "Harden the side-by-side AuxEconomyShadow runtime before any cutover: atomic hot bundle replacement, generation-scoped transient state, non-starving AutoSell intents, fail-closed coordinator state changes and a strict parity gate.",
+  "branch": "feature/ah-consolidation-critical-hardening-v1",
+  "base_parallel_sha": "4a0205fbc8091e8d172b0da6537d5ac8366e446c",
+  "modules": [
+    "AuxEconomyShadow",
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-consolidation-shadow-source",
+    "hot-lua-runtime",
+    "SummonScout hot payload composition",
+    "addon-packager-transform"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "notes": "Critical hardening only. AuxVmangos remains production owner, shadow remains inert, and no cutover/updater activation is permitted by this task. ECONOMY profile is declared because the shadow bundle is injected into the watched SummonScout host by the ECONOMY packager."
+}
