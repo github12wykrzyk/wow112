@@ -4,32 +4,13 @@
   "goal": "Hot-install a passive read-only active-vs-shadow parity observer around project-owned AVM arbitrage callbacks without changing production AH decisions, queries or transactions.",
   "branch": "feature/ah-consolidation-parity-bridge-v1",
   "base_parallel_sha": "3b2cab37e996303cf4cdcb677373d2a01cdd2907",
-  "modules": [
-    "AuxEconomyShadow"
-  ],
-  "dependencies": [
-    "ah-consolidation-strategies-v1"
-  ],
-  "shared_resources": [
-    "ah-consolidation-shadow-source",
-    "auction-house-economy-model",
-    "hot-lua-runtime",
-    "aux-observer-callbacks"
-  ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
-  "delivery_profiles": [
-    "economy"
-  ],
-  "lease": {
-    "owner": "chatgpt:ah-consolidation-parity-bridge-v1",
-    "acquired_at": "2026-10-03T22:25:00Z",
-    "heartbeat_at": "2026-10-03T23:11:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "resource:aux-observer-callbacks"
-    ]
-  },
-  "notes": "Passive evidence stage only. Original AVM callbacks are called exactly once and their return values are preserved. Observer errors are pcall-contained. No AH query/action primitives, no frame/event/OnUpdate owner, no production cutover, TransactionGuard remains hard-locked. Previous integrated strategy lease was released. Exact SHA bc79a166699973bf83107e58769c85c8ffcf035b passed preflight run 37160852951 and ECONOMY run 37160887461, artifact 11287129551; queue opt-in follows on this metadata successor."
+  "modules": ["AuxEconomyShadow"],
+  "dependencies": ["ah-consolidation-strategies-v1"],
+  "shared_resources": ["ah-consolidation-shadow-source", "auction-house-economy-model", "hot-lua-runtime", "aux-observer-callbacks"],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": ["economy"],
+  "lease": null,
+  "integrated_feature_sha": "96b28d2c3be9d33bd80521bae97b1b2985ee7bca",
+  "notes": "Integrated to parallel be342e9ef615c67a8f2a169080e5af496c1d53ac. Exact integrated STANDARD run 37161045397 artifact 11287637680 and ECONOMY run 37161050162 artifact 11287975286 passed. Lease released so parity evidence hardening successor may acquire the shadow scope. Production AuxVmangos remains owner and TransactionGuard remains hard-locked."
 }
