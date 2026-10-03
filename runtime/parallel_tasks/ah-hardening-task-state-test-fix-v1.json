@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "ah-hardening-task-state-test-fix-v1",
+  "goal": "Align the AH critical-hardening regression test with the already integrated task state and exact integrated feature SHA, restoring the AI registry workflow without changing gameplay code.",
+  "branch": "feature/ah-hardening-task-state-test-fix-v1",
+  "base_parallel_sha": "acede96fdd5550b189d243fb5ac6f63be9a4db25",
+  "modules": [
+    "AI-workflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-test-suite"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt-cp-fix-20261003",
+    "acquired_at": "2026-10-03T19:47:00Z",
+    "heartbeat_at": "2026-10-03T19:47:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AI-workflow",
+      "resource:ai-test-suite"
+    ]
+  },
+  "notes": "Metadata/test-only follow-up after parallel-control-plane-reconciler-v1. Exercises the new control-plane lease gate on a feature based after the control-plane marker."
+}

@@ -69,7 +69,8 @@ class AHShadowCriticalHardeningTests(unittest.TestCase):
         task = json.loads(TASK.read_text(encoding="utf-8"))
         self.assertEqual(task["branch"], "feature/ah-consolidation-critical-hardening-v1-r2")
         self.assertEqual(task["base_parallel_sha"], "ef8dc204e8f2f8e7b808a38b2aa3a4b776fd9116")
-        self.assertEqual(task["status"], "coding")
+        self.assertEqual(task["status"], "integrated")
+        self.assertEqual(task["integrated_feature_sha"], "89e2d4b06d436b05bea6a3f45a624a7c6ba253cc")
         self.assertFalse(task["auto_integrate"])
         self.assertIn("economy", task["delivery_profiles"])
 
