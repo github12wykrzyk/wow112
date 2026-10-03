@@ -7,7 +7,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local POSTPAY_VERSION = "5-direct-prefix1"
+local POSTPAY_VERSION = "5-postpay-confirm1"
 local PP = H.GetState("postpay")
 PP.pending = PP.pending or {}
 PP.lastMessageIndex = tonumber(PP.lastMessageIndex) or 0
@@ -26,6 +26,8 @@ local DIRECT_INVITE_ROOTS = {
 
 local DIRECT_INVITE_DELAY = 0.65
 local DIRECT_INVITE_DEDUPE = 2.0
+local POSTPAY_RETRY_DELAY = 1.25
+local POSTPAY_MAX_ATTEMPTS = 2
 
 local DIRECT_INVITE_HARD_BLACKLIST = {
     ["hydraone"] = true,
@@ -351,36 +353,73 @@ local function ppChooseMessage()
     return POSTPAY_MESSAGES[index]
 end
 
-local function ppSend(name)
-    name = ppTrim(name)
+local function ppSendItem(item)
+    if type(item) ~= "table" then return false end
+    local name = ppTrim(item.name or "")
     if not ppValidName(name) or not ppEnabled() or not SendChatMessage then
         return false
     end
 
-    local message = ppChooseMessage()
-    if not message then return false end
+    if not item.message or item.message == "" then
+        item.message = ppChooseMessage()
+    end
+    if not item.message then return false end
+
+    item.attempts = (tonumber(item.attempts) or 0) + 1
+    item.sentAt = ppNow()
+    item.retryAt = item.sentAt + POSTPAY_RETRY_DELAY
+    item.awaitingAck = true
 
     if pcall then
-        local ok = pcall(SendChatMessage, message, "WHISPER", nil, name)
+        local ok = pcall(SendChatMessage, item.message, "WHISPER", nil, name)
         if not ok then
-            if SummonScoutDB.debug then ppChat("post-payment whisper failed -> " .. name) end
+            item.awaitingAck = false
+            item.retryAt = ppNow() + 0.35
+            if SummonScoutDB.debug then
+                ppChat("post-payment whisper call failed -> " .. name)
+            end
             return false
         end
     else
-        SendChatMessage(message, "WHISPER", nil, name)
+        SendChatMessage(item.message, "WHISPER", nil, name)
     end
 
     if SummonScoutDB.debug then
-        ppChat("post-payment thank-you -> " .. name)
+        ppChat("post-payment whisper attempt " .. tostring(item.attempts) .. " -> " .. name)
     end
     return true
+end
+
+local function ppConfirmOutgoing(message, name)
+    message = message or ""
+    name = ppTrim(name or "")
+    if message == "" or not ppValidName(name) then return false end
+
+    local i
+    for i = 1, table.getn(PP.pending) do
+        local item = PP.pending[i]
+        if item and item.awaitingAck
+            and ppSamePlayer(item.name, name)
+            and item.message == message then
+            item.confirmed = true
+            item.awaitingAck = false
+            if SummonScoutDB and SummonScoutDB.debug then
+                ppChat("post-payment confirmed -> " .. name)
+            end
+            return true
+        end
+    end
+    return false
 end
 
 local function ppQueueName(name)
     if not ppEnabled() or not ppValidName(name) then return false end
     PP.pending[table.getn(PP.pending) + 1] = {
         name = ppTrim(name),
-        dueAt = ppNow() + 0.35 + (table.getn(PP.pending) * 0.35)
+        dueAt = ppNow() + 0.35 + (table.getn(PP.pending) * 0.35),
+        attempts = 0,
+        awaitingAck = false,
+        confirmed = false
     }
     return true
 end
@@ -432,10 +471,42 @@ end
 
 local function ppProcessPending()
     if table.getn(PP.pending) == 0 then return end
+    if not ppEnabled() then
+        PP.pending = {}
+        return
+    end
+
     local item = PP.pending[1]
-    if ppNow() < (item.dueAt or 0) then return end
-    table.remove(PP.pending, 1)
-    if ppEnabled() then ppSend(item.name) end
+    local t = ppNow()
+
+    if item.confirmed then
+        table.remove(PP.pending, 1)
+        return
+    end
+
+    if item.awaitingAck then
+        if t < (item.retryAt or 0) then return end
+        item.awaitingAck = false
+        if (tonumber(item.attempts) or 0) >= POSTPAY_MAX_ATTEMPTS then
+            if SummonScoutDB.debug then
+                ppChat("post-payment unconfirmed after retry -> " .. tostring(item.name or "?"))
+            end
+            table.remove(PP.pending, 1)
+            return
+        end
+        item.dueAt = t
+    end
+
+    if t < (item.dueAt or 0) then return end
+
+    local sent = ppSendItem(item)
+    if not sent then
+        if (tonumber(item.attempts) or 0) >= POSTPAY_MAX_ATTEMPTS then
+            table.remove(PP.pending, 1)
+        else
+            item.dueAt = t + 0.35
+        end
+    end
 end
 
 local function ppAttachGuiToggle()
@@ -487,6 +558,7 @@ function M.Init()
     H.RegisterEvent("TRADE_CLOSED")
     H.RegisterEvent("CHAT_MSG_SYSTEM")
     H.RegisterEvent("CHAT_MSG_WHISPER")
+    H.RegisterEvent("CHAT_MSG_WHISPER_INFORM")
     ppAttachGuiToggle()
     W112_SUMMONSCOUT_POSTPAY_OFFER_VERSION = POSTPAY_VERSION
     W112_SUMMONSCOUT_GROUPED_NOTICE_VERSION = "1"
@@ -513,6 +585,11 @@ function M.OnEvent(ev, a1, a2)
 
     if ev == "CHAT_MSG_WHISPER" then
         ppQueueDirectInvite(a2 or "", a1 or "")
+        return
+    end
+
+    if ev == "CHAT_MSG_WHISPER_INFORM" then
+        ppConfirmOutgoing(a1 or "", a2 or "")
         return
     end
 
