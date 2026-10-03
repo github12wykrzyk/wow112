@@ -31,6 +31,29 @@
     "marker_path": "runtime/parallel_task_enforcement_v1.marker",
     "legacy_policy": "Feature branches whose merge-base predates the marker are grandfathered. Feature branches based on a parallel revision containing the marker must own exactly one task record."
   },
+  "lease_policy": {
+    "mode": "exclusive_scopes",
+    "marker_path": "runtime/parallel_control_plane_v1.marker",
+    "default_ttl_seconds": 21600,
+    "min_ttl_seconds": 900,
+    "max_ttl_seconds": 86400,
+    "required_statuses": [
+      "coding",
+      "preflight",
+      "ready_for_integration",
+      "integrating"
+    ],
+    "scope_model": "module:<module> and resource:<shared_resource>",
+    "conflict_resolution": "Oldest live lease wins per scope; ties break by branch then task id. Expired leases never block another task.",
+    "legacy_policy": "Branches whose merge-base predates the control-plane marker remain valid without leases. Newer feature branches must hold an active lease before preflight/integration."
+  },
+  "reconciler": {
+    "remote_ref_prefix": "refs/remotes/origin/feature/",
+    "stale_after_seconds": 86400,
+    "workflow": ".github/workflows/parallel_control_plane_reconcile.yml",
+    "mutation_policy": "read_only_report",
+    "branch_cleanup_policy": "Never delete or rewrite branches automatically; report stale/resolved state for explicit housekeeping."
+  },
   "delivery_profiles": {
     "economy": {
       "workflow": "build_parallel_economy.yml",
@@ -79,6 +102,11 @@
     "After the enforcement marker exists on parallel, a new feature preflight fails closed unless exactly one task record owns that feature branch. Existing feature branches based before the marker are grandfathered until they finish.",
     "Independent coding, commits, preflights and module-specific builds may run concurrently.",
     "shared_resources declare mechanisms that require ordered integration or explicit arbitration; a conflict is a scheduling signal, not a reason to block independent development.",
+    "After the control-plane marker exists on parallel, coding/preflight/integration states require an active exclusive-scope lease before preflight or queued integration.",
+    "Lease scopes are derived from declared modules and shared_resources. A task may lease a safe subset; undeclared scopes are rejected.",
+    "Lease heartbeat extends TTL only for the same owner. Expired leases are reclaimable and never require destructive branch operations.",
+    "When live leases conflict, deterministic oldest-lease priority selects one scope owner; losing tasks remain safe on their feature branches.",
+    "The scheduled reconciler is read-only: it discovers feature task records, expired/missing leases and live scope conflicts but never deletes, force-pushes or rewrites branches.",
     "delivery_profiles are fail-closed routing declarations. A feature touching ECONOMY, updater or AutoLoginBridge profile paths cannot integrate without declaring the corresponding profile.",
     "auto_integrate defaults to false. Automatic integration is allowed only for an explicitly opted-in task in ready_for_integration state with no unresolved declared task dependency.",
     "Declared delivery profile workflows run and must PASS on the exact feature SHA before the integration queue can merge that feature.",
@@ -90,7 +118,7 @@
     "runtime/ai_experiments.json remains the evidence/routing ledger; per-task records carry durable coordination intent instead of every transient workflow observation.",
     "A task file status is declared branch-local intent. Live updater status must be derived from live branch/workflow/artifact evidence; a merged task record alone never proves READY TO TEST.",
     "A task marked test_ready must still be backed by the exact integrated parallel SHA and the required package/profile gates outside this coordination file.",
-    "Task records never replace exact-SHA CI, provenance, candidate manifest, dependency registry, loader/update delivery gates or gameplay evidence."
+    "Task records and leases never replace exact-SHA CI, provenance, candidate manifest, dependency registry, loader/update delivery gates or gameplay evidence."
   ],
   "updater_states": {
     "coding": "WORKING",

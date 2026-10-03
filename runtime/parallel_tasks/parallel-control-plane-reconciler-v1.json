@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "parallel-control-plane-reconciler-v1",
+  "goal": "Extend the existing Parallel task coordination layer with scoped TTL leases, deterministic conflict ownership, live feature-branch reconciliation, and fail-closed lease checks before preflight/integration.",
+  "branch": "feature/parallel-control-plane-reconciler-v1",
+  "base_parallel_sha": "f3458ace47ee3144940c85cb74e429c3e8ba9bee",
+  "modules": [
+    "AI-workflow",
+    "AI-experiments"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "ai-task-coordination"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Infrastructure-only control plane. Merge-base predates the control-plane lease marker, so this bootstrap task is intentionally grandfathered. No WoW runtime payload changes."
+}
