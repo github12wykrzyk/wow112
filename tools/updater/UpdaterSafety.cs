@@ -1,13 +1,151 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using DiagnosticsProcess = System.Diagnostics.Process;
 
 namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.10-parallel.2";
+        public const string Version = "2.10-parallel.3";
+    }
+
+    internal static class LowCpuThrottle
+    {
+        private const uint JobObjectCpuRateControlInformation = 15;
+        private const uint JobObjectCpuRateControlEnable = 0x1;
+        private const uint JobObjectCpuRateControlHardCap = 0x4;
+        private const uint DuplicateSameAccess = 0x2;
+        private const uint LowCpuRate = 500; // 5.00% (rate is percentage * 100)
+        private static readonly object Gate = new object();
+        private static readonly HashSet<string> Applied = new HashSet<string>(StringComparer.Ordinal);
+        private static Timer timer;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobCpuRateControlInformation
+        {
+            public uint ControlFlags;
+            public uint CpuRate;
+        }
+
+        public static void EnsureStarted()
+        {
+            lock (Gate)
+            {
+                if (timer != null) return;
+                timer = new Timer(delegate { Scan(); }, null, 0, 250);
+            }
+        }
+
+        private static void Scan()
+        {
+            DiagnosticsProcess[] processes = null;
+            try
+            {
+                processes = DiagnosticsProcess.GetProcesses();
+                foreach (var process in processes)
+                {
+                    try
+                    {
+                        if (process.HasExited || !process.ProcessName.StartsWith("WoW", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (process.PriorityClass != System.Diagnostics.ProcessPriorityClass.BelowNormal)
+                            continue;
+
+                        string identity;
+                        try { identity = process.Id + ":" + process.StartTime.ToUniversalTime().Ticks; }
+                        catch { identity = process.Id.ToString(); }
+
+                        lock (Gate)
+                            if (Applied.Contains(identity)) continue;
+
+                        if (!ApplyHardCap(process)) continue;
+
+                        try { process.PriorityClass = System.Diagnostics.ProcessPriorityClass.Idle; }
+                        catch { }
+                        lock (Gate) Applied.Add(identity);
+                    }
+                    catch
+                    {
+                        // A process may exit or deny inspection between enumeration and assignment.
+                    }
+                }
+            }
+            catch
+            {
+                // Throttling is QoL only; never destabilize updater/game launch on watcher failure.
+            }
+            finally
+            {
+                if (processes != null)
+                    foreach (var process in processes)
+                        try { process.Dispose(); } catch { }
+            }
+        }
+
+        private static bool ApplyHardCap(DiagnosticsProcess process)
+        {
+            var job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero) return false;
+            try
+            {
+                var info = new JobCpuRateControlInformation
+                {
+                    ControlFlags = JobObjectCpuRateControlEnable | JobObjectCpuRateControlHardCap,
+                    CpuRate = LowCpuRate
+                };
+                var size = Marshal.SizeOf(typeof(JobCpuRateControlInformation));
+                var buffer = Marshal.AllocHGlobal(size);
+                try
+                {
+                    Marshal.StructureToPtr(info, buffer, false);
+                    if (!SetInformationJobObject(job, JobObjectCpuRateControlInformation, buffer, (uint)size))
+                        return false;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+
+                if (!AssignProcessToJobObject(job, process.Handle))
+                    return false;
+
+                // Keep the job alive after the updater closes: duplicate the job handle into the
+                // throttled WoW process itself. Windows closes that handle automatically when WoW exits.
+                IntPtr remoteHandle;
+                if (!DuplicateHandle(GetCurrentProcess(), job, process.Handle, out remoteHandle,
+                    0, false, DuplicateSameAccess))
+                    return false;
+
+                return true;
+            }
+            finally
+            {
+                CloseHandle(job);
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(IntPtr job, uint infoClass, IntPtr info, uint infoLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr sourceHandle, IntPtr targetProcess,
+            out IntPtr targetHandle, uint desiredAccess, bool inheritHandle, uint options);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
     }
 
     internal static class UpdaterSafety
@@ -192,6 +330,7 @@ namespace WoW112Updater
 
         public static void WriteUtf8Atomic(string path, string text, string tempSuffix, string previousSuffix)
         {
+            LowCpuThrottle.EnsureStarted();
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Brak ścieżki pliku.", "path");
             if (tempSuffix == null) tempSuffix = ".tmp";
             if (previousSuffix == null) previousSuffix = ".previous";
@@ -257,4 +396,3 @@ namespace WoW112Updater
         }
     }
 }
-
