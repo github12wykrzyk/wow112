@@ -5,13 +5,14 @@ use std::time::Duration;
 
 mod auth;
 mod wire_build;
-mod world_poc05;
+mod world_poc05_retry;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
-const DEFAULT_AUTH_ADDR: &str = "10.0.2.2:3724";
+const DEFAULT_AUTH_ADDR: &str = "play.octowow.st:3724";
 const DEFAULT_SOAK_SECONDS: u64 = 60;
 const DEFAULT_RECONNECT_LIMIT: u32 = 60;
+const DEFAULT_REALM_INDEX: usize = 1;
 
 fn main() {
     if let Err(error) = run() {
@@ -71,7 +72,7 @@ fn run() -> Result<(), String> {
     let realm_index = env::var("WOW112_REALM_INDEX")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0);
+        .unwrap_or(DEFAULT_REALM_INDEX);
     let soak_seconds = parse_env_u64("WOW112_SOAK_SECONDS", DEFAULT_SOAK_SECONDS)?;
     let reconnect_limit = parse_env_u32("WOW112_RECONNECT_LIMIT", DEFAULT_RECONNECT_LIMIT)?.max(1);
     let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
@@ -82,7 +83,7 @@ fn run() -> Result<(), String> {
         OCTOWOW_WIRE_BUILD
     );
     println!(
-        "[POC05] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_mail_actions=enabled",
+        "[POC05] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_mail_actions=enabled ah_candidate_pool_retry=enabled",
         soak_seconds, reconnect_limit, reconnect_delay_ms
     );
 
@@ -160,7 +161,7 @@ fn run_session(
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    world_poc05::login_poc05(
+    world_poc05_retry::login_poc05_retry(
         &mut world_stream,
         session_key,
         realm.realm_id,
