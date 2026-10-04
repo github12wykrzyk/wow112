@@ -1,0 +1,48 @@
+name: Verify parallel STANDARD delivery
+
+on:
+  workflow_run:
+    workflows:
+      - Build work candidate
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: verify-parallel-standard-delivery
+  cancel-in-progress: true
+
+jobs:
+  delivery-visibility:
+    if: >-
+      github.event.workflow_run.head_branch == 'parallel' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2022
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Verify loader can resolve exact PARALLEL STANDARD artifact
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = '${{ github.event.workflow_run.head_sha }}'
+          $run = '${{ github.event.workflow_run.id }}'
+          $artifact = "WoW112-WORK-CANDIDATE-$sha"
+          python tools/verify_parallel_standard_delivery.py `
+            --repo '${{ github.repository }}' `
+            --sha "$sha" `
+            --run-id "$run" `
+            --artifact-name "$artifact" `
+            --branch parallel
+          if ($LASTEXITCODE -ne 0) {
+            throw "PARALLEL/STANDARD delivery visibility gate failed: loader may resolve a stale build"
+          }
