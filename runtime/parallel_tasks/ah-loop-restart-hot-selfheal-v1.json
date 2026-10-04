@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "ah-loop-restart-hot-selfheal-v1",
+  "goal": "Repair direct-live AUX LOOP after ECONOMY hot updates when the running AuxVmangos expects AUXFAST_RestartSearch but the already-loaded AuxFastBridge exposes only older restart primitives; keep the repair hot, transaction-neutral and rollback-safe.",
+  "branch": "feature/ah-loop-restart-hot-selfheal-v1",
+  "base_parallel_sha": "98eaf0b0df9c2ed14d42181c77983676e1e3fbe5",
+  "modules": [
+    "AuxEconomyShadow",
+    "AuxVmangos",
+    "AuxFastBridge"
+  ],
+  "dependencies": [
+    "ah-direct-live-authority-v1"
+  ],
+  "shared_resources": [
+    "AUXFAST_RestartSearch",
+    "AuxEconomyShadow hot bundle",
+    "AuxVmangos LOOP scheduler"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-loop-restart-hot-selfheal-v1",
+    "acquired_at": "2026-10-04T13:29:49Z",
+    "heartbeat_at": "2026-10-04T13:29:49Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxEconomyShadow",
+      "module:AuxVmangos",
+      "module:AuxFastBridge",
+      "resource:AUXFAST_RestartSearch"
+    ]
+  },
+  "notes": "Issue #388 on direct-live testpoint f06b13eb showed AH_ZERO_CONFIG_ACTIVE live=true/loop=true followed only by repeated 'LOOP restart unavailable; retry in 5s' and no later AUX scan start. The hot repair is intentionally limited to restoring the missing bridge restart surface: prefer an already-loaded legacy AUXFAST_ResumeSearch, otherwise use only verified AuxFastBridge primitives plus upstream aux.tabs.search execute. It sends no auction query itself, submits no transaction, changes no live flags, and remains inside the existing ECONOMY hot host. No gameplay result is claimed before user test."
+}
