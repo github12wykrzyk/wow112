@@ -191,8 +191,14 @@ def append_summonscout_hot_fanout(data):
         'and W112_SUMMONSCOUT_HOT.modules '
         'and W112_SUMMONSCOUT_HOT.modules["whisperconfirm"] ~= nil\n'
     ).encode("utf-8")
+    prepare = (
+        'if __w112_hot_fanout_reload and W112_SUMMONSCOUT_HOT '
+        'and type(W112_SUMMONSCOUT_HOT.PrepareFanoutReload) == "function" then '
+        'W112_SUMMONSCOUT_HOT.PrepareFanoutReload() end\n'
+    ).encode("utf-8")
     rows = [
         guard,
+        prepare,
         data.rstrip(b"\r\n"),
         b"\n\n-- " + FANOUT_BEGIN_MARKER + b"\n",
         b"if __w112_hot_fanout_reload then\n",
@@ -219,6 +225,8 @@ def append_summonscout_hot_fanout(data):
     out = b"".join(rows)
     if b"\n    (function()\n" in out:
         raise RuntimeError("SummonScout HOT fanout emitted Lua 5.0 ambiguous IIFE syntax")
+    if b"PrepareFanoutReload()" not in out:
+        raise RuntimeError("SummonScout HOT fanout missing pre-reload wrapper reset")
     if len(out) >= HOT_PAYLOAD_CAP:
         raise RuntimeError(
             "SummonScout HOT fanout exceeds native watcher payload cap: "

@@ -7,6 +7,7 @@ local H = W112_SUMMONSCOUT_HOT
 H.modules = H.modules or {}
 H.state = H.state or {}
 H.generations = H.generations or {}
+H.moduleOrder = H.moduleOrder or {}
 H.lastError = H.lastError or ""
 
 local function hotChat(text)
@@ -24,6 +25,14 @@ local function callSafe(fn, a, b, c, d)
     return true
 end
 
+local function rememberModule(name)
+    local i
+    for i = 1, table.getn(H.moduleOrder) do
+        if H.moduleOrder[i] == name then return end
+    end
+    H.moduleOrder[table.getn(H.moduleOrder) + 1] = name
+end
+
 function H.GetState(name)
     name = tostring(name or "")
     if name == "" then return nil end
@@ -35,6 +44,45 @@ function H.RegisterEvent(eventName)
     if H.frame and eventName and eventName ~= "" then
         H.frame:RegisterEvent(eventName)
     end
+end
+
+-- HOT fanout replaces several modules in one synchronous payload. Older host
+-- behavior initialized each replacement before shutting down the previous
+-- generation, leaving nested SummonScoutFrame/H.frame wrapper chains behind.
+-- Repeated live updates could therefore grow the call stack until Lua reported
+-- "C stack overflow" from WhisperConfirmSpam. Fanout calls this once, before
+-- executing the replacement modules, so old wrappers are peeled in reverse
+-- registration order and both shared dispatch surfaces return to their stable
+-- bases before the new generation installs.
+function H.PrepareFanoutReload()
+    local i
+    for i = table.getn(H.moduleOrder), 1, -1 do
+        local name = H.moduleOrder[i]
+        local module = H.modules[name]
+        if module and type(module.Shutdown) == "function" then
+            callSafe(module.Shutdown)
+        end
+    end
+
+    H.modules = {}
+    H.moduleOrder = {}
+
+    if SummonScoutFrame and SummonScoutFrame.GetScript and SummonScoutFrame.SetScript
+        and type(H.coreBaseOnEvent) == "function" then
+        SummonScoutFrame:SetScript("OnEvent", H.coreBaseOnEvent)
+    end
+    if H.frame and H.frame.SetScript then
+        if type(H.hostBaseOnEvent) == "function" then
+            H.frame:SetScript("OnEvent", H.hostBaseOnEvent)
+        end
+        if type(H.hostBaseOnUpdate) == "function" then
+            H.frame:SetScript("OnUpdate", H.hostBaseOnUpdate)
+        end
+    end
+
+    H.lastError = ""
+    H.fanoutResets = (tonumber(H.fanoutResets) or 0) + 1
+    return true
 end
 
 function H.Register(name, module, version)
@@ -59,6 +107,7 @@ function H.Register(name, module, version)
     end
 
     H.modules[name] = module
+    rememberModule(name)
     H.generations[name] = (tonumber(H.generations[name]) or 0) + 1
     H.lastError = ""
     W112_SUMMONSCOUT_HOT_GENERATION = (tonumber(W112_SUMMONSCOUT_HOT_GENERATION) or 0) + 1
@@ -72,6 +121,11 @@ function H.Register(name, module, version)
             .. " gen " .. tostring(H.generations[name]))
     end
     return true
+end
+
+if not H.coreBaseOnEvent and SummonScoutFrame and SummonScoutFrame.GetScript then
+    local base = SummonScoutFrame:GetScript("OnEvent")
+    if type(base) == "function" then H.coreBaseOnEvent = base end
 end
 
 if not H.frame then
@@ -105,4 +159,15 @@ if not H.frame then
     end)
 end
 
-W112_SUMMONSCOUT_HOT_HOST_VERSION = "1"
+if H.frame and H.frame.GetScript then
+    if not H.hostBaseOnEvent then
+        local baseEvent = H.frame:GetScript("OnEvent")
+        if type(baseEvent) == "function" then H.hostBaseOnEvent = baseEvent end
+    end
+    if not H.hostBaseOnUpdate then
+        local baseUpdate = H.frame:GetScript("OnUpdate")
+        if type(baseUpdate) == "function" then H.hostBaseOnUpdate = baseUpdate end
+    end
+end
+
+W112_SUMMONSCOUT_HOT_HOST_VERSION = "2-fanout-reset"
