@@ -2,16 +2,15 @@
 --
 -- Exact aliases remain authoritative. This hot module augments every location
 -- with a short, distinctive anchor derived from its dictionary aliases/ID and
--- makes root matching substring-based. Example: Winterspring -> "winter", so
--- "winterspri", "winterspf" and "xxxwinterspring" still classify correctly.
--- Generated anchors that collide between different locations are discarded.
+-- makes root matching substring-based. P0.2 consumes only the explicit Engine
+-- V2 API; legacy upvalue access is owned by EngineV2FoundationHot.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "1-anchor-dict"
+local VERSION = "2-explicit-api-anchor-dict"
 local S = H.GetState("locationanchor")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
@@ -34,74 +33,14 @@ local function laNormalize(s)
     return s
 end
 
-local function laGetUpvalue(fn, index)
-    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
-        return nil, nil
+local function laResolveApi()
+    local api = W112_SUMMONSCOUT_API_V1
+    if type(api) ~= "table"
+        or type(api.GetLocationCatalog) ~= "function"
+        or type(api.InstallLocationRootMatcher) ~= "function" then
+        return nil
     end
-    if pcall then
-        local ok, name, value = pcall(debug.getupvalue, fn, index)
-        if ok then return name, value end
-        return nil, nil
-    end
-    return debug.getupvalue(fn, index)
-end
-
-local function laFindApi()
-    local frame = SummonScoutFrame
-    if not frame or not frame.GetScript then return nil end
-    local handler = frame:GetScript("OnEvent")
-    if type(handler) ~= "function" then return nil end
-
-    local i
-    for i = 1, 40 do
-        local name, value = laGetUpvalue(handler, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.handleChannelMessage) == "function"
-            and type(value.normalizeMessage) == "function" then
-            return value
-        end
-    end
-    return nil
-end
-
-local function laNamedFunctionUpvalue(fn, wanted)
-    if type(fn) ~= "function" then return nil end
-    local i
-    for i = 1, 40 do
-        local name, value = laGetUpvalue(fn, i)
-        if not name then break end
-        if name == wanted and type(value) == "function" then
-            return value
-        end
-    end
-    return nil
-end
-
-local function laResolveMatcher(api)
-    if type(api) ~= "table" or type(api.handleChannelMessage) ~= "function" then
-        return nil, nil
-    end
-
-    local findLocation = laNamedFunctionUpvalue(api.handleChannelMessage, "findLocation")
-    if not findLocation then return nil, nil end
-
-    local findLocations = laNamedFunctionUpvalue(findLocation, "findLocationsInMessage")
-    if not findLocations then return nil, nil end
-
-    local locations = nil
-    local rootIndex = nil
-    local i
-    for i = 1, 40 do
-        local name, value = laGetUpvalue(findLocations, i)
-        if not name then break end
-        if name == "LOCATIONS" and type(value) == "table" then
-            locations = value
-        elseif name == "tokenHasRoot" and type(value) == "function" then
-            rootIndex = i
-        end
-    end
-    return findLocations, locations, rootIndex
+    return api
 end
 
 local function laCandidateKey(token)
@@ -120,7 +59,6 @@ local function laCollectCandidates(loc, out)
     end
 
     add(loc.id)
-
     local aliases = loc.aliases
     if type(aliases) ~= "table" then return end
 
@@ -128,9 +66,7 @@ local function laCollectCandidates(loc, out)
     for i = 1, table.getn(aliases) do
         local alias = laNormalize(aliases[i])
         local token
-        for token in string.gfind(alias, "%S+") do
-            add(token)
-        end
+        for token in string.gfind(alias, "%S+") do add(token) end
         add(alias)
     end
 end
@@ -198,45 +134,32 @@ local function laReportFailure(reason)
 end
 
 local function laPatch()
-    local api = laFindApi()
+    local api = laResolveApi()
     if not api then
-        laReportFailure("core API unavailable")
+        laReportFailure("explicit core API unavailable")
         return false
     end
 
-    local matcher, locations, rootIndex = laResolveMatcher(api)
-    if not matcher or not locations or not rootIndex then
-        laReportFailure("location matcher unavailable")
+    local locations = api.GetLocationCatalog()
+    if type(locations) ~= "table" then
+        laReportFailure("location catalog unavailable")
         return false
     end
 
-    if S.patchedMatcher == matcher and S.rootIndex == rootIndex then
+    if S.patchedApi == api and S.patchedRootFn == laAnchorHas then
         S.lastFailure = ""
         return true
     end
 
-    if type(debug) ~= "table" or type(debug.setupvalue) ~= "function" then
-        laReportFailure("debug.setupvalue unavailable")
-        return false
-    end
-
     S.generatedCount = laInstallRoots(locations)
-
-    local ok, result
-    if pcall then
-        ok, result = pcall(debug.setupvalue, matcher, rootIndex, laAnchorHas)
-    else
-        result = debug.setupvalue(matcher, rootIndex, laAnchorHas)
-        ok = true
-    end
-
-    if not ok or not result then
-        laReportFailure("root matcher patch rejected")
+    local ok, reason = api.InstallLocationRootMatcher(laAnchorHas)
+    if not ok then
+        laReportFailure(reason or "root matcher patch rejected")
         return false
     end
 
-    S.patchedMatcher = matcher
-    S.rootIndex = rootIndex
+    S.patchedApi = api
+    S.patchedRootFn = laAnchorHas
     S.lastFailure = ""
     W112_SUMMONSCOUT_LOCATION_ANCHOR_ROOTS = S.generatedCount
     return true
@@ -254,6 +177,11 @@ function M.OnUpdate()
     if t < (S.nextPatchAt or 0) then return end
     S.nextPatchAt = t + 0.50
     laPatch()
+end
+
+function M.Shutdown()
+    S.patchedApi = nil
+    S.patchedRootFn = nil
 end
 
 H.Register("locationanchor", M, VERSION)

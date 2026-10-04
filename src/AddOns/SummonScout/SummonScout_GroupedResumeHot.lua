@@ -4,13 +4,15 @@
 -- in party/raid because its normal path is an invite path. This module rearms the
 -- existing party summon state machine for grouped customers and adds a combat
 -- wait state so target-combat failures do not burn the core retry budget.
+-- P0.2 consumes the explicit Engine V2 compatibility API; it never walks core
+-- function upvalues directly.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "2-combat-wait-resume"
+local VERSION = "3-explicit-api-combat-wait-resume"
 local S = H.GetState("groupedresume")
 S.deferred = S.deferred or {}
 S.lastHoldAckAt = S.lastHoldAckAt or {}
@@ -151,78 +153,10 @@ local function grHasNegativeResume(s)
     return false
 end
 
-local function grDebugGetUpvalue(fn, index)
-    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
-        return nil, nil
-    end
-    if pcall then
-        local ok, name, value = pcall(debug.getupvalue, fn, index)
-        if ok then return name, value end
-        return nil, nil
-    end
-    return debug.getupvalue(fn, index)
-end
-
-local function grFindApiInFunction(fn, depth, seen)
-    if type(fn) ~= "function" or depth > 5 then return nil end
-    seen = seen or {}
-    if seen[fn] then return nil end
-    seen[fn] = true
-
-    local i
-    for i = 1, 40 do
-        local name, value = grDebugGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.queuePartySummon) == "function"
-            and type(value.isInGroup) == "function"
-            and type(value.whisperInviteDecision) == "function" then
-            return value
-        end
-    end
-
-    for i = 1, 40 do
-        local name, value = grDebugGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "function" then
-            local found = grFindApiInFunction(value, depth + 1, seen)
-            if found then return found end
-        end
-    end
-    return nil
-end
-
-local function grFindStateInFunction(fn, depth, seen)
-    if type(fn) ~= "function" or depth > 4 then return nil end
-    seen = seen or {}
-    if seen[fn] then return nil end
-    seen[fn] = true
-
-    local i
-    for i = 1, 40 do
-        local name, value = grDebugGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.summonPending) == "table"
-            and value.summonActiveAttempts ~= nil
-            and value.summonActiveNextAt ~= nil then
-            return value
-        end
-    end
-
-    for i = 1, 40 do
-        local name, value = grDebugGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "function" then
-            local found = grFindStateInFunction(value, depth + 1, seen)
-            if found then return found end
-        end
-    end
-    return nil
-end
-
 local function grResolveCoreApi(force)
-    if not force and type(S.api) == "table" and type(S.api.queuePartySummon) == "function" then
+    if not force and type(S.api) == "table"
+        and S.api == W112_SUMMONSCOUT_API_V1
+        and type(S.api.queuePartySummon) == "function" then
         return S.api
     end
 
@@ -230,13 +164,12 @@ local function grResolveCoreApi(force)
     if not force and t < (S.apiProbeAt or 0) then return nil end
     S.apiProbeAt = t + 2.0
 
-    local frame = SummonScoutFrame
-    if not frame or not frame.GetScript then return nil end
-    local handler = frame:GetScript("OnEvent")
-    local api = grFindApiInFunction(handler, 0, {})
-    if api then
+    local api = W112_SUMMONSCOUT_API_V1
+    if type(api) == "table"
+        and type(api.queuePartySummon) == "function"
+        and type(api.whisperInviteDecision) == "function" then
         S.api = api
-        S.coreState = nil
+        S.coreState = W112_SUMMONSCOUT_STATE
         S.apiProbeFailedReported = false
         return api
     end
@@ -244,23 +177,14 @@ local function grResolveCoreApi(force)
 end
 
 local function grResolveCoreState(api)
-    if type(S.coreState) == "table" and type(S.coreState.summonPending) == "table" then
-        return S.coreState
-    end
-    if type(api) ~= "table" then return nil end
-
-    local candidates = {
-        api.retryActiveSummon,
-        api.finishActiveSummon,
-        api.queuePartySummon
-    }
-    local i
-    for i = 1, table.getn(candidates) do
-        local state = grFindStateInFunction(candidates[i], 0, {})
-        if state then
-            S.coreState = state
-            return state
-        end
+    local state = W112_SUMMONSCOUT_STATE
+    if type(state) ~= "table" and type(api) == "table" then state = api.state end
+    if type(state) == "table"
+        and type(state.summonPending) == "table"
+        and state.summonActiveAttempts ~= nil
+        and state.summonActiveNextAt ~= nil then
+        S.coreState = state
+        return state
     end
     return nil
 end
@@ -384,6 +308,18 @@ local function grCaptureCombatFailure(api, message)
     return grBeginCombatWait(api, name)
 end
 
+local function grQueueExplicit(api, name, source)
+    if type(api) == "table" and type(api.QueuePartySummonExplicit) == "function" then
+        local ok = api.QueuePartySummonExplicit(name, source)
+        if ok then return true end
+    end
+    if type(api) == "table" and type(api.queuePartySummon) == "function" then
+        api.queuePartySummon(name)
+        return true
+    end
+    return false
+end
+
 local function grResumeCombatWait(api, sender)
     local key = grKey(sender)
     local item = S.combatWait[key]
@@ -405,7 +341,7 @@ local function grResumeCombatWait(api, sender)
 
     S.combatWait[key] = nil
     S.deferred[key] = nil
-    api.queuePartySummon(sender)
+    grQueueExplicit(api, sender, "combat-resume")
     if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage("|cff66ff66SummonScout combat resume:|r " .. sender)
     end
@@ -424,9 +360,7 @@ end
 function M.OnEvent(ev, message, sender)
     if ev == "UI_ERROR_MESSAGE" or ev == "CHAT_MSG_SPELL_FAILED_LOCALPLAYER" then
         local api = grResolveCoreApi(false)
-        if api then
-            grCaptureCombatFailure(api, message)
-        end
+        if api then grCaptureCombatFailure(api, message) end
         return
     end
 
@@ -454,18 +388,17 @@ function M.OnEvent(ev, message, sender)
         if SummonScoutDB.debug and not S.apiProbeFailedReported then
             S.apiProbeFailedReported = true
             if DEFAULT_CHAT_FRAME then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout grouped resume:|r core API unavailable")
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout grouped resume:|r explicit API unavailable")
             end
         end
         return
     end
 
     if not grIsResume(api, message) then return end
-
     if grResumeCombatWait(api, sender) then return end
 
     S.deferred[key] = nil
-    api.queuePartySummon(sender)
+    grQueueExplicit(api, sender, "grouped-resume")
     if SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage("|cff66ff66SummonScout grouped resume:|r " .. sender .. " -> " .. grNormalize(message))
     end
@@ -496,7 +429,7 @@ function M.OnUpdate()
                 elseif (t - outSince) >= 1.0 then
                     S.combatWait[key] = nil
                     S.deferred[key] = nil
-                    api.queuePartySummon(name)
+                    grQueueExplicit(api, name, "combat-resume")
                     if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
                         DEFAULT_CHAT_FRAME:AddMessage("|cff66ff66SummonScout combat auto-resume:|r " .. name)
                     end

@@ -1,23 +1,20 @@
 -- SummonScout Engine V2 P0 foundation bridge for WoW 1.12.1 / Lua 5.0.
 --
--- This is deliberately a compatibility layer, not a gameplay rewrite.
--- It gives the existing SummonScout runtime one explicit public API/state surface
--- and closes the remaining unowned CHAT_MSG_SYSTEM join path before the core can
--- enqueue an unrelated party/raid member for Ritual of Summoning.
---
--- P0.2 can migrate the older hot modules onto W112_SUMMONSCOUT_API_V1 and then
--- remove the fallback upvalue discovery kept here only for the legacy core.
+-- P0.2 keeps all legacy-core introspection in this one compatibility layer.
+-- Hot modules consume W112_SUMMONSCOUT_API_V1 / W112_SUMMONSCOUT_STATE and no
+-- longer walk the core dispatcher closure on their own.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "p0.1-api-ownership"
+local VERSION = "p0.2-explicit-api"
 local S = H.GetState("enginev2foundation")
 S.lastFailure = S.lastFailure or ""
 S.api = nil
 S.coreState = nil
+S.compat = S.compat or {}
 
 local function fTrim(s)
     s = tostring(s or "")
@@ -40,6 +37,20 @@ local function fGetUpvalue(fn, index)
         return nil, nil
     end
     return debug.getupvalue(fn, index)
+end
+
+local function fSetUpvalue(fn, index, value)
+    if type(debug) ~= "table" or type(debug.setupvalue) ~= "function" then
+        return false, "debug.setupvalue unavailable"
+    end
+    if pcall then
+        local ok, result = pcall(debug.setupvalue, fn, index, value)
+        if not ok or not result then return false, "setupvalue rejected" end
+        return true, result
+    end
+    local result = debug.setupvalue(fn, index, value)
+    if not result then return false, "setupvalue rejected" end
+    return true, result
 end
 
 local function fFindApi(fn, depth, seen)
@@ -72,19 +83,6 @@ local function fFindApi(fn, depth, seen)
     return nil
 end
 
-local function fResolveApi()
-    local api = W112_SUMMONSCOUT_API_V1
-    if type(api) == "table"
-        and type(api.queuePartySummon) == "function"
-        and type(api.handleChannelMessage) == "function" then
-        return api
-    end
-
-    local frame = SummonScoutFrame
-    if not frame or not frame.GetScript then return nil end
-    return fFindApi(frame:GetScript("OnEvent"), 0, {})
-end
-
 local function fFindState(fn, depth, seen)
     if type(fn) ~= "function" or depth > 4 then return nil end
     seen = seen or {}
@@ -114,6 +112,41 @@ local function fFindState(fn, depth, seen)
     return nil
 end
 
+local function fNamedFunction(fn, wanted)
+    if type(fn) ~= "function" then return nil end
+    local i
+    for i = 1, 40 do
+        local name, value = fGetUpvalue(fn, i)
+        if not name then break end
+        if name == wanted and type(value) == "function" then return value end
+    end
+    return nil
+end
+
+local function fNamedOrValueIndex(fn, wanted, expected)
+    if type(fn) ~= "function" then return nil end
+    local i
+    for i = 1, 40 do
+        local name, value = fGetUpvalue(fn, i)
+        if not name then break end
+        if name == wanted or (expected ~= nil and value == expected) then return i end
+    end
+    return nil
+end
+
+local function fResolveApi()
+    local api = W112_SUMMONSCOUT_API_V1
+    if type(api) == "table"
+        and type(api.queuePartySummon) == "function"
+        and type(api.handleChannelMessage) == "function" then
+        return api
+    end
+
+    local frame = SummonScoutFrame
+    if not frame or not frame.GetScript then return nil end
+    return fFindApi(frame:GetScript("OnEvent"), 0, {})
+end
+
 local function fResolveState(api)
     if type(W112_SUMMONSCOUT_STATE) == "table"
         and type(W112_SUMMONSCOUT_STATE.pendingManualInvites) == "table" then
@@ -136,6 +169,41 @@ local function fResolveState(api)
         if state then return state end
     end
     return nil
+end
+
+local function fResolveCompat(api)
+    if type(api) ~= "table" then return nil end
+    local C = S.compat
+    if C.api == api and type(C.findLocation) == "function"
+        and type(C.locationCatalog) == "table" and C.locationRootIndex then
+        return C
+    end
+
+    C = {}
+    C.api = api
+    C.findLocation = fNamedFunction(api.handleChannelMessage, "findLocation")
+    if type(C.findLocation) == "function" then
+        C.findLocations = fNamedFunction(C.findLocation, "findLocationsInMessage")
+    end
+
+    if type(C.findLocations) == "function" then
+        local i
+        for i = 1, 40 do
+            local name, value = fGetUpvalue(C.findLocations, i)
+            if not name then break end
+            if name == "LOCATIONS" and type(value) == "table" then
+                C.locationCatalog = value
+            elseif name == "tokenHasRoot" and type(value) == "function" then
+                C.locationRootIndex = i
+                C.locationRootMatcher = value
+            end
+        end
+    end
+
+    C.rosterSync = api.syncPartyRoster
+    C.rosterQueueIndex = fNamedOrValueIndex(api.syncPartyRoster, "queuePartySummon", api.queuePartySummon)
+    S.compat = C
+    return C
 end
 
 local function fJoinedName(line)
@@ -183,13 +251,19 @@ local function fInstall()
 
     S.api = api
     S.coreState = state
+    S.compat = {}
     W112_SUMMONSCOUT_API_V1 = api
     W112_SUMMONSCOUT_STATE = state
     W112_SUMMONSCOUT_API_VERSION = 1
+    W112_SUMMONSCOUT_COMPAT_VERSION = 2
     W112_SUMMON_ENGINE_V2_FOUNDATION = VERSION
 
     api.state = state
     api.apiVersion = 1
+    api.compatVersion = 2
+    api.GetState = function()
+        return state
+    end
     api.HasInviteOwnership = function(name)
         return fHasInviteOwnership(state, name)
     end
@@ -201,6 +275,43 @@ local function fInstall()
         api.queuePartySummon(name)
         return true, source
     end
+    api.FindLocation = function(message)
+        local C = fResolveCompat(api)
+        if not C or type(C.findLocation) ~= "function" then return nil, true end
+        return C.findLocation(message or "")
+    end
+    api.GetLocationCatalog = function()
+        local C = fResolveCompat(api)
+        if not C or type(C.locationCatalog) ~= "table" then return nil end
+        return C.locationCatalog
+    end
+    api.InstallLocationRootMatcher = function(fn)
+        if type(fn) ~= "function" then return false, "invalid matcher" end
+        local C = fResolveCompat(api)
+        if not C or type(C.findLocations) ~= "function" or not C.locationRootIndex then
+            return false, "location internals unavailable"
+        end
+        local ok, reason = fSetUpvalue(C.findLocations, C.locationRootIndex, fn)
+        if ok then C.locationRootMatcher = fn end
+        return ok, reason
+    end
+    api.InstallRosterQueueGuard = function(fn)
+        if type(fn) ~= "function" then return false, "invalid guard" end
+        local C = fResolveCompat(api)
+        if not C or C.rosterSync ~= api.syncPartyRoster or not C.rosterQueueIndex then
+            S.compat = {}
+            C = fResolveCompat(api)
+        end
+        if not C or type(api.syncPartyRoster) ~= "function" or not C.rosterQueueIndex then
+            return false, "roster queue internals unavailable"
+        end
+        local ok, reason = fSetUpvalue(api.syncPartyRoster, C.rosterQueueIndex, fn)
+        if ok then C.rosterQueueGuard = fn end
+        return ok, reason
+    end
+
+    -- Resolve once here so all hot modules share the same legacy-core map.
+    fResolveCompat(api)
 
     local current = frame:GetScript("OnEvent")
     if type(current) ~= "function" then
@@ -208,7 +319,6 @@ local function fInstall()
         return false
     end
 
-    -- Avoid stacking our own wrapper if this file is executed twice in one UI generation.
     if S.wrapper and S.base and current == S.wrapper then
         current = S.base
         frame:SetScript("OnEvent", current)
@@ -221,9 +331,6 @@ local function fInstall()
         if event == "CHAT_MSG_SYSTEM" and SummonScoutDB and SummonScoutDB.partyAutoSummon then
             joined = fJoinedName(arg1 or "")
             if joined and not fHasInviteOwnership(state, joined) then
-                -- Core historically queued CHAT_MSG_SYSTEM joins directly, bypassing
-                -- the roster ownership hot guard. Disable only that one dispatch;
-                -- explicit grouped/combat resume continues through its existing path.
                 restoreAutoSummon = SummonScoutDB.partyAutoSummon
                 SummonScoutDB.partyAutoSummon = false
                 if SummonScoutDB.debug then
@@ -242,7 +349,6 @@ local function fInstall()
         if restoreAutoSummon ~= nil and SummonScoutDB then
             SummonScoutDB.partyAutoSummon = restoreAutoSummon
         end
-
         if not ok then error(err) end
     end
 

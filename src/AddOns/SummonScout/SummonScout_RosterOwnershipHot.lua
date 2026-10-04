@@ -1,25 +1,19 @@
 -- SummonScout roster ownership + World destination guard for WoW 1.12.1 / Lua 5.0.
 --
--- Roster side:
--- Core roster synchronization historically queued every newly observed party/raid
--- member for Ritual of Summoning. Gate that path on the pendingManualInvites
--- ownership marker written by this client's own eligible invite paths.
+-- Roster side: only members carrying this client's pendingManualInvites ownership
+-- marker may enter the automatic Ritual path through roster synchronization.
+-- World side: a destination-qualified summoner never invites a World requester
+-- for another known/unknown destination.
 --
--- World side:
--- A destination-qualified summoner must never invite a World requester for another
--- known/unknown destination. Re-check the configured service at the final core
--- channel-dispatch boundary, independently of the core's earlier invite decision.
--- This also prunes stale queued World invites after a hot reload/service change.
---
--- Explicit grouped-resume requests continue to call the exported queue API directly
--- and are intentionally unaffected.
+-- P0.2 consumes the explicit Engine V2 API/state. Legacy core upvalue discovery
+-- and setupvalue are centralized in SummonScout_EngineV2FoundationHot.lua.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "2-own-invite-world-destination"
+local VERSION = "3-explicit-api-own-invite-world-destination"
 local S = H.GetState("rosterguard")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
@@ -40,77 +34,27 @@ local function rgKey(name)
     return string.lower(rgTrim(name or ""))
 end
 
-local function rgGetUpvalue(fn, index)
-    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
-        return nil, nil
-    end
-    if pcall then
-        local ok, name, value = pcall(debug.getupvalue, fn, index)
-        if ok then return name, value end
-        return nil, nil
-    end
-    return debug.getupvalue(fn, index)
-end
-
-local function rgFindApiInFunction(fn, depth, seen)
-    if type(fn) ~= "function" or depth > 5 then return nil end
-    seen = seen or {}
-    if seen[fn] then return nil end
-    seen[fn] = true
-
-    local i
-    for i = 1, 40 do
-        local name, value = rgGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.queuePartySummon) == "function"
-            and type(value.notePendingManualInvite) == "function"
-            and type(value.syncPartyRoster) == "function"
-            and type(value.handleChannelMessage) == "function" then
-            return value
-        end
-    end
-
-    for i = 1, 40 do
-        local name, value = rgGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "function" then
-            local found = rgFindApiInFunction(value, depth + 1, seen)
-            if found then return found end
-        end
-    end
-    return nil
-end
-
 local function rgResolveApi()
-    local frame = SummonScoutFrame
-    if not frame or not frame.GetScript then return nil end
-    local handler = frame:GetScript("OnEvent")
-    return rgFindApiInFunction(handler, 0, {})
+    local api = W112_SUMMONSCOUT_API_V1
+    if type(api) ~= "table"
+        or type(api.queuePartySummon) ~= "function"
+        or type(api.syncPartyRoster) ~= "function"
+        or type(api.handleChannelMessage) ~= "function"
+        or type(api.FindLocation) ~= "function"
+        or type(api.InstallRosterQueueGuard) ~= "function" then
+        return nil
+    end
+    return api
 end
 
 local function rgResolveState(api)
-    if type(api) ~= "table" or type(api.queuePartySummon) ~= "function" then return nil end
-    if type(S.coreState) == "table"
-        and type(S.coreState.pendingManualInvites) == "table"
-        and type(S.coreState.summonPending) == "table"
-        and type(S.coreState.queue) == "table"
-        and S.coreQueue == api.queuePartySummon then
-        return S.coreState
-    end
-
-    local i
-    for i = 1, 40 do
-        local name, value = rgGetUpvalue(api.queuePartySummon, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.pendingManualInvites) == "table"
-            and type(value.summonPending) == "table"
-            and type(value.queue) == "table" then
-            S.coreState = value
-            S.coreQueue = api.queuePartySummon
-            return value
-        end
+    local state = W112_SUMMONSCOUT_STATE
+    if type(state) ~= "table" and type(api) == "table" then state = api.state end
+    if type(state) == "table"
+        and type(state.pendingManualInvites) == "table"
+        and type(state.summonPending) == "table"
+        and type(state.queue) == "table" then
+        return state
     end
     return nil
 end
@@ -132,19 +76,6 @@ local function rgServiceContains(locationId)
     local haystack = "," .. service .. ","
     local needle = "," .. rgKey(locationId) .. ","
     return string.find(haystack, needle, 1, true) ~= nil
-end
-
-local function rgFindNamedFunction(fn, wanted)
-    if type(fn) ~= "function" then return nil end
-    local i
-    for i = 1, 40 do
-        local name, value = rgGetUpvalue(fn, i)
-        if not name then break end
-        if name == wanted and type(value) == "function" then
-            return value
-        end
-    end
-    return nil
 end
 
 local function rgWorldDestinationBlocked(findLocation, message)
@@ -186,11 +117,18 @@ local function rgPruneWrongDestinationQueue(state)
 end
 
 local function rgPatchWorldDestination(api, state)
-    if S.patchedChannelApi == api
+    if S.channelVersion == VERSION and S.patchedChannelApi == api
         and type(S.channelWrapper) == "function"
         and api.handleChannelMessage == S.channelWrapper then
         rgPruneWrongDestinationQueue(state)
         return true
+    end
+
+    -- Hot-upgrade cleanly from the previous managed wrapper before installing
+    -- the explicit-API generation. No unrelated wrapper is unwrapped.
+    if type(S.channelWrapper) == "function" and type(S.channelOriginal) == "function"
+        and api.handleChannelMessage == S.channelWrapper then
+        api.handleChannelMessage = S.channelOriginal
     end
 
     local original = api.handleChannelMessage
@@ -199,14 +137,8 @@ local function rgPatchWorldDestination(api, state)
         return false
     end
 
-    local findLocation = rgFindNamedFunction(original, "findLocation")
-    if type(findLocation) ~= "function" then
-        rgReportFailure("findLocation upvalue unavailable")
-        return false
-    end
-
     local wrapper = function(message, sender, channelBaseName, channelFullName)
-        local blocked, destination = rgWorldDestinationBlocked(findLocation, message)
+        local blocked, destination = rgWorldDestinationBlocked(api.FindLocation, message)
         if not blocked then
             return original(message, sender, channelBaseName, channelFullName)
         end
@@ -237,22 +169,17 @@ local function rgPatchWorldDestination(api, state)
     S.patchedChannelApi = api
     S.channelOriginal = original
     S.channelWrapper = wrapper
-    S.channelFindLocation = findLocation
+    S.channelVersion = VERSION
     rgPruneWrongDestinationQueue(state)
     return true
 end
 
 local function rgPatchRosterOwnership(api, state)
-    if S.patchedSync == api.syncPartyRoster
+    if S.guardVersion == VERSION
+        and S.patchedSync == api.syncPartyRoster
         and S.patchedQueue == api.queuePartySummon
         and type(S.guardQueue) == "function" then
         return true
-    end
-
-    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function"
-        or type(debug.setupvalue) ~= "function" then
-        rgReportFailure("debug.setupvalue unavailable")
-        return false
     end
 
     local original = api.queuePartySummon
@@ -262,9 +189,7 @@ local function rgPatchRosterOwnership(api, state)
         local tracked = current and key ~= ""
             and type(current.pendingManualInvites[key]) == "table"
 
-        if tracked then
-            return original(name)
-        end
+        if tracked then return original(name) end
 
         if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
             DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout roster guard:|r unowned join ignored -> "
@@ -273,45 +198,30 @@ local function rgPatchRosterOwnership(api, state)
         return nil
     end
 
-    local i
-    for i = 1, 40 do
-        local name, value = rgGetUpvalue(api.syncPartyRoster, i)
-        if not name then break end
-        if name == "queuePartySummon" or value == original or value == S.guardQueue then
-            local ok, result
-            if pcall then
-                ok, result = pcall(debug.setupvalue, api.syncPartyRoster, i, guard)
-            else
-                result = debug.setupvalue(api.syncPartyRoster, i, guard)
-                ok = true
-            end
-            if ok and result then
-                S.patchedSync = api.syncPartyRoster
-                S.patchedQueue = api.queuePartySummon
-                S.guardQueue = guard
-                S.coreState = state
-                S.coreQueue = api.queuePartySummon
-                return true
-            end
-            rgReportFailure("queue upvalue patch rejected")
-            return false
-        end
+    local ok, reason = api.InstallRosterQueueGuard(guard)
+    if not ok then
+        rgReportFailure(reason or "queue guard install rejected")
+        return false
     end
 
-    rgReportFailure("queuePartySummon upvalue not found")
-    return false
+    S.patchedSync = api.syncPartyRoster
+    S.patchedQueue = api.queuePartySummon
+    S.guardQueue = guard
+    S.guardVersion = VERSION
+    S.coreState = state
+    return true
 end
 
 local function rgPatch()
     local api = rgResolveApi()
     if not api then
-        rgReportFailure("core API unavailable")
+        rgReportFailure("explicit core API unavailable")
         return false
     end
 
     local state = rgResolveState(api)
     if not state then
-        rgReportFailure("core state unavailable")
+        rgReportFailure("explicit core state unavailable")
         return false
     end
 
@@ -334,6 +244,10 @@ function M.OnUpdate()
     if t < (S.nextPatchAt or 0) then return end
     S.nextPatchAt = t + 0.50
     rgPatch()
+end
+
+function M.Shutdown()
+    S.coreState = nil
 end
 
 H.Register("rosterguard", M, VERSION)
