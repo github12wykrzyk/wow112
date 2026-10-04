@@ -49,7 +49,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo ndk -t x86_64 --platform 21 build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+          cd probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --release
 
       - name: Verify and stage artifact
         id: stage
