@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-roster-ownership-guard-v1-r2",
+  "goal": "Prevent a SummonScout client from creating summon-pending state for unrelated party/raid joins; only joins backed by this client's destination-qualified tracked invite may enter the automatic summon queue, while explicit grouped resume requests remain supported.",
+  "branch": "feature/summonscout-roster-ownership-guard-v1-r2",
+  "base_parallel_sha": "b582e48db227a3ce45f9eaaa74eba90bd83ba314",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout roster-to-summon ownership gate"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Rebased successor of feature/summonscout-roster-ownership-guard-v1 after the old exact feature SHA was blocked only by a stale unrelated AH task-state regression test on its merge-base. Parallel b582e48db227a3ce45f9eaaa74eba90bd83ba314 contains the independent CI-only repair. Gameplay change is unchanged: roster-driven queueing passes only for pendingManualInvites created by this client's already destination-qualified SummonScout invite paths; unrelated group joins are ignored before summon-pending is created; exported queue API stays unchanged for explicit grouped 123/ready/combat-resume flows.",
+  "integrated_feature_sha": "5d9f3ee200aa56628a6509e659d4a9f2a6c9d0ac"
+}
