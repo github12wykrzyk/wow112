@@ -17,20 +17,10 @@
     "SummonScoutHotHostFrame dispatcher wrapper chain",
     "SummonScout HOT fanout carrier"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summonscout-hotreload-stack-reset-v1",
-    "acquired_at": "2026-10-04T13:38:00Z",
-    "heartbeat_at": "2026-10-04T13:38:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "resource:SummonScout HotHost module registry",
-      "resource:SummonScoutFrame OnEvent wrapper chain",
-      "resource:SummonScoutHotHostFrame dispatcher wrapper chain",
-      "resource:SummonScout HOT fanout carrier"
-    ]
-  },
-  "notes": "Root cause from gameplay test on parallel 98eaf0b0: HOT fanout re-executes WhisperConfirmSpam plus every *Hot.lua module while H.Register initializes the new module before old Shutdown. Shared-frame wrappers therefore remain nested across generations and eventually overflow the C stack at WhisperConfirmSpam.lua:378. The host now tracks registration order, captures stable core/host dispatch bases, exposes PrepareFanoutReload(), shuts down the previous generation in reverse order, force-restores stable dispatch bases, clears the active module registry, then the generated fanout installs the new generation. The packager injects this reset before the host payload and fails closed if it is missing. A client UI reload/restart is required once to load HotHost v2; subsequent HOT updates stay bounded."
+  "lease": null,
+  "notes": "Root cause from gameplay test on parallel 98eaf0b0: HOT fanout re-executes WhisperConfirmSpam plus every *Hot.lua module while H.Register initializes the new module before old Shutdown. Shared-frame wrappers therefore remain nested across generations and eventually overflow the C stack at WhisperConfirmSpam.lua:378. The host now tracks registration order, captures stable core/host dispatch bases, exposes PrepareFanoutReload(), shuts down the previous generation in reverse order, force-restores stable dispatch bases, clears the active module registry, then the generated fanout installs the new generation. The packager injects this reset before the host payload and fails closed if it is missing. A client UI reload/restart is required once to load HotHost v2; subsequent HOT updates stay bounded.",
+  "integrated_feature_sha": "24786b6c2a832893e5c48529fd92abbf9c71a0c3"
 }
