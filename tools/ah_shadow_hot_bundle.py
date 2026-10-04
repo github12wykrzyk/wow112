@@ -35,6 +35,7 @@ ORDER = (
     "AuxEconomyShadow_ParityBridge.lua",
     "AuxEconomyShadow_ParityExport.lua",
     "AuxEconomyShadow_Cutover.lua",
+    "AuxEconomyShadow_DirectLive.lua",
     "AuxEconomyShadow_HotPayload.lua",
 )
 

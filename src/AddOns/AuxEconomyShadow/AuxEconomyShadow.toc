@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux Economy Shadow
-## Notes: Side-by-side AH consolidation with guarded cutover candidate.
+## Notes: Side-by-side AH consolidation in observer mode; AuxVmangos is authoritative live executor.
 ## Author: github12wykrzyk/wow112
-## Version: 1.1-cutover-candidate
+## Version: 1.2-direct-live-authority
 ## Dependencies: aux-addon
 ## SavedVariables: AVM_SHADOW_DB
 
@@ -24,4 +24,5 @@ AuxEconomyShadow_Parity.lua
 AuxEconomyShadow_ParityBridge.lua
 AuxEconomyShadow_ParityExport.lua
 AuxEconomyShadow_Cutover.lua
+AuxEconomyShadow_DirectLive.lua
 AuxEconomyShadow_HotPayload.lua

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "ah-direct-live-authority-v1",
+  "goal": "Stop blocking AH development on unreliable shadow parity instrumentation: keep AuxVmangos as the authoritative live economy executor and force AuxEconomyShadow to observer-only with cutover disabled, preserving rollback.",
+  "branch": "feature/ah-direct-live-authority-v1",
+  "base_parallel_sha": "87cead9c33d6f33f396419a5ce1707d0284f53a7",
+  "modules": [
+    "AuxEconomyShadow",
+    "AuxVmangos"
+  ],
+  "dependencies": [
+    "ah-cutover-authoritative-gate-v1"
+  ],
+  "shared_resources": [
+    "ah-transaction-authority",
+    "AuxEconomyShadow hot bundle",
+    "AuxVmangos live executor"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "User explicitly chose direct live rollout after repeated AH Evidence V1/V2 attempts failed to observe LOOP counter growth. This does not weaken or fake parity evidence: the shadow cutover is disabled instead. AuxVmangos already defaults auxArbEnabled/auxArbLive true and remains the proven transaction executor. Future AH behavior changes should be applied directly to active AuxVmangos until a separate shadow migration is intentionally reopened. Rollback is the previous parallel testpoint.",
+  "integrated_feature_sha": "44d70db4ba9b894df25838e8d4ff3eac5543b4a8"
+}
