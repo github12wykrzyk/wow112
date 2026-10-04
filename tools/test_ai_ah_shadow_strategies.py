@@ -73,7 +73,7 @@ class AHShadowStrategyParityTests(unittest.TestCase):
                 "GetNumAuctionItems",
                 "CreateFrame(",
                 "RegisterEvent(",
-                "SetScript(\"OnUpdate\"",
+                'SetScript("OnUpdate"',
             ):
                 self.assertNotIn(forbidden, text)
 
@@ -103,16 +103,21 @@ class AHShadowStrategyParityTests(unittest.TestCase):
             self.assertIn(name, ORDER)
         bridge = "AuxEconomyShadow_ParityBridge.lua"
         exporter = "AuxEconomyShadow_ParityExport.lua"
+        cutover = "AuxEconomyShadow_Cutover.lua"
         self.assertIn("src/AddOns/AuxEconomyShadow/" + bridge, watches)
         self.assertIn(bridge, toc)
         self.assertIn(bridge, ORDER)
         self.assertIn("src/AddOns/AuxEconomyShadow/" + exporter, watches)
         self.assertIn(exporter, toc)
         self.assertIn(exporter, ORDER)
-        self.assertEqual(manifest["stage"], "passive_parity_export_ready")
-        self.assertFalse(manifest["delivery"]["cutover_allowed"])
+        self.assertIn("src/AddOns/AuxEconomyShadow/" + cutover, watches)
+        self.assertIn(cutover, toc)
+        self.assertIn(cutover, ORDER)
+        self.assertEqual(manifest["stage"], "cutover_authoritative_gate_candidate")
+        self.assertTrue(manifest["delivery"]["cutover_allowed"])
+        self.assertTrue(manifest["safety"]["real_actions_fail_closed"])
         bundle = build_bundle()
-        for name in STRATEGY_FILES + (bridge, exporter):
+        for name in STRATEGY_FILES + (bridge, exporter, cutover):
             self.assertIn(("-- BEGIN " + name).encode("ascii"), bundle)
 
     def test_task_is_economy_gated_and_integrated(self):

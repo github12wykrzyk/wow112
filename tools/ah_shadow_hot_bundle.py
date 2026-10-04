@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the inert AuxEconomyShadow Lua bundle for an already watched hot host."""
+"""Build the AuxEconomyShadow Lua bundle for an already watched hot host."""
 from __future__ import annotations
 
 import re
@@ -12,7 +12,7 @@ BUNDLE_MARKER = b"W112_AH_SHADOW_HOT_BUNDLE_BEGIN:v1"
 BUNDLE_END = b"W112_AH_SHADOW_HOT_BUNDLE_END:v1"
 ATOMIC_BEGIN_MARKER = b"W112_AH_SHADOW_ATOMIC_BATCH_BEGIN:v1"
 ATOMIC_END_MARKER = b"W112_AH_SHADOW_ATOMIC_BATCH_END:v1"
-BUNDLE_PROTOCOL_REVISION = "v5-host-independent-shadow"
+BUNDLE_PROTOCOL_REVISION = "v6-cutover-authoritative-gate"
 MAX_BUNDLE_BYTES = 196608
 LUA51_LENGTH_OPERATOR = re.compile(rb"#\s*[A-Za-z_(]")
 
@@ -34,6 +34,7 @@ ORDER = (
     "AuxEconomyShadow_Parity.lua",
     "AuxEconomyShadow_ParityBridge.lua",
     "AuxEconomyShadow_ParityExport.lua",
+    "AuxEconomyShadow_Cutover.lua",
     "AuxEconomyShadow_HotPayload.lua",
 )
 

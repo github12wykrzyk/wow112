@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Aux Economy Shadow
-## Notes: Inactive side-by-side AH consolidation runtime; persistent hot-replace modules.
+## Notes: Side-by-side AH consolidation with guarded cutover candidate.
 ## Author: github12wykrzyk/wow112
-## Version: 1.0-shadow-passive-parity
+## Version: 1.1-cutover-candidate
 ## Dependencies: aux-addon
 ## SavedVariables: AVM_SHADOW_DB
 
@@ -23,4 +23,5 @@ AuxEconomyShadow_Ledger.lua
 AuxEconomyShadow_Parity.lua
 AuxEconomyShadow_ParityBridge.lua
 AuxEconomyShadow_ParityExport.lua
+AuxEconomyShadow_Cutover.lua
 AuxEconomyShadow_HotPayload.lua
