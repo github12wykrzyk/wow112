@@ -14,17 +14,10 @@
     "SummonScout grouped resume hot module",
     "SummonScout active summon failure routing"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summonscout-combat-wait-resume-v1",
-    "acquired_at": "2026-10-04T07:28:38Z",
-    "heartbeat_at": "2026-10-04T07:28:38Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:SummonScout"
-    ]
-  },
-  "notes": "Lua-only follow-up to grouped-resume v1. The hot module observes the exact active SummonScout transaction through the existing EventAPI/upvalue bridge. If a spell rejection coincides with the active grouped target being in combat, it moves that customer into a bounded 120-second combat wait, clears the active core request via finishActiveSummon so retries are not consumed, whispers that retry will occur after combat, and automatically requeues after one stable second out of combat. A grouped 'wait' still suppresses auto-resume until an explicit ready/123/now message. Resume matching now accepts leading strong intent tokens with trailing emoticons/text while negative phrases remain blocking. No native DLL, invite, payment, advert, AH or loader behavior is changed."
+  "integrated_feature_sha": "46c89382041c9fa901cf3fce1c1043fb0c0dee7b",
+  "lease": null,
+  "notes": "Lua-only follow-up to grouped-resume v1. The hot module observes the exact active SummonScout transaction through the existing EventAPI/upvalue bridge. If a spell rejection coincides with the active grouped target being in combat, it moves that customer into a bounded 120-second combat wait, clears the active core request via finishActiveSummon so retries are not consumed, whispers that retry will occur after combat, and automatically requeues after one stable second out of combat. A grouped 'wait' still suppresses auto-resume until an explicit ready/123/now message. Resume matching accepts leading strong intent tokens with trailing emoticons/text while negative phrases remain blocking. Feature SHA 46c89382041c9fa901cf3fce1c1043fb0c0dee7b was already integrated into parallel; this branch-only coordination cleanup releases the stale lease that remained after integration."
 }
