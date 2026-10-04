@@ -14,14 +14,6 @@
   "status": "preflight",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:android-headless-poc05-unified-v1",
-    "acquired_at": "2026-10-04T18:54:00Z",
-    "heartbeat_at": "2026-10-04T20:14:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:Wow112HeadlessAndroid"
-    ]
-  },
-  "notes": "POC-05 local gameplay evidence on 2026-10-04 reached SRP6 PASS, world auth PASS, SMSG_LOGIN_VERIFY_WORLD PASS and gold snapshot, but failed opening AH because discover_poc05_context collapsed multiple detected auctioneer GUIDs to one arbitrary HashSet candidate. This iteration preserves the candidate pool and retries unattempted auctioneers every 16 packets while continuing object-update discovery, matching the proven POC-02/04 strategy. Launcher defaults are play.octowow.st:3724 and realm index 1; world address is taken dynamically from the realm list. Gameplay result for this exact SHA remains pending user test."
+  "lease": null,
+  "notes": "GAMEPLAY VALIDATED on 2026-10-04 for runtime/source SHA 7eff8c373c5ba666a54feb3c86c4d312514be69a (Android build run 37231248322 PASS; Parallel feature preflight run 37231248342 PASS; artifact 11314026699). Stationary test profile used auth play.octowow.st:3724, realm index 1, auctioneer 0xF130003D4100023A and mailbox 0xF11002A4A5002A0C. Verified in live gameplay: SRP6/world login; gold snapshot; AH MSG_AUCTION_HELLO plus read-only page-0 auction query; mailbox list read-only; guarded take-item for mail_id 2030002114 / item 15981 Lunar Sphere with server result=0 and post-action reconciliation item=0 stack=0; guarded take-money for mail_id 2030004257 / 200000 copper (20g) with server result=0 and post-action reconciliation money=0; 60-second keepalive soak with PING/PONG; reconnect recovery after transient WouldBlock/ConnectionReset; final exit code 0. No automatic retry is permitted after an uncertain mailbox mutation result. Candidate-pool AH retry remains enabled. This Android experiment stays isolated and is not auto-integrated into parallel."
 }
