@@ -31,6 +31,7 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Ledger.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Parity.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityBridge.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityExport.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": "WoWAutoLoginBridge_5875_v1.dll",
@@ -59,6 +60,7 @@
     "ledger": "persistent bounded economy event ledger with summary aggregation",
     "parity": "pure comparison store for active-vs-shadow decisions and lifecycle states",
     "parity_bridge": "passive hot-reload observer around project-owned AVM_AuxArb callbacks; original callbacks run exactly once and retain their return values",
+    "parity_export": "shadow-only wrapper around parity.RecordDecision that mirrors compact parity evidence into AVM_DB.marketMeta for the existing AH dump exporter",
     "states": ["IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"]
   },
   "delivery": {
@@ -78,5 +80,5 @@
     "wrapper_preserves_original_return": true,
     "real_actions_hard_locked": true
   },
-  "stage": "passive_parity_bridge_ready"
+  "stage": "passive_parity_export_ready"
 }

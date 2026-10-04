@@ -33,6 +33,7 @@ ORDER = (
     "AuxEconomyShadow_Ledger.lua",
     "AuxEconomyShadow_Parity.lua",
     "AuxEconomyShadow_ParityBridge.lua",
+    "AuxEconomyShadow_ParityExport.lua",
     "AuxEconomyShadow_HotPayload.lua",
 )
 
