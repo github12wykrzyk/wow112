@@ -11,13 +11,22 @@
     "parallel-diagnostic-hotfix-fastpath-v1"
   ],
   "shared_resources": [
-    "AutoLoginBridge-hot-lua-watcher",
-    "SummonScout-hot-payload-host",
-    "AH-shadow-hot-host"
+    "AutoLoginBridge-hot-lua-watcher"
   ],
-  "status": "feature",
-  "auto_integrate": false,
-  "delivery_profiles": [],
-  "lease": null,
-  "notes": "Native watcher emits a green [W112 HOT] OK #N line only after FrameScriptExecute reports success for a changed watched payload. Cold baseline seeding does not emit a ping. Current watched routes are SummonScout postpay/AH host, whisper host and hot-transformed SummonScout core. This is an acknowledgement layer only; no summon, AH, login retry or payload scheduling behavior is changed."
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "autologinbridge"
+  ],
+  "lease": {
+    "owner": "chatgpt-hotfix-ingame-ack-v1",
+    "acquired_at": "2026-10-04T01:58:40Z",
+    "heartbeat_at": "2026-10-04T01:58:40Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AutoLoginBridge",
+      "resource:AutoLoginBridge-hot-lua-watcher"
+    ]
+  },
+  "notes": "Native watcher emits a green [W112 HOT] OK #N line only after FrameScriptExecute reports success for a changed watched payload. Cold baseline seeding does not emit a ping. Current watched routes are SummonScout postpay/AH host, whisper host and hot-transformed SummonScout core. This is an acknowledgement layer only; no summon, AH, login retry or payload scheduling behavior is changed. Exact feature integration is opted into the serialized Parallel queue after preflight plus the autologinbridge profile gate pass."
 }
