@@ -3,7 +3,7 @@
   "id": "summonscout-l1-leader-handoff",
   "goal": "If the local level-1 SummonScout character becomes party leader, transfer leadership to an eligible configured summoner already in the party.",
   "branch": "feature/summonscout-l1-leader-handoff",
-  "base_parallel_sha": "403e7bf3a69e47b9922ba5ab59048a066afeb11a",
+  "base_parallel_sha": "0c0cfc36ccc1c54e76077cd167d4f41e51abbfce",
   "status": "ready_for_integration",
   "auto_integrate": true,
   "modules": [
@@ -18,7 +18,7 @@
   "lease": {
     "owner": "chatgpt:summonscout-l1-leader-handoff",
     "acquired_at": "2026-10-04T11:46:00Z",
-    "heartbeat_at": "2026-10-04T11:53:00Z",
+    "heartbeat_at": "2026-10-04T11:58:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "resource:SummonScout party roster leadership"
