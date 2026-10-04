@@ -134,7 +134,7 @@ def routing_from_ledger(module, limit):
         exp for exp in ledger.get("experiments", [])
         if exp.get("status") in ACTIVE and module in exp.get("modules", [])
     ]
-    return [compact_ledger_experiment(exp) for exp in reversed(active)[:limit]]
+    return [compact_ledger_experiment(exp) for exp in list(reversed(active))[:limit]]
 
 
 def routing_rows(module, limit):
