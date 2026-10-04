@@ -1,4 +1,6 @@
+use std::io;
 use std::net::{Ipv4Addr, TcpStream};
+use std::time::Duration;
 use wow_login_messages::all::{
     CMD_AUTH_LOGON_CHALLENGE_Client, Locale, Os, Platform, ProtocolVersion, Version,
 };
@@ -14,6 +16,38 @@ use wow_login_messages::Message;
 use wow_srp::client::SrpClientChallenge;
 use wow_srp::normalized_string::NormalizedString;
 use wow_srp::{PublicKey, SESSION_KEY_LENGTH};
+
+fn hex_prefix(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
+    let previous_timeout = stream.read_timeout().ok().flatten();
+    if stream.set_read_timeout(Some(timeout)).is_err() {
+        println!("[AUTH-DIAG] {label} unable-to-set-timeout");
+        return;
+    }
+
+    let mut buf = [0u8; 32];
+    match stream.peek(&mut buf) {
+        Ok(count) => println!(
+            "[AUTH-DIAG] {label} pending={count} bytes={}",
+            hex_prefix(&buf[..count])
+        ),
+        Err(error)
+            if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+        {
+            println!("[AUTH-DIAG] {label} pending=0");
+        }
+        Err(error) => println!("[AUTH-DIAG] {label} peek-error={error}"),
+    }
+
+    let _ = stream.set_read_timeout(previous_timeout);
+}
 
 pub fn authenticate(
     auth_server: &mut TcpStream,
@@ -40,6 +74,8 @@ pub fn authenticate(
 
     let response = expect_server_message::<CMD_AUTH_LOGON_CHALLENGE_Server, _>(&mut *auth_server)
         .map_err(|e| format!("read auth challenge failed: {e:?}"))?;
+
+    diag_peek(auth_server, "after-challenge", Duration::from_millis(100));
 
     let challenge = if let CMD_AUTH_LOGON_CHALLENGE_Server::Success {
         generator,
@@ -79,6 +115,8 @@ pub fn authenticate(
     }
     .write(&mut *auth_server)
     .map_err(|e| format!("write auth proof failed: {e:?}"))?;
+
+    diag_peek(auth_server, "proof-response", Duration::from_millis(1500));
 
     let proof = expect_server_message::<CMD_AUTH_LOGON_PROOF_Server, _>(&mut *auth_server)
         .map_err(|e| format!("read auth proof failed: {e:?}"))?;
