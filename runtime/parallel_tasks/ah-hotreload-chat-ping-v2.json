@@ -14,21 +14,12 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [
     "economy"
   ],
-  "lease": {
-    "owner": "chatgpt:ah-hotreload-chat-ping-v2",
-    "acquired_at": "2026-10-04T01:00:00Z",
-    "heartbeat_at": "2026-10-04T01:06:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "resource:parity-evidence",
-      "resource:ah-shadow-hot-bundle"
-    ]
-  },
-  "notes": "Diagnostics-only second one-shot chat canary. Changes only the parity exporter revision and chat text. No AH query, scan scheduling, buy, bid, cancel, post, transaction ownership or cutover behavior changes. Expected chat text after live ECONOMY apply: [GPT] AH hot-reload ping 2 OK. Feature SHA 757fe692c269b66614f65b42b92beeacf6d624ee passed preflight run 37166896533 and ECONOMY run 37166937298 before queue opt-in."
+  "lease": null,
+  "notes": "Diagnostics-only second one-shot chat canary. Changes only the parity exporter revision and chat text. No AH query, scan scheduling, buy, bid, cancel, post, transaction ownership or cutover behavior changes. Expected chat text after live ECONOMY apply: [GPT] AH hot-reload ping 2 OK. Feature SHA 757fe692c269b66614f65b42b92beeacf6d624ee passed preflight run 37166896533 and ECONOMY run 37166937298 before queue opt-in. Housekeeping: feature branch task synchronized to integrated state and stale control-plane lease released after parallel integration.",
+  "integrated_feature_sha": "eebd212499c8b93fb4ad4ae4d75de3eca3cb2b52"
 }
