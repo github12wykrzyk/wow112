@@ -1,15 +1,16 @@
 -- SummonScout Engine V2 P0 foundation bridge for WoW 1.12.1 / Lua 5.0.
 --
--- P0.2 keeps all legacy-core introspection in this one compatibility layer.
--- Hot modules consume W112_SUMMONSCOUT_API_V1 / W112_SUMMONSCOUT_STATE and no
--- longer walk the core dispatcher closure on their own.
+-- P0.3a keeps all legacy-core introspection in this one compatibility layer,
+-- but makes queue ownership fail closed at the public API boundary. Hot modules
+-- consume W112_SUMMONSCOUT_API_V1 / W112_SUMMONSCOUT_STATE and never receive a
+-- raw queue primitive.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "p0.2-explicit-api"
+local VERSION = "p0.3a-owned-queue-api"
 local S = H.GetState("enginev2foundation")
 S.lastFailure = S.lastFailure or ""
 S.api = nil
@@ -224,6 +225,15 @@ local function fHasInviteOwnership(state, name)
     return key ~= "" and type(state.pendingManualInvites[key]) == "table"
 end
 
+local function fInGroup(api, name)
+    if type(api) ~= "table" or type(api.isInGroup) ~= "function" then return false end
+    if pcall then
+        local ok, grouped = pcall(api.isInGroup, name)
+        return ok and grouped and true or false
+    end
+    return api.isInGroup(name) and true or false
+end
+
 local function fChat(text)
     if DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Summon Engine P0:|r " .. tostring(text or ""))
@@ -249,32 +259,73 @@ local function fInstall()
         return false
     end
 
+    -- Preserve the real legacy queue privately. On same-generation re-init the
+    -- table already exposes our public wrapper; never accidentally wrap a
+    -- wrapper and create recursion. On a new core generation capture its fresh
+    -- raw queue before publishing the P0 API again.
+    local rawQueue = nil
+    if S.api == api and type(S.publicQueuePartySummon) == "function"
+        and api.queuePartySummon == S.publicQueuePartySummon then
+        rawQueue = S.rawQueuePartySummon
+    else
+        rawQueue = api.queuePartySummon
+    end
+    if type(rawQueue) ~= "function" then
+        S.lastFailure = "raw summon queue unavailable"
+        return false
+    end
+
     S.api = api
     S.coreState = state
     S.compat = {}
     W112_SUMMONSCOUT_API_V1 = api
     W112_SUMMONSCOUT_STATE = state
     W112_SUMMONSCOUT_API_VERSION = 1
-    W112_SUMMONSCOUT_COMPAT_VERSION = 2
+    W112_SUMMONSCOUT_COMPAT_VERSION = 3
     W112_SUMMON_ENGINE_V2_FOUNDATION = VERSION
 
     api.state = state
     api.apiVersion = 1
-    api.compatVersion = 2
+    api.compatVersion = 3
     api.GetState = function()
         return state
     end
     api.HasInviteOwnership = function(name)
         return fHasInviteOwnership(state, name)
     end
-    api.QueuePartySummonExplicit = function(name, source)
+
+    local explicitQueue = function(name, source)
         source = tostring(source or "")
         if source ~= "grouped-resume" and source ~= "combat-resume" and source ~= "manual-explicit" then
             return false, "source-rejected"
         end
-        api.queuePartySummon(name)
+
+        if source == "grouped-resume" or source == "combat-resume" then
+            if not fInGroup(api, name) then return false, "not-grouped" end
+        elseif not fHasInviteOwnership(state, name) and not fInGroup(api, name) then
+            return false, "ownership-required"
+        end
+
+        rawQueue(name)
         return true, source
     end
+
+    local publicQueue = function(name, source)
+        source = tostring(source or "")
+        if source ~= "" then return explicitQueue(name, source) end
+        if not fHasInviteOwnership(state, name) then
+            return false, "ownership-required"
+        end
+        rawQueue(name)
+        return true, "owned-join"
+    end
+
+    S.rawQueuePartySummon = rawQueue
+    S.publicQueuePartySummon = publicQueue
+    S.explicitQueuePartySummon = explicitQueue
+    api.queuePartySummon = publicQueue
+    api.QueuePartySummonExplicit = explicitQueue
+
     api.FindLocation = function(message)
         local C = fResolveCompat(api)
         if not C or type(C.findLocation) ~= "function" then return nil, true end
@@ -324,6 +375,9 @@ local function fInstall()
         frame:SetScript("OnEvent", current)
     end
 
+    -- Keep the P0.1 event-level ownership guard as defense in depth while the
+    -- canonical core still contains the legacy system-join queue call. P0.3a's
+    -- public queue guard independently fails closed if another caller reaches it.
     local wrapper = function()
         local restoreAutoSummon = nil
         local joined = nil
