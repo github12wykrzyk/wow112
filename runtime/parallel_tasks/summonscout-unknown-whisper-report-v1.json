@@ -14,9 +14,19 @@
     "SummonScoutDB.unknownWhisperReport SavedVariables",
     "WoW112 updater DPAPI report token and GitHub Issue API"
   ],
-  "status": "feature_preflight_pending",
-  "auto_integrate": false,
-  "delivery_profiles": [],
-  "lease": null,
-  "notes": "The reporter does not reimplement summon intent. It wraps the registered whisperconfirm module and records only messages that reach its existing unknown-probe path, plus unparsed replies while that probe is pending. Known/handled whispers, manual-conversation locks and whispers that become a successful invite before the probe are not dumped. A bounded 250-entry ring is persisted. The updater polls flushed SummonScout SavedVariables, uploads only unknownWhisperReport, deduplicates by SHA256 and chunks oversized reports into GitHub Issue comments. WoW flushes SavedVariables on /reload, logout or client exit."
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": {
+    "owner": "chatgpt-summonscout-unknown-whisper-report-v1",
+    "acquired_at": "2026-10-04T10:50:00Z",
+    "heartbeat_at": "2026-10-04T10:50:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScoutDB.unknownWhisperReport SavedVariables"
+    ]
+  },
+  "notes": "The reporter does not reimplement summon intent. It wraps the registered whisperconfirm module and records only messages that reach its existing unknown-probe path, plus unparsed replies while that probe is pending. Known/handled whispers, manual-conversation locks and whispers that become a successful invite before the probe are not dumped. A bounded 250-entry ring is persisted. The updater polls flushed SummonScout SavedVariables, uploads only unknownWhisperReport, deduplicates by SHA256 and chunks oversized reports into GitHub Issue comments. WoW flushes SavedVariables on /reload, logout or client exit. The updater delivery profile is mandatory because tools/updater is changed; auto-integration remains gated by exact feature-SHA preflight and updater profile PASS."
 }
