@@ -87,6 +87,7 @@ fn run() -> Result<(), String> {
         soak_seconds, reconnect_limit, reconnect_delay_ms
     );
 
+    // POC-06: transaction failures/uncertainty are deliberately non-retryable.
     for attempt in 1..=reconnect_limit {
         println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
         match run_session(
