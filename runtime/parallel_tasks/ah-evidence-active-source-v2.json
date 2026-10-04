@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "ah-evidence-active-source-v2",
+  "goal": "Replace AH Evidence v1 stale MARKET-source selection with multi-source parity tracking that identifies the AuxVmangos SavedVariables source actually changed by LOOP/reload, without modifying the AH engine.",
+  "branch": "feature/ah-evidence-active-source-v2",
+  "base_parallel_sha": "8f88388804371a99a43395ba74ba340ddf5a5946",
+  "modules": [
+    "UpdaterAHEvidence"
+  ],
+  "dependencies": [
+    "ah-evidence-gate-v1"
+  ],
+  "shared_resources": [
+    "updater-ah-evidence"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-evidence-active-source-v2",
+    "acquired_at": "2026-10-04T11:30:00Z",
+    "heartbeat_at": "2026-10-04T11:30:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:UpdaterAHEvidence",
+      "resource:updater-ah-evidence"
+    ]
+  },
+  "notes": "Updater-only Evidence Gate V2. Baseline includes every valid parity-evidence AuxVmangos.lua regardless of MARKET snapshot. CHECK identifies the uniquely changed source using SavedVariables write/counter deltas, keeps baseline after FAIL, and leaves AuxVmangos/AuxEconomyShadow/cutover behavior untouched."
+}
