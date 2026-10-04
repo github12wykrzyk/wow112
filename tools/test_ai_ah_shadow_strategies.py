@@ -104,20 +104,21 @@ class AHShadowStrategyParityTests(unittest.TestCase):
         bridge = "AuxEconomyShadow_ParityBridge.lua"
         exporter = "AuxEconomyShadow_ParityExport.lua"
         cutover = "AuxEconomyShadow_Cutover.lua"
-        self.assertIn("src/AddOns/AuxEconomyShadow/" + bridge, watches)
-        self.assertIn(bridge, toc)
-        self.assertIn(bridge, ORDER)
-        self.assertIn("src/AddOns/AuxEconomyShadow/" + exporter, watches)
-        self.assertIn(exporter, toc)
-        self.assertIn(exporter, ORDER)
-        self.assertIn("src/AddOns/AuxEconomyShadow/" + cutover, watches)
-        self.assertIn(cutover, toc)
-        self.assertIn(cutover, ORDER)
-        self.assertEqual(manifest["stage"], "cutover_authoritative_gate_candidate")
-        self.assertTrue(manifest["delivery"]["cutover_allowed"])
+        direct_live = "AuxEconomyShadow_DirectLive.lua"
+        for name in (bridge, exporter, cutover, direct_live):
+            self.assertIn("src/AddOns/AuxEconomyShadow/" + name, watches)
+            self.assertIn(name, toc)
+            self.assertIn(name, ORDER)
+        self.assertLess(ORDER.index(cutover), ORDER.index(direct_live))
+        self.assertLess(ORDER.index(direct_live), ORDER.index("AuxEconomyShadow_HotPayload.lua"))
+        self.assertEqual(manifest["stage"], "direct_live_active_shadow_observer")
+        self.assertFalse(manifest["delivery"]["cutover_allowed"])
+        self.assertEqual(manifest["delivery"]["authoritative_live_module"], "AuxVmangos")
         self.assertTrue(manifest["safety"]["real_actions_fail_closed"])
+        self.assertTrue(manifest["safety"]["real_actions_hard_locked"])
+        self.assertFalse(manifest["safety"]["may_submit_transactions"])
         bundle = build_bundle()
-        for name in STRATEGY_FILES + (bridge, exporter, cutover):
+        for name in STRATEGY_FILES + (bridge, exporter, cutover, direct_live):
             self.assertIn(("-- BEGIN " + name).encode("ascii"), bundle)
 
     def test_task_is_economy_gated_and_integrated(self):
