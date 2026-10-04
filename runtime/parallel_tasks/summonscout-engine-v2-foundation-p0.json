@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-engine-v2-foundation-p0",
+  "goal": "P0 foundation for autonomous Summon Engine V2: establish one explicit SummonScout runtime API/state surface and close the remaining unowned CHAT_MSG_SYSTEM join path without changing Ritual, payment, advert or native execution behavior.",
+  "branch": "feature/summonscout-engine-v2-foundation-p0",
+  "base_parallel_sha": "d994e4479458e02f49e525d2c7e478f600caa94f",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-roster-ownership-guard-v1-r2",
+    "summonscout-combat-wait-resume-v1"
+  ],
+  "shared_resources": [
+    "SummonScout core EventAPI/state",
+    "SummonScout roster-to-summon ownership",
+    "SummonScout hot module compatibility surface"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "P0.1 is intentionally behavior-conservative. A final TOC compatibility module resolves the legacy core EventAPI/state once, exports W112_SUMMONSCOUT_API_V1/W112_SUMMONSCOUT_STATE, and wraps the current OnEvent chain so an unowned CHAT_MSG_SYSTEM party/raid join temporarily suppresses partyAutoSummon for that dispatch. Existing owned invite markers, grouped/combat resume, Ritual/native bridge, payment, adverts and coordinator behavior are unchanged. Follow-up P0.2 will migrate legacy hot modules to the explicit API and remove their duplicated upvalue discovery; P0.3 will move the public surface into canonical core and reduce semantic package transforms.",
+  "integrated_feature_sha": "2914007c22121475dece5e52746657786a72e37c"
+}

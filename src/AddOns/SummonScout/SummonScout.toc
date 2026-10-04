@@ -13,3 +13,4 @@ SummonScout_PostPaymentOfferHot.lua
 SummonScout_WhisperConfirmSpam.lua
 SummonScout_GroupedResumeHot.lua
 SummonScout_RosterOwnershipHot.lua
+SummonScout_EngineV2FoundationHot.lua
