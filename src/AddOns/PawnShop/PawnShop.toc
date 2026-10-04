@@ -1,0 +1,9 @@
+## Interface: 11200
+## Title: PawnShop
+## Notes: AUX-backed whisper appraisal for BoE greens and trade goods.
+## Author: github12wykrzyk/wow112
+## Version: 0.1-pawnshop
+## Dependencies: AuxVmangos
+## SavedVariables: PawnShopDB
+
+PawnShop.lua
