@@ -14,15 +14,15 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [
     "economy"
   ],
   "lease": {
     "owner": "chatgpt:ah-parity-persistent-evidence-v1",
     "acquired_at": "2026-10-04T08:16:30Z",
-    "heartbeat_at": "2026-10-04T08:16:30Z",
+    "heartbeat_at": "2026-10-04T08:31:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:AuxEconomyShadow",
@@ -30,5 +30,5 @@
       "resource:ah-shadow-hot-bundle"
     ]
   },
-  "notes": "AH-DUMP #321 and #323 on parallel a79572f5 remained at scans=1/pages=17/decisionCompared=17 after roughly ten loop scans followed by /reload. AuxFastBridge loop reaches AVM_AuxArbScanDone normally; root cause is ParityExport.install()/publish() overwriting SavedVariables marketMeta.shadowParity with fresh runtime counters after Lua reset. This feature adds revision-compatible cumulative SavedVariables evidence with delta accounting and exposes current-generation counters separately. It does not modify AuxVmangos, PlaceAuctionBid, TransactionGuard or cutover arming; generationArmed and exact candidate matches remain current-generation only."
+  "notes": "AH-DUMP #321 and #323 on parallel a79572f5 remained at scans=1/pages=17/decisionCompared=17 after roughly ten loop scans followed by /reload. AuxFastBridge loop reaches AVM_AuxArbScanDone normally; root cause is ParityExport.install()/publish() overwriting SavedVariables marketMeta.shadowParity with fresh runtime counters after Lua reset. This feature adds revision-compatible cumulative SavedVariables evidence with delta accounting and exposes current-generation counters separately. It does not modify AuxVmangos, PlaceAuctionBid, TransactionGuard or cutover arming; generationArmed and exact candidate matches remain current-generation only. Exact feature code SHA 6a33c3e7f01f1f12ca9d9c06dbe5e3ec42b451f3 passed Parallel feature preflight + ECONOMY profile run 37189079340."
 }
