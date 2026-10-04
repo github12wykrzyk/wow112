@@ -15,15 +15,14 @@ namespace WoW112Updater
     // the WoW112Updater namespace, so the existing updater source picks it up
     // without changing its networking call sites.
     //
-    // Delivery is intentionally decoupled from the moving Parallel development
-    // trunk. Branch identity is resolved through parallel-testpoint. The STANDARD
-    // candidate lookup is also narrowed to build_work_candidate.yml so unrelated
-    // high-volume Actions runs can never push the exact testpoint run out of the
-    // updater's result window. Artifact provenance still remains branch=parallel.
+    // STANDARD must follow the live parallel branch HEAD. Do not rewrite
+    // /branches/parallel to parallel-testpoint: that pins the updater to an old
+    // candidate and can make a freshly built hotfix invisible in the loader.
+    // The Actions lookup is still narrowed to build_work_candidate.yml so
+    // unrelated high-volume workflows cannot push the exact parallel run out of
+    // the updater's result window.
     internal sealed class HttpClientHandler : System.Net.Http.HttpClientHandler
     {
-        private const string ParallelBranchPath = "/repos/github12wykrzyk/wow112/branches/parallel";
-        private const string TestPointBranchPath = "/repos/github12wykrzyk/wow112/branches/parallel-testpoint";
         private const string ActionsRunsPath = "/repos/github12wykrzyk/wow112/actions/runs";
         private const string CandidateWorkflowRunsPath = "/repos/github12wykrzyk/wow112/actions/workflows/build_work_candidate.yml/runs";
 
@@ -36,6 +35,11 @@ namespace WoW112Updater
         {
             try
             {
+                if (request != null)
+                {
+                    request.Headers.TryAddWithoutValidation("Cache-Control", "no-cache, no-store");
+                    request.Headers.TryAddWithoutValidation("Pragma", "no-cache");
+                }
                 RewriteParallelDeliveryLookup(request);
                 return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
             }
@@ -53,15 +57,8 @@ namespace WoW112Updater
             var uri = request.RequestUri;
             if (!string.Equals(uri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase)) return;
 
-            if (string.Equals(uri.AbsolutePath, ParallelBranchPath, StringComparison.OrdinalIgnoreCase))
-            {
-                var branchBuilder = new UriBuilder(uri) { Path = TestPointBranchPath };
-                request.RequestUri = branchBuilder.Uri;
-                return;
-            }
-
             // The STANDARD/ANGLE/AUTO-REAR candidate path asks for branch=parallel&per_page=50.
-            // Keep the query intact but scope it to the authoritative workflow endpoint.
+            // Keep branch=parallel intact and only scope the endpoint to the candidate workflow.
             // The GitHub monitor uses per_page=30/100 and ECONOMY has its own route, so this
             // rewrite is deliberately narrow and does not alter those consumers.
             if (string.Equals(uri.AbsolutePath, ActionsRunsPath, StringComparison.OrdinalIgnoreCase)
