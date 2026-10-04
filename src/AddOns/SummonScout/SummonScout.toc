@@ -14,6 +14,7 @@ SummonScout_LocationAnchorHot.lua
 SummonScout_PostPaymentOfferHot.lua
 SummonScout_PostPaymentFallbackHot.lua
 SummonScout_WhisperConfirmSpam.lua
+SummonScout_WhisperConfirmStackFixHot.lua
 SummonScout_GroupedResumeHot.lua
 SummonScout_RosterOwnershipHot.lua
 SummonScout_FallbackRouterHot.lua
