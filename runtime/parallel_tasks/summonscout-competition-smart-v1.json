@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-competition-smart-v1",
+  "goal": "Recognize competitor summon/travel advertisements with a high-confidence scored classifier and route them into the existing SummonScout counter scheduler, with a GUI-editable minimum response interval.",
+  "branch": "feature/summonscout-competition-smart-v1",
+  "base_parallel_sha": "93de16f51ca784d8a3443a10742f32a58c434fbe",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": [
+    "SummonScoutCompetitionSmart"
+  ],
+  "dependencies": [
+    "summonscout-whisper-ux-v1",
+    "summonscout-core-anchor-unwind-trace-v1"
+  ],
+  "shared_resources": [
+    "SummonScout competitor counter classifier",
+    "SummonScout counter cooldown GUI",
+    "SummonScout HOT fanout TOC"
+  ],
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-competition-smart-v1",
+    "acquired_at": "2026-10-04T15:11:00Z",
+    "heartbeat_at": "2026-10-04T15:11:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout competitor counter classifier",
+      "resource:SummonScout counter cooldown GUI",
+      "resource:SummonScout HOT fanout TOC"
+    ]
+  },
+  "notes": "Adds a HOT module rather than replacing core ownership. The classifier scores independent travel/summon, seller/CTA, price and destination signals, rejects buyer-like wording unless explicit seller evidence is present, and reuses the core scheduleCounter function discovered from the canonical dispatcher upvalue graph. Existing counterScope, 2-3s reaction jitter, pending dedupe, own-ad grace and counterCooldown remain authoritative. GUI exposes counterCooldown as Min interval (15-3600s). Public CHANNEL/YELL/SAY are observed; private buyer whispers are intentionally excluded."
+}
