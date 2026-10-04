@@ -286,6 +286,7 @@ def build_context(module, branch="parallel", limit=6, head=None, intent="auto"):
     active, routing_source, fallback_used = routing_rows(module, limit)
     hints = source_hints(module, runtime, parallel)
     ownership = ownership_context(module, hints, dependency_registry)
+    eligible = economy_eligible(module, economy)
     profiles = delivery_profiles(module, hints, economy, policy)
     risk_class = classify_risk(module, intent, hints, parallel, ownership)
 
@@ -305,6 +306,9 @@ def build_context(module, branch="parallel", limit=6, head=None, intent="auto"):
     workflows = {
         "feature_preflight": ".github/workflows/parallel_feature_preflight.yml",
         "parallel_candidate": parallel.get("workflow"),
+        "economy": (
+            economy.get("delivery", {}).get("workflow") if eligible else None
+        ),
         "delivery_profiles": {
             name: policy.get("delivery_profiles", {}).get(name, {}).get("workflow")
             for name in profiles
@@ -340,10 +344,12 @@ def build_context(module, branch="parallel", limit=6, head=None, intent="auto"):
             "full_ledger_fallback_used": fallback_used,
             "active_count": len(active),
             "active_experiments": active,
+            "recent_active": active,
             "selected_branch_active": branch_active,
             "feature_candidates": feature_active,
         },
         "delivery": {
+            "economy_eligible": eligible,
             "profiles": profiles,
             "standard_gate": (
                 "conditional_policy_check"
@@ -402,6 +408,7 @@ def render_text(ctx):
         for item in ctx["ownership"]:
             lines.append("    - %s | %s" % (item["resource"], item["policy"]))
     delivery = ctx["delivery"]
+    lines.append("  economy eligible: %s" % ("yes" if delivery["economy_eligible"] else "no"))
     lines.append("  delivery profiles: %s" % (", ".join(delivery["profiles"]) or "<none>"))
     lines.append("  standard gate: %s" % delivery["standard_gate"])
     lines.append("  lifecycle: " + " -> ".join(delivery["lifecycle"]))
