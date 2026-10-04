@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "hotfix-ingame-ack-v1",
+  "goal": "Make every successful existing Parallel hot-Lua watcher apply end with a visible in-game chat acknowledgement so a tester can tell that the live client actually executed the changed payload.",
+  "branch": "feature/hotfix-ingame-ack-v1",
+  "base_parallel_sha": "be68344ee6063f2cee838d721946c401e86e90a6",
+  "modules": [
+    "AutoLoginBridge"
+  ],
+  "dependencies": [
+    "parallel-diagnostic-hotfix-fastpath-v1"
+  ],
+  "shared_resources": [
+    "AutoLoginBridge-hot-lua-watcher",
+    "SummonScout-hot-payload-host",
+    "AH-shadow-hot-host"
+  ],
+  "status": "feature",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Native watcher emits a green [W112 HOT] OK #N line only after FrameScriptExecute reports success for a changed watched payload. Cold baseline seeding does not emit a ping. Current watched routes are SummonScout postpay/AH host, whisper host and hot-transformed SummonScout core. This is an acknowledgement layer only; no summon, AH, login retry or payload scheduling behavior is changed."
+}
