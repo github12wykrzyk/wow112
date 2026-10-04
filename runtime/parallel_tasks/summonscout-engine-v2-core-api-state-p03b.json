@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-engine-v2-core-api-state-p03b",
+  "goal": "P0.3b Summon Engine V2: export EventAPI and SS directly from canonical SummonScout.lua before the OnEvent handler, remove recursive API/state upvalue discovery from the foundation bridge, update the hot-reload transform to the core-native export anchor, and preserve current ownership, Ritual, payment, advert, destination and hot-module behavior.",
+  "branch": "feature/summonscout-engine-v2-core-api-p03b",
+  "base_parallel_sha": "a8246230d9e2fa0f9a09b92297dc308e03fcf4e4",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-owned-queue-p03a"
+  ],
+  "shared_resources": [
+    "SummonScout canonical API/state export",
+    "SummonScout Engine V2 foundation compatibility boundary",
+    "SummonScout hot-reload core transform"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Canonical source migration was validated on helper run 37199558877 from exact base a8246230d9e2fa0f9a09b92297dc308e03fcf4e4. The hot transform was then updated and executable-transform tested on helper run 37199900558. SummonScout.lua publishes W112_SUMMONSCOUT_API_V1/EventAPI and W112_SUMMONSCOUT_STATE/SS directly before installing OnEvent. Foundation no longer contains fFindApi/fFindState recursive walkers and fails closed if the core-native surface is missing. debug.getupvalue/setupvalue intentionally remain only for the still-private location-root and roster-queue compatibility hooks; those are deferred to the next P0 step. No gameplay semantics are intentionally changed in P0.3b.",
+  "integrated_feature_sha": "37f3593dc691b727cb691a6a5add6c235b47a3a2"
+}

@@ -185,19 +185,17 @@ def transform_core(data: bytes) -> bytes:
     s = _one(s, active_before_roster, active_after_roster, "active summon before roster guard")
 
     event_anchor = (
-        "    handleChannelMessage = handleChannelMessage,\n"
-        "}\n\n"
+        "W112_SUMMONSCOUT_CORE_API_NATIVE = true\n\n"
         'frame:SetScript("OnEvent", function()\n'
     )
     event_rebind = (
-        "    handleChannelMessage = handleChannelMessage,\n"
-        "}\n\n"
+        "W112_SUMMONSCOUT_CORE_API_NATIVE = true\n\n"
         "-- PLAYER_LOGIN is not fired by an in-world hot execution. Re-apply\n"
         "-- defaults/migrations only for a real hot generation before scripts swap.\n"
         "if hotReload then EventAPI.setDefaults() end\n\n"
         'frame:SetScript("OnEvent", function()\n'
     )
-    s = _one(s, event_anchor, event_rebind, "hot defaults before script swap")
+    s = _one(s, event_anchor, event_rebind, "hot defaults after core-native API export")
 
     slash = (
         'SLASH_SUMMONSCOUT1 = "/ssi"\n'

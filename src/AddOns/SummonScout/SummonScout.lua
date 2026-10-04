@@ -2990,6 +2990,14 @@ local EventAPI = {
     handleChannelMessage = handleChannelMessage,
 }
 
+-- Engine V2 P0.3b: publish the canonical core runtime surface directly.
+-- Hot compatibility modules must consume these globals instead of walking
+-- the OnEvent closure to rediscover EventAPI / SS through debug upvalues.
+W112_SUMMONSCOUT_API_V1 = EventAPI
+W112_SUMMONSCOUT_STATE = SS
+W112_SUMMONSCOUT_API_VERSION = 1
+W112_SUMMONSCOUT_CORE_API_NATIVE = true
+
 frame:SetScript("OnEvent", function()
     if event == "PLAYER_LOGIN" then
         EventAPI.setDefaults()

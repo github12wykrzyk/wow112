@@ -1,16 +1,15 @@
 -- SummonScout Engine V2 P0 foundation bridge for WoW 1.12.1 / Lua 5.0.
 --
--- P0.3a keeps all legacy-core introspection in this one compatibility layer,
--- but makes queue ownership fail closed at the public API boundary. Hot modules
--- consume W112_SUMMONSCOUT_API_V1 / W112_SUMMONSCOUT_STATE and never receive a
--- raw queue primitive.
+-- P0.3b receives EventAPI / SS directly from canonical SummonScout.lua.
+-- Legacy debug introspection remains only for the still-private location / roster
+-- compatibility hooks; API/state discovery itself is now core-native and fail closed.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "p0.3a-owned-queue-api"
+local VERSION = "p0.3b-core-api-state"
 local S = H.GetState("enginev2foundation")
 S.lastFailure = S.lastFailure or ""
 S.api = nil
@@ -54,65 +53,6 @@ local function fSetUpvalue(fn, index, value)
     return true, result
 end
 
-local function fFindApi(fn, depth, seen)
-    if type(fn) ~= "function" or depth > 6 then return nil end
-    seen = seen or {}
-    if seen[fn] then return nil end
-    seen[fn] = true
-
-    local i
-    for i = 1, 40 do
-        local name, value = fGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.queuePartySummon) == "function"
-            and type(value.notePendingManualInvite) == "function"
-            and type(value.syncPartyRoster) == "function"
-            and type(value.handleChannelMessage) == "function" then
-            return value
-        end
-    end
-
-    for i = 1, 40 do
-        local name, value = fGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "function" then
-            local found = fFindApi(value, depth + 1, seen)
-            if found then return found end
-        end
-    end
-    return nil
-end
-
-local function fFindState(fn, depth, seen)
-    if type(fn) ~= "function" or depth > 4 then return nil end
-    seen = seen or {}
-    if seen[fn] then return nil end
-    seen[fn] = true
-
-    local i
-    for i = 1, 40 do
-        local name, value = fGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "table"
-            and type(value.pendingManualInvites) == "table"
-            and type(value.summonPending) == "table"
-            and type(value.queue) == "table" then
-            return value
-        end
-    end
-
-    for i = 1, 40 do
-        local name, value = fGetUpvalue(fn, i)
-        if not name then break end
-        if type(value) == "function" then
-            local found = fFindState(value, depth + 1, seen)
-            if found then return found end
-        end
-    end
-    return nil
-end
-
 local function fNamedFunction(fn, wanted)
     if type(fn) ~= "function" then return nil end
     local i
@@ -139,35 +79,21 @@ local function fResolveApi()
     local api = W112_SUMMONSCOUT_API_V1
     if type(api) == "table"
         and type(api.queuePartySummon) == "function"
+        and type(api.notePendingManualInvite) == "function"
+        and type(api.syncPartyRoster) == "function"
         and type(api.handleChannelMessage) == "function" then
         return api
     end
-
-    local frame = SummonScoutFrame
-    if not frame or not frame.GetScript then return nil end
-    return fFindApi(frame:GetScript("OnEvent"), 0, {})
+    return nil
 end
 
 local function fResolveState(api)
-    if type(W112_SUMMONSCOUT_STATE) == "table"
-        and type(W112_SUMMONSCOUT_STATE.pendingManualInvites) == "table" then
-        return W112_SUMMONSCOUT_STATE
-    end
-    if type(S.coreState) == "table"
-        and type(S.coreState.pendingManualInvites) == "table" then
-        return S.coreState
-    end
-    if type(api) ~= "table" then return nil end
-
-    local candidates = {
-        api.queuePartySummon,
-        api.notePendingManualInvite,
-        api.syncPartyRoster
-    }
-    local i
-    for i = 1, table.getn(candidates) do
-        local state = fFindState(candidates[i], 0, {})
-        if state then return state end
+    local state = W112_SUMMONSCOUT_STATE
+    if type(state) == "table"
+        and type(state.pendingManualInvites) == "table"
+        and type(state.summonPending) == "table"
+        and type(state.queue) == "table" then
+        return state
     end
     return nil
 end
@@ -281,12 +207,12 @@ local function fInstall()
     W112_SUMMONSCOUT_API_V1 = api
     W112_SUMMONSCOUT_STATE = state
     W112_SUMMONSCOUT_API_VERSION = 1
-    W112_SUMMONSCOUT_COMPAT_VERSION = 3
+    W112_SUMMONSCOUT_COMPAT_VERSION = 4
     W112_SUMMON_ENGINE_V2_FOUNDATION = VERSION
 
     api.state = state
     api.apiVersion = 1
-    api.compatVersion = 3
+    api.compatVersion = 4
     api.GetState = function()
         return state
     end

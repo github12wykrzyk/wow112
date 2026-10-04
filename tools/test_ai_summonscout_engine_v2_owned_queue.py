@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract tests for SummonScout Engine V2 P0.3a owned queue API."""
+"""Contract tests for SummonScout Engine V2 owned queue API."""
 import unittest
 from pathlib import Path
 
@@ -15,7 +15,6 @@ class SummonScoutOwnedQueueApiContract(unittest.TestCase):
 
     def test_foundation_publishes_owned_queue_boundary(self):
         text = self.text(FOUNDATION)
-        self.assertIn('local VERSION = "p0.3a-owned-queue-api"', text)
         self.assertIn("S.rawQueuePartySummon = rawQueue", text)
         self.assertIn("S.publicQueuePartySummon = publicQueue", text)
         self.assertIn("api.queuePartySummon = publicQueue", text)
