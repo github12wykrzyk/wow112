@@ -7,6 +7,7 @@ on:
       - feature/android-headless-wow112-poc
       - feature/android-headless-wow112-poc05-mail-actions-v2
       - feature/android-headless-poc05-unified-v1
+      - feature/android-headless-poc06-fast
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - 'runtime/parallel_tasks/android-headless-wow112-poc.json'
