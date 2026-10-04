@@ -6,6 +6,7 @@ use std::time::Duration;
 mod auth;
 mod wire_build;
 mod world_poc05_retry;
+mod world_portal;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
@@ -69,6 +70,10 @@ fn run() -> Result<(), String> {
     let auth_addr = env::var("WOW112_AUTH_ADDR")
         .unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
     let character_name = env::var("WOW112_CHARACTER").ok();
+    let mode = env::var("WOW112_MODE")
+        .unwrap_or_else(|_| "poc05".to_string())
+        .trim()
+        .to_ascii_lowercase();
     let realm_index = env::var("WOW112_REALM_INDEX")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -78,14 +83,27 @@ fn run() -> Result<(), String> {
     let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
     let mut mail_mutation_committed = false;
 
+    if !matches!(mode.as_str(), "poc05" | "portal" | "portal-clicker" | "clicker") {
+        return Err(format!("unsupported WOW112_MODE={mode:?}"));
+    }
+    let portal_mode = matches!(mode.as_str(), "portal" | "portal-clicker" | "clicker");
+
     println!(
-        "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless",
-        OCTOWOW_WIRE_BUILD
+        "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless mode={}",
+        OCTOWOW_WIRE_BUILD,
+        if portal_mode { "portal-clicker" } else { "poc05" }
     );
-    println!(
-        "[POC05] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_mail_actions=enabled ah_candidate_pool_retry=enabled",
-        soak_seconds, reconnect_limit, reconnect_delay_ms
-    );
+    if portal_mode {
+        println!(
+            "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled",
+            soak_seconds, reconnect_limit, reconnect_delay_ms
+        );
+    } else {
+        println!(
+            "[POC05] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_mail_actions=enabled ah_candidate_pool_retry=enabled",
+            soak_seconds, reconnect_limit, reconnect_delay_ms
+        );
+    }
 
     for attempt in 1..=reconnect_limit {
         println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
@@ -96,11 +114,18 @@ fn run() -> Result<(), String> {
             &password,
             character_name.as_deref(),
             soak_seconds,
+            &mode,
             &mut mail_mutation_committed,
         ) {
             Ok(()) => {
-                println!("[RESILIENCE] POC-05 RECONNECT/KEEPALIVE PASS attempts={attempt}");
-                println!("[WOW112-ANDROID-PROBE] PASS: POC-05 persistent world session");
+                println!(
+                    "[RESILIENCE] {} RECONNECT/KEEPALIVE PASS attempts={attempt}",
+                    if portal_mode { "PORTAL" } else { "POC-05" }
+                );
+                println!(
+                    "[WOW112-ANDROID-PROBE] PASS: {} persistent world session",
+                    if portal_mode { "portal-clicker" } else { "POC-05" }
+                );
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
@@ -115,7 +140,8 @@ fn run() -> Result<(), String> {
     }
 
     Err(format!(
-        "POC-05 reconnect limit exhausted after {reconnect_limit} attempts"
+        "{} reconnect limit exhausted after {reconnect_limit} attempts",
+        if portal_mode { "portal-clicker" } else { "POC-05" }
     ))
 }
 
@@ -126,6 +152,7 @@ fn run_session(
     password: &str,
     character_name: Option<&str>,
     soak_seconds: u64,
+    mode: &str,
     mail_mutation_committed: &mut bool,
 ) -> Result<(), String> {
     println!("[AUTH] connecting to {auth_addr}");
@@ -161,15 +188,26 @@ fn run_session(
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    world_poc05_retry::login_poc05_retry(
-        &mut world_stream,
-        session_key,
-        realm.realm_id,
-        username,
-        character_name,
-        soak_seconds,
-        mail_mutation_committed,
-    )?;
+    if matches!(mode, "portal" | "portal-clicker" | "clicker") {
+        world_portal::login_portal_clicker(
+            &mut world_stream,
+            session_key,
+            realm.realm_id,
+            username,
+            character_name,
+            soak_seconds,
+        )?;
+    } else {
+        world_poc05_retry::login_poc05_retry(
+            &mut world_stream,
+            session_key,
+            realm.realm_id,
+            username,
+            character_name,
+            soak_seconds,
+            mail_mutation_committed,
+        )?;
+    }
 
     Ok(())
 }

@@ -69,6 +69,8 @@ jobs:
           cp probes/Wow112HeadlessAndroid/README.md "$OUT/README.md"
           cp probes/Wow112HeadlessAndroid/RUN_POC05.cmd "$OUT/RUN_POC05.cmd"
           cp probes/Wow112HeadlessAndroid/RUN_POC05.ps1 "$OUT/RUN_POC05.ps1"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.cmd "$OUT/RUN_PORTAL_CLICKER.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.ps1 "$OUT/RUN_PORTAL_CLICKER.ps1"
 
           file "$OUT/wow112-headless-android-probe"
           BIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
@@ -91,6 +93,8 @@ jobs:
               wow112-headless-android-probe \
               RUN_POC05.cmd \
               RUN_POC05.ps1 \
+              RUN_PORTAL_CLICKER.cmd \
+              RUN_PORTAL_CLICKER.ps1 \
               README.md \
               BUILD_INFO.txt > SHA256SUMS.txt
             sha256sum -c SHA256SUMS.txt
