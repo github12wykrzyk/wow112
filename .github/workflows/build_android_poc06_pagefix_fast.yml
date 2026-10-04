@@ -24,13 +24,8 @@ jobs:
           from pathlib import Path
           p = Path('probes/Wow112HeadlessAndroid/src/world_poc06.rs')
           s = p.read_text()
-          old = '''    let query = build_read_only_auction_query(auctioneer_guid);
-          println!(
-              "[AH] sending page0 query label={label} house={auction_house} payload={} filters=ANY",
-              query.len()
-          );
-          '''
-          new = '''    let page = env::var("WOW112_AH_PAGE")
+          anchor = '    let query = build_read_only_auction_query(auctioneer_guid);'
+          replacement = '''    let page = env::var("WOW112_AH_PAGE")
               .unwrap_or_else(|_| "0".to_string())
               .trim()
               .parse::<u32>()
@@ -39,15 +34,15 @@ jobs:
               .checked_mul(50)
               .ok_or_else(|| format!("WOW112_AH_PAGE overflow page={page}"))?;
           let mut query = build_read_only_auction_query(auctioneer_guid);
-          query[8..12].copy_from_slice(&list_from.to_le_bytes());
-          println!(
-              "[AH] sending selected-page query label={label} page={page} listfrom={list_from} house={auction_house} payload={} filters=ANY",
-              query.len()
-          );
-          '''
-          if s.count(old) != 1:
-              raise SystemExit(f'page query patch anchor count={s.count(old)}')
-          s = s.replace(old, new, 1)
+          query[8..12].copy_from_slice(&list_from.to_le_bytes());'''
+          if s.count(anchor) != 1:
+              raise SystemExit(f'page query patch anchor count={s.count(anchor)}')
+          s = s.replace(anchor, replacement, 1)
+          s = s.replace(
+              '"[AH] sending page0 query label={label} house={auction_house} payload={} filters=ANY"',
+              '"[AH] sending selected-page query label={label} page={page} listfrom={list_from} house={auction_house} payload={} filters=ANY"',
+              1,
+          )
           s = s.replace('SMSG_AUCTION_LIST_RESULT PASS page0_records=', 'SMSG_AUCTION_LIST_RESULT PASS records=', 1)
           s = s.replace('[POC06] BUY CANDIDATES page0 ', '[POC06] BUY CANDIDATES selected-page ', 1)
           s = s.replace('[AH] page0 snapshot PASS ', '[AH] selected-page snapshot PASS ', 1)
