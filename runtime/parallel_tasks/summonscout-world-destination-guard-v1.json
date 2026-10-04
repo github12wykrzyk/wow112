@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-world-destination-guard-v1",
+  "goal": "Prevent a destination-qualified SummonScout client from auto-inviting World summon requests for any other or unknown destination; preserve demand logging and existing grouped-resume behavior, and prune stale mismatched invite queue entries.",
+  "branch": "feature/summonscout-world-destination-guard-v1",
+  "base_parallel_sha": "a79572f56f6cd99d2606fce7bb12c081831719d4",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-roster-ownership-guard-v1-r2"
+  ],
+  "shared_resources": [
+    "SummonScout-world-invite-destination-gate",
+    "SummonScout-roster-ownership-hot-module"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Hot Lua guard in the existing SummonScout_RosterOwnershipHot module. It wraps the core EventAPI.handleChannelMessage at runtime, temporarily disables autoInvite for World messages whose classified destination is not in SummonScoutDB.service (or is unknown/ambiguous while serving a specific destination), then restores the user's setting so logging/counter behavior still runs. Existing mismatched queued World invites are pruned on patch. This addresses the actual wrong World auto-invite; the previous roster ownership guard only addressed the secondary party-join summon-pending symptom. Lease was narrowed after preflight run 37188617286 showed an unrelated live SummonScout module-wide lease owned by the combat-resume task; the exact World gate and roster-hot resource remain exclusively leased here.",
+  "diagnostic_hotfix_fast_path": false,
+  "integrated_feature_sha": "36b419e283cee385e51c751c2ac4345d40d5c03a"
+}

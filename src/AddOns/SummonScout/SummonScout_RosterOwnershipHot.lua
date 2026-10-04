@@ -1,21 +1,25 @@
--- SummonScout roster ownership guard for WoW 1.12.1 / Lua 5.0.
+-- SummonScout roster ownership + World destination guard for WoW 1.12.1 / Lua 5.0.
 --
+-- Roster side:
 -- Core roster synchronization historically queued every newly observed party/raid
--- member for Ritual of Summoning. That bypasses the destination-qualified invite
--- path: a player invited by somebody else (for example a Silithus buyer seen by a
--- Hyjal-only summoner) could become summon-pending on this client.
+-- member for Ritual of Summoning. Gate that path on the pendingManualInvites
+-- ownership marker written by this client's own eligible invite paths.
 --
--- Keep the existing queue machinery, but gate the roster-driven call on the
--- pendingManualInvites ownership marker already written by SummonScout's own
--- eligible World/whisper invite paths. Explicit grouped-resume requests continue
--- to call the exported queue API directly and are intentionally unaffected.
+-- World side:
+-- A destination-qualified summoner must never invite a World requester for another
+-- known/unknown destination. Re-check the configured service at the final core
+-- channel-dispatch boundary, independently of the core's earlier invite decision.
+-- This also prunes stale queued World invites after a hot reload/service change.
+--
+-- Explicit grouped-resume requests continue to call the exported queue API directly
+-- and are intentionally unaffected.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "1-own-invite-only"
+local VERSION = "2-own-invite-world-destination"
 local S = H.GetState("rosterguard")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
@@ -61,7 +65,8 @@ local function rgFindApiInFunction(fn, depth, seen)
         if type(value) == "table"
             and type(value.queuePartySummon) == "function"
             and type(value.notePendingManualInvite) == "function"
-            and type(value.syncPartyRoster) == "function" then
+            and type(value.syncPartyRoster) == "function"
+            and type(value.handleChannelMessage) == "function" then
             return value
         end
     end
@@ -89,6 +94,7 @@ local function rgResolveState(api)
     if type(S.coreState) == "table"
         and type(S.coreState.pendingManualInvites) == "table"
         and type(S.coreState.summonPending) == "table"
+        and type(S.coreState.queue) == "table"
         and S.coreQueue == api.queuePartySummon then
         return S.coreState
     end
@@ -99,7 +105,8 @@ local function rgResolveState(api)
         if not name then break end
         if type(value) == "table"
             and type(value.pendingManualInvites) == "table"
-            and type(value.summonPending) == "table" then
+            and type(value.summonPending) == "table"
+            and type(value.queue) == "table" then
             S.coreState = value
             S.coreQueue = api.queuePartySummon
             return value
@@ -113,27 +120,132 @@ local function rgReportFailure(reason)
     if S.lastFailure == reason then return end
     S.lastFailure = reason
     if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout roster guard:|r " .. reason)
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout guard:|r " .. reason)
     end
 end
 
-local function rgPatch()
-    local api = rgResolveApi()
-    if not api then
-        rgReportFailure("core API unavailable")
+local function rgServiceContains(locationId)
+    local service = rgKey(SummonScoutDB and SummonScoutDB.service or "all")
+    if service == "" or service == "all" then return true end
+    if not locationId or locationId == "" then return false end
+
+    local haystack = "," .. service .. ","
+    local needle = "," .. rgKey(locationId) .. ","
+    return string.find(haystack, needle, 1, true) ~= nil
+end
+
+local function rgFindNamedFunction(fn, wanted)
+    if type(fn) ~= "function" then return nil end
+    local i
+    for i = 1, 40 do
+        local name, value = rgGetUpvalue(fn, i)
+        if not name then break end
+        if name == wanted and type(value) == "function" then
+            return value
+        end
+    end
+    return nil
+end
+
+local function rgWorldDestinationBlocked(findLocation, message)
+    local service = rgKey(SummonScoutDB and SummonScoutDB.service or "all")
+    if service == "" or service == "all" then return false, nil end
+    if type(findLocation) ~= "function" then return true, "classifier-unavailable" end
+
+    local loc, ambiguous = findLocation(message or "")
+    if ambiguous then return true, "ambiguous" end
+    if not loc or not loc.id then return true, "unknown" end
+    if not rgServiceContains(loc.id) then
+        return true, tostring(loc.label or loc.id)
+    end
+    return false, tostring(loc.label or loc.id)
+end
+
+local function rgPruneWrongDestinationQueue(state)
+    if type(state) ~= "table" or type(state.queue) ~= "table" then return end
+    local service = rgKey(SummonScoutDB and SummonScoutDB.service or "all")
+    if service == "" or service == "all" then return end
+
+    local kept = {}
+    local i
+    for i = 1, table.getn(state.queue) do
+        local item = state.queue[i]
+        if type(item) == "table" and item.locationId and rgServiceContains(item.locationId) then
+            kept[table.getn(kept) + 1] = item
+        else
+            if type(item) == "table" and type(state.queued) == "table" then
+                state.queued[rgKey(item.name)] = nil
+            end
+            if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World guard:|r stale queued invite removed -> "
+                    .. tostring(type(item) == "table" and item.name or "?"))
+            end
+        end
+    end
+    state.queue = kept
+end
+
+local function rgPatchWorldDestination(api, state)
+    if S.patchedChannelApi == api
+        and type(S.channelWrapper) == "function"
+        and api.handleChannelMessage == S.channelWrapper then
+        rgPruneWrongDestinationQueue(state)
+        return true
+    end
+
+    local original = api.handleChannelMessage
+    if type(original) ~= "function" then
+        rgReportFailure("core channel handler unavailable")
         return false
     end
 
-    local state = rgResolveState(api)
-    if not state then
-        rgReportFailure("core state unavailable")
+    local findLocation = rgFindNamedFunction(original, "findLocation")
+    if type(findLocation) ~= "function" then
+        rgReportFailure("findLocation upvalue unavailable")
         return false
     end
 
+    local wrapper = function(message, sender, channelBaseName, channelFullName)
+        local blocked, destination = rgWorldDestinationBlocked(findLocation, message)
+        if not blocked then
+            return original(message, sender, channelBaseName, channelFullName)
+        end
+
+        local previousAutoInvite = SummonScoutDB and SummonScoutDB.autoInvite
+        if SummonScoutDB then SummonScoutDB.autoInvite = false end
+
+        local ok, err = true, nil
+        if pcall then
+            ok, err = pcall(original, message, sender, channelBaseName, channelFullName)
+        else
+            original(message, sender, channelBaseName, channelFullName)
+        end
+
+        if SummonScoutDB then SummonScoutDB.autoInvite = previousAutoInvite end
+
+        if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World guard:|r invite blocked -> "
+                .. tostring(sender or "?") .. " [" .. tostring(destination or "?")
+                .. "], serving=" .. tostring(SummonScoutDB.service or "all"))
+        end
+
+        if not ok then error(err) end
+        return nil
+    end
+
+    api.handleChannelMessage = wrapper
+    S.patchedChannelApi = api
+    S.channelOriginal = original
+    S.channelWrapper = wrapper
+    S.channelFindLocation = findLocation
+    rgPruneWrongDestinationQueue(state)
+    return true
+end
+
+local function rgPatchRosterOwnership(api, state)
     if S.patchedSync == api.syncPartyRoster
         and S.patchedQueue == api.queuePartySummon
         and type(S.guardQueue) == "function" then
-        S.lastFailure = ""
         return true
     end
 
@@ -179,7 +291,6 @@ local function rgPatch()
                 S.guardQueue = guard
                 S.coreState = state
                 S.coreQueue = api.queuePartySummon
-                S.lastFailure = ""
                 return true
             end
             rgReportFailure("queue upvalue patch rejected")
@@ -189,6 +300,26 @@ local function rgPatch()
 
     rgReportFailure("queuePartySummon upvalue not found")
     return false
+end
+
+local function rgPatch()
+    local api = rgResolveApi()
+    if not api then
+        rgReportFailure("core API unavailable")
+        return false
+    end
+
+    local state = rgResolveState(api)
+    if not state then
+        rgReportFailure("core state unavailable")
+        return false
+    end
+
+    if not rgPatchWorldDestination(api, state) then return false end
+    if not rgPatchRosterOwnership(api, state) then return false end
+
+    S.lastFailure = ""
+    return true
 end
 
 local M = {}
