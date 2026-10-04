@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "ah-defensive-bid-rules-v3",
+  "goal": "Replace the effectively dormant legacy BID execution path with a defensive BID v3 that also bids auctions with buyout, adds vendor/DE/resell bidding, exact named live revalidation, conservative session capital caps, and a native AUX Arb Rules tab for both BUYOUT and BID thresholds.",
+  "branch": "feature/ah-defensive-bid-rules-v3",
+  "base_parallel_sha": "f5cdb58ac186e763972668d1923190eabb44e5bc",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [
+    "ah-liquid-depth-lowrisk-v1",
+    "ah-direct-live-authority-v1"
+  ],
+  "shared_resources": [
+    "AuxVmangos AUX_ARB scan callbacks",
+    "auction transaction authority",
+    "AH query stream"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-defensive-bid-rules-v3",
+    "acquired_at": "2026-10-04T16:00:00Z",
+    "heartbeat_at": "2026-10-04T16:00:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxVmangos"
+    ]
+  },
+  "notes": "User reports the existing BID path appears not to bid at all and explicitly wants auctions with buyout to remain valid BID targets. Root cause in current core: legacy avm_bid_raw_from_record rejects every auction with buyout, and legacy BID competes poorly with buyout routes. This feature leaves proven Vendor/DE buyout execution intact, suppresses only the legacy BID collector/executor, and adds BID v3 as a post-scan exact-revalidated route. BID v3 supports vendor, DE and resell. Default low-risk caps: short-duration tier only, max 5g per route bid, 6 placements/session, 30g cumulative committed, Vendor >=25% margin and 50s profit, DE >=45% margin and 1g profit, Resell >=40% margin and 1g profit with <=60% history entry, >=3 history samples, >=10 live depth units and >=3 sellers. Resell uses min(AUX history, 90% live depth) minus 5% AH cut before margin. Auctions with buyout are allowed if required bid is still below buyout. Exact filtered revalidation recalculates the current required bid and thresholds immediately before PlaceAuctionBid. The existing core wallet-delta BID_PENDING confirmation is reused. A native AUX 'Arb Rules' tab exposes BUYOUT Vendor/DE/Flip/Liquid/session thresholds plus all BID route and session thresholds. Vendor buyout gains an optional safety-margin percentage defaulting to 0% so the gameplay-confirmed route is unchanged unless the user raises it. New Lua files are TOC-loaded, therefore one /reload is required after first ECONOMY installation. No gameplay result is claimed before user test."
+}
