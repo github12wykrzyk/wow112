@@ -163,7 +163,7 @@ namespace WoW112Updater
             }
         }
 
-        private Process StartTerminalPortalProcess(string exePath, string realmHost, WowAccount account)
+        private System.Diagnostics.Process StartTerminalPortalProcess(string exePath, string realmHost, WowAccount account)
         {
             if (account == null) throw new ArgumentNullException("account");
             var password = accountVault.Unprotect(account);
@@ -181,7 +181,7 @@ namespace WoW112Updater
             psi.EnvironmentVariables["WOW112_SOAK_SECONDS"] = "0";
             psi.EnvironmentVariables["WOW112_RECONNECT_LIMIT"] = "60";
             psi.EnvironmentVariables["WOW112_RECONNECT_DELAY_MS"] = "2000";
-            var process = Process.Start(psi);
+            var process = System.Diagnostics.Process.Start(psi);
             if (process == null) throw new InvalidOperationException("Windows nie uruchomił terminal portal clickera.");
             return process;
         }
