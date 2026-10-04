@@ -13,7 +13,7 @@
   "shared_resources": [
     "WoW 1.12.1 build 5875 headless protocol client"
   ],
-  "status": "in_progress",
+  "status": "preflight",
   "auto_integrate": false,
   "delivery_profiles": [],
   "lease": {
@@ -25,5 +25,6 @@
       "module:Wow112HeadlessAndroid"
     ]
   },
-  "notes": "POC-05 starts from exact accepted POC-04 SHA 3a6926be6e4ac846ade5724347f1e7df88c79728. It reads PLAYER_FIELD_COINAGE and owned item/container update masks, keeps mailbox read-only by default, and allows take-money/take-item only for an explicit mail_id plus WOW112_MAIL_MUTATION_CONFIRM=YES. COD item collection is blocked. Any disconnect or ambiguous result after mutation send is fail-closed and is not automatically retried; after a server-confirmed mutation, reconnects reconcile mailbox state instead of sending the mutation again. No gameplay result yet."
+  "notes": "POC-05 starts from exact accepted POC-04 SHA 3a6926be6e4ac846ade5724347f1e7df88c79728. It reads PLAYER_FIELD_COINAGE and owned item/container update masks, keeps mailbox read-only by default, and allows take-money/take-item only for an explicit mail_id plus WOW112_MAIL_MUTATION_CONFIRM=YES. COD item collection is blocked. Any disconnect or ambiguous result after mutation send is fail-closed and is not automatically retried; after a server-confirmed mutation, reconnects reconcile mailbox state instead of sending the mutation again. No gameplay result yet.",
+  "observed_head": "087f5ac78b33b2a41af9ad619996bb8d9fa26727"
 }
