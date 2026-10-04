@@ -15,20 +15,10 @@
     "SummonScout roster-to-summon ownership",
     "SummonScout grouped/combat resume routing"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summon-engine-p03a",
-    "acquired_at": "2026-10-04T10:36:00Z",
-    "heartbeat_at": "2026-10-04T10:36:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:SummonScout",
-      "resource:SummonScout public queue API",
-      "resource:SummonScout roster-to-summon ownership",
-      "resource:SummonScout grouped/combat resume routing"
-    ]
-  },
-  "notes": "Continuation after P0.2. This deliberately does not yet edit the large canonical SummonScout.lua export surface; P0.3a hardens the already deployed explicit compatibility boundary first. The raw legacy queue remains private in foundation state, the public default queue requires pendingManualInvites ownership, and grouped/combat explicit sources require the target to be a real party/raid member. P0.1 event guard remains defense in depth until the canonical core export/ownership migration is completed in the next P0 step."
+  "lease": null,
+  "notes": "Continuation after P0.2. P0.3a hardens the deployed explicit compatibility boundary first: raw legacy queue stays private, the public default queue requires pendingManualInvites ownership, and grouped/combat explicit sources require a real party/raid member. Exact feature SHA 01361a270e81d8246d5b74cb239c2a8f4a34f5ab passed Parallel feature preflight run 37196272534 attempt 2, integrated to parallel as 904bcfc9dd6b8538e4b29258bea447071a7b2987, and full STANDARD run 37196585268 passed with artifact 11300772847 (sha256:97af3ccbfe1cd469c00efaa7a0308115465333f136d958d0dbbbfbf241d7ec28). parallel-testpoint was advanced to exact integrated SHA after verification. Canonical SummonScout.lua API/state export and removal of remaining foundation introspection are deferred to the next P0 step.",
+  "integrated_feature_sha": "01361a270e81d8246d5b74cb239c2a8f4a34f5ab"
 }
