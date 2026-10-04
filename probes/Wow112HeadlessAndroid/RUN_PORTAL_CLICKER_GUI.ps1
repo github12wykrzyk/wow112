@@ -12,11 +12,10 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $script:rows = New-Object System.Collections.ArrayList
-$script:eventQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
-$script:startQueue = New-Object System.Collections.Queue
 $script:adb = $null
 $script:adbReady = $false
 $script:closing = $false
+$script:pollIndex = 0
 $script:remoteBase = "/data/local/tmp/wow112-headless-android-probe"
 $script:binary = Join-Path $PSScriptRoot "wow112-headless-android-probe"
 $configDir = Join-Path $env:LOCALAPPDATA "WoW112PortalClicker"
@@ -75,18 +74,28 @@ function Set-RowStatus($Row, [string]$Text, [System.Drawing.Color]$Color) {
     $Row.Status.ForeColor = $Color
 }
 
-function Find-Row([string]$Id) {
-    foreach ($row in $script:rows) {
-        if ($row.Id -eq $Id) { return $row }
-    }
-    return $null
-}
-
 function Set-AdbStatus([string]$Text, [System.Drawing.Color]$Color) {
     if ($script:adbStatus -and -not $script:adbStatus.IsDisposed) {
         $script:adbStatus.Text = $Text
         $script:adbStatus.ForeColor = $Color
     }
+}
+
+function Invoke-AdbShell([string]$Command, [switch]$IgnoreExitCode) {
+    if (-not $script:adb) { $script:adb = Resolve-Adb }
+    $oldPref = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = (& $script:adb shell $Command 2>&1 | Out-String)
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldPref
+    }
+    if (-not $IgnoreExitCode -and $code -ne 0) {
+        throw "adb shell failed ($code): $($output.Trim())"
+    }
+    return [pscustomobject]@{ Code = $code; Output = $output.Trim() }
 }
 
 function Ensure-AdbReady {
@@ -96,51 +105,70 @@ function Ensure-AdbReady {
     $script:adb = Resolve-Adb
     Set-AdbStatus "ADB: preparing..." ([System.Drawing.Color]::DarkOrange)
     Append-Log "ADB start-server"
-    & $script:adb start-server | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "adb start-server failed: $LASTEXITCODE" }
+
+    $oldPref = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $script:adb start-server | Out-Null
+        $code = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $oldPref }
+    if ($code -ne 0) { throw "adb start-server failed: $code" }
 
     Append-Log "Waiting for Android device/emulator"
-    & $script:adb wait-for-device
-    if ($LASTEXITCODE -ne 0) { throw "adb wait-for-device failed: $LASTEXITCODE" }
+    $oldPref = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $script:adb wait-for-device
+        $code = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $oldPref }
+    if ($code -ne 0) { throw "adb wait-for-device failed: $code" }
 
     Append-Log "Uploading headless binary"
-    & $script:adb push $script:binary $script:remoteBase | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "adb push failed: $LASTEXITCODE" }
-    & $script:adb shell "chmod 755 $script:remoteBase" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "adb chmod failed: $LASTEXITCODE" }
+    $oldPref = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $script:adb push $script:binary $script:remoteBase | Out-Null
+        $pushCode = $LASTEXITCODE
+        & $script:adb shell "chmod 755 $script:remoteBase" | Out-Null
+        $chmodCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $oldPref }
+    if ($pushCode -ne 0) { throw "adb push failed: $pushCode" }
+    if ($chmodCode -ne 0) { throw "adb chmod failed: $chmodCode" }
 
     $script:adbReady = $true
     Set-AdbStatus "ADB: READY" ([System.Drawing.Color]::DarkGreen)
     Append-Log "ADB READY"
 }
 
-function Get-RowRemoteName($Row) {
-    return "pclkr_" + $Row.Id.Substring(0, 8)
+function Get-RemotePaths($Row) {
+    $suffix = $Row.Id.Substring(0, 8)
+    return [pscustomobject]@{
+        Name = "pclkr_$suffix"
+        Binary = "/data/local/tmp/pclkr_$suffix"
+        Log = "/data/local/tmp/pclkr_$suffix.log"
+        Pid = "/data/local/tmp/pclkr_$suffix.pid"
+    }
 }
 
 function Stop-RemoteSlot($Row, [bool]$LogIt = $true) {
     try {
-        if (-not $script:adb) { $script:adb = Resolve-Adb }
-        $remoteName = Get-RowRemoteName $Row
-        $raw = (& $script:adb shell "pidof $remoteName" 2>$null | Out-String).Trim()
-        if ($raw) {
-            foreach ($pidText in ($raw -split '\s+')) {
-                if ($pidText -match '^\d+$') { & $script:adb shell "kill $pidText" | Out-Null }
-            }
-            if ($LogIt) { Append-Log "[$($Row.Login.Text)] remote process stopped" }
-        }
+        $paths = Get-RemotePaths $Row
+        $cmd = "if [ -f $($paths.Pid) ]; then P=`$(cat $($paths.Pid)); if [ -n \"`$P\" ]; then kill `$P 2>/dev/null || true; fi; fi; rm -f $($paths.Pid)"
+        [void](Invoke-AdbShell $cmd -IgnoreExitCode)
+        $Row.Running = $false
+        $Row.LastLog = ""
+        Set-RowStatus $Row "STOPPED" ([System.Drawing.Color]::DimGray)
+        $Row.Start.Enabled = $true
+        $Row.Stop.Enabled = $false
+        if ($LogIt) { Append-Log "[$($Row.Login.Text.Trim())] stopped" }
     }
     catch {
-        if ($LogIt) { Append-Log "[$($Row.Login.Text)] stop warning: $($_.Exception.Message)" }
+        Set-RowStatus $Row "STOP ERROR" ([System.Drawing.Color]::Firebrick)
+        if ($LogIt) { Append-Log "[$($Row.Login.Text.Trim())] stop error: $($_.Exception.Message)" }
     }
-
-    if ($Row.Process) {
-        try { if (-not $Row.Process.HasExited) { $Row.Process.Kill() } } catch {}
-        $Row.Process = $null
-    }
-    Set-RowStatus $Row "STOPPED" ([System.Drawing.Color]::DimGray)
-    $Row.Start.Enabled = $true
-    $Row.Stop.Enabled = $false
 }
 
 function Save-Config {
@@ -156,7 +184,7 @@ function Save-Config {
             }
         }
         $cfg = [pscustomobject]@{
-            version = 2
+            version = 3
             authAddr = $script:authBox.Text.Trim()
             worldAddr = $script:worldBox.Text.Trim()
             realmIndex = [int]$script:realmBox.Value
@@ -186,19 +214,14 @@ function Start-Row($Row) {
         Append-Log "[$login] pominiety: brak hasla"
         return
     }
-    if ($Row.Process) {
-        try { if (-not $Row.Process.HasExited) { return } } catch {}
-    }
 
     try {
         Ensure-AdbReady
         Save-Config
         Stop-RemoteSlot $Row $false
 
-        $remoteName = Get-RowRemoteName $Row
-        $remoteSlot = "/data/local/tmp/$remoteName"
-        & $script:adb shell "cp $script:remoteBase $remoteSlot && chmod 755 $remoteSlot" | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Nie udalo sie przygotowac $remoteSlot" }
+        $paths = Get-RemotePaths $Row
+        [void](Invoke-AdbShell "cp $script:remoteBase $($paths.Binary) && chmod 755 $($paths.Binary)")
 
         $assignments = New-Object 'System.Collections.Generic.List[string]'
         $assignments.Add("WOW112_MODE=$(Quote-Sh 'portal-clicker')")
@@ -212,62 +235,69 @@ function Start-Row($Row) {
         $assignments.Add("WOW112_PORTAL_ATTEMPTS=$(Quote-Sh ([string]$script:attemptsBox.Value))")
         $world = $script:worldBox.Text.Trim()
         if (-not [string]::IsNullOrWhiteSpace($world)) { $assignments.Add("WOW112_WORLD_ADDR=$(Quote-Sh $world)") }
-        $remoteCommand = "exec env " + ($assignments -join " ") + " " + (Quote-Sh $remoteSlot)
 
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $script:adb
-        $psi.Arguments = "shell"
-        $psi.UseShellExecute = $false
-        $psi.CreateNoWindow = $true
-        $psi.RedirectStandardInput = $true
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
+        $envLine = $assignments -join " "
+        $cmd = "rm -f $($paths.Log) $($paths.Pid); nohup env $envLine $($paths.Binary) >$($paths.Log) 2>&1 </dev/null & echo `$! >$($paths.Pid)"
+        $result = Invoke-AdbShell $cmd
+        Start-Sleep -Milliseconds 250
 
-        $proc = New-Object System.Diagnostics.Process
-        $proc.StartInfo = $psi
-        $proc.EnableRaisingEvents = $true
+        $probe = Invoke-AdbShell "P=`$(cat $($paths.Pid) 2>/dev/null); if [ -n \"`$P\" ] && kill -0 `$P 2>/dev/null; then echo RUNNING:`$P; else echo DEAD; tail -n 20 $($paths.Log) 2>/dev/null; fi" -IgnoreExitCode
+        if ($probe.Output -notmatch 'RUNNING:') {
+            throw "worker nie wystartowal: $($probe.Output)"
+        }
 
-        $queue = $script:eventQueue
-        $idForOutput = $Row.Id
-        $outHandler = {
-            param($sender, $e)
-            if (-not [string]::IsNullOrWhiteSpace($e.Data)) {
-                $queue.Enqueue([pscustomobject]@{ Kind = 'OUT'; Id = $idForOutput; Text = $e.Data })
-            }
-        }.GetNewClosure()
-        $errHandler = {
-            param($sender, $e)
-            if (-not [string]::IsNullOrWhiteSpace($e.Data)) {
-                $queue.Enqueue([pscustomobject]@{ Kind = 'ERR'; Id = $idForOutput; Text = $e.Data })
-            }
-        }.GetNewClosure()
-        $exitHandler = {
-            param($sender, $e)
-            $code = -1
-            try { $code = $sender.ExitCode } catch {}
-            $queue.Enqueue([pscustomobject]@{ Kind = 'EXIT'; Id = $idForOutput; Code = $code })
-        }.GetNewClosure()
-
-        $proc.add_OutputDataReceived($outHandler)
-        $proc.add_ErrorDataReceived($errHandler)
-        $proc.add_Exited($exitHandler)
-        if (-not $proc.Start()) { throw "Nie udalo sie uruchomic adb shell." }
-        $Row.Process = $proc
-        $proc.BeginOutputReadLine()
-        $proc.BeginErrorReadLine()
-        $proc.StandardInput.WriteLine($remoteCommand)
-        $proc.StandardInput.Close()
-
+        $Row.Running = $true
+        $Row.LastLog = ""
         Set-RowStatus $Row "STARTING" ([System.Drawing.Color]::DarkOrange)
         $Row.Start.Enabled = $false
         $Row.Stop.Enabled = $true
-        Append-Log "[$login] starting; pierwsza postac na koncie"
+        Append-Log "[$login] detached worker started; pierwsza postac na koncie"
     }
     catch {
+        $Row.Running = $false
         Set-RowStatus $Row "ERROR" ([System.Drawing.Color]::Firebrick)
         $Row.Start.Enabled = $true
         $Row.Stop.Enabled = $false
         Append-Log "[$login] START ERROR: $($_.Exception.Message)"
+    }
+}
+
+function Poll-Row($Row) {
+    if (-not $Row.Running) { return }
+    try {
+        $paths = Get-RemotePaths $Row
+        $cmd = "P=`$(cat $($paths.Pid) 2>/dev/null); if [ -n \"`$P\" ] && kill -0 `$P 2>/dev/null; then echo __RUNNING__; else echo __DEAD__; fi; tail -n 12 $($paths.Log) 2>/dev/null"
+        $result = Invoke-AdbShell $cmd -IgnoreExitCode
+        $text = $result.Output
+        $login = $Row.Login.Text.Trim()
+
+        if ($text -match '__DEAD__') {
+            $Row.Running = $false
+            Set-RowStatus $Row "EXIT" ([System.Drawing.Color]::Firebrick)
+            $Row.Start.Enabled = $true
+            $Row.Stop.Enabled = $false
+            if ($text -ne $Row.LastLog) { Append-Log "[$login] worker stopped`r`n$text" }
+            $Row.LastLog = $text
+            return
+        }
+
+        if ($text -ne $Row.LastLog) {
+            $lines = @($text -split "`r?`n" | Where-Object { $_ -and $_ -ne '__RUNNING__' })
+            foreach ($line in $lines) {
+                if (-not $Row.LastLog.Contains($line)) { Append-Log "[$login] $line" }
+            }
+            $Row.LastLog = $text
+        }
+
+        if ($text.Contains('[PORTAL] USE attempt=')) { Set-RowStatus $Row "CLICKED" ([System.Drawing.Color]::DarkBlue) }
+        elseif ($text.Contains('[PORTAL] discovered')) { Set-RowStatus $Row "PORTAL FOUND" ([System.Drawing.Color]::DarkCyan) }
+        elseif ($text.Contains('[PORTAL] CLICKER ACTIVE')) { Set-RowStatus $Row "ACTIVE" ([System.Drawing.Color]::DarkGreen) }
+        elseif ($text.Contains('[WORLD] SMSG_LOGIN_VERIFY_WORLD')) { Set-RowStatus $Row "WORLD" ([System.Drawing.Color]::DarkOrange) }
+        else { Set-RowStatus $Row "RUNNING" ([System.Drawing.Color]::DarkOrange) }
+    }
+    catch {
+        Set-RowStatus $Row "POLL ERROR" ([System.Drawing.Color]::Firebrick)
+        Append-Log "[$($Row.Login.Text.Trim())] poll error: $($_.Exception.Message)"
     }
 }
 
@@ -320,7 +350,8 @@ function Add-AccountRow($Account = $null) {
 
     $row = [pscustomobject]@{
         Id = $id; Panel = $panel; Enabled = $enabled; Login = $login; Password = $password
-        Status = $status; Start = $start; Stop = $stop; Remove = $remove; Process = $null
+        Status = $status; Start = $start; Stop = $stop; Remove = $remove
+        Running = $false; LastLog = ""
     }
 
     $start.Add_Click(({ try { Start-Row $row } catch { Append-Log "START handler: $($_.Exception.Message)" } }.GetNewClosure()))
@@ -345,35 +376,26 @@ function Start-All {
     try {
         Ensure-AdbReady
         Save-Config
-        $script:startAllTimer.Stop()
-        $script:startQueue.Clear()
         foreach ($row in @($script:rows)) {
             if ($row.Enabled.Checked -and -not [string]::IsNullOrWhiteSpace($row.Login.Text)) {
-                $script:startQueue.Enqueue($row)
+                Start-Row $row
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 300
             }
-        }
-        Append-Log "Start all: kolejka $($script:startQueue.Count) kont"
-        if ($script:startQueue.Count -gt 0) {
-            $row = $script:startQueue.Dequeue()
-            Start-Row $row
-            if ($script:startQueue.Count -gt 0) { $script:startAllTimer.Start() }
         }
     }
     catch { Append-Log "START ALL ERROR: $($_.Exception.Message)" }
 }
 
 function Stop-All {
-    try {
-        $script:startAllTimer.Stop()
-        $script:startQueue.Clear()
-        foreach ($row in @($script:rows)) { Stop-RemoteSlot $row $false }
-        Append-Log "All clickers stopped"
+    foreach ($row in @($script:rows)) {
+        if ($row.Running) { Stop-RemoteSlot $row $false }
     }
-    catch { Append-Log "STOP ALL ERROR: $($_.Exception.Message)" }
+    Append-Log "All clickers stopped"
 }
 
 $script:form = New-Object System.Windows.Forms.Form
-$script:form.Text = "WoW112 Headless Portal Clickers - SAFE GUI"
+$script:form.Text = "WoW112 Portal Clickers - DETACHED"
 $script:form.Size = New-Object System.Drawing.Size(940, 700)
 $script:form.MinimumSize = New-Object System.Drawing.Size(940, 600)
 $script:form.StartPosition = "CenterScreen"
@@ -384,9 +406,9 @@ $top.Height = 112
 
 $title = New-Object System.Windows.Forms.Label
 $title.Location = New-Object System.Drawing.Point(12, 10)
-$title.Size = New-Object System.Drawing.Size(500, 24)
+$title.Size = New-Object System.Drawing.Size(520, 24)
 $title.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-$title.Text = "Headless Summoning Portal Clickers - SAFE GUI"
+$title.Text = "Headless Summoning Portal Clickers - DETACHED"
 $top.Controls.Add($title)
 
 $authLabel = New-Object System.Windows.Forms.Label
@@ -479,7 +501,7 @@ $top.Controls.Add($save)
 $configLabel = New-Object System.Windows.Forms.Label
 $configLabel.Location = New-Object System.Drawing.Point(510, 79)
 $configLabel.Size = New-Object System.Drawing.Size(390, 22)
-$configLabel.Text = "Bez pola Postac: zawsze pierwsza postac na koncie."
+$configLabel.Text = "Pierwsza postac; worker odłączony od GUI."
 $top.Controls.Add($configLabel)
 
 $headers = New-Object System.Windows.Forms.Panel
@@ -519,57 +541,25 @@ $script:form.Controls.Add($script:logBox)
 $script:form.Controls.Add($headers)
 $script:form.Controls.Add($top)
 
-$script:startAllTimer = New-Object System.Windows.Forms.Timer
-$script:startAllTimer.Interval = 900
-$script:startAllTimer.Add_Tick({
+$script:pollTimer = New-Object System.Windows.Forms.Timer
+$script:pollTimer.Interval = 1200
+$script:pollTimer.Add_Tick({
     try {
-        $script:startAllTimer.Stop()
-        if ($script:startQueue.Count -gt 0) {
-            $next = $script:startQueue.Dequeue()
-            Start-Row $next
-        }
-        if ($script:startQueue.Count -gt 0) { $script:startAllTimer.Start() }
+        $runningRows = @($script:rows | Where-Object { $_.Running })
+        if ($runningRows.Count -eq 0) { return }
+        if ($script:pollIndex -ge $runningRows.Count) { $script:pollIndex = 0 }
+        $row = $runningRows[$script:pollIndex]
+        $script:pollIndex++
+        Poll-Row $row
     }
-    catch { Append-Log "START QUEUE ERROR: $($_.Exception.Message)" }
+    catch { Append-Log "POLL TIMER ERROR: $($_.Exception.Message)" }
 })
-
-$script:eventTimer = New-Object System.Windows.Forms.Timer
-$script:eventTimer.Interval = 150
-$script:eventTimer.Add_Tick({
-    try {
-        $evt = $null
-        while ($script:eventQueue.TryDequeue([ref]$evt)) {
-            $row = Find-Row ([string]$evt.Id)
-            if (-not $row) { continue }
-            $login = $row.Login.Text.Trim()
-            if ($evt.Kind -eq 'OUT') {
-                $line = [string]$evt.Text
-                Append-Log "[$login] $line"
-                if ($line.Contains('[PORTAL] CLICKER ACTIVE')) { Set-RowStatus $row "ACTIVE" ([System.Drawing.Color]::DarkGreen) }
-                elseif ($line.Contains('[PORTAL] USE attempt=')) { Set-RowStatus $row "CLICKED" ([System.Drawing.Color]::DarkBlue) }
-                elseif ($line.Contains('[PORTAL] discovered')) { Set-RowStatus $row "PORTAL FOUND" ([System.Drawing.Color]::DarkCyan) }
-            }
-            elseif ($evt.Kind -eq 'ERR') {
-                Append-Log "[$login][ERR] $($evt.Text)"
-                Set-RowStatus $row "ERROR" ([System.Drawing.Color]::Firebrick)
-            }
-            elseif ($evt.Kind -eq 'EXIT') {
-                if (-not $script:closing) {
-                    Set-RowStatus $row "EXIT $($evt.Code)" ([System.Drawing.Color]::Firebrick)
-                    Append-Log "[$login] adb session exited: $($evt.Code)"
-                }
-                $row.Process = $null
-                $row.Start.Enabled = $true
-                $row.Stop.Enabled = $false
-            }
-            $evt = $null
-        }
-    }
-    catch { Append-Log "EVENT QUEUE ERROR: $($_.Exception.Message)" }
-})
-$script:eventTimer.Start()
+$script:pollTimer.Start()
 
 try {
+    if (-not (Test-Path -LiteralPath $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+    if (Test-Path -LiteralPath $crashPath) { Remove-Item -LiteralPath $crashPath -Force -ErrorAction SilentlyContinue }
+
     $config = Load-Config
     if ($config) {
         if ($config.authAddr) { $script:authBox.Text = [string]$config.authAddr }
@@ -585,18 +575,15 @@ try {
         $exact = Get-Content -LiteralPath $buildInfo | Where-Object { $_ -like 'EXACT_SHA=*' } | Select-Object -First 1
         if ($exact) { Append-Log $exact }
     }
-    Append-Log "SAFE GUI ready. Start all uruchamia konta co 900 ms."
+    Append-Log "DETACHED GUI ready. Brak async Process callbacks."
 
     $script:form.Add_FormClosing({
         param($sender, $e)
         if ($script:closing) { return }
-        $running = $false
-        foreach ($row in $script:rows) {
-            if ($row.Process) { try { if (-not $row.Process.HasExited) { $running = $true; break } } catch {} }
-        }
+        $running = @($script:rows | Where-Object { $_.Running }).Count -gt 0
         if ($running) {
             $answer = [System.Windows.Forms.MessageBox]::Show(
-                "Zamkniecie GUI zatrzyma wszystkie uruchomione clickery. Zamknac?",
+                "Zamkniecie GUI zatrzyma wszystkie clickery. Zamknac?",
                 "Portal Clicker",
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Question
@@ -604,7 +591,7 @@ try {
             if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { $e.Cancel = $true; return }
         }
         $script:closing = $true
-        $script:eventTimer.Stop()
+        $script:pollTimer.Stop()
         Save-Config
         Stop-All
     })
@@ -614,10 +601,16 @@ try {
 catch {
     try {
         if (-not (Test-Path -LiteralPath $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
-        $details = "$(Get-Date -Format o)`r`n$($_ | Out-String)`r`n$($_.ScriptStackTrace)"
+        $details = @(
+            "Time: $(Get-Date -Format o)",
+            "Message: $($_.Exception.Message)",
+            "Type: $($_.Exception.GetType().FullName)",
+            "Stack: $($_.ScriptStackTrace)",
+            "Invocation: $($_.InvocationInfo.PositionMessage)"
+        ) -join "`r`n"
         Set-Content -LiteralPath $crashPath -Value $details -Encoding UTF8
     }
     catch {}
-    [System.Windows.Forms.MessageBox]::Show("GUI crash: $($_.Exception.Message)`r`nLog: $crashPath", "Portal Clicker GUI", "OK", "Error") | Out-Null
-    exit 1
+    [System.Windows.Forms.MessageBox]::Show("GUI crash zapisany do:`r`n$crashPath`r`n`r`n$($_.Exception.Message)", "Portal Clicker - GUI crash", "OK", "Error") | Out-Null
+    exit 2
 }
