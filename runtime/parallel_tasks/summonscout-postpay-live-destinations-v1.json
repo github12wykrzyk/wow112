@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-postpay-live-destinations-v1",
+  "goal": "Make the post-payment thank-you advertise every other currently available SummonScout destination across the live fallback-router fleet, excluding this client's own service and failing safe to thank-only when no verified other route is available.",
+  "branch": "feature/summonscout-postpay-live-destinations-v1",
+  "base_parallel_sha": "24142abf7bd6949f15ed48ff32329b9f81e0367b",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "hot-fanout-lua50-syntax-fix-v1",
+    "summonscout-fallback-router-v1",
+    "summonscout-postpay-retry-v1"
+  ],
+  "shared_resources": [
+    "SummonScout post-payment customer messaging"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Primary post-payment copy now derives other routes from fallbackrouter.directory plus live fallbackrouter.providers using the existing 38s provider TTL, excludes every locally configured service id, and formats one/two/many destination labels. Primary exports a narrow message builder/detector so PostPaymentFallbackHot uses the same dynamic route list and cannot duplicate a valid dynamic thank-you. If the fleet directory is unavailable or has no other route, both paths send thank-only rather than advertising an unverified location.",
+  "integrated_feature_sha": "8a88f7a13182957a44e35f8011ecc3aec8786c51"
+}
