@@ -7,6 +7,7 @@ on:
       - 'feature/**'
     paths:
       - 'tools/updater/**'
+      - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_updater.yml'
   workflow_dispatch:
 
@@ -27,6 +28,17 @@ jobs:
       - name: Verify current repository state
         shell: pwsh
         run: python tools/verify_current.py
+
+      - name: Build terminal portal clicker x86
+        if: ${{ hashFiles('probes/Wow112HeadlessAndroid/Cargo.toml') != '' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustup target add i686-pc-windows-msvc
+          cargo check --locked --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+          cargo build --locked --release --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe dist/WoW112TerminalPortalClicker.exe
 
       - name: Compile WinForms updater and bootstrap x86
         shell: pwsh
@@ -89,21 +101,17 @@ jobs:
             tools\updater\UpdaterIssueReportFeature.cs
           if ($LASTEXITCODE -ne 0) { throw "updater csc failed with exit code $LASTEXITCODE" }
 
-          # Exercise the actual updater gate against missing, stale and mutated
-          # attestations on Windows x86; do not rely on text/regex checks alone.
           & $csc /nologo /target:exe /platform:x86 /optimize+ /langversion:latest `
-            /out:dist\\UpdaterAttestationTests.exe `
-            /reference:"$ref\\mscorlib.dll" `
-            /reference:"$ref\\System.dll" `
-            /reference:"$ref\\System.Core.dll" `
-            tools\\updater\\UpdaterSafety.cs `
-            tools\\updater\\UpdaterAttestationTests.cs
+            /out:dist\UpdaterAttestationTests.exe `
+            /reference:"$ref\mscorlib.dll" `
+            /reference:"$ref\System.dll" `
+            /reference:"$ref\System.Core.dll" `
+            tools\updater\UpdaterSafety.cs `
+            tools\updater\UpdaterAttestationTests.cs
           if ($LASTEXITCODE -ne 0) { throw "updater attestation test compile failed" }
           & ./dist/UpdaterAttestationTests.exe
           if ($LASTEXITCODE -ne 0) { throw "updater attestation test failed" }
 
-          # Future-proof addon gate: arbitrary safe addon folder names are valid,
-          # while traversal and malformed addon roots remain fail-closed.
           & $csc /nologo /target:exe /platform:x86 /optimize+ /langversion:latest `
             /out:dist\UpdaterAddonsTests.exe `
             /reference:"$ref\mscorlib.dll" `
@@ -138,7 +146,7 @@ jobs:
           path: dist/ui-checks
           if-no-files-found: warn
 
-      - name: Verify updater PE32 x86 and hashes
+      - name: Verify updater and terminal PE32 x86 and hashes
         shell: pwsh
         run: |
           @'
@@ -166,8 +174,10 @@ jobs:
 
           updater = Path('dist/WoW112ParallelUpdater.exe')
           bootstrap = Path('dist/WoW112UpdaterBootstrap.exe')
+          terminal = Path('dist/WoW112TerminalPortalClicker.exe')
           updater_data, updater_machine = inspect(updater)
           bootstrap_data, bootstrap_machine = inspect(bootstrap)
+          terminal_data, terminal_machine = inspect(terminal)
           meta = {
               'name': updater.name,
               'updater_version': updater_version,
@@ -179,6 +189,10 @@ jobs:
               'bootstrap_sha256': hashlib.sha256(bootstrap_data).hexdigest(),
               'bootstrap_size': len(bootstrap_data),
               'bootstrap_pe_machine': f'0x{bootstrap_machine:04X}',
+              'terminal_portal_name': terminal.name,
+              'terminal_portal_sha256': hashlib.sha256(terminal_data).hexdigest(),
+              'terminal_portal_size': len(terminal_data),
+              'terminal_portal_pe_machine': f'0x{terminal_machine:04X}',
               'git_sha': '${{ github.sha }}',
               'channel': '${{ github.ref_name }}',
           }
@@ -197,6 +211,7 @@ jobs:
           path: |
             dist/WoW112ParallelUpdater.exe
             dist/WoW112UpdaterBootstrap.exe
+            dist/WoW112TerminalPortalClicker.exe
             dist/updater_build.json
             dist/README_UPDATER.md
           if-no-files-found: error
