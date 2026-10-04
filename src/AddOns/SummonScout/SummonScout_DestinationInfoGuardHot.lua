@@ -12,7 +12,7 @@
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.GetState) ~= "function" then return end
 
-local VERSION = "1-priority-info-query"
+local VERSION = "2-info-sum-auto-probe"
 local D = H.GetState("destinationinfoguard")
 local F = H.GetState("fallbackrouter")
 
@@ -68,7 +68,7 @@ local function diIsInfoQuestion(message)
     local asksWhich = diPhraseHas(s, "which")
     if not asksWhere and not asksWhat and not asksWhich then return false end
 
-    local summonWord = string.find(s, "summ", 1, true) ~= nil
+    local summonWord = diPhraseHas(s, "sum") or string.find(s, "summ", 1, true) ~= nil
     local routeWord = diPhraseHas(s, "location") or diPhraseHas(s, "locations")
         or diPhraseHas(s, "destination") or diPhraseHas(s, "destinations")
         or diPhraseHas(s, "place") or diPhraseHas(s, "places")
@@ -200,10 +200,15 @@ end
 
 local function diAutomaticOutgoing(message)
     local raw = diTrim(message)
+    local normalized = diNormalize(raw)
     if string.find(raw, "I can help with summons. Available:", 1, true) == 1 then return true end
     if raw == "I don't have an available summon route right now." then return true end
     if string.sub(raw, 1, 9) == "Got it - " then return true end
     if string.find(raw, " is currently unavailable. Please try again shortly.", 1, true) then return true end
+    if string.find(normalized, "do you need ", 1, true) == 1
+        and string.find(normalized, " summon", 1, true) then
+        return true
+    end
     return false
 end
 
