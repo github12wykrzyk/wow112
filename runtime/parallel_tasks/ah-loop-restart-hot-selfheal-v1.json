@@ -17,22 +17,12 @@
     "AuxEconomyShadow hot bundle",
     "AuxVmangos LOOP scheduler"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [
     "economy"
   ],
-  "lease": {
-    "owner": "chatgpt:ah-loop-restart-hot-selfheal-v1",
-    "acquired_at": "2026-10-04T13:29:49Z",
-    "heartbeat_at": "2026-10-04T13:35:52Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "module:AuxVmangos",
-      "module:AuxFastBridge",
-      "resource:AUXFAST_RestartSearch"
-    ]
-  },
-  "notes": "Issue #388 on direct-live testpoint f06b13eb showed AH_ZERO_CONFIG_ACTIVE live=true/loop=true followed only by repeated 'LOOP restart unavailable; retry in 5s' and no later AUX scan start. The hot repair is intentionally limited to restoring the missing bridge restart surface: prefer an already-loaded legacy AUXFAST_ResumeSearch, otherwise use only verified AuxFastBridge primitives plus upstream aux.tabs.search execute. It sends no auction query itself, submits no transaction, changes no live flags, and remains inside the existing ECONOMY hot host. The predecessor ah-direct-live-authority-v1 lease was stale on its old feature ref after successful integration and has now been explicitly released. No gameplay result is claimed before user test."
+  "lease": null,
+  "notes": "Issue #388 on direct-live testpoint f06b13eb showed AH_ZERO_CONFIG_ACTIVE live=true/loop=true followed only by repeated 'LOOP restart unavailable; retry in 5s' and no later AUX scan start. The hot repair is intentionally limited to restoring the missing bridge restart surface: prefer an already-loaded legacy AUXFAST_ResumeSearch, otherwise use only verified AuxFastBridge primitives plus upstream aux.tabs.search execute. It sends no auction query itself, submits no transaction, changes no live flags, and remains inside the existing ECONOMY hot host. The predecessor ah-direct-live-authority-v1 lease was stale on its old feature ref after successful integration and has now been explicitly released. No gameplay result is claimed before user test. This feature branch task record was reconciled to its already-integrated parallel state so it no longer holds an orphaned control-plane lease.",
+  "integrated_feature_sha": "7fffeb1610abb8011574a4396c77fe4f5ecdfb8d"
 }
