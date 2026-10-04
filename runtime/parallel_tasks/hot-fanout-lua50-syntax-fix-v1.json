@@ -3,7 +3,7 @@
   "id": "hot-fanout-lua50-syntax-fix-v1",
   "goal": "Fix the packaged SummonScout HOT fanout so WoW 1.12.1 Lua 5.0 can parse the watched WhisperConfirmSpam carrier; eliminate consecutive immediately-invoked parenthesized functions and add a regression gate for the exact ambiguous-syntax failure seen in game.",
   "branch": "feature/hot-fanout-lua50-syntax-fix-v1",
-  "base_parallel_sha": "403e7bf3a69e47b9922ba5ab59048a066afeb11a",
+  "base_parallel_sha": "f77dde19bd83f3a29cb64338e74c9ff5f301476c",
   "modules": [
     "SummonScout",
     "AI-workflow"
@@ -27,5 +27,5 @@
       "resource:SummonScout hot delivery transform"
     ]
   },
-  "notes": "Root cause reproduced from verified artifact 11302366865 for parallel a8246230d9e2fa0f9a09b92297dc308e03fcf4e4: generated SummonScout_WhisperConfirmSpam.lua line 1321 ends one IIFE with end)(), and line 1324 begins the next with (function(), which WoW Lua 5.0 rejects as ambiguous syntax (function call x new statement). Fix replaces every generated IIFE with a uniquely named local function followed by an ordinary call, preserves per-module local/return scope, and adds a regression assertion that the ambiguous wrapper form cannot be packaged again."
+  "notes": "Root cause reproduced from verified artifact 11302366865 for parallel a8246230d9e2fa0f9a09b92297dc308e03fcf4e4: generated SummonScout_WhisperConfirmSpam.lua line 1321 ends one IIFE with end)(), and line 1324 begins the next with (function(), which WoW Lua 5.0 rejects as ambiguous syntax (function call x new statement). Fix replaces every generated IIFE with a uniquely named local function followed by an ordinary call, preserves per-module local/return scope, and adds a regression assertion that the ambiguous wrapper form cannot be packaged again. Reconciled onto current parallel after concurrent queue integrations changed the baseline task record."
 }

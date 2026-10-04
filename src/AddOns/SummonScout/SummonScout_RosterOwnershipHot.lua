@@ -15,10 +15,12 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "4-explicit-api-world-buyer-taxi"
+local VERSION = "5-explicit-api-l1-leader-handoff"
 local S = H.GetState("rosterguard")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
+S.nextLeaderHandoffAt = tonumber(S.nextLeaderHandoffAt) or 0
+S.lastLeaderHandoffTarget = S.lastLeaderHandoffTarget or ""
 
 local function rgNow()
     if GetTime then return GetTime() end
@@ -262,6 +264,44 @@ local function rgPatchRosterOwnership(api, state)
     return true
 end
 
+local LEADER_HANDOFF_PRIORITY = {
+    "teletanaris",
+    "bolthyjal",
+    "feltaxi",
+}
+
+local function rgTryLevelOneLeaderHandoff()
+    if type(UnitLevel) ~= "function" or type(UnitIsPartyLeader) ~= "function"
+        or type(UnitName) ~= "function" or type(GetNumPartyMembers) ~= "function"
+        or type(PromoteByName) ~= "function" then
+        return
+    end
+
+    if UnitLevel("player") ~= 1 or not UnitIsPartyLeader("player") then
+        S.lastLeaderHandoffTarget = ""
+        return
+    end
+
+    local count = GetNumPartyMembers() or 0
+    if count <= 0 then return end
+
+    local wanted, i, j, name
+    for i = 1, table.getn(LEADER_HANDOFF_PRIORITY) do
+        wanted = LEADER_HANDOFF_PRIORITY[i]
+        for j = 1, count do
+            name = UnitName("party" .. j)
+            if name and rgKey(name) == wanted then
+                PromoteByName(name)
+                S.lastLeaderHandoffTarget = wanted
+                if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout roster:|r lvl 1 leader -> " .. tostring(name))
+                end
+                return
+            end
+        end
+    end
+end
+
 local function rgPatch()
     local api = rgResolveApi()
     if not api then
@@ -286,7 +326,9 @@ local M = {}
 
 function M.Init()
     S.nextPatchAt = 0
+    S.nextLeaderHandoffAt = 0
     rgPatch()
+    rgTryLevelOneLeaderHandoff()
 end
 
 function M.OnUpdate()
@@ -294,6 +336,10 @@ function M.OnUpdate()
     if t < (S.nextPatchAt or 0) then return end
     S.nextPatchAt = t + 0.50
     rgPatch()
+    if t >= (S.nextLeaderHandoffAt or 0) then
+        S.nextLeaderHandoffAt = t + 2.00
+        rgTryLevelOneLeaderHandoff()
+    end
 end
 
 function M.Shutdown()
