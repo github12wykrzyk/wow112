@@ -91,15 +91,13 @@ class AHCutoverAuthoritativeGateTests(unittest.TestCase):
         task = json.loads(TASK.read_text(encoding="utf-8"))
         self.assertEqual(task["branch"], "feature/ah-cutover-authoritative-gate-v1")
         self.assertEqual(task["base_parallel_sha"], "9b743815820bf68dcff2f4c483b3d430ac954de7")
-        self.assertIn(task["status"], {"preflight", "ready_for_integration"})
-        if task["status"] == "ready_for_integration":
-            self.assertTrue(task["auto_integrate"])
-        else:
-            self.assertFalse(task["auto_integrate"])
+        self.assertEqual(task["status"], "integrated")
+        self.assertFalse(task["auto_integrate"])
+        self.assertEqual(task["integrated_feature_sha"], "5cdcb4bdab9f5ed1ae53d17ad22c21624c8b62c3")
         self.assertEqual(task["delivery_profiles"], ["economy"])
         self.assertIn("AuxEconomyShadow", task["modules"])
         self.assertIn("AuxVmangos", task["modules"])
-        self.assertIn("resource:auxvmangos-real-action-gate", task["lease"]["scopes"])
+        self.assertIsNone(task["lease"])
 
 
 if __name__ == "__main__":

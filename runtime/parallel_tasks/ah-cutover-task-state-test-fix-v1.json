@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "ah-cutover-task-state-test-fix-v1",
+  "goal": "Restore the global AI/preflight test suite after ah-cutover-authoritative-gate-v1 reached integrated state by making its regression test assert the exact integrated state and feature SHA instead of the obsolete preflight/ready state.",
+  "branch": "feature/ah-cutover-task-state-test-fix-v1",
+  "base_parallel_sha": "1de2df5aa5424b910f0a99ac9733dd14e2ed27c2",
+  "modules": [
+    "AI-workflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-test-suite"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Test/metadata-only unblocker. Current parallel task ah-cutover-authoritative-gate-v1 is already integrated with integrated_feature_sha 5cdcb4bdab9f5ed1ae53d17ad22c21624c8b62c3 and lease=null, while tools/test_ai_ah_cutover_authoritative_gate.py still required preflight/ready_for_integration and an active lease. This feature strengthens the test to the exact integrated SHA/state and does not change AH or gameplay code.",
+  "integrated_feature_sha": "07781acf2455f803506d6e6077771b8e2298b0af"
+}
