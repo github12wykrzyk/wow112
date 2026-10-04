@@ -32,6 +32,7 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Parity.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityBridge.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityExport.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Cutover.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": "WoWAutoLoginBridge_5875_v1.dll",
@@ -55,30 +56,63 @@
   "coordination": {
     "coordinator": "single shadow state machine",
     "aux_adapter": "observation-only boundary accepting normalized AUX callbacks",
-    "transaction_guard": "single future transaction authority; real actions hard-locked in shadow",
+    "transaction_guard": "single cutover transaction authority; enabling real actions is parity-gated and pending dispatches remain fail-closed until active-owner reconciliation",
     "autosell": "pure cancel-return-reprice-post-reconcile lifecycle emitting intents only",
     "ledger": "persistent bounded economy event ledger with summary aggregation",
     "parity": "pure comparison store for active-vs-shadow decisions and lifecycle states",
     "parity_bridge": "passive hot-reload observer around project-owned AVM_AuxArb callbacks; original callbacks run exactly once and retain their return values",
-    "parity_export": "shadow-only wrapper around parity.RecordDecision that mirrors compact parity evidence into AVM_DB.marketMeta for the existing AH dump exporter",
-    "states": ["IDLE","SCANNING","PAUSE_REQUESTED","PAUSED","VERIFYING","TRANSACTION_PENDING","UNKNOWN_HOLD","RESUME_PENDING","STOPPED"]
+    "parity_export": "single wrapper around parity.RecordDecision that mirrors compact parity evidence and feeds active/shadow decision pairs to cutover",
+    "cutover": "guarded PlaceAuctionBid approval layer: proven AuxVmangos remains the transaction executor/rollback backend; current-generation positive exact shadow parity is required before authoritative gating arms",
+    "states": [
+      "IDLE",
+      "SCANNING",
+      "PAUSE_REQUESTED",
+      "PAUSED",
+      "VERIFYING",
+      "TRANSACTION_PENDING",
+      "UNKNOWN_HOLD",
+      "RESUME_PENDING",
+      "STOPPED"
+    ]
   },
   "delivery": {
-    "enabled": false,
-    "active_parallel_candidate": false,
-    "active_economy_overlay": false,
+    "enabled": true,
+    "active_parallel_candidate": true,
+    "active_economy_overlay": true,
     "updater_visible": false,
-    "cutover_allowed": false
+    "cutover_allowed": true,
+    "cutover_mode": "auto-arm-after-current-generation-positive-exact-match"
   },
   "safety": {
-    "production_ah_untouched": true,
+    "production_ah_source_untouched": true,
+    "production_transaction_executor_retained": true,
     "may_send_ah_queries": false,
-    "may_submit_transactions": false,
-    "may_patch_global_ah_api": false,
+    "may_submit_transactions": true,
+    "may_patch_global_ah_api": true,
+    "patched_global_ah_api": [
+      "PlaceAuctionBid"
+    ],
+    "global_patch_scope": "only AuxVmangos REVALIDATE/BID_REVALIDATE auxarb_* candidates are gated; unrelated/manual calls pass through",
     "passive_project_callback_wrapping": true,
-    "wrapped_project_callbacks": ["AVM_AuxArbScanStart","AVM_AuxArbAuction","AVM_AuxArbPageDone","AVM_AuxArbScanDone"],
+    "wrapped_project_callbacks": [
+      "AVM_AuxArbScanStart",
+      "AVM_AuxArbAuction",
+      "AVM_AuxArbPageDone",
+      "AVM_AuxArbScanDone"
+    ],
     "wrapper_preserves_original_return": true,
-    "real_actions_hard_locked": true
+    "real_actions_hard_locked": false,
+    "real_actions_fail_closed": true,
+    "pre_arm_behavior": "existing AuxVmangos behavior passes through until the first current-generation positive exact parity match",
+    "mismatch_behavior": "recorded mismatched active candidate is blocked and cutover disarms for the generation",
+    "baseline_evidence": {
+      "issue": 309,
+      "sha": "be68344ee6063f2cee838d721946c401e86e90a6",
+      "decision_compared": 1214,
+      "decision_match_pct": 100,
+      "observer_errors": 0,
+      "note": "All baseline decisions were both-reject; therefore live cutover additionally requires a current-generation positive exact match."
+    }
   },
-  "stage": "passive_parity_export_ready"
+  "stage": "cutover_authoritative_gate_candidate"
 }

@@ -22,13 +22,14 @@ BUNDLE_BUILDER = ROOT / "tools" / "ah_shadow_hot_bundle.py"
 class AHShadowCriticalHardeningTests(unittest.TestCase):
     def test_atomic_bundle_and_anchor_contract(self):
         bundle = build_bundle()
-        self.assertEqual(BUNDLE_PROTOCOL_REVISION, "v5-host-independent-shadow")
+        self.assertEqual(BUNDLE_PROTOCOL_REVISION, "v6-cutover-authoritative-gate")
         self.assertEqual(bundle.count(ATOMIC_BEGIN_MARKER), 1)
         self.assertEqual(bundle.count(ATOMIC_END_MARKER), 1)
         self.assertLess(bundle.find(ATOMIC_BEGIN_MARKER), bundle.find(ATOMIC_END_MARKER))
         self.assertEqual(bundle.count(b"W112_AH_SHADOW.BeginHotPayload("), 1)
         self.assertEqual(bundle.count(b"W112_AH_SHADOW.EndHotPayload("), 1)
         self.assertLess(bundle.find(b"-- END AuxEconomyShadow_Anchor.lua"), bundle.find(ATOMIC_BEGIN_MARKER))
+        self.assertLess(bundle.find(b"-- BEGIN AuxEconomyShadow_Cutover.lua"), bundle.find(b"-- BEGIN AuxEconomyShadow_HotPayload.lua"))
         self.assertLess(bundle.find(b"-- BEGIN AuxEconomyShadow_HotPayload.lua"), bundle.find(ATOMIC_END_MARKER))
         self.assertEqual(ORDER[0], "AuxEconomyShadow_Anchor.lua")
 
