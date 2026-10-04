@@ -642,5 +642,5 @@ end
 
 H.Register("postpay", M, POSTPAY_VERSION)
 if DEFAULT_CHAT_FRAME then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r direct-prefix hot-test received")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SummonScout PING]|r updater-testpoint-ping-v1 received")
 end

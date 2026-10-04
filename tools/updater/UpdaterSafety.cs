@@ -7,7 +7,7 @@ namespace WoW112Updater
 {
     internal static class UpdaterBuildInfo
     {
-        public const string Version = "2.10-parallel.2";
+        public const string Version = "2.10-parallel.3";
     }
 
     internal static class UpdaterSafety
@@ -101,7 +101,7 @@ namespace WoW112Updater
             if (!IsCommitSha(candidateSha) || !IsCommitSha(currentHead) ||
                 !string.Equals(candidateSha, currentHead, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
-                    "HEAD parallel zmienił się lub jest nieprawidłowy (paczka: " +
+                    "Punkt dostawy parallel-testpoint zmienił się lub jest nieprawidłowy (paczka: " +
                     ShortSha(candidateSha) + ", aktualny: " + ShortSha(currentHead) +
                     "). Instalacja starszej paczki zablokowana; sprawdź ponownie aktualizację.");
         }

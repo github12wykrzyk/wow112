@@ -37,14 +37,15 @@ namespace WoW112Updater
                     trackedHead = currentHead;
                     waitingRunId = 0L;
                 }
-                var url = ApiRoot + "/actions/workflows/" + EconomyWorkflowFile + "/runs?branch=" + branch + "&per_page=20";
+                var runBranch = string.Equals(branch, "parallel-testpoint", StringComparison.Ordinal) ? "parallel" : branch;
+                var url = ApiRoot + "/actions/workflows/" + EconomyWorkflowFile + "/runs?branch=" + runBranch + "&per_page=20";
                 var root = AsDictionary(json.DeserializeObject(await GetStringAsync(client, url)));
                 var runs = AsArray(GetValue(root, "workflow_runs"));
-                var exact = UpdaterSafety.FindRunForHead(runs, EconomyWorkflowName, branch, trackedHead);
+                var exact = UpdaterSafety.FindRunForHead(runs, EconomyWorkflowName, runBranch, trackedHead);
                 if (exact == null)
                 {
                     if (DateTime.UtcNow >= deadlineUtc)
-                        return UpdaterSafety.RequireSuccessfulRunForHead(runs, EconomyWorkflowName, branch, trackedHead);
+                        return UpdaterSafety.RequireSuccessfulRunForHead(runs, EconomyWorkflowName, runBranch, trackedHead);
                     status.Text = "ECONOMY " + ShortSha(trackedHead) + " • czekam na fast build...";
                     await Task.Delay(2500);
                     continue;
@@ -62,7 +63,7 @@ namespace WoW112Updater
                     await Task.Delay(5000);
                     continue;
                 }
-                return UpdaterSafety.RequireSuccessfulRunForHead(runs, EconomyWorkflowName, branch, trackedHead);
+                return UpdaterSafety.RequireSuccessfulRunForHead(runs, EconomyWorkflowName, runBranch, trackedHead);
             }
         }
 

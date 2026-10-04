@@ -407,7 +407,7 @@ namespace WoW112Updater
         private async Task<RemotePackageInfo> FindLatestPackageAsync()
         {
             var stable = IsStable();
-            var branch = "parallel";
+            var branch = "parallel-testpoint";
             var workflowName = stable ? StableWorkflowName : (IsEconomy() ? EconomyWorkflowName : TestWorkflowName);
             var prefix = stable ? StableArtifactPrefix : (IsEconomy() ? EconomyArtifactPrefix : TestArtifactPrefix);
             var innerName = stable ? StableInnerZip : (IsEconomy() ? EconomyInnerZip : IsAutoRear() ? AutoRearInnerZip
@@ -483,7 +483,7 @@ namespace WoW112Updater
             using (var client = CreateClient())
             {
                 var branchInfo = AsDictionary(json.DeserializeObject(
-                    await GetStringAsync(client, ApiRoot + "/branches/parallel")));
+                    await GetStringAsync(client, ApiRoot + "/branches/parallel-testpoint")));
                 var head = GetString(AsDictionary(GetValue(branchInfo, "commit")), "sha");
                 UpdaterSafety.RequireCurrentParallelHead(remote.HeadSha, head);
             }
@@ -513,15 +513,16 @@ namespace WoW112Updater
                     waitingRunId = 0L;
                 }
 
-                var url = ApiRoot + "/actions/runs?branch=" + branch + "&per_page=50";
+                var runBranch = string.Equals(branch, "parallel-testpoint", StringComparison.Ordinal) ? "parallel" : branch;
+                var url = ApiRoot + "/actions/runs?branch=" + runBranch + "&per_page=50";
                 var root = AsDictionary(json.DeserializeObject(await GetStringAsync(client, url)));
                 var runs = AsArray(GetValue(root, "workflow_runs"));
-                var exact = UpdaterSafety.FindRunForHead(runs, workflowName, branch, trackedHead);
+                var exact = UpdaterSafety.FindRunForHead(runs, workflowName, runBranch, trackedHead);
 
                 if (exact == null)
                 {
                     if (DateTime.UtcNow >= deadlineUtc)
-                        return UpdaterSafety.RequireSuccessfulRunForHead(runs, workflowName, branch, trackedHead);
+                        return UpdaterSafety.RequireSuccessfulRunForHead(runs, workflowName, runBranch, trackedHead);
 
                     status.Text = "Nowy HEAD " + ShortSha(trackedHead) +
                         " • czekam na uruchomienie jego builda...";
@@ -548,7 +549,7 @@ namespace WoW112Updater
                 }
 
                 var chosen = UpdaterSafety.RequireSuccessfulRunForHead(
-                    runs, workflowName, branch, trackedHead);
+                    runs, workflowName, runBranch, trackedHead);
                 if (waitingRunId != 0)
                     Log("Build Parallel #" + GetLong(chosen, "id") + " dla HEAD " +
                         ShortSha(trackedHead) + " zakończony sukcesem; pobieram zweryfikowaną paczkę.");
