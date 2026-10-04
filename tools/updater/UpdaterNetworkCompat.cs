@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -79,6 +80,40 @@ namespace WoW112Updater
             foreach (var part in text.Split('&'))
                 if (string.Equals(part, token, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
+        }
+    }
+
+    // MainForm historically resolves the updater-local WoW112Updater.Process guard before
+    // System.Diagnostics.Process. That guard is correct for WoW launches but wrong for the
+    // Android terminal backend, where adb.exe must be executed as a normal Windows process.
+    // Keep every legacy call fail-closed through the guard and bypass it only for adb.exe.
+    internal sealed partial class MainForm
+    {
+        private static class Process
+        {
+            public static global::WoW112Updater.Process[] GetProcesses()
+            {
+                return global::WoW112Updater.Process.GetProcesses();
+            }
+
+            public static System.Diagnostics.Process Start(System.Diagnostics.ProcessStartInfo startInfo)
+            {
+                if (startInfo != null
+                    && string.Equals(Path.GetFileName(startInfo.FileName), "adb.exe", StringComparison.OrdinalIgnoreCase))
+                    return System.Diagnostics.Process.Start(startInfo);
+
+                return global::WoW112Updater.Process.Start(startInfo);
+            }
+
+            public static System.Diagnostics.Process Start(System.Diagnostics.ProcessStartInfo startInfo, string configName)
+            {
+                return global::WoW112Updater.Process.Start(startInfo, configName);
+            }
+
+            public static System.Diagnostics.Process Start(System.Diagnostics.ProcessStartInfo startInfo, string configName, bool backgroundSound)
+            {
+                return global::WoW112Updater.Process.Start(startInfo, configName, backgroundSound);
+            }
         }
     }
 }
