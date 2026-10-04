@@ -16,7 +16,7 @@
     "AuxEconomyShadow hot bundle",
     "AuxVmangos live executor"
   ],
-  "status": "in_progress",
+  "status": "ready_for_integration",
   "auto_integrate": true,
   "delivery_profiles": [
     "economy"
