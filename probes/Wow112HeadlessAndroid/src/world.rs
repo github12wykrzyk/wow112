@@ -214,7 +214,18 @@ fn inspect_update_packet(
         return Ok(());
     }
 
-    match parse_raw_server_message(opcode, payload)? {
+    let message = match parse_raw_server_message(opcode, payload) {
+        Ok(message) => message,
+        Err(error) => {
+            println!(
+                "[AH-DIAG] background update skipped opcode=0x{opcode:04X} payload={} reason={error}",
+                payload.len()
+            );
+            return Ok(());
+        }
+    };
+
+    match message {
         ServerOpcodeMessage::SMSG_UPDATE_OBJECT(message) => {
             collect_auctioneer_guids(&message.objects, auctioneers);
         }
@@ -273,7 +284,7 @@ fn send_auction_hello(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
     auctioneer_guid: u64,
-) -> Result<u32, String> {
+) -> Result<(u64, u32), String> {
     println!("[AH] opening auction house guid=0x{auctioneer_guid:016X}");
     write_encrypted_raw(
         stream,
@@ -283,7 +294,11 @@ fn send_auction_hello(
     )?;
 
     let mut discovered = HashSet::new();
-    for index in 0..128usize {
+    discovered.insert(auctioneer_guid);
+    let mut attempted = HashSet::new();
+    attempted.insert(auctioneer_guid);
+
+    for index in 0..256usize {
         let (opcode, payload) = read_encrypted_raw(stream, crypto.decrypter())?;
         if opcode == MSG_AUCTION_HELLO_OPCODE {
             if payload.len() < 12 {
@@ -297,7 +312,7 @@ fn send_auction_hello(
             println!(
                 "[AH] MSG_AUCTION_HELLO PASS guid=0x{response_guid:016X} house={auction_house}"
             );
-            return Ok(auction_house);
+            return Ok((response_guid, auction_house));
         }
 
         inspect_update_packet(opcode, &payload, &mut discovered)?;
@@ -307,9 +322,30 @@ fn send_auction_hello(
                 payload.len()
             );
         }
+
+        if (index + 1) % 16 == 0 {
+            if let Some(next_guid) = discovered
+                .iter()
+                .copied()
+                .find(|guid| !attempted.contains(guid))
+            {
+                println!("[AH] hello retry with auctioneer guid=0x{next_guid:016X}");
+                write_encrypted_raw(
+                    stream,
+                    crypto.encrypter(),
+                    u32::from(MSG_AUCTION_HELLO_OPCODE),
+                    &next_guid.to_le_bytes(),
+                )?;
+                attempted.insert(next_guid);
+            }
+        }
     }
 
-    Err("server did not return MSG_AUCTION_HELLO within 128 packets".to_string())
+    Err(format!(
+        "server did not return MSG_AUCTION_HELLO within 256 packets; attempted={} candidates={}",
+        attempted.len(),
+        discovered.len()
+    ))
 }
 
 fn build_read_only_auction_query(auctioneer_guid: u64) -> Vec<u8> {
@@ -402,8 +438,9 @@ fn probe_read_only_auction_house(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
 ) -> Result<(), String> {
-    let auctioneer_guid = discover_auctioneer(stream, crypto)?;
-    let auction_house = send_auction_hello(stream, crypto, auctioneer_guid)?;
+    let auctioneer_candidate = discover_auctioneer(stream, crypto)?;
+    let (auctioneer_guid, auction_house) =
+        send_auction_hello(stream, crypto, auctioneer_candidate)?;
 
     let query = build_read_only_auction_query(auctioneer_guid);
     println!(
