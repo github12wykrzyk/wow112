@@ -14,21 +14,12 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [
     "economy"
   ],
-  "lease": {
-    "owner": "chatgpt-ah-shadow-host-independent-v1",
-    "acquired_at": "2026-10-04T01:38:57Z",
-    "heartbeat_at": "2026-10-04T01:45:10Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "resource:ah-shadow-hot-bundle",
-      "resource:parity-evidence"
-    ]
-  },
-  "notes": "Root cause from gameplay evidence #301/#302: ECONOMY delivered the transformed SummonScout_PostPaymentOfferHot.lua, but AH-DUMP #302 contained no marketMeta.shadowParity. The transformed host appended the shadow bundle after a top-level SummonScout runtime-anchor guard that can return before the bundle. Fix prepends the shadow bundle before all original SummonScout host code, preserving the original host afterward. No AuxVmangos production logic, AH query scheduling, buy/bid/cancel/post primitives, transaction ownership or cutover behavior changes. Regression now asserts BUNDLE_END precedes the complete original host, so any host return is necessarily after shadow execution. Exact feature SHA d690673ddbfefdfd6185619e5d40ba6cb8be5504 passed preflight run 37168884209 and ECONOMY run 37168923033 before queue opt-in."
+  "lease": null,
+  "notes": "Root cause from gameplay evidence #301/#302: ECONOMY delivered the transformed SummonScout_PostPaymentOfferHot.lua, but AH-DUMP #302 contained no marketMeta.shadowParity. The transformed host appended the shadow bundle after a top-level SummonScout runtime-anchor guard that can return before the bundle. Fix prepends the shadow bundle before all original SummonScout host code, preserving the original host afterward. No AuxVmangos production logic, AH query scheduling, buy/bid/cancel/post primitives, transaction ownership or cutover behavior changes. Regression asserts BUNDLE_END precedes the complete original host, so any host return is necessarily after shadow execution. Feature SHA d690673ddbfefdfd6185619e5d40ba6cb8be5504 passed preflight 37168884209 and ECONOMY 37168923033. Queue SHA 9b5aae5f34a2391c6a9721734265225f339a3d7a integrated to parallel be68344ee6063f2cee838d721946c401e86e90a6; final STANDARD 37169074680 PASS and ECONOMY 37169080277 PASS. Feature-branch lease released after integration.",
+  "integrated_feature_sha": "9b5aae5f34a2391c6a9721734265225f339a3d7a"
 }
