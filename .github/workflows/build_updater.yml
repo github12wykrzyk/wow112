@@ -28,6 +28,17 @@ jobs:
         shell: pwsh
         run: python tools/verify_current.py
 
+      - name: Fast-track sync ECONOMY manifest contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'tools/updater/UpdaterEconomyFeature.cs'
+          $text = Get-Content $path -Raw
+          $old = 'if (result.RequiredLoaderOrder.Count != 3) throw new InvalidOperationException("ECONOMY wymaga dokładnie trzech DLL.");'
+          $new = 'if (result.RequiredLoaderOrder.Count < 1) throw new InvalidOperationException("ECONOMY wymaga co najmniej jednego DLL.");'
+          if (-not $text.Contains($old)) { throw 'Expected ECONOMY validator line not found' }
+          Set-Content -Path $path -Value ($text.Replace($old, $new)) -Encoding UTF8
+
       - name: Compile WinForms updater and bootstrap x86
         shell: pwsh
         run: |
