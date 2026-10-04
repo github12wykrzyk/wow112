@@ -8,9 +8,9 @@
 
 SummonScout.lua
 SummonScout_HotHost.lua
+SummonScout_EngineV2FoundationHot.lua
 SummonScout_LocationAnchorHot.lua
 SummonScout_PostPaymentOfferHot.lua
 SummonScout_WhisperConfirmSpam.lua
 SummonScout_GroupedResumeHot.lua
 SummonScout_RosterOwnershipHot.lua
-SummonScout_EngineV2FoundationHot.lua

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-engine-v2-explicit-api-p02",
+  "goal": "P0.2 Summon Engine V2 foundation: migrate grouped resume, roster ownership and location anchor hot modules away from duplicated legacy-core upvalue discovery onto W112_SUMMONSCOUT_API_V1/W112_SUMMONSCOUT_STATE, keeping gameplay behavior unchanged.",
+  "branch": "feature/summonscout-engine-v2-explicit-api-p02",
+  "base_parallel_sha": "b0fdbefbf1e552838732e65916def282137e15b5",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-foundation-p0"
+  ],
+  "shared_resources": [
+    "SummonScout core EventAPI/state",
+    "SummonScout hot module compatibility surface",
+    "SummonScout roster-to-summon ownership",
+    "SummonScout location classifier"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summon-engine-p02",
+    "acquired_at": "2026-10-04T09:15:00Z",
+    "heartbeat_at": "2026-10-04T09:15:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:SummonScout",
+      "resource:SummonScout core EventAPI/state",
+      "resource:SummonScout hot module compatibility surface",
+      "resource:SummonScout roster-to-summon ownership",
+      "resource:SummonScout location classifier"
+    ]
+  },
+  "notes": "Separate continuation from frozen P0.1 testpoint b0fdbefbf1e552838732e65916def282137e15b5. P0.2 centralizes legacy debug.getupvalue/setupvalue knowledge in EngineV2FoundationHot and makes hot modules consume an explicit compatibility API. No Ritual/native/payment/advert behavior change is intended."
+}
