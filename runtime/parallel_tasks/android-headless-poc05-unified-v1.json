@@ -15,18 +15,15 @@
   ],
   "status": "preflight",
   "auto_integrate": false,
-  "delivery_profiles": [
-    "android-headless-poc05-test-bundle"
-  ],
+  "delivery_profiles": [],
   "lease": {
     "owner": "chatgpt:android-headless-poc05-unified-v1",
     "acquired_at": "2026-10-04T18:54:00Z",
     "heartbeat_at": "2026-10-04T18:54:00Z",
     "ttl_seconds": 21600,
     "scopes": [
-      "module:Wow112HeadlessAndroid",
-      "workflow:build_android_headless_probe"
+      "module:Wow112HeadlessAndroid"
     ]
   },
-  "notes": "Fresh feature branch from exact parallel SHA 368abe053d6981d0897fbaecb2646391c213a87a. Runtime source is copied exactly from verified POC-05 fix SHA 404df8dcd6690cbe678f3de6d96596a0f0ae0525 (preflight run 37225206063 PASS, Android build run 37225206076 PASS, artifact 11311582132). This iteration changes delivery only: Windows/ADB one-run launcher, current POC-05 README, BUILD_INFO exact-SHA metadata and SHA256SUMS verification. Gameplay result for the new packaged exact SHA remains unknown until user test."
+  "notes": "Fresh feature branch from exact parallel SHA 368abe053d6981d0897fbaecb2646391c213a87a. Runtime source is copied exactly from verified POC-05 fix SHA 404df8dcd6690cbe678f3de6d96596a0f0ae0525 (preflight run 37225206063 PASS, Android build run 37225206076 PASS, artifact 11311582132). This iteration changes delivery only: Windows/ADB one-run launcher, current POC-05 README, BUILD_INFO exact-SHA metadata and SHA256SUMS verification. Android POC is isolated from the canonical Windows delivery profiles, so delivery_profiles is intentionally empty. Gameplay result for the new packaged exact SHA remains unknown until user test."
 }
