@@ -1,4 +1,5 @@
 use crate::wire_build::OCTOWOW_WIRE_BUILD;
+use std::io::{self, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 use wow_srp::normalized_string::NormalizedString;
@@ -10,6 +11,38 @@ use wow_world_messages::vanilla::{
     CMSG_AUTH_SESSION, CMSG_CHAR_ENUM, CMSG_PLAYER_LOGIN, SMSG_AUTH_CHALLENGE,
     SMSG_AUTH_RESPONSE, SMSG_CHAR_ENUM,
 };
+
+fn hex_prefix(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn world_diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
+    let previous_timeout = stream.read_timeout().ok().flatten();
+    if stream.set_read_timeout(Some(timeout)).is_err() {
+        println!("[WORLD-DIAG] {label} unable-to-set-timeout");
+        return;
+    }
+
+    let mut buf = [0u8; 32];
+    match stream.peek(&mut buf) {
+        Ok(count) => println!(
+            "[WORLD-DIAG] {label} pending={count} bytes={}",
+            hex_prefix(&buf[..count])
+        ),
+        Err(error)
+            if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+        {
+            println!("[WORLD-DIAG] {label} pending=0");
+        }
+        Err(error) => println!("[WORLD-DIAG] {label} peek-error={error}"),
+    }
+
+    let _ = stream.set_read_timeout(previous_timeout);
+}
 
 pub fn login(
     stream: &mut TcpStream,
@@ -35,7 +68,7 @@ pub fn login(
         challenge.server_seed,
     );
 
-    CMSG_AUTH_SESSION {
+    let auth_session = CMSG_AUTH_SESSION {
         build: OCTOWOW_WIRE_BUILD as u32,
         server_id: server_id as u32,
         username: username.to_string(),
@@ -47,9 +80,25 @@ pub fn login(
             addon_extra_crc: 0,
             addon_has_signature: 0,
         }],
-    }
-    .write_unencrypted_client(&mut *stream)
-    .map_err(|e| format!("write world auth session failed: {e:?}"))?;
+    };
+
+    let mut auth_wire = Vec::new();
+    auth_session
+        .write_unencrypted_client(&mut auth_wire)
+        .map_err(|e| format!("encode world auth session failed: {e:?}"))?;
+    let safe_prefix_len = auth_wire.len().min(24);
+    println!(
+        "[WORLD-DIAG] auth-session-out len={} prefix={} wire-build={} server-id={}",
+        auth_wire.len(),
+        hex_prefix(&auth_wire[..safe_prefix_len]),
+        OCTOWOW_WIRE_BUILD,
+        server_id
+    );
+    stream
+        .write_all(&auth_wire)
+        .map_err(|e| format!("write world auth session failed: {e:?}"))?;
+
+    world_diag_peek(stream, "auth-response-raw", Duration::from_millis(1500));
 
     let auth_response = expect_server_message_encryption::<SMSG_AUTH_RESPONSE, _>(
         &mut *stream,
