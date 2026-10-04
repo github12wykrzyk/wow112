@@ -1,0 +1,69 @@
+name: Build Android WoW112 headless probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/android-headless-wow112-poc
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_android_headless_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: cargo install cargo-ndk --locked
+
+      - name: Host compile check
+        shell: bash
+        run: cargo check --locked --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml || cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Build Android x86_64 executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo ndk -t x86_64 --platform 21 build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Verify and stage artifact
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$(find probes/Wow112HeadlessAndroid/target -type f -name wow112-headless-android-probe -perm -111 -print -quit)"
+          test -n "$BIN"
+          mkdir -p dist/android-headless-probe
+          cp "$BIN" dist/android-headless-probe/wow112-headless-android-probe
+          file dist/android-headless-probe/wow112-headless-android-probe
+          sha256sum dist/android-headless-probe/wow112-headless-android-probe | tee dist/android-headless-probe/SHA256SUMS.txt
+          cp probes/Wow112HeadlessAndroid/README.md dist/android-headless-probe/README.md
+
+      - name: Upload probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Android-Headless-Probe-${{ github.sha }}
+          path: dist/android-headless-probe
+          if-no-files-found: error
+          retention-days: 14
