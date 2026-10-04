@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "android-headless-wow112-poc",
+  "goal": "Prove a renderer-free WoW 1.12.1 build 5875 client can authenticate and enter a world session as an Android x86_64 executable in a PC emulator before implementing read-only Auction House and Mail support.",
+  "branch": "feature/android-headless-wow112-poc",
+  "base_parallel_sha": "7ae339593c11d3c9836ab0e0fd8eb197e38e7be2",
+  "modules": [
+    "Wow112HeadlessAndroid"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "WoW 1.12.1 build 5875 headless protocol client"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:android-headless-wow112",
+    "acquired_at": "2026-10-04T10:25:00Z",
+    "heartbeat_at": "2026-10-04T10:25:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:Wow112HeadlessAndroid"
+    ]
+  },
+  "notes": "Isolated emulator-first probe. It does not modify current MarketWorker/AUX DLL ownership, parallel_candidate, loader or updater delivery. POC-01 ends at SMSG_LOGIN_VERIFY_WORLD; AH read-only is intentionally deferred until protocol login succeeds on the real server."
+}

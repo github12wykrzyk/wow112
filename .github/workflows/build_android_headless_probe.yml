@@ -7,6 +7,7 @@ on:
       - feature/android-headless-wow112-poc
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
+      - 'runtime/parallel_tasks/android-headless-wow112-poc.json'
       - '.github/workflows/build_android_headless_probe.yml'
 
 permissions:
@@ -42,7 +43,7 @@ jobs:
 
       - name: Host compile check
         shell: bash
-        run: cargo check --locked --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml || cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
       - name: Build Android x86_64 executable
         shell: bash

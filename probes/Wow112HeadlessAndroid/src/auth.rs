@@ -35,10 +35,10 @@ pub fn authenticate(
         client_ip_address: Ipv4Addr::LOCALHOST,
         account_name: username.to_string(),
     }
-    .write(auth_server)
+    .write(&mut *auth_server)
     .map_err(|e| format!("write auth challenge failed: {e:?}"))?;
 
-    let response = expect_server_message::<CMD_AUTH_LOGON_CHALLENGE_Server, _>(auth_server)
+    let response = expect_server_message::<CMD_AUTH_LOGON_CHALLENGE_Server, _>(&mut *auth_server)
         .map_err(|e| format!("read auth challenge failed: {e:?}"))?;
 
     let challenge = if let CMD_AUTH_LOGON_CHALLENGE_Server::Success {
@@ -77,10 +77,10 @@ pub fn authenticate(
         telemetry_keys: vec![],
         security_flag: CMD_AUTH_LOGON_PROOF_Client_SecurityFlag::None,
     }
-    .write(auth_server)
+    .write(&mut *auth_server)
     .map_err(|e| format!("write auth proof failed: {e:?}"))?;
 
-    let proof = expect_server_message::<CMD_AUTH_LOGON_PROOF_Server, _>(auth_server)
+    let proof = expect_server_message::<CMD_AUTH_LOGON_PROOF_Server, _>(&mut *auth_server)
         .map_err(|e| format!("read auth proof failed: {e:?}"))?;
 
     let session = if let CMD_AUTH_LOGON_PROOF_Server::Success { server_proof, .. } = proof {
@@ -92,10 +92,10 @@ pub fn authenticate(
     };
 
     CMD_REALM_LIST_Client {}
-        .write(auth_server)
+        .write(&mut *auth_server)
         .map_err(|e| format!("write realm-list request failed: {e:?}"))?;
 
-    let realms = expect_server_message::<CMD_REALM_LIST_Server, _>(auth_server)
+    let realms = expect_server_message::<CMD_REALM_LIST_Server, _>(&mut *auth_server)
         .map_err(|e| format!("read realm-list failed: {e:?}"))?;
 
     println!("[AUTH] SRP6 PASS");

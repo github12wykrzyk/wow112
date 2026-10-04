@@ -21,7 +21,7 @@ pub fn login(
         .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(|e| format!("set world read timeout failed: {e}"))?;
 
-    let challenge = expect_server_message::<SMSG_AUTH_CHALLENGE, _>(stream)
+    let challenge = expect_server_message::<SMSG_AUTH_CHALLENGE, _>(&mut *stream)
         .map_err(|e| format!("read world auth challenge failed: {e:?}"))?;
 
     let seed = ProofSeed::new();
@@ -47,11 +47,11 @@ pub fn login(
             addon_has_signature: 0,
         }],
     }
-    .write_unencrypted_client(stream)
+    .write_unencrypted_client(&mut *stream)
     .map_err(|e| format!("write world auth session failed: {e:?}"))?;
 
     let auth_response = expect_server_message_encryption::<SMSG_AUTH_RESPONSE, _>(
-        stream,
+        &mut *stream,
         crypto.decrypter(),
     )
     .map_err(|e| format!("read world auth response failed: {e:?}"))?;
@@ -62,11 +62,11 @@ pub fn login(
     println!("[WORLD] auth PASS");
 
     CMSG_CHAR_ENUM {}
-        .write_encrypted_client(stream, crypto.encrypter())
+        .write_encrypted_client(&mut *stream, crypto.encrypter())
         .map_err(|e| format!("write character enum request failed: {e:?}"))?;
 
     let characters = expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(
-        stream,
+        &mut *stream,
         crypto.decrypter(),
     )
     .map_err(|e| format!("read character enum failed: {e:?}"))?;
@@ -91,11 +91,11 @@ pub fn login(
 
     println!("[WORLD] logging character={}", selected.name);
     CMSG_PLAYER_LOGIN { guid: selected.guid }
-        .write_encrypted_client(stream, crypto.encrypter())
+        .write_encrypted_client(&mut *stream, crypto.encrypter())
         .map_err(|e| format!("write player login failed: {e:?}"))?;
 
     for index in 0..256usize {
-        let opcode = ServerOpcodeMessage::read_encrypted(stream, crypto.decrypter())
+        let opcode = ServerOpcodeMessage::read_encrypted(&mut *stream, crypto.decrypter())
             .map_err(|e| format!("read world opcode failed before login verify: {e:?}"))?;
 
         if index < 24 {
