@@ -39,10 +39,14 @@ class AHShadowStrategyParityTests(unittest.TestCase):
 
     def test_postscan_buyout_precedes_bid_fallback(self):
         pipeline = (SHADOW / "AuxEconomyShadow_CandidatePipeline.lua").read_text(encoding="utf-8")
-        self.assertIn("postscanBestAffordable", pipeline)
-        self.assertIn("bestBidLive", pipeline)
-        self.assertIn('selectionSource = "bid-fallback"', pipeline)
-        self.assertLess(pipeline.index("postscanBestAffordable"), pipeline.index("bestBidLive"))
+        selection = (
+            'local selectedPostscan = postscanBestAffordable\n'
+            '        local selectionSource = selectedPostscan and "buyout" or nil\n'
+            '        if not selectedPostscan and bestBidLive then\n'
+            '            selectedPostscan = bestBidLive\n'
+            '            selectionSource = "bid-fallback"'
+        )
+        self.assertIn(selection, pipeline)
 
     def test_de_history_rollback_boundary_is_preserved(self):
         de = (SHADOW / "AuxEconomyShadow_Disenchant.lua").read_text(encoding="utf-8").lower()
