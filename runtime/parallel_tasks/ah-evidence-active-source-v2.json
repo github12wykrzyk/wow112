@@ -28,5 +28,5 @@
       "resource:updater-ah-evidence"
     ]
   },
-  "notes": "Updater-only Evidence Gate V2. Baseline includes every valid parity-evidence AuxVmangos.lua regardless of MARKET snapshot. CHECK identifies the uniquely changed source using SavedVariables write/counter deltas, keeps baseline after FAIL, and leaves AuxVmangos/AuxEconomyShadow/cutover behavior untouched."
+  "notes": "Updater-only Evidence Gate V2. Baseline includes every valid parity-evidence AuxVmangos.lua regardless of MARKET snapshot. CHECK identifies the uniquely changed source using SavedVariables write/counter deltas, keeps baseline after FAIL, and leaves AuxVmangos/AuxEconomyShadow/cutover behavior untouched. Predecessor v1 lease was released after its completed integration so this successor can own the same evidence surface."
 }
