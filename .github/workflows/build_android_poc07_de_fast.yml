@@ -1,0 +1,90 @@
+name: POC07 DE Android Fast Build
+
+on:
+  push:
+    branches:
+      - feature/android-headless-poc07-fast
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/world_poc07_delive.rs'
+      - '.github/workflows/build_android_poc07_de_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select DE live entrypoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN='probes/Wow112HeadlessAndroid/src/main.rs'
+          grep -q 'mod world_poc07_vendorlive;' "$MAIN"
+          grep -q 'world_poc07_vendorlive::login_poc07_vendorlive' "$MAIN"
+          sed -i 's/mod world_poc07_vendorlive;/mod world_poc07_delive;/' "$MAIN"
+          sed -i 's/world_poc07_vendorlive::login_poc07_vendorlive/world_poc07_delive::login_poc07_delive/' "$MAIN"
+          grep -q 'mod world_poc07_delive;' "$MAIN"
+          grep -q 'world_poc07_delive::login_poc07_delive' "$MAIN"
+
+      - name: Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Build POC07 DE x86_64 Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINKER="${ANDROID_SDK_ROOT}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
+          test -x "$LINKER"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$LINKER"
+          export CC_x86_64_linux_android="$LINKER"
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target x86_64-linux-android
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN='probes/Wow112HeadlessAndroid/target/x86_64-linux-android/release/wow112-headless-android-probe'
+          test -x "$BIN"
+          mkdir -p dist/poc07-de
+          cp "$BIN" dist/poc07-de/wow112-headless-android-probe
+          cp probes/Wow112HeadlessAndroid/src/world_poc07_delive.rs dist/poc07-de/world_poc07_delive.rs
+          BIN_SHA="$(sha256sum dist/poc07-de/wow112-headless-android-probe | awk '{print $1}')"
+          {
+            echo 'POC=07-DE-LIVE-SCAN'
+            echo "REPOSITORY=${GITHUB_REPOSITORY}"
+            echo "BRANCH=${GITHUB_REF_NAME}"
+            echo "EXACT_SHA=${GITHUB_SHA}"
+            echo 'TARGET=x86_64-linux-android'
+            echo 'ANDROID_API=21'
+            echo "BINARY_SHA256=${BIN_SHA}"
+            echo 'MUTATION=DISABLED'
+            echo 'DE_SCOPE=QUALITY_2_3_ILVL_31_65'
+            echo 'DEFAULT_DE_NET_BPS=8500'
+          } > dist/poc07-de/BUILD_INFO.txt
+          (cd dist/poc07-de && sha256sum wow112-headless-android-probe world_poc07_delive.rs BUILD_INFO.txt > SHA256SUMS.txt)
+          file dist/poc07-de/wow112-headless-android-probe
+          cat dist/poc07-de/BUILD_INFO.txt
+
+      - name: Upload POC07 DE binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Android-POC07-DE-Live-${{ github.sha }}
+          path: dist/poc07-de
+          if-no-files-found: error
+          retention-days: 7
