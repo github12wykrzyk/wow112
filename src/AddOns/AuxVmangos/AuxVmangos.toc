@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: AuxVmangos
-## Notes: Turtle arbitrage with single-state AutoSell repricing, manual exact price decisions, owner-scan arbitration, transaction-safe fast resume, low-risk live-depth arbitrage and native ledger UI.
+## Notes: Turtle arbitrage with single-state AutoSell repricing, manual exact price decisions, owner-scan arbitration, transaction-safe fast resume, low-risk live-depth arbitrage, defensive BID rules and native ledger UI.
 ## Author: github12wykrzyk/wow112
 ## Dependencies: aux-addon
-## Version: 0.48-liquid-depth-lowrisk
+## Version: 0.49-defensive-bid-rules-v3
 ## SavedVariables: AVM_DB
 AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
@@ -16,5 +16,7 @@ AuxVmangos_AutoSellAHSession.lua
 AuxVmangos_AutoSell.lua
 AuxVmangos_AutoSellLifecycle.lua
 AuxVmangos_PostDefaults.lua
+AuxVmangos_ArbitrageRules.lua
+AuxVmangos_AuxArbitrageRules.lua
 AuxVmangos_WatchUI.lua
 AuxVmangos_LiquidDepth.lua
