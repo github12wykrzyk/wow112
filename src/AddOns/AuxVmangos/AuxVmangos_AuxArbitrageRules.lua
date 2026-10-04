@@ -9,10 +9,20 @@ local frame = CreateFrame('Frame', nil, aux.frame)
 frame:SetAllPoints()
 frame:Hide()
 
+-- Keep navigation/actions in one fixed row inside AUX content. The rule pages
+-- are anchored below that row so their controls can never overlap the buttons
+-- on 768p / scaled UI layouts.
+local header = CreateFrame('Frame', nil, frame)
+header:SetPoint('TOPLEFT', aux.frame.content, 'TOPLEFT', 0, 0)
+header:SetPoint('TOPRIGHT', aux.frame.content, 'TOPRIGHT', 0, 0)
+header:SetHeight(30)
+
 local buyPage = CreateFrame('Frame', nil, frame)
-buyPage:SetAllPoints()
+buyPage:SetPoint('TOPLEFT', aux.frame.content, 'TOPLEFT', 0, -34)
+buyPage:SetPoint('BOTTOMRIGHT', aux.frame.content, 'BOTTOMRIGHT', 0, 0)
 local bidPage = CreateFrame('Frame', nil, frame)
-bidPage:SetAllPoints()
+bidPage:SetPoint('TOPLEFT', aux.frame.content, 'TOPLEFT', 0, -34)
+bidPage:SetPoint('BOTTOMRIGHT', aux.frame.content, 'BOTTOMRIGHT', 0, 0)
 bidPage:Hide()
 local currentPage = 'BUYOUT'
 local fields = {}
@@ -101,7 +111,7 @@ local function show_page(which)
 	load_fields()
 end
 
-local buyBtn=gui.button(frame);buyBtn:SetPoint('TOPLEFT',aux.frame.content,'TOPLEFT',8,-6);buyBtn:SetWidth(100);buyBtn:SetText('BUYOUT')
+local buyBtn=gui.button(frame);buyBtn:SetPoint('TOPLEFT',header,'TOPLEFT',8,-2);buyBtn:SetWidth(100);buyBtn:SetText('BUYOUT')
 local bidBtn=gui.button(frame);bidBtn:SetPoint('LEFT',buyBtn,'RIGHT',6,0);bidBtn:SetWidth(100);bidBtn:SetText('BID')
 local saveBtn=gui.button(frame);saveBtn:SetPoint('LEFT',bidBtn,'RIGHT',20,0);saveBtn:SetWidth(100);saveBtn:SetText('Save rules')
 local reloadBtn=gui.button(frame);reloadBtn:SetPoint('LEFT',saveBtn,'RIGHT',6,0);reloadBtn:SetWidth(80);reloadBtn:SetText('Reload')

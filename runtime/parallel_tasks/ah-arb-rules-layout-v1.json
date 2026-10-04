@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "ah-arb-rules-layout-v1",
+  "goal": "Fix the native AUX Arb Rules tab layout so BUYOUT/BID/Save/Reload controls occupy a dedicated header row and never overlap BUYOUT/BID rule fields on 768p or scaled UI layouts.",
+  "branch": "feature/ah-arb-rules-layout-v1",
+  "base_parallel_sha": "84c6baf9389c1776398f0a07f52b710de534ffd8",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [
+    "ah-defensive-bid-rules-v3"
+  ],
+  "shared_resources": [
+    "AuxVmangos native AUX Arb Rules UI"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-arb-rules-layout-v1",
+    "acquired_at": "2026-10-04T17:02:46Z",
+    "heartbeat_at": "2026-10-04T17:02:46Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxVmangos"
+    ]
+  },
+  "notes": "User screenshot showed the Arb Rules top action buttons overlapping the BID master/vendor/DE/resell checkboxes and first-row fields. Root cause: rule pages were SetAllPoints() to the full AUX frame while the action buttons were anchored to aux.frame.content, so the two coordinate systems collided. This UI-only fix creates a dedicated header anchored to aux.frame.content and anchors BUYOUT/BID pages 34 px below it. No BID/BUYOUT thresholds, defaults, transaction logic, scanning, valuation, or auction execution behavior changes. ECONOMY delivery is required; one /reload is expected because this is TOC-loaded addon Lua. No gameplay/UI success is claimed before user test."
+}
