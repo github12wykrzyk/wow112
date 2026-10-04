@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "android-headless-poc05-unified-v1",
+  "goal": "Deliver the verified POC-05 Android headless client as a self-contained test bundle with a Windows/ADB launcher, exact Git SHA evidence and bundle checksums, rebased onto the current parallel integration head without adding it to the normal Windows parallel_candidate stack.",
+  "branch": "feature/android-headless-poc05-unified-v1",
+  "base_parallel_sha": "368abe053d6981d0897fbaecb2646391c213a87a",
+  "modules": [
+    "Wow112HeadlessAndroid"
+  ],
+  "dependencies": [
+    "android-headless-wow112-poc05-mail-actions-v2"
+  ],
+  "shared_resources": [
+    "WoW 1.12.1 build 5875 headless protocol client"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "android-headless-poc05-test-bundle"
+  ],
+  "lease": {
+    "owner": "chatgpt:android-headless-poc05-unified-v1",
+    "acquired_at": "2026-10-04T18:54:00Z",
+    "heartbeat_at": "2026-10-04T18:54:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:Wow112HeadlessAndroid",
+      "workflow:build_android_headless_probe"
+    ]
+  },
+  "notes": "Fresh feature branch from exact parallel SHA 368abe053d6981d0897fbaecb2646391c213a87a. Runtime source is copied exactly from verified POC-05 fix SHA 404df8dcd6690cbe678f3de6d96596a0f0ae0525 (preflight run 37225206063 PASS, Android build run 37225206076 PASS, artifact 11311582132). This iteration changes delivery only: Windows/ADB one-run launcher, current POC-05 README, BUILD_INFO exact-SHA metadata and SHA256SUMS verification. Gameplay result for the new packaged exact SHA remains unknown until user test."
+}
