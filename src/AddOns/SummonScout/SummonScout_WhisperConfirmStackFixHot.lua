@@ -19,7 +19,7 @@ if M.__stackFixPlayerLogin then
 end
 
 local ORIGINAL_ON_EVENT = M.OnEvent
-local VERSION = "1-player-login-no-reattach"
+local VERSION = "2-player-login-no-reattach-standard-sync"
 
 M.OnEvent = function(ev, a1, a2)
     if ev == "PLAYER_LOGIN" then
