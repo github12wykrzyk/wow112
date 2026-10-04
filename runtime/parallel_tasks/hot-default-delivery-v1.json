@@ -14,17 +14,17 @@
   "shared_resources": [
     "SummonScout hot delivery transform"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
   "lease": {
     "owner": "chatgpt:hot-default-delivery",
     "acquired_at": "2026-10-04T11:16:00Z",
-    "heartbeat_at": "2026-10-04T11:16:00Z",
+    "heartbeat_at": "2026-10-04T11:29:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "resource:SummonScout hot delivery transform"
     ]
   },
-  "notes": "Infrastructure-only first iteration. Existing direct native watch paths remain unchanged. The packaged whisper host becomes a live fanout carrier for every TOC-declared SummonScout_*Hot.lua module that is not already watched directly. Cold load skips the fanout to avoid duplicate registration; live reload replays the fanout in TOC order. Packaging fails closed on unlisted hot modules or watcher payload overflow."
+  "notes": "Existing direct native watch paths stay unchanged. The normal Parallel addon packager now turns SummonScout_WhisperConfirmSpam.lua into a watched fanout carrier for every TOC-declared SummonScout_*Hot.lua module that is not already watched/hosted directly. Cold load skips the fanout to avoid duplicate registration; live reload replays the fanout in TOC order. Packaging fails closed when a non-direct Hot source is missing from the TOC or when the generated watched payload reaches the native 262144-byte cap. This includes SummonScout_RosterOwnershipHot.lua, so the current WTB+taxi parser hotfix is carried by the same automatic path."
 }
