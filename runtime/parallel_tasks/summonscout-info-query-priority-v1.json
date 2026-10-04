@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-info-query-priority-v1",
+  "goal": "Treat destination-information whispers such as 'where can u summon' as informational queries before core invite, grouped-resume and unknown-probe handlers; reply with the live fleet destination list and arm the existing fallback-router pending choice for the customer's next destination reply.",
+  "branch": "feature/summonscout-info-query-priority-v1",
+  "base_parallel_sha": "fbb56aebdd6ad7e1384b9034cd3d2780667640e4",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-fallback-router-v1",
+    "summonscout-unknown-whisper-report-v1"
+  ],
+  "shared_resources": [
+    "SummonScoutFrame CHAT_MSG_WHISPER routing",
+    "SummonScout HotHost CHAT_MSG_WHISPER routing",
+    "SummonScout fallbackrouter pendingChoice",
+    "SummonScout manual-chat outgoing classification"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Lua-only priority guard loaded last from the SummonScout TOC. It intercepts only informational where/what/which + summon/location/destination/place/route questions, suppresses invite-oriented handlers, derives available routes from the existing fallback-router local service/directory/live-provider state, writes the normal pendingChoice state, and preserves all existing routing/payment/ritual behavior for non-informational whispers. Exact CI/test/artifact evidence remains unset until produced.",
+  "integrated_feature_sha": "8c42f57102f73fc5cae58105d7be4ac7357d1449"
+}
