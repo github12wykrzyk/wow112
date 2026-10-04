@@ -69,6 +69,12 @@ jobs:
           python tools/package_parallel_economy_overlay.py --sha "${{ github.sha }}" --fingerprint dist/economy_fingerprint.json
           if ($LASTEXITCODE -ne 0) { throw "ECONOMY package failed" }
 
+      - name: Fast-track SummonScout stack-overflow fix into ECONOMY
+        shell: pwsh
+        run: |
+          python tools/patch_parallel_economy_summonscout_fix.py --sha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "SummonScout ECONOMY fast-track patch failed" }
+
       - name: Upload ECONOMY overlay
         uses: actions/upload-artifact@v4
         with:
