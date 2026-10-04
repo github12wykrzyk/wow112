@@ -5,7 +5,7 @@ use std::time::Duration;
 
 mod auth;
 mod wire_build;
-mod world_poc07;
+mod world_poc07_vendorlive;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
@@ -82,7 +82,7 @@ fn run() -> Result<(), String> {
         OCTOWOW_WIRE_BUILD
     );
     println!(
-        "[POC07] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} autobuy_engine=enabled guarded_buy_primitive=POC06 hard_max_purchases=1 no_auto_retry_after_buy_send=enabled",
+        "[POC07-LIVE] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} vendor_valuation=server-item-query guarded_buy_primitive=POC06 hard_max_purchases=1 no_auto_retry_after_buy_send=enabled",
         soak_seconds, reconnect_limit, reconnect_delay_ms
     );
 
@@ -98,8 +98,8 @@ fn run() -> Result<(), String> {
             &mut ah_mutation_committed,
         ) {
             Ok(()) => {
-                println!("[RESILIENCE] POC-07 SESSION PASS attempts={attempt}");
-                println!("[WOW112-ANDROID-PROBE] PASS: POC-07 autobuy engine");
+                println!("[RESILIENCE] POC-07 LIVE SESSION PASS attempts={attempt}");
+                println!("[WOW112-ANDROID-PROBE] PASS: POC-07 live vendor autobuy engine");
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
@@ -114,7 +114,7 @@ fn run() -> Result<(), String> {
     }
 
     Err(format!(
-        "POC-07 reconnect limit exhausted after {reconnect_limit} attempts"
+        "POC-07 LIVE reconnect limit exhausted after {reconnect_limit} attempts"
     ))
 }
 
@@ -153,7 +153,7 @@ fn run_session(
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    world_poc07::login_poc07(
+    world_poc07_vendorlive::login_poc07_vendorlive(
         &mut world_stream,
         session_key,
         realm.realm_id,
