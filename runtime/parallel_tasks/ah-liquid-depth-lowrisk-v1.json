@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "ah-liquid-depth-lowrisk-v1",
+  "goal": "Add a low-risk LIQUID_DEPTH auction-buying route for the current AuxVmangos live authority: nominate only stackable deep discounts, require a fresh exact named full-depth recheck, then buy only at <=60% of confirmed depth with conservative resale/cut/ROI and strict 10g listing, 20g item and 50g session commitment caps.",
+  "branch": "feature/ah-liquid-depth-lowrisk-v1",
+  "base_parallel_sha": "67f982b41279c088ead27a54e0bebff89cd49ca0",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [
+    "ah-direct-live-authority-v1",
+    "ah-loop-restart-hot-selfheal-v1"
+  ],
+  "shared_resources": [
+    "AuxVmangos AUX_ARB scan callbacks",
+    "auction transaction authority",
+    "AH query stream"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-liquid-depth-lowrisk-v1",
+    "acquired_at": "2026-10-04T14:36:37Z",
+    "heartbeat_at": "2026-10-04T14:36:37Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxVmangos"
+    ]
+  },
+  "notes": "User has about 1000g and requested a new low-risk buying algorithm after Vendor/DE became the only gameplay-confirmed routes. LIQUID_DEPTH does not rely on historical pricing. Discovery data is nomination-only; before any PlaceAuctionBid it performs an exact named query over all result pages, requires at least 20 higher-priced reference units from at least 3 sellers, entry <=60% of the exact depth unit, assumes only 90% of that depth price for resale, subtracts 5% AH cut, requires >=1g expected profit and >=25% ROI, and rechecks the exact listing on its page. Capital is fail-closed at 10g/listing, 20g/item/session and 50g/route-session, with existing global wallet/session caps also honored. The route uses its own pending/unknown money-delta confirmation and blocks LOOP during exact verification/transaction. Vendor/DE code is untouched. Because this is a new TOC-loaded Lua module rather than a hot-bundle monkeypatch, one /reload is required after ECONOMY installation before first gameplay test. No gameplay success is claimed before user test."
+}
