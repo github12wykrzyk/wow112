@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -50,6 +51,15 @@ namespace WoW112Updater
             public int IntegrationReadyCount;
             public string FirstIntegration;
             public readonly List<string> DetailRows = new List<string>();
+        }
+
+        private sealed class LiveFileDelta
+        {
+            public int Total;
+            public int Dll;
+            public int Exe;
+            public int Addons;
+            public int Other;
         }
 
         protected override void OnLoad(EventArgs e)
@@ -471,7 +481,7 @@ namespace WoW112Updater
             liveFilesLastAttemptUtc = DateTime.UtcNow;
             SetLiveFilesVisual(Color.FromArgb(34, 67, 112), Color.FromArgb(174, 211, 255),
                 "LIVE UPDATE   PLIKI: LICZĘ RÓŻNICE SHA256...",
-                "Pobieram i weryfikuję artefakt dokładnego HEAD, a następnie porównuję EXE/DLL/AddOny z lokalnym katalogiem.");
+                "Pobieram i weryfikuję artefakt dokładnego HEAD, a następnie porównuję pełny zestaw plików zarządzanych przez updater z lokalnym katalogiem.");
             try
             {
                 await CheckAsync();
@@ -493,6 +503,128 @@ namespace WoW112Updater
             }
         }
 
+        private LiveFileDelta BuildExactLiveFileDelta(string root)
+        {
+            if (IsEconomy())
+            {
+                return new LiveFileDelta
+                {
+                    Total = LastEnabledDllChangeCount + lastEconomyAddonChangeCount,
+                    Dll = LastEnabledDllChangeCount,
+                    Exe = 0,
+                    Addons = lastEconomyAddonChangeCount,
+                    Other = 0
+                };
+            }
+
+            if (cachedVerifiedPackage == null)
+                throw new InvalidOperationException("Brak zweryfikowanej paczki w cache do policzenia dokładnej delty.");
+
+            var files = new List<PackageFile>();
+            var packageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var ms = new MemoryStream(cachedVerifiedPackage, false))
+            using (var zip = new ZipArchive(ms, ZipArchiveMode.Read, false))
+            {
+                foreach (var entry in zip.Entries)
+                {
+                    if (string.IsNullOrWhiteSpace(entry.Name)) continue;
+                    if (!string.Equals(entry.FullName, entry.Name, StringComparison.Ordinal))
+                        throw new InvalidOperationException("Paczka zawiera zagnieżdżoną lub niebezpieczną ścieżkę: " + entry.FullName);
+                    if (!packageNames.Add(entry.Name))
+                        throw new InvalidOperationException("Paczka zawiera powieloną nazwę pliku: " + entry.Name);
+                    var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                    if (ext != ".dll" && ext != ".exe") continue;
+                    files.Add(new PackageFile(entry.Name, ReadEntry(entry)));
+                }
+            }
+
+            foreach (var addon in cachedVerifiedAddons)
+            {
+                if (!packageNames.Add(addon.Name))
+                    throw new InvalidOperationException("Konflikt nazwy pliku dodatku: " + addon.Name);
+                files.Add(new PackageFile(addon.Name, addon.Bytes));
+            }
+
+            var oldManaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var oldState = ReadInstalledState(root);
+            if (oldState != null)
+            {
+                foreach (var value in AsArray(GetValue(oldState, "managed_files")))
+                {
+                    var name = Convert.ToString(value);
+                    if (!string.IsNullOrWhiteSpace(name)) oldManaged.Add(name);
+                }
+            }
+
+            var remoteDlls = files.Where(f => f.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).ToList();
+            var remoteDllNames = new HashSet<string>(remoteDlls.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+            var installFiles = new List<PackageFile>();
+            var finalDllNames = new List<string>();
+
+            foreach (var file in files)
+            {
+                if (!file.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    installFiles.Add(file);
+                    continue;
+                }
+
+                var dest = SafeDestination(root, file.Name);
+                if (IsDllInstallDisabled(file.Name))
+                {
+                    continue;
+                }
+                if (IsDllUpdateEnabled(file.Name))
+                {
+                    installFiles.Add(file);
+                    finalDllNames.Add(file.Name);
+                }
+                else if (File.Exists(dest))
+                {
+                    finalDllNames.Add(file.Name);
+                }
+            }
+
+            foreach (var oldName in oldManaged.Where(name => name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !remoteDllNames.Contains(name)))
+            {
+                var dest = SafeDestination(root, oldName);
+                if (!IsDllInstallDisabled(oldName) && !IsDllUpdateEnabled(oldName) && File.Exists(dest)
+                    && !finalDllNames.Contains(oldName, StringComparer.OrdinalIgnoreCase))
+                    finalDllNames.Add(oldName);
+            }
+
+            var dllList = finalDllNames.Count == 0 ? string.Empty : string.Join("\r\n", finalDllNames.ToArray()) + "\r\n";
+            installFiles.Add(new PackageFile("dlls.txt", Encoding.ASCII.GetBytes(dllList)));
+            files = installFiles;
+
+            var newManaged = new HashSet<string>(files.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+            foreach (var name in finalDllNames) newManaged.Add(name);
+
+            var changedNames = new List<string>();
+            foreach (var file in files)
+            {
+                var dest = SafeDestination(root, file.Name);
+                if (!File.Exists(dest) || !string.Equals(Sha256File(dest), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    changedNames.Add(file.Name);
+            }
+
+            var staleNames = oldManaged.Where(name =>
+                !newManaged.Contains(name)
+                && File.Exists(SafeDestination(root, name))
+                && (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || IsDllInstallDisabled(name) || IsDllUpdateEnabled(name))).ToList();
+
+            var all = changedNames.Concat(staleNames).ToList();
+            var result = new LiveFileDelta { Total = all.Count };
+            foreach (var name in all)
+            {
+                if (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) result.Dll++;
+                else if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) result.Exe++;
+                else if (UpdaterAddons.IsAddonPath(name)) result.Addons++;
+                else result.Other++;
+            }
+            return result;
+        }
+
         private void RefreshLiveFilesFromCache()
         {
             if (!liveDashboardAttached || githubLiveFilesBadge.IsDisposed || string.IsNullOrWhiteSpace(liveFilesCheckedKey)) return;
@@ -503,30 +635,23 @@ namespace WoW112Updater
                 var expectedKey = ReadyQueueProfileName() + "|" + lastRemote.HeadSha + "|" + Path.GetFullPath(root).ToLowerInvariant();
                 if (!string.Equals(liveFilesCheckedKey, expectedKey, StringComparison.Ordinal)) return;
 
-                var dll = LastEnabledDllChangeCount;
-                var exe = !IsEconomy() && lastExeInspection != null && lastExeInspection.HasChange ? 1 : 0;
-                var addons = IsEconomy() ? lastEconomyAddonChangeCount : cachedVerifiedAddons.Count(addon =>
-                {
-                    var path = SafeDestination(root, addon.Name);
-                    return !File.Exists(path) || !string.Equals(Sha256File(path), Sha256(addon.Bytes), StringComparison.OrdinalIgnoreCase);
-                });
-                var total = dll + exe + addons;
-
-                if (total > 0)
+                var delta = BuildExactLiveFileDelta(root);
+                if (delta.Total > 0)
                 {
                     SetLiveFilesVisual(
                         Color.FromArgb(34, 67, 112), Color.FromArgb(174, 211, 255),
-                        "LIVE UPDATE   PLIKI GOTOWE DO POBRANIA/UPDATE: " + total +
-                            "   | DLL " + dll + " | EXE " + exe + " | ADDONY " + addons,
+                        "LIVE UPDATE   PLIKI GOTOWE DO POBRANIA/UPDATE: " + delta.Total +
+                            "   | DLL " + delta.Dll + " | EXE " + delta.Exe + " | ADDONY " + delta.Addons +
+                            (delta.Other > 0 ? " | INNE " + delta.Other : string.Empty),
                         "Dokładny HEAD: " + lastRemote.HeadSha + " / run " + lastRemote.RunId +
-                            ". Licznik obejmuje tylko pliki faktycznie różniące się lokalnym SHA256 i aktywne wg ustawień DLL.");
+                            ". Licznik odtwarza ten sam końcowy zestaw zarządzanych plików co instalator, w tym dlls.txt i pliki do usunięcia.");
                 }
                 else
                 {
                     SetLiveFilesVisual(
                         Color.FromArgb(32, 77, 50), Color.FromArgb(164, 245, 181),
                         "LIVE UPDATE   PLIKI GOTOWE DO POBRANIA/UPDATE: 0   | LOKALNIE AKTUALNE",
-                        "EXE, aktywne DLL i pliki AddOnów odpowiadają zweryfikowanemu artefaktowi " + MonitorShort(lastRemote.HeadSha, 12) + ".");
+                        "Pełny zestaw plików zarządzanych przez updater odpowiada zweryfikowanemu artefaktowi " + MonitorShort(lastRemote.HeadSha, 12) + ".");
                 }
             }
             catch (Exception ex)
