@@ -3,7 +3,7 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow parity export requires persistent anchor")
 end
 
-local REVISION = "2-marketmeta-export-chat-ping"
+local REVISION = "3-marketmeta-export-chat-ping-2"
 local ok = R.ReplaceModule("parity_export", REVISION, function(state)
     local api = {}
     api.revision = REVISION
@@ -20,7 +20,7 @@ local ok = R.ReplaceModule("parity_export", REVISION, function(state)
         if state.lastChatPingRevision == REVISION then return end
         local frame = DEFAULT_CHAT_FRAME or ChatFrame1
         if frame and type(frame.AddMessage) == "function" then
-            frame:AddMessage("|cff00ff00[GPT]|r AH hot-reload ping OK")
+            frame:AddMessage("|cff00ff00[GPT]|r AH hot-reload ping 2 OK")
             state.lastChatPingRevision = REVISION
         end
     end
