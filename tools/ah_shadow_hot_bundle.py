@@ -12,7 +12,7 @@ BUNDLE_MARKER = b"W112_AH_SHADOW_HOT_BUNDLE_BEGIN:v1"
 BUNDLE_END = b"W112_AH_SHADOW_HOT_BUNDLE_END:v1"
 ATOMIC_BEGIN_MARKER = b"W112_AH_SHADOW_ATOMIC_BATCH_BEGIN:v1"
 ATOMIC_END_MARKER = b"W112_AH_SHADOW_ATOMIC_BATCH_END:v1"
-BUNDLE_PROTOCOL_REVISION = "v4-passive-parity-bridge"
+BUNDLE_PROTOCOL_REVISION = "v5-host-independent-shadow"
 MAX_BUNDLE_BYTES = 196608
 LUA51_LENGTH_OPERATOR = re.compile(rb"#\s*[A-Za-z_(]")
 
@@ -127,8 +127,22 @@ def transform_summonscout_host(name: str, data: bytes) -> bytes:
         return data
     if BUNDLE_MARKER in data or BUNDLE_END in data:
         raise RuntimeError("AH shadow hot bundle already present in watched host")
+
+    # The SummonScout host intentionally returns immediately when its persistent
+    # runtime anchor is unavailable. ECONOMY shadow must not inherit that
+    # dependency: the native watcher executes this whole file even on clients
+    # where SummonScout itself is disabled. Put the AH bundle first so it can
+    # install independently; only afterward may the SummonScout-specific guard
+    # decide to return from the remainder of the chunk.
     bundle = build_bundle()
-    return data.rstrip(b"\r\n") + b"\n\n-- Packaged AuxEconomyShadow hot bundle follows.\n" + bundle
+    host = data.rstrip(b"\r\n")
+    return (
+        b"-- Packaged AuxEconomyShadow hot bundle executes before SummonScout host guards.\n"
+        + bundle
+        + b"\n-- Original SummonScout hot host follows.\n"
+        + host
+        + b"\n"
+    )
 
 
 if __name__ == "__main__":

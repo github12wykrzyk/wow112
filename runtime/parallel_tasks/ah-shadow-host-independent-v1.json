@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-shadow-host-independent-v1",
+  "goal": "Make the ECONOMY AuxEconomyShadow hot bundle execute independently of the SummonScout runtime anchor so a SummonScout guard cannot skip shadow/parity installation.",
+  "branch": "feature/ah-shadow-host-independent-v1",
+  "base_parallel_sha": "0d358d5e6d3282c0c4ee9cc91fe5a7d2bb7e3f4f",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-hotreload-chat-ping-v2"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "Root cause from gameplay evidence #301/#302: ECONOMY delivered the transformed SummonScout_PostPaymentOfferHot.lua, but AH-DUMP #302 contained no marketMeta.shadowParity. The transformed host appended the shadow bundle after a top-level SummonScout runtime-anchor guard that can return before the bundle. Fix prepends the shadow bundle before all original SummonScout host code, preserving the original host afterward. No AuxVmangos production logic, AH query scheduling, buy/bid/cancel/post primitives, transaction ownership or cutover behavior changes. Regression now asserts BUNDLE_END precedes the complete original host, so any host return is necessarily after shadow execution. Exact feature SHA d690673ddbfefdfd6185619e5d40ba6cb8be5504 passed preflight run 37168884209 and ECONOMY run 37168923033 before queue opt-in.",
+  "integrated_feature_sha": "9b5aae5f34a2391c6a9721734265225f339a3d7a"
+}
