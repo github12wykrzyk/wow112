@@ -8,6 +8,7 @@
 
 SummonScout.lua
 SummonScout_HotHost.lua
+SummonScout_LocationAnchorHot.lua
 SummonScout_PostPaymentOfferHot.lua
 SummonScout_WhisperConfirmSpam.lua
 SummonScout_GroupedResumeHot.lua
