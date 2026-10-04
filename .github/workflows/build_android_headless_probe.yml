@@ -1,0 +1,133 @@
+name: Build Android WoW112 headless probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - parallel
+      - feature/updater-android-portal-control-v1
+      - feature/android-headless-poc05-unified-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_android_headless_probe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-android-wow112-headless-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: cargo install cargo-ndk --locked
+
+      - name: PowerShell launcher syntax check
+        shell: pwsh
+        run: |
+          $files = @(
+            'probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.ps1',
+            'probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file : $($_.Message)" }
+              exit 1
+            }
+          }
+
+      - name: Host compile check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Build Android x86_64 executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --release
+
+      - name: Verify and stage Android portal bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$(find probes/Wow112HeadlessAndroid/target -type f -name wow112-headless-android-probe -perm -111 -print -quit)"
+          test -n "$BIN"
+          OUT="dist/android-headless-probe"
+          mkdir -p "$OUT"
+          cp "$BIN" "$OUT/wow112-headless-android-probe"
+          cp probes/Wow112HeadlessAndroid/README.md "$OUT/README.md"
+          cp probes/Wow112HeadlessAndroid/RUN_POC05.cmd "$OUT/RUN_POC05.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_POC05.ps1 "$OUT/RUN_POC05.ps1"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.cmd "$OUT/RUN_PORTAL_CLICKER.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.ps1 "$OUT/RUN_PORTAL_CLICKER.ps1"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.cmd "$OUT/RUN_PORTAL_CLICKER_GUI.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.ps1 "$OUT/RUN_PORTAL_CLICKER_GUI.ps1"
+
+          file "$OUT/wow112-headless-android-probe"
+          BIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
+          cat > "$OUT/BUILD_INFO.txt" <<INFO
+          POC=05
+          REPOSITORY=${GITHUB_REPOSITORY}
+          BRANCH=${GITHUB_REF_NAME}
+          EXACT_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          TARGET=x86_64-linux-android
+          ANDROID_API=21
+          BINARY=wow112-headless-android-probe
+          BINARY_SHA256=${BIN_SHA}
+          PORTAL_BACKEND=android-detached-v5
+          INFO
+
+          (
+            cd "$OUT"
+            sha256sum \
+              wow112-headless-android-probe \
+              RUN_POC05.cmd \
+              RUN_POC05.ps1 \
+              RUN_PORTAL_CLICKER.cmd \
+              RUN_PORTAL_CLICKER.ps1 \
+              RUN_PORTAL_CLICKER_GUI.cmd \
+              RUN_PORTAL_CLICKER_GUI.ps1 \
+              README.md \
+              BUILD_INFO.txt > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          grep -Fx "EXACT_SHA=${GITHUB_SHA}" "$OUT/BUILD_INFO.txt"
+          grep -Fx "BINARY_SHA256=${BIN_SHA}" "$OUT/BUILD_INFO.txt"
+
+      - name: Upload Android portal bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Android-Headless-POC05-${{ github.sha }}
+          path: dist/android-headless-probe
+          if-no-files-found: error
+          retention-days: 14

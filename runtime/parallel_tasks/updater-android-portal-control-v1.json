@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "updater-android-portal-control-v1",
+  "goal": "Integrate the gameplay-validated Android detached V5 headless Summoning Portal clicker into the existing Parallel updater/loader as a control-plane feature, reusing the existing account vault and keeping clicker workers isolated from the loader process.",
+  "branch": "feature/updater-android-portal-control-v1",
+  "base_parallel_sha": "368abe053d6981d0897fbaecb2646391c213a87a",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "Updater",
+    "HeadlessPortalClicker"
+  ],
+  "dependencies": [
+    "terminal-portal-clicker-v2"
+  ],
+  "shared_resources": [
+    "tools/updater/UpdaterTerminalPortalFeature.cs",
+    "probes/Wow112HeadlessAndroid",
+    ".github/workflows/build_updater.yml",
+    ".github/workflows/build_android_headless_probe.yml"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "Exact feature payload build evidence before opt-in: Build WoW112 updater run 37237611112 PASS including x86 compile, dashboard UI smoke, PE/hash verification and artifact upload; Build Android WoW112 headless probe run 37237611102 PASS including PowerShell syntax, host compile, Android x86_64 release build, checksum staging and artifact upload. User gameplay already validated multi-account detached portal clicking on V5. Promotion remains fail-closed behind Parallel Control Plane preflight, exact updater profile gates and serialized CAS integration. Lease intentionally uses only the updater panel resource because the older terminal-portal-clicker-v2 still owns the shared Android probe scope; the control-plane policy explicitly permits leasing a safe declared subset.",
+  "integrated_feature_sha": "7288a91fe308ec7baed21530ec8469d2b0564b98"
+}
