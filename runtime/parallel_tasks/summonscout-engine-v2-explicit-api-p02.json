@@ -16,21 +16,10 @@
     "SummonScout roster-to-summon ownership",
     "SummonScout location classifier"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summon-engine-p02",
-    "acquired_at": "2026-10-04T09:15:00Z",
-    "heartbeat_at": "2026-10-04T10:08:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:SummonScout",
-      "resource:SummonScout core EventAPI/state",
-      "resource:SummonScout hot module compatibility surface",
-      "resource:SummonScout roster-to-summon ownership",
-      "resource:SummonScout location classifier"
-    ]
-  },
-  "notes": "Separate continuation from accepted P0.1 testpoint b0fdbefbf1e552838732e65916def282137e15b5. User reported P0.1 works OK in game on that exact testpoint on 2026-10-04; exact test evidence is recorded in the existing P0.1 task record. P0.2 centralizes legacy debug.getupvalue/setupvalue knowledge in EngineV2FoundationHot and makes hot modules consume an explicit compatibility API. No Ritual/native/payment/advert behavior change is intended. Fresh preflight/integration must use the current live parallel HEAD because parallel advanced independently after the first P0.2 preflight."
+  "lease": null,
+  "notes": "Separate continuation from accepted P0.1 testpoint b0fdbefbf1e552838732e65916def282137e15b5. User reported P0.1 works OK in game on that exact testpoint on 2026-10-04. P0.2 centralized legacy debug.getupvalue/setupvalue knowledge in EngineV2FoundationHot and made hot modules consume an explicit compatibility API. Exact feature SHA 0c5da7ddfd002901d11d2f52cbe92eedd9cc28f4 passed preflight run 37194378541, integrated to parallel as 7ae339593c11d3c9836ab0e0fd8eb197e38e7be2, and full STANDARD run 37194481921 passed with artifact 11300078817. Lease closed after integration so later SummonScout work is not blocked by stale feature metadata.",
+  "integrated_feature_sha": "0c5da7ddfd002901d11d2f52cbe92eedd9cc28f4"
 }
