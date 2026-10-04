@@ -11,17 +11,10 @@
   "shared_resources": [
     "summonscout-grouped-whisper-resume"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summonscout-grouped-resume-v1",
-    "acquired_at": "2026-10-04T01:26:56Z",
-    "heartbeat_at": "2026-10-04T01:26:56Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "resource:summonscout-grouped-whisper-resume"
-    ]
-  },
-  "notes": "Lua-only SummonScout hot module; no DLL/native changes. Reuses the existing core queuePartySummon transaction state machine and its active/pending dedupe. Adds one TOC payload entry."
+  "integrated_feature_sha": "bbb638f701d4aff722e0d910ac5fccfff2774103",
+  "lease": null,
+  "notes": "Lua-only SummonScout hot module; no DLL/native changes. Reuses the existing core queuePartySummon transaction state machine and its active/pending dedupe. Adds one TOC payload entry. Exact feature SHA bbb638f701d4aff722e0d910ac5fccfff2774103 passed Parallel feature preflight run 37168071451 and was manually integrated by parallel merge 8a0944ce74eb8f1c39d88880ea4840fa408aced0 before the no-profile integration fix. Cleanup records the already-completed integration and releases the stale lease."
 }

@@ -12,11 +12,12 @@
     "aux-de-valuation",
     "auction-house-scan-loop"
   ],
-  "status": "preflight",
+  "status": "integrated",
   "auto_integrate": false,
   "delivery_profiles": [
     "STANDARD",
     "ECONOMY"
   ],
-  "notes": "Targeted rollback removes AuxVmangos_DEPriceGuard.lua entirely and restores AuxVmangos.toc byte-for-byte to commit 1891af1e, the parent before the initial 'guard DE valuations against thin price spikes' change. Native AH and AuxFastBridge already match that earlier lineage from the previous rollback; unrelated modern parallel modules remain untouched."
+  "integrated_feature_sha": "381ab3f8665a43029037f9c41a5d1ff777d51585",
+  "notes": "Targeted rollback removes AuxVmangos_DEPriceGuard.lua entirely and restores AuxVmangos.toc byte-for-byte to commit 1891af1e, the parent before the initial 'guard DE valuations against thin price spikes' change. Native AH and AuxFastBridge already match that earlier lineage from the previous rollback; unrelated modern parallel modules remain untouched. Exact feature SHA 381ab3f8665a43029037f9c41a5d1ff777d51585 passed Parallel feature preflight run 37140599302 and is an ancestor of current parallel. Cleanup reconciles the stale preflight task state with the already-integrated repository history."
 }
