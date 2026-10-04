@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "ah-evidence-active-source-v2",
+  "goal": "Replace AH Evidence v1 stale MARKET-source selection with multi-source parity tracking that identifies the AuxVmangos SavedVariables source actually changed by LOOP/reload, without modifying the AH engine.",
+  "branch": "feature/ah-evidence-active-source-v2",
+  "base_parallel_sha": "8f88388804371a99a43395ba74ba340ddf5a5946",
+  "modules": [
+    "UpdaterAHEvidence"
+  ],
+  "dependencies": [
+    "ah-evidence-gate-v1"
+  ],
+  "shared_resources": [
+    "updater-ah-evidence"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "Updater-only Evidence Gate V2. Baseline includes every valid parity-evidence AuxVmangos.lua regardless of MARKET snapshot. CHECK identifies the uniquely changed source using SavedVariables write/counter deltas, keeps baseline after FAIL, and leaves AuxVmangos/AuxEconomyShadow/cutover behavior untouched. Predecessor v1 lease was released after its completed integration so this successor can own the same evidence surface.",
+  "integrated_feature_sha": "fd3623cdaf8b61c2885eb73ae6ea4c6670c34214"
+}

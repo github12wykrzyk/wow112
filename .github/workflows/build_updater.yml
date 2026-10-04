@@ -77,6 +77,10 @@ jobs:
             tools\updater\UpdaterNetworkCompat.cs `
             tools\updater\UpdaterProcessGuard.cs `
             tools\updater\UpdaterRealmlistFeature.cs `
+            tools\updater\UpdaterAhEvidenceV2Bootstrap.cs `
+            tools\updater\UpdaterAhEvidenceV2Model.cs `
+            tools\updater\UpdaterAhEvidenceV2Logic.cs `
+            tools\updater\UpdaterAhEvidenceV2Support.cs `
             tools\updater\UpdaterAccountsFeature.cs `
             tools\updater\UpdaterSummonCoordinatorFeature.cs `
             tools\updater\UpdaterEconomyFeature.cs `
