@@ -100,6 +100,35 @@
     "cas_retry_limit": 3,
     "profile_gate_policy": "Profile-routed file changes must declare the matching delivery_profiles. Declared profile workflows must pass on the exact feature SHA before integration and again on the exact integrated parallel SHA before the serialized queue is released."
   },
+  "diagnostic_hotfix_fast_path": {
+    "opt_in_field": "diagnostic_hotfix_fast_path",
+    "required_delivery_profiles": [
+      "economy"
+    ],
+    "allowed_modules": [
+      "AuxEconomyShadow"
+    ],
+    "allowed_payload_paths": [
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityExport.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
+    ],
+    "forbidden_added_tokens": [
+      "transaction",
+      "ownership",
+      "cutover",
+      "placeauctionbid",
+      "startauction",
+      "cancelauction",
+      "queryauctionitems",
+      "clickauctionsellitembutton",
+      "pickupcontaineritem",
+      "pickupinventoryitem",
+      "buyout",
+      "autosell",
+      "postauction"
+    ],
+    "fallback": "Any ambiguity, extra path, unsupported module/profile, or forbidden added token requires the full STANDARD post-integration gate."
+  },
   "rules": [
     "Each independent user request gets its own feature branch from the current verified parallel HEAD.",
     "Each feature owns exactly one uniquely named runtime/parallel_tasks/<task-id>.json coordination record; unrelated feature threads must not edit one another's task files.",
@@ -117,7 +146,10 @@
     "The integration queue is globally serialized, re-runs Parallel feature preflight against the live parallel HEAD immediately before each merge attempt, and pushes parallel without force.",
     "If parallel moves before the queued push, the queue fetches the new HEAD, re-runs preflight and retries from the fresh base; merge conflicts fail closed for explicit arbitration.",
     "A successful queued merge records integrated status and the exact integrated feature SHA inside the merge commit, avoiding a follow-up metadata-only parallel commit.",
-    "After a queued merge, the exact integrated parallel SHA must PASS STANDARD Build work candidate and every declared delivery profile workflow before the queue releases the next integration.",
+    "After a queued merge, the exact integrated parallel SHA must PASS STANDARD Build work candidate and every declared delivery profile workflow before the queue releases the next integration, except for the explicit diagnostic_hotfix_fast_path described below.",
+    "diagnostic_hotfix_fast_path is opt-in and may omit only the post-integration STANDARD gate; Parallel feature preflight plus the exact feature-SHA and exact integrated-SHA ECONOMY gates remain mandatory.",
+    "diagnostic_hotfix_fast_path is limited to the policy allowlist of diagnostic/hot-payload Lua files and the task's own coordination record. Any DLL, ownership, transaction, auction action, workflow, packager, manifest or other file change falls back to STANDARD.",
+    "The diagnostic fast path never advances or weakens the STANDARD parallel-testpoint publication contract; it is profile-scoped ECONOMY delivery for live diagnostics/hot payloads only.",
     "Final movement of parallel remains serialized by the optimistic compare-and-swap integration policy with force=false.",
     "runtime/ai_experiments.json remains the evidence/routing ledger; per-task records carry durable coordination intent instead of every transient workflow observation.",
     "A task file status is declared branch-local intent. Live updater status must be derived from live branch/workflow/artifact evidence; a merged task record alone never proves READY TO TEST.",

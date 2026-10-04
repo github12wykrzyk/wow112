@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "parallel-diagnostic-hotfix-fastpath-v1",
+  "goal": "Add a fail-closed diagnostic ECONOMY hotfix fast path that preserves feature preflight and exact-SHA ECONOMY gates while omitting post-integration STANDARD only for explicitly allowlisted hot-bundle diagnostics.",
+  "branch": "feature/parallel-diagnostic-hotfix-fastpath-v1",
+  "base_parallel_sha": "0d358d5e6d3282c0c4ee9cc91fe5a7d2bb7e3f4f",
+  "modules": [
+    "AI-workflow",
+    "ParallelDiagnosticFastPath"
+  ],
+  "dependencies": [
+    "parallel-profile-delivery-v2"
+  ],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "parallel-profile-delivery",
+    "parallel-standard-delivery"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:parallel-diagnostic-hotfix-fastpath-v1",
+    "acquired_at": "2026-10-04T01:10:00Z",
+    "heartbeat_at": "2026-10-04T01:10:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AI-workflow",
+      "module:ParallelDiagnosticFastPath",
+      "resource:parallel-integration-routing",
+      "resource:parallel-profile-delivery",
+      "resource:parallel-standard-delivery"
+    ]
+  },
+  "notes": "Infrastructure-only change. This task deliberately does NOT set diagnostic_hotfix_fast_path=true, so its own integration still requires the full STANDARD plus ECONOMY verification. Future diagnostic tasks must explicitly opt in and pass the allowlist classifier."
+}

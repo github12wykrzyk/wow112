@@ -161,6 +161,19 @@ jobs:
               throw "feature no longer passes preflight against current parallel $base"
             }
 
+            $deliveryGateRaw = python tools/parallel_diagnostic_fastpath.py `
+              --base refs/remotes/origin/parallel `
+              --branch "$env:FEATURE_BRANCH" `
+              --task-id "$env:TASK_ID"
+            if ($LASTEXITCODE -ne 0) {
+              throw "diagnostic fast-path classifier failed"
+            }
+            $deliveryGate = (($deliveryGateRaw -join "`n") | ConvertFrom-Json)
+            if ($null -eq $deliveryGate -or $null -eq $deliveryGate.require_standard) {
+              throw "diagnostic fast-path classifier returned invalid output"
+            }
+            Write-Host "Post-integration delivery gate: require_standard=$($deliveryGate.require_standard) fast_path=$($deliveryGate.fast_path) reason=$($deliveryGate.reason)"
+
             git checkout -B __parallel_integrate refs/remotes/origin/parallel
             if ($LASTEXITCODE -ne 0) { throw "cannot create integration worktree" }
 
@@ -186,18 +199,28 @@ jobs:
               }
 
               "parallel_sha=$integrated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-              python tools/parallel_ci_dispatch.py `
-                --repo "${{ github.repository }}" `
-                --ref parallel `
-                --sha "$integrated" `
-                --standard `
-                --profiles "$env:DELIVERY_PROFILES" `
-                --github-output "$env:GITHUB_OUTPUT"
+              if ($deliveryGate.require_standard -eq $true) {
+                python tools/parallel_ci_dispatch.py `
+                  --repo "${{ github.repository }}" `
+                  --ref parallel `
+                  --sha "$integrated" `
+                  --standard `
+                  --profiles "$env:DELIVERY_PROFILES" `
+                  --github-output "$env:GITHUB_OUTPUT"
+              }
+              else {
+                python tools/parallel_ci_dispatch.py `
+                  --repo "${{ github.repository }}" `
+                  --ref parallel `
+                  --sha "$integrated" `
+                  --profiles "$env:DELIVERY_PROFILES" `
+                  --github-output "$env:GITHUB_OUTPUT"
+              }
               if ($LASTEXITCODE -ne 0) {
                 throw "exact integrated parallel delivery gates failed for $integrated"
               }
 
-              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated profiles=$env:DELIVERY_PROFILES"
+              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated profiles=$env:DELIVERY_PROFILES standard=$($deliveryGate.require_standard)"
               exit 0
             }
 
