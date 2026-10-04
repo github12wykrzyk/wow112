@@ -45,6 +45,23 @@ jobs:
         shell: bash
         run: cargo install cargo-ndk --locked
 
+      - name: PowerShell launcher syntax check
+        shell: pwsh
+        run: |
+          $files = @(
+            'probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.ps1',
+            'probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file : $($_.Message)" }
+              exit 1
+            }
+          }
+
       - name: Host compile check
         shell: bash
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
@@ -71,6 +88,8 @@ jobs:
           cp probes/Wow112HeadlessAndroid/RUN_POC05.ps1 "$OUT/RUN_POC05.ps1"
           cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.cmd "$OUT/RUN_PORTAL_CLICKER.cmd"
           cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER.ps1 "$OUT/RUN_PORTAL_CLICKER.ps1"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.cmd "$OUT/RUN_PORTAL_CLICKER_GUI.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.ps1 "$OUT/RUN_PORTAL_CLICKER_GUI.ps1"
 
           file "$OUT/wow112-headless-android-probe"
           BIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
@@ -95,6 +114,8 @@ jobs:
               RUN_POC05.ps1 \
               RUN_PORTAL_CLICKER.cmd \
               RUN_PORTAL_CLICKER.ps1 \
+              RUN_PORTAL_CLICKER_GUI.cmd \
+              RUN_PORTAL_CLICKER_GUI.ps1 \
               README.md \
               BUILD_INFO.txt > SHA256SUMS.txt
             sha256sum -c SHA256SUMS.txt
