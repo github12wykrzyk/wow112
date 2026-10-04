@@ -4,8 +4,8 @@
   "goal": "Add a true WoW 1.12.1 headless terminal login mode for portal-clicker accounts, with transient-network autoreconnect and Summoning Portal detection/use matching the current AutoSummonAssist portal contract, while keeping normal graphical Multibox launch independent.",
   "branch": "feature/terminal-portal-clicker-v2",
   "base_parallel_sha": "8de7d480eeaaca4f3a3eeb6899fec1c87d0f14c3",
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "modules": [
     "HeadlessPortalClicker",
     "Updater"
@@ -22,7 +22,7 @@
   "lease": {
     "owner": "chatgpt:terminal-portal-clicker-v2",
     "acquired_at": "2026-10-04T17:35:00Z",
-    "heartbeat_at": "2026-10-04T17:38:00Z",
+    "heartbeat_at": "2026-10-04T18:09:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:HeadlessPortalClicker",
@@ -32,5 +32,5 @@
       "resource:Summoning Portal interaction contract"
     ]
   },
-  "notes": "The first feature SHA 003f5354a796dac822dc24bee26e23f7a155aaa7 contains the headless client and portal-mode source. Its initial preflight failed before compilation only because the task coordination record did not yet exist. A subsequent registry run exposed schema errors in the first record revision; this revision fixes status, dependencies and canonical lease scopes. No compile, package or gameplay result is claimed yet."
+  "notes": "Feature SHA cc831cc399ac28c4da982caee827cefbacaa4426 passed Parallel feature preflight run 37222955298 and exact updater profile gate via Build WoW112 updater run 37223081291, including Rust i686 release build, WinForms x86 compile, dashboard smoke and terminal/updater PE32+SHA verification. This control-plane-only commit opts the experiment into integration; gameplay portal-use evidence remains pending user test."
 }
