@@ -14,21 +14,12 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [
     "economy"
   ],
-  "lease": {
-    "owner": "chatgpt:ah-parity-marketmeta-export-v1",
-    "acquired_at": "2026-10-04T00:25:00Z",
-    "heartbeat_at": "2026-10-04T00:42:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "resource:parity-evidence",
-      "resource:ah-shadow-hot-bundle"
-    ]
-  },
-  "notes": "Diagnostics-only. Production AuxVmangos remains the sole AH owner. The exporter wraps only the shadow parity module's RecordDecision method, preserves its return value, and writes compact evidence into existing AVM_DB.marketMeta. No AH query/transaction API, frame, event or active AVM callback is added. Both-reject decisions count as successful comparisons while shadow-extra, shadow-miss and different-candidate remain zero-tolerance cutover blockers. Exact feature SHA 4e4c07edee88dcfec92b063178f706d5649ae529 passed preflight run 37165689389 and ECONOMY run 37165724143, artifact 11288583979."
+  "lease": null,
+  "notes": "Diagnostics-only. Production AuxVmangos remains the sole AH owner. The exporter wraps only the shadow parity module's RecordDecision method, preserves its return value, and writes compact evidence into existing AVM_DB.marketMeta. No AH query/transaction API, frame, event or active AVM callback is added. Both-reject decisions count as successful comparisons while shadow-extra, shadow-miss and different-candidate remain zero-tolerance cutover blockers. Exact feature SHA 4e4c07edee88dcfec92b063178f706d5649ae529 passed preflight run 37165689389 and ECONOMY run 37165724143, artifact 11288583979. Integrated to parallel as c4a7f4b514c4e12a856ccb58760ee9592ce06b95.",
+  "integrated_feature_sha": "1d57898958ab1bca496e1c56aad2fb832e9bc269"
 }
