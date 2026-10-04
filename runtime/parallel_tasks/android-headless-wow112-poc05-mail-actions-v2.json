@@ -13,18 +13,10 @@
   "shared_resources": [
     "WoW 1.12.1 build 5875 headless protocol client"
   ],
-  "status": "preflight",
+  "status": "superseded",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:android-headless-wow112-poc05",
-    "acquired_at": "2026-10-04T18:15:00Z",
-    "heartbeat_at": "2026-10-04T18:15:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:Wow112HeadlessAndroid"
-    ]
-  },
-  "notes": "POC-05 starts from exact accepted POC-04 SHA 3a6926be6e4ac846ade5724347f1e7df88c79728. It reads PLAYER_FIELD_COINAGE and owned item/container update masks, keeps mailbox read-only by default, and allows take-money/take-item only for an explicit mail_id plus WOW112_MAIL_MUTATION_CONFIRM=YES. COD item collection is blocked. Any disconnect or ambiguous result after mutation send is fail-closed and is not automatically retried; after a server-confirmed mutation, reconnects reconcile mailbox state instead of sending the mutation again. No gameplay result yet.",
-  "observed_head": "087f5ac78b33b2a41af9ad619996bb8d9fa26727"
+  "lease": null,
+  "notes": "Superseded by android-headless-poc05-unified-v1 for self-contained POC-05 test delivery. Runtime code at exact SHA 404df8dcd6690cbe678f3de6d96596a0f0ae0525 remains the verified source handoff: Parallel feature preflight run 37225206063 PASS, Android build run 37225206076 PASS, artifact 11311582132. This metadata transition releases the Wow112HeadlessAndroid lease only; it does not alter or invalidate the 404df8dc code/evidence. Gameplay result for 404df8dc was not recorded before supersession.",
+  "observed_head": "404df8dcd6690cbe678f3de6d96596a0f0ae0525"
 }
