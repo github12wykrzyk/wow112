@@ -35,7 +35,7 @@ namespace WoW112Updater
             RealmlistFeature.Attach(mainForm);
             MaintenanceFeature.Attach(mainForm);
             IssueReportFeature.Attach(mainForm);
-            SummonScoutUnknownReportFeature.Attach(mainForm);
+            AhEvidenceGateFeature.Attach(mainForm);
             ((MainForm)mainForm).AttachAccounts();
             ((MainForm)mainForm).BuildDashboard();
             var args = Environment.GetCommandLineArgs();
@@ -233,433 +233,505 @@ namespace WoW112Updater
         }
     }
 
-    // Publishes only SummonScout's bounded unknown-whisper SavedVariables table.
-    // The existing DPAPI-protected report token is reused; account paths,
-    // credentials and unrelated SavedVariables are never uploaded.
-    internal static class SummonScoutUnknownReportFeature
+    internal static class AhEvidenceGateFeature
     {
+        private const string ApiRoot = "https://api.github.com/repos/github12wykrzyk/wow112";
+        private const string BaselineFileName = "ah_evidence_baseline.json";
+        private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+
+        private sealed class Snapshot
+        {
+            public string Path;
+            public string SourceId;
+            public string CompatibilityKey;
+            public long LastScanAt;
+            public long Items;
+            public long Auctions;
+            public long PackedRows;
+            public long Scans;
+            public long Pages;
+            public long Records;
+            public long DecisionCompared;
+            public long ObserverErrors;
+            public long Mismatches;
+            public string Reason;
+            public bool Valid;
+        }
+
+        private sealed class Baseline
+        {
+            public string head_sha;
+            public string source_path;
+            public string source_id;
+            public string compatibility_key;
+            public long scans;
+            public long pages;
+            public long records;
+            public long decision_compared;
+            public string captured_utc;
+        }
+
         public static void Attach(Form form)
         {
             if (form == null) return;
-            new Controller(form).Attach();
+            var host = form as IUpdaterHost;
+            if (host == null) return;
+
+            var button = new Button
+            {
+                Text = "AH EVIDENCE",
+                Width = 142,
+                Height = 30,
+                Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
+                FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
+                BackColor = Color.FromArgb(50, 58, 75),
+                ForeColor = Color.White
+            };
+            button.FlatAppearance.BorderColor = Color.FromArgb(223, 182, 115);
+            button.Click += async delegate { await HandleClickAsync(host, button); };
+
+            form.Shown += delegate
+            {
+                if (button.Parent != null) return;
+                button.Left = Math.Max(8, form.ClientSize.Width - button.Width - 18);
+                button.Top = Math.Max(8, form.ClientSize.Height - button.Height - 18);
+                form.Controls.Add(button);
+                button.BringToFront();
+                RefreshButton(host, button);
+            };
+            form.Resize += delegate
+            {
+                if (button.Parent == null) return;
+                button.Left = Math.Max(8, form.ClientSize.Width - button.Width - 18);
+                button.Top = Math.Max(8, form.ClientSize.Height - button.Height - 18);
+                button.BringToFront();
+            };
         }
 
-        private sealed class Controller
+        private static async Task HandleClickAsync(IUpdaterHost host, Button button)
         {
-            private const string Owner = "github12wykrzyk";
-            private const string Repo = "wow112";
-            private const string ApiRoot = "https://api.github.com/repos/" + Owner + "/" + Repo;
-            private const string SearchApiRoot = "https://api.github.com/search/issues";
-            private const int PollMs = 60000;
-            private const int IssueBodySafeChars = 58000;
-            private const int CommentChunkChars = 45000;
-            private readonly Form form;
-            private readonly TextBox gameDir;
-            private readonly RichTextBox log;
-            private readonly Timer timer = new Timer();
-            private readonly JavaScriptSerializer json = new JavaScriptSerializer();
-            private bool busy;
-
-            public Controller(Form form)
+            if (button == null || button.IsDisposed) return;
+            button.Enabled = false;
+            try
             {
-                this.form = form;
-                gameDir = GetPrivateField<TextBox>(form, "gameDir");
-                log = GetPrivateField<RichTextBox>(form, "log");
-                timer.Interval = PollMs;
-                json.MaxJsonLength = 32 * 1024 * 1024;
-                json.RecursionLimit = 128;
-            }
-
-            public void Attach()
-            {
-                if (gameDir == null) return;
-                timer.Tick += async delegate { await SyncAsync(); };
-                form.FormClosed += delegate
-                {
-                    timer.Stop();
-                    timer.Dispose();
-                };
-                timer.Start();
-                Log("SUMMON UNKNOWN telemetry: ON — publikuje tylko nierozpoznane whispery po zapisie SavedVariables.");
-            }
-
-            private async Task SyncAsync()
-            {
-                if (busy || form.IsDisposed) return;
-                var token = LoadReportToken();
-                if (string.IsNullOrWhiteSpace(token)) return;
-
-                var root = gameDir.Text.Trim();
-                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return;
+                var root = (host.GameDirectory ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                    throw new InvalidOperationException("Wybierz istniejący katalog gry.");
                 root = Path.GetFullPath(root);
 
-                var snapshots = BuildSnapshots(root);
-                if (snapshots.Count == 0) return;
-
-                var canonical = new StringBuilder();
-                foreach (var snapshot in snapshots)
+                var baselinePath = BaselinePath(root);
+                var head = ReadInstalledHead(root);
+                Baseline baseline = null;
+                if (File.Exists(baselinePath))
                 {
-                    canonical.AppendLine(snapshot.Table);
-                    canonical.AppendLine("---");
+                    try { baseline = Json.Deserialize<Baseline>(File.ReadAllText(baselinePath, Encoding.UTF8)); }
+                    catch { baseline = null; }
                 }
-                var fullHash = Sha256Text(canonical.ToString());
-                if (string.Equals(ReadStateHash(), fullHash, StringComparison.OrdinalIgnoreCase)) return;
 
-                busy = true;
-                try
+                if (baseline != null && !string.Equals(baseline.head_sha ?? string.Empty, head ?? string.Empty, StringComparison.OrdinalIgnoreCase))
                 {
-                    string headSha;
-                    long runId;
-                    ReadInstalled(root, out headSha, out runId);
-                    var marker = "[ssunknown:" + fullHash.Substring(0, 12) + "]";
+                    File.Delete(baselinePath);
+                    baseline = null;
+                    host.LogMessage("AH EVIDENCE: stary baseline odrzucony po zmianie installed HEAD.");
+                }
 
-                    using (var client = CreateClient(token))
+                if (baseline == null)
+                {
+                    var selected = SelectSource(root);
+                    if (selected == null || !selected.Valid)
+                        throw new InvalidOperationException(selected == null ? "Brak jednoznacznego pełnego źródła AuxVmangos." : selected.Reason);
+
+                    baseline = new Baseline
                     {
-                        var existing = await FindExistingIssueAsync(client, marker);
-                        if (existing > 0)
-                        {
-                            WriteStateHash(fullHash);
-                            Log("SUMMON UNKNOWN: zsynchronizowany z istniejącym Issue #" + existing + ".");
-                            return;
-                        }
-
-                        var report = BuildReport(headSha, runId, marker, fullHash, snapshots);
-                        var body = report;
-                        var chunks = 0;
-                        if (report.Length > IssueBodySafeChars)
-                        {
-                            chunks = Math.Max(1, (report.Length + CommentChunkChars - 1) / CommentChunkChars);
-                            body = "## SummonScout unknown whisper report\n\n" +
-                                "Pełny raport jest w " + chunks + " komentarzach poniżej.\n\n" +
-                                "Head SHA: `" + headSha + "`\n\n" +
-                                "Run ID: " + runId + "\n\n" +
-                                "Payload SHA256: `" + fullHash + "`\n\n" + marker;
-                        }
-
-                        var title = "[SUMMON-UNKNOWN] " + ShortSha(headSha) + " " +
-                            DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + "Z " + marker;
-                        var issueNumber = await CreateIssueAsync(client, title, body);
-
-                        if (chunks > 0)
-                        {
-                            for (var i = 0; i < chunks; i++)
-                            {
-                                var start = i * CommentChunkChars;
-                                var count = Math.Min(CommentChunkChars, report.Length - start);
-                                await CreateCommentAsync(client, issueNumber,
-                                    "## Summon unknown chunk " + (i + 1) + "/" + chunks + "\n\n" +
-                                    report.Substring(start, count));
-                                if (i + 1 < chunks) await Task.Delay(100);
-                            }
-                        }
-
-                        WriteStateHash(fullHash);
-                        Log("SUMMON UNKNOWN -> GitHub Issue #" + issueNumber + ".");
-                    }
+                        head_sha = head ?? string.Empty,
+                        source_path = selected.Path,
+                        source_id = selected.SourceId,
+                        compatibility_key = selected.CompatibilityKey,
+                        scans = selected.Scans,
+                        pages = selected.Pages,
+                        records = selected.Records,
+                        decision_compared = selected.DecisionCompared,
+                        captured_utc = DateTime.UtcNow.ToString("o")
+                    };
+                    Directory.CreateDirectory(Path.GetDirectoryName(baselinePath));
+                    File.WriteAllText(baselinePath, Json.Serialize(baseline), new UTF8Encoding(false));
+                    host.LogMessage("AH EVIDENCE BASELINE: source=" + selected.SourceId +
+                        " scans=" + selected.Scans + " pages=" + selected.Pages +
+                        " decisions=" + selected.DecisionCompared + ".");
+                    MessageBox.Show(host.Window,
+                        "Baseline zapisany.\n\nTeraz puść 2 pełne cykle LOOP, potem /reload i kliknij AH EVIDENCE ponownie.\n\n" +
+                        "source_id: " + selected.SourceId + "\n" +
+                        "scans: " + selected.Scans + "  pages: " + selected.Pages + "  decisions: " + selected.DecisionCompared,
+                        "AH Evidence Gate", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
-                catch (Exception ex)
-                {
-                    Log("SUMMON UNKNOWN błąd: " + ex.Message);
-                }
-                finally
-                {
-                    busy = false;
-                }
+
+                var current = ReadSnapshot(root, baseline.source_path);
+                if (current == null)
+                    current = new Snapshot { Path = baseline.source_path, SourceId = baseline.source_id, Valid = false, Reason = "Źródłowy AuxVmangos.lua z baseline nie istnieje." };
+
+                var reasons = new List<string>();
+                if (!current.Valid) reasons.Add("source-invalid:" + current.Reason);
+                if (!string.Equals(current.SourceId ?? string.Empty, baseline.source_id ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                    reasons.Add("source-id-changed");
+                if (!string.Equals(current.CompatibilityKey ?? string.Empty, baseline.compatibility_key ?? string.Empty, StringComparison.Ordinal))
+                    reasons.Add("compatibility-key-changed");
+                if (current.Scans < baseline.scans + 2) reasons.Add("scans-delta<2");
+                if (current.Pages <= baseline.pages) reasons.Add("pages-not-growing");
+                if (current.Records <= baseline.records) reasons.Add("records-not-growing");
+                if (current.DecisionCompared <= baseline.decision_compared) reasons.Add("decisionCompared-not-growing");
+                if (current.ObserverErrors != 0) reasons.Add("observer-errors=" + current.ObserverErrors);
+                if (current.Mismatches != 0) reasons.Add("mismatches=" + current.Mismatches);
+
+                var verdict = reasons.Count == 0 ? "PASS" : "FAIL";
+                var report = BuildReport(head, baseline, current, verdict, reasons);
+                await UploadIssueAsync(host.GitHubToken, head, baseline.source_id, verdict, report);
+                host.LogMessage("AH EVIDENCE " + verdict + ": source=" + baseline.source_id +
+                    " scans " + baseline.scans + "->" + current.Scans +
+                    ", decisions " + baseline.decision_compared + "->" + current.DecisionCompared + ".");
+
+                File.Delete(baselinePath);
+                MessageBox.Show(host.Window, report,
+                    "AH Evidence Gate — " + verdict,
+                    MessageBoxButtons.OK,
+                    verdict == "PASS" ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
-
-            private List<Snapshot> BuildSnapshots(string root)
+            catch (Exception ex)
             {
-                var result = new List<Snapshot>();
-                var accountRoot = Path.Combine(root, "WTF", "Account");
-                if (!Directory.Exists(accountRoot)) return result;
+                host.LogMessage("AH EVIDENCE błąd: " + ex.Message);
+                MessageBox.Show(host.Window, ex.Message, "AH Evidence Gate", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                button.Enabled = true;
+                RefreshButton(host, button);
+            }
+        }
 
-                string[] files;
-                try
-                {
-                    files = Directory.GetFiles(accountRoot, "SummonScout.lua", SearchOption.AllDirectories)
-                        .Where(p => p.IndexOf(Path.DirectorySeparatorChar + "SavedVariables" + Path.DirectorySeparatorChar,
-                            StringComparison.OrdinalIgnoreCase) >= 0)
-                        .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                        .ToArray();
-                }
-                catch
-                {
-                    return result;
-                }
+        private static void RefreshButton(IUpdaterHost host, Button button)
+        {
+            try
+            {
+                var root = (host.GameDirectory ?? string.Empty).Trim();
+                button.Text = Directory.Exists(root) && File.Exists(BaselinePath(root)) ? "AH EVIDENCE: CHECK" : "AH EVIDENCE";
+            }
+            catch { button.Text = "AH EVIDENCE"; }
+        }
 
-                foreach (var file in files)
+        private static string BaselinePath(string root)
+        {
+            return Path.Combine(root, ".wow112_parallel_updater", BaselineFileName);
+        }
+
+        private static string ReadInstalledHead(string root)
+        {
+            try
+            {
+                var path = Path.Combine(root, ".wow112_parallel_updater", "installed.json");
+                if (!File.Exists(path)) return string.Empty;
+                var text = File.ReadAllText(path, Encoding.UTF8);
+                var match = Regex.Match(text, "\\\"head_sha\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", RegexOptions.IgnoreCase);
+                return match.Success ? match.Groups[1].Value : string.Empty;
+            }
+            catch { return string.Empty; }
+        }
+
+        private static Snapshot SelectSource(string root)
+        {
+            var accountRoot = Path.Combine(root, "WTF", "Account");
+            if (!Directory.Exists(accountRoot))
+                return new Snapshot { Valid = false, Reason = "Brak WTF/Account." };
+
+            var rows = new List<Snapshot>();
+            foreach (var path in Directory.GetFiles(accountRoot, "AuxVmangos.lua", SearchOption.AllDirectories))
+            {
+                var row = ReadSnapshot(root, path);
+                if (row != null && row.Valid) rows.Add(row);
+            }
+            if (rows.Count == 0)
+                return new Snapshot { Valid = false, Reason = "Nie znaleziono pełnego AuxVmangos snapshotu z marketem i parity evidence." };
+
+            rows = rows.OrderByDescending(x => x.DecisionCompared)
+                .ThenByDescending(x => x.Scans)
+                .ThenByDescending(x => x.LastScanAt)
+                .ThenByDescending(x => x.PackedRows)
+                .ToList();
+
+            if (rows.Count > 1)
+            {
+                var a = rows[0];
+                var b = rows[1];
+                if (a.DecisionCompared == b.DecisionCompared && a.Scans == b.Scans &&
+                    a.LastScanAt == b.LastScanAt && a.PackedRows == b.PackedRows)
                 {
-                    try
+                    return new Snapshot
                     {
-                        var text = File.ReadAllText(file, Encoding.UTF8);
-                        var table = ExtractLuaTableField(text, "unknownWhisperReport");
-                        if (string.IsNullOrWhiteSpace(table)) continue;
-                        var seqMatch = Regex.Match(table, "\\[\\\"seq\\\"\\]\\s*=\\s*(\\d+)");
-                        long seq;
-                        if (!seqMatch.Success || !long.TryParse(seqMatch.Groups[1].Value, out seq) || seq <= 0) continue;
-                        result.Add(new Snapshot
-                        {
-                            SavedUtc = File.GetLastWriteTimeUtc(file),
-                            Table = table,
-                            Seq = seq
-                        });
-                    }
-                    catch
-                    {
-                    }
+                        Valid = false,
+                        Reason = "Dwa źródła AH są równie wiarygodne; fail-closed zamiast zgadywania. source_id=" +
+                            a.SourceId + " i " + b.SourceId
+                    };
                 }
-                return result;
             }
+            return rows[0];
+        }
 
-            private static string BuildReport(string headSha, long runId, string marker, string hash, List<Snapshot> snapshots)
+        private static Snapshot ReadSnapshot(string root, string path)
+        {
+            try
             {
-                var sb = new StringBuilder();
-                sb.AppendLine("## SummonScout unknown whisper report");
-                sb.AppendLine();
-                sb.AppendLine("Head SHA: `" + headSha + "`");
-                sb.AppendLine("Run ID: " + runId);
-                sb.AppendLine("Payload SHA256: `" + hash + "`");
-                sb.AppendLine("SavedVariables snapshots: " + snapshots.Count);
-                sb.AppendLine();
-                sb.AppendLine("Contains only `SummonScoutDB.unknownWhisperReport`: sender, raw whisper, normalized whisper, parser context, active service and module versions. No account path, credentials or unrelated SavedVariables are uploaded.");
-                sb.AppendLine("WoW 1.12 writes SavedVariables on `/reload`, logout or client exit, so the report appears after the next flush.");
-                sb.AppendLine();
-
-                for (var i = 0; i < snapshots.Count; i++)
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+                var text = File.ReadAllText(path, Encoding.UTF8);
+                var packed = ExtractLuaStringField(text, "marketPacked");
+                var marketMeta = ExtractLuaTableField(text, "marketMeta");
+                var row = new Snapshot
                 {
-                    var snapshot = snapshots[i];
-                    sb.AppendLine("### Snapshot " + (i + 1));
-                    sb.AppendLine("Saved UTC: " + snapshot.SavedUtc.ToString("o"));
-                    sb.AppendLine("Max seq: " + snapshot.Seq);
-                    sb.AppendLine("```lua");
-                    sb.AppendLine(EscapeFence(snapshot.Table));
-                    sb.AppendLine("```");
-                    sb.AppendLine();
-                }
-                sb.AppendLine(marker);
-                return sb.ToString();
-            }
-
-            private async Task<long> CreateIssueAsync(HttpClient client, string title, string body)
-            {
-                var payload = new Dictionary<string, object>();
-                payload["title"] = title;
-                payload["body"] = body;
-                using (var request = new HttpRequestMessage(HttpMethod.Post, ApiRoot + "/issues"))
+                    Path = path,
+                    SourceId = SourceId(root, path),
+                    Valid = false
+                };
+                if (string.IsNullOrWhiteSpace(packed) || !packed.StartsWith("AVM3", StringComparison.Ordinal))
                 {
-                    request.Content = new StringContent(json.Serialize(payload), Encoding.UTF8, "application/json");
-                    using (var response = await client.SendAsync(request))
-                    {
-                        var text = await response.Content.ReadAsStringAsync();
-                        if (!response.IsSuccessStatusCode)
-                            throw new InvalidOperationException("GitHub Issue API " + (int)response.StatusCode + ": " + Tail(text, 500));
-                        var obj = json.DeserializeObject(text) as Dictionary<string, object>;
-                        if (obj == null || !obj.ContainsKey("number")) throw new InvalidOperationException("GitHub Issue API: brak numeru Issue.");
-                        return Convert.ToInt64(obj["number"]);
-                    }
+                    row.Reason = "marketPacked nie jest AVM3.";
+                    return row;
                 }
-            }
-
-            private async Task CreateCommentAsync(HttpClient client, long issueNumber, string body)
-            {
-                var payload = new Dictionary<string, object>();
-                payload["body"] = body;
-                using (var request = new HttpRequestMessage(HttpMethod.Post, ApiRoot + "/issues/" + issueNumber + "/comments"))
+                row.PackedRows = CountPackedRows(packed);
+                if (row.PackedRows <= 0)
                 {
-                    request.Content = new StringContent(json.Serialize(payload), Encoding.UTF8, "application/json");
-                    using (var response = await client.SendAsync(request))
-                    {
-                        var text = await response.Content.ReadAsStringAsync();
-                        if (!response.IsSuccessStatusCode)
-                            throw new InvalidOperationException("GitHub comment API " + (int)response.StatusCode + ": " + Tail(text, 500));
-                    }
+                    row.Reason = "marketPacked zawiera tylko nagłówek AVM3.";
+                    return row;
                 }
-            }
-
-            private async Task<long> FindExistingIssueAsync(HttpClient client, string marker)
-            {
-                try
+                if (string.IsNullOrWhiteSpace(marketMeta))
                 {
-                    var q = "repo:" + Owner + "/" + Repo + " \"" + marker + "\" in:body";
-                    using (var response = await client.GetAsync(SearchApiRoot + "?q=" + Uri.EscapeDataString(q) + "&per_page=1"))
-                    {
-                        if (!response.IsSuccessStatusCode) return 0;
-                        var text = await response.Content.ReadAsStringAsync();
-                        var root = json.DeserializeObject(text) as Dictionary<string, object>;
-                        if (root == null || !root.ContainsKey("items")) return 0;
-                        var items = root["items"] as object[];
-                        if (items == null || items.Length == 0) return 0;
-                        var first = items[0] as Dictionary<string, object>;
-                        if (first == null || !first.ContainsKey("number")) return 0;
-                        return Convert.ToInt64(first["number"]);
-                    }
+                    row.Reason = "Brak marketMeta.";
+                    return row;
                 }
-                catch
+
+                row.LastScanAt = LuaLong(marketMeta, "lastScanAt");
+                row.Items = LuaLong(marketMeta, "items");
+                row.Auctions = LuaLong(marketMeta, "auctions");
+                if (row.LastScanAt <= 0 || row.Items <= 0 || row.Auctions <= 0)
                 {
-                    return 0;
+                    row.Reason = "Snapshot nie ma realnego pełnego marketu (lastScanAt/items/auctions).";
+                    return row;
                 }
-            }
 
-            private static HttpClient CreateClient(string token)
-            {
-                var client = new HttpClient();
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("WoW112ParallelUpdater/" + UpdaterBuildInfo.Version);
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
-                client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
-                return client;
-            }
-
-            private static string ExtractLuaTableField(string text, string field)
-            {
-                if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(field)) return null;
-                var marker = "[\"" + field + "\"]";
-                var fieldAt = text.IndexOf(marker, StringComparison.Ordinal);
-                if (fieldAt < 0) fieldAt = text.IndexOf(field, StringComparison.Ordinal);
-                if (fieldAt < 0) return null;
-                var equalsAt = text.IndexOf('=', fieldAt);
-                if (equalsAt < 0) return null;
-                var open = text.IndexOf('{', equalsAt);
-                if (open < 0) return null;
-
-                var depth = 0;
-                var inString = false;
-                var escaped = false;
-                for (var i = open; i < text.Length; i++)
+                var parity = ExtractLuaTableField(marketMeta, "shadowParity");
+                var evidence = ExtractLuaTableField(marketMeta, "shadowParityEvidence");
+                if (string.IsNullOrWhiteSpace(parity) || string.IsNullOrWhiteSpace(evidence))
                 {
-                    var ch = text[i];
-                    if (inString)
-                    {
-                        if (escaped) escaped = false;
-                        else if (ch == '\\') escaped = true;
-                        else if (ch == '"') inString = false;
-                        continue;
-                    }
-                    if (ch == '"')
-                    {
-                        inString = true;
-                        continue;
-                    }
-                    if (ch == '{') depth++;
-                    else if (ch == '}')
-                    {
-                        depth--;
-                        if (depth == 0) return text.Substring(fieldAt, i - fieldAt + 1);
-                    }
+                    row.Reason = "Brak shadowParity/shadowParityEvidence.";
+                    return row;
                 }
-                return null;
-            }
 
-            private static void ReadInstalled(string root, out string headSha, out long runId)
-            {
-                headSha = string.Empty;
-                runId = 0;
-                try
+                row.CompatibilityKey = LuaString(evidence, "compatibilityKey");
+                row.Scans = LuaLong(evidence, "scans");
+                row.Pages = LuaLong(evidence, "pages");
+                row.Records = LuaLong(evidence, "records");
+                row.ObserverErrors = LuaLong(evidence, "observerErrors");
+                row.DecisionCompared = LuaLong(parity, "decisionCompared");
+                row.Mismatches = LuaLong(parity, "evidenceMismatches");
+                if (string.IsNullOrWhiteSpace(row.CompatibilityKey))
                 {
-                    var path = Path.Combine(root, ".wow112_parallel_updater", "installed.json");
-                    if (!File.Exists(path)) return;
-                    var text = File.ReadAllText(path, Encoding.UTF8);
-                    var sha = Regex.Match(text, "\\\"head_sha\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
-                    if (sha.Success) headSha = sha.Groups[1].Value;
-                    var run = Regex.Match(text, "\\\"run_id\\\"\\s*:\\s*(\\d+)");
-                    if (run.Success) long.TryParse(run.Groups[1].Value, out runId);
+                    row.Reason = "Brak compatibilityKey.";
+                    return row;
                 }
-                catch
-                {
-                }
-            }
 
-            private static string ReportTokenPath()
-            {
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112ParallelUpdater", "report_token.dpapi");
+                row.Valid = true;
+                row.Reason = string.Empty;
+                return row;
             }
-
-            private static byte[] ReportEntropy()
+            catch (Exception ex)
             {
-                return Encoding.UTF8.GetBytes("WoW112ParallelUpdater-report-token-v1");
+                return new Snapshot { Path = path, SourceId = SourceId(root, path), Valid = false, Reason = ex.GetType().Name + ": " + ex.Message };
             }
+        }
 
-            private static string LoadReportToken()
+        private static long CountPackedRows(string packed)
+        {
+            if (string.IsNullOrEmpty(packed)) return 0;
+            var lines = packed.Replace("\r", string.Empty).Split('\n');
+            long count = 0;
+            for (var i = 0; i < lines.Length; i++)
             {
-                try
-                {
-                    var path = ReportTokenPath();
-                    if (!File.Exists(path)) return string.Empty;
-                    var protectedBytes = Convert.FromBase64String(File.ReadAllText(path, Encoding.ASCII));
-                    return Encoding.UTF8.GetString(ProtectedData.Unprotect(protectedBytes, ReportEntropy(), DataProtectionScope.CurrentUser));
-                }
-                catch
-                {
-                    return string.Empty;
-                }
+                var line = lines[i].Trim();
+                if (line.Length == 0 || line == "AVM3") continue;
+                count++;
             }
+            return count;
+        }
 
-            private static string StatePath()
+        private static string SourceId(string root, string path)
+        {
+            try
             {
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WoW112ParallelUpdater", "summonscout_unknown.sha256");
-            }
-
-            private static string ReadStateHash()
-            {
-                try { return File.Exists(StatePath()) ? File.ReadAllText(StatePath(), Encoding.ASCII).Trim() : string.Empty; }
-                catch { return string.Empty; }
-            }
-
-            private static void WriteStateHash(string value)
-            {
-                var path = StatePath();
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllText(path, value ?? string.Empty, Encoding.ASCII);
-            }
-
-            private static string Sha256Text(string value)
-            {
+                var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var fullPath = Path.GetFullPath(path);
+                var relative = fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)
+                    ? fullPath.Substring(fullRoot.Length)
+                    : fullPath;
+                relative = relative.Replace('\\', '/').ToLowerInvariant();
                 using (var sha = SHA256.Create())
                 {
-                    var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(value ?? string.Empty));
-                    var sb = new StringBuilder(bytes.Length * 2);
-                    foreach (var b in bytes) sb.Append(b.ToString("x2"));
+                    var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(relative));
+                    var sb = new StringBuilder();
+                    for (var i = 0; i < 8; i++) sb.Append(hash[i].ToString("x2"));
                     return sb.ToString();
                 }
             }
+            catch { return "unknown"; }
+        }
 
-            private static string ShortSha(string sha)
-            {
-                if (string.IsNullOrWhiteSpace(sha)) return "unknown";
-                return sha.Length <= 8 ? sha : sha.Substring(0, 8);
-            }
+        private static long LuaLong(string table, string key)
+        {
+            if (string.IsNullOrEmpty(table)) return 0;
+            var pattern = "\\[\\\"" + Regex.Escape(key) + "\\\"\\]\\s*=\\s*(-?[0-9]+)";
+            var match = Regex.Match(table, pattern);
+            long value;
+            return match.Success && long.TryParse(match.Groups[1].Value, out value) ? value : 0;
+        }
 
-            private static string EscapeFence(string text)
-            {
-                return (text ?? string.Empty).Replace("```", "``\\`");
-            }
+        private static string LuaString(string table, string key)
+        {
+            if (string.IsNullOrEmpty(table)) return string.Empty;
+            var marker = "[\"" + key + "\"]";
+            var at = table.IndexOf(marker, StringComparison.Ordinal);
+            if (at < 0) return string.Empty;
+            var eq = table.IndexOf('=', at + marker.Length);
+            if (eq < 0) return string.Empty;
+            var quote = table.IndexOf('"', eq + 1);
+            if (quote < 0) return string.Empty;
+            return ReadLuaQuoted(table, quote);
+        }
 
-            private static string Tail(string text, int max)
-            {
-                if (string.IsNullOrEmpty(text) || text.Length <= max) return text ?? string.Empty;
-                return text.Substring(text.Length - max);
-            }
+        private static string ExtractLuaStringField(string text, string key)
+        {
+            var marker = "[\"" + key + "\"]";
+            var at = text.IndexOf(marker, StringComparison.Ordinal);
+            if (at < 0) return null;
+            var eq = text.IndexOf('=', at + marker.Length);
+            if (eq < 0) return null;
+            var quote = text.IndexOf('"', eq + 1);
+            if (quote < 0) return null;
+            return ReadLuaQuoted(text, quote);
+        }
 
-            private void Log(string message)
+        private static string ReadLuaQuoted(string text, int openingQuote)
+        {
+            var sb = new StringBuilder();
+            var escaped = false;
+            for (var i = openingQuote + 1; i < text.Length; i++)
             {
-                if (log == null) return;
-                log.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
-                log.SelectionStart = log.TextLength;
-                log.ScrollToCaret();
+                var c = text[i];
+                if (escaped)
+                {
+                    if (c == 'n') sb.Append('\n');
+                    else if (c == 'r') sb.Append('\r');
+                    else if (c == 't') sb.Append('\t');
+                    else sb.Append(c);
+                    escaped = false;
+                    continue;
+                }
+                if (c == '\\') { escaped = true; continue; }
+                if (c == '"') return sb.ToString();
+                sb.Append(c);
             }
+            return null;
+        }
 
-            private static T GetPrivateField<T>(object instance, string name) where T : class
-            {
-                var field = instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
-                return field == null ? null : field.GetValue(instance) as T;
-            }
+        private static string ExtractLuaTableField(string text, string key)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            var marker = "[\"" + key + "\"]";
+            var at = text.IndexOf(marker, StringComparison.Ordinal);
+            if (at < 0) return null;
+            var eq = text.IndexOf('=', at + marker.Length);
+            if (eq < 0) return null;
+            var open = text.IndexOf('{', eq + 1);
+            if (open < 0) return null;
 
-            private sealed class Snapshot
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            for (var i = open; i < text.Length; i++)
             {
-                public DateTime SavedUtc;
-                public string Table;
-                public long Seq;
+                var c = text[i];
+                if (inString)
+                {
+                    if (escaped) { escaped = false; continue; }
+                    if (c == '\\') { escaped = true; continue; }
+                    if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') { inString = true; continue; }
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0) return text.Substring(open, i - open + 1);
+                }
             }
+            return null;
+        }
+
+        private static string BuildReport(string head, Baseline baseline, Snapshot current, string verdict, List<string> reasons)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("AH EVIDENCE GATE: " + verdict);
+            sb.AppendLine("head_sha=" + (head ?? string.Empty));
+            sb.AppendLine("source_id=" + (baseline.source_id ?? string.Empty));
+            sb.AppendLine("compatibility_key_before=" + (baseline.compatibility_key ?? string.Empty));
+            sb.AppendLine("compatibility_key_after=" + (current.CompatibilityKey ?? string.Empty));
+            sb.AppendLine("baseline_utc=" + (baseline.captured_utc ?? string.Empty));
+            sb.AppendLine("scans=" + baseline.scans + " -> " + current.Scans + " (delta " + (current.Scans - baseline.scans) + ")");
+            sb.AppendLine("pages=" + baseline.pages + " -> " + current.Pages + " (delta " + (current.Pages - baseline.pages) + ")");
+            sb.AppendLine("records=" + baseline.records + " -> " + current.Records + " (delta " + (current.Records - baseline.records) + ")");
+            sb.AppendLine("decisionCompared=" + baseline.decision_compared + " -> " + current.DecisionCompared + " (delta " + (current.DecisionCompared - baseline.decision_compared) + ")");
+            sb.AppendLine("observerErrors=" + current.ObserverErrors);
+            sb.AppendLine("mismatches=" + current.Mismatches);
+            sb.AppendLine("market_lastScanAt=" + current.LastScanAt + " items=" + current.Items + " auctions=" + current.Auctions + " packedRows=" + current.PackedRows);
+            if (reasons.Count > 0) sb.AppendLine("reasons=" + string.Join(",", reasons.ToArray()));
+            return sb.ToString();
+        }
+
+        private static async Task UploadIssueAsync(string token, string head, string sourceId, string verdict, string report)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                throw new InvalidOperationException("Brak tokenu GitHub w updaterze — evidence policzone lokalnie, ale nie mogę wysłać Issue.");
+
+            using (var client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("WoW112Updater-AHEvidence/1.0");
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+                client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+
+                var title = "[AH-EVIDENCE] " + ShortSha(head) + " " + verdict + " " + sourceId;
+                var marker = "[ah-evidence:" + sourceId + ":" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "]";
+                var payload = new Dictionary<string, object>
+                {
+                    { "title", title },
+                    { "body", "```text\n" + report + "```\n\n" + marker }
+                };
+                using (var request = new HttpRequestMessage(HttpMethod.Post, ApiRoot + "/issues"))
+                {
+                    request.Content = new StringContent(Json.Serialize(payload), Encoding.UTF8, "application/json");
+                    using (var response = await client.SendAsync(request))
+                    {
+                        var text = await response.Content.ReadAsStringAsync();
+                        if (!response.IsSuccessStatusCode)
+                            throw new InvalidOperationException("GitHub Issue upload HTTP " + (int)response.StatusCode + ": " + text);
+                    }
+                }
+            }
+        }
+
+        private static string ShortSha(string sha)
+        {
+            if (string.IsNullOrWhiteSpace(sha)) return "unknown";
+            sha = sha.Trim();
+            return sha.Length <= 8 ? sha : sha.Substring(0, 8);
         }
     }
 }
+

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-evidence-gate-v1",
+  "goal": "Make AH persistence testing fail closed on one full AuxVmangos SavedVariables source and keep the evidence action DPI-safe in the updater dashboard.",
+  "branch": "feature/ah-evidence-gate-v1",
+  "base_parallel_sha": "b0fdbefbf1e552838732e65916def282137e15b5",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "UpdaterAHEvidence"
+  ],
+  "dependencies": [
+    "ah-parity-persistent-evidence-v1"
+  ],
+  "shared_resources": [
+    "updater-ah-evidence",
+    "updater-dashboard-tools-row"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "Updater-only diagnostic gate. AH engine, transaction logic, parity producer and cutover policy remain unchanged.",
+  "integrated_feature_sha": "dabfd226045fdcba8a100d81c18f477c64993bee"
+}

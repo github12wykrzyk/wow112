@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-engine-v2-owned-queue-p03a",
+  "goal": "P0.3a Summon Engine V2 hardening: make the public party-summon queue fail closed on invite ownership, require real group membership for grouped/combat resume, and keep the raw legacy queue private inside the foundation bridge without changing Ritual, payment, advert or destination behavior.",
+  "branch": "feature/summonscout-engine-v2-core-api-p03",
+  "base_parallel_sha": "6fc774b0eb4f11c8f284628db7fd2df7200374e3",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-explicit-api-p02"
+  ],
+  "shared_resources": [
+    "SummonScout public queue API",
+    "SummonScout roster-to-summon ownership",
+    "SummonScout grouped/combat resume routing"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Continuation after P0.2. This deliberately does not yet edit the large canonical SummonScout.lua export surface; P0.3a hardens the already deployed explicit compatibility boundary first. The raw legacy queue remains private in foundation state, the public default queue requires pendingManualInvites ownership, and grouped/combat explicit sources require the target to be a real party/raid member. P0.1 event guard remains defense in depth until the canonical core export/ownership migration is completed in the next P0 step.",
+  "integrated_feature_sha": "01361a270e81d8246d5b74cb239c2a8f4a34f5ab"
+}
