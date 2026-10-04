@@ -1,5 +1,7 @@
 name: Build Android WoW112 headless probe
 
+# Bootstrap note: touching this workflow on parallel intentionally seeds the first
+# branch-local Android artifact consumed by MULTIBOX TERMINAL in the updater.
 on:
   workflow_dispatch:
   push:
