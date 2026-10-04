@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-postpay-ledger-fallback-v1",
+  "goal": "Make the post-payment thank-you plus other-destinations whisper fail-safe when the trusted payment ledger records gold but the primary post-payment sender produces no confirmed outgoing whisper.",
+  "branch": "feature/summonscout-postpay-ledgerrow-v1",
+  "base_parallel_sha": "bbabbb3974c648374156fc39e3f985ce815ad232",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-postpay-retry-v1"
+  ],
+  "shared_resources": [
+    "SummonScout post-payment fallback watchdog"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt-postpay-fallback",
+    "acquired_at": "2026-10-04T10:17:45Z",
+    "heartbeat_at": "2026-10-04T10:17:45Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout post-payment fallback watchdog"
+    ]
+  },
+  "notes": "Lua-only reliability guard. Keep the existing trusted wallet-delta ledger and primary retry logic unchanged. Track actual paymentLog row identities, arm a 2.2 s grace window for each newly appended row, suppress the guard when CHAT_MSG_WHISPER_INFORM confirms the primary Hyjal/Hydraxis/Winterspring offer to that payer, otherwise send exactly one bounded fallback. The guard obeys the existing postPaymentOfferEnabled toggle and never replays ledger rows that existed when it initialized."
+}
