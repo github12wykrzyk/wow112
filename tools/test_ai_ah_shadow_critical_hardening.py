@@ -22,7 +22,7 @@ BUNDLE_BUILDER = ROOT / "tools" / "ah_shadow_hot_bundle.py"
 class AHShadowCriticalHardeningTests(unittest.TestCase):
     def test_atomic_bundle_and_anchor_contract(self):
         bundle = build_bundle()
-        self.assertEqual(BUNDLE_PROTOCOL_REVISION, "v4-passive-parity-bridge")
+        self.assertEqual(BUNDLE_PROTOCOL_REVISION, "v5-host-independent-shadow")
         self.assertEqual(bundle.count(ATOMIC_BEGIN_MARKER), 1)
         self.assertEqual(bundle.count(ATOMIC_END_MARKER), 1)
         self.assertLess(bundle.find(ATOMIC_BEGIN_MARKER), bundle.find(ATOMIC_END_MARKER))
