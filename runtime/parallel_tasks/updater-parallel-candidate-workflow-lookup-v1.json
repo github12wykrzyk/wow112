@@ -4,8 +4,8 @@
   "goal": "Make the Parallel updater resolve STANDARD candidate runs from the authoritative build_work_candidate workflow for the frozen parallel-testpoint so unrelated Actions traffic cannot hide a valid downloadable build.",
   "branch": "feature/updater-parallel-candidate-workflow-lookup-v1",
   "base_parallel_sha": "84c6baf9389c1776398f0a07f52b710de534ffd8",
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "modules": [
     "Updater"
   ],
@@ -17,16 +17,7 @@
   "delivery_profiles": [
     "updater"
   ],
-  "lease": {
-    "owner": "chatgpt:updater-parallel-candidate-workflow-lookup-v1",
-    "acquired_at": "2026-10-04T16:50:00Z",
-    "heartbeat_at": "2026-10-04T16:50:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:Updater",
-      "resource:Parallel updater candidate discovery",
-      "resource:parallel-testpoint delivery contract"
-    ]
-  },
-  "notes": "Root cause confirmed: the installed updater asks the shared /actions/runs?branch=parallel&per_page=50 feed for Build work candidate. On a busy repository the exact verified testpoint run can fall outside that window, so the updater reports no download despite a valid artifact. UpdaterNetworkCompat now narrowly rewrites only the STANDARD parallel per_page=50 query to /actions/workflows/build_work_candidate.yml/runs while preserving branch=parallel provenance and the existing parallel->parallel-testpoint branch lookup. Updater version bumped to 2.10-parallel.3."
+  "lease": null,
+  "notes": "Integrated on parallel. Stale feature-branch lease released after integration so subsequent Updater features can pass the exclusive-scope control-plane gate.",
+  "integrated_feature_sha": "41e8d999053c1f1573d633c4925b252b811b1a81"
 }
