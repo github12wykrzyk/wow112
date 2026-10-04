@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "ah-hotreload-chat-ping-v1",
+  "goal": "Emit a one-time in-game chat canary when the ECONOMY AH hot payload is applied, proving the existing live Lua watcher executed the new parity exporter generation.",
+  "branch": "feature/ah-hotreload-chat-ping-v1",
+  "base_parallel_sha": "c4a7f4b514c4e12a856ccb58760ee9592ce06b95",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-parity-marketmeta-export-v1"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-hotreload-chat-ping-v1",
+    "acquired_at": "2026-10-04T00:48:00Z",
+    "heartbeat_at": "2026-10-04T00:48:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxEconomyShadow",
+      "resource:parity-evidence",
+      "resource:ah-shadow-hot-bundle"
+    ]
+  },
+  "notes": "Diagnostics-only one-shot chat canary. Changes only AuxEconomyShadow_ParityExport.lua. It calls DEFAULT_CHAT_FRAME:AddMessage once per exporter revision after successful install. No AH query, buy, bid, cancel, post, scan scheduling, transaction ownership or cutover behavior changes."
+}
