@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "terminal-portal-clicker-v2",
+  "goal": "Add a true WoW 1.12.1 headless terminal login mode for portal-clicker accounts, with transient-network autoreconnect and Summoning Portal detection/use matching the current AutoSummonAssist portal contract, while keeping normal graphical Multibox launch independent.",
+  "branch": "feature/terminal-portal-clicker-v2",
+  "base_parallel_sha": "8de7d480eeaaca4f3a3eeb6899fec1c87d0f14c3",
+  "status": "active",
+  "auto_integrate": false,
+  "modules": [
+    "HeadlessPortalClicker",
+    "Updater"
+  ],
+  "dependencies": [
+    "AutoSummonAssist portal contract",
+    "Updater account vault"
+  ],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid",
+    "tools/updater/UpdaterAccountsFeature.cs",
+    "Summoning Portal interaction contract"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": {
+    "owner": "chatgpt:terminal-portal-clicker-v2",
+    "acquired_at": "2026-10-04T17:35:00Z",
+    "heartbeat_at": "2026-10-04T17:35:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:HeadlessPortalClicker",
+      "module:Updater",
+      "resource:probes/Wow112HeadlessAndroid",
+      "resource:tools/updater/UpdaterAccountsFeature.cs",
+      "resource:summoning-portal-interaction"
+    ]
+  },
+  "notes": "The first feature SHA 003f5354a796dac822dc24bee26e23f7a155aaa7 contains the headless client and portal-mode source. Its initial preflight failed before compilation only because this task coordination record did not yet exist. No compile, package or gameplay result is claimed by this record."
+}
