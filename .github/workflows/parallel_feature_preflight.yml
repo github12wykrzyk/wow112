@@ -98,7 +98,7 @@ jobs:
     needs:
       - preflight
       - profile_gates
-    if: github.event_name == 'push' && needs.preflight.outputs.auto_integrate == 'true' && needs.profile_gates.result == 'success'
+    if: ${{ always() && github.event_name == 'push' && needs.preflight.result == 'success' && needs.preflight.outputs.auto_integrate == 'true' && (needs.profile_gates.result == 'success' || needs.profile_gates.result == 'skipped') }}
     runs-on: windows-2022
     permissions:
       contents: write
