@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Contract tests for SummonScout Engine V2 P0.3b core-native API/state."""
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -44,6 +45,19 @@ class SummonScoutCoreApiStateContract(unittest.TestCase):
         self.assertIn('local VERSION = "p0.3b-core-api-state"', foundation)
         self.assertIn("W112_SUMMONSCOUT_COMPAT_VERSION = 4", foundation)
         self.assertIn("api.compatVersion = 4", foundation)
+
+    def test_hot_transform_accepts_core_native_export_anchor(self):
+        transform_path = ROOT / "tools" / "summonscout_hot_transform.py"
+        spec = importlib.util.spec_from_file_location("summonscout_hot_transform", transform_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        transformed = module.transform_core(CORE.read_bytes()).decode("utf-8")
+        self.assertIn("W112_SUMMONSCOUT_CORE_API_NATIVE = true", transformed)
+        self.assertIn("if hotReload then EventAPI.setDefaults() end", transformed)
+        self.assertLess(
+            transformed.index("W112_SUMMONSCOUT_CORE_API_NATIVE = true"),
+            transformed.index("if hotReload then EventAPI.setDefaults() end"),
+        )
 
 
 if __name__ == "__main__":
