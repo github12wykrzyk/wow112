@@ -14,15 +14,15 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [
     "economy"
   ],
   "lease": {
     "owner": "chatgpt:ah-hotreload-chat-ping-v1",
     "acquired_at": "2026-10-04T00:48:00Z",
-    "heartbeat_at": "2026-10-04T00:55:00Z",
+    "heartbeat_at": "2026-10-04T00:56:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:AuxEconomyShadow",
@@ -30,5 +30,5 @@
       "resource:ah-shadow-hot-bundle"
     ]
   },
-  "notes": "Diagnostics-only one-shot chat canary. Changes only AuxEconomyShadow_ParityExport.lua. It calls DEFAULT_CHAT_FRAME:AddMessage once per exporter revision after successful install. No AH query, buy, bid, cancel, post, scan scheduling, transaction ownership or cutover behavior changes."
+  "notes": "Diagnostics-only one-shot chat canary. Changes only AuxEconomyShadow_ParityExport.lua. It calls DEFAULT_CHAT_FRAME:AddMessage once per exporter revision after successful install. No AH query, buy, bid, cancel, post, scan scheduling, transaction ownership or cutover behavior changes. Feature SHA eea75d5bdf678033436e079cd60377a4426d043c passed preflight and ECONOMY profile gate before queue opt-in."
 }
