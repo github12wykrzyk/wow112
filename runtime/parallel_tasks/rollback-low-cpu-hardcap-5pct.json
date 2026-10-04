@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "rollback-low-cpu-hardcap-5pct",
+  "goal": "Rollback the 5 percent LOW-profile CPU hard cap after user-observed in-game disconnects, restoring the updater behavior that existed before low-cpu-hardcap-5pct.",
+  "branch": "feature/rollback-low-cpu-hardcap-5pct",
+  "base_parallel_sha": "93de16f51ca784d8a3443a10742f32a58c434fbe",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "UpdaterLowCpuThrottle"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "tools/updater/UpdaterSafety.cs"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "User reported disconnects after enabling the 5% Job Object hard cap. Restore exact pre-feature UpdaterSafety.cs from parallel commit 67f982b41279c088ead27a54e0bebff89cd49ca0. This removes the Job Object CPU cap, Idle-priority watcher and associated P/Invoke code, returning updater version to 2.10-parallel.2. No gameplay success is claimed until retested.",
+  "integrated_feature_sha": "eb7dc13ba77a5304e6496208732a6ffbadaf962d"
+}
