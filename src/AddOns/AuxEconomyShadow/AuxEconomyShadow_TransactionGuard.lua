@@ -3,12 +3,12 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow transaction guard requires persistent anchor")
 end
 
-local REVISION = "1-fail-closed-shadow"
+local REVISION = "2-cutover-armable"
 local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
     state.serial = tonumber(state.serial) or 0
     state.pending = state.pending or nil
     state.last = state.last or nil
-    state.realActionsEnabled = false
+    state.realActionsEnabled = state.realActionsEnabled and true or false
 
     local api = {}
     api.revision = REVISION
@@ -26,10 +26,8 @@ local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
     end
 
     function api.SetRealActionsEnabled(enabled)
-        -- Shadow consolidation is deliberately incapable of arming real actions
-        -- until a later cutover-specific implementation replaces this module.
-        state.realActionsEnabled = false
-        return false, enabled and "shadow-real-actions-locked" or "already-disabled"
+        state.realActionsEnabled = enabled and true or false
+        return true, state.realActionsEnabled and "enabled" or "disabled"
     end
 
     function api.Prepare(candidate, context)
@@ -45,7 +43,7 @@ local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
         if context.signatureCurrent == false then return nil, "stale-signature" end
 
         state.serial = state.serial + 1
-        local token = "shadow-tx-" .. tostring(state.serial) .. "-" .. candidateKey(candidate)
+        local token = "cutover-tx-" .. tostring(state.serial) .. "-" .. candidateKey(candidate)
         state.pending = {
             token = token,
             key = candidateKey(candidate),
@@ -53,7 +51,8 @@ local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
             itemId = tonumber(candidate.itemId) or 0,
             amount = amount,
             preparedAt = tonumber(context.now) or 0,
-            shadowOnly = true,
+            shadowOnly = not state.realActionsEnabled,
+            dispatched = false,
         }
         return token, nil
     end
@@ -68,7 +67,7 @@ local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
         if context.queryInFlight then return false, "query-in-flight" end
         if context.unknownHold then return false, "unknown-hold" end
         if context.signatureCurrent == false then return false, "stale-signature" end
-        if not state.realActionsEnabled then return false, "shadow-real-actions-locked" end
+        if not state.realActionsEnabled then return false, "real-actions-disabled" end
         return true, nil
     end
 
@@ -77,6 +76,28 @@ local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
         if not p then return false, "nothing-pending" end
         if tostring(token or "") ~= tostring(p.token or "") then return false, "token-mismatch" end
         p.outcome = tostring(outcome or "simulated")
+        p.completed = true
+        state.last = p
+        state.pending = nil
+        return true
+    end
+
+    function api.MarkDispatched(token, outcome)
+        local p = state.pending
+        if not p then return false, "nothing-pending" end
+        if tostring(token or "") ~= tostring(p.token or "") then return false, "token-mismatch" end
+        p.outcome = "dispatched:" .. tostring(outcome or "real-action")
+        p.dispatched = true
+        p.dispatchedAt = type(GetTime) == "function" and (tonumber(GetTime()) or 0) or 0
+        return true
+    end
+
+    function api.Reconcile(token, outcome)
+        local p = state.pending
+        if not p then return false, "nothing-pending" end
+        if tostring(token or "") ~= tostring(p.token or "") then return false, "token-mismatch" end
+        if not p.dispatched then return false, "not-dispatched" end
+        p.outcome = "settled:" .. tostring(outcome or "reconciled")
         p.completed = true
         state.last = p
         state.pending = nil
@@ -99,7 +120,7 @@ local ok = R.ReplaceModule("transaction_guard", REVISION, function(state)
             serial = state.serial,
             pending = state.pending,
             last = state.last,
-            realActionsEnabled = false,
+            realActionsEnabled = state.realActionsEnabled and true or false,
         }
     end
 

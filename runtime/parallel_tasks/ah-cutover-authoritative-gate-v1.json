@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "ah-cutover-authoritative-gate-v1",
+  "goal": "Introduce the first guarded AH cutover: keep proven AuxVmangos transaction execution as rollback backend, but require current-generation AuxEconomyShadow positive exact candidate parity before shadow-authoritative real actions can arm; fail closed on any mismatch.",
+  "branch": "feature/ah-cutover-authoritative-gate-v1",
+  "base_parallel_sha": "9b743815820bf68dcff2f4c483b3d430ac954de7",
+  "modules": [
+    "AuxEconomyShadow",
+    "AuxVmangos"
+  ],
+  "dependencies": [
+    "ah-shadow-host-independent-v1"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle",
+    "auxvmangos-real-action-gate"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt-ah-cutover-authoritative-gate-v1",
+    "acquired_at": "2026-10-04T02:20:11Z",
+    "heartbeat_at": "2026-10-04T07:07:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxEconomyShadow",
+      "module:AuxVmangos",
+      "resource:ah-shadow-hot-bundle",
+      "resource:parity-evidence",
+      "resource:auxvmangos-real-action-gate"
+    ]
+  },
+  "notes": "Gameplay evidence #309 on parallel be68344e showed shadow installed/hooks intact, observerErrors=0, 1214/1214 decisions at 100% with cutoverReady=true, but every decision was both-reject. Pre-cutover audit found CandidatePipeline exports selectedPostscan while the passive bridge reads result.selected. This feature fixes that interface via the cutover compatibility wrapper, requires a live positive exact-match candidate in the current hot generation, keeps zero tolerance for shadow-extra/shadow-miss/different-candidate/lifecycle-diff, and wraps only AuxVmangos-owned PlaceAuctionBid phases. Before first positive match the proven active owner passes through unchanged; a recorded mismatch blocks that candidate and disarms cutover. No QueryAuctionItems/CancelAuction/StartAuction ownership is added."
+}

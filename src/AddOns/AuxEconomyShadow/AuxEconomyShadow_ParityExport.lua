@@ -3,7 +3,7 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow parity export requires persistent anchor")
 end
 
-local REVISION = "3-marketmeta-export-chat-ping-2"
+local REVISION = "4-cutover-decision-feed"
 local ok = R.ReplaceModule("parity_export", REVISION, function(state)
     local api = {}
     api.revision = REVISION
@@ -20,7 +20,7 @@ local ok = R.ReplaceModule("parity_export", REVISION, function(state)
         if state.lastChatPingRevision == REVISION then return end
         local frame = DEFAULT_CHAT_FRAME or ChatFrame1
         if frame and type(frame.AddMessage) == "function" then
-            frame:AddMessage("|cff00ff00[GPT]|r AH hot-reload ping 2 OK")
+            frame:AddMessage("|cff00ff00[GPT]|r AH cutover candidate hot-reload OK")
             state.lastChatPingRevision = REVISION
         end
     end
@@ -69,7 +69,7 @@ local ok = R.ReplaceModule("parity_export", REVISION, function(state)
     function api.install(reason)
         local parity = R.GetModule("parity")
         if type(parity) ~= "table" or type(parity.RecordDecision) ~= "function" then
-            return false
+            error("parity export cannot install without parity RecordDecision")
         end
         if parity.RecordDecision == state.wrapper then
             publish("install-existing:" .. tostring(reason or ""))
@@ -81,6 +81,15 @@ local ok = R.ReplaceModule("parity_export", REVISION, function(state)
         state.originalRecordDecision = parity.RecordDecision
         state.wrapper = function(active, shadow, at, note)
             local row = state.originalRecordDecision(active, shadow, at, note)
+            local cutover = R.GetModule("cutover")
+            if type(cutover) == "table" and type(cutover.ObserveDecision) == "function" then
+                local okCutover, errCutover = pcall(cutover.ObserveDecision, active, shadow, at, note)
+                if not okCutover then
+                    AVM_DB = type(AVM_DB) == "table" and AVM_DB or {}
+                    AVM_DB.diag = type(AVM_DB.diag) == "table" and AVM_DB.diag or {}
+                    AVM_DB.diag.shadowCutoverFeedError = tostring(errCutover or "unknown")
+                end
+            end
             publish("record-decision")
             return row
         end
