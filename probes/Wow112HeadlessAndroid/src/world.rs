@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::env;
 use std::io::{self, Cursor, Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 use wow_srp::normalized_string::NormalizedString;
 use wow_srp::vanilla_header::{DecrypterHalf, EncrypterHalf, HeaderCrypto, ProofSeed};
 use wow_srp::SESSION_KEY_LENGTH;
@@ -18,6 +19,8 @@ const VANILLA_MODULUS_CRC: u32 = 0x4C1C776D;
 const SMSG_ADDON_INFO_OPCODE: u16 = 0x02EF;
 const SMSG_UPDATE_OBJECT_OPCODE: u16 = 0x00A9;
 const SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE: u16 = 0x01F6;
+const CMSG_PING_OPCODE: u32 = 0x01DC;
+const SMSG_PONG_OPCODE: u16 = 0x01DD;
 const MSG_AUCTION_HELLO_OPCODE: u16 = 0x0255;
 const CMSG_AUCTION_LIST_ITEMS_OPCODE: u32 = 0x0258;
 const SMSG_AUCTION_LIST_RESULT_OPCODE: u16 = 0x025C;
@@ -26,6 +29,8 @@ const SMSG_MAIL_LIST_RESULT_OPCODE: u16 = 0x023B;
 const UNIT_NPC_FLAG_AUCTIONEER: u32 = 0x0000_1000;
 const GAMEOBJECT_TYPE_MAILBOX: i32 = 19;
 const AUCTION_RECORD_SIZE: usize = 64;
+const PING_INTERVAL_SECONDS: u64 = 30;
+const PONG_TIMEOUT_SECONDS: u64 = 15;
 
 fn hex_prefix(bytes: &[u8]) -> String {
     bytes
@@ -626,12 +631,123 @@ fn probe_read_only_mailbox(
     Err("SMSG_MAIL_LIST_RESULT not received within 256 packets".to_string())
 }
 
+fn maintain_world_session(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    soak_seconds: u64,
+) -> Result<(), String> {
+    let previous_timeout = stream.read_timeout().ok().flatten();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(1000)))
+        .map_err(|e| format!("set POC-04 poll timeout failed: {e}"))?;
+
+    let started = Instant::now();
+    let mut next_ping = Instant::now();
+    let mut pending_ping: Option<(u32, Instant)> = None;
+    let mut sequence = 1u32;
+    let mut drained_packets = 0u64;
+
+    if soak_seconds == 0 {
+        println!("[RESILIENCE] POC-04 persistent world session started duration=infinite");
+    } else {
+        println!("[RESILIENCE] POC-04 persistent world session started duration={soak_seconds}s");
+    }
+
+    loop {
+        if soak_seconds != 0 && started.elapsed() >= Duration::from_secs(soak_seconds) {
+            let _ = stream.set_read_timeout(previous_timeout);
+            println!(
+                "[RESILIENCE] POC-04 SOAK PASS duration={}s drained_packets={drained_packets}",
+                started.elapsed().as_secs()
+            );
+            return Ok(());
+        }
+
+        if let Some((ping_id, sent_at)) = pending_ping {
+            if sent_at.elapsed() >= Duration::from_secs(PONG_TIMEOUT_SECONDS) {
+                let _ = stream.set_read_timeout(previous_timeout);
+                return Err(format!(
+                    "world keepalive pong timeout ping={ping_id} waited={}s",
+                    sent_at.elapsed().as_secs()
+                ));
+            }
+        } else if Instant::now() >= next_ping {
+            let ping_id = sequence;
+            let mut payload = Vec::with_capacity(8);
+            payload.extend_from_slice(&ping_id.to_le_bytes());
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            write_encrypted_raw(stream, crypto.encrypter(), CMSG_PING_OPCODE, &payload)?;
+            println!("[RESILIENCE] CMSG_PING seq={ping_id}");
+            pending_ping = Some((ping_id, Instant::now()));
+            sequence = sequence.wrapping_add(1);
+        }
+
+        let mut header_probe = [0u8; 4];
+        match stream.peek(&mut header_probe) {
+            Ok(0) => {
+                let _ = stream.set_read_timeout(previous_timeout);
+                return Err("world socket closed during POC-04 soak".to_string());
+            }
+            Ok(count) if count < header_probe.len() => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Ok(_) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(20)))
+                    .map_err(|e| format!("set POC-04 packet timeout failed: {e}"))?;
+                let (opcode, payload) = read_encrypted_raw(stream, crypto.decrypter())?;
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(1000)))
+                    .map_err(|e| format!("restore POC-04 poll timeout failed: {e}"))?;
+                drained_packets += 1;
+
+                if opcode == SMSG_PONG_OPCODE {
+                    if payload.len() < 4 {
+                        let _ = stream.set_read_timeout(previous_timeout);
+                        return Err(format!("SMSG_PONG payload too short: {}", payload.len()));
+                    }
+                    let pong_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+                    match pending_ping {
+                        Some((expected, _)) if expected == pong_id => {
+                            println!("[RESILIENCE] SMSG_PONG PASS seq={pong_id}");
+                            pending_ping = None;
+                            next_ping = Instant::now() + Duration::from_secs(PING_INTERVAL_SECONDS);
+                        }
+                        Some((expected, _)) => {
+                            println!(
+                                "[RESILIENCE-DIAG] stale/mismatched pong expected={expected} got={pong_id}"
+                            );
+                        }
+                        None => {
+                            println!("[RESILIENCE-DIAG] unsolicited pong seq={pong_id}");
+                        }
+                    }
+                } else if drained_packets <= 12 {
+                    println!(
+                        "[RESILIENCE-DIAG] drain rx[{drained_packets}] opcode=0x{opcode:04X} payload={}",
+                        payload.len()
+                    );
+                }
+            }
+            Err(error)
+                if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+            {
+            }
+            Err(error) => {
+                let _ = stream.set_read_timeout(previous_timeout);
+                return Err(format!("world keepalive peek failed: {error:?}"));
+            }
+        }
+    }
+}
+
 pub fn login(
     stream: &mut TcpStream,
     session_key: [u8; SESSION_KEY_LENGTH as usize],
     server_id: u8,
     username: &str,
     character_name: Option<&str>,
+    soak_seconds: u64,
 ) -> Result<(), String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
@@ -762,5 +878,6 @@ pub fn login(
     let (auctioneer_guid, mailbox_guid) = discover_interaction_targets(stream, &mut crypto)?;
     probe_read_only_auction_house(stream, &mut crypto, auctioneer_guid)?;
     probe_read_only_mailbox(stream, &mut crypto, mailbox_guid)?;
+    maintain_world_session(stream, &mut crypto, soak_seconds)?;
     Ok(())
 }
