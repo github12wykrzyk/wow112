@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-hot-fanout-lua50-fix-v1",
+  "goal": "Fix the SummonScout HOT fanout package generated for WoW 1.12 Lua 5.0 so adjacent fanned-out modules cannot produce the ambiguous '(function()' statement parse error seen at SummonScout_WhisperConfirmSpam.lua:1324.",
+  "branch": "feature/summonscout-hot-fanout-lua50-fix-v1",
+  "base_parallel_sha": "7f99a16060ca4b25789e85b9d74c082bc3132051",
+  "modules": [
+    "SummonScout",
+    "AI-workflow"
+  ],
+  "dependencies": [
+    "hot-default-delivery-v1"
+  ],
+  "shared_resources": [
+    "SummonScout hot delivery transform"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-hot-fanout-lua50-fix",
+    "acquired_at": "2026-10-04T12:02:00Z",
+    "heartbeat_at": "2026-10-04T12:05:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout hot delivery transform"
+    ]
+  },
+  "notes": "Regression evidence is exact artifact 11302366865 / parallel a8246230d9e2fa0f9a09b92297dc308e03fcf4e4: generated SummonScout_WhisperConfirmSpam.lua had adjacent anonymous IIFEs with end)() followed by (function(), which WoW 1.12 Lua 5.0 rejected as ambiguous syntax near line 1324. The fix uses uniquely named local wrapper functions per fanned-out module and adds a structural regression test for this exact boundary. No SummonScout service logic, native DLL, watcher slot, TOC order, or payment/summon transaction behavior is changed."
+}
