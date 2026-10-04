@@ -46,6 +46,21 @@ class SummonScoutHotFanoutTests(unittest.TestCase):
         self.assertGreater(fanout, guard)
         self.assertIn(b"if __w112_hot_fanout_reload then", packaged)
 
+    def test_fanout_uses_lua50_safe_named_wrappers(self):
+        host = addons.SUMMONSCOUT_ROOT / addons.HOT_FANOUT_HOST
+        packaged = addons.package_bytes("SummonScout", host)
+        modules = addons.hot_fanout_modules()
+
+        # WoW 1.12 Lua 5.0 rejects consecutive `(function() ... end)()`
+        # statements as ambiguous function-call/new-statement syntax.
+        self.assertNotIn(b"\n    (function()\n", packaged)
+        self.assertNotIn(b"end)()\n    -- W112 HOT FANOUT END", packaged)
+
+        for index, _name in enumerate(modules, start=1):
+            wrapper = "__w112_hot_fanout_module_" + str(index)
+            self.assertIn(("    local function " + wrapper + "()\n").encode("utf-8"), packaged)
+            self.assertIn(("\n    " + wrapper + "()\n").encode("utf-8"), packaged)
+
 
 if __name__ == "__main__":
     unittest.main()

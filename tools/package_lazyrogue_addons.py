@@ -198,16 +198,17 @@ def append_summonscout_hot_fanout(data):
         b"if __w112_hot_fanout_reload then\n",
     ]
 
-    for name in hot_fanout_modules():
+    for index, name in enumerate(hot_fanout_modules(), start=1):
         path = SUMMONSCOUT_ROOT / name
         payload = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         if not payload.strip() or b"\x00" in payload:
             raise RuntimeError("SummonScout HOT fanout invalid payload: " + name)
+        wrapper = "__w112_hot_fanout_module_" + str(index)
         rows.extend([
             ("    -- W112 HOT FANOUT BEGIN " + name + "\n").encode("utf-8"),
-            b"    (function()\n",
+            ("    local function " + wrapper + "()\n").encode("utf-8"),
             payload.rstrip(b"\n"),
-            b"\n    end)()\n",
+            ("\n    end\n    " + wrapper + "()\n").encode("utf-8"),
             ("    -- W112 HOT FANOUT END " + name + "\n").encode("utf-8"),
         ])
 
@@ -216,6 +217,8 @@ def append_summonscout_hot_fanout(data):
         b"-- " + FANOUT_END_MARKER + b"\n",
     ])
     out = b"".join(rows)
+    if b"\n    (function()\n" in out:
+        raise RuntimeError("SummonScout HOT fanout emitted Lua 5.0 ambiguous IIFE syntax")
     if len(out) >= HOT_PAYLOAD_CAP:
         raise RuntimeError(
             "SummonScout HOT fanout exceeds native watcher payload cap: "
