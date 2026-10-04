@@ -1,0 +1,73 @@
+name: POC06 Android Fast Build
+
+on:
+  push:
+    branches:
+      - feature/android-headless-poc06-fastbuild
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_android_poc06_fast.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Build POC06 x86_64 Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINKER="${ANDROID_SDK_ROOT}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
+          test -x "$LINKER"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$LINKER"
+          export CC_x86_64_linux_android="$LINKER"
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target x86_64-linux-android
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="probes/Wow112HeadlessAndroid/target/x86_64-linux-android/release/wow112-headless-android-probe"
+          test -x "$BIN"
+          mkdir -p dist/poc06
+          cp "$BIN" dist/poc06/wow112-headless-android-probe
+          BIN_SHA="$(sha256sum dist/poc06/wow112-headless-android-probe | awk '{print $1}')"
+          {
+            echo "POC=06"
+            echo "REPOSITORY=${GITHUB_REPOSITORY}"
+            echo "BRANCH=${GITHUB_REF_NAME}"
+            echo "EXACT_SHA=${GITHUB_SHA}"
+            echo "TARGET=x86_64-linux-android"
+            echo "ANDROID_API=21"
+            echo "BINARY_SHA256=${BIN_SHA}"
+          } > dist/poc06/BUILD_INFO.txt
+          sha256sum dist/poc06/wow112-headless-android-probe dist/poc06/BUILD_INFO.txt > dist/poc06/SHA256SUMS.txt
+          file dist/poc06/wow112-headless-android-probe
+          cat dist/poc06/BUILD_INFO.txt
+
+      - name: Upload POC06 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Android-POC06-Fast-${{ github.sha }}
+          path: dist/poc06
+          if-no-files-found: error
+          retention-days: 7
