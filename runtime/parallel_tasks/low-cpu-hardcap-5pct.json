@@ -4,8 +4,8 @@
   "goal": "Hard-cap each WoW client launched from a MULTIBOX profile marked LOW to 5 percent total CPU while leaving non-LOW clients uncapped.",
   "branch": "feature/low-cpu-hardcap-5pct",
   "base_parallel_sha": "18307e740164522c6aab6ea4d9b2d527a65cfc87",
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "modules": [
     "UpdaterLowCpuThrottle"
   ],
@@ -16,15 +16,7 @@
   "delivery_profiles": [
     "updater"
   ],
-  "lease": {
-    "owner": "chatgpt-low-cpu-hardcap-5pct",
-    "acquired_at": "2026-10-04T14:42:00Z",
-    "heartbeat_at": "2026-10-04T14:42:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:UpdaterLowCpuThrottle",
-      "resource:tools/updater/UpdaterSafety.cs"
-    ]
-  },
-  "notes": "Updater-only QoL change. LOW is identified by the existing BelowNormal launch marker, then placed in a Windows Job Object with CPU hard-cap rate 500 (5.00%) and switched to Idle priority. The job handle is duplicated into the WoW process so the cap survives updater exit. Non-LOW clients are not selected. Requires exact feature and integrated updater profile builds plus normal Parallel post-integration gate. Gameplay effect remains unverified until the user tests real multibox clients."
+  "lease": null,
+  "notes": "Updater-only QoL change. LOW is identified by the existing BelowNormal launch marker, then placed in a Windows Job Object with CPU hard-cap rate 500 (5.00%) and switched to Idle priority. The job handle is duplicated into the WoW process so the cap survives updater exit. Non-LOW clients are not selected. Requires exact feature and integrated updater profile builds plus normal Parallel post-integration gate. Gameplay effect was superseded by rollback after user-reported disconnects.",
+  "integrated_feature_sha": "9c051edcf77916f2653bfbe682f71d8a21b08554"
 }
