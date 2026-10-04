@@ -15,14 +15,16 @@ namespace WoW112Updater
     // without changing its networking call sites.
     //
     // Delivery is intentionally decoupled from the moving Parallel development
-    // trunk. Only the exact branch-ref lookup for /branches/parallel is rewritten
-    // to /branches/parallel-testpoint. Actions queries still use branch=parallel,
-    // so downloaded artifacts and attestations retain their original Parallel
-    // provenance while the user-facing test point remains frozen.
+    // trunk. Branch identity is resolved through parallel-testpoint. The STANDARD
+    // candidate lookup is also narrowed to build_work_candidate.yml so unrelated
+    // high-volume Actions runs can never push the exact testpoint run out of the
+    // updater's result window. Artifact provenance still remains branch=parallel.
     internal sealed class HttpClientHandler : System.Net.Http.HttpClientHandler
     {
         private const string ParallelBranchPath = "/repos/github12wykrzyk/wow112/branches/parallel";
         private const string TestPointBranchPath = "/repos/github12wykrzyk/wow112/branches/parallel-testpoint";
+        private const string ActionsRunsPath = "/repos/github12wykrzyk/wow112/actions/runs";
+        private const string CandidateWorkflowRunsPath = "/repos/github12wykrzyk/wow112/actions/workflows/build_work_candidate.yml/runs";
 
         public HttpClientHandler()
         {
@@ -33,7 +35,7 @@ namespace WoW112Updater
         {
             try
             {
-                RewriteParallelBranchLookup(request);
+                RewriteParallelDeliveryLookup(request);
                 return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -44,15 +46,39 @@ namespace WoW112Updater
             }
         }
 
-        private static void RewriteParallelBranchLookup(HttpRequestMessage request)
+        private static void RewriteParallelDeliveryLookup(HttpRequestMessage request)
         {
             if (request == null || request.RequestUri == null) return;
             var uri = request.RequestUri;
             if (!string.Equals(uri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase)) return;
-            if (!string.Equals(uri.AbsolutePath, ParallelBranchPath, StringComparison.OrdinalIgnoreCase)) return;
 
-            var builder = new UriBuilder(uri) { Path = TestPointBranchPath };
-            request.RequestUri = builder.Uri;
+            if (string.Equals(uri.AbsolutePath, ParallelBranchPath, StringComparison.OrdinalIgnoreCase))
+            {
+                var branchBuilder = new UriBuilder(uri) { Path = TestPointBranchPath };
+                request.RequestUri = branchBuilder.Uri;
+                return;
+            }
+
+            // The STANDARD/ANGLE/AUTO-REAR candidate path asks for branch=parallel&per_page=50.
+            // Keep the query intact but scope it to the authoritative workflow endpoint.
+            // The GitHub monitor uses per_page=30/100 and ECONOMY has its own route, so this
+            // rewrite is deliberately narrow and does not alter those consumers.
+            if (string.Equals(uri.AbsolutePath, ActionsRunsPath, StringComparison.OrdinalIgnoreCase)
+                && QueryContains(uri.Query, "branch=parallel")
+                && QueryContains(uri.Query, "per_page=50"))
+            {
+                var candidateBuilder = new UriBuilder(uri) { Path = CandidateWorkflowRunsPath };
+                request.RequestUri = candidateBuilder.Uri;
+            }
+        }
+
+        private static bool QueryContains(string query, string token)
+        {
+            if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(token)) return false;
+            var text = query[0] == '?' ? query.Substring(1) : query;
+            foreach (var part in text.Split('&'))
+                if (string.Equals(part, token, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
     }
 }
