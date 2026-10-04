@@ -55,8 +55,9 @@ namespace WoW112Updater
                 tools.SuspendLayout();
                 tools.ColumnCount = 8;
                 tools.ColumnStyles.Clear();
-                for (var i = 0; i < 8; i++) tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12.5F));
-                tools.Controls.Add(ActionButton(terminalPortalButton, "MULTIBOX TERMINAL"), 7, 0);
+                for (var i = 0; i < 7; i++) tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 14.285714F));
+                tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64F));
+                tools.Controls.Add(ActionButton(terminalPortalButton, "TERM"), 7, 0);
                 tools.ResumeLayout(true);
             }
             Log("MULTIBOX TERMINAL gotowy: headless portal-clicker, bez graficznego klienta WoW.");
