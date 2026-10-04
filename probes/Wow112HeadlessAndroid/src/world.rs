@@ -1,8 +1,8 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 use wow_srp::normalized_string::NormalizedString;
-use wow_srp::vanilla_header::ProofSeed;
+use wow_srp::vanilla_header::{DecrypterHalf, ProofSeed};
 use wow_srp::SESSION_KEY_LENGTH;
 use wow_world_messages::vanilla::opcodes::ServerOpcodeMessage;
 use wow_world_messages::vanilla::{
@@ -13,6 +13,7 @@ use wow_world_messages::vanilla::{
 
 const OCTOWOW_WORLD_BUILD: u32 = 5875;
 const VANILLA_MODULUS_CRC: u32 = 0x4C1C776D;
+const SMSG_ADDON_INFO_OPCODE: u16 = 0x02EF;
 
 fn hex_prefix(bytes: &[u8]) -> String {
     bytes
@@ -44,6 +45,47 @@ fn world_diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
     }
 
     let _ = stream.set_read_timeout(previous_timeout);
+}
+
+fn skip_octowow_addon_info(
+    stream: &mut TcpStream,
+    decrypter: &mut DecrypterHalf,
+) -> Result<(), String> {
+    let header = decrypter
+        .read_and_decrypt_server_header(&mut *stream)
+        .map_err(|e| format!("read Octo addon-info header failed: {e:?}"))?;
+
+    if header.size < 2 {
+        return Err(format!(
+            "invalid Octo pre-auth header size={} opcode=0x{:04X}",
+            header.size, header.opcode
+        ));
+    }
+
+    let payload_len = usize::from(header.size - 2);
+    let mut payload = vec![0u8; payload_len];
+    stream
+        .read_exact(&mut payload)
+        .map_err(|e| format!("read Octo addon-info payload failed: {e:?}"))?;
+
+    let prefix_len = payload.len().min(32);
+    println!(
+        "[WORLD-DIAG] pre-auth-raw opcode=0x{:04X} size={} payload={} prefix={}",
+        header.opcode,
+        header.size,
+        payload_len,
+        hex_prefix(&payload[..prefix_len])
+    );
+
+    if header.opcode != SMSG_ADDON_INFO_OPCODE {
+        return Err(format!(
+            "expected Octo SMSG_ADDON_INFO opcode=0x{SMSG_ADDON_INFO_OPCODE:04X}, got 0x{:04X}",
+            header.opcode
+        ));
+    }
+
+    println!("[WORLD] custom SMSG_ADDON_INFO skipped payload={payload_len}");
+    Ok(())
 }
 
 fn octo_fingerprint_addons() -> Vec<AddonInfo> {
@@ -121,6 +163,8 @@ pub fn login(
         .map_err(|e| format!("write world auth session failed: {e:?}"))?;
 
     world_diag_peek(stream, "auth-response-raw", Duration::from_millis(1500));
+
+    skip_octowow_addon_info(stream, crypto.decrypter())?;
 
     let auth_response = {
         let mut found = None;
