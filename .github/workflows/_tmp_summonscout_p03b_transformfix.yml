@@ -27,7 +27,7 @@ jobs:
           text = transform_path.read_text(encoding='utf-8')
           pattern = re.compile(r'    event_anchor = \(.*?    s = _one\(s, event_anchor, event_rebind, "hot defaults before script swap"\)\n', re.S)
           replacement = '''    event_anchor = (\n        "W112_SUMMONSCOUT_CORE_API_NATIVE = true\\n\\n"\n        'frame:SetScript("OnEvent", function()\\n'\n    )\n    event_rebind = (\n        "W112_SUMMONSCOUT_CORE_API_NATIVE = true\\n\\n"\n        "-- PLAYER_LOGIN is not fired by an in-world hot execution. Re-apply\\n"\n        "-- defaults/migrations only for a real hot generation before scripts swap.\\n"\n        "if hotReload then EventAPI.setDefaults() end\\n\\n"\n        'frame:SetScript("OnEvent", function()\\n'\n    )\n    s = _one(s, event_anchor, event_rebind, "hot defaults after core-native API export")\n'''
-          text, count = pattern.subn(replacement, text, count=1)
+          text, count = pattern.subn(lambda _match: replacement, text, count=1)
           if count != 1:
               raise SystemExit(f'transform event anchor replacement count={count}')
           transform_path.write_text(text, encoding='utf-8')
