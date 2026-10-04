@@ -118,7 +118,7 @@ namespace WoW112Updater
             string[] captions = { "Sprawdź / napraw", "Zabij wszystkie", "Wyślij raport", "Wyślij AH dump", "Aktualizuj updater", "Konta WoW", "MULTIBOX" };
             for (int i = 0; i < keys.Length; i++) utilities.Controls.Add(ActionButton((Button)featureControls[keys[i]], captions[i]), i, 0);
             tools.Controls.Add(utilities, 0, 1);
-            var backups = Grid(4, 1); Columns(backups, 120, -1, 120, 132);
+            var backups = Grid(5, 1); Columns(backups, 120, -1, 120, 132, 142);
             backups.Controls.Add(TextLabel("Przywróć kopię", 9, Muted), 0, 0);
             PrepareInput(rollbackChoice); backups.Controls.Add(rollbackChoice, 1, 0);
             backups.Controls.Add(ActionButton(rollbackButton, "Przywróć"), 2, 0);
@@ -148,14 +148,14 @@ namespace WoW112Updater
             gameDir.Leave += delegate { SaveConfig(false); };
             status.TextChanged += delegate { UpdateStatusStyle(); };
             localInfo.TextChanged += delegate { detailsTip.SetToolTip(localInfo, localInfo.Text); };
-            ClientSizeChanged += delegate { RepositionFloatingDiagnosticControls(); };
+            Resize += delegate { DockAhEvidenceControl(backups); };
             FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
                 if (busy && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; status.Text = "Poczekaj na zakończenie bieżącej operacji."; }
             };
             FormClosed += delegate { detailsTip.Dispose(); token.Dispose(); };
-            Shown += delegate { FitWorkingArea(); RepositionFloatingDiagnosticControls(); StartGitHubMonitor(); };
-            DpiChanged += delegate { BeginInvoke(new Action(delegate { FitWorkingArea(); RepositionFloatingDiagnosticControls(); })); };
+            Shown += delegate { FitWorkingArea(); DockAhEvidenceControl(backups); StartGitHubMonitor(); };
+            DpiChanged += delegate { BeginInvoke(new Action(delegate { FitWorkingArea(); DockAhEvidenceControl(backups); })); };
             ResetRemote(true);
             RefreshLocalState();
             ResumeLayout(true);
@@ -170,16 +170,22 @@ namespace WoW112Updater
             Location = new Point(Math.Max(area.Left, Math.Min(Left, area.Right - Width)), Math.Max(area.Top, Math.Min(Top, area.Bottom - Height)));
         }
 
-        private void RepositionFloatingDiagnosticControls()
+        private void DockAhEvidenceControl(TableLayoutPanel host)
         {
-            foreach (var button in Controls.OfType<Button>())
+            if (host == null || host.IsDisposed) return;
+            var button = Controls.OfType<Button>()
+                .FirstOrDefault(item => item.Text.StartsWith("AH EVIDENCE", StringComparison.OrdinalIgnoreCase));
+            if (button == null)
+                button = host.Controls.OfType<Button>()
+                    .FirstOrDefault(item => item.Text.StartsWith("AH EVIDENCE", StringComparison.OrdinalIgnoreCase));
+            if (button == null) return;
+            if (button.Parent != host)
             {
-                if (!button.Text.StartsWith("AH EVIDENCE", StringComparison.OrdinalIgnoreCase)) continue;
-                button.Anchor = AnchorStyles.None;
-                button.Left = Math.Max(8, ClientSize.Width - button.Width - 18);
-                button.Top = Math.Max(8, ClientSize.Height - button.Height - 18);
-                button.BringToFront();
+                if (button.Parent != null) button.Parent.Controls.Remove(button);
+                host.Controls.Add(button, 4, 0);
             }
+            ActionButton(button, button.Text);
+            host.PerformLayout();
         }
 
         private static TableLayoutPanel Grid(int columns, int rows)
