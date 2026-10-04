@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-fallback-router-v1",
+  "goal": "When a customer whisper is question-like but the existing SummonScout parser cannot resolve it, reply with currently available summon destinations; when the customer selects a recognized destination, keep local requests on the current summoner and hand remote requests through the configured master to a live summoner serving that destination.",
+  "branch": "feature/summonscout-fallback-router-v1",
+  "base_parallel_sha": "6fc774b0eb4f11c8f284628db7fd2df7200374e3",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-explicit-api-p02",
+    "summonscout-roster-ownership-guard-v1-r2"
+  ],
+  "shared_resources": [
+    "SummonScout CHAT_MSG_WHISPER classification",
+    "SummonScout explicit API",
+    "SummonScout masterName whisper control plane"
+  ],
+  "status": "in_progress",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Lua-only hot modules. Normal understood whisper requests stay on the existing core path. Fleet control payloads use a dedicated SSFR1 prefix with hex-encoded fields to avoid colliding with the direct-prefix buyer parser and avoid literal WoW pipe escapes. Live providers expire by TTL; remote routes ACK back before the origin confirms success. No Ritual/native coordinator/payment/World-chat behavior is replaced. Exact CI/test/artifact evidence will be recorded only after it exists."
+}
