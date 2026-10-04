@@ -25,12 +25,12 @@
   "lease": {
     "owner": "chatgpt-github12",
     "acquired_at": "2026-10-04T21:55:44Z",
-    "heartbeat_at": "2026-10-04T21:55:44Z",
+    "heartbeat_at": "2026-10-04T21:58:31Z",
     "ttl_seconds": 21600,
     "scopes": [
-      "resource:tools/updater/UpdaterTerminalPortalFeature.cs",
-      "resource:probes/Wow112HeadlessAndroid"
+      "resource:tools/updater/UpdaterTerminalPortalFeature.cs"
     ]
   },
-  "notes": "Exact feature payload build evidence before opt-in: Build WoW112 updater run 37237611112 PASS including x86 compile, dashboard UI smoke, PE/hash verification and artifact upload; Build Android WoW112 headless probe run 37237611102 PASS including PowerShell syntax, host compile, Android x86_64 release build, checksum staging and artifact upload. User gameplay already validated multi-account detached portal clicking on V5. Promotion remains fail-closed behind Parallel Control Plane preflight, exact updater profile gates and serialized CAS integration."
+  "notes": "Exact feature payload build evidence before opt-in: Build WoW112 updater run 37237611112 PASS including x86 compile, dashboard UI smoke, PE/hash verification and artifact upload; Build Android WoW112 headless probe run 37237611102 PASS including PowerShell syntax, host compile, Android x86_64 release build, checksum staging and artifact upload. User gameplay already validated multi-account detached portal clicking on V5. Promotion remains fail-closed behind Parallel Control Plane preflight, exact updater profile gates and serialized CAS integration. Lease intentionally uses only the updater panel resource because the older terminal-portal-clicker-v2 still owns the shared Android probe scope; the control-plane policy explicitly permits leasing a safe declared subset.",
+  "integrated_feature_sha": null
 }
