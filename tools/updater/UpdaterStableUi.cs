@@ -103,13 +103,21 @@ namespace WoW112Updater
             progress.Dock = DockStyle.Fill; progress.Margin = new Padding(4, 1, 4, 3);
             progress.Style = ProgressBarStyle.Continuous;
             update.Controls.Add(progress, 0, 3);
-            var actions = Grid(5, 1); actions.ColumnStyles.Clear();
-            foreach (float width in new[] { 16F, 16F, 18F, 30F, 20F }) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, width));
+            var actions = Grid(6, 1); actions.ColumnStyles.Clear();
+            foreach (float width in new[] { 12F, 12F, 14F, 25F, 17F, 20F }) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, width));
             actions.Controls.Add(ActionButton(checkButton, "Sprawdź"), 0, 0);
             actions.Controls.Add(ActionButton(dllUpdatesButton, "DLL-e"), 1, 0);
             actions.Controls.Add(ActionButton(updateButton, "Aktualizuj"), 2, 0);
             actions.Controls.Add(ActionButton(updatePlayButton, "Aktualizuj i uruchom", true), 3, 0);
             actions.Controls.Add(ActionButton(launchButton, "Uruchom grę"), 4, 0);
+            var loaderUpdateButton = new Button();
+            featureControls["selfUpdateHome"] = loaderUpdateButton;
+            loaderUpdateButton.Click += delegate
+            {
+                var selfUpdate = featureControls.ContainsKey("selfUpdate") ? featureControls["selfUpdate"] as Button : null;
+                if (selfUpdate != null && selfUpdate.Enabled) selfUpdate.PerformClick();
+            };
+            actions.Controls.Add(ActionButton(loaderUpdateButton, "Aktualizuj loader"), 5, 0);
             update.Controls.Add(actions, 0, 4);
 
             var tools = Card("NARZĘDZIA", 2); root.Controls.Add(tools, 0, 3);
@@ -164,7 +172,6 @@ namespace WoW112Updater
         private void FitWorkingArea()
         {
             var area = Screen.FromControl(this).WorkingArea;
-            // Keep the window visible without rebuilding or repositioning child controls.
             if (MinimumSize.Width > area.Width || MinimumSize.Height > area.Height) MinimumSize = Size.Empty;
             Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
             Location = new Point(Math.Max(area.Left, Math.Min(Left, area.Right - Width)), Math.Max(area.Top, Math.Min(Top, area.Bottom - Height)));
