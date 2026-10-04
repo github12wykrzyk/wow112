@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using DiagnosticsProcess = System.Diagnostics.Process;
 
 namespace WoW112Updater
 {
@@ -42,17 +42,17 @@ namespace WoW112Updater
 
         private static void Scan()
         {
-            Process[] processes = null;
+            DiagnosticsProcess[] processes = null;
             try
             {
-                processes = Process.GetProcesses();
+                processes = DiagnosticsProcess.GetProcesses();
                 foreach (var process in processes)
                 {
                     try
                     {
                         if (process.HasExited || !process.ProcessName.StartsWith("WoW", StringComparison.OrdinalIgnoreCase))
                             continue;
-                        if (process.PriorityClass != ProcessPriorityClass.BelowNormal)
+                        if (process.PriorityClass != System.Diagnostics.ProcessPriorityClass.BelowNormal)
                             continue;
 
                         string identity;
@@ -64,7 +64,7 @@ namespace WoW112Updater
 
                         if (!ApplyHardCap(process)) continue;
 
-                        try { process.PriorityClass = ProcessPriorityClass.Idle; }
+                        try { process.PriorityClass = System.Diagnostics.ProcessPriorityClass.Idle; }
                         catch { }
                         lock (Gate) Applied.Add(identity);
                     }
@@ -86,7 +86,7 @@ namespace WoW112Updater
             }
         }
 
-        private static bool ApplyHardCap(Process process)
+        private static bool ApplyHardCap(DiagnosticsProcess process)
         {
             var job = CreateJobObject(IntPtr.Zero, null);
             if (job == IntPtr.Zero) return false;
