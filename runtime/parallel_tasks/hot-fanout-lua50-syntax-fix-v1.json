@@ -15,9 +15,9 @@
   "shared_resources": [
     "SummonScout hot delivery transform"
   ],
-  "status": "planned",
+  "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Root cause reproduced from verified artifact 11302366865 for parallel a8246230d9e2fa0f9a09b92297dc308e03fcf4e4: generated SummonScout_WhisperConfirmSpam.lua line 1321 ends one IIFE with end)(), and line 1324 begins the next with (function(), which WoW Lua 5.0 rejects as ambiguous syntax (function call x new statement)."
+  "notes": "Root cause reproduced from verified artifact 11302366865 for parallel a8246230d9e2fa0f9a09b92297dc308e03fcf4e4: generated SummonScout_WhisperConfirmSpam.lua line 1321 ends one IIFE with end)(), and line 1324 begins the next with (function(), which WoW Lua 5.0 rejects as ambiguous syntax (function call x new statement). Baseline task status normalized from obsolete planned to current-schema coding so parallel task validation remains fail-closed while the feature branch carries its own live ready_for_integration lease state."
 }
