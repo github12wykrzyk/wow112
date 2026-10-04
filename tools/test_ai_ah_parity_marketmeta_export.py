@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHADOW = ROOT / "src" / "AddOns" / "AuxEconomyShadow"
 EXPORT_NAME = "AuxEconomyShadow_ParityExport.lua"
 EXPORT = SHADOW / EXPORT_NAME
+PARITY = SHADOW / "AuxEconomyShadow_Parity.lua"
 TOC = SHADOW / "AuxEconomyShadow.toc"
 MANIFEST = ROOT / "runtime" / "ah_consolidation_shadow_v2.json"
 
@@ -57,6 +58,14 @@ class AHParityMarketMetaExportTests(unittest.TestCase):
             "AVM_AuxArbScanDone =",
         ):
             self.assertNotIn(forbidden, text)
+
+    def test_both_reject_counts_as_successful_decision_comparison(self):
+        text = PARITY.read_text(encoding="utf-8")
+        self.assertIn('local bothReject = tonumber(counts["both-reject"]) or 0', text)
+        self.assertIn("local compared = bothReject + exactMatch +", text)
+        self.assertIn("local matched = bothReject + exactMatch", text)
+        for mismatch in ('counts["shadow-extra"]', 'counts["shadow-miss"]', 'counts["different-candidate"]'):
+            self.assertIn(mismatch, text)
 
 
 if __name__ == "__main__":
