@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "hot-default-delivery-v1",
+  "goal": "Make SummonScout hot-capable Lua changes automatically propagate through the existing Parallel addon packaging workflow by fanning every non-directly-watched SummonScout_*Hot.lua module into an already watched live-reload host, without requiring manual per-file watcher updates.",
+  "branch": "feature/hot-default-delivery-v1",
+  "base_parallel_sha": "fbb56aebdd6ad7e1384b9034cd3d2780667640e4",
+  "modules": [
+    "SummonScout",
+    "AI-workflow"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-explicit-api-p02"
+  ],
+  "shared_resources": [
+    "SummonScout hot delivery transform"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:hot-default-delivery",
+    "acquired_at": "2026-10-04T11:16:00Z",
+    "heartbeat_at": "2026-10-04T11:16:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout hot delivery transform"
+    ]
+  },
+  "notes": "Infrastructure-only first iteration. Existing direct native watch paths remain unchanged. The packaged whisper host becomes a live fanout carrier for every TOC-declared SummonScout_*Hot.lua module that is not already watched directly. Cold load skips the fanout to avoid duplicate registration; live reload replays the fanout in TOC order. Packaging fails closed on unlisted hot modules or watcher payload overflow."
+}
