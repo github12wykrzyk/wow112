@@ -26,14 +26,14 @@ jobs:
         with:
           targets: x86_64-linux-android
 
-      - name: Android SDK tools
-        uses: android-actions/setup-android@v3
-
       - name: Install Android NDK
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager 'ndk;27.2.12479018'
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       - name: Install cargo-ndk
