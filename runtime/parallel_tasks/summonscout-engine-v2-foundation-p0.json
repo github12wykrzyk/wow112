@@ -16,20 +16,10 @@
     "SummonScout roster-to-summon ownership",
     "SummonScout hot module compatibility surface"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summon-engine-p0",
-    "acquired_at": "2026-10-04T09:03:00Z",
-    "heartbeat_at": "2026-10-04T09:03:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:SummonScout",
-      "resource:SummonScout core EventAPI/state",
-      "resource:SummonScout roster-to-summon ownership",
-      "resource:SummonScout hot module compatibility surface"
-    ]
-  },
-  "notes": "P0.1 is intentionally behavior-conservative. A final TOC compatibility module resolves the legacy core EventAPI/state once, exports W112_SUMMONSCOUT_API_V1/W112_SUMMONSCOUT_STATE, and wraps the current OnEvent chain so an unowned CHAT_MSG_SYSTEM party/raid join temporarily suppresses partyAutoSummon for that dispatch. Existing owned invite markers, grouped/combat resume, Ritual/native bridge, payment, adverts and coordinator behavior are unchanged. Follow-up P0.2 will migrate legacy hot modules to the explicit API and remove their duplicated upvalue discovery; P0.3 will move the public surface into canonical core and reduce semantic package transforms."
+  "integrated_feature_sha": "2914007c22121475dece5e52746657786a72e37c",
+  "lease": null,
+  "notes": "P0.1 is integrated into parallel b0fdbefbf1e552838732e65916def282137e15b5. Exact feature SHA 2914007c22121475dece5e52746657786a72e37c passed Parallel feature preflight run 37190904052 (attempt 2); exact integrated parallel SHA passed STANDARD Build work candidate run 37191103568 and produced artifact 11299610274. parallel-testpoint is frozen at b0fdbefbf1e552838732e65916def282137e15b5 for gameplay attribution. This branch-only cleanup releases the feature lease after integration; no gameplay code changes are made."
 }
