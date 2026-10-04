@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-grouped-resume-v1",
+  "goal": "Allow an already-grouped summon customer to rearm the existing party summon queue by whispering 123, k summon or ready after deferring or missing the first portal.",
+  "branch": "feature/summonscout-grouped-resume-v1",
+  "base_parallel_sha": "0d358d5e6d3282c0c4ee9cc91fe5a7d2bb7e3f4f",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summonscout-grouped-whisper-resume"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-grouped-resume-v1",
+    "acquired_at": "2026-10-04T01:26:56Z",
+    "heartbeat_at": "2026-10-04T01:26:56Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:summonscout-grouped-whisper-resume"
+    ]
+  },
+  "notes": "Lua-only SummonScout hot module; no DLL/native changes. Reuses the existing core queuePartySummon transaction state machine and its active/pending dedupe. Adds one TOC payload entry."
+}
