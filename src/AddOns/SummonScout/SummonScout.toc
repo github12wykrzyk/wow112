@@ -19,3 +19,4 @@ SummonScout_FallbackRouterHot.lua
 SummonScout_FallbackRouterHubAckHot.lua
 SummonScout_UnknownWhisperReportHot.lua
 SummonScout_DestinationInfoGuardHot.lua
+SummonScout_CoreErrorGuardHot.lua
