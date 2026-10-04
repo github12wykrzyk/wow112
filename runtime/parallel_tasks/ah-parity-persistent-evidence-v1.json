@@ -14,21 +14,12 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [
     "economy"
   ],
-  "lease": {
-    "owner": "chatgpt:ah-parity-persistent-evidence-v1",
-    "acquired_at": "2026-10-04T08:16:30Z",
-    "heartbeat_at": "2026-10-04T08:31:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AuxEconomyShadow",
-      "resource:parity-evidence",
-      "resource:ah-shadow-hot-bundle"
-    ]
-  },
-  "notes": "AH-DUMP #321 and #323 on parallel a79572f5 remained at scans=1/pages=17/decisionCompared=17 after roughly ten loop scans followed by /reload. AuxFastBridge loop reaches AVM_AuxArbScanDone normally; root cause is ParityExport.install()/publish() overwriting SavedVariables marketMeta.shadowParity with fresh runtime counters after Lua reset. This feature adds revision-compatible cumulative SavedVariables evidence with delta accounting and exposes current-generation counters separately. It does not modify AuxVmangos, PlaceAuctionBid, TransactionGuard or cutover arming; generationArmed and exact candidate matches remain current-generation only. Exact feature code SHA 6a33c3e7f01f1f12ca9d9c06dbe5e3ec42b451f3 passed Parallel feature preflight + ECONOMY profile run 37189079340."
+  "lease": null,
+  "integrated_feature_sha": "99e9b64a11dfd0768e20a4567932b77d473f8dc5",
+  "notes": "AH-DUMP #321 and #323 on parallel a79572f5 remained at scans=1/pages=17/decisionCompared=17 after roughly ten loop scans followed by /reload. AuxFastBridge loop reaches AVM_AuxArbScanDone normally; root cause is ParityExport.install()/publish() overwriting SavedVariables marketMeta.shadowParity with fresh runtime counters after Lua reset. This feature adds revision-compatible cumulative SavedVariables evidence with delta accounting and exposes current-generation counters separately. It does not modify AuxVmangos, PlaceAuctionBid, TransactionGuard or cutover arming; generationArmed and exact candidate matches remain current-generation only. Exact feature code SHA 6a33c3e7f01f1f12ca9d9c06dbe5e3ec42b451f3 passed Parallel feature preflight + ECONOMY profile run 37189079340. Queue SHA 99e9b64a11dfd0768e20a4567932b77d473f8dc5 passed run 37189227961 and integrated as parallel d994e4479458e02f49e525d2c7e478f600caa94f. Final ECONOMY run 37189363478 artifact 11298069538 PASS; STANDARD run 37189358667 artifact 11297339071 PASS."
 }
