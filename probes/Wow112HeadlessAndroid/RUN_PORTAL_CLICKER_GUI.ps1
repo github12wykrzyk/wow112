@@ -15,6 +15,7 @@ $script:rows = New-Object System.Collections.ArrayList
 $script:adb = $null
 $script:adbReady = $false
 $script:remoteBase = "/data/local/tmp/wow112-headless-android-probe"
+$script:remoteUpload = "/data/local/tmp/wow112-headless-android-probe.upload"
 $script:binary = Join-Path $PSScriptRoot "wow112-headless-android-probe"
 $configDir = Join-Path $env:LOCALAPPDATA "WoW112PortalClicker"
 $configPath = Join-Path $configDir "accounts.json"
@@ -96,15 +97,15 @@ function Ensure-AdbReady {
         $c1 = $LASTEXITCODE
         & $script:adb wait-for-device
         $c2 = $LASTEXITCODE
-        & $script:adb push $script:binary $script:remoteBase | Out-Null
+        & $script:adb push $script:binary $script:remoteUpload | Out-Null
         $c3 = $LASTEXITCODE
-        & $script:adb shell "chmod 755 $script:remoteBase" | Out-Null
+        & $script:adb shell "chmod 755 $script:remoteUpload && mv -f $script:remoteUpload $script:remoteBase" | Out-Null
         $c4 = $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $old }
 
     if ($c1 -ne 0 -or $c2 -ne 0 -or $c3 -ne 0 -or $c4 -ne 0) {
-        throw "ADB prepare failed: start=$c1 wait=$c2 push=$c3 chmod=$c4"
+        throw "ADB prepare failed: start=$c1 wait=$c2 push=$c3 install=$c4"
     }
     $script:adbReady = $true
     $script:adbStatus.Text = "ADB: READY"
@@ -115,7 +116,8 @@ function Ensure-AdbReady {
 function Get-Paths($Row) {
     $s = $Row.Id.Substring(0,8)
     return [pscustomobject]@{
-        Bin = "/data/local/tmp/pclkr_$s"
+        Name = "pclkr_$s"
+        LegacyBin = "/data/local/tmp/pclkr_$s"
         Log = "/data/local/tmp/pclkr_$s.log"
         Pid = "/data/local/tmp/pclkr_$s.pid"
     }
@@ -154,7 +156,7 @@ function Stop-Row($Row, [bool]$LogIt = $true) {
     try {
         if (-not $script:adb) { $script:adb = Resolve-Adb }
         $p = Get-Paths $Row
-        $cmd = 'if [ -f {0} ]; then P=$(cat {0}); if [ -n "$P" ]; then kill $P 2>/dev/null || true; fi; fi; rm -f {0}' -f $p.Pid
+        $cmd = 'if [ -f {0} ]; then P=$(cat {0}); if [ -n "$P" ]; then kill $P 2>/dev/null || true; fi; fi; for P in $(pidof {1} 2>/dev/null); do kill $P 2>/dev/null || true; done; rm -f {0}' -f $p.Pid, $p.Name
         [void](Invoke-AdbShell $cmd -IgnoreExitCode)
         $Row.Running = $false
         $Row.Stop.Enabled = $false
@@ -181,7 +183,7 @@ function Save-Config {
             }
         }
         [pscustomobject]@{
-            version = 4
+            version = 5
             authAddr = $script:authBox.Text.Trim()
             worldAddr = $script:worldBox.Text.Trim()
             realmIndex = [int]$script:realmBox.Value
@@ -212,7 +214,6 @@ function Start-Row($Row) {
         Save-Config
         Stop-Row $Row $false
         $p = Get-Paths $Row
-        [void](Invoke-AdbShell ("cp $script:remoteBase $($p.Bin) && chmod 755 $($p.Bin)"))
 
         $a = New-Object 'System.Collections.Generic.List[string]'
         $a.Add("WOW112_MODE=$(Quote-Sh 'portal-clicker')")
@@ -228,7 +229,7 @@ function Start-Row($Row) {
         if ($world) { $a.Add("WOW112_WORLD_ADDR=$(Quote-Sh $world)") }
 
         $envLine = $a -join " "
-        $launch = 'rm -f {0} {1}; nohup env {2} {3} >{0} 2>&1 </dev/null & echo $! >{1}' -f $p.Log, $p.Pid, $envLine, $p.Bin
+        $launch = 'rm -f {0} {1}; nohup env {2} {3} >{0} 2>&1 </dev/null & echo $! >{1}' -f $p.Log, $p.Pid, $envLine, $script:remoteBase
         [void](Invoke-AdbShell $launch)
         Start-Sleep -Milliseconds 350
         Probe-Row $Row
@@ -288,7 +289,9 @@ function Start-All {
 }
 
 function Stop-All {
-    foreach ($row in @($script:rows)) { if ($row.Running) { Stop-Row $row $false } }
+    foreach ($row in @($script:rows)) {
+        if ($row.Login.Text.Trim()) { Stop-Row $row $false }
+    }
     Append-Log "All stopped"
 }
 
@@ -344,7 +347,7 @@ try {
     $cfg=Load-Config
     if($cfg){ if($cfg.authAddr){$script:authBox.Text=[string]$cfg.authAddr}; if($null-ne $cfg.worldAddr){$script:worldBox.Text=[string]$cfg.worldAddr}; if($null-ne $cfg.realmIndex){$script:realmBox.Value=[decimal]$cfg.realmIndex}; if($null-ne $cfg.portalAttempts){$script:attemptsBox.Value=[decimal][Math]::Max(1,[Math]::Min(8,[int]$cfg.portalAttempts))}; foreach($a in @($cfg.accounts)){Add-Row $a} }
     while($script:rows.Count-lt 3){Add-Row}
-    Append-Log "GUI ready. World moze zostac puste. Pierwsza postac na koncie."
+    Append-Log "GUI ready. World moze zostac puste. Pierwsza postac na koncie. Shared executable V5."
     $script:form.Add_FormClosing({ Save-Config; Stop-All })
     [void]$script:form.ShowDialog()
 }
