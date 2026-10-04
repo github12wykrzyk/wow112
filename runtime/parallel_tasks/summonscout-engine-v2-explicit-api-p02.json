@@ -16,13 +16,13 @@
     "SummonScout roster-to-summon ownership",
     "SummonScout location classifier"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
   "lease": {
     "owner": "chatgpt:summon-engine-p02",
     "acquired_at": "2026-10-04T09:15:00Z",
-    "heartbeat_at": "2026-10-04T09:15:00Z",
+    "heartbeat_at": "2026-10-04T10:01:00Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:SummonScout",
@@ -32,5 +32,5 @@
       "resource:SummonScout location classifier"
     ]
   },
-  "notes": "Separate continuation from frozen P0.1 testpoint b0fdbefbf1e552838732e65916def282137e15b5. P0.2 centralizes legacy debug.getupvalue/setupvalue knowledge in EngineV2FoundationHot and makes hot modules consume an explicit compatibility API. No Ritual/native/payment/advert behavior change is intended."
+  "notes": "Separate continuation from frozen P0.1 testpoint b0fdbefbf1e552838732e65916def282137e15b5. User reported P0.1 works OK in game on that exact testpoint on 2026-10-04; evidence is recorded in runtime/parallel_tasks/summonscout-engine-v2-foundation-p0-game-test.json. P0.2 centralizes legacy debug.getupvalue/setupvalue knowledge in EngineV2FoundationHot and makes hot modules consume an explicit compatibility API. No Ritual/native/payment/advert behavior change is intended. Fresh preflight/integration must use the current live parallel HEAD because parallel advanced independently after the first P0.2 preflight."
 }
