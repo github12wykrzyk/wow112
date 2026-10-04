@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-combat-wait-resume-v1",
+  "goal": "Handle Ritual of Summoning failures caused by the grouped target being in combat: acknowledge once, park the request without burning the normal retry budget, auto-resume after the target leaves combat, and accept tolerant grouped resume whispers such as 'now :D'.",
+  "branch": "feature/summonscout-combat-wait-resume-v1",
+  "base_parallel_sha": "9b743815820bf68dcff2f4c483b3d430ac954de7",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-grouped-resume-v1"
+  ],
+  "shared_resources": [
+    "SummonScout grouped resume hot module",
+    "SummonScout active summon failure routing"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-combat-wait-resume-v1",
+    "acquired_at": "2026-10-04T07:28:38Z",
+    "heartbeat_at": "2026-10-04T07:28:38Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:SummonScout"
+    ]
+  },
+  "notes": "Lua-only follow-up to grouped-resume v1. The hot module observes the exact active SummonScout transaction through the existing EventAPI/upvalue bridge. If a spell rejection coincides with the active grouped target being in combat, it moves that customer into a bounded 120-second combat wait, clears the active core request via finishActiveSummon so retries are not consumed, whispers that retry will occur after combat, and automatically requeues after one stable second out of combat. A grouped 'wait' still suppresses auto-resume until an explicit ready/123/now message. Resume matching now accepts leading strong intent tokens with trailing emoticons/text while negative phrases remain blocking. No native DLL, invite, payment, advert, AH or loader behavior is changed."
+}
