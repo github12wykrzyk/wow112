@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-hotreload-chat-ping-v2",
+  "goal": "Emit a second one-time in-game chat canary through the ECONOMY AH hot payload to re-confirm live Lua watcher execution without reusing the previous revision marker.",
+  "branch": "feature/ah-hotreload-chat-ping-v2",
+  "base_parallel_sha": "375ded929f7515604e8ca222a8a7fd4e7d143977",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-hotreload-chat-ping-v1"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "Diagnostics-only second one-shot chat canary. Changes only the parity exporter revision and chat text. No AH query, scan scheduling, buy, bid, cancel, post, transaction ownership or cutover behavior changes. Expected chat text after live ECONOMY apply: [GPT] AH hot-reload ping 2 OK. Feature SHA 757fe692c269b66614f65b42b92beeacf6d624ee passed preflight run 37166896533 and ECONOMY run 37166937298 before queue opt-in.",
+  "integrated_feature_sha": "eebd212499c8b93fb4ad4ae4d75de3eca3cb2b52"
+}
