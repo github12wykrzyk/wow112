@@ -5,50 +5,209 @@ use std::time::Duration;
 
 mod auth;
 mod wire_build;
-mod world;
+mod world_poc05_retry;
+mod world_portal;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
-const DEFAULT_AUTH_ADDR: &str = "127.0.0.1:3724";
-const DEFAULT_SOAK_SECONDS: u64 = 0;
+const DEFAULT_AUTH_ADDR: &str = "play.octowow.st:3724";
+const DEFAULT_SOAK_SECONDS: u64 = 60;
 const DEFAULT_RECONNECT_LIMIT: u32 = 60;
-const DEFAULT_RECONNECT_DELAY_MS: u64 = 2000;
+const DEFAULT_REALM_INDEX: usize = 1;
 
-fn main(){if let Err(e)=run(){eprintln!("[WOW112-HEADLESS] ERROR: {e}");std::process::exit(2);}}
-fn parse_u64(name:&str,default:u64)->Result<u64,String>{match env::var(name){Ok(v)=>v.parse::<u64>().map_err(|e|format!("invalid {name}={v:?}: {e}")),Err(_)=>Ok(default)}}
-fn parse_u32(name:&str,default:u32)->Result<u32,String>{match env::var(name){Ok(v)=>v.parse::<u32>().map_err(|e|format!("invalid {name}={v:?}: {e}")),Err(_)=>Ok(default)}}
-fn transient(e:&str)->bool{["ConnectionReset","Connection reset by peer","BrokenPipe","UnexpectedEof","TimedOut","timed out","WouldBlock","ConnectionRefused","connection refused","world socket closed","world keepalive pong timeout","portal world peek failed"].iter().any(|n|e.contains(n))}
-
-fn run()->Result<(),String>{
- let username=env::var("WOW112_ACCOUNT").map_err(|_|"missing WOW112_ACCOUNT".to_string())?.to_ascii_uppercase();
- let password=env::var("WOW112_PASSWORD").map_err(|_|"missing WOW112_PASSWORD".to_string())?;
- let auth_addr=env::var("WOW112_AUTH_ADDR").unwrap_or_else(|_|DEFAULT_AUTH_ADDR.to_string());
- let character=env::var("WOW112_CHARACTER").ok();
- let realm_index=env::var("WOW112_REALM_INDEX").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(0);
- let soak=parse_u64("WOW112_SOAK_SECONDS",DEFAULT_SOAK_SECONDS)?;
- let limit=parse_u32("WOW112_RECONNECT_LIMIT",DEFAULT_RECONNECT_LIMIT)?.max(1);
- let delay=parse_u64("WOW112_RECONNECT_DELAY_MS",DEFAULT_RECONNECT_DELAY_MS)?;
- let mode=env::var("WOW112_HEADLESS_MODE").unwrap_or_else(|_|"portal".to_string()).to_ascii_lowercase();
- println!("[WOW112-HEADLESS] binary-build=5875 wire-build={} mode={} reconnect-limit={} delay-ms={}",OCTOWOW_WIRE_BUILD,mode,limit,delay);
- for attempt in 1..=limit{
-  println!("[RESILIENCE] session attempt={attempt}/{limit}");
-  match session(&auth_addr,realm_index,&username,&password,character.as_deref(),soak,&mode){
-   Ok(())=>return Ok(()),
-   Err(e) if transient(&e)&&attempt<limit=>{println!("[RESILIENCE] transient failure: {e}");thread::sleep(Duration::from_millis(delay));}
-   Err(e)=>return Err(e),
-  }
- }
- Err(format!("reconnect limit exhausted after {limit} attempts"))
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("[WOW112-ANDROID-PROBE] ERROR: {error}");
+        std::process::exit(2);
+    }
 }
 
-fn session(auth_addr:&str,realm_index:usize,username:&str,password:&str,character:Option<&str>,soak:u64,mode:&str)->Result<(),String>{
- println!("[AUTH] connecting {auth_addr}");
- let mut auth_stream=TcpStream::connect(auth_addr).map_err(|e|format!("auth connect {auth_addr} failed: {e}"))?;
- let (session_key,realms)=auth::authenticate(&mut auth_stream,username,password)?;
- if realms.realms.is_empty(){return Err("auth succeeded but realm list is empty".to_string());}
- let realm=realms.realms.get(realm_index).ok_or_else(||format!("WOW112_REALM_INDEX={realm_index} out of range"))?;
- let world_addr=env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_|realm.address.clone());
- println!("[WORLD] connecting realm={} address={}",realm.name,world_addr);
- let mut world_stream=TcpStream::connect(&world_addr).map_err(|e|format!("world connect {world_addr} failed: {e}"))?;
- if mode=="portal"||mode=="portal_clicker"{world::login_portal(&mut world_stream,session_key,realm.realm_id,username,character,soak)}else{world::login(&mut world_stream,session_key,realm.realm_id,username,character,soak)}
+fn parse_env_u64(name: &str, default_value: u64) -> Result<u64, String> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<u64>()
+            .map_err(|e| format!("invalid {name}={value:?}: {e}")),
+        Err(_) => Ok(default_value),
+    }
+}
+
+fn parse_env_u32(name: &str, default_value: u32) -> Result<u32, String> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<u32>()
+            .map_err(|e| format!("invalid {name}={value:?}: {e}")),
+        Err(_) => Ok(default_value),
+    }
+}
+
+fn is_transient_network_error(error: &str) -> bool {
+    if error.contains("MAIL_MUTATION_") {
+        return false;
+    }
+    [
+        "ConnectionReset",
+        "Connection reset by peer",
+        "BrokenPipe",
+        "UnexpectedEof",
+        "TimedOut",
+        "timed out",
+        "WouldBlock",
+        "ConnectionRefused",
+        "connection refused",
+        "world socket closed",
+        "world keepalive pong timeout",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
+}
+
+fn run() -> Result<(), String> {
+    let username = env::var("WOW112_ACCOUNT")
+        .map_err(|_| "missing WOW112_ACCOUNT".to_string())?
+        .to_ascii_uppercase();
+    let password = env::var("WOW112_PASSWORD")
+        .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let auth_addr = env::var("WOW112_AUTH_ADDR")
+        .unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
+    let character_name = env::var("WOW112_CHARACTER").ok();
+    let mode = env::var("WOW112_MODE")
+        .unwrap_or_else(|_| "poc05".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    let realm_index = env::var("WOW112_REALM_INDEX")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_REALM_INDEX);
+    let soak_seconds = parse_env_u64("WOW112_SOAK_SECONDS", DEFAULT_SOAK_SECONDS)?;
+    let reconnect_limit = parse_env_u32("WOW112_RECONNECT_LIMIT", DEFAULT_RECONNECT_LIMIT)?.max(1);
+    let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
+    let mut mail_mutation_committed = false;
+
+    if !matches!(mode.as_str(), "poc05" | "portal" | "portal-clicker" | "clicker") {
+        return Err(format!("unsupported WOW112_MODE={mode:?}"));
+    }
+    let portal_mode = matches!(mode.as_str(), "portal" | "portal-clicker" | "clicker");
+
+    println!(
+        "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless mode={}",
+        OCTOWOW_WIRE_BUILD,
+        if portal_mode { "portal-clicker" } else { "poc05" }
+    );
+    if portal_mode {
+        println!(
+            "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled",
+            soak_seconds, reconnect_limit, reconnect_delay_ms
+        );
+    } else {
+        println!(
+            "[POC05] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_mail_actions=enabled ah_candidate_pool_retry=enabled",
+            soak_seconds, reconnect_limit, reconnect_delay_ms
+        );
+    }
+
+    for attempt in 1..=reconnect_limit {
+        println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
+        match run_session(
+            &auth_addr,
+            realm_index,
+            &username,
+            &password,
+            character_name.as_deref(),
+            soak_seconds,
+            &mode,
+            &mut mail_mutation_committed,
+        ) {
+            Ok(()) => {
+                println!(
+                    "[RESILIENCE] {} RECONNECT/KEEPALIVE PASS attempts={attempt}",
+                    if portal_mode { "PORTAL" } else { "POC-05" }
+                );
+                println!(
+                    "[WOW112-ANDROID-PROBE] PASS: {} persistent world session",
+                    if portal_mode { "portal-clicker" } else { "POC-05" }
+                );
+                return Ok(());
+            }
+            Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
+                println!("[RESILIENCE] transient network failure: {error}");
+                println!("[RESILIENCE] reconnecting with full auth + realm + character state rebuild");
+                if reconnect_delay_ms != 0 {
+                    thread::sleep(Duration::from_millis(reconnect_delay_ms));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(format!(
+        "{} reconnect limit exhausted after {reconnect_limit} attempts",
+        if portal_mode { "portal-clicker" } else { "POC-05" }
+    ))
+}
+
+fn run_session(
+    auth_addr: &str,
+    realm_index: usize,
+    username: &str,
+    password: &str,
+    character_name: Option<&str>,
+    soak_seconds: u64,
+    mode: &str,
+    mail_mutation_committed: &mut bool,
+) -> Result<(), String> {
+    println!("[AUTH] connecting to {auth_addr}");
+
+    let mut auth_stream = TcpStream::connect(auth_addr)
+        .map_err(|e| format!("auth connect {auth_addr} failed: {e}"))?;
+    let (session_key, realms) = auth::authenticate(&mut auth_stream, username, password)?;
+
+    if realms.realms.is_empty() {
+        return Err("auth succeeded but realm list is empty".to_string());
+    }
+
+    println!("[AUTH] realms={}", realms.realms.len());
+    for (index, realm) in realms.realms.iter().enumerate() {
+        println!(
+            "[AUTH] realm[{index}] name={} address={} id={}",
+            realm.name, realm.address, realm.realm_id
+        );
+    }
+
+    let realm = realms
+        .realms
+        .get(realm_index)
+        .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
+
+    let world_addr = env::var("WOW112_WORLD_ADDR")
+        .unwrap_or_else(|_| realm.address.clone());
+    println!(
+        "[WORLD] connecting realm={} id={} address={}",
+        realm.name, realm.realm_id, world_addr
+    );
+
+    let mut world_stream = TcpStream::connect(&world_addr)
+        .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
+
+    if matches!(mode, "portal" | "portal-clicker" | "clicker") {
+        world_portal::login_portal_clicker(
+            &mut world_stream,
+            session_key,
+            realm.realm_id,
+            username,
+            character_name,
+            soak_seconds,
+        )?;
+    } else {
+        world_poc05_retry::login_poc05_retry(
+            &mut world_stream,
+            session_key,
+            realm.realm_id,
+            username,
+            character_name,
+            soak_seconds,
+            mail_mutation_committed,
+        )?;
+    }
+
+    Ok(())
 }
