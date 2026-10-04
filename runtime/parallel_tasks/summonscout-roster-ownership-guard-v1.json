@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-roster-ownership-guard-v1",
+  "goal": "Prevent a SummonScout client from creating summon-pending state for unrelated party/raid joins; only joins backed by this client's destination-qualified tracked invite may enter the automatic summon queue, while explicit grouped resume requests remain supported.",
+  "branch": "feature/summonscout-roster-ownership-guard-v1",
+  "base_parallel_sha": "1de2df5aa5424b910f0a99ac9733dd14e2ed27c2",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout roster-to-summon ownership gate"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-roster-ownership-guard-v1",
+    "acquired_at": "2026-10-04T07:36:00Z",
+    "heartbeat_at": "2026-10-04T07:36:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout roster-to-summon ownership gate"
+    ]
+  },
+  "notes": "ASAP Lua-only guard for the observed Hyjal-only client logging 'party join -> summon pending' for Deitara after a World request for Silithus. Root cause: syncPartyRoster still calls queuePartySummon for every newly observed group member, despite the existing pendingManualInvites ownership marker added for SummonScout's own eligible invites. The hot guard replaces the roster-facing queue upvalue with an ownership check: tracked SummonScout invites pass through to the original queue; unrelated group joins are ignored before summon-pending is created. The exported queue API is left unchanged so grouped 123/ready/combat-resume flows still work."
+}
