@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "parallel-no-profile-integration-fix-v1",
+  "goal": "Allow explicitly queued feature branches with no delivery profiles to reach the serialized parallel integration job after successful preflight.",
+  "branch": "feature/parallel-no-profile-integration-fix-v1",
+  "base_parallel_sha": "8a0944ce74eb8f1c39d88880ea4840fa408aced0",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "integrated_feature_sha": null,
+  "modules": [
+    "AIWorkflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-integration-queue"
+  ],
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:parallel-no-profile-integration-fix-v1",
+    "acquired_at": "2026-10-04T01:37:22Z",
+    "heartbeat_at": "2026-10-04T01:37:22Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AIWorkflow",
+      "resource:parallel-integration-queue"
+    ]
+  },
+  "notes": "Infrastructure-only workflow fix. Empty delivery_profiles is intentional; this task is the regression case for no-profile auto integration."
+}
