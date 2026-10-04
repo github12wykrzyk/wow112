@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-ad-collision-guard-v1",
+  "goal": "Prevent multiple SummonScout clients from posting periodic WTS summon adverts back-to-back by using observed summon adverts as a peer backoff signal while preserving the existing 200-500 second random cadence and 1 second competitor counter.",
+  "branch": "feature/summonscout-ad-collision-guard-v1",
+  "base_parallel_sha": "8a0944ce74eb8f1c39d88880ea4840fa408aced0",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-random-spam-counter1-v1"
+  ],
+  "shared_resources": [
+    "SummonScout-advert-scheduler",
+    "SummonScout-hot-timing-payload"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-ad-collision-guard-v1",
+    "acquired_at": "2026-10-04T01:33:00Z",
+    "heartbeat_at": "2026-10-04T01:33:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout-advert-scheduler",
+      "resource:SummonScout-hot-timing-payload"
+    ]
+  },
+  "notes": "Hot-only Lua change. CHAT_MSG_CHANNEL WTS/selling summon adverts from another sender push this client's next periodic advert at least 45 seconds plus a 0-75 second per-character backoff. Later peer adverts may push again so a burst becomes spaced; continuous external seller traffic is capped at a 240 second guard chain to avoid permanent starvation. Own echoed adverts are ignored and the existing counter path is untouched."
+}
