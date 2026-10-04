@@ -16,7 +16,8 @@ class AHDirectLiveAuthorityTests(unittest.TestCase):
         self.assertLess(ORDER.index("AuxEconomyShadow_Cutover.lua"), ORDER.index("AuxEconomyShadow_DirectLive.lua"))
         self.assertLess(ORDER.index("AuxEconomyShadow_DirectLive.lua"), ORDER.index("AuxEconomyShadow_HotPayload.lua"))
         bundle = build_bundle()
-        self.assertIn(b"1-active-auxvmangos", bundle)
+        self.assertIn(b"2-loop-restart-selfheal", bundle)
+        self.assertIn(b"restart-hot-selfheal", bundle)
         self.assertIn(b"user-authorized-direct-live", bundle)
 
     def test_direct_live_disarms_shadow_without_mutating_aux_live_settings(self):
@@ -27,6 +28,22 @@ class AHDirectLiveAuthorityTests(unittest.TestCase):
         self.assertIn('shadowRole = "observer-only"', text)
         self.assertNotIn("AVM_DB.auxArbLive =", text)
         self.assertNotIn("AVM_DB.auxArbEnabled =", text)
+        self.assertNotIn("QueryAuctionItems", text)
+        self.assertNotIn("PlaceAuctionBid", text)
+
+    def test_direct_live_repairs_missing_loop_restart_from_loaded_bridge(self):
+        text = (SHADOW / "AuxEconomyShadow_DirectLive.lua").read_text(encoding="utf-8")
+        self.assertIn('type(AUXFAST_RestartSearch) ~= "function"', text)
+        self.assertIn('type(AUXFAST_ResumeSearch) == "function"', text)
+        self.assertIn('AUXFAST_RestartSearch = function()', text)
+        self.assertIn('type(AUXFAST_ArmHeadless) == "function"', text)
+        self.assertIn('type(AUXFAST_SearchBusy) == "function"', text)
+        self.assertIn('type(AUXFAST_BeginScan) == "function"', text)
+        self.assertIn('pcall(require, "aux.tabs.search")', text)
+        self.assertIn('restartCompat = "legacy-resume"', text)
+        self.assertIn('restartCompat = "bridge-primitives"', text)
+        self.assertIn('restartCompat = "bridge-missing"', text)
+        self.assertIn('restartAvailable = type(AUXFAST_RestartSearch) == "function"', text)
 
     def test_runtime_contract_declares_auxvmangos_authority(self):
         data = json.loads(RUNTIME.read_text(encoding="utf-8"))
