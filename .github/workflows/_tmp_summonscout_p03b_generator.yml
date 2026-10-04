@@ -1,0 +1,120 @@
+name: TEMP SummonScout P0.3b generator
+
+on:
+  push:
+    branches:
+      - 'tmp/summonscout-p03b-generator'
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout generator branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate P0.3b source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          addon = root / 'src' / 'AddOns' / 'SummonScout'
+          core_path = addon / 'SummonScout.lua'
+          foundation_path = addon / 'SummonScout_EngineV2FoundationHot.lua'
+          test_path = root / 'tools' / 'test_ai_summonscout_engine_v2_core_api_state.py'
+
+          core = core_path.read_text(encoding='utf-8')
+          marker = '''    processLoginRecovery = processLoginRecovery,\n    refreshShardGuardState = refreshShardGuardState,\n    handleChannelMessage = handleChannelMessage,\n}\n\nframe:SetScript("OnEvent", function()'''
+          replacement = '''    processLoginRecovery = processLoginRecovery,\n    refreshShardGuardState = refreshShardGuardState,\n    handleChannelMessage = handleChannelMessage,\n}\n\n-- Engine V2 P0.3b: publish the canonical core runtime surface directly.\n-- Hot compatibility modules must consume these globals instead of walking\n-- the OnEvent closure to rediscover EventAPI / SS through debug upvalues.\nW112_SUMMONSCOUT_API_V1 = EventAPI\nW112_SUMMONSCOUT_STATE = SS\nW112_SUMMONSCOUT_API_VERSION = 1\nW112_SUMMONSCOUT_CORE_API_NATIVE = true\n\nframe:SetScript("OnEvent", function()'''
+          if core.count(marker) != 1:
+              raise SystemExit(f'core export insertion marker count={core.count(marker)}')
+          core = core.replace(marker, replacement, 1)
+          core_path.write_text(core, encoding='utf-8')
+
+          foundation = foundation_path.read_text(encoding='utf-8')
+          foundation = foundation.replace(
+              '-- P0.3a keeps all legacy-core introspection in this one compatibility layer,\n-- but makes queue ownership fail closed at the public API boundary. Hot modules\n-- consume W112_SUMMONSCOUT_API_V1 / W112_SUMMONSCOUT_STATE and never receive a\n-- raw queue primitive.\n',
+              '-- P0.3b receives EventAPI / SS directly from canonical SummonScout.lua.\n-- Legacy debug introspection remains only for the still-private location / roster\n-- compatibility hooks; API/state discovery itself is now core-native and fail closed.\n'
+          )
+          if 'local VERSION = "p0.3a-owned-queue-api"' not in foundation:
+              raise SystemExit('foundation version marker missing')
+          foundation = foundation.replace(
+              'local VERSION = "p0.3a-owned-queue-api"',
+              'local VERSION = "p0.3b-core-api-state"',
+              1,
+          )
+
+          pattern_find = re.compile(
+              r'\nlocal function fFindApi\(fn, depth, seen\).*?\nlocal function fNamedFunction\(fn, wanted\)',
+              re.S,
+          )
+          foundation, count = pattern_find.subn(
+              '\nlocal function fNamedFunction(fn, wanted)',
+              foundation,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'legacy API/state discovery removal count={count}')
+
+          pattern_resolve = re.compile(
+              r'local function fResolveApi\(\).*?\nend\n\nlocal function fResolveState\(api\).*?\nend\n\nlocal function fResolveCompat',
+              re.S,
+          )
+          resolve_replacement = '''local function fResolveApi()\n    local api = W112_SUMMONSCOUT_API_V1\n    if type(api) == "table"\n        and type(api.queuePartySummon) == "function"\n        and type(api.notePendingManualInvite) == "function"\n        and type(api.syncPartyRoster) == "function"\n        and type(api.handleChannelMessage) == "function" then\n        return api\n    end\n    return nil\nend\n\nlocal function fResolveState(api)\n    local state = W112_SUMMONSCOUT_STATE\n    if type(state) == "table"\n        and type(state.pendingManualInvites) == "table"\n        and type(state.summonPending) == "table"\n        and type(state.queue) == "table" then\n        return state\n    end\n    return nil\nend\n\nlocal function fResolveCompat'''
+          foundation, count = pattern_resolve.subn(
+              resolve_replacement,
+              foundation,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'core-native resolver replacement count={count}')
+
+          if foundation.count('W112_SUMMONSCOUT_COMPAT_VERSION = 3') != 1:
+              raise SystemExit('compat global version marker mismatch')
+          foundation = foundation.replace(
+              'W112_SUMMONSCOUT_COMPAT_VERSION = 3',
+              'W112_SUMMONSCOUT_COMPAT_VERSION = 4',
+              1,
+          )
+          if foundation.count('api.compatVersion = 3') != 1:
+              raise SystemExit('compat API version marker mismatch')
+          foundation = foundation.replace('api.compatVersion = 3', 'api.compatVersion = 4', 1)
+
+          if 'local function fFindApi' in foundation or 'local function fFindState' in foundation:
+              raise SystemExit('legacy API/state walker still present')
+          if 'return fFindApi(frame:GetScript("OnEvent")' in foundation:
+              raise SystemExit('OnEvent API walker still present')
+          if 'fFindState(candidates' in foundation:
+              raise SystemExit('state walker still present')
+          if 'debug.getupvalue' not in foundation or 'debug.setupvalue' not in foundation:
+              raise SystemExit('compat location/roster introspection unexpectedly removed')
+          foundation_path.write_text(foundation, encoding='utf-8')
+
+          test_path.write_text('''#!/usr/bin/env python3\n"""Contract tests for SummonScout Engine V2 P0.3b core-native API/state."""\nimport unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\nADDON = ROOT / "src" / "AddOns" / "SummonScout"\nCORE = ADDON / "SummonScout.lua"\nFOUNDATION = ADDON / "SummonScout_EngineV2FoundationHot.lua"\n\n\nclass SummonScoutCoreApiStateContract(unittest.TestCase):\n    def text(self, path):\n        return path.read_text(encoding="utf-8")\n\n    def test_core_exports_api_and_state_before_event_handler(self):\n        core = self.text(CORE)\n        api = core.index("W112_SUMMONSCOUT_API_V1 = EventAPI")\n        state = core.index("W112_SUMMONSCOUT_STATE = SS")\n        version = core.index("W112_SUMMONSCOUT_API_VERSION = 1")\n        native = core.index("W112_SUMMONSCOUT_CORE_API_NATIVE = true")\n        handler = core.index('frame:SetScript("OnEvent", function()')\n        self.assertLess(api, handler)\n        self.assertLess(state, handler)\n        self.assertLess(version, handler)\n        self.assertLess(native, handler)\n\n    def test_foundation_resolves_core_native_surface_without_api_state_walkers(self):\n        foundation = self.text(FOUNDATION)\n        self.assertIn("local api = W112_SUMMONSCOUT_API_V1", foundation)\n        self.assertIn("local state = W112_SUMMONSCOUT_STATE", foundation)\n        self.assertNotIn("local function fFindApi", foundation)\n        self.assertNotIn("local function fFindState", foundation)\n        self.assertNotIn('return fFindApi(frame:GetScript("OnEvent")', foundation)\n        self.assertNotIn("fFindState(candidates", foundation)\n\n    def test_legacy_introspection_is_now_only_for_remaining_compat_hooks(self):\n        foundation = self.text(FOUNDATION)\n        self.assertIn("debug.getupvalue", foundation)\n        self.assertIn("debug.setupvalue", foundation)\n        self.assertIn("local function fResolveCompat", foundation)\n        self.assertIn("api.InstallLocationRootMatcher", foundation)\n        self.assertIn("api.InstallRosterQueueGuard", foundation)\n        self.assertIn('local VERSION = "p0.3b-core-api-state"', foundation)\n        self.assertIn("W112_SUMMONSCOUT_COMPAT_VERSION = 4", foundation)\n        self.assertIn("api.compatVersion = 4", foundation)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
+          PY
+
+          python tools/test_ai_summonscout_engine_v2_foundation.py
+          python tools/test_ai_summonscout_engine_v2_explicit_api.py
+          python tools/test_ai_summonscout_engine_v2_core_api_state.py
+          python tools/verify_current.py
+
+      - name: Commit generated tree without temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "wow112-ai-generator"
+          git config user.email "github12wykrzyk@users.noreply.github.com"
+          git rm .github/workflows/_tmp_summonscout_p03b_generator.yml
+          git add src/AddOns/SummonScout/SummonScout.lua \
+                  src/AddOns/SummonScout/SummonScout_EngineV2FoundationHot.lua \
+                  tools/test_ai_summonscout_engine_v2_core_api_state.py
+          git commit -m "gen: SummonScout P0.3b core-native API/state"
+          git push origin HEAD:refs/heads/tmp/summonscout-p03b-generator
