@@ -27,6 +27,7 @@ ALLOWED_EXTENSIONS = {
 SUMMONSCOUT_ROOT = LOCAL_BASE / "SummonScout"
 SUMMONSCOUT_TOC = SUMMONSCOUT_ROOT / "SummonScout.toc"
 HOT_FANOUT_HOST = "SummonScout_WhisperConfirmSpam.lua"
+HOT_FANOUT_PRELUDE = ("SummonScout_CoreAnchorHot.lua",)
 HOT_PAYLOAD_CAP = 262144
 FANOUT_BEGIN_MARKER = b"W112_SUMMONSCOUT_HOT_FANOUT_BEGIN:v1"
 FANOUT_END_MARKER = b"W112_SUMMONSCOUT_HOT_FANOUT_END:v1"
@@ -149,28 +150,35 @@ def discover_addons():
     return sources
 
 
-def hot_fanout_modules():
+def _summonscout_toc_entries():
     if not SUMMONSCOUT_TOC.is_file():
         raise RuntimeError("SummonScout HOT fanout: missing SummonScout.toc")
-
-    ordered = []
-    seen = set()
+    entries = []
     for raw in SUMMONSCOUT_TOC.read_text(encoding="utf-8").splitlines():
         name = raw.strip()
         if not name or name.startswith("##"):
             continue
+        entries.append(name)
+    return entries
+
+
+def hot_fanout_modules():
+    ordered = []
+    seen = set()
+    prelude = set(HOT_FANOUT_PRELUDE)
+    for name in _summonscout_toc_entries():
         if not (name.startswith("SummonScout_") and name.endswith("Hot.lua")):
             continue
         if name in seen:
             raise RuntimeError("SummonScout HOT fanout: duplicate TOC entry: " + name)
         seen.add(name)
-        if name not in DIRECT_WATCHED_OR_HOSTED:
+        if name not in DIRECT_WATCHED_OR_HOSTED and name not in prelude:
             ordered.append(name)
 
     discovered = {
         path.name
         for path in SUMMONSCOUT_ROOT.glob("SummonScout_*Hot.lua")
-        if path.name not in DIRECT_WATCHED_OR_HOSTED
+        if path.name not in DIRECT_WATCHED_OR_HOSTED and path.name not in prelude
     }
     if set(ordered) != discovered:
         missing = sorted(discovered - set(ordered))
@@ -180,6 +188,46 @@ def hot_fanout_modules():
             + ",".join(missing) + " stale=" + ",".join(stale)
         )
     return ordered
+
+
+def hot_fanout_prelude_modules():
+    entries = _summonscout_toc_entries()
+    try:
+        host_index = entries.index("SummonScout_HotHost.lua")
+        whisper_index = entries.index(HOT_FANOUT_HOST)
+    except ValueError as exc:
+        raise RuntimeError("SummonScout HOT fanout missing required TOC host entry") from exc
+
+    out = []
+    previous = host_index
+    for name in HOT_FANOUT_PRELUDE:
+        if name not in entries:
+            raise RuntimeError("SummonScout HOT fanout missing prelude TOC entry: " + name)
+        index = entries.index(name)
+        if index <= previous or index >= whisper_index:
+            raise RuntimeError(
+                "SummonScout HOT fanout prelude must load after HotHost and before whisper host: " + name
+            )
+        previous = index
+        path = SUMMONSCOUT_ROOT / name
+        if not path.is_file():
+            raise RuntimeError("SummonScout HOT fanout missing prelude source: " + name)
+        out.append(name)
+    return out
+
+
+def _append_wrapped_payload(rows, name, wrapper, marker_prefix):
+    path = SUMMONSCOUT_ROOT / name
+    payload = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if not payload.strip() or b"\x00" in payload:
+        raise RuntimeError("SummonScout HOT fanout invalid payload: " + name)
+    rows.extend([
+        ("    -- W112 HOT " + marker_prefix + " BEGIN " + name + "\n").encode("utf-8"),
+        ("    local function " + wrapper + "()\n").encode("utf-8"),
+        payload.rstrip(b"\n"),
+        ("\n    end\n    " + wrapper + "()\n").encode("utf-8"),
+        ("    -- W112 HOT " + marker_prefix + " END " + name + "\n").encode("utf-8"),
+    ])
 
 
 def append_summonscout_hot_fanout(data):
@@ -196,27 +244,35 @@ def append_summonscout_hot_fanout(data):
         'and type(W112_SUMMONSCOUT_HOT.PrepareFanoutReload) == "function" then '
         'W112_SUMMONSCOUT_HOT.PrepareFanoutReload() end\n'
     ).encode("utf-8")
-    rows = [
-        guard,
-        prepare,
+    rows = [guard, prepare]
+
+    # A legacy live session may still have a dirty H.coreBaseOnEvent captured by
+    # HotHost v1/v2. Run the canonical-anchor unwinder before re-executing the
+    # whisper host itself; otherwise WhisperConfirm would wrap the dirty chain
+    # once more before the normal fanout modules get a chance to repair it.
+    rows.append(b"if __w112_hot_fanout_reload then\n")
+    for index, name in enumerate(hot_fanout_prelude_modules(), start=1):
+        _append_wrapped_payload(
+            rows,
+            name,
+            "__w112_hot_fanout_prelude_" + str(index),
+            "PRELUDE",
+        )
+    rows.append(b"end\n")
+
+    rows.extend([
         data.rstrip(b"\r\n"),
         b"\n\n-- " + FANOUT_BEGIN_MARKER + b"\n",
         b"if __w112_hot_fanout_reload then\n",
-    ]
+    ])
 
     for index, name in enumerate(hot_fanout_modules(), start=1):
-        path = SUMMONSCOUT_ROOT / name
-        payload = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        if not payload.strip() or b"\x00" in payload:
-            raise RuntimeError("SummonScout HOT fanout invalid payload: " + name)
-        wrapper = "__w112_hot_fanout_module_" + str(index)
-        rows.extend([
-            ("    -- W112 HOT FANOUT BEGIN " + name + "\n").encode("utf-8"),
-            ("    local function " + wrapper + "()\n").encode("utf-8"),
-            payload.rstrip(b"\n"),
-            ("\n    end\n    " + wrapper + "()\n").encode("utf-8"),
-            ("    -- W112 HOT FANOUT END " + name + "\n").encode("utf-8"),
-        ])
+        _append_wrapped_payload(
+            rows,
+            name,
+            "__w112_hot_fanout_module_" + str(index),
+            "FANOUT",
+        )
 
     rows.extend([
         b"end\n",
@@ -227,6 +283,11 @@ def append_summonscout_hot_fanout(data):
         raise RuntimeError("SummonScout HOT fanout emitted Lua 5.0 ambiguous IIFE syntax")
     if b"PrepareFanoutReload()" not in out:
         raise RuntimeError("SummonScout HOT fanout missing pre-reload wrapper reset")
+    prelude_marker = b"W112 HOT PRELUDE BEGIN SummonScout_CoreAnchorHot.lua"
+    if prelude_marker not in out:
+        raise RuntimeError("SummonScout HOT fanout missing canonical core-anchor prelude")
+    if out.find(prelude_marker) > out.find(data.rstrip(b"\r\n")):
+        raise RuntimeError("SummonScout HOT fanout core-anchor prelude runs after whisper host")
     if len(out) >= HOT_PAYLOAD_CAP:
         raise RuntimeError(
             "SummonScout HOT fanout exceeds native watcher payload cap: "
