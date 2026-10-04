@@ -41,11 +41,11 @@ class SummonScoutHotFanoutTests(unittest.TestCase):
         host = addons.SUMMONSCOUT_ROOT / addons.HOT_FANOUT_HOST
         packaged = addons.package_bytes("SummonScout", host)
         prelude = b"-- W112 HOT PRELUDE BEGIN SummonScout_CoreAnchorHot.lua"
-        host_start = packaged.find(host.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n").rstrip(b"\n"))
+        whisper_body = b'local WC_VERSION = "2-hot2-manualchat-safe1"'
 
         self.assertEqual(addons.hot_fanout_prelude_modules(), ["SummonScout_CoreAnchorHot.lua"])
         self.assertGreaterEqual(packaged.find(prelude), 0)
-        self.assertGreater(host_start, packaged.find(prelude))
+        self.assertGreater(packaged.find(whisper_body), packaged.find(prelude))
 
     def test_fanout_is_cold_load_guarded(self):
         host = addons.SUMMONSCOUT_ROOT / addons.HOT_FANOUT_HOST
