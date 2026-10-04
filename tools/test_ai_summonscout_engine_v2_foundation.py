@@ -7,11 +7,17 @@ ADDON = ROOT / "src" / "AddOns" / "SummonScout"
 
 
 class SummonEngineV2FoundationTests(unittest.TestCase):
-    def test_foundation_is_loaded_after_existing_hot_guards(self):
+    def test_foundation_loads_after_hot_host_before_explicit_api_consumers(self):
         toc = (ADDON / "SummonScout.toc").read_text(encoding="utf-8")
-        roster = toc.index("SummonScout_RosterOwnershipHot.lua")
+        host = toc.index("SummonScout_HotHost.lua")
         foundation = toc.index("SummonScout_EngineV2FoundationHot.lua")
-        self.assertGreater(foundation, roster)
+        self.assertGreater(foundation, host)
+        for name in (
+            "SummonScout_LocationAnchorHot.lua",
+            "SummonScout_GroupedResumeHot.lua",
+            "SummonScout_RosterOwnershipHot.lua",
+        ):
+            self.assertLess(foundation, toc.index(name), name)
 
     def test_public_runtime_surface_is_exported(self):
         text = (ADDON / "SummonScout_EngineV2FoundationHot.lua").read_text(encoding="utf-8")
@@ -27,7 +33,21 @@ class SummonEngineV2FoundationTests(unittest.TestCase):
         self.assertIn("pendingManualInvites", text)
         self.assertIn("not fHasInviteOwnership(state, joined)", text)
         self.assertIn("SummonScoutDB.partyAutoSummon = false", text)
-        self.assertNotIn("debug.setupvalue", text)
+        self.assertIn("restoreAutoSummon = SummonScoutDB.partyAutoSummon", text)
+        self.assertIn("SummonScoutDB.partyAutoSummon = restoreAutoSummon", text)
+
+    def test_legacy_introspection_is_centralized_not_used_by_consumers(self):
+        foundation = (ADDON / "SummonScout_EngineV2FoundationHot.lua").read_text(encoding="utf-8")
+        self.assertIn("debug.getupvalue", foundation)
+        self.assertIn("debug.setupvalue", foundation)
+        for name in (
+            "SummonScout_LocationAnchorHot.lua",
+            "SummonScout_GroupedResumeHot.lua",
+            "SummonScout_RosterOwnershipHot.lua",
+        ):
+            text = (ADDON / name).read_text(encoding="utf-8")
+            self.assertNotIn("debug.getupvalue", text, name)
+            self.assertNotIn("debug.setupvalue", text, name)
 
     def test_existing_core_path_that_needs_guard_remains_identified(self):
         core = (ADDON / "SummonScout.lua").read_text(encoding="utf-8")
