@@ -136,7 +136,7 @@ pub fn login(
         found.ok_or_else(|| "world auth response not received within 16 packets".to_string())?
     };
 
-    if !matches!(auth_response, SMSG_AUTH_RESPONSE::AuthOk { .. }) {
+    if !matches!(*auth_response, SMSG_AUTH_RESPONSE::AuthOk { .. }) {
         return Err(format!("world auth rejected: {auth_response:?}"));
     }
     println!("[WORLD] auth PASS wire-build={OCTOWOW_WIRE_BUILD}");
