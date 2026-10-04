@@ -24,6 +24,18 @@ ALLOWED_EXTENSIONS = {
     ".jpg", ".jpeg", ".png",
 }
 
+SUMMONSCOUT_ROOT = LOCAL_BASE / "SummonScout"
+SUMMONSCOUT_TOC = SUMMONSCOUT_ROOT / "SummonScout.toc"
+HOT_FANOUT_HOST = "SummonScout_WhisperConfirmSpam.lua"
+HOT_PAYLOAD_CAP = 262144
+FANOUT_BEGIN_MARKER = b"W112_SUMMONSCOUT_HOT_FANOUT_BEGIN:v1"
+FANOUT_END_MARKER = b"W112_SUMMONSCOUT_HOT_FANOUT_END:v1"
+DIRECT_WATCHED_OR_HOSTED = {
+    "SummonScout_PostPaymentOfferHot.lua",
+    HOT_FANOUT_HOST,
+    "SummonScout_TimingHot.lua",
+}
+
 
 def has_root_toc(root):
     return any(path.is_file() and path.suffix.lower() == ".toc" for path in root.iterdir())
@@ -137,10 +149,87 @@ def discover_addons():
     return sources
 
 
+def hot_fanout_modules():
+    if not SUMMONSCOUT_TOC.is_file():
+        raise RuntimeError("SummonScout HOT fanout: missing SummonScout.toc")
+
+    ordered = []
+    seen = set()
+    for raw in SUMMONSCOUT_TOC.read_text(encoding="utf-8").splitlines():
+        name = raw.strip()
+        if not name or name.startswith("##"):
+            continue
+        if not (name.startswith("SummonScout_") and name.endswith("Hot.lua")):
+            continue
+        if name in seen:
+            raise RuntimeError("SummonScout HOT fanout: duplicate TOC entry: " + name)
+        seen.add(name)
+        if name not in DIRECT_WATCHED_OR_HOSTED:
+            ordered.append(name)
+
+    discovered = {
+        path.name
+        for path in SUMMONSCOUT_ROOT.glob("SummonScout_*Hot.lua")
+        if path.name not in DIRECT_WATCHED_OR_HOSTED
+    }
+    if set(ordered) != discovered:
+        missing = sorted(discovered - set(ordered))
+        stale = sorted(set(ordered) - discovered)
+        raise RuntimeError(
+            "SummonScout HOT fanout TOC/source mismatch: missing="
+            + ",".join(missing) + " stale=" + ",".join(stale)
+        )
+    return ordered
+
+
+def append_summonscout_hot_fanout(data):
+    if FANOUT_BEGIN_MARKER in data or FANOUT_END_MARKER in data:
+        raise RuntimeError("SummonScout HOT fanout already appended")
+
+    guard = (
+        'local __w112_hot_fanout_reload = W112_SUMMONSCOUT_HOT '
+        'and W112_SUMMONSCOUT_HOT.modules '
+        'and W112_SUMMONSCOUT_HOT.modules["whisperconfirm"] ~= nil\n'
+    ).encode("utf-8")
+    rows = [
+        guard,
+        data.rstrip(b"\r\n"),
+        b"\n\n-- " + FANOUT_BEGIN_MARKER + b"\n",
+        b"if __w112_hot_fanout_reload then\n",
+    ]
+
+    for name in hot_fanout_modules():
+        path = SUMMONSCOUT_ROOT / name
+        payload = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        if not payload.strip() or b"\x00" in payload:
+            raise RuntimeError("SummonScout HOT fanout invalid payload: " + name)
+        rows.extend([
+            ("    -- W112 HOT FANOUT BEGIN " + name + "\n").encode("utf-8"),
+            b"    (function()\n",
+            payload.rstrip(b"\n"),
+            b"\n    end)()\n",
+            ("    -- W112 HOT FANOUT END " + name + "\n").encode("utf-8"),
+        ])
+
+    rows.extend([
+        b"end\n",
+        b"-- " + FANOUT_END_MARKER + b"\n",
+    ])
+    out = b"".join(rows)
+    if len(out) >= HOT_PAYLOAD_CAP:
+        raise RuntimeError(
+            "SummonScout HOT fanout exceeds native watcher payload cap: "
+            + str(len(out)) + "/" + str(HOT_PAYLOAD_CAP)
+        )
+    return out
+
+
 def package_bytes(folder, path):
     data = path.read_bytes()
     if folder.lower() == "summonscout":
         data = transform_summonscout_file(path.name, data)
+        if path.name == HOT_FANOUT_HOST:
+            data = append_summonscout_hot_fanout(data)
         data = transform_summonscout_host(path.name, data)
     return data
 

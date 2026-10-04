@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "hot-default-delivery-v1",
+  "goal": "Make SummonScout hot-capable Lua changes automatically propagate through the existing Parallel addon packaging workflow by fanning every non-directly-watched SummonScout_*Hot.lua module into an already watched live-reload host, without requiring manual per-file watcher updates.",
+  "branch": "feature/hot-default-delivery-v1",
+  "base_parallel_sha": "fbb56aebdd6ad7e1384b9034cd3d2780667640e4",
+  "modules": [
+    "SummonScout",
+    "AI-workflow"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-explicit-api-p02"
+  ],
+  "shared_resources": [
+    "SummonScout hot delivery transform"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Existing direct native watch paths stay unchanged. The normal Parallel addon packager now turns SummonScout_WhisperConfirmSpam.lua into a watched fanout carrier for every TOC-declared SummonScout_*Hot.lua module that is not already watched/hosted directly. Cold load skips the fanout to avoid duplicate registration; live reload replays the fanout in TOC order. Packaging fails closed when a non-direct Hot source is missing from the TOC or when the generated watched payload reaches the native 262144-byte cap. This includes SummonScout_RosterOwnershipHot.lua, so the current WTB+taxi parser hotfix is carried by the same automatic path.",
+  "integrated_feature_sha": "104058d7599a55d612c1a0a4f82a9c22513074d5"
+}
