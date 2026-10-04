@@ -11,17 +11,9 @@
   "shared_resources": [
     "SummonScout roster-to-summon ownership gate"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "superseded",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summonscout-roster-ownership-guard-v1",
-    "acquired_at": "2026-10-04T07:36:00Z",
-    "heartbeat_at": "2026-10-04T07:36:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "resource:SummonScout roster-to-summon ownership gate"
-    ]
-  },
-  "notes": "ASAP Lua-only guard for the observed Hyjal-only client logging 'party join -> summon pending' for Deitara after a World request for Silithus. Root cause: syncPartyRoster still calls queuePartySummon for every newly observed group member, despite the existing pendingManualInvites ownership marker added for SummonScout's own eligible invites. The hot guard replaces the roster-facing queue upvalue with an ownership check: tracked SummonScout invites pass through to the original queue; unrelated group joins are ignored before summon-pending is created. The exported queue API is left unchanged so grouped 123/ready/combat-resume flows still work."
+  "lease": null,
+  "notes": "Superseded by feature/summonscout-roster-ownership-guard-v1-r2 after exact feature SHA ca2412651fb23a9bb523312194fe3e78031c2c73 was blocked only by a stale unrelated AH task-state regression test present on its original merge-base. The gameplay change was carried unchanged to the successor rebased on repaired parallel b582e48db227a3ce45f9eaaa74eba90bd83ba314. Lease released so the successor can own the same SummonScout roster-to-summon ownership gate scope."
 }
