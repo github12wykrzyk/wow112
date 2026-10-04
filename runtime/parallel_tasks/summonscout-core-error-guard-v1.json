@@ -14,18 +14,10 @@
     "SummonScoutFrame OnEvent wrapper chain",
     "SummonScout HotHost error state"
   ],
-  "status": "ready_for_integration",
-  "auto_integrate": true,
+  "status": "integrated",
+  "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt:summonscout-core-error-guard-v1",
-    "acquired_at": "2026-10-04T13:00:30Z",
-    "heartbeat_at": "2026-10-04T13:00:30Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "resource:SummonScoutFrame OnEvent wrapper chain",
-      "resource:SummonScout HotHost error state"
-    ]
-  },
-  "notes": "Adds a final TOC-loaded hot guard that unwraps its own previous generation safely, wraps the currently composed SummonScoutFrame OnEvent handler with pcall, suppresses repeated Blizzard error popups, stores exact error text/time in W112_SUMMONSCOUT_HOT.state.coreerrorguard and H.lastError, and emits only a throttled controlled chat line. Existing invite, payment, routing and ritual handlers are otherwise untouched."
+  "lease": null,
+  "notes": "Integrated into parallel; lease released after exact integration so successor SummonScout wrapper-chain work can proceed. Adds a final TOC-loaded hot guard that wraps the currently composed SummonScoutFrame OnEvent handler with pcall, suppresses repeated Blizzard error popups, stores exact error text/time in W112_SUMMONSCOUT_HOT.state.coreerrorguard and H.lastError, and emits only a throttled controlled chat line.",
+  "integrated_feature_sha": "5fcfd22c6e36a93bb6317f0771ae5c44ad885096"
 }
