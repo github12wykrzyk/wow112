@@ -148,13 +148,14 @@ namespace WoW112Updater
             gameDir.Leave += delegate { SaveConfig(false); };
             status.TextChanged += delegate { UpdateStatusStyle(); };
             localInfo.TextChanged += delegate { detailsTip.SetToolTip(localInfo, localInfo.Text); };
+            ClientSizeChanged += delegate { RepositionFloatingDiagnosticControls(); };
             FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
                 if (busy && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; status.Text = "Poczekaj na zakończenie bieżącej operacji."; }
             };
             FormClosed += delegate { detailsTip.Dispose(); token.Dispose(); };
-            Shown += delegate { FitWorkingArea(); StartGitHubMonitor(); };
-            DpiChanged += delegate { BeginInvoke(new Action(FitWorkingArea)); };
+            Shown += delegate { FitWorkingArea(); RepositionFloatingDiagnosticControls(); StartGitHubMonitor(); };
+            DpiChanged += delegate { BeginInvoke(new Action(delegate { FitWorkingArea(); RepositionFloatingDiagnosticControls(); })); };
             ResetRemote(true);
             RefreshLocalState();
             ResumeLayout(true);
@@ -167,6 +168,18 @@ namespace WoW112Updater
             if (MinimumSize.Width > area.Width || MinimumSize.Height > area.Height) MinimumSize = Size.Empty;
             Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
             Location = new Point(Math.Max(area.Left, Math.Min(Left, area.Right - Width)), Math.Max(area.Top, Math.Min(Top, area.Bottom - Height)));
+        }
+
+        private void RepositionFloatingDiagnosticControls()
+        {
+            foreach (var button in Controls.OfType<Button>())
+            {
+                if (!button.Text.StartsWith("AH EVIDENCE", StringComparison.OrdinalIgnoreCase)) continue;
+                button.Anchor = AnchorStyles.None;
+                button.Left = Math.Max(8, ClientSize.Width - button.Width - 18);
+                button.Top = Math.Max(8, ClientSize.Height - button.Height - 18);
+                button.BringToFront();
+            }
         }
 
         private static TableLayoutPanel Grid(int columns, int rows)
