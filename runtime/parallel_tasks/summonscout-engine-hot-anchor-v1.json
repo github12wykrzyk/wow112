@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-engine-hot-anchor-v1",
+  "goal": "Stop SummonScout Engine V2 queue-wrapper accumulation across HOT fanout generations by canonicalizing api.queuePartySummon back to the deepest raw core queue and publishing exactly one managed ownership wrapper.",
+  "branch": "feature/summonscout-engine-hot-anchor-v1",
+  "base_parallel_sha": "e5a59dc51c49ca95ea5b9a70abf562b4fc38c4c9",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-core-api-state-p03b",
+    "summonscout-core-anchor-unwind-trace-v1"
+  ],
+  "shared_resources": [
+    "SummonScout Engine V2 queue API ownership",
+    "SummonScout HOT fanout TOC"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Root cause: EngineV2FoundationHot resets persisted S.api to nil on every execution, making its same-generation raw-queue guard unreachable after HOT reload. A previous publicQueue wrapper can therefore become the next generation rawQueue and wrappers accumulate until C stack overflow. The integrated fix adds a final HOT API anchor that recursively unwinds known rawQueue closures, republishes one ownership-equivalent queue wrapper, restores raw ownership on Shutdown, and self-verifies that api.queuePartySummon remains anchored.",
+  "integrated_feature_sha": "d299cfb37527d6fe47f870f8519644a67b229c47"
+}
