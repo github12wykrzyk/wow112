@@ -8,14 +8,13 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local GUARD_VERSION = "1-ledger-fallback1"
+local GUARD_VERSION = "2-live-destinations1"
 local G = H.GetState("postpay_fallback")
 G.pending = G.pending or {}
 G.seenRows = G.seenRows or {}
 G.nextPollAt = tonumber(G.nextPollAt) or 0
 
 local FALLBACK_DELAY = 2.20
-local FALLBACK_MESSAGE = "Thank you! I also offer summons to Hyjal, Hydraxis and Winterspring."
 
 local function gfNow()
     if GetTime then return GetTime() end
@@ -51,10 +50,38 @@ local function gfChat(text)
 end
 
 local function gfLooksLikePrimaryPostpay(message)
+    if type(H.IsPostPaymentOfferMessage) == "function" then
+        if pcall then
+            local ok, result = pcall(H.IsPostPaymentOfferMessage, message or "")
+            if ok and result then return true end
+        elseif H.IsPostPaymentOfferMessage(message or "") then
+            return true
+        end
+    end
+
+    -- Compatibility with the pre-live-directory primary while clients hot-migrate.
     local s = string.lower(message or "")
-    return string.find(s, "hyjal", 1, true) ~= nil
-        and string.find(s, "hydraxis", 1, true) ~= nil
-        and string.find(s, "winterspring", 1, true) ~= nil
+    if string.find(s, "hyjal", 1, true)
+        and string.find(s, "hydraxis", 1, true)
+        and string.find(s, "winterspring", 1, true) then
+        return true
+    end
+    return string.find(s, "we also summon to ", 1, true) ~= nil
+end
+
+local function gfBuildMessage()
+    if type(H.BuildPostPaymentOfferMessage) == "function" then
+        if pcall then
+            local ok, message = pcall(H.BuildPostPaymentOfferMessage)
+            if ok and type(message) == "string" and message ~= "" then return message end
+        else
+            local message = H.BuildPostPaymentOfferMessage()
+            if type(message) == "string" and message ~= "" then return message end
+        end
+    end
+    -- Fail closed when the primary builder is unavailable: thank the payer but
+    -- never advertise a destination whose provider state we cannot verify.
+    return "Thank you!"
 end
 
 local function gfSeedRows()
@@ -150,11 +177,12 @@ local function gfProcessPending()
         elseif t >= (tonumber(item.dueAt) or 0) then
             local name = gfTrim(item.name or "")
             if gfValidName(name) and SendChatMessage then
+                local message = gfBuildMessage()
                 local ok = true
                 if pcall then
-                    ok = pcall(SendChatMessage, FALLBACK_MESSAGE, "WHISPER", nil, name)
+                    ok = pcall(SendChatMessage, message, "WHISPER", nil, name)
                 else
-                    SendChatMessage(FALLBACK_MESSAGE, "WHISPER", nil, name)
+                    SendChatMessage(message, "WHISPER", nil, name)
                 end
                 if SummonScoutDB and SummonScoutDB.debug then
                     gfChat((ok and "post-payment fallback sent -> " or "post-payment fallback call failed -> ") .. name)

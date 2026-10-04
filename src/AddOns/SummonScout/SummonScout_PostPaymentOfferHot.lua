@@ -7,7 +7,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local POSTPAY_VERSION = "5-postpay-confirm1"
+local POSTPAY_VERSION = "6-postpay-live-destinations1"
 local PP = H.GetState("postpay")
 PP.pending = PP.pending or {}
 PP.lastMessageIndex = tonumber(PP.lastMessageIndex) or 0
@@ -28,6 +28,7 @@ local DIRECT_INVITE_DELAY = 0.65
 local DIRECT_INVITE_DEDUPE = 2.0
 local POSTPAY_RETRY_DELAY = 1.25
 local POSTPAY_MAX_ATTEMPTS = 2
+local POSTPAY_PROVIDER_TTL = 38.0
 
 local DIRECT_INVITE_HARD_BLACKLIST = {
     ["hydraone"] = true,
@@ -35,27 +36,28 @@ local DIRECT_INVITE_HARD_BLACKLIST = {
     ["bolthyjal"] = true
 }
 
-local POSTPAY_MESSAGES = {
-    "Thank you! I also offer summons to Hyjal, Hydraxis and Winterspring.",
-    "Thanks a lot! Summons also available to Hyjal, Hydraxis and Winterspring.",
-    "Thank you for the payment! I also summon to Hyjal, Hydraxis and Winterspring.",
-    "Many thanks! I can summon you to Hyjal, Hydraxis or Winterspring too.",
-    "Thanks! Need another summon? Hyjal, Hydraxis and Winterspring are available.",
-    "Thank you! Other destinations: Hyjal, Hydraxis and Winterspring.",
-    "Much appreciated! I also run summons to Hyjal, Hydraxis and Winterspring.",
-    "Thanks for using my summon! Hyjal, Hydraxis and Winterspring are available too.",
-    "Thank you very much! I also offer Hyjal, Hydraxis and Winterspring summons.",
-    "Thanks! I can also get you to Hyjal, Hydraxis or Winterspring.",
-    "Thank you! Summon service also covers Hyjal, Hydraxis and Winterspring.",
-    "Cheers, thank you! I also summon to Hyjal, Hydraxis and Winterspring.",
-    "Thanks a ton! Hyjal, Hydraxis and Winterspring summons are available too.",
-    "Thank you for the gold! I also offer Hyjal, Hydraxis and Winterspring.",
-    "Many thanks for the payment! Hyjal, Hydraxis and Winterspring also available.",
-    "Thank you! If you need more, I summon to Hyjal, Hydraxis and Winterspring.",
-    "Thanks! My other summon spots are Hyjal, Hydraxis and Winterspring.",
-    "Much appreciated! I can also summon to Hyjal, Hydraxis and Winterspring.",
-    "Thank you! Hyjal, Hydraxis and Winterspring are also on my summon list.",
-    "Thanks for the support! I also offer summons to Hyjal, Hydraxis and Winterspring."
+-- Keep the customer copy compact and make the route suffix dynamic. The
+-- available destinations come from the same fallback-router directory that
+-- powers "where can u summon?", with this client's own service removed.
+local POSTPAY_OFFER_PREFIXES = {
+    "Thanks. We also summon to ",
+    "Thank you! We also summon to ",
+    "Thanks for the payment! We also summon to ",
+    "Many thanks! We also summon to ",
+    "Much appreciated! We also summon to "
+}
+
+local POSTPAY_THANK_MESSAGES = {
+    "Thanks for the payment!",
+    "Thank you!",
+    "Many thanks!",
+    "Much appreciated!"
+}
+
+local POSTPAY_DISPLAY_LABELS = {
+    hyjal = "Hyjal",
+    hydraxian = "Hydraxis",
+    winterspring = "Winterspring"
 }
 
 local function ppNow()
@@ -142,6 +144,167 @@ local function ppChat(text)
         DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffSummonScout:|r " .. tostring(text or ""))
     end
 end
+
+local function ppLocationCatalog()
+    local byId = {}
+    local api = W112_SUMMONSCOUT_API_V1
+    if type(api) ~= "table" or type(api.GetLocationCatalog) ~= "function" then return byId end
+    local list = api.GetLocationCatalog()
+    if type(list) ~= "table" then return byId end
+    local i
+    for i = 1, table.getn(list) do
+        local loc = list[i]
+        if type(loc) == "table" and loc.id then
+            byId[string.lower(ppTrim(loc.id or ""))] = loc
+        end
+    end
+    return byId
+end
+
+local function ppLocalServiceSet()
+    local result = {}
+    local service = string.lower(ppTrim(SummonScoutDB and SummonScoutDB.service or ""))
+    if service == "" or service == "all" then return result end
+    local token
+    for token in string.gfind(service, "[^,]+") do
+        local id = string.lower(ppTrim(token or ""))
+        if id ~= "" then result[id] = true end
+    end
+    return result
+end
+
+local function ppDestinationLabel(catalog, id)
+    id = string.lower(ppTrim(id or ""))
+    if POSTPAY_DISPLAY_LABELS[id] then return POSTPAY_DISPLAY_LABELS[id] end
+    local loc = catalog[id]
+    return loc and tostring(loc.label or loc.id) or id
+end
+
+local function ppAddOtherDestination(ids, seen, localServices, catalog, id)
+    id = string.lower(ppTrim(id or ""))
+    if id == "" or seen[id] or localServices[id] then return end
+    if next(catalog) ~= nil and not catalog[id] then return end
+    seen[id] = true
+    ids[table.getn(ids) + 1] = id
+end
+
+local function ppOtherDestinationLabels()
+    local ids = {}
+    local seen = {}
+    local localServices = ppLocalServiceSet()
+    local catalog = ppLocationCatalog()
+    local F = H.GetState("fallbackrouter")
+
+    -- Non-hub summoners receive the live fleet directory from the hub.
+    if type(F) == "table" and type(F.directory) == "table" then
+        local id, enabled
+        for id, enabled in pairs(F.directory) do
+            if enabled then
+                ppAddOtherDestination(ids, seen, localServices, catalog, id)
+            end
+        end
+    end
+
+    -- The hub owns provider heartbeats directly. Use the same 38s provider TTL
+    -- as FallbackRouter so a stale/offline summoner is not advertised here.
+    if type(F) == "table" and type(F.providers) == "table" then
+        local t = ppNow()
+        local id, providers, _, item
+        for id, providers in pairs(F.providers) do
+            local live = false
+            if type(providers) == "table" then
+                for _, item in pairs(providers) do
+                    if type(item) == "table"
+                        and (t - (tonumber(item.seen) or 0)) <= POSTPAY_PROVIDER_TTL then
+                        live = true
+                        break
+                    end
+                end
+            end
+            if live then
+                ppAddOtherDestination(ids, seen, localServices, catalog, id)
+            end
+        end
+    end
+
+    table.sort(ids)
+    local labels = {}
+    local i
+    for i = 1, table.getn(ids) do
+        labels[table.getn(labels) + 1] = ppDestinationLabel(catalog, ids[i])
+    end
+    return labels
+end
+
+local function ppJoinLabels(labels)
+    local count = type(labels) == "table" and table.getn(labels) or 0
+    if count <= 0 then return "" end
+    if count == 1 then return tostring(labels[1]) end
+    if count == 2 then return tostring(labels[1]) .. " and " .. tostring(labels[2]) end
+
+    local text = ""
+    local i
+    for i = 1, count do
+        if i == 1 then
+            text = tostring(labels[i])
+        elseif i == count then
+            text = text .. " and " .. tostring(labels[i])
+        else
+            text = text .. ", " .. tostring(labels[i])
+        end
+    end
+    return text
+end
+
+local function ppChooseIndex(count)
+    if not count or count <= 0 then return nil end
+    local index = 1
+    if math and math.random then
+        index = math.random(count)
+    else
+        index = math.mod(math.floor(ppNow() * 1000), count) + 1
+    end
+    if count > 1 and index == PP.lastMessageIndex then
+        index = math.mod(index, count) + 1
+    end
+    PP.lastMessageIndex = index
+    return index
+end
+
+local function ppChooseMessage()
+    local labels = ppOtherDestinationLabels()
+    local routeText = ppJoinLabels(labels)
+    if routeText ~= "" then
+        local index = ppChooseIndex(table.getn(POSTPAY_OFFER_PREFIXES))
+        if not index then return nil end
+        return POSTPAY_OFFER_PREFIXES[index] .. routeText .. "."
+    end
+
+    local index = ppChooseIndex(table.getn(POSTPAY_THANK_MESSAGES))
+    return index and POSTPAY_THANK_MESSAGES[index] or "Thank you!"
+end
+
+local function ppIsPostPaymentOfferMessage(message)
+    message = tostring(message or "")
+    local i
+    for i = 1, table.getn(POSTPAY_THANK_MESSAGES) do
+        if message == POSTPAY_THANK_MESSAGES[i] then return true end
+    end
+    for i = 1, table.getn(POSTPAY_OFFER_PREFIXES) do
+        local prefix = POSTPAY_OFFER_PREFIXES[i]
+        if string.sub(message, 1, string.len(prefix)) == prefix
+            and string.sub(message, -1) == "." then
+            return true
+        end
+    end
+    return false
+end
+
+-- Shared, narrow post-payment API. The fallback reliability module uses the
+-- same builder/detector so dynamic route lists cannot create duplicate thanks.
+H.BuildPostPaymentOfferMessage = ppChooseMessage
+H.IsPostPaymentOfferMessage = ppIsPostPaymentOfferMessage
+H.GetPostPaymentOtherDestinationLabels = ppOtherDestinationLabels
 
 local function ppHasDirectInviteRoot(message)
     local s = ppNormalize(message)
@@ -335,24 +498,6 @@ local function ppResolvePaymentName(payment)
     return nil
 end
 
-local function ppChooseMessage()
-    local count = table.getn(POSTPAY_MESSAGES)
-    if count <= 0 then return nil end
-
-    local index = 1
-    if math and math.random then
-        index = math.random(count)
-    else
-        index = math.mod(math.floor(ppNow() * 1000), count) + 1
-    end
-
-    if count > 1 and index == PP.lastMessageIndex then
-        index = math.mod(index, count) + 1
-    end
-    PP.lastMessageIndex = index
-    return POSTPAY_MESSAGES[index]
-end
-
 local function ppSendItem(item)
     if type(item) ~= "table" then return false end
     local name = ppTrim(item.name or "")
@@ -385,7 +530,8 @@ local function ppSendItem(item)
     end
 
     if SummonScoutDB.debug then
-        ppChat("post-payment whisper attempt " .. tostring(item.attempts) .. " -> " .. name)
+        ppChat("post-payment whisper attempt " .. tostring(item.attempts) .. " -> " .. name
+            .. " [other=" .. ppJoinLabels(ppOtherDestinationLabels()) .. "]")
     end
     return true
 end
