@@ -12,6 +12,8 @@ use wow_world_messages::vanilla::{
     SMSG_AUTH_RESPONSE, SMSG_CHAR_ENUM,
 };
 
+const VANILLA_MODULUS_CRC: u32 = 0x4C1C776D;
+
 fn hex_prefix(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -44,6 +46,23 @@ fn world_diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
     let _ = stream.set_read_timeout(previous_timeout);
 }
 
+fn octo_fingerprint_addons() -> Vec<AddonInfo> {
+    [
+        "Blizzard_BindingUI",
+        "Blizzard_InspectUI",
+        "Blizzard_MacroUI",
+        "Blizzard_RaidUI",
+    ]
+    .iter()
+    .map(|name| AddonInfo {
+        addon_name: (*name).to_string(),
+        addon_crc: VANILLA_MODULUS_CRC,
+        addon_extra_crc: 0,
+        addon_has_signature: 1,
+    })
+    .collect()
+}
+
 pub fn login(
     stream: &mut TcpStream,
     session_key: [u8; SESSION_KEY_LENGTH as usize],
@@ -74,12 +93,7 @@ pub fn login(
         username: username.to_string(),
         client_seed: seed_value,
         client_proof,
-        addon_info: vec![AddonInfo {
-            addon_name: "WoW112HeadlessProbe".to_string(),
-            addon_crc: 0,
-            addon_extra_crc: 0,
-            addon_has_signature: 0,
-        }],
+        addon_info: octo_fingerprint_addons(),
     };
 
     let mut auth_wire = Vec::new();
@@ -88,7 +102,7 @@ pub fn login(
         .map_err(|e| format!("encode world auth session failed: {e:?}"))?;
     let safe_prefix_len = auth_wire.len().min(24);
     println!(
-        "[WORLD-DIAG] auth-session-out len={} prefix={} wire-build={} server-id={}",
+        "[WORLD-DIAG] auth-session-out len={} prefix={} wire-build={} server-id={} addons=octo-fingerprint-4",
         auth_wire.len(),
         hex_prefix(&auth_wire[..safe_prefix_len]),
         OCTOWOW_WIRE_BUILD,
@@ -100,11 +114,27 @@ pub fn login(
 
     world_diag_peek(stream, "auth-response-raw", Duration::from_millis(1500));
 
-    let auth_response = expect_server_message_encryption::<SMSG_AUTH_RESPONSE, _>(
-        &mut *stream,
-        crypto.decrypter(),
-    )
-    .map_err(|e| format!("read world auth response failed: {e:?}"))?;
+    let auth_response = {
+        let mut found = None;
+        for index in 0..16usize {
+            let opcode = ServerOpcodeMessage::read_encrypted(&mut *stream, crypto.decrypter())
+                .map_err(|e| format!("read world pre-auth opcode failed: {e:?}"))?;
+
+            match opcode {
+                ServerOpcodeMessage::SMSG_AUTH_RESPONSE(response) => {
+                    found = Some(response);
+                    break;
+                }
+                other => {
+                    if index < 8 {
+                        println!("[WORLD] pre-auth rx[{index}] {other:?}");
+                    }
+                }
+            }
+        }
+
+        found.ok_or_else(|| "world auth response not received within 16 packets".to_string())?
+    };
 
     if !matches!(auth_response, SMSG_AUTH_RESPONSE::AuthOk { .. }) {
         return Err(format!("world auth rejected: {auth_response:?}"));
