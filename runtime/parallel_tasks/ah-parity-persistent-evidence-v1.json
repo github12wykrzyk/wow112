@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-parity-persistent-evidence-v1",
+  "goal": "Persist compatible AuxEconomyShadow parity telemetry across /reload so repeated loop scans accumulate evidence instead of being overwritten by a fresh runtime summary, while keeping cutover arming and candidate approvals current-generation only.",
+  "branch": "feature/ah-parity-persistent-evidence-v1",
+  "base_parallel_sha": "a79572f56f6cd99d2606fce7bb12c081831719d4",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-cutover-authoritative-gate-v1"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "AH-DUMP #321 and #323 on parallel a79572f5 remained at scans=1/pages=17/decisionCompared=17 after roughly ten loop scans followed by /reload. AuxFastBridge loop reaches AVM_AuxArbScanDone normally; root cause is ParityExport.install()/publish() overwriting SavedVariables marketMeta.shadowParity with fresh runtime counters after Lua reset. This feature adds revision-compatible cumulative SavedVariables evidence with delta accounting and exposes current-generation counters separately. It does not modify AuxVmangos, PlaceAuctionBid, TransactionGuard or cutover arming; generationArmed and exact candidate matches remain current-generation only. Exact feature code SHA 6a33c3e7f01f1f12ca9d9c06dbe5e3ec42b451f3 passed Parallel feature preflight + ECONOMY profile run 37189079340.",
+  "integrated_feature_sha": "99e9b64a11dfd0768e20a4567932b77d473f8dc5"
+}
