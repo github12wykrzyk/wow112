@@ -48,10 +48,18 @@ fn world_diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
 
 fn octo_fingerprint_addons() -> Vec<AddonInfo> {
     [
+        "Blizzard_AuctionUI",
+        "Blizzard_BattlefieldMinimap",
         "Blizzard_BindingUI",
+        "Blizzard_CombatText",
+        "Blizzard_CraftUI",
+        "Blizzard_GMSurveyUI",
         "Blizzard_InspectUI",
         "Blizzard_MacroUI",
         "Blizzard_RaidUI",
+        "Blizzard_TalentUI",
+        "Blizzard_TradeSkillUI",
+        "Blizzard_TrainerUI",
     ]
     .iter()
     .map(|name| AddonInfo {
@@ -102,7 +110,7 @@ pub fn login(
         .map_err(|e| format!("encode world auth session failed: {e:?}"))?;
     let safe_prefix_len = auth_wire.len().min(24);
     println!(
-        "[WORLD-DIAG] auth-session-out len={} prefix={} wire-build={} server-id={} addons=octo-fingerprint-4",
+        "[WORLD-DIAG] auth-session-out len={} prefix={} wire-build={} server-id={} addons=octo-standard-12",
         auth_wire.len(),
         hex_prefix(&auth_wire[..safe_prefix_len]),
         OCTOWOW_WIRE_BUILD,
