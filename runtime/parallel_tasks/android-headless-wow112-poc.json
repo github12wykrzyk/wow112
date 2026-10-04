@@ -11,7 +11,7 @@
   "shared_resources": [
     "WoW 1.12.1 build 5875 headless protocol client"
   ],
-  "status": "in_progress",
+  "status": "preflight",
   "auto_integrate": false,
   "delivery_profiles": [],
   "lease": {
@@ -23,5 +23,5 @@
       "module:Wow112HeadlessAndroid"
     ]
   },
-  "notes": "Isolated emulator-first probe. It does not modify current MarketWorker/AUX DLL ownership, parallel_candidate, loader or updater delivery. POC-01 is PASSED on exact SHA fe9509df1cd770a352b7a8451457efbe31f8db2f, Android build run 37210672434, preflight run 37210672427, artifact 11306227666. User gameplay test on 2026-10-04 showed custom SMSG_ADDON_INFO skipped, WORLD auth PASS with build 5875, 3 characters enumerated, character login, SMSG_LOGIN_VERIFY_WORLD PASS and final 'PASS: entered world session'. The simultaneous desktop session on the same account was disconnected when the headless world session authenticated, providing independent server-side session acceptance evidence. AUTH login remains build 7272 while CMSG_AUTH_SESSION uses world build 5875, matching the working Windows client disassembly. Next milestone is POC-02 read-only Auction House; Mail remains deferred."
+  "notes": "Isolated emulator-first probe. It does not modify current MarketWorker/AUX DLL ownership, parallel_candidate, loader or updater delivery. POC-01 is PASSED on exact SHA fe9509df1cd770a352b7a8451457efbe31f8db2f, Android build run 37210672434, preflight run 37210672427, artifact 11306227666. User gameplay test on 2026-10-04 showed custom SMSG_ADDON_INFO skipped, WORLD auth PASS with build 5875, 3 characters enumerated, character login, SMSG_LOGIN_VERIFY_WORLD PASS and final 'PASS: entered world session'. The simultaneous desktop session on the same account was disconnected when the headless world session authenticated, providing independent server-side session acceptance evidence. AUTH login remains build 7272 while CMSG_AUTH_SESSION uses world build 5875, matching the working Windows client disassembly. POC-02 read-only Auction House is implemented on top of this baseline; Mail remains deferred."
 }
