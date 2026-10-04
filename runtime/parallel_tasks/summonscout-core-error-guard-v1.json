@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-core-error-guard-v1",
+  "goal": "Contain repeated SummonScoutFrame runtime errors currently rethrown through SummonScout_WhisperConfirmSpam.lua so one bad core event cannot flood the Blizzard error popup; preserve the original error text in persistent hot state for diagnosis and show at most one controlled chat report per distinct error/cooldown window.",
+  "branch": "feature/summonscout-core-error-guard-v1",
+  "base_parallel_sha": "f06b13eb5055c056d25e4cdc25fae256a4f25629",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "hot-fanout-lua50-syntax-fix-v1"
+  ],
+  "shared_resources": [
+    "SummonScoutFrame OnEvent wrapper chain",
+    "SummonScout HotHost error state"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Adds a final TOC-loaded hot guard that unwraps its own previous generation safely, wraps the currently composed SummonScoutFrame OnEvent handler with pcall, suppresses repeated Blizzard error popups, stores exact error text/time in W112_SUMMONSCOUT_HOT.state.coreerrorguard and H.lastError, and emits only a throttled controlled chat line. Existing invite, payment, routing and ritual handlers are otherwise untouched.",
+  "integrated_feature_sha": "5fcfd22c6e36a93bb6317f0771ae5c44ad885096"
+}
