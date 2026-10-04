@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "updater-live-dashboard-reconcile-v1",
+  "goal": "Make the updater GitHub/live-delivery dashboard self-clearing by reconciling only current feature/promote HEADs and integrated state, and add a live GUI bar showing the exact number of verified Parallel files that differ from the selected game directory.",
+  "branch": "feature/updater-live-dashboard-reconcile-v1",
+  "base_parallel_sha": "b0fdbefbf1e552838732e65916def282137e15b5",
+  "modules": [
+    "UpdaterDashboard"
+  ],
+  "dependencies": [
+    "loader-ready-queue-bar-v1",
+    "updater-delivery-dashboard-v2"
+  ],
+  "shared_resources": [
+    "updater live dashboard status bars"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": {
+    "owner": "chatgpt-updater-live-dashboard-reconcile-v1",
+    "acquired_at": "2026-10-04T09:20:00Z",
+    "heartbeat_at": "2026-10-04T09:20:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:UpdaterDashboard",
+      "resource:updater live dashboard status bars"
+    ]
+  },
+  "notes": "Operational GH LIVE is rebuilt from recent exact-HEAD gate evidence every 30 seconds: superseded refs are ignored, already integrated feature HEADs disappear immediately, one metadata-only bookkeeping tail after an integrated payload is treated as resolved, completed FAIL history ages out after 30 minutes and READY history after 4 hours. Refresh errors clear old counts to UNKNOWN instead of retaining stale red/yellow data. A fourth GUI row automatically checks a newly verified Parallel artifact once per HEAD/profile/game-directory and reports the SHA256 delta as DLL/EXE/AddOn file counts. No game payload, DLL ABI, WoW hook, AH, summon or login behavior is changed. Auto-integration remains subject to exact feature preflight and updater profile build gates."
+}
