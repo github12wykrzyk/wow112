@@ -18,10 +18,9 @@
   "lease": {
     "owner": "chatgpt:summonscout-l1-leader-handoff",
     "acquired_at": "2026-10-04T11:46:00Z",
-    "heartbeat_at": "2026-10-04T11:46:00Z",
+    "heartbeat_at": "2026-10-04T11:49:00Z",
     "ttl_seconds": 21600,
     "scopes": [
-      "module:SummonScout",
       "resource:SummonScout party roster leadership"
     ]
   }
