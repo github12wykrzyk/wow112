@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-buyer-taxi-invite-v1",
+  "goal": "Treat World messages containing WTB + taxi/T A X I + a recognized destination as buyer summon requests, so examples such as 'WTB Hydraxian taxi' enter the normal SummonScout invite path without weakening destination, blacklist, dedupe or seller guards.",
+  "branch": "feature/summonscout-buyer-taxi-invite-v1",
+  "base_parallel_sha": "7ae339593c11d3c9836ab0e0fd8eb197e38e7be2",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-engine-v2-explicit-api-p02"
+  ],
+  "shared_resources": [
+    "SummonScout World buyer-intent classifier"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Small Lua-only parser hotfix in the existing explicit-API roster/world guard. The guard recognizes only the narrow buyer pattern WTB + taxi (including spaced T A X I) when Engine V2 resolves a known destination, then routes that message through the existing core as a summon request. Existing configured-service destination gating remains authoritative, so wrong-destination requests are still blocked. No native Ritual, payment, advert, coordinator or DLL behavior is changed.",
+  "integrated_feature_sha": "eab8db5cabb8eef2e5655720cccdf2876e8aa967"
+}

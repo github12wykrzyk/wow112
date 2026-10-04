@@ -4,6 +4,8 @@
 -- marker may enter the automatic Ritual path through roster synchronization.
 -- World side: a destination-qualified summoner never invites a World requester
 -- for another known/unknown destination.
+-- Buyer side: WTB + taxi + a recognized destination is treated as a summon request
+-- even when the player omits the word "summon" (e.g. "WTB Hydraxian taxi").
 --
 -- P0.2 consumes the explicit Engine V2 API/state. Legacy core upvalue discovery
 -- and setupvalue are centralized in SummonScout_EngineV2FoundationHot.lua.
@@ -13,7 +15,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "3-explicit-api-own-invite-world-destination"
+local VERSION = "4-explicit-api-world-buyer-taxi"
 local S = H.GetState("rosterguard")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
@@ -32,6 +34,23 @@ end
 
 local function rgKey(name)
     return string.lower(rgTrim(name or ""))
+end
+
+local function rgNormalize(message)
+    local s = string.lower(tostring(message or ""))
+    s = string.gsub(s, "|c%x%x%x%x%x%x%x%x", " ")
+    s = string.gsub(s, "|r", " ")
+    s = string.gsub(s, "|H.-|h(.-)|h", "%1")
+    s = string.gsub(s, "[%p%c]", " ")
+    s = string.gsub(s, "%s+", " ")
+    return rgTrim(s)
+end
+
+local function rgPhraseHas(s, phrase)
+    s = rgNormalize(s)
+    phrase = rgNormalize(phrase)
+    if s == "" or phrase == "" then return false end
+    return string.find(" " .. s .. " ", " " .. phrase .. " ", 1, true) ~= nil
 end
 
 local function rgResolveApi()
@@ -76,6 +95,32 @@ local function rgServiceContains(locationId)
     local haystack = "," .. service .. ","
     local needle = "," .. rgKey(locationId) .. ","
     return string.find(haystack, needle, 1, true) ~= nil
+end
+
+local function rgBuyerTaxiMessage(api, message)
+    local normalized = rgNormalize(message)
+    if not rgPhraseHas(normalized, "wtb") then return message, false, nil end
+    if not (rgPhraseHas(normalized, "taxi") or rgPhraseHas(normalized, "t a x i")) then
+        return message, false, nil
+    end
+
+    local loc, ambiguous = api.FindLocation(message or "")
+    if ambiguous or not loc or not loc.id then
+        return message, false, nil
+    end
+
+    -- The core World parser requires a summon token. Inject one only for this
+    -- narrow buyer pattern and keep all destination / blacklist / dedupe gates
+    -- in the existing core path.
+    if rgPhraseHas(normalized, "summon")
+        or rgPhraseHas(normalized, "summons")
+        or rgPhraseHas(normalized, "summoning")
+        or rgPhraseHas(normalized, "summ")
+        or rgPhraseHas(normalized, "sum") then
+        return message, false, loc
+    end
+
+    return tostring(message or "") .. " summon", true, loc
 end
 
 local function rgWorldDestinationBlocked(findLocation, message)
@@ -138,9 +183,14 @@ local function rgPatchWorldDestination(api, state)
     end
 
     local wrapper = function(message, sender, channelBaseName, channelFullName)
-        local blocked, destination = rgWorldDestinationBlocked(api.FindLocation, message)
+        local routedMessage, buyerTaxi, buyerLoc = rgBuyerTaxiMessage(api, message)
+        local blocked, destination = rgWorldDestinationBlocked(api.FindLocation, routedMessage)
         if not blocked then
-            return original(message, sender, channelBaseName, channelFullName)
+            if buyerTaxi and SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r WTB taxi -> summon request: "
+                    .. tostring(sender or "?") .. " [" .. tostring(buyerLoc and (buyerLoc.label or buyerLoc.id) or "?") .. "]")
+            end
+            return original(routedMessage, sender, channelBaseName, channelFullName)
         end
 
         local previousAutoInvite = SummonScoutDB and SummonScoutDB.autoInvite
@@ -148,9 +198,9 @@ local function rgPatchWorldDestination(api, state)
 
         local ok, err = true, nil
         if pcall then
-            ok, err = pcall(original, message, sender, channelBaseName, channelFullName)
+            ok, err = pcall(original, routedMessage, sender, channelBaseName, channelFullName)
         else
-            original(message, sender, channelBaseName, channelFullName)
+            original(routedMessage, sender, channelBaseName, channelFullName)
         end
 
         if SummonScoutDB then SummonScoutDB.autoInvite = previousAutoInvite end
