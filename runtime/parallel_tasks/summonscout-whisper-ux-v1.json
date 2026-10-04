@@ -21,13 +21,12 @@
   "lease": {
     "owner": "chatgpt:summonscout-whisper-ux-v1",
     "acquired_at": "2026-10-04T14:52:14Z",
-    "heartbeat_at": "2026-10-04T14:52:14Z",
+    "heartbeat_at": "2026-10-04T14:55:19Z",
     "ttl_seconds": 21600,
     "scopes": [
-      "module:SummonScout",
       "resource:SummonScout destination information classifier",
       "resource:SummonScout manual chat lock outgoing classifier"
     ]
   },
-  "notes": "Gameplay showed two UX gaps on the accepted core-anchor testpoint: 'where u can sum' missed the info classifier because it only matched 'summ', and an automatic 'Do you need ... summon?' outgoing whisper could be observed as manual chat and lock the sender before their ok/yes/sure reply reached the existing pending-confirmation handler. This iteration changes only DestinationInfoGuardHot: accepts exact token 'sum' in where/what/which info questions and classifies the automatic summon probe as bot-generated outgoing traffic. Existing WhisperConfirmSpam affirmative table and delayed invite/dedupe path remain authoritative; no second invite path is added."
+  "notes": "Gameplay showed two UX gaps on the accepted core-anchor testpoint: 'where u can sum' missed the info classifier because it only matched 'summ', and an automatic 'Do you need ... summon?' outgoing whisper could be observed as manual chat and lock the sender before their ok/yes/sure reply reached the existing pending-confirmation handler. This iteration changes only DestinationInfoGuardHot: accepts exact token 'sum' in where/what/which info questions and classifies the automatic summon probe as bot-generated outgoing traffic. Existing WhisperConfirmSpam affirmative table and delayed invite/dedupe path remain authoritative; no second invite path is added. Lease intentionally covers only the two touched classifier resources because the broader module:SummonScout scope is owned by an independent EngineV2 task."
 }
