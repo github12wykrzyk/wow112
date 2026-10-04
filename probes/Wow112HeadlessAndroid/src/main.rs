@@ -15,7 +15,8 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let username = env::var("WOW112_ACCOUNT")
-        .map_err(|_| "missing WOW112_ACCOUNT".to_string())?;
+        .map_err(|_| "missing WOW112_ACCOUNT".to_string())?
+        .to_ascii_uppercase();
     let password = env::var("WOW112_PASSWORD")
         .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
     let auth_addr = env::var("WOW112_AUTH_ADDR")
