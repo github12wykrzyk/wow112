@@ -58,6 +58,26 @@ fn poc05_capture_item(
     }
 }
 
+fn poc05_guarded_owner_guid<F>(object_guid: u64, kind: &'static str, getter: F) -> Option<u64>
+where
+    F: FnOnce() -> Option<u64>,
+{
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(getter));
+    std::panic::set_hook(previous_hook);
+
+    match result {
+        Ok(value) => value,
+        Err(_) => {
+            println!(
+                "[POC05-DIAG] partial {kind} owner GUID skipped object=0x{object_guid:016X}"
+            );
+            None
+        }
+    }
+}
+
 fn poc05_capture_mask(
     object_guid: u64,
     mask: &UpdateMask,
@@ -71,9 +91,17 @@ fn poc05_capture_mask(
             }
         }
         UpdateMask::Item(item) => {
+            let known = snapshot.items.contains_key(&object_guid);
+            let owner_guid = if known {
+                None
+            } else {
+                poc05_guarded_owner_guid(object_guid, "item", || {
+                    item.item_owner().map(|guid| guid.guid())
+                })
+            };
             poc05_capture_item(
                 object_guid,
-                item.item_owner().map(|guid| guid.guid()),
+                owner_guid,
                 item.object_entry(),
                 item.item_stack_count(),
                 "item",
@@ -82,9 +110,17 @@ fn poc05_capture_mask(
             );
         }
         UpdateMask::Container(container) => {
+            let known = snapshot.items.contains_key(&object_guid);
+            let owner_guid = if known {
+                None
+            } else {
+                poc05_guarded_owner_guid(object_guid, "container", || {
+                    container.item_owner().map(|guid| guid.guid())
+                })
+            };
             poc05_capture_item(
                 object_guid,
-                container.item_owner().map(|guid| guid.guid()),
+                owner_guid,
                 container.object_entry(),
                 container.item_stack_count(),
                 "container",
