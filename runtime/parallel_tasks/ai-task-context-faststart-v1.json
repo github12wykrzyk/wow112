@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "ai-task-context-faststart-v1",
+  "goal": "Make ai_task_context use the compact routing index by default and emit a precomputed FAST START packet with risk class, analysis budget, ownership and delivery routing.",
+  "branch": "feature/ai-task-context-faststart-v1",
+  "base_parallel_sha": "30db991551fc114580e65a4f9cd27d0343da6ab9",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "integrated_feature_sha": null,
+  "modules": [
+    "AITaskContext"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-routing-fast-start"
+  ],
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:ai-task-context-faststart-v1",
+    "acquired_at": "2026-10-04T02:08:00Z",
+    "heartbeat_at": "2026-10-04T02:08:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AITaskContext",
+      "resource:ai-routing-fast-start"
+    ]
+  },
+  "notes": "Infrastructure-only. No runtime/gameplay source changes and no delivery profile ownership. Auto integration is intentional after feature preflight."
+}
