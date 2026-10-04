@@ -1,4 +1,3 @@
-use crate::wire_build::OCTOWOW_WIRE_BUILD;
 use std::io::{self, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -12,6 +11,7 @@ use wow_world_messages::vanilla::{
     SMSG_AUTH_RESPONSE, SMSG_CHAR_ENUM,
 };
 
+const OCTOWOW_WORLD_BUILD: u32 = 5875;
 const VANILLA_MODULUS_CRC: u32 = 0x4C1C776D;
 
 fn hex_prefix(bytes: &[u8]) -> String {
@@ -96,7 +96,7 @@ pub fn login(
     );
 
     let auth_session = CMSG_AUTH_SESSION {
-        build: OCTOWOW_WIRE_BUILD as u32,
+        build: OCTOWOW_WORLD_BUILD,
         server_id: server_id as u32,
         username: username.to_string(),
         client_seed: seed_value,
@@ -110,10 +110,10 @@ pub fn login(
         .map_err(|e| format!("encode world auth session failed: {e:?}"))?;
     let safe_prefix_len = auth_wire.len().min(24);
     println!(
-        "[WORLD-DIAG] auth-session-out len={} prefix={} wire-build={} server-id={} addons=octo-standard-12",
+        "[WORLD-DIAG] auth-session-out len={} prefix={} world-build={} server-id={} addons=octo-standard-12",
         auth_wire.len(),
         hex_prefix(&auth_wire[..safe_prefix_len]),
-        OCTOWOW_WIRE_BUILD,
+        OCTOWOW_WORLD_BUILD,
         server_id
     );
     stream
@@ -147,7 +147,7 @@ pub fn login(
     if !matches!(*auth_response, SMSG_AUTH_RESPONSE::AuthOk { .. }) {
         return Err(format!("world auth rejected: {auth_response:?}"));
     }
-    println!("[WORLD] auth PASS wire-build={OCTOWOW_WIRE_BUILD}");
+    println!("[WORLD] auth PASS world-build={OCTOWOW_WORLD_BUILD}");
 
     CMSG_CHAR_ENUM {}
         .write_encrypted_client(&mut *stream, crypto.encrypter())
