@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "updater-home-selfupdate-v1",
+  "goal": "Expose the existing SHA-verified Parallel updater self-update/bootstrap action directly on the main loader dashboard so it is visible without hunting through maintenance tools.",
+  "branch": "feature/updater-home-selfupdate-v1",
+  "base_parallel_sha": "8de7d480eeaaca4f3a3eeb6899fec1c87d0f14c3",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "Updater"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "updater main dashboard self-update action"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "UI-only routing: the new main-dashboard button delegates to the already registered MaintenanceController selfUpdate button via PerformClick, preserving the existing workflow lookup, SHA256 validation, staged bootstrap replacement and restart path. The original maintenance button remains available.",
+  "integrated_feature_sha": "e683334d53d492d7e778720d6e4995c8ef91e7d7"
+}
