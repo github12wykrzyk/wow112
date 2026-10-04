@@ -33,6 +33,16 @@ local function rememberModule(name)
     H.moduleOrder[table.getn(H.moduleOrder) + 1] = name
 end
 
+local function canonicalCoreBase()
+    if type(W112_SUMMONSCOUT_CORE_BASE_ON_EVENT) == "function" then
+        return W112_SUMMONSCOUT_CORE_BASE_ON_EVENT
+    end
+    if type(H.coreBaseOnEvent) == "function" then
+        return H.coreBaseOnEvent
+    end
+    return nil
+end
+
 function H.GetState(name)
     name = tostring(name or "")
     if name == "" then return nil end
@@ -52,8 +62,10 @@ end
 -- Repeated live updates could therefore grow the call stack until Lua reported
 -- "C stack overflow" from WhisperConfirmSpam. Fanout calls this once, before
 -- executing the replacement modules, so old wrappers are peeled in reverse
--- registration order and both shared dispatch surfaces return to their stable
--- bases before the new generation installs.
+-- registration order and both shared dispatch surfaces return to stable bases.
+-- The core reset always prefers the canonical global anchor repaired by the
+-- core-anchor prelude; H.coreBaseOnEvent is retained only as a compatibility
+-- fallback for sessions that have not loaded that prelude yet.
 function H.PrepareFanoutReload()
     local i
     for i = table.getn(H.moduleOrder), 1, -1 do
@@ -67,9 +79,10 @@ function H.PrepareFanoutReload()
     H.modules = {}
     H.moduleOrder = {}
 
-    if SummonScoutFrame and SummonScoutFrame.GetScript and SummonScoutFrame.SetScript
-        and type(H.coreBaseOnEvent) == "function" then
-        SummonScoutFrame:SetScript("OnEvent", H.coreBaseOnEvent)
+    local coreBase = canonicalCoreBase()
+    if SummonScoutFrame and SummonScoutFrame.SetScript and type(coreBase) == "function" then
+        SummonScoutFrame:SetScript("OnEvent", coreBase)
+        H.coreBaseOnEvent = coreBase
     end
     if H.frame and H.frame.SetScript then
         if type(H.hostBaseOnEvent) == "function" then
@@ -123,9 +136,19 @@ function H.Register(name, module, version)
     return true
 end
 
-if not H.coreBaseOnEvent and SummonScoutFrame and SummonScoutFrame.GetScript then
+-- On a cold TOC load HotHost runs immediately after SummonScout.lua and before
+-- any wrapper module, so the currently installed OnEvent function is the true
+-- core dispatcher. Freeze that identity once as the canonical anchor. A live
+-- migration from older HotHost generations is repaired by CoreAnchorHot before
+-- the next fanout host installs any new wrappers.
+if type(W112_SUMMONSCOUT_CORE_BASE_ON_EVENT) == "function" then
+    H.coreBaseOnEvent = W112_SUMMONSCOUT_CORE_BASE_ON_EVENT
+elseif SummonScoutFrame and SummonScoutFrame.GetScript then
     local base = SummonScoutFrame:GetScript("OnEvent")
-    if type(base) == "function" then H.coreBaseOnEvent = base end
+    if type(base) == "function" then
+        H.coreBaseOnEvent = base
+        W112_SUMMONSCOUT_CORE_BASE_ON_EVENT = base
+    end
 end
 
 if not H.frame then
@@ -170,4 +193,4 @@ if H.frame and H.frame.GetScript then
     end
 end
 
-W112_SUMMONSCOUT_HOT_HOST_VERSION = "2-fanout-reset"
+W112_SUMMONSCOUT_HOT_HOST_VERSION = "3-canonical-core-anchor"

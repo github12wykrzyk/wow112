@@ -29,13 +29,23 @@ class SummonScoutHotFanoutTests(unittest.TestCase):
             self.assertNotIn(marker, packaged)
 
     def test_every_non_direct_hot_source_is_declared_in_toc(self):
-        declared = set(addons.hot_fanout_modules())
+        declared = set(addons.hot_fanout_modules()) | set(addons.hot_fanout_prelude_modules())
         discovered = {
             path.name
             for path in addons.SUMMONSCOUT_ROOT.glob("SummonScout_*Hot.lua")
             if path.name not in addons.DIRECT_WATCHED_OR_HOSTED
         }
         self.assertEqual(declared, discovered)
+
+    def test_core_anchor_prelude_runs_before_whisper_host(self):
+        host = addons.SUMMONSCOUT_ROOT / addons.HOT_FANOUT_HOST
+        packaged = addons.package_bytes("SummonScout", host)
+        prelude = b"-- W112 HOT PRELUDE BEGIN SummonScout_CoreAnchorHot.lua"
+        whisper_body = b'local WC_VERSION = "2-hot2-manualchat-safe1"'
+
+        self.assertEqual(addons.hot_fanout_prelude_modules(), ["SummonScout_CoreAnchorHot.lua"])
+        self.assertGreaterEqual(packaged.find(prelude), 0)
+        self.assertGreater(packaged.find(whisper_body), packaged.find(prelude))
 
     def test_fanout_is_cold_load_guarded(self):
         host = addons.SUMMONSCOUT_ROOT / addons.HOT_FANOUT_HOST
@@ -50,11 +60,17 @@ class SummonScoutHotFanoutTests(unittest.TestCase):
         host = addons.SUMMONSCOUT_ROOT / addons.HOT_FANOUT_HOST
         packaged = addons.package_bytes("SummonScout", host)
         modules = addons.hot_fanout_modules()
+        preludes = addons.hot_fanout_prelude_modules()
 
         # WoW 1.12 Lua 5.0 rejects consecutive `(function() ... end)()`
         # statements as ambiguous function-call/new-statement syntax.
         self.assertNotIn(b"\n    (function()\n", packaged)
         self.assertNotIn(b"end)()\n    -- W112 HOT FANOUT END", packaged)
+
+        for index, _name in enumerate(preludes, start=1):
+            wrapper = "__w112_hot_fanout_prelude_" + str(index)
+            self.assertIn(("    local function " + wrapper + "()\n").encode("utf-8"), packaged)
+            self.assertIn(("\n    " + wrapper + "()\n").encode("utf-8"), packaged)
 
         for index, _name in enumerate(modules, start=1):
             wrapper = "__w112_hot_fanout_module_" + str(index)

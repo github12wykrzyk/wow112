@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-core-anchor-unwind-trace-v1",
+  "goal": "Eliminate residual SummonScout C stack overflow after HOT reload by establishing one canonical SummonScoutFrame core OnEvent anchor, unwrapping legacy live wrapper chains before WhisperConfirm re-installs, and capturing one residual failure with xpcall/debug.traceback for exact diagnosis without reintroducing popup spam.",
+  "branch": "feature/summonscout-core-anchor-unwind-trace-v1",
+  "base_parallel_sha": "18307e740164522c6aab6ea4d9b2d527a65cfc87",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-hotreload-stack-reset-v1",
+    "summonscout-core-error-guard-v1",
+    "hot-fanout-lua50-syntax-fix-v1"
+  ],
+  "shared_resources": [
+    "SummonScoutFrame OnEvent wrapper chain",
+    "SummonScout canonical core OnEvent anchor",
+    "SummonScout HotHost module registry",
+    "SummonScout HOT fanout carrier",
+    "SummonScout core error diagnostic state"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Gameplay on parallel/testpoint 18307e740164522c6aab6ea4d9b2d527a65cfc87 still produced 'SummonScout_WhisperConfirmSpam.lua:379: C stack overflow' after the v2 fanout reset. Exact artifact inspection showed line 379 only rethrows an error from OWN_CORE_BASE. The remaining migration hole is that HotHost v1/v2 can preserve an already wrapped handler as H.coreBaseOnEvent and old H.modules may exist without moduleOrder, so PrepareFanoutReload cannot reliably peel the pre-v2 live chain. This iteration adds CoreAnchorHot as a TOC-time and fanout-prelude repair: it follows only known wrapper-base upvalue names with Lua 5.0 debug.getupvalue, freezes the deepest recovered dispatcher in W112_SUMMONSCOUT_CORE_BASE_ON_EVENT/H.coreBaseOnEvent, and resets the frame before WhisperConfirm executes. HotHost v3 always prefers that canonical anchor. CoreErrorGuard v2 arms a one-shot xpcall/debug.traceback capture persisted to hot state, W112_SUMMONSCOUT_LAST_TRACEBACK and SummonScoutDB if any residual runtime error survives. Packager fails closed if the anchor prelude is missing or ordered after the whisper host.",
+  "integrated_feature_sha": "052898af2e43e873bd52aa94a58706eb7eb9c946"
+}
