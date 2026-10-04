@@ -3,7 +3,7 @@ if type(R) ~= "table" or type(R.ReplaceModule) ~= "function" then
     error("AuxEconomyShadow parity diagnostics require persistent anchor")
 end
 
-local REVISION = "1-pure-parity"
+local REVISION = "2-count-both-reject"
 local ok = R.ReplaceModule("parity", REVISION, function(state)
     state.rows = type(state.rows) == "table" and state.rows or {}
     state.maxRows = tonumber(state.maxRows) or 500
@@ -123,11 +123,13 @@ local ok = R.ReplaceModule("parity", REVISION, function(state)
     function api.Summary()
         local counts = {}
         for k, v in pairs(state.counts) do counts[k] = v end
-        local compared = (tonumber(counts.match) or 0) +
+        local bothReject = tonumber(counts["both-reject"]) or 0
+        local exactMatch = tonumber(counts.match) or 0
+        local compared = bothReject + exactMatch +
             (tonumber(counts["shadow-extra"]) or 0) +
             (tonumber(counts["shadow-miss"]) or 0) +
             (tonumber(counts["different-candidate"]) or 0)
-        local matched = tonumber(counts.match) or 0
+        local matched = bothReject + exactMatch
         local matchPct = 0
         if compared > 0 then matchPct = matched * 100 / compared end
         return {

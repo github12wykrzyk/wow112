@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ah-parity-marketmeta-export-v1",
+  "goal": "Mirror compact passive AH parity evidence into AVM_DB.marketMeta so the existing AH dump exporter always includes cutover evidence even when the large diag table is truncated.",
+  "branch": "feature/ah-parity-marketmeta-export-v1",
+  "base_parallel_sha": "cfa1db3518fd2474293d026d76257571371b5311",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-parity-evidence-hardening-v1"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "Diagnostics-only. Production AuxVmangos remains the sole AH owner. The exporter wraps only the shadow parity module's RecordDecision method, preserves its return value, and writes compact evidence into existing AVM_DB.marketMeta. No AH query/transaction API, frame, event or active AVM callback is added. Both-reject decisions count as successful comparisons while shadow-extra, shadow-miss and different-candidate remain zero-tolerance cutover blockers. Exact feature SHA 4e4c07edee88dcfec92b063178f706d5649ae529 passed preflight run 37165689389 and ECONOMY run 37165724143, artifact 11288583979.",
+  "integrated_feature_sha": "1d57898958ab1bca496e1c56aad2fb832e9bc269"
+}

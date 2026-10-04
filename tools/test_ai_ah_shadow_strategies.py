@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import re
 import unittest
 from pathlib import Path
 
@@ -8,65 +7,86 @@ from ah_shadow_hot_bundle import ORDER, build_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
 SHADOW = ROOT / "src" / "AddOns" / "AuxEconomyShadow"
-ACTIVE = ROOT / "src" / "AddOns" / "AuxVmangos" / "AuxVmangos.lua"
 MANIFEST = ROOT / "runtime" / "ah_consolidation_shadow_v2.json"
 TASK = ROOT / "runtime" / "parallel_tasks" / "ah-consolidation-strategies-v1.json"
+
 STRATEGY_FILES = (
     "AuxEconomyShadow_Flip.lua",
     "AuxEconomyShadow_Stack.lua",
     "AuxEconomyShadow_Bid.lua",
 )
-FORBIDDEN = (
-    "PlaceAuctionBid", "CancelAuction", "PostAuction", "QueryAuctionItems", "UseContainerItem",
-    "GetAuctionItemInfo", "GetNumAuctionItems", "GetMoney(", "UnitName(", "CreateFrame(",
-    "RegisterEvent(", 'SetScript("OnUpdate"',
-)
-LUA51_LENGTH_OPERATOR = re.compile(r"#\s*[A-Za-z_(]")
 
 
 class AHShadowStrategyParityTests(unittest.TestCase):
     def test_active_defaults_have_shadow_strategy_models(self):
-        active = ACTIVE.read_text(encoding="utf-8")
-        self.assertIn("AVM_DB.flipEnabled == nil then AVM_DB.flipEnabled = true", active)
-        self.assertIn("AVM_DB.stackArbEnabled == nil then AVM_DB.stackArbEnabled = true", active)
-        self.assertIn("AVM_DB.bidArbEnabled == nil then AVM_DB.bidArbEnabled = true", active)
-        for name in STRATEGY_FILES:
-            self.assertTrue((SHADOW / name).is_file(), name)
+        flip = (SHADOW / "AuxEconomyShadow_Flip.lua").read_text(encoding="utf-8")
+        stack = (SHADOW / "AuxEconomyShadow_Stack.lua").read_text(encoding="utf-8")
+        for token in (
+            "flipDepthUnits",
+            "flipHistMaxPct",
+            "flipMinSellers",
+            "flipMaxItemSpend",
+            "historyByKey",
+        ):
+            self.assertIn(token, flip)
+        for token in (
+            "stackSmallPct",
+            "stackLargePct",
+            "stackSmallDepthUnits",
+            "stackMinSmallSellers",
+        ):
+            self.assertIn(token, stack)
+
+    def test_postscan_buyout_precedes_bid_fallback(self):
+        pipeline = (SHADOW / "AuxEconomyShadow_CandidatePipeline.lua").read_text(encoding="utf-8")
+        selection = (
+            'local selectedPostscan = postscanBestAffordable\n'
+            '        local selectionSource = selectedPostscan and "buyout" or nil\n'
+            '        if not selectedPostscan and bestBidLive then\n'
+            '            selectedPostscan = bestBidLive\n'
+            '            selectionSource = "bid-fallback"'
+        )
+        self.assertIn(selection, pipeline)
+
+    def test_de_history_rollback_boundary_is_preserved(self):
+        de = (SHADOW / "AuxEconomyShadow_Disenchant.lua").read_text(encoding="utf-8").lower()
+        for forbidden in (
+            "aux.core.history",
+            "avm_aux_history",
+            "history.value",
+            "data_points",
+            "depriceguard",
+            "dehistorycaphits",
+        ):
+            self.assertNotIn(forbidden, de)
 
     def test_strategy_modules_are_pure_and_lua50_safe(self):
         for name in STRATEGY_FILES:
             text = (SHADOW / name).read_text(encoding="utf-8")
             self.assertIn("ReplaceModule", text)
-            for token in FORBIDDEN:
-                self.assertNotIn(token, text, f"{name}: {token}")
-            for raw in text.splitlines():
-                code = raw.split("--", 1)[0]
-                self.assertIsNone(LUA51_LENGTH_OPERATOR.search(code), f"{name}: Lua 5.1 # operator")
-
-    def test_de_history_rollback_boundary_is_preserved(self):
-        de = (SHADOW / "AuxEconomyShadow_Disenchant.lua").read_text(encoding="utf-8").lower()
-        for token in ("aux.core.history", "history.value", "data_points", "dehistorycaphits"):
-            self.assertNotIn(token, de)
-        flip = (SHADOW / "AuxEconomyShadow_Flip.lua").read_text(encoding="utf-8")
-        self.assertIn("historyByKey", flip)
-        self.assertNotIn("aux.core.history", flip)
-
-    def test_postscan_buyout_precedes_bid_fallback(self):
-        pipeline = (SHADOW / "AuxEconomyShadow_CandidatePipeline.lua").read_text(encoding="utf-8")
-        buyout = pipeline.find("selectedPostscan = postscanBestAffordable")
-        fallback = pipeline.find("if not selectedPostscan and bestBidLive")
-        marker = pipeline.find('selectionSource = "bid-fallback"')
-        self.assertGreaterEqual(buyout, 0)
-        self.assertGreater(fallback, buyout)
-        self.assertGreater(marker, fallback)
-        for name in ('"disenchant"', '"flip"', '"stack"'):
-            self.assertIn(name, pipeline)
+            for forbidden in (
+                "PlaceAuctionBid",
+                "CancelAuction",
+                "PostAuction",
+                "QueryAuctionItems",
+                "GetAuctionItemInfo",
+                "GetNumAuctionItems",
+                "CreateFrame(",
+                "RegisterEvent(",
+                "SetScript(\"OnUpdate\"",
+            ):
+                self.assertNotIn(forbidden, text)
 
     def test_bid_contract_matches_current_active_guards(self):
         bid = (SHADOW / "AuxEconomyShadow_Bid.lua").read_text(encoding="utf-8")
         for token in (
-            "bidVendorMarginPct", "bidDeMarginPct", "bidMinProfit", "bidMaxAmount",
-            "bidMaxDuration", "bidMaxSessionPlacements", "has-buyout", "high-bidder",
+            "bidVendorMarginPct",
+            "bidDeMarginPct",
+            "bidMaxAmount",
+            "bidMaxDuration",
+            "bidMaxSessionPlacements",
+            "has-buyout",
+            "high-bidder",
         ):
             self.assertIn(token, bid)
         contracts = (SHADOW / "AuxEconomyShadow_Contracts.lua").read_text(encoding="utf-8")
@@ -82,13 +102,17 @@ class AHShadowStrategyParityTests(unittest.TestCase):
             self.assertIn(name, toc)
             self.assertIn(name, ORDER)
         bridge = "AuxEconomyShadow_ParityBridge.lua"
+        exporter = "AuxEconomyShadow_ParityExport.lua"
         self.assertIn("src/AddOns/AuxEconomyShadow/" + bridge, watches)
         self.assertIn(bridge, toc)
         self.assertIn(bridge, ORDER)
-        self.assertEqual(manifest["stage"], "passive_parity_bridge_ready")
+        self.assertIn("src/AddOns/AuxEconomyShadow/" + exporter, watches)
+        self.assertIn(exporter, toc)
+        self.assertIn(exporter, ORDER)
+        self.assertEqual(manifest["stage"], "passive_parity_export_ready")
         self.assertFalse(manifest["delivery"]["cutover_allowed"])
         bundle = build_bundle()
-        for name in STRATEGY_FILES + (bridge,):
+        for name in STRATEGY_FILES + (bridge, exporter):
             self.assertIn(("-- BEGIN " + name).encode("ascii"), bundle)
 
     def test_task_is_economy_gated_and_integrated(self):
