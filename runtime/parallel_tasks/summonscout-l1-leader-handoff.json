@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-l1-leader-handoff",
+  "goal": "If the local level-1 SummonScout character becomes party leader, transfer leadership to an eligible configured summoner already in the party.",
+  "branch": "feature/summonscout-l1-leader-handoff",
+  "base_parallel_sha": "a8246230d9e2fa0f9a09b92297dc308e03fcf4e4",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout party roster leadership"
+  ],
+  "delivery_profiles": [],
+  "notes": "Priority order: teletanaris, bolthyjal, feltaxi. No action if none is currently in party.",
+  "lease": {
+    "owner": "chatgpt:summonscout-l1-leader-handoff",
+    "acquired_at": "2026-10-04T11:46:00Z",
+    "heartbeat_at": "2026-10-04T11:46:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:SummonScout",
+      "resource:SummonScout party roster leadership"
+    ]
+  }
+}
