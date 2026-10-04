@@ -1,9 +1,9 @@
 param(
-    [string]$AuthAddr = "10.0.2.2:3724",
+    [string]$AuthAddr = "play.octowow.st:3724",
     [string]$WorldAddr = "",
     [string]$AhGuid = "",
     [string]$MailboxGuid = "",
-    [int]$RealmIndex = 0,
+    [int]$RealmIndex = 1,
     [int]$SoakSeconds = 60,
     [int]$ReconnectLimit = 60,
     [switch]$NoPause
@@ -77,6 +77,13 @@ try {
     }
 
     $adb = Resolve-Adb
+    Write-Host "[CONFIG] Auth: $AuthAddr"
+    Write-Host "[CONFIG] RealmIndex: $RealmIndex"
+    if ([string]::IsNullOrWhiteSpace($WorldAddr)) {
+        Write-Host "[CONFIG] World: from realm list"
+    } else {
+        Write-Host "[CONFIG] World: $WorldAddr"
+    }
     Write-Host "[1/4] ADB: $adb"
     & $adb start-server | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "adb start-server failed: $LASTEXITCODE" }
