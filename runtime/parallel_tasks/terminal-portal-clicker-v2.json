@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "terminal-portal-clicker-v2",
+  "goal": "Add a true WoW 1.12.1 headless terminal login mode for portal-clicker accounts, with transient-network autoreconnect and Summoning Portal detection/use matching the current AutoSummonAssist portal contract, while keeping normal graphical Multibox launch independent.",
+  "branch": "feature/terminal-portal-clicker-v2",
+  "base_parallel_sha": "8de7d480eeaaca4f3a3eeb6899fec1c87d0f14c3",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "HeadlessPortalClicker",
+    "Updater"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid",
+    "tools/updater/UpdaterAccountsFeature.cs",
+    "Summoning Portal interaction contract"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "Feature SHA cc831cc399ac28c4da982caee827cefbacaa4426 passed Parallel feature preflight run 37222955298 and exact updater profile gate via Build WoW112 updater run 37223081291, including Rust i686 release build, WinForms x86 compile, dashboard smoke and terminal/updater PE32+SHA verification. This control-plane-only commit opts the experiment into integration; gameplay portal-use evidence remains pending user test.",
+  "integrated_feature_sha": "dec92af596b51bdaa4c1c20e90843f2477982e44"
+}
