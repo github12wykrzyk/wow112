@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-location-anchor-v1",
+  "goal": "Apply tolerant distinctive location anchors across the entire SummonScout destination dictionary so truncated, suffixed, concatenated and lightly mistyped place names still classify to the intended summon destination without enabling broad fuzzy matching.",
+  "branch": "feature/summonscout-location-root-match",
+  "base_parallel_sha": "a79572f56f6cd99d2606fce7bb12c081831719d4",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout location dictionary matcher"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt",
+    "acquired_at": "2026-10-04T08:25:51Z",
+    "heartbeat_at": "2026-10-04T08:25:51Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout location dictionary matcher"
+    ]
+  },
+  "notes": "Lua-only SummonScout hot module. Exact aliases remain authoritative. Distinctive 5-6 character anchors are generated from every location id/alias; anchors that collide across destinations are discarded. Root matching becomes plain substring matching, allowing examples such as winterspri, winterspf and junk-prefix-winterspring while preserving current seller/buyer, invite, payment, roster and native summon behavior."
+}
