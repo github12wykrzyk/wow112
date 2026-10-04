@@ -33,6 +33,7 @@
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityBridge.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_ParityExport.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_Cutover.lua",
+      "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_DirectLive.lua",
       "src/AddOns/AuxEconomyShadow/AuxEconomyShadow_HotPayload.lua"
     ],
     "native_live_executor": "WoWAutoLoginBridge_5875_v1.dll",
@@ -56,13 +57,14 @@
   "coordination": {
     "coordinator": "single shadow state machine",
     "aux_adapter": "observation-only boundary accepting normalized AUX callbacks",
-    "transaction_guard": "single cutover transaction authority; enabling real actions is parity-gated and pending dispatches remain fail-closed until active-owner reconciliation",
+    "transaction_guard": "retained cutover transaction guard; direct-live routing keeps it disarmed while AuxVmangos owns real actions",
     "autosell": "pure cancel-return-reprice-post-reconcile lifecycle emitting intents only",
     "ledger": "persistent bounded economy event ledger with summary aggregation",
     "parity": "pure comparison store for active-vs-shadow decisions and lifecycle states",
     "parity_bridge": "passive hot-reload observer around project-owned AVM_AuxArb callbacks; original callbacks run exactly once and retain their return values",
     "parity_export": "single wrapper around parity.RecordDecision that mirrors compact parity evidence and feeds active/shadow decision pairs to cutover",
-    "cutover": "guarded PlaceAuctionBid approval layer: proven AuxVmangos remains the transaction executor/rollback backend; current-generation positive exact shadow parity is required before authoritative gating arms",
+    "cutover": "rollback-capable approval layer retained but explicitly disarmed by direct-live authority routing",
+    "direct_live_authority": "AuxVmangos is the authoritative live economy path; AuxEconomyShadow is observer-only and cannot gate or submit real actions",
     "states": [
       "IDLE",
       "SCANNING",
@@ -80,19 +82,20 @@
     "active_parallel_candidate": true,
     "active_economy_overlay": true,
     "updater_visible": false,
-    "cutover_allowed": true,
-    "cutover_mode": "auto-arm-after-current-generation-positive-exact-match"
+    "cutover_allowed": false,
+    "cutover_mode": "disabled-user-authorized-direct-live",
+    "authoritative_live_module": "AuxVmangos"
   },
   "safety": {
     "production_ah_source_untouched": true,
     "production_transaction_executor_retained": true,
     "may_send_ah_queries": false,
-    "may_submit_transactions": true,
+    "may_submit_transactions": false,
     "may_patch_global_ah_api": true,
     "patched_global_ah_api": [
       "PlaceAuctionBid"
     ],
-    "global_patch_scope": "only AuxVmangos REVALIDATE/BID_REVALIDATE auxarb_* candidates are gated; unrelated/manual calls pass through",
+    "global_patch_scope": "cutover wrapper remains installed but disarmed; unrelated/manual and AuxVmangos calls pass through to the existing live executor",
     "passive_project_callback_wrapping": true,
     "wrapped_project_callbacks": [
       "AVM_AuxArbScanStart",
@@ -101,18 +104,18 @@
       "AVM_AuxArbScanDone"
     ],
     "wrapper_preserves_original_return": true,
-    "real_actions_hard_locked": false,
+    "real_actions_hard_locked": true,
     "real_actions_fail_closed": true,
-    "pre_arm_behavior": "existing AuxVmangos behavior passes through until the first current-generation positive exact parity match",
-    "mismatch_behavior": "recorded mismatched active candidate is blocked and cutover disarms for the generation",
+    "pre_arm_behavior": "shadow cutover is intentionally disabled; AuxVmangos remains authoritative for live vendor/DE/flip/stack/bid actions",
+    "mismatch_behavior": "shadow mismatches remain diagnostic only while direct-live routing is active",
     "baseline_evidence": {
       "issue": 309,
       "sha": "be68344ee6063f2cee838d721946c401e86e90a6",
       "decision_compared": 1214,
       "decision_match_pct": 100,
       "observer_errors": 0,
-      "note": "All baseline decisions were both-reject; therefore live cutover additionally requires a current-generation positive exact match."
+      "note": "Historical parity evidence remains available, but the user explicitly chose direct live AuxVmangos after repeated LOOP/evidence instrumentation failed to advance."
     }
   },
-  "stage": "cutover_authoritative_gate_candidate"
+  "stage": "direct_live_active_shadow_observer"
 }
