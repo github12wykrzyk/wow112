@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-unknown-whisper-report-v1",
+  "goal": "Persist every whisper that the live SummonScout whisper-confirmation engine classifies as unknown and automatically publish the bounded SavedVariables telemetry as a GPT-readable GitHub Issue without uploading unrelated account data.",
+  "branch": "feature/summonscout-unknown-whisper-report",
+  "base_parallel_sha": "6fc774b0eb4f11c8f284628db7fd2df7200374e3",
+  "modules": [
+    "SummonScout",
+    "UpdaterTelemetry"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout whisperconfirm hot-module state",
+    "SummonScoutDB.unknownWhisperReport SavedVariables",
+    "WoW112 updater DPAPI report token and GitHub Issue API"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "The reporter does not reimplement summon intent. It wraps the registered whisperconfirm module and records only messages that reach its existing unknown-probe path, plus unparsed replies while that probe is pending. Known/handled whispers, manual-conversation locks and whispers that become a successful invite before the probe are not dumped. A bounded 250-entry ring is persisted. The updater polls flushed SummonScout SavedVariables, uploads only unknownWhisperReport, deduplicates by SHA256 and chunks oversized reports into GitHub Issue comments. WoW flushes SavedVariables on /reload, logout or client exit. The updater delivery profile is mandatory because tools/updater is changed; auto-integration remains gated by exact feature-SHA preflight and updater profile PASS.",
+  "integrated_feature_sha": "431cfd3c4584048e9757fff42480a35c60c16166"
+}
