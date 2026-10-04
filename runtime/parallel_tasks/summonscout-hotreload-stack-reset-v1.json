@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-hotreload-stack-reset-v1",
+  "goal": "Prevent repeated SummonScout HOT fanout reloads from stacking nested core/host wrappers until Lua 5.0 hits C stack overflow; reset the previous hot generation in reverse module order before installing the new fanout payload while preserving existing summon behavior.",
+  "branch": "feature/summonscout-hotreload-stack-reset-v1",
+  "base_parallel_sha": "98eaf0b0df9c2ed14d42181c77983676e1e3fbe5",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "hot-fanout-lua50-syntax-fix-v1",
+    "summonscout-core-error-guard-v1"
+  ],
+  "shared_resources": [
+    "SummonScout HotHost module registry",
+    "SummonScoutFrame OnEvent wrapper chain",
+    "SummonScoutHotHostFrame dispatcher wrapper chain",
+    "SummonScout HOT fanout carrier"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Root cause from gameplay test on parallel 98eaf0b0: HOT fanout re-executes WhisperConfirmSpam plus every *Hot.lua module while H.Register initializes the new module before old Shutdown. Shared-frame wrappers therefore remain nested across generations and eventually overflow the C stack at WhisperConfirmSpam.lua:378. The host now tracks registration order, captures stable core/host dispatch bases, exposes PrepareFanoutReload(), shuts down the previous generation in reverse order, force-restores stable dispatch bases, clears the active module registry, then the generated fanout installs the new generation. The packager injects this reset before the host payload and fails closed if it is missing. A client UI reload/restart is required once to load HotHost v2; subsequent HOT updates stay bounded.",
+  "integrated_feature_sha": "24786b6c2a832893e5c48529fd92abbf9c71a0c3"
+}
