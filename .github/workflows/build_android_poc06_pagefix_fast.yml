@@ -1,0 +1,116 @@
+name: POC06 Android PageFix Fast Build
+
+on:
+  push:
+    branches:
+      - feature/android-headless-poc06-fastbuild
+    paths:
+      - '.github/workflows/build_android_poc06_pagefix_fast.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply page-aware POC06 patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('probes/Wow112HeadlessAndroid/src/world_poc06.rs')
+          s = p.read_text()
+          old = '''    let query = build_read_only_auction_query(auctioneer_guid);
+          println!(
+              "[AH] sending page0 query label={label} house={auction_house} payload={} filters=ANY",
+              query.len()
+          );
+          '''
+          new = '''    let page = env::var("WOW112_AH_PAGE")
+              .unwrap_or_else(|_| "0".to_string())
+              .trim()
+              .parse::<u32>()
+              .map_err(|e| format!("invalid WOW112_AH_PAGE: {e}"))?;
+          let list_from = page
+              .checked_mul(50)
+              .ok_or_else(|| format!("WOW112_AH_PAGE overflow page={page}"))?;
+          let mut query = build_read_only_auction_query(auctioneer_guid);
+          query[8..12].copy_from_slice(&list_from.to_le_bytes());
+          println!(
+              "[AH] sending selected-page query label={label} page={page} listfrom={list_from} house={auction_house} payload={} filters=ANY",
+              query.len()
+          );
+          '''
+          if s.count(old) != 1:
+              raise SystemExit(f'page query patch anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
+          s = s.replace('SMSG_AUCTION_LIST_RESULT PASS page0_records=', 'SMSG_AUCTION_LIST_RESULT PASS records=', 1)
+          s = s.replace('[POC06] BUY CANDIDATES page0 ', '[POC06] BUY CANDIDATES selected-page ', 1)
+          s = s.replace('[AH] page0 snapshot PASS ', '[AH] selected-page snapshot PASS ', 1)
+          s = s.replace('auction not present in fresh page0 snapshot', 'auction not present in fresh selected-page snapshot', 1)
+          p.write_text(s)
+          print('PAGEFIX_APPLIED=PASS')
+          print('WOW112_AH_PAGE_SUPPORTED=YES')
+          PY
+          grep -F 'WOW112_AH_PAGE' probes/Wow112HeadlessAndroid/src/world_poc06.rs
+          grep -F 'selected-page query' probes/Wow112HeadlessAndroid/src/world_poc06.rs
+
+      - name: Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Build POC06 PageFix x86_64 Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINKER="${ANDROID_SDK_ROOT}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
+          test -x "$LINKER"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$LINKER"
+          export CC_x86_64_linux_android="$LINKER"
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target x86_64-linux-android
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="probes/Wow112HeadlessAndroid/target/x86_64-linux-android/release/wow112-headless-android-probe"
+          test -x "$BIN"
+          mkdir -p dist/poc06
+          cp "$BIN" dist/poc06/wow112-headless-android-probe
+          cp probes/Wow112HeadlessAndroid/src/world_poc06.rs dist/poc06/world_poc06.PAGEFIX.rs
+          BIN_SHA="$(sha256sum dist/poc06/wow112-headless-android-probe | awk '{print $1}')"
+          {
+            echo "POC=06-PAGEFIX"
+            echo "REPOSITORY=${GITHUB_REPOSITORY}"
+            echo "BRANCH=${GITHUB_REF_NAME}"
+            echo "EXACT_SHA=${GITHUB_SHA}"
+            echo "TARGET=x86_64-linux-android"
+            echo "ANDROID_API=21"
+            echo "BINARY_SHA256=${BIN_SHA}"
+            echo "RUNTIME_PAGE_ENV=WOW112_AH_PAGE"
+          } > dist/poc06/BUILD_INFO.txt
+          (cd dist/poc06 && sha256sum wow112-headless-android-probe world_poc06.PAGEFIX.rs BUILD_INFO.txt > SHA256SUMS.txt)
+          file dist/poc06/wow112-headless-android-probe
+          cat dist/poc06/BUILD_INFO.txt
+
+      - name: Upload POC06 PageFix binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Android-POC06-PageFix-${{ github.sha }}
+          path: dist/poc06
+          if-no-files-found: error
+          retention-days: 7
