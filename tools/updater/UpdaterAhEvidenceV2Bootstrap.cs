@@ -45,6 +45,7 @@ namespace WoW112Updater
         public static void Attach(MainForm form)
         {
             if (form == null || form.IsDisposed) return;
+            var host = (IUpdaterHost)form;
             foreach (var old in FindButtons(form).ToArray())
             {
                 if (string.Equals(Convert.ToString(old.Tag), Marker, StringComparison.Ordinal)) continue;
@@ -53,7 +54,7 @@ namespace WoW112Updater
             }
             try
             {
-                var root = (form.GameDirectory ?? "").Trim();
+                var root = (host.GameDirectory ?? "").Trim();
                 var oldBase = Path.Combine(root, ".wow112_parallel_updater", LegacyBaselineName);
                 if (Directory.Exists(root) && File.Exists(oldBase)) File.Delete(oldBase);
             }
@@ -72,11 +73,11 @@ namespace WoW112Updater
                 Tag = Marker
             };
             button.FlatAppearance.BorderColor = Color.FromArgb(223, 182, 115);
-            button.Click += delegate { HandleClick(form, button); };
+            button.Click += delegate { HandleClick(host, button); };
             form.Controls.Add(button);
             Place(form, button);
             button.BringToFront();
-            Refresh(form, button);
+            Refresh(host, button);
             form.Resize += delegate
             {
                 if (button.IsDisposed || button.Parent == null) return;
