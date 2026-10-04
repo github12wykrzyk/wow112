@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "parallel-diagnostic-hotfix-fastpath-v1",
+  "goal": "Add a fail-closed diagnostic ECONOMY hotfix fast path that preserves feature preflight and exact-SHA ECONOMY gates while omitting post-integration STANDARD only for explicitly allowlisted hot-bundle diagnostics.",
+  "branch": "feature/parallel-diagnostic-hotfix-fastpath-v1",
+  "base_parallel_sha": "0d358d5e6d3282c0c4ee9cc91fe5a7d2bb7e3f4f",
+  "modules": [
+    "AI-workflow",
+    "ParallelDiagnosticFastPath"
+  ],
+  "dependencies": [
+    "parallel-profile-delivery-v2"
+  ],
+  "shared_resources": [
+    "parallel-integration-routing",
+    "parallel-profile-delivery",
+    "parallel-standard-delivery"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "Infrastructure-only change. This task deliberately does NOT set diagnostic_hotfix_fast_path=true, so its own integration still requires the full STANDARD plus ECONOMY verification. Future diagnostic tasks must explicitly opt in and pass the allowlist classifier.",
+  "integrated_feature_sha": "13737eaaf20c7c3a07dab49645493b6f64d83921"
+}
