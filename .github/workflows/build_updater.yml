@@ -35,8 +35,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           rustup target add i686-pc-windows-msvc
-          cargo check --locked --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
-          cargo build --locked --release --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+          cargo check --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "terminal portal cargo check failed" }
+          cargo build --release --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "terminal portal cargo build failed" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe dist/WoW112TerminalPortalClicker.exe
 
@@ -94,6 +96,7 @@ jobs:
             tools\updater\UpdaterAhEvidenceV2Logic.cs `
             tools\updater\UpdaterAhEvidenceV2Support.cs `
             tools\updater\UpdaterAccountsFeature.cs `
+            tools\updater\UpdaterTerminalPortalFeature.cs `
             tools\updater\UpdaterSummonCoordinatorFeature.cs `
             tools\updater\UpdaterEconomyFeature.cs `
             tools\updater\UpdaterMaintenanceFeature.cs `
