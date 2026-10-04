@@ -1,4 +1,5 @@
-use std::io;
+use sha1::{Digest, Sha1};
+use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::time::Duration;
 use wow_login_messages::all::{
@@ -16,6 +17,11 @@ use wow_login_messages::Message;
 use wow_srp::client::SrpClientChallenge;
 use wow_srp::normalized_string::NormalizedString;
 use wow_srp::{PublicKey, SESSION_KEY_LENGTH};
+
+const VANILLA_5875_WIN_X86_INTEGRITY_HASH: [u8; 20] = [
+    0x95, 0xED, 0xB2, 0x7C, 0x78, 0x23, 0xB3, 0x63, 0xCB, 0xDD, 0xAB, 0x56, 0xA3, 0x92,
+    0xE7, 0xCB, 0x73, 0xFC, 0xCA, 0x20,
+];
 
 fn hex_prefix(bytes: &[u8]) -> String {
     bytes
@@ -49,12 +55,20 @@ fn diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
     let _ = stream.set_read_timeout(previous_timeout);
 }
 
+fn vanilla_5875_version_proof(client_public_key: &[u8; 32]) -> [u8; 20] {
+    Sha1::new()
+        .chain_update(client_public_key)
+        .chain_update(VANILLA_5875_WIN_X86_INTEGRITY_HASH)
+        .finalize()
+        .into()
+}
+
 pub fn authenticate(
     auth_server: &mut TcpStream,
     username: &str,
     password: &str,
 ) -> Result<([u8; SESSION_KEY_LENGTH as usize], CMD_REALM_LIST_Server), String> {
-    CMD_AUTH_LOGON_CHALLENGE_Client {
+    let challenge_request = CMD_AUTH_LOGON_CHALLENGE_Client {
         protocol_version: ProtocolVersion::Three,
         version: Version {
             major: 1,
@@ -68,9 +82,21 @@ pub fn authenticate(
         utc_timezone_offset: 0,
         client_ip_address: Ipv4Addr::LOCALHOST,
         account_name: username.to_string(),
-    }
-    .write(&mut *auth_server)
-    .map_err(|e| format!("write auth challenge failed: {e:?}"))?;
+    };
+
+    let mut challenge_wire = Vec::new();
+    challenge_request
+        .write(&mut challenge_wire)
+        .map_err(|e| format!("encode auth challenge failed: {e:?}"))?;
+    let safe_prefix_len = challenge_wire.len().min(34);
+    println!(
+        "[AUTH-DIAG] challenge-out len={} prefix={} expected-build=5875",
+        challenge_wire.len(),
+        hex_prefix(&challenge_wire[..safe_prefix_len])
+    );
+    auth_server
+        .write_all(&challenge_wire)
+        .map_err(|e| format!("write auth challenge failed: {e:?}"))?;
 
     let response = expect_server_message::<CMD_AUTH_LOGON_CHALLENGE_Server, _>(&mut *auth_server)
         .map_err(|e| format!("read auth challenge failed: {e:?}"))?;
@@ -106,10 +132,14 @@ pub fn authenticate(
         return Err(format!("auth challenge rejected: {response:?}"));
     };
 
+    let client_public_key = *challenge.client_public_key();
+    let crc_hash = vanilla_5875_version_proof(&client_public_key);
+    println!("[AUTH-DIAG] version-proof=vmangos-5875-win-x86");
+
     CMD_AUTH_LOGON_PROOF_Client {
-        client_public_key: *challenge.client_public_key(),
+        client_public_key,
         client_proof: *challenge.client_proof(),
-        crc_hash: [0u8; 20],
+        crc_hash,
         telemetry_keys: vec![],
         security_flag: CMD_AUTH_LOGON_PROOF_Client_SecurityFlag::None,
     }
