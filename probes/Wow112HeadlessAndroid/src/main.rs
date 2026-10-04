@@ -5,12 +5,12 @@ use std::time::Duration;
 
 mod auth;
 mod wire_build;
-mod world_poc06;
+mod world_poc07;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
 const DEFAULT_AUTH_ADDR: &str = "play.octowow.st:3724";
-const DEFAULT_SOAK_SECONDS: u64 = 15;
+const DEFAULT_SOAK_SECONDS: u64 = 0;
 const DEFAULT_RECONNECT_LIMIT: u32 = 60;
 const DEFAULT_REALM_INDEX: usize = 1;
 
@@ -66,8 +66,7 @@ fn run() -> Result<(), String> {
         .to_ascii_uppercase();
     let password = env::var("WOW112_PASSWORD")
         .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
-    let auth_addr =
-        env::var("WOW112_AUTH_ADDR").unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
+    let auth_addr = env::var("WOW112_AUTH_ADDR").unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
     let character_name = env::var("WOW112_CHARACTER").ok();
     let realm_index = env::var("WOW112_REALM_INDEX")
         .ok()
@@ -83,7 +82,7 @@ fn run() -> Result<(), String> {
         OCTOWOW_WIRE_BUILD
     );
     println!(
-        "[POC06] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_ah_buy=enabled ah_candidate_pool_retry=enabled no_auto_retry_after_buy_send=enabled",
+        "[POC07] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} autobuy_engine=enabled guarded_buy_primitive=POC06 hard_max_purchases=1 no_auto_retry_after_buy_send=enabled",
         soak_seconds, reconnect_limit, reconnect_delay_ms
     );
 
@@ -99,15 +98,13 @@ fn run() -> Result<(), String> {
             &mut ah_mutation_committed,
         ) {
             Ok(()) => {
-                println!("[RESILIENCE] POC-06 RECONNECT/KEEPALIVE PASS attempts={attempt}");
-                println!("[WOW112-ANDROID-PROBE] PASS: POC-06 guarded AH BUY");
+                println!("[RESILIENCE] POC-07 SESSION PASS attempts={attempt}");
+                println!("[WOW112-ANDROID-PROBE] PASS: POC-07 autobuy engine");
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
                 println!("[RESILIENCE] transient network failure: {error}");
-                println!(
-                    "[RESILIENCE] reconnecting with full auth + realm + character state rebuild"
-                );
+                println!("[RESILIENCE] reconnecting with full auth + realm + character state rebuild");
                 if reconnect_delay_ms != 0 {
                     thread::sleep(Duration::from_millis(reconnect_delay_ms));
                 }
@@ -117,7 +114,7 @@ fn run() -> Result<(), String> {
     }
 
     Err(format!(
-        "POC-06 reconnect limit exhausted after {reconnect_limit} attempts"
+        "POC-07 reconnect limit exhausted after {reconnect_limit} attempts"
     ))
 }
 
@@ -131,15 +128,12 @@ fn run_session(
     ah_mutation_committed: &mut bool,
 ) -> Result<(), String> {
     println!("[AUTH] connecting to {auth_addr}");
-
     let mut auth_stream = TcpStream::connect(auth_addr)
         .map_err(|e| format!("auth connect {auth_addr} failed: {e}"))?;
     let (session_key, realms) = auth::authenticate(&mut auth_stream, username, password)?;
-
     if realms.realms.is_empty() {
         return Err("auth succeeded but realm list is empty".to_string());
     }
-
     println!("[AUTH] realms={}", realms.realms.len());
     for (index, realm) in realms.realms.iter().enumerate() {
         println!(
@@ -147,22 +141,19 @@ fn run_session(
             realm.name, realm.address, realm.realm_id
         );
     }
-
     let realm = realms
         .realms
         .get(realm_index)
         .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
-
     let world_addr = env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_| realm.address.clone());
     println!(
         "[WORLD] connecting realm={} id={} address={}",
         realm.name, realm.realm_id, world_addr
     );
-
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    world_poc06::login_poc06(
+    world_poc07::login_poc07(
         &mut world_stream,
         session_key,
         realm.realm_id,
@@ -171,6 +162,5 @@ fn run_session(
         soak_seconds,
         ah_mutation_committed,
     )?;
-
     Ok(())
 }
