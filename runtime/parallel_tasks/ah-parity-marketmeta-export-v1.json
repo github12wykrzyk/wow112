@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "ah-parity-marketmeta-export-v1",
+  "goal": "Mirror compact passive AH parity evidence into AVM_DB.marketMeta so the existing AH dump exporter always includes cutover evidence even when the large diag table is truncated.",
+  "branch": "feature/ah-parity-marketmeta-export-v1",
+  "base_parallel_sha": "cfa1db3518fd2474293d026d76257571371b5311",
+  "modules": [
+    "AuxEconomyShadow"
+  ],
+  "dependencies": [
+    "ah-parity-evidence-hardening-v1"
+  ],
+  "shared_resources": [
+    "parity-evidence",
+    "ah-shadow-hot-bundle"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": {
+    "owner": "chatgpt:ah-parity-marketmeta-export-v1",
+    "acquired_at": "2026-10-04T00:25:00Z",
+    "heartbeat_at": "2026-10-04T00:25:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AuxEconomyShadow",
+      "resource:parity-evidence",
+      "resource:ah-shadow-hot-bundle"
+    ]
+  },
+  "notes": "Diagnostics-only. Production AuxVmangos remains the sole AH owner. The exporter wraps only the shadow parity module's RecordDecision method, preserves its return value, and writes compact evidence into existing AVM_DB.marketMeta. No AH query/transaction API, frame, event or active AVM callback is added. ECONOMY hot delivery remains sufficient."
+}
