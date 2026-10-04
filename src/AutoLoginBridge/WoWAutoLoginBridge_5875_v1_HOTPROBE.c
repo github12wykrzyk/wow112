@@ -4,7 +4,7 @@
  *
  * The canonical AutoLoginBridge source remains unchanged and is included below.
  * This wrapper adds two isolated helpers:
- * - hot-Lua watcher for SummonScout post-payment messaging,
+ * - hot-Lua watcher with a visible in-game ack after each successful apply,
  * - resilient AutoLogin retry after transient login-server disconnects.
  *
  * The retry path arms only after the normal native AutoLogin has fired once.
@@ -48,6 +48,11 @@ static const char *g_hot_source_names[HOT_FILE_COUNT]={
     "SummonScout/SummonScout_PostPaymentOfferHot.lua",
     "SummonScout/SummonScout_WhisperConfirmSpam.lua",
     "SummonScout/SummonScout.lua"
+};
+static const char *g_hot_ack_scripts[HOT_FILE_COUNT]={
+    "W112_HOT_ACK_COUNT=(tonumber(W112_HOT_ACK_COUNT) or 0)+1;local f=DEFAULT_CHAT_FRAME or ChatFrame1;if f and f.AddMessage then f:AddMessage('|cff40ff40[W112 HOT]|r OK #'..tostring(W112_HOT_ACK_COUNT)..' - postpay/AH host') end",
+    "W112_HOT_ACK_COUNT=(tonumber(W112_HOT_ACK_COUNT) or 0)+1;local f=DEFAULT_CHAT_FRAME or ChatFrame1;if f and f.AddMessage then f:AddMessage('|cff40ff40[W112 HOT]|r OK #'..tostring(W112_HOT_ACK_COUNT)..' - whisper host') end",
+    "W112_HOT_ACK_COUNT=(tonumber(W112_HOT_ACK_COUNT) or 0)+1;local f=DEFAULT_CHAT_FRAME or ChatFrame1;if f and f.AddMessage then f:AddMessage('|cff40ff40[W112 HOT]|r OK #'..tostring(W112_HOT_ACK_COUNT)..' - SummonScout core') end"
 };
 
 static UINT_PTR g_hot_timer=0u;
@@ -311,6 +316,10 @@ static DWORD hot_tick_file(DWORD index,DWORD now)
     g_hot_last_result=ok?1u:0u;
     if(ok) {
         ++g_hot_generation;
+        ((FrameScriptExecuteFn)(DWORD)FRAMESCRIPT_EXECUTE)(
+            g_hot_ack_scripts[index],
+            "WoW112HotApplyAck"
+        );
         return HOT_STATUS_APPLIED;
     }
     return HOT_STATUS_EXEC_FAILED;
