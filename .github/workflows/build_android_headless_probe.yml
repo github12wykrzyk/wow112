@@ -26,6 +26,9 @@ jobs:
         with:
           targets: x86_64-linux-android
 
+      - name: Android SDK tools
+        uses: android-actions/setup-android@v3
+
       - name: Install Android NDK
         shell: bash
         run: |
