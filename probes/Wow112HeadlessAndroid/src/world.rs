@@ -21,7 +21,10 @@ const SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE: u16 = 0x01F6;
 const MSG_AUCTION_HELLO_OPCODE: u16 = 0x0255;
 const CMSG_AUCTION_LIST_ITEMS_OPCODE: u32 = 0x0258;
 const SMSG_AUCTION_LIST_RESULT_OPCODE: u16 = 0x025C;
+const CMSG_GET_MAIL_LIST_OPCODE: u32 = 0x023A;
+const SMSG_MAIL_LIST_RESULT_OPCODE: u16 = 0x023B;
 const UNIT_NPC_FLAG_AUCTIONEER: u32 = 0x0000_1000;
+const GAMEOBJECT_TYPE_MAILBOX: i32 = 19;
 const AUCTION_RECORD_SIZE: usize = 64;
 
 fn hex_prefix(bytes: &[u8]) -> String {
@@ -182,6 +185,16 @@ fn update_mask_is_auctioneer(mask: &UpdateMask) -> bool {
     }
 }
 
+fn update_mask_is_mailbox(mask: &UpdateMask) -> bool {
+    match mask {
+        UpdateMask::GameObject(gameobject) => gameobject
+            .gameobject_type_id()
+            .map(|type_id| type_id == GAMEOBJECT_TYPE_MAILBOX)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 fn collect_auctioneer_guids(objects: &[Object], auctioneers: &mut HashSet<u64>) {
     for object in objects {
         let candidate = match object {
@@ -200,6 +213,27 @@ fn collect_auctioneer_guids(objects: &[Object], auctioneers: &mut HashSet<u64>) 
         if let Some(guid) = candidate {
             if auctioneers.insert(guid) {
                 println!("[AH] discovered auctioneer guid=0x{guid:016X}");
+            }
+        }
+    }
+}
+
+fn collect_mailbox_guids(objects: &[Object], mailboxes: &mut HashSet<u64>) {
+    for object in objects {
+        let candidate = match object {
+            Object::Values { guid1, mask1 } if update_mask_is_mailbox(mask1) => Some(guid1.guid()),
+            Object::CreateObject { guid3, mask2, .. }
+            | Object::CreateObject2 { guid3, mask2, .. }
+                if update_mask_is_mailbox(mask2) =>
+            {
+                Some(guid3.guid())
+            }
+            _ => None,
+        };
+
+        if let Some(guid) = candidate {
+            if mailboxes.insert(guid) {
+                println!("[MAIL] discovered mailbox guid=0x{guid:016X}");
             }
         }
     }
@@ -237,47 +271,98 @@ fn inspect_update_packet(
     Ok(())
 }
 
-fn parse_guid_override(value: &str) -> Result<u64, String> {
+fn inspect_interaction_update_packet(
+    opcode: u16,
+    payload: &[u8],
+    auctioneers: &mut HashSet<u64>,
+    mailboxes: &mut HashSet<u64>,
+) -> Result<(), String> {
+    if opcode != SMSG_UPDATE_OBJECT_OPCODE && opcode != SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE {
+        return Ok(());
+    }
+
+    let message = match parse_raw_server_message(opcode, payload) {
+        Ok(message) => message,
+        Err(error) => {
+            println!(
+                "[WORLD-DIAG] object update skipped opcode=0x{opcode:04X} payload={} reason={error}",
+                payload.len()
+            );
+            return Ok(());
+        }
+    };
+
+    match message {
+        ServerOpcodeMessage::SMSG_UPDATE_OBJECT(message) => {
+            collect_auctioneer_guids(&message.objects, auctioneers);
+            collect_mailbox_guids(&message.objects, mailboxes);
+        }
+        ServerOpcodeMessage::SMSG_COMPRESSED_UPDATE_OBJECT(message) => {
+            collect_auctioneer_guids(&message.objects, auctioneers);
+            collect_mailbox_guids(&message.objects, mailboxes);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_guid_override(name: &str, value: &str) -> Result<u64, String> {
     let trimmed = value.trim();
     if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).map_err(|e| format!("invalid WOW112_AH_GUID hex value: {e}"))
+        u64::from_str_radix(hex, 16).map_err(|e| format!("invalid {name} hex value: {e}"))
     } else {
         trimmed
             .parse::<u64>()
-            .map_err(|e| format!("invalid WOW112_AH_GUID decimal value: {e}"))
+            .map_err(|e| format!("invalid {name} decimal value: {e}"))
     }
 }
 
-fn discover_auctioneer(
+fn discover_interaction_targets(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
-) -> Result<u64, String> {
+) -> Result<(u64, u64), String> {
+    let mut auctioneers = HashSet::new();
+    let mut mailboxes = HashSet::new();
+
     if let Ok(value) = env::var("WOW112_AH_GUID") {
-        let guid = parse_guid_override(&value)?;
+        let guid = parse_guid_override("WOW112_AH_GUID", &value)?;
         println!("[AH] using configured auctioneer guid=0x{guid:016X}");
-        return Ok(guid);
+        auctioneers.insert(guid);
+    }
+    if let Ok(value) = env::var("WOW112_MAILBOX_GUID") {
+        let guid = parse_guid_override("WOW112_MAILBOX_GUID", &value)?;
+        println!("[MAIL] using configured mailbox guid=0x{guid:016X}");
+        mailboxes.insert(guid);
     }
 
-    println!("[AH] POC-02 discovering nearby auctioneer from object updates");
-    let mut auctioneers = HashSet::new();
-    for index in 0..512usize {
-        let (opcode, payload) = read_encrypted_raw(stream, crypto.decrypter())?;
-        inspect_update_packet(opcode, &payload, &mut auctioneers)?;
-
-        if let Some(guid) = auctioneers.iter().next().copied() {
-            println!("[AH] auctioneer candidate ready after rx[{index}]");
-            return Ok(guid);
+    println!("[WORLD] discovering nearby auctioneer + mailbox from object updates");
+    for index in 0..768usize {
+        if let (Some(auctioneer), Some(mailbox)) = (
+            auctioneers.iter().next().copied(),
+            mailboxes.iter().next().copied(),
+        ) {
+            println!(
+                "[WORLD] interaction targets ready after rx[{index}] auctioneer=0x{auctioneer:016X} mailbox=0x{mailbox:016X}"
+            );
+            return Ok((auctioneer, mailbox));
         }
 
-        if index < 16 {
+        let (opcode, payload) = read_encrypted_raw(stream, crypto.decrypter())?;
+        inspect_interaction_update_packet(opcode, &payload, &mut auctioneers, &mut mailboxes)?;
+
+        if index < 20 {
             println!(
-                "[AH-DIAG] world rx[{index}] opcode=0x{opcode:04X} payload={}",
+                "[WORLD-DIAG] discovery rx[{index}] opcode=0x{opcode:04X} payload={}",
                 payload.len()
             );
         }
     }
 
-    Err("no nearby UNIT_NPC_FLAG_AUCTIONEER found within 512 world packets".to_string())
+    Err(format!(
+        "interaction discovery incomplete after 768 packets: auctioneers={} mailboxes={}",
+        auctioneers.len(),
+        mailboxes.len()
+    ))
 }
 
 fn send_auction_hello(
@@ -351,15 +436,15 @@ fn send_auction_hello(
 fn build_read_only_auction_query(auctioneer_guid: u64) -> Vec<u8> {
     let mut payload = Vec::with_capacity(32);
     payload.extend_from_slice(&auctioneer_guid.to_le_bytes());
-    payload.extend_from_slice(&0u32.to_le_bytes()); // list_start_item / page 0
-    payload.push(0); // empty searched_name CString
-    payload.push(0); // minimum_level
-    payload.push(0); // maximum_level
-    payload.extend_from_slice(&u32::MAX.to_le_bytes()); // any inventory slot
-    payload.extend_from_slice(&u32::MAX.to_le_bytes()); // any item class
-    payload.extend_from_slice(&u32::MAX.to_le_bytes()); // any item subclass
-    payload.extend_from_slice(&u32::MAX.to_le_bytes()); // any quality
-    payload.push(0); // usable=false
+    payload.extend_from_slice(&0u32.to_le_bytes());
+    payload.push(0);
+    payload.push(0);
+    payload.push(0);
+    payload.extend_from_slice(&u32::MAX.to_le_bytes());
+    payload.extend_from_slice(&u32::MAX.to_le_bytes());
+    payload.extend_from_slice(&u32::MAX.to_le_bytes());
+    payload.extend_from_slice(&u32::MAX.to_le_bytes());
+    payload.push(0);
     payload
 }
 
@@ -437,8 +522,8 @@ fn parse_auction_list_result(payload: &[u8]) -> Result<(), String> {
 fn probe_read_only_auction_house(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
+    auctioneer_candidate: u64,
 ) -> Result<(), String> {
-    let auctioneer_candidate = discover_auctioneer(stream, crypto)?;
     let (auctioneer_guid, auction_house) =
         send_auction_hello(stream, crypto, auctioneer_candidate)?;
 
@@ -473,6 +558,72 @@ fn probe_read_only_auction_house(
     }
 
     Err("SMSG_AUCTION_LIST_RESULT not received within 256 packets".to_string())
+}
+
+fn parse_mail_list_result(payload: &[u8]) -> Result<(), String> {
+    match parse_raw_server_message(SMSG_MAIL_LIST_RESULT_OPCODE, payload)? {
+        ServerOpcodeMessage::SMSG_MAIL_LIST_RESULT(message) => {
+            println!(
+                "[MAIL] SMSG_MAIL_LIST_RESULT PASS mails={} payload={}",
+                message.mails.len(),
+                payload.len()
+            );
+
+            for (index, mail) in message.mails.iter().take(20).enumerate() {
+                println!(
+                    "[MAIL] mail[{index}] id={} type={:?} subject={:?} item={} stack={} money={} cod={} text_id={} checked=0x{:X} expires_days={:.3}",
+                    mail.message_id,
+                    mail.message_type,
+                    mail.subject,
+                    mail.item,
+                    mail.item_stack_size,
+                    mail.money.as_int(),
+                    mail.cash_on_delivery_amount,
+                    mail.item_text_id,
+                    mail.checked_timestamp,
+                    mail.expiration_time
+                );
+            }
+            Ok(())
+        }
+        other => Err(format!(
+            "expected SMSG_MAIL_LIST_RESULT after raw parse, got {other:?}"
+        )),
+    }
+}
+
+fn probe_read_only_mailbox(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    mailbox_guid: u64,
+) -> Result<(), String> {
+    println!("[MAIL] opening mailbox guid=0x{mailbox_guid:016X}");
+    write_encrypted_raw(
+        stream,
+        crypto.encrypter(),
+        CMSG_GET_MAIL_LIST_OPCODE,
+        &mailbox_guid.to_le_bytes(),
+    )?;
+
+    let mut discovered = HashSet::new();
+    for index in 0..256usize {
+        let (opcode, payload) = read_encrypted_raw(stream, crypto.decrypter())?;
+        if opcode == SMSG_MAIL_LIST_RESULT_OPCODE {
+            parse_mail_list_result(&payload)?;
+            println!("[MAIL] POC-03 READ-ONLY PASS");
+            return Ok(());
+        }
+
+        inspect_update_packet(opcode, &payload, &mut discovered)?;
+        if index < 12 {
+            println!(
+                "[MAIL-DIAG] list wait rx[{index}] opcode=0x{opcode:04X} payload={}",
+                payload.len()
+            );
+        }
+    }
+
+    Err("SMSG_MAIL_LIST_RESULT not received within 256 packets".to_string())
 }
 
 pub fn login(
@@ -608,6 +759,8 @@ pub fn login(
         return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());
     }
 
-    probe_read_only_auction_house(stream, &mut crypto)?;
+    let (auctioneer_guid, mailbox_guid) = discover_interaction_targets(stream, &mut crypto)?;
+    probe_read_only_auction_house(stream, &mut crypto, auctioneer_guid)?;
+    probe_read_only_mailbox(stream, &mut crypto, mailbox_guid)?;
     Ok(())
 }
