@@ -14,15 +14,15 @@
     "parity-evidence",
     "ah-shadow-hot-bundle"
   ],
-  "status": "preflight",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [
     "economy"
   ],
   "lease": {
     "owner": "chatgpt-ah-shadow-host-independent-v1",
     "acquired_at": "2026-10-04T01:38:57Z",
-    "heartbeat_at": "2026-10-04T01:38:57Z",
+    "heartbeat_at": "2026-10-04T01:45:10Z",
     "ttl_seconds": 21600,
     "scopes": [
       "module:AuxEconomyShadow",
@@ -30,5 +30,5 @@
       "resource:parity-evidence"
     ]
   },
-  "notes": "Root cause from gameplay evidence #301/#302: ECONOMY delivered the transformed SummonScout_PostPaymentOfferHot.lua, but AH-DUMP #302 contained no marketMeta.shadowParity. The transformed host currently appends the shadow bundle after a top-level SummonScout runtime-anchor guard that can return before the bundle. Fix prepends the shadow bundle before any SummonScout guard, preserving the original host afterward. No AuxVmangos production logic, AH query scheduling, buy/bid/cancel/post primitives, transaction ownership or cutover behavior changes. Regression test asserts the final transformed host places ParityBridge and ParityExport before the SummonScout guard return. First post-fix CI failure was only a stale protocol-version assertion; current runtime fix is unchanged."
+  "notes": "Root cause from gameplay evidence #301/#302: ECONOMY delivered the transformed SummonScout_PostPaymentOfferHot.lua, but AH-DUMP #302 contained no marketMeta.shadowParity. The transformed host appended the shadow bundle after a top-level SummonScout runtime-anchor guard that can return before the bundle. Fix prepends the shadow bundle before all original SummonScout host code, preserving the original host afterward. No AuxVmangos production logic, AH query scheduling, buy/bid/cancel/post primitives, transaction ownership or cutover behavior changes. Regression now asserts BUNDLE_END precedes the complete original host, so any host return is necessarily after shadow execution. Exact feature SHA d690673ddbfefdfd6185619e5d40ba6cb8be5504 passed preflight run 37168884209 and ECONOMY run 37168923033 before queue opt-in."
 }
