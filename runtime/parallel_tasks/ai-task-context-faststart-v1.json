@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "ai-task-context-faststart-v1",
+  "goal": "Make ai_task_context use the compact routing index by default and emit a precomputed FAST START packet with risk class, analysis budget, ownership and delivery routing.",
+  "branch": "feature/ai-task-context-faststart-v1",
+  "base_parallel_sha": "30db991551fc114580e65a4f9cd27d0343da6ab9",
+  "status": "integrated",
+  "auto_integrate": false,
+  "integrated_feature_sha": "ae378214903192d9c899176e464acb4dadba445f",
+  "modules": [
+    "AITaskContext"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-routing-fast-start"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Infrastructure-only. No runtime/gameplay source changes and no delivery profile ownership. Auto integration is intentional after feature preflight."
+}
