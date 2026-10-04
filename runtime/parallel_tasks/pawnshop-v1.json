@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "pawnshop-v1",
+  "goal": "Add a standalone PawnShop addon that advertises a buy service on World and provides fail-closed AUX-backed whisper appraisals for BoE green equipment and Trade Goods, with GUI-editable pricing percentages and no automatic trade actions.",
+  "branch": "feature/pawnshop-v1",
+  "base_parallel_sha": "c3e9b9f3bbc61cb5aaca7e41587908e9ce1dbdd5",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": ["PawnShop"],
+  "dependencies": [],
+  "shared_resources": ["aux-price-read-only", "world-advertising"],
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:pawnshop-v1",
+    "acquired_at": "2026-10-04T15:38:01Z",
+    "heartbeat_at": "2026-10-04T15:38:01Z",
+    "ttl_seconds": 21600,
+    "scopes": ["module:PawnShop", "resource:aux-price-read-only", "resource:world-advertising"]
+  },
+  "notes": "Stage 1 only: no trade-window automation and no automatic gold placement. BoE green appraisal uses AuxVmangos' current DE material economics plus trusted vendor values with seller-share/vendor-floor/DE-cap controls. Trade Goods use AUX historical value with a configurable haircut and minimum history samples. /pawn exposes the pricing percentages and World advertising interval/toggle; settings persist in PawnShopDB."
+}
