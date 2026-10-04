@@ -22,7 +22,6 @@ namespace WoW112Updater
         private const string TerminalUpdaterWorkflow = "build_updater.yml";
         private const string TerminalUpdaterWorkflowName = "Build WoW112 updater";
         private const string TerminalUpdaterArtifactPrefix = "WoW112ParallelUpdater-";
-        private readonly Button terminalPortalButton = new Button();
         private readonly Timer terminalPortalAttachTimer = CreateTerminalPortalAttachTimer();
         private bool terminalPortalAttached;
         private bool terminalPortalBusy;
@@ -46,21 +45,16 @@ namespace WoW112Updater
         {
             if (terminalPortalAttached) return;
             terminalPortalAttached = true;
-            terminalPortalButton.Click += async delegate { await ShowTerminalPortalAsync(); };
-            featureControls["terminalPortal"] = terminalPortalButton;
             var multibox = featureControls.ContainsKey("multibox") ? featureControls["multibox"] as Button : null;
-            var tools = multibox == null ? null : multibox.Parent as TableLayoutPanel;
-            if (tools != null)
+            if (multibox != null)
             {
-                tools.SuspendLayout();
-                tools.ColumnCount = 8;
-                tools.ColumnStyles.Clear();
-                for (var i = 0; i < 7; i++) tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 14.285714F));
-                tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64F));
-                tools.Controls.Add(ActionButton(terminalPortalButton, "TERM"), 7, 0);
-                tools.ResumeLayout(true);
+                var menu = multibox.ContextMenuStrip ?? new ContextMenuStrip();
+                var terminalItem = new ToolStripMenuItem("Terminal portal clickers");
+                terminalItem.Click += async delegate { await ShowTerminalPortalAsync(); };
+                menu.Items.Add(terminalItem);
+                multibox.ContextMenuStrip = menu;
             }
-            Log("MULTIBOX TERMINAL gotowy: headless portal-clicker, bez graficznego klienta WoW.");
+            Log("MULTIBOX TERMINAL gotowy: kliknij prawym na MULTIBOX -> Terminal portal clickers.");
         }
 
         private async Task ShowTerminalPortalAsync()
