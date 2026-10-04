@@ -2,7 +2,10 @@ use std::env;
 use std::net::TcpStream;
 
 mod auth;
+mod wire_build;
 mod world;
+
+use wire_build::OCTOWOW_WIRE_BUILD;
 
 const DEFAULT_AUTH_ADDR: &str = "10.0.2.2:3724";
 
@@ -27,7 +30,10 @@ fn run() -> Result<(), String> {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
 
-    println!("[WOW112-ANDROID-PROBE] build=5875 protocol=vanilla target=headless");
+    println!(
+        "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless",
+        OCTOWOW_WIRE_BUILD
+    );
     println!("[AUTH] connecting to {auth_addr}");
 
     let mut auth_stream = TcpStream::connect(&auth_addr)

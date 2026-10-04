@@ -1,3 +1,4 @@
+use crate::wire_build::OCTOWOW_WIRE_BUILD;
 use sha1::{Digest, Sha1};
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpStream};
@@ -74,7 +75,7 @@ pub fn authenticate(
             major: 1,
             minor: 12,
             patch: 1,
-            build: 5875,
+            build: OCTOWOW_WIRE_BUILD,
         },
         platform: Platform::X86,
         os: Os::Windows,
@@ -90,9 +91,10 @@ pub fn authenticate(
         .map_err(|e| format!("encode auth challenge failed: {e:?}"))?;
     let safe_prefix_len = challenge_wire.len().min(34);
     println!(
-        "[AUTH-DIAG] challenge-out len={} prefix={} expected-build=5875",
+        "[AUTH-DIAG] challenge-out len={} prefix={} expected-wire-build={}",
         challenge_wire.len(),
-        hex_prefix(&challenge_wire[..safe_prefix_len])
+        hex_prefix(&challenge_wire[..safe_prefix_len]),
+        OCTOWOW_WIRE_BUILD
     );
     auth_server
         .write_all(&challenge_wire)
@@ -134,7 +136,10 @@ pub fn authenticate(
 
     let client_public_key = *challenge.client_public_key();
     let crc_hash = vanilla_5875_version_proof(&client_public_key);
-    println!("[AUTH-DIAG] version-proof=vmangos-5875-win-x86");
+    println!(
+        "[AUTH-DIAG] version-proof=vanilla-5875-files wire-build={}",
+        OCTOWOW_WIRE_BUILD
+    );
 
     CMD_AUTH_LOGON_PROOF_Client {
         client_public_key,

@@ -1,3 +1,4 @@
+use crate::wire_build::OCTOWOW_WIRE_BUILD;
 use std::net::TcpStream;
 use std::time::Duration;
 use wow_srp::normalized_string::NormalizedString;
@@ -35,7 +36,7 @@ pub fn login(
     );
 
     CMSG_AUTH_SESSION {
-        build: 5875,
+        build: OCTOWOW_WIRE_BUILD as u32,
         server_id: server_id as u32,
         username: username.to_string(),
         client_seed: seed_value,
@@ -59,7 +60,7 @@ pub fn login(
     if !matches!(auth_response, SMSG_AUTH_RESPONSE::AuthOk { .. }) {
         return Err(format!("world auth rejected: {auth_response:?}"));
     }
-    println!("[WORLD] auth PASS");
+    println!("[WORLD] auth PASS wire-build={OCTOWOW_WIRE_BUILD}");
 
     CMSG_CHAR_ENUM {}
         .write_encrypted_client(&mut *stream, crypto.encrypter())
