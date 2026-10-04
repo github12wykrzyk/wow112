@@ -5,12 +5,12 @@ use std::time::Duration;
 
 mod auth;
 mod wire_build;
-mod world;
+mod world_poc05;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
 const DEFAULT_AUTH_ADDR: &str = "10.0.2.2:3724";
-const DEFAULT_SOAK_SECONDS: u64 = 300;
+const DEFAULT_SOAK_SECONDS: u64 = 60;
 const DEFAULT_RECONNECT_LIMIT: u32 = 60;
 
 fn main() {
@@ -39,6 +39,9 @@ fn parse_env_u32(name: &str, default_value: u32) -> Result<u32, String> {
 }
 
 fn is_transient_network_error(error: &str) -> bool {
+    if error.contains("MAIL_MUTATION_") {
+        return false;
+    }
     [
         "ConnectionReset",
         "Connection reset by peer",
@@ -72,13 +75,14 @@ fn run() -> Result<(), String> {
     let soak_seconds = parse_env_u64("WOW112_SOAK_SECONDS", DEFAULT_SOAK_SECONDS)?;
     let reconnect_limit = parse_env_u32("WOW112_RECONNECT_LIMIT", DEFAULT_RECONNECT_LIMIT)?.max(1);
     let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
+    let mut mail_mutation_committed = false;
 
     println!(
         "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless",
         OCTOWOW_WIRE_BUILD
     );
     println!(
-        "[RESILIENCE] POC-04 soak_seconds={} reconnect_limit={} reconnect_delay_ms={}",
+        "[POC05] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} guarded_mail_actions=enabled",
         soak_seconds, reconnect_limit, reconnect_delay_ms
     );
 
@@ -91,10 +95,11 @@ fn run() -> Result<(), String> {
             &password,
             character_name.as_deref(),
             soak_seconds,
+            &mut mail_mutation_committed,
         ) {
             Ok(()) => {
-                println!("[RESILIENCE] POC-04 RECONNECT/KEEPALIVE PASS attempts={attempt}");
-                println!("[WOW112-ANDROID-PROBE] PASS: persistent world session");
+                println!("[RESILIENCE] POC-05 RECONNECT/KEEPALIVE PASS attempts={attempt}");
+                println!("[WOW112-ANDROID-PROBE] PASS: POC-05 persistent world session");
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
@@ -109,7 +114,7 @@ fn run() -> Result<(), String> {
     }
 
     Err(format!(
-        "POC-04 reconnect limit exhausted after {reconnect_limit} attempts"
+        "POC-05 reconnect limit exhausted after {reconnect_limit} attempts"
     ))
 }
 
@@ -120,6 +125,7 @@ fn run_session(
     password: &str,
     character_name: Option<&str>,
     soak_seconds: u64,
+    mail_mutation_committed: &mut bool,
 ) -> Result<(), String> {
     println!("[AUTH] connecting to {auth_addr}");
 
@@ -154,13 +160,14 @@ fn run_session(
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    world::login(
+    world_poc05::login_poc05(
         &mut world_stream,
         session_key,
         realm.realm_id,
         username,
         character_name,
         soak_seconds,
+        mail_mutation_committed,
     )?;
 
     Ok(())

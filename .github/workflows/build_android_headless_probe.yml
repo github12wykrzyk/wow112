@@ -5,9 +5,11 @@ on:
   push:
     branches:
       - feature/android-headless-wow112-poc
+      - feature/android-headless-wow112-poc05-mail-actions-v2
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - 'runtime/parallel_tasks/android-headless-wow112-poc.json'
+      - 'runtime/parallel_tasks/android-headless-wow112-poc05-mail-actions-v2.json'
       - '.github/workflows/build_android_headless_probe.yml'
 
 permissions:

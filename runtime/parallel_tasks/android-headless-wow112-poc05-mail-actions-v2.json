@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "android-headless-wow112-poc05-mail-actions-v2",
+  "goal": "POC-05: extend the verified renderer-free WoW 1.12.1 build 5875 Android headless client with player gold + inventory snapshots and guarded mailbox take-money/take-item operations while preserving POC-04 reconnect/keepalive behavior.",
+  "branch": "feature/android-headless-wow112-poc05-mail-actions-v2",
+  "base_parallel_sha": "64e19e0767a1345726f6541ade24719d1d9e1fdb",
+  "modules": [
+    "Wow112HeadlessAndroid"
+  ],
+  "dependencies": [
+    "android-headless-wow112-poc"
+  ],
+  "shared_resources": [
+    "WoW 1.12.1 build 5875 headless protocol client"
+  ],
+  "status": "in_progress",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:android-headless-wow112-poc05",
+    "acquired_at": "2026-10-04T18:15:00Z",
+    "heartbeat_at": "2026-10-04T18:15:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:Wow112HeadlessAndroid"
+    ]
+  },
+  "notes": "POC-05 starts from exact accepted POC-04 SHA 3a6926be6e4ac846ade5724347f1e7df88c79728. It reads PLAYER_FIELD_COINAGE and owned item/container update masks, keeps mailbox read-only by default, and allows take-money/take-item only for an explicit mail_id plus WOW112_MAIL_MUTATION_CONFIRM=YES. COD item collection is blocked. Any disconnect or ambiguous result after mutation send is fail-closed and is not automatically retried; after a server-confirmed mutation, reconnects reconcile mailbox state instead of sending the mutation again. No gameplay result yet."
+}
