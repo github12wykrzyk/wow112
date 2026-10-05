@@ -1,4 +1,4 @@
-name: POC07 DE V5 Windows Fast Build
+name: POC07 DE V5.1 Windows Offline Fast Build
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/RESOLVE_DE_GATE_OFFLINE.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V5_WINDOWS.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/START_POC07_DE_V5_WINDOWS.bat'
       - 'probes/Wow112HeadlessAndroid/Cargo.toml'
@@ -53,29 +54,58 @@ jobs:
           $text = $text.Replace('world_poc07_vendorlive::login_poc07_vendorlive', 'world_poc07_delive_v5::login_poc07_delive_v5')
           Set-Content -LiteralPath $main -Value $text -Encoding utf8
 
-      - name: Exact DisenchantID gate smoke
+      - name: Build exact DE seed cache on CI network
+        shell: pwsh
+        run: |
+          $ids = @(
+            1077,1297,1929,1930,1944,2314,2315,2316,2578,2584,2857,2865,2867,2868,
+            2957,2958,2966,2990,2991,3019,3065,3204,3482,3483,3835,3840,3842,4035,
+            4043,4045,4047,4050,4051,4052,4054,4061,4063,4072,4073,4075,4077,4083,
+            4246,4247,4249,4250,4251,4311,4318,4701,4706,4709,4710,4711,4716,4717,
+            20406,20407,20408,41316
+          ) | Sort-Object -Unique
+          $seedCandidates = "$env:RUNNER_TEMP/seed-candidates.csv"
+          $seedSafe = "$env:RUNNER_TEMP/seed-safe.csv"
+          $seedCache = "$env:RUNNER_TEMP/seed-cache.csv"
+          $rows = for ($i = 0; $i -lt $ids.Count; $i++) {
+            [pscustomobject]@{
+              rank=$i; auction_id=(100000+$i); item_id=$ids[$i]; count=1; buyout=1;
+              unit_value=2; gross_value=2; expected_profit=1; page=0; owner_guid=1
+            }
+          }
+          $rows | Export-Csv -LiteralPath $seedCandidates -NoTypeInformation -Encoding utf8
+          & ./probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1 `
+            -CandidateCsv $seedCandidates `
+            -CacheCsv $seedCache `
+            -SafeCsv $seedSafe `
+            -TimeoutSec 20 `
+            -Retries 3
+          $cache = @(Import-Csv $seedCache)
+          $bad = $cache | Where-Object { $_.item_id -eq '20406' }
+          $good = $cache | Where-Object { $_.item_id -eq '41316' }
+          if (-not $bad -or [uint32]$bad.disenchant_id -ne 0) { throw 'Seed gate expected 20406 DisenchantID=0' }
+          if (-not $good -or [uint32]$good.disenchant_id -le 0) { throw 'Seed gate expected 41316 DisenchantID>0' }
+          Write-Host "[V5.1-SEED] PASS requested=$($ids.Count) resolved=$($cache.Count)"
+
+      - name: Offline exact gate smoke
         shell: pwsh
         run: |
           @'
           rank,auction_id,item_id,count,buyout,unit_value,gross_value,expected_profit,page,owner_guid
           0,1,20406,1,2015,19372,19372,17357,40032,1
           1,2,41316,1,100,1090,1090,990,40000,2
-          '@ | Set-Content -LiteralPath "$env:RUNNER_TEMP/candidates.csv" -Encoding utf8
-          & ./probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1 `
-            -CandidateCsv "$env:RUNNER_TEMP/candidates.csv" `
-            -CacheCsv "$env:RUNNER_TEMP/cache.csv" `
-            -SafeCsv "$env:RUNNER_TEMP/safe.csv" `
-            -TimeoutSec 20 `
-            -Retries 3
-          $cache = @(Import-Csv "$env:RUNNER_TEMP/cache.csv")
-          $bad = $cache | Where-Object { $_.item_id -eq '20406' }
-          $good = $cache | Where-Object { $_.item_id -eq '41316' }
-          if (-not $bad -or [uint32]$bad.disenchant_id -ne 0) { throw 'Expected 20406 DisenchantID=0' }
-          if (-not $good -or [uint32]$good.disenchant_id -le 0) { throw 'Expected 41316 DisenchantID>0' }
-          $safe = @(Import-Csv "$env:RUNNER_TEMP/safe.csv")
-          if ($safe.item_id -contains '20406') { throw '20406 leaked through gate' }
-          if (-not ($safe.item_id -contains '41316')) { throw '41316 missing from safe output' }
-          Write-Host '[WINDOWS-V5-GATE-SMOKE] PASS'
+          '@ | Set-Content -LiteralPath "$env:RUNNER_TEMP/offline-candidates.csv" -Encoding utf8
+          & ./probes/Wow112HeadlessAndroid/tools/RESOLVE_DE_GATE_OFFLINE.ps1 `
+            -CandidateCsv "$env:RUNNER_TEMP/offline-candidates.csv" `
+            -CacheCsv "$env:RUNNER_TEMP/seed-cache.csv" `
+            -SafeCsv "$env:RUNNER_TEMP/offline-safe.csv" `
+            -MissingCsv "$env:RUNNER_TEMP/offline-missing.csv"
+          $safe = @(Import-Csv "$env:RUNNER_TEMP/offline-safe.csv")
+          $missing = @(Import-Csv "$env:RUNNER_TEMP/offline-missing.csv")
+          if ($safe.item_id -contains '20406') { throw '20406 leaked through offline gate' }
+          if (-not ($safe.item_id -contains '41316')) { throw '41316 missing from offline safe output' }
+          if ($missing.Count -ne 0) { throw 'Offline smoke unexpectedly has missing IDs' }
+          Write-Host '[WINDOWS-V5.1-OFFLINE-GATE-SMOKE] PASS'
 
       - name: Build native Windows x64
         shell: pwsh
@@ -90,16 +120,17 @@ jobs:
           if (-not (Test-Path -LiteralPath $src)) { throw "Missing exe: $src" }
           $dist = 'dist/poc07-de-v5-windows'
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          New-Item -ItemType Directory -Force -Path "$dist/runtime" | Out-Null
           Copy-Item $src "$dist/wow112-headless-windows.exe"
           Copy-Item 'probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V5_WINDOWS.ps1' $dist
           Copy-Item 'probes/Wow112HeadlessAndroid/tools/START_POC07_DE_V5_WINDOWS.bat' $dist
-          Copy-Item 'probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1' $dist
+          Copy-Item 'probes/Wow112HeadlessAndroid/tools/RESOLVE_DE_GATE_OFFLINE.ps1' $dist
           Copy-Item 'probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs' $dist
-          New-Item -ItemType Directory -Force -Path "$dist/runtime" | Out-Null
-          'item_id,disenchant_id' | Set-Content -LiteralPath "$dist/runtime/DE_DISENCHANT_CACHE.csv" -Encoding utf8
+          Copy-Item "$env:RUNNER_TEMP/seed-cache.csv" "$dist/runtime/DE_DISENCHANT_CACHE.csv"
+          $cacheCount = @(Import-Csv "$dist/runtime/DE_DISENCHANT_CACHE.csv").Count
           $sha = (Get-FileHash "$dist/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           @"
-          POC=07-DE-LIVE-V5-WINDOWS-NATIVE
+          POC=07-DE-LIVE-V5.1-WINDOWS-OFFLINE
           REPOSITORY=$env:GITHUB_REPOSITORY
           BRANCH=$env:GITHUB_REF_NAME
           EXACT_SHA=$env:GITHUB_SHA
@@ -109,18 +140,30 @@ jobs:
           ADB=NOT_USED
           ANDROID=NOT_REQUIRED
           DE_MODEL=V4_STRICT_ITEMLEVEL
-          DISENCHANT_GATE=CAPYDB_EXACT_DISENCHANT_ID
+          DISENCHANT_GATE=OFFLINE_PREFILLED_EXACT_CACHE
+          CACHE_ENTRIES=$cacheCount
+          CACHE_BUILD_NETWORK=GITHUB_ACTIONS_ONLY
+          RUNTIME_HTTP=DISABLED
           GATE_FAIL_CLOSED=YES
+          MISSING_IDS_EXPORT=runtime/V5_MISSING_ITEM_IDS.csv
           "@ | Set-Content -LiteralPath "$dist/BUILD_INFO.txt" -Encoding utf8
+          @"
+          V5.1 OFFLINE FAST TRACK
+          =======================
+          Runtime nie laczy sie z OctoWow ani CapyDB.
+          Exact DisenchantID jest czytany tylko z runtime/DE_DISENCHANT_CACHE.csv.
+          Brak itemu w cache = fail-closed i zapis do runtime/V5_MISSING_ITEM_IDS.csv.
+          ZERO BUY / MUTATION DISABLED.
+          "@ | Set-Content -LiteralPath "$dist/00_START_HERE.txt" -Encoding utf8
           Get-ChildItem $dist -File | ForEach-Object {
             "{0}  {1}" -f ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()), $_.Name
           } | Set-Content -LiteralPath "$dist/SHA256SUMS.txt" -Encoding ascii
           Get-Content "$dist/BUILD_INFO.txt"
 
-      - name: Upload Windows V5 package
+      - name: Upload Windows V5.1 offline package
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112-Windows-POC07-DE-V5-${{ github.sha }}
+          name: WoW112-Windows-POC07-DE-V5.1-OFFLINE-${{ github.sha }}
           path: dist/poc07-de-v5-windows
           if-no-files-found: error
           retention-days: 7
