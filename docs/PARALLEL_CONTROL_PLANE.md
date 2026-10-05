@@ -1,17 +1,31 @@
 # Parallel Control Plane
 
-This layer extends the existing `runtime/parallel_tasks/*.json` coordination model. It does not replace the experiment ledger, candidate gates, provenance, or the serialized Parallel integration queue.
+This layer is now **diagnostic only**. It no longer gates ordinary feature preflight or integration.
 
-## Lease model
+The hot path is deliberately branch-local:
 
-A task can own a TTL lease with an `owner`, `acquired_at`, `heartbeat_at`, `ttl_seconds`, and explicit scopes. Scopes are restricted to declarations already present in the task:
+1. fetch the current integration base;
+2. validate the current feature's own `runtime/parallel_tasks/*.json` record;
+3. validate delivery-profile declarations for the files changed by that feature;
+4. run targeted preflight/build checks;
+5. serialize only the actual trunk movement through the integration queue;
+6. re-run the same branch-local checks against the live base immediately before merge.
 
-- `module:<module>`
-- `resource:<shared_resource>`
+No normal feature run fetches or reconciles every remote `feature/**` ref.
 
-The default TTL is six hours. New feature branches based on a Parallel revision containing `runtime/parallel_control_plane_v1.marker` must hold an active lease while in `coding`, `preflight`, `ready_for_integration`, or `integrating`.
+## Integration mutex
 
-Lease operations:
+The authoritative concurrency mechanism for trunk movement is the GitHub Actions concurrency group:
+
+```text
+parallel-integration-queue
+```
+
+Independent coding and feature preflight remain concurrent. Only integration is serialized. The existing compare-and-swap retry behavior still protects against the integration base moving between validation and push.
+
+## Legacy lease metadata
+
+Task records may still contain a TTL `lease` object (`owner`, timestamps, TTL and scopes). The lease commands remain available for explicit diagnostics or manual coordination:
 
 ```text
 python tools/parallel_task_state.py lease-claim --task-id <id> --owner <session>
@@ -19,33 +33,26 @@ python tools/parallel_task_state.py lease-heartbeat --task-id <id> --owner <sess
 python tools/parallel_task_state.py lease-release --task-id <id> --owner <session>
 ```
 
-A lease may cover all declared task scopes or a safe subset via repeated `--scope`.
+These leases are **not required by the normal preflight/integration hot path** and no global winner election is performed before a feature can compile or enter the serialized integration queue.
 
-## Conflict behavior
+## Manual reconciler
 
-Independent feature coding remains parallel. Before preflight and again immediately before integration, the Control Plane checks all fetched `feature/**` task records.
+`.github/workflows/parallel_control_plane_reconcile.yml` is manual (`workflow_dispatch`) only. When explicitly run, it fetches live `feature/**` refs and reports task/lease state and scope conflicts. It is an audit tool, not a delivery dependency.
 
-When multiple live leases cover the same scope, ownership is deterministic:
+The reconciler remains read-only. Cleanup or task mutation is never inferred from its report.
 
-1. oldest live `acquired_at`;
-2. branch name;
-3. task id.
+## Safety that remains mandatory
 
-Only the winning task may pass the conflicting scope gate. No branch is deleted, reset, or rewritten. When a lease expires it stops blocking other tasks.
+Removing global lease reconciliation does not weaken the delivery gates. The following remain authoritative:
 
-## Reconciler
+- exactly one task record for feature branches after the enforcement marker;
+- delivery-profile routing checks;
+- exact-SHA feature preflight;
+- changed native-module compilation where applicable;
+- serialized integration;
+- live-base revalidation immediately before merge;
+- compare-and-swap retry if the integration base moved;
+- STANDARD/ECONOMY/profile workflows where required;
+- FINAL_PACKAGE, provenance, updater integrity and gameplay evidence.
 
-`.github/workflows/parallel_control_plane_reconcile.yml` runs hourly and on relevant Parallel infrastructure changes. It fetches live `feature/**` refs and emits:
-
-- tracked feature tasks;
-- active and expired leases;
-- required leases that are missing;
-- scope conflicts and deterministic winners.
-
-The reconciler is intentionally read-only. Cleanup or status mutation is never inferred from time alone.
-
-## Compatibility
-
-Feature branches whose merge-base predates `runtime/parallel_control_plane_v1.marker` are grandfathered. This prevents the rollout from breaking already-running work. Existing task records may omit `lease`.
-
-The task record, lease, and reconciler report are coordination evidence only. Exact-SHA feature preflight, STANDARD/ECONOMY/profile workflows, FINAL_PACKAGE, provenance, `parallel-testpoint`, updater integrity, and gameplay evidence remain authoritative.
+The old global Control Plane can still be invoked when diagnosing coordination problems, but it must not be placed back in the normal feature hot path.
