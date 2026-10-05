@@ -42,9 +42,8 @@ $remoteBinary = "/data/local/tmp/wow112-headless-android-probe"
 
 try {
     Write-Host "============================================================"
-    Write-Host "WoW112 TELE-01 - READ-ONLY WHISPER SNIFFER"
-    Write-Host "RX only: NO reply / NO invite / NO cast / NO portal use"
-    Write-Host "Expected evidence: [TELE-WHISPER] sender_guid=... text=..."
+    Write-Host "WoW112 TELE-02 - WHISPER NAME + ONE-SHOT TX"
+    Write-Host "Default: RX + GUID->nick only. Invite/cast/portal disabled."
     Write-Host "============================================================"
     if (Test-Path -LiteralPath $buildInfo) { Get-Content -LiteralPath $buildInfo | ForEach-Object { Write-Host $_ }; Write-Host "" }
     if (-not (Test-Path -LiteralPath $binary)) { throw "Brak binarki w paczce: $binary" }
@@ -53,7 +52,6 @@ try {
     Write-Host "[CONFIG] Auth: $AuthAddr"
     Write-Host "[CONFIG] RealmIndex: $RealmIndex"
     Write-Host "[CONFIG] SoakSeconds: $SoakSeconds (0 = bez limitu)"
-    Write-Host "[CONFIG] ReconnectLimit: $ReconnectLimit"
     if ([string]::IsNullOrWhiteSpace($WorldAddr)) { Write-Host "[CONFIG] World: from realm list" } else { Write-Host "[CONFIG] World: $WorldAddr" }
 
     Write-Host "[1/4] ADB: $adb"
@@ -75,6 +73,7 @@ try {
     $password = $credential.GetNetworkCredential().Password
     if ([string]::IsNullOrEmpty($password)) { throw "Haslo WoW nie moze byc puste." }
     $character = (Read-Host "Postac [Enter=pierwsza postac]").Trim()
+    $testReply = (Read-Host "Jednorazowa odpowiedz testowa [Enter=TX disabled]").Trim()
 
     $assignments = New-Object 'System.Collections.Generic.List[string]'
     Add-EnvAssignment $assignments "WOW112_MODE" "tele-sniffer"
@@ -87,18 +86,26 @@ try {
     Add-EnvAssignment $assignments "WOW112_RECONNECT_DELAY_MS" "0"
     Add-EnvAssignment $assignments "WOW112_CHARACTER" $character
     Add-EnvAssignment $assignments "WOW112_WORLD_ADDR" $WorldAddr
+    Add-EnvAssignment $assignments "WOW112_TELE_TEST_REPLY" $testReply
 
     $remoteCommand = (($assignments -join " ") + " " + $remoteBinary)
-    Write-Host "[4/4] Start TELE-01. Po zalogowaniu wyslij whisper na te postac z innej postaci."
+    Write-Host "[4/4] Start TELE-02. Wyslij do tej postaci whisper z drugiego klienta."
+    Write-Host "[EXPECT RX] [TELE-NAME] resolved ... + [TELE-WHISPER] sender_name=..."
+    if ([string]::IsNullOrWhiteSpace($testReply)) {
+        Write-Host "[TX] disabled"
+    } else {
+        Write-Host "[TX] ARMED ONCE: pierwszy poprawnie rozwiazany whisper dostanie jedna odpowiedz."
+        Write-Host "[EXPECT TX] [TELE-TX] ... result=sent_once oraz [TELE-TX-ECHO] ..."
+    }
     & $adb shell $remoteCommand
     $probeExit = $LASTEXITCODE
 
     $password = $null
     $credential = $null
     if ($securePassword) { $securePassword.Dispose() }
-    if ($probeExit -ne 0) { throw "TELE-01 zakonczyl sie kodem $probeExit." }
+    if ($probeExit -ne 0) { throw "TELE-02 zakonczyl sie kodem $probeExit." }
     Write-Host ""
-    Write-Host "TELE-01 zakonczony kodem 0."
+    Write-Host "TELE-02 zakonczony kodem 0."
 }
 catch {
     Write-Host ""

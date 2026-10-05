@@ -3,6 +3,114 @@ include!("world.rs");
 use wow_world_messages::vanilla::SMSG_MESSAGECHAT_ChatType;
 
 const SMSG_MESSAGECHAT_OPCODE: u16 = 0x0096;
+const CMSG_MESSAGECHAT_OPCODE: u32 = 0x0095;
+const CMSG_NAME_QUERY_OPCODE: u32 = 0x0050;
+const SMSG_NAME_QUERY_RESPONSE_OPCODE: u16 = 0x0051;
+const CHAT_TYPE_WHISPER: u32 = 6;
+const LANGUAGE_UNIVERSAL: u32 = 0;
+
+fn tele_read_cstring(payload: &[u8], start: usize) -> Result<(String, usize), String> {
+    let rest = payload
+        .get(start..)
+        .ok_or_else(|| format!("cstring offset out of range: {start}"))?;
+    let nul = rest
+        .iter()
+        .position(|value| *value == 0)
+        .ok_or_else(|| format!("unterminated cstring at offset {start}"))?;
+    let value = String::from_utf8_lossy(&rest[..nul]).into_owned();
+    Ok((value, start + nul + 1))
+}
+
+fn tele_parse_name_query_response(payload: &[u8]) -> Result<(u64, String), String> {
+    if payload.len() < 10 {
+        return Err(format!("name response too short: {}", payload.len()));
+    }
+    let guid = u64::from_le_bytes(
+        payload[0..8]
+            .try_into()
+            .map_err(|_| "invalid name response guid".to_string())?,
+    );
+    let (character_name, next) = tele_read_cstring(payload, 8)?;
+    let (_realm_name, _next) = tele_read_cstring(payload, next)?;
+    if character_name.is_empty() {
+        return Err(format!("empty character name for guid=0x{guid:016X}"));
+    }
+    Ok((guid, character_name))
+}
+
+fn tele_send_name_query(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    guid: u64,
+) -> Result<(), String> {
+    write_encrypted_raw(
+        stream,
+        crypto.encrypter(),
+        CMSG_NAME_QUERY_OPCODE,
+        &guid.to_le_bytes(),
+    )?;
+    println!("[TELE-NAME] query guid=0x{guid:016X}");
+    Ok(())
+}
+
+fn tele_send_whisper(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    target: &str,
+    message: &str,
+) -> Result<(), String> {
+    if target.is_empty() || target.as_bytes().contains(&0) {
+        return Err("invalid TELE whisper target".to_string());
+    }
+    if message.is_empty() || message.as_bytes().contains(&0) {
+        return Err("invalid TELE whisper message".to_string());
+    }
+    if message.len() > 255 {
+        return Err(format!("TELE test whisper too long: {} bytes", message.len()));
+    }
+
+    let mut payload = Vec::with_capacity(8 + target.len() + 1 + message.len() + 1);
+    payload.extend_from_slice(&CHAT_TYPE_WHISPER.to_le_bytes());
+    payload.extend_from_slice(&LANGUAGE_UNIVERSAL.to_le_bytes());
+    payload.extend_from_slice(target.as_bytes());
+    payload.push(0);
+    payload.extend_from_slice(message.as_bytes());
+    payload.push(0);
+
+    write_encrypted_raw(
+        stream,
+        crypto.encrypter(),
+        CMSG_MESSAGECHAT_OPCODE,
+        &payload,
+    )?;
+    println!("[TELE-TX] target={target:?} text={message:?} result=sent_once");
+    Ok(())
+}
+
+fn tele_emit_resolved_whisper(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    sequence: u64,
+    guid: u64,
+    sender_name: &str,
+    text: &str,
+    test_reply: &str,
+    reply_sent: &mut bool,
+) -> Result<(), String> {
+    println!(
+        "[TELE-WHISPER] seq={} sender_name={:?} sender_guid=0x{:016X} text={:?}",
+        sequence,
+        sender_name,
+        guid,
+        text
+    );
+
+    if !test_reply.is_empty() && !*reply_sent {
+        tele_send_whisper(stream, crypto, sender_name, test_reply)?;
+        *reply_sent = true;
+    }
+    Ok(())
+}
 
 fn tele_sniffer_loop(
     stream: &mut TcpStream,
@@ -23,9 +131,19 @@ fn tele_sniffer_loop(
     let mut ping_sequence = 1u32;
     let mut awaiting_pong: Option<(u32, Instant)> = None;
     let mut whisper_count = 0u64;
+    let mut name_cache: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
+    let mut pending_whispers: std::collections::HashMap<u64, Vec<(u64, String)>> =
+        std::collections::HashMap::new();
+    let test_reply = std::env::var("WOW112_TELE_TEST_REPLY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    let mut reply_sent = false;
 
     println!(
-        "[TELE] WHISPER SNIFFER ACTIVE rx_only=yes chat_tx=disabled invite=disabled cast=disabled portal_use=disabled duration={}",
+        "[TELE] WHISPER SNIFFER ACTIVE rx_only=no name_resolution=cmsg-name-query chat_tx={} invite=disabled cast=disabled portal_use=disabled duration={}",
+        if test_reply.is_empty() { "disabled" } else { "armed_once" },
         if soak_seconds == 0 {
             "infinite".to_string()
         } else {
@@ -70,6 +188,37 @@ fn tele_sniffer_loop(
                     continue;
                 }
 
+                if opcode == SMSG_NAME_QUERY_RESPONSE_OPCODE {
+                    match tele_parse_name_query_response(&payload) {
+                        Ok((guid, character_name)) => {
+                            println!(
+                                "[TELE-NAME] resolved guid=0x{:016X} name={:?}",
+                                guid, character_name
+                            );
+                            name_cache.insert(guid, character_name.clone());
+                            if let Some(items) = pending_whispers.remove(&guid) {
+                                for (sequence, text) in items {
+                                    tele_emit_resolved_whisper(
+                                        stream,
+                                        crypto,
+                                        sequence,
+                                        guid,
+                                        &character_name,
+                                        &text,
+                                        &test_reply,
+                                        &mut reply_sent,
+                                    )?;
+                                }
+                            }
+                        }
+                        Err(error) => println!(
+                            "[TELE-DIAG] name response skipped payload={} reason={error}",
+                            payload.len()
+                        ),
+                    }
+                    continue;
+                }
+
                 if opcode != SMSG_MESSAGECHAT_OPCODE {
                     continue;
                 }
@@ -87,14 +236,40 @@ fn tele_sniffer_loop(
 
                 if let ServerOpcodeMessage::SMSG_MESSAGECHAT(chat) = message {
                     let text = chat.message;
-                    if let SMSG_MESSAGECHAT_ChatType::Whisper { sender2 } = chat.chat_type {
-                        whisper_count = whisper_count.saturating_add(1);
-                        println!(
-                            "[TELE-WHISPER] seq={} sender_guid=0x{:016X} text={:?}",
-                            whisper_count,
-                            sender2.guid(),
-                            text
-                        );
+                    match chat.chat_type {
+                        SMSG_MESSAGECHAT_ChatType::Whisper { sender2 } => {
+                            whisper_count = whisper_count.saturating_add(1);
+                            let guid = sender2.guid();
+                            if let Some(sender_name) = name_cache.get(&guid).cloned() {
+                                tele_emit_resolved_whisper(
+                                    stream,
+                                    crypto,
+                                    whisper_count,
+                                    guid,
+                                    &sender_name,
+                                    &text,
+                                    &test_reply,
+                                    &mut reply_sent,
+                                )?;
+                            } else {
+                                let first_pending = !pending_whispers.contains_key(&guid);
+                                pending_whispers
+                                    .entry(guid)
+                                    .or_default()
+                                    .push((whisper_count, text));
+                                if first_pending {
+                                    tele_send_name_query(stream, crypto, guid)?;
+                                }
+                            }
+                        }
+                        SMSG_MESSAGECHAT_ChatType::WhisperInform { sender2 } => {
+                            println!(
+                                "[TELE-TX-ECHO] target_guid=0x{:016X} text={:?}",
+                                sender2.guid(),
+                                text
+                            );
+                        }
+                        _ => {}
                     }
                 }
             }
