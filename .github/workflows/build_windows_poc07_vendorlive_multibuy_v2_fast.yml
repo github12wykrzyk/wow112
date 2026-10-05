@@ -1,0 +1,76 @@
+name: POC07 VendorLive MultiBuy V2 Neighborhood Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v2_neighborhood_patch.py'
+      - '.github/workflows/build_windows_poc07_vendorlive_multibuy_v2_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate full-sweep base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate multibuy base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_names_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate V2 neighborhood revalidation
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v2_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $a=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs -Pattern 'REVALIDATE PASS' -Quiet
+          $b=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs -Pattern 'REVALIDATE_RADIUS: u32 = 5' -Quiet
+          $c=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs -Pattern 'login_poc07_vendorlive_multibuy_v2' -Quiet
+          if (-not ($a -and $b -and $c)) { throw 'V2 neighborhood source markers missing' }
+          Write-Host '[VENDOR-MULTIBUY-V2] GENERATOR PASS'
+
+      - name: Select V2 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_multibuy_v2;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_multibuy_v2::login_poc07_vendorlive_multibuy_v2')
+          Set-Content $p $t -Encoding utf8
+          if ((Get-Content $p -Raw) -notmatch 'world_poc07_vendorlive_multibuy_v2::login_poc07_vendorlive_multibuy_v2') { throw 'V2 entrypoint not selected' }
+          Write-Host '[VENDOR-MULTIBUY-V2] ENTRYPOINT PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendor-multibuy-v2'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "POC=POC07-VENDORLIVE-MULTIBUY-V2-NEIGHBORHOOD`nEXACT_SHA=$env:GITHUB_SHA`nBINARY_SHA256=$h`nREVALIDATION=ORIGINAL_PAGE_PLUS_MINUS_5`nEXACT_TUPLE_REQUIRED=AUCTION_ID_ITEM_ID_COUNT_BUYOUT`nLIVE_ITEM_NAMES=YES`nNO_AUTO_RETRY_AFTER_SEND=YES" | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDORLIVE-MULTIBUY-V2-${{ github.sha }}
+          path: dist/vendor-multibuy-v2
+          if-no-files-found: error
+          retention-days: 7
