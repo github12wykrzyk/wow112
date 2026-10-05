@@ -30,7 +30,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host '[POC08-E-SMOKE] patch py_compile PASS'
 
-      - name: Generate V5.3 base + exact DEID cache
+      - name: Generate V5.3 base and DEID cache
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
@@ -48,7 +48,7 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py --cache-csv "$env:RUNNER_TEMP/poc08-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Generate POC08-E guarded source
+      - name: Generate guarded E source
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
@@ -69,26 +69,13 @@ jobs:
         shell: pwsh
         run: |
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_e_buyone.rs'
-          $required=@(
-            'WOW112_POC08_E_ACTION',
-            'WOW112_DE_BUY_CONFIRM',
-            'POC08_E_DIRTY_JOURNAL_BLOCK',
-            'status=PREPARED',
-            'status=COMMITTED',
-            'TARGETED REVALIDATE PASS',
-            'mail.stack == target.count',
-            'c.record.owner_guid != player_guid',
-            'hard_max_purchases=1',
-            'poc06_perform_auction_action',
-            'GUARDED DE BUY-ONE PASS',
-            'NO_DE_CANDIDATE_PASS'
-          )
+          $required=@('WOW112_POC08_E_ACTION','WOW112_DE_BUY_CONFIRM','POC08_E_DIRTY_JOURNAL_BLOCK','status=PREPARED','status=COMMITTED','TARGETED REVALIDATE PASS','mail.stack == target.count','c.record.owner_guid != player_guid','hard_max_purchases=1','poc06_perform_auction_action','GUARDED DE BUY-ONE PASS','NO_DE_CANDIDATE_PASS')
           foreach($m in $required){ if(-not (Select-String -Path $p -SimpleMatch $m -Quiet)){ throw "POC08-E safety marker missing: $m" } }
           if(-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '20406 => Some\(0\)' -Quiet)){ throw 'Twilight DE=0 regression missing' }
           if(-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '41316 => Some\([1-9][0-9]*\)' -Quiet)){ throw 'known-positive DE regression missing' }
           Write-Host '[POC08-E-SMOKE] static transaction guards PASS'
 
-      - name: Select POC08-E entrypoint
+      - name: Select E entrypoint
         shell: pwsh
         run: |
           $p='probes/Wow112HeadlessAndroid/src/main.rs'
@@ -114,24 +101,19 @@ jobs:
           if(-not (Test-Path $exe)){ throw 'EXE missing after build' }
           $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           Write-Host "[POC08-E-SMOKE] exe_sha256=$hash size=$((Get-Item $exe).Length)"
-
           Remove-Item Env:WOW112_ACCOUNT -ErrorAction SilentlyContinue
           Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
           $o=& $exe 2>&1; $c=$LASTEXITCODE
           if($c -ne 2 -or ($o -join "`n") -notmatch 'missing WOW112_ACCOUNT'){ throw "missing-account fail-fast failed exit=$c output=$($o -join ' | ')" }
-          Write-Host '[POC08-E-SMOKE] missing account fail-closed PASS'
-
           $env:WOW112_ACCOUNT='octowar1'
           Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
           $o=& $exe 2>&1; $c=$LASTEXITCODE
           if($c -ne 2 -or ($o -join "`n") -notmatch 'missing WOW112_PASSWORD'){ throw "missing-password fail-fast failed exit=$c output=$($o -join ' | ')" }
-          Write-Host '[POC08-E-SMOKE] missing password fail-closed PASS'
-
           $env:WOW112_PASSWORD='smoke-not-a-real-password'
           $env:WOW112_AUTH_ADDR='127.0.0.1:9'
           $o=& $exe 2>&1; $c=$LASTEXITCODE
           if($c -ne 2 -or ($o -join "`n") -notmatch 'auth connect .* failed'){ throw "local-refused startup path failed exit=$c output=$($o -join ' | ')" }
-          Write-Host '[POC08-E-SMOKE] native startup/network error path PASS'
+          Write-Host '[POC08-E-SMOKE] native fail-fast paths PASS'
 
       - name: Stage artifact
         shell: pwsh
@@ -149,18 +131,8 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_e_buyone.rs "$d/source/world_poc08_e_buyone.rs"
           Copy-Item probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs "$d/source/poc08_de_cache_generated.rs"
           $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
-          @"
-POC=08-E-GUARDED-DE-BUY-ONE
-EXACT_SHA=$env:GITHUB_SHA
-EXE_SHA256=$h
-MAX_PURCHASES=1
-DEFAULT_MAX_SINGLE_BUY=5g
-REVALIDATION=TARGETED_EXACT_NAME_AND_TUPLE
-FINAL_SUCCESS=SERVER_ACK_AND_EXACT_NEW_MAIL_STACK
-DIRTY_JOURNAL=FAIL_CLOSED
-DE_UNKNOWN=FAIL_CLOSED
-DE_DISTRIBUTION=REFERENCE_CLASSIC_NOT_OCTO_VERIFIED
-"@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          $info=@('POC=08-E-GUARDED-DE-BUY-ONE',"EXACT_SHA=$env:GITHUB_SHA","EXE_SHA256=$h",'MAX_PURCHASES=1','DEFAULT_MAX_SINGLE_BUY=5g','REVALIDATION=TARGETED_EXACT_NAME_AND_TUPLE','FINAL_SUCCESS=SERVER_ACK_AND_EXACT_NEW_MAIL_STACK','DIRTY_JOURNAL=FAIL_CLOSED','DE_UNKNOWN=FAIL_CLOSED','DE_DISTRIBUTION=REFERENCE_CLASSIC_NOT_OCTO_VERIFIED')
+          $info | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
