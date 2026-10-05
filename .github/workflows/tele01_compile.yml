@@ -1,6 +1,6 @@
-name: TELE-01 compile gate
+name: TELE-01 Android smoke bundle
 
-# Temporary branch-only exact-SHA compile gate for TELE-01.
+# Temporary branch-only exact-SHA build gate for TELE-01.
 on:
   push:
     branches:
@@ -14,17 +14,82 @@ permissions:
   contents: read
 
 concurrency:
-  group: tele01-compile-${{ github.ref }}
+  group: tele01-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  cargo-check:
+  build-smoke-bundle:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: PowerShell launcher syntax check
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Cargo check TELE-01
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+      - name: Build Android x86_64 executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --release
+      - name: Stage TELE-01 smoke bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$(find probes/Wow112HeadlessAndroid/target -type f -name wow112-headless-android-probe -perm -111 -print -quit)"
+          test -n "$BIN"
+          OUT="dist/tele01-smoke"
+          mkdir -p "$OUT"
+          cp "$BIN" "$OUT/wow112-headless-android-probe"
+          cp probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.ps1 "$OUT/RUN_TELE_SNIFFER.ps1"
+          cp probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.cmd "$OUT/RUN_TELE_SNIFFER.cmd"
+          BIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
+          cat > "$OUT/BUILD_INFO.txt" <<INFO
+          TELE_STAGE=01
+          REPOSITORY=${GITHUB_REPOSITORY}
+          BRANCH=${GITHUB_REF_NAME}
+          EXACT_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          TARGET=x86_64-linux-android
+          ANDROID_API=21
+          MODE=tele-sniffer
+          RX_ONLY=yes
+          BINARY_SHA256=${BIN_SHA}
+          INFO
+          (
+            cd "$OUT"
+            sha256sum wow112-headless-android-probe RUN_TELE_SNIFFER.ps1 RUN_TELE_SNIFFER.cmd BUILD_INFO.txt > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+      - name: Upload TELE-01 smoke bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-TELE01-${{ github.sha }}
+          path: dist/tele01-smoke
+          if-no-files-found: error
+          retention-days: 14
