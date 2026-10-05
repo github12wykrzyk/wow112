@@ -1,0 +1,175 @@
+name: POC08-E0 Full DEID Coverage Audit Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_e0_missing_item_ids.txt'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_e0_coverage_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_E0_COVERAGE_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC08_E0_COVERAGE_WINDOWS.bat'
+      - '.github/workflows/build_windows_poc08_e0_coverage_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate V5.3 base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build legacy anchor cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/e0-base-cache.csv" --unresolved "$env:RUNNER_TEMP/e0-base-unresolved.csv" --workers 16 --timeout 15 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache "$env:RUNNER_TEMP/e0-base-cache.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/e0-legacy-cache.csv" --unresolved "$env:RUNNER_TEMP/e0-legacy-unresolved.csv" --workers 8 --timeout 15 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build fresh 2348-ID provenance request set
+        shell: python
+        run: |
+          import csv, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          legacy = root / 'e0-legacy-cache.csv'
+          ids = set()
+          with legacy.open(encoding='utf-8-sig', newline='') as f:
+              for row in csv.DictReader(f): ids.add(int(row['item_id']))
+          extra = pathlib.Path('probes/Wow112HeadlessAndroid/tools/poc08_e0_missing_item_ids.txt')
+          ids.update(int(x) for x in extra.read_text(encoding='utf-8').splitlines() if x.strip())
+          if len(ids) != 2348:
+              raise SystemExit(f'POC08-E0 expected 2348 provenance IDs, got {len(ids)}')
+          (root / 'e0-all-ids.txt').write_text('\n'.join(map(str, sorted(ids))) + '\n', encoding='utf-8')
+          (root / 'e0-empty-seed.csv').write_text('item_id,disenchant_id,source\n', encoding='utf-8')
+          print(f'[POC08-E0-CI] REQUEST SET PASS ids={len(ids)}')
+
+      - name: Fresh-resolve DEID provenance
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache "$env:RUNNER_TEMP/e0-empty-seed.csv" --missing-ids "$env:RUNNER_TEMP/e0-all-ids.txt" --output-cache "$env:RUNNER_TEMP/poc08-e0-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-e0-unresolved.csv" --workers 32 --timeout 10 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py --cache-csv "$env:RUNNER_TEMP/poc08-e0-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Provenance coverage assertions
+        shell: python
+        run: |
+          import csv, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          cache = list(csv.DictReader((root / 'poc08-e0-cache.csv').open(encoding='utf-8-sig')))
+          unresolved = list(csv.DictReader((root / 'poc08-e0-unresolved.csv').open(encoding='utf-8-sig')))
+          sources = {}
+          for row in cache:
+              sources[row['source']] = sources.get(row['source'], 0) + 1
+          by_id = {int(r['item_id']): int(r['disenchant_id']) for r in cache}
+          for blocked in (20406, 20407, 20408):
+              assert by_id.get(blocked) == 0, (blocked, by_id.get(blocked))
+          assert by_id.get(41316, 0) > 0, by_id.get(41316)
+          print(f'[POC08-E0-CI] PROVENANCE PASS resolved={len(cache)}/2348 unresolved={len(unresolved)} sources={sources}')
+
+      - name: Generate POC08-E0 source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_e0_coverage_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs probes/Wow112HeadlessAndroid/src/world_poc08_e0_coverage.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Select POC08-E0 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_e0_coverage;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_e0_coverage::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08-E0]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08E0 COVERAGE AUDIT SESSION PASS')
+          $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08E0 full DEID coverage audit')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Static read-only + regression assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_e0_coverage.rs'
+          foreach ($marker in @('mutation=DISABLED','POC08-E0-COVERAGE','deid_status','deid_source','poc08_exact_disenchant_source','loss_probability','record.owner_guid == player_guid','record.count == 1')) {
+            if (-not (Select-String -Path $p -SimpleMatch -Pattern $marker -Quiet)) { throw "POC08-E0 marker missing: $marker" }
+          }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '20406 => Some\(0\)' -Quiet)) { throw 'Twilight regression 20406 missing' }
+          if (-not (Select-String -Path $p -SimpleMatch -Pattern 'hard read-only; BUY is disabled' -Quiet)) { throw 'read-only guard missing' }
+          Write-Host '[POC08-E0-CI] READ-ONLY + COVERAGE + REGRESSION PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-e0'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_E0_COVERAGE_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_E0_COVERAGE_WINDOWS.bat $d
+          Copy-Item "$env:RUNNER_TEMP/poc08-e0-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-e0-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item "$env:RUNNER_TEMP/e0-all-ids.txt" "$d/runtime/DEID_REQUEST_SET_2348.txt"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_e0_coverage.rs "$d/source/world_poc08_e0_coverage.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs "$d/source/poc08_de_cache_generated.rs"
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-E0-FULL-DEID-COVERAGE-AUDIT
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          MUTATION=DISABLED
+          ZERO_BUY=YES
+          DEID_REQUESTED=2348
+          DEID_PROVENANCE=TRACKED
+          UNKNOWN=FAIL_CLOSED
+          DE_REFERENCE=CLASSIC_NOT_OCTO_VERIFIED
+          MATERIAL_SAFE=DEPTH_PLUS_HISTORY
+          OWN_LISTINGS=EXCLUDED
+          DE_MIN_SAFE_PROFIT_DEFAULT=2000
+          DE_MIN_SAFE_ROI_BPS_DEFAULT=2000
+          DE_MAX_PLOSS_BPS_DEFAULT=4000
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          POC08-E0 is READ ONLY.
+          Run START_POC08_E0_COVERAGE_WINDOWS.bat.
+          This build refreshes DEID coverage/provenance for the full observed item set and keeps unknowns fail-closed.
+          It does NOT buy anything. Reference disenchant loot distributions are still not Octo-authoritative.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC08-E0-COVERAGE-${{ github.sha }}
+          path: dist/poc08-e0
+          if-no-files-found: error
+          retention-days: 7
