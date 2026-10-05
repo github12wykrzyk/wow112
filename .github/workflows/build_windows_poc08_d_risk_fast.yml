@@ -1,0 +1,139 @@
+name: POC08-D Discrete DE Risk Audit Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_D_RISK_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC08_D_RISK_WINDOWS.bat'
+      - '.github/workflows/build_windows_poc08_d_risk_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate V5.3 base + exact DEID cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/poc08-base-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-base-unresolved.csv" --workers 16 --timeout 15 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache "$env:RUNNER_TEMP/poc08-base-cache.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/poc08-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-unresolved.csv" --workers 4 --timeout 15 --retries 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py --cache-csv "$env:RUNNER_TEMP/poc08-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate POC08-D source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs'
+          foreach ($marker in @('POC08-D-RISK','de_ploss_bps','de_roi_bps','de_risk_pass','mutation=DISABLED','NO_CANDIDATE_PASS')) {
+            if (-not (Select-String -Path $p -Pattern $marker -Quiet)) { throw "POC08-D marker missing: $marker" }
+          }
+          Write-Host '[POC08-D-CI] source markers PASS'
+
+      - name: Select POC08-D entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_d_risk;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_d_risk::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08-D]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08D RISK AUDIT SESSION PASS')
+          $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08D discrete DE risk audit')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Static safety + regression assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs'
+          if (-not (Select-String -Path $p -Pattern 'hard read-only; BUY is disabled' -Quiet)) { throw 'read-only guard missing' }
+          if (-not (Select-String -Path $p -Pattern 'mutation=DISABLED' -Quiet)) { throw 'mutation disabled marker missing' }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '20406 => Some\(0\)' -Quiet)) { throw 'Twilight regression 20406 missing' }
+          if (-not (Select-String -Path $p -Pattern 'record.owner_guid == player_guid' -Quiet)) { throw 'own-listing exclusion missing' }
+          if (-not (Select-String -Path $p -Pattern 'record.count == 1' -Quiet)) { throw 'stacked-DE fail-closed guard missing' }
+          if (-not (Select-String -Path $p -Pattern 'loss_probability' -Quiet)) { throw 'P(loss) model missing' }
+          Write-Host '[POC08-D-CI] READ-ONLY + REGRESSION + RISK GUARDS PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-d'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_D_RISK_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_D_RISK_WINDOWS.bat $d
+          Copy-Item "$env:RUNNER_TEMP/poc08-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs "$d/source/world_poc08_d_risk.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs "$d/source/poc08_de_cache_generated.rs"
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-D-DISCRETE-DE-RISK-AUDIT
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          MUTATION=DISABLED
+          ZERO_BUY=YES
+          ZERO_CANDIDATES=NORMAL_PASS
+          DE_ID_GATE=IN_RUNTIME_OFFLINE_FAIL_CLOSED
+          DE_REFERENCE=CLASSIC_NOT_OCTO_VERIFIED
+          MATERIAL_SAFE=DEPTH_PLUS_HISTORY
+          OWN_LISTINGS=EXCLUDED
+          DE_MIN_SAFE_PROFIT_DEFAULT=2000
+          DE_MIN_SAFE_ROI_BPS_DEFAULT=2000
+          DE_MAX_PLOSS_BPS_DEFAULT=4000
+          PLOSS=DISCRETE_REFERENCE_OUTCOME_WITH_CONSERVATIVE_ROUNDING
+          STACKED_DE=FAIL_CLOSED
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          POC08-D is READ ONLY.
+          Run START_POC08_D_RISK_WINDOWS.bat.
+          It adds discrete P(loss), SAFE ROI and SAFE profit gates on top of POC08-C PriceBook.
+          Default audit gates: >=20s SAFE profit, >=20% SAFE ROI, <=40% P(loss).
+          Reference DE distributions are still NOT_OCTO_VERIFIED, therefore this build cannot buy.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC08-D-RISK-${{ github.sha }}
+          path: dist/poc08-d
+          if-no-files-found: error
+          retention-days: 7
