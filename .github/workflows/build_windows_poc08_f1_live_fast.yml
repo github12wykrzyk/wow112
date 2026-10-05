@@ -4,7 +4,9 @@ on:
   push:
     branches: [feature/poc08-f2-de-hardening]
     paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_F2_DE_2PASS_WINDOWS.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/START_POC08_F2_DE_2PASS_WINDOWS.bat'
       - '.github/workflows/build_windows_poc08_f1_live_fast.yml'
@@ -38,9 +40,9 @@ jobs:
         run: |
           python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Host '[POC08-F2-CI] pilot cache PASS coverage=intentionally-minimal DE=9823'
+          Write-Host '[POC08-F2-CI] pilot cache PASS coverage=intentionally-minimal DE=9823 provenance=OctoWow'
 
-      - name: Generate POC08-F1 base source
+      - name: Generate and harden POC08-F2 source
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
@@ -61,6 +63,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Select F2 entrypoint
         shell: pwsh
@@ -74,18 +78,20 @@ jobs:
           $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08F2 exact audited DE buy-one')
           Set-Content $p $t -Encoding utf8
 
-      - name: Static mutation safety assertions
+      - name: Static mutation and valuation safety assertions
         shell: pwsh
         run: |
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs'
           $main='probes/Wow112HeadlessAndroid/src/main.rs'
-          foreach ($marker in @('WOW112_F2_EXPECT_AUCTION_ID','WOW112_F2_EXPECT_ITEM_ID','WOW112_F2_EXPECT_BUYOUT','WOW112_F2_EXPECT_COUNT','[POC08-F2] EXACT AUDIT TARGET PASS','audited-exact-tuple+fresh-page','poc07_buy_exact_one','hard_max_purchases=1')) {
+          foreach ($marker in @('WOW112_F2_EXPECT_AUCTION_ID','WOW112_F2_EXPECT_ITEM_ID','WOW112_F2_EXPECT_BUYOUT','WOW112_F2_EXPECT_COUNT','[POC08-F2] EXACT AUDIT TARGET PASS','audited-exact-tuple+fresh-page','poc07_buy_exact_one','hard_max_purchases=1','let mut truncated = false;','truncated={}')) {
             if (-not (Select-String -Path $p -Pattern $marker -SimpleMatch -Quiet)) { throw "missing F2 safety marker: $marker" }
           }
+          if (-not (Select-String -Path $p -Pattern 'poc08_de_source_confidence(c.record.item_id) >= 2' -SimpleMatch -Quiet)) { throw 'F2 provenance>=2 gate missing' }
           if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'AH mutation retry blocker missing from main' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => Some\(5\)' -Quiet)) { throw 'DE pilot item 9823 missing' }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => 2' -SimpleMatch -Quiet)) { throw 'DE pilot Octo provenance confidence=2 missing' }
           if (Select-String -Path $p -Pattern 'let (auctioneer_candidates, _mailbox_guid)' -SimpleMatch -Quiet) { throw 'mailbox_guid integration regression' }
-          Write-Host '[POC08-F2-CI] MUTATION SAFETY ASSERTIONS PASS'
+          Write-Host '[POC08-F2-CI] MUTATION+VALUATION SAFETY ASSERTIONS PASS'
 
       - name: Build native Windows
         shell: pwsh
@@ -104,7 +110,7 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs "$d/source/world_poc08_f2_live.rs"
           $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           @"
-          POC=08-F2-EXACT-AUDITED-DE-2PASS
+          POC=08-F2-EXACT-AUDITED-DE-2PASS-HARDENED
           EXACT_SHA=$env:GITHUB_SHA
           BINARY_SHA256=$h
           PASS1=AUDIT_ONLY_ZERO_MUTATION
@@ -112,15 +118,19 @@ jobs:
           HARD_MAX_PURCHASES=1
           FRESH_EXACT_AUCTION_PRECHECK=YES
           NO_AUTO_RETRY_AFTER_BUY_SEND=YES
+          MATERIAL_BOOK_TRUNCATION=FAIL_CLOSED
+          DE_PROVENANCE_MIN_CONFIDENCE=2
           DE_PILOT_ITEM=9823
           DE_PILOT_DEID=5
           DE_PILOT_HARD_MAX_BUYOUT=1500
           DE_MODEL_DISAGREEMENT_BPS=0
           "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
           @'
-          POC08-F2 performs a two-pass guarded DE pilot.
+          POC08-F2 hardened performs a two-pass guarded DE pilot.
           PASS 1 is read-only and displays the exact candidate.
           PASS 2 can buy only that exact auction/item/buyout/count if it still passes every risk gate.
+          Material valuation FAILS CLOSED if a material result set is truncated by the page cap.
+          Pilot provenance requires Octo-web confidence or stronger.
           The existing fresh-page exact precheck runs again immediately before the send.
           After AH_MUTATION_UNCERTAIN: DO NOT rerun until AH/mail state is checked.
           '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
@@ -128,7 +138,7 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112-Windows-POC08-F2-EXACT-DE-${{ github.sha }}
+          name: WoW112-Windows-POC08-F2-HARDENED-${{ github.sha }}
           path: dist/poc08-f2
           if-no-files-found: error
           retention-days: 7
