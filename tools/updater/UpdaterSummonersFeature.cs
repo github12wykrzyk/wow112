@@ -29,8 +29,14 @@ namespace WoW112Updater
                 var form = System.Windows.Forms.Application.OpenForms.OfType<MainForm>().FirstOrDefault();
                 if (form == null || form.IsDisposed || form.Disposing) return;
                 if (!form.dashboardReady) return;
-                timer.Stop();
+
                 form.AttachSummonersFeature();
+                foreach (Form dialog in System.Windows.Forms.Application.OpenForms)
+                {
+                    if (dialog == null || dialog.IsDisposed || dialog.Disposing) continue;
+                    if (string.Equals(dialog.Text, "MULTIBOX — World of Warcraft 1.12.1", StringComparison.Ordinal))
+                        form.AttachSummonersDialogButton(dialog);
+                }
             };
             timer.Start();
             return timer;
@@ -49,7 +55,22 @@ namespace WoW112Updater
             item.Click += delegate { ShowSummonersConfig(); };
             menu.Items.Add(item);
             multibox.ContextMenuStrip = menu;
-            Log("MULTIBOX SUMMONERS gotowy: PPM na MULTIBOX -> Summoners...");
+            Log("MULTIBOX SUMMONERS gotowy: przycisk w oknie MULTIBOX + PPM -> Summoners...");
+        }
+
+        private void AttachSummonersDialogButton(Form dialog)
+        {
+            if (dialog.Controls.Find("wow112SummonersButton", true).Length != 0) return;
+            var button = new Button
+            {
+                Name = "wow112SummonersButton",
+                Text = "SUMMONERS",
+                Location = new Point(260, 414),
+                Size = new Size(210, 34)
+            };
+            button.Click += delegate { ShowSummonersConfig(); };
+            dialog.Controls.Add(button);
+            button.BringToFront();
         }
 
         private string SummonersConfigPath()
