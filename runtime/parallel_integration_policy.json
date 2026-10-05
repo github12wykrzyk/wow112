@@ -1,32 +1,37 @@
 {
-  "schema_version": 1,
-  "branch": "parallel",
-  "mode": "optimistic_compare_and_swap",
-  "purpose": "Prevent concurrent AI sessions from integrating against a stale parallel HEAD without serializing independent feature development or preflight.",
+  "schema_version": 2,
+  "legacy_name": "parallel_integration_policy",
+  "canonical_branch": "main",
+  "delivery_alias_branch": "parallel",
+  "mode": "serialized_revalidate_then_atomic_alias_update",
+  "purpose": "Integrate exact preflighted feature SHAs into canonical main while keeping parallel as an exact delivery compatibility alias.",
   "preconditions": [
-    "feature/** exact SHA has a successful Parallel feature preflight",
-    "feature exact SHA and current parallel HEAD are re-read from live GitHub immediately before integration",
-    "all required module-specific workflows for the feature SHA have passed"
+    "feature/** exact SHA has passed routed feature preflight against main",
+    "required exact feature-SHA delivery profile gates have passed",
+    "current main HEAD is re-read inside the serialized integration queue"
   ],
   "integration_transaction": {
-    "base_ref": "parallel",
+    "base_ref": "main",
     "merge_commit_parents": [
-      "exact current parallel HEAD",
+      "exact current main HEAD",
       "exact preflighted feature SHA"
     ],
     "ref_update": {
-      "target": "parallel",
+      "targets": [
+        "main",
+        "parallel"
+      ],
+      "atomic": true,
       "force": false,
-      "expected_behavior": "fast-forward only"
+      "expected_behavior": "main and parallel advance together to one exact integrated SHA"
     }
   },
   "on_ref_rejected_or_head_changed": [
-    "do not force-update parallel",
+    "do not force-update canonical refs",
     "discard the stale integration commit",
-    "re-read current parallel HEAD",
-    "re-run parallel feature preflight against the new parallel HEAD",
-    "create a fresh merge commit with the new HEAD as first parent",
-    "retry the non-forced ref update"
+    "fetch current main",
+    "re-run routed feature preflight against the fresh main HEAD",
+    "create a fresh merge commit and retry within the queue"
   ],
   "parallelism": {
     "allowed": [
@@ -35,14 +40,14 @@
       "feature preflight workflows",
       "module-specific feature workflows"
     ],
-    "serialized_by_atomic_ref_update": [
-      "final parallel ref movement"
+    "serialized": [
+      "final canonical main integration and atomic main/parallel ref movement"
     ]
   },
   "prohibitions": [
-    "direct force push to parallel",
-    "integrating a feature whose preflight evidence belongs to a different feature SHA",
-    "reusing a merge commit after parallel HEAD changed",
-    "treating an old successful parallel build as evidence for the new HEAD"
+    "treating parallel as an independent integration base",
+    "routing ordinary new work to work",
+    "force-pushing main or parallel to resolve queue races",
+    "reusing exact-SHA CI evidence for a different feature or integrated SHA"
   ]
 }

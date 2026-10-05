@@ -1,41 +1,44 @@
 {
   "branches": {
-    "alternative": "parallel",
+    "canonical": "main",
+    "delivery_alias": "parallel",
     "delivery_pointer": "parallel-testpoint",
-    "development": "work",
+    "development": "main",
     "feature_pattern": "feature/**",
+    "legacy_compatibility": [
+      "work"
+    ],
     "promotion_pattern": "promote/**",
     "stable": "main"
   },
   "fast_path": {
     "after_verified_snapshot": [
       "read runtime/ai_experiment_index.json before module source",
-      "query live relevant branch HEADs before writes",
-      "read only module/dependency files needed for the task"
+      "resolve current main HEAD before creating/writing a feature",
+      "read only module/dependency files needed for the task",
+      "implement before broadening analysis unless a concrete risk is unresolved"
     ],
     "eligible_tasks": [
       "ordinary module or feature diagnosis",
-      "ordinary implementation on work, parallel or feature/**",
+      "ordinary implementation from canonical main through feature/**",
       "CI/status follow-up where startup authority files are unchanged"
     ],
     "full_startup_required_for": [
-      "stable promotion or promote/** work",
+      "release or promote/** work",
       "editing any startup source file, snapshot or generator",
       "recovery after unknown or ambiguous write/transport state",
       "snapshot missing, stale, mismatched or unverifiable",
-      "authority or branch ambiguity not resolved by compact state"
+      "authority ambiguity not resolved by compact state"
     ],
     "invariants": [
-      "snapshot is a generated cache; canonical files and live GitHub state remain authoritative",
-      "explicit parallel stays parallel and main remains accepted stable only",
-      "unproven native or multi-file parallel changes start on feature/**",
+      "main is canonical integration authority",
+      "parallel is an exact delivery alias",
+      "work is not a normal development target",
       "one logical iteration uses one coherent commit when possible",
       "never force-push or destructively reset unique work",
-      "exact-SHA CI/package gates and updater delivery rules are unchanged",
-      "fast startup never weakens runtime, package, provenance or promotion verification",
-      "parallel integration is compare-and-swap: exact preflighted feature SHA plus current parallel parent, force=false ref update, retry from fresh HEAD on rejection",
-      "parallel-testpoint is a frozen delivery pointer and may advance only to a fully verified exact parallel SHA; development may continue independently on parallel",
-      "for long-running ChatGPT tasks, proactively send concise truthful progress updates during active work; aim to avoid more than about 60 seconds of silence when the chat surface permits, without issuing extra GitHub/CI calls solely to create a ping"
+      "fast startup never weakens exact-SHA runtime, package, provenance or release verification",
+      "heavy audits stay outside the ordinary hot path",
+      "branch/history/archive archaeology is failure-driven, not default"
     ],
     "schema_version": 1,
     "snapshot": "runtime/ai_startup_snapshot.json",
@@ -48,7 +51,7 @@
     ],
     "verification": {
       "fallback_if_unverifiable": true,
-      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live selected-branch HEAD",
+      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live main HEAD",
       "same_head_required": true
     }
   },
@@ -62,16 +65,16 @@
   "schema_version": 1,
   "source_files": {
     "AGENTS.md": {
-      "git_blob_sha1": "df4877629d66e1a07b4eed7876372557f8939175"
+      "git_blob_sha1": "89cb2c341650d67a8b7ca3949a6edebbf6409748"
     },
     "AI_INDEX.json": {
-      "git_blob_sha1": "1c8fb8fe2090d67ee829ea46221250d2e1a9b85e"
+      "git_blob_sha1": "165c876c1e919593027d0329f67a482f4b1ad739"
     },
     "AI_START_HERE.md": {
-      "git_blob_sha1": "04c9f174a2c68733468b84af489ab1a313b97974"
+      "git_blob_sha1": "0e14962a4981dd0c4d4d2033a1f6d10c2d9bd939"
     },
     "CURRENT.json": {
-      "git_blob_sha1": "ec43f2149558e74dec201c7ea5e360e29d49a266"
+      "git_blob_sha1": "5ccf3a6d52f88512a0615ef0470bc9d667d8caba"
     },
     "runtime/current.json": {
       "git_blob_sha1": "529737eb52d65ceeef76ff11cbdb222deb119681"
@@ -142,7 +145,7 @@
   "verification": {
     "check_experiment_fast_index": "python tools/ai_experiments.py index --check",
     "fast_verify": "python tools/verify_current.py",
-    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/parallel",
+    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/main",
     "runtime_verify": "python tools/verify_runtime_artifacts.py",
     "verified_symbols_verify": "python tools/verify_verified_symbols.py"
   }

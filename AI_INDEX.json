@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Machine-readable routing index for repeated AI-assisted development. Canonical state is not duplicated here.",
+  "purpose": "Machine-readable fast routing for one canonical main integration world. Stable state is metadata/artifact identity; parallel is a delivery alias.",
   "target": {
     "game": "World of Warcraft",
     "version": "1.12.1",
@@ -9,11 +9,15 @@
     "architecture": "x86"
   },
   "branches": {
+    "canonical": "main",
+    "development": "main",
     "stable": "main",
-    "development": "work",
-    "promotion_pattern": "promote/**",
-    "alternative": "parallel",
+    "delivery_alias": "parallel",
     "delivery_pointer": "parallel-testpoint",
+    "legacy_compatibility": [
+      "work"
+    ],
+    "promotion_pattern": "promote/**",
     "feature_pattern": "feature/**"
   },
   "read_order": [
@@ -52,6 +56,8 @@
     "parallel_feature_preflight": ".github/workflows/parallel_feature_preflight.yml",
     "parallel_integration_policy": "runtime/parallel_integration_policy.json",
     "parallel_testpoint_policy": "runtime/parallel_testpoint_policy.json",
+    "thread_policy": "runtime/parallel_thread_policy.json",
+    "delivery_routing_policy": "runtime/parallel_delivery_routing.json",
     "experiment_fast_index": "runtime/ai_experiment_index.json",
     "startup_snapshot": "runtime/ai_startup_snapshot.json",
     "startup_snapshot_generator": "tools/ai_startup_snapshot.py"
@@ -63,6 +69,7 @@
     "deep_verify": "python tools/verify_repo.py",
     "status": "python tools/ai_status.py",
     "status_json": "python tools/ai_status.py --json",
+    "task_context": "python tools/ai_task_context.py --branch main --module MODULE",
     "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json",
     "package_exact_stable": "python tools/package_exact_current.py --output dist/WoW112_STABLE_CANDIDATE.zip --metadata dist/candidate_metadata.json",
     "finalize_package": "python tools/verify_candidate_package.py --package dist/WoW112_WORK_CANDIDATE.zip --package-metadata dist/candidate_metadata.json --summary dist/candidate_summary.json --finalize",
@@ -72,8 +79,8 @@
     "sync_source_metadata": "python tools/sync_source_metadata.py",
     "check_source_metadata": "python tools/sync_source_metadata.py --check",
     "validate_experiments": "python tools/ai_experiments.py validate",
-    "route_experiment": "python tools/ai_experiments.py route --module MODULE [--branch parallel]",
-    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/parallel",
+    "route_experiment": "python tools/ai_experiments.py route --module MODULE",
+    "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/main",
     "generate_experiment_fast_index": "python tools/ai_experiments.py index",
     "check_experiment_fast_index": "python tools/ai_experiments.py index --check",
     "generate_startup_snapshot": "python tools/ai_startup_snapshot.py",
@@ -81,7 +88,7 @@
   },
   "directories": {
     "src": "canonical editable source/evidence grouped by module",
-    "runtime": "machine-readable active runtime metadata and verified fast indexes",
+    "runtime": "machine-readable active runtime metadata, task coordination and verified fast indexes",
     "baseline": "stable rollback metadata",
     "manifests": "reference hashes",
     "artifacts/runtime_cache": "content-addressed exact DLL bytes for stable packaging and rollback",
@@ -98,31 +105,23 @@
     "artifacts/V67"
   ],
   "rules": [
-    "AGENTS.md defines the AI operating contract",
-    "runtime/current.json decides the active stack and canonical source provenance",
-    "work must contain current main before development",
+    "main is the canonical integration/development trunk",
+    "parallel is an exact compatibility/delivery alias and is never an independent development authority",
+    "work is legacy compatibility/history and is not the default branch for new tasks",
+    "ordinary new work starts on short-lived feature/** from current main",
+    "read compact startup/routing state before module source and do not enumerate all branches on the success path",
+    "broaden analysis only for concrete unresolved ownership, conflict, provenance, verification or recovery risk",
     "normal multi-file changes should be one Git tree commit",
-    "TEST candidates may compile changed source",
-    "STABLE packages must use exact accepted bytes, never an unchecked rebuild",
-    "stable promotion must pass Pre-promote stable on the exact promote/** SHA before main moves",
-    "promote accepted changes from a clean main-based tree, not the entire accumulated work branch",
-    "run source metadata sync/check before stable promotion",
-    "final runnable ZIPs must pass tools/verify_candidate_package.py",
+    "the serialized queue revalidates against live main and atomically updates main plus parallel",
+    "post-integration delivery is fail-closed path/risk routed; unknown or mixed runtime changes require STANDARD",
+    "heavy repository-wide audits are scheduled/manual/PR/release and not part of every micro-iteration",
+    "PREFLIGHT PASS is not TEST READY; exact integrated-SHA delivery/package gates are authoritative",
+    "STABLE packages use exact accepted bytes, never an unchecked rebuild",
+    "stable state is baseline/artifact metadata, not a permanent branch role",
+    "release candidates use promote/** and exact-SHA pre-promotion plus explicit stable packaging",
     "AI owns routine GitHub housekeeping",
     "never mix TBC/Wrath/Retail assumptions into build 5875 code",
-    "respect explicitly selected development branch and check live GitHub HEAD before writing",
-    "route new features via active experiment ownership and dependencies; keep parallel and work distinct",
-    "ledger test/package evidence must identify exact commit; unknown results remain null",
-    "parallel is an integration/test trunk; unproven native or multi-file work preflights on feature/** first",
-    "feature -> parallel integration uses optimistic CAS: after exact feature preflight PASS, re-read current parallel HEAD, create one merge commit whose first parent is that exact HEAD and second parent is the exact feature SHA, then update parallel with force=false; if parallel moved or the ref update is rejected, discard the merge commit, re-run preflight against the new HEAD and retry",
-    "parallel-testpoint is the frozen user-delivery pointer; it may point only at an exact parallel commit whose required STANDARD/ECONOMY workflow, FINAL_PACKAGE/provenance and relevant artifact gates have passed",
-    "do not advance parallel-testpoint merely because parallel moved; keep the issued test SHA frozen until its gameplay result is recorded or the user explicitly supersedes that test point",
-    "updater delivery resolves the desired SHA from parallel-testpoint but consumes workflow artifacts whose original head_branch remains parallel, preserving exact build provenance",
-    "freeze an issued test artifact by exact branch and SHA until its gameplay result is recorded",
-    "batch exact-SHA workflow checks on the success path; inspect jobs/steps/logs only for failures or blockers; optimize end-to-end latency without weakening gates",
-    "read compact experiment index and live branch refs before module-source analysis; full experiment ledger is evidence/detail fallback",
-    "use verified runtime/ai_startup_snapshot.json fast path for eligible tasks; any identity mismatch or ambiguity falls back to the canonical five-file startup",
-    "for long-running ChatGPT tasks, proactively send concise truthful progress updates during active work; aim to avoid more than about 60 seconds of silence when the chat surface permits, without issuing extra GitHub/CI calls solely to create a ping"
+    "inspect successful jobs/steps/logs only when a specific decision requires them"
   ],
   "startup_fast_path": {
     "schema_version": 1,
@@ -135,38 +134,37 @@
       "runtime/current.json"
     ],
     "verification": {
-      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live selected-branch HEAD",
+      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live main HEAD",
       "same_head_required": true,
       "fallback_if_unverifiable": true
     },
     "eligible_tasks": [
       "ordinary module or feature diagnosis",
-      "ordinary implementation on work, parallel or feature/**",
+      "ordinary implementation from canonical main through feature/**",
       "CI/status follow-up where startup authority files are unchanged"
     ],
     "full_startup_required_for": [
-      "stable promotion or promote/** work",
+      "release or promote/** work",
       "editing any startup source file, snapshot or generator",
       "recovery after unknown or ambiguous write/transport state",
       "snapshot missing, stale, mismatched or unverifiable",
-      "authority or branch ambiguity not resolved by compact state"
+      "authority ambiguity not resolved by compact state"
     ],
     "after_verified_snapshot": [
       "read runtime/ai_experiment_index.json before module source",
-      "query live relevant branch HEADs before writes",
-      "read only module/dependency files needed for the task"
+      "resolve current main HEAD before creating/writing a feature",
+      "read only module/dependency files needed for the task",
+      "implement before broadening analysis unless a concrete risk is unresolved"
     ],
     "invariants": [
-      "snapshot is a generated cache; canonical files and live GitHub state remain authoritative",
-      "explicit parallel stays parallel and main remains accepted stable only",
-      "unproven native or multi-file parallel changes start on feature/**",
+      "main is canonical integration authority",
+      "parallel is an exact delivery alias",
+      "work is not a normal development target",
       "one logical iteration uses one coherent commit when possible",
       "never force-push or destructively reset unique work",
-      "exact-SHA CI/package gates and updater delivery rules are unchanged",
-      "fast startup never weakens runtime, package, provenance or promotion verification",
-      "parallel integration is compare-and-swap: exact preflighted feature SHA plus current parallel parent, force=false ref update, retry from fresh HEAD on rejection",
-      "parallel-testpoint is a frozen delivery pointer and may advance only to a fully verified exact parallel SHA; development may continue independently on parallel",
-      "for long-running ChatGPT tasks, proactively send concise truthful progress updates during active work; aim to avoid more than about 60 seconds of silence when the chat surface permits, without issuing extra GitHub/CI calls solely to create a ping"
+      "fast startup never weakens exact-SHA runtime, package, provenance or release verification",
+      "heavy audits stay outside the ordinary hot path",
+      "branch/history/archive archaeology is failure-driven, not default"
     ]
   }
 }
