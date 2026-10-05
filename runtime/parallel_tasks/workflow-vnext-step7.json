@@ -4,7 +4,7 @@
   "goal": "Make main the canonical integration trunk, keep parallel as an exact delivery alias, and move repository-wide audits out of the micro-iteration hot path into scheduled/manual/release workflows.",
   "branch": "feature/workflow-vnext-step7",
   "base_parallel_sha": "13f1ef9da43958cfc271d97e12bd6a234cf398d4",
-  "status": "ready",
+  "status": "ready_for_integration",
   "auto_integrate": true,
   "modules": [
     "WorkflowRouting"
