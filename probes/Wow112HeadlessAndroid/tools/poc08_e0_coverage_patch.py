@@ -56,19 +56,19 @@ replace_once(
 replace_once(
     'rejected csv header',
     'vendor_unit,vendor_profit,disenchant_id,reference_de_ev,de_profit,reason\\n',
-    'vendor_unit,vendor_profit,disenchant_id,deid_status,deid_source,reference_de_ev,de_profit,reason\\n',
+    'vendor_unit,vendor_profit,disenchant_id,deid_status,deid_source,reference_de_ev,safe_de_ev,de_profit,de_roi_bps,de_ploss_bps,de_risk_pass,reason\\n',
 )
 
 replace_once(
     'rejected csv format',
     '                "{},{},{},{},{},{},{},{},{},{},{},{}",',
-    '                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",',
+    '                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",',
 )
 
 replace_once(
     'rejected csv values',
-    '                disenchant_id,\n                reference_de_ev,\n',
-    '                disenchant_id,\n                deid_status,\n                deid_source,\n                reference_de_ev,\n',
+    '                disenchant_id,\n                reference_de_ev,\n                de_profit,\n                reason,\n',
+    '                disenchant_id,\n                deid_status,\n                deid_source,\n                reference_de_ev,\n                safe_de_ev,\n                de_profit,\n                de_roi_bps,\n                de_ploss_bps,\n                de_risk_pass,\n                reason,\n',
 )
 
 replace_once(
