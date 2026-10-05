@@ -1,0 +1,29 @@
+name: TELE-01 compile gate
+
+on:
+  push:
+    branches:
+      - feature/tele01-whisper-sniffer-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/tele01_compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele01-compile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo check TELE-01
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
