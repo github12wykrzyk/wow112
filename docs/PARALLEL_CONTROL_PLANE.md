@@ -43,6 +43,27 @@ parallel-integration-queue
 
 Independent coding and feature preflight remain concurrent. Only integration is serialized. The existing compare-and-swap retry behavior still protects against the integration base moving between validation and push.
 
+## Single-owner delivery
+
+Queued integration has exactly one downstream delivery owner.
+
+The integration job checks out with the default `actions/checkout` repository `GITHUB_TOKEN` credentials and pushes the integrated SHA to `parallel`. GitHub intentionally does not create new workflow runs for ordinary events caused by that repository `GITHUB_TOKEN`, so that queue push does **not** recursively start the build workflows' `push` triggers.
+
+After the remote SHA is verified, `tools/parallel_ci_dispatch.py` explicitly starts only the required STANDARD/ECONOMY/UPDATER/AutoLoginBridge workflows with `workflow_dispatch`, resolves the newly materialized run by exact branch + exact SHA, and waits for that exact run to succeed.
+
+Therefore the normal queue path is:
+
+```text
+queue integration
+  -> GITHUB_TOKEN push (no recursive push workflows)
+  -> exact-SHA workflow_dispatch owner
+  -> wait for exact selected delivery runs
+```
+
+Existing `push` triggers on delivery workflows are retained only as a direct/manual-push recovery path. They are not a second delivery owner for queued integration. Do not replace the integration push credentials with a PAT or another token that can recursively trigger workflows unless the delivery ownership model is redesigned at the same time.
+
+`tools/test_ai_delivery_single_owner.py` protects this invariant and must remain in the broad infrastructure test suite.
+
 ## Legacy lease metadata
 
 Task records may still contain a TTL `lease` object (`owner`, timestamps, TTL and scopes). The lease commands remain available for explicit diagnostics or manual coordination:
@@ -72,6 +93,7 @@ Removing global lease reconciliation does not weaken the delivery gates. The fol
 - serialized integration;
 - live-base revalidation immediately before merge;
 - compare-and-swap retry if the integration base moved;
+- single-owner exact-SHA downstream delivery;
 - STANDARD/ECONOMY/profile workflows where required;
 - FINAL_PACKAGE, provenance, updater integrity and gameplay evidence.
 
