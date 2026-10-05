@@ -1,0 +1,105 @@
+name: POC07 DE V5.3 Windows Turbo Offline
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V53_TURBO_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC07_DE_V53_TURBO_WINDOWS.bat'
+      - '.github/workflows/build_windows_poc07_de_v53_turbo_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate V5.3 turbo source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $q = Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs -Pattern 'ITEM-QUERY PASS' -Quiet
+          $c = Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs -Pattern 'CLASS CEILING PASS' -Quiet
+          if (-not $q) { throw 'V5.3 item-query turbo marker missing' }
+          if (-not $c) { throw 'V5.3 class-ceiling marker missing' }
+
+      - name: Select V5.3 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_delive_v53;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_delive_v53::login_poc07_delive_v53')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Complete offline DE cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/v53-base-cache.csv" --unresolved "$env:RUNNER_TEMP/v53-base-unresolved.csv" --workers 16 --timeout 15 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache "$env:RUNNER_TEMP/v53-base-cache.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/v53-cache.csv" --unresolved "$env:RUNNER_TEMP/v53-unresolved.csv" --workers 4 --timeout 15 --retries 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $c=@(Import-Csv "$env:RUNNER_TEMP/v53-cache.csv")
+          $u=@(Import-Csv "$env:RUNNER_TEMP/v53-unresolved.csv")
+          $r=@($c | Where-Object { $_.item_id -eq '4368' })
+          if ($r.Count -gt 0) { Write-Host "[V5.3-CACHE] item4368 disenchant_id=$($r[0].disenchant_id)" } else { Write-Warning '[V5.3-CACHE] item4368 unresolved; remains fail-closed' }
+          Write-Host "[V5.3-CACHE] entries=$($c.Count) unresolved=$($u.Count)"
+
+      - name: Offline gate smoke
+        shell: pwsh
+        run: |
+          @'
+          rank,auction_id,item_id,count,buyout,unit_value,gross_value,expected_profit,page,owner_guid
+          0,1,20406,1,1,2,2,1,0,1
+          1,2,41316,1,1,2,2,1,0,1
+          '@ | Set-Content "$env:RUNNER_TEMP/candidates.csv" -Encoding utf8
+          & ./probes/Wow112HeadlessAndroid/tools/RESOLVE_DE_GATE_OFFLINE.ps1 -CandidateCsv "$env:RUNNER_TEMP/candidates.csv" -CacheCsv "$env:RUNNER_TEMP/v53-cache.csv" -SafeCsv "$env:RUNNER_TEMP/safe.csv" -MissingCsv "$env:RUNNER_TEMP/missing.csv"
+          $s=@(Import-Csv "$env:RUNNER_TEMP/safe.csv")
+          if ($s.item_id -contains '20406') { throw '20406 leaked' }
+          if (-not ($s.item_id -contains '41316')) { throw '41316 blocked' }
+          Write-Host '[V5.3-OFFLINE-SMOKE] PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/v53'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V5_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V53_TURBO_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC07_DE_V53_TURBO_WINDOWS.bat $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RESOLVE_DE_GATE_OFFLINE.ps1 $d
+          Copy-Item "$env:RUNNER_TEMP/v53-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE.csv"
+          Copy-Item "$env:RUNNER_TEMP/v53-unresolved.csv" "$d/V53_CACHE_UNRESOLVED.csv"
+          $n=@(Import-Csv "$d/runtime/DE_DISENCHANT_CACHE.csv").Count
+          $u=@(Import-Csv "$d/V53_CACHE_UNRESOLVED.csv").Count
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "POC=V5.3-TURBO-CLASS-CEILING-OFFLINE`nEXACT_SHA=$env:GITHUB_SHA`nBINARY_SHA256=$h`nAH_PAGING=RESPONSE_PACED_ZERO_SLEEP`nAH_ECONOMIC_CEILING=CLASS_SPECIFIC`nITEM_QUERY_WINDOW_DEFAULT=64`nCACHE_ENTRIES=$n`nCACHE_UNRESOLVED=$u`nRUNTIME_HTTP=DISABLED`nMUTATION=DISABLED`nZERO_BUY=YES" | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          'Run START_POC07_DE_V53_TURBO_WINDOWS.bat. V5.3 uses per-class economic ceilings and a default 64 in-flight item-query window; exact DE gate is local/offline; ZERO BUY.' | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-DE-V5.3-TURBO-OFFLINE-${{ github.sha }}
+          path: dist/v53
+          if-no-files-found: error
+          retention-days: 7
