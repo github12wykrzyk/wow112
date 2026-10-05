@@ -34,8 +34,11 @@ fn poc08_e_journal_path() -> String {
     env::var("WOW112_POC08_E_JOURNAL").unwrap_or_else(|_| "POC08_E_TX_JOURNAL.log".to_string())
 }
 
-fn poc08_e_journal_append(status: &str, target: Poc06AuctionRecord) -> Result<(), String> {
+fn poc08_e_journal_append(status_kv: &str, target: Poc06AuctionRecord) -> Result<(), String> {
     use std::io::Write as _;
+    if !matches!(status_kv, "status=PREPARED" | "status=COMMITTED" | "status=ABORTED_SAFE") {
+        return Err(format!("POC08-E invalid journal state {status_kv:?}"));
+    }
     let path = poc08_e_journal_path();
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -44,8 +47,8 @@ fn poc08_e_journal_append(status: &str, target: Poc06AuctionRecord) -> Result<()
         .map_err(|e| format!("POC08-E journal open failed path={path:?}: {e}"))?;
     writeln!(
         file,
-        "status={} auction_id={} item_id={} count={} buyout={}",
-        status, target.auction_id, target.item_id, target.count, target.buyout
+        "{} auction_id={} item_id={} count={} buyout={}",
+        status_kv, target.auction_id, target.item_id, target.count, target.buyout
     )
     .map_err(|e| format!("POC08-E journal write failed path={path:?}: {e}"))?;
     file.flush().map_err(|e| format!("POC08-E journal flush failed path={path:?}: {e}"))?;
@@ -111,7 +114,7 @@ fn poc08_e_reconcile_pending_mail(
                 "[POC08-E] EXACT MAIL PASS attempt={} mail_id={} item_id={} stack={} auction_id={}",
                 attempt, mail_id, pending.target.item_id, stack, pending.target.auction_id
             );
-            poc08_e_journal_append("COMMITTED", pending.target)?;
+            poc08_e_journal_append("status=COMMITTED", pending.target)?;
             poc08_e_pending_set(None)?;
             return Ok(());
         }
@@ -234,7 +237,7 @@ fn poc08_e_execute_buy_one(
     };
 
     let pending = Poc08EPendingTx { target: fresh, before_mail_ids };
-    poc08_e_journal_append("PREPARED", fresh)?;
+    poc08_e_journal_append("status=PREPARED", fresh)?;
     poc08_e_pending_set(Some(pending.clone()))?;
 
     let action = Poc06AhAction::GuardedBuy {
