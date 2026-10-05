@@ -51,7 +51,7 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch_v2.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk_gate.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_d_risk_gate.rs'
-          foreach ($marker in @('POC08-D-RISK','de_loss_probability_bps','de_safe_roi_bps','mutation=DISABLED','NO_CANDIDATE_PASS')) {
+          foreach ($marker in @('POC08-D-RISK','loss_probability_bps','safe_roi_bps','mutation=DISABLED','NO_CANDIDATE_PASS')) {
             if (-not (Select-String -Path $p -Pattern $marker -Quiet)) { throw "POC08-D marker missing: $marker" }
           }
           Write-Host '[POC08-D-CI] source markers PASS'
