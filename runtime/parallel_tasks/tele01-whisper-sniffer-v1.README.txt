@@ -1,0 +1,1 @@
+TELE-01 branch bootstrap marker. Implementation follows project startup contract and will remain RX-only until real whisper receive is proven.
