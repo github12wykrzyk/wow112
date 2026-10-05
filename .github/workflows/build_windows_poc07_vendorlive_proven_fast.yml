@@ -1,0 +1,52 @@
+name: POC07 VendorLive Windows Proven Fast
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - '.github/workflows/build_windows_poc07_vendorlive_proven_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Assert vendorlive entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          if ($t -notmatch 'mod world_poc07_vendorlive;') { throw 'vendorlive module not selected' }
+          if ($t -notmatch 'world_poc07_vendorlive::login_poc07_vendorlive') { throw 'vendorlive login entrypoint not selected' }
+          Write-Host '[VENDORLIVE] ENTRYPOINT PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendorlive'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs $d
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs $d
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc06.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "POC=POC07-VENDORLIVE-PROVEN`nEXACT_SHA=$env:GITHUB_SHA`nBINARY_SHA256=$h`nVALUATION=LIVE_SERVER_ITEM_QUERY`nENTRYPOINT=world_poc07_vendorlive`nHARD_MAX_PURCHASES=1`nNO_AUTO_RETRY_AFTER_SEND=YES" | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDORLIVE-PROVEN-${{ github.sha }}
+          path: dist/vendorlive
+          if-no-files-found: error
+          retention-days: 7
