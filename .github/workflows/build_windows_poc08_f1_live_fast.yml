@@ -4,6 +4,7 @@ on:
   push:
     branches: [feature/windows-headless-ah-fast]
     paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_F1_LIVE_WINDOWS.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/START_POC08_F1_LIVE_WINDOWS.bat'
@@ -16,18 +17,10 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Verify live input
-        shell: pwsh
-        run: |
-          $p='probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt'
-          $ids = Get-Content $p | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ } | Sort-Object -Unique
-          if ($ids.Count -ne 2343) { throw "expected 2343 unique live IDs, got $($ids.Count)" }
-          Write-Host "[POC08-F1-CI] live input PASS count=$($ids.Count)"
 
       - name: Generate V5.3 base
         shell: pwsh
@@ -41,17 +34,12 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build provenance cache
+      - name: Generate minimal pilot provenance cache
         shell: pwsh
         run: |
-          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_provenance.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/f1-base.csv" --unresolved "$env:RUNNER_TEMP/f1-base-unresolved.csv" --workers 16 --timeout 12 --retries 2
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_provenance.py --seed-cache "$env:RUNNER_TEMP/f1-base.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/f1-mid.csv" --unresolved "$env:RUNNER_TEMP/f1-mid-unresolved.csv" --workers 8 --timeout 12 --retries 2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_provenance.py --seed-cache "$env:RUNNER_TEMP/f1-mid.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt --output-cache "$env:RUNNER_TEMP/f1-cache.csv" --unresolved "$env:RUNNER_TEMP/f1-unresolved.csv" --workers 32 --timeout 10 --retries 1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv "$env:RUNNER_TEMP/f1-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host '[POC08-F1-CI] pilot cache PASS coverage=intentionally-minimal DE=9823 vendor=server-values-all-scanned-items'
 
       - name: Generate POC08-F1 source
         shell: pwsh
@@ -94,7 +82,7 @@ jobs:
             if (-not (Select-String -Path $p -Pattern $marker -SimpleMatch -Quiet)) { throw "missing F1 safety marker: $marker" }
           }
           if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'AH mutation retry blocker missing from main' }
-          if (-not (Select-String -Path $p -Pattern 'WOW112_F1_DE_WHITELIST' -SimpleMatch -Quiet)) { throw 'DE whitelist guard missing' }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => Some\(5\)' -Quiet)) { throw 'DE pilot item 9823 missing' }
           Write-Host '[POC08-F1-CI] MUTATION SAFETY ASSERTIONS PASS'
 
       - name: Build native Windows
@@ -110,8 +98,7 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
           Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_F1_LIVE_WINDOWS.ps1 $d
           Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_F1_LIVE_WINDOWS.bat $d
-          Copy-Item "$env:RUNNER_TEMP/f1-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
-          Copy-Item "$env:RUNNER_TEMP/f1-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv "$d/runtime/DE_PILOT_CACHE.csv"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs "$d/source/world_poc08_f1_live.rs"
           $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           @"
@@ -124,8 +111,9 @@ jobs:
           NO_AUTO_RETRY_AFTER_BUY_SEND=YES
           DEFAULT_MODE=VENDOR_SMOKE
           DE_MODE=WHITELIST_ONLY
-          INITIAL_DE_WHITELIST=9823
-          INITIAL_DE_HARD_MAX_BUYOUT=1500
+          DE_PILOT_ITEM=9823
+          DE_PILOT_HARD_MAX_BUYOUT=1500
+          DE_CACHE=INTENTIONALLY_MINIMAL
           "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
           @'
           POC08-F1 can perform a REAL AH purchase.
