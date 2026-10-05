@@ -11,5 +11,5 @@
   "shared_resources": ["tools/updater"],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "UI-only shell. Reuses existing DPAPI-protected WowAccountVault; tele_config.json stores account IDs/roles only. TeleRuntimeEnabled=false. No worker start, invite, cast or portal use. Windows updater compile + UI smoke required before any integration decision."
+  "notes": "UI-only shell. Reuses existing DPAPI-protected WowAccountVault; tele_config.json stores account IDs/roles only. TeleRuntimeEnabled=false. No worker start, invite, cast or portal use. Windows updater compile + UI smoke required before any integration decision. Compile shadowing fix uses System.Windows.Forms.Application.OpenForms. Explicit smoke retrigger added because the fix push did not materialize an Actions run."
 }
