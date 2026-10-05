@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "tele02-whisper-name-tx-v2",
+  "goal": "Extend canonical TELE-01 with deterministic whisper sender GUID-to-character-name resolution and an explicitly armed one-shot whisper TX test, while keeping invite, cast, and portal use disabled.",
+  "branch": "feature/tele02-whisper-name-tx-v2",
+  "base_parallel_sha": "eae4f656672ba46171e90b12f20cc6435dbae756",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "HeadlessTele"
+  ],
+  "dependencies": [
+    "tele01-whisper-sniffer-v1"
+  ],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Clean canonical successor of TELE-02 v1. Reuses exact runtime-tested world_tele.rs blob ff10c065e6932f58b5bbd976632033739f67fa0c and TELE-02 launcher blob 81e973934a1e9d8c23d1666f61cc193de6170264. Previous exact SHA 0760f1b7e62ba0c4138a4abd62b5dc49b5c0da80 passed TELE-02 Android smoke build and feature preflight; user runtime evidence confirmed the explicitly armed one-shot reply was received. Canonical v2 preflight PASS at 7e4d85df5b8cf3b13cdb3653ecf7c31bbb02b5e0. world.rs remains blob 9d6c379376d49239a15a3a048d08e40bb95069e8 and Cargo.toml remains blob 3106a3ac3b20cd339527be99ba35e388b5f82f54, matching the validated baseline. Invite/cast/portal use remain disabled. Explicit integration retrigger added because the prior ready-state push did not materialize an Actions run.",
+  "integrated_feature_sha": "921b6c3dd80ddf06ca73c9a1fb6934b328a38708"
+}
