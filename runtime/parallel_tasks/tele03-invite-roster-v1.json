@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "tele03-invite-roster-v1",
+  "goal": "Extend the validated TELE whisper transport with an explicitly armed one-shot group invite triggered by an exact whisper phrase, and observe server party command/roster state without cast, portal use, auto-accept, or leader mutations.",
+  "branch": "feature/tele03-invite-roster-v1",
+  "base_parallel_sha": "0cac718c775b27378fa078e1d290a5b5a6c8542b",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": [
+    "HeadlessTele"
+  ],
+  "dependencies": [
+    "tele02-whisper-name-tx-v1"
+  ],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "TELE-02 runtime PASS: real whisper RX, GUID-to-name resolution, and one-shot whisper TX confirmed on OctoWoW. TELE-03 arms exactly one CMSG_GROUP_INVITE only when WOW112_TELE_TEST_INVITE_TRIGGER exactly matches a resolved incoming whisper. SMSG_PARTY_COMMAND_RESULT and SMSG_GROUP_LIST are observed/logged. Auto-accept, leader change, ritual cast, and portal use remain disabled."
+}
