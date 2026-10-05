@@ -1,0 +1,136 @@
+name: Build TELE-04 runtime invite V2
+
+on:
+  push:
+    branches:
+      - feature/tele04-runtime-invite-v2
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_tele04_runtime_invite_v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-tele04-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact TELE-04 runtime revision
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Host contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele04_runtime -- --nocapture
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele04_runtime
+
+      - name: Launcher syntax check
+        shell: pwsh
+        run: |
+          $file = 'probes/Wow112HeadlessAndroid/RUN_TELE04_INVITE.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error "$file : $($_.Message)" }
+            exit 1
+          }
+
+      - name: Static mutation safety gate
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('probes/Wow112HeadlessAndroid/src/bin/tele04_runtime.rs').read_text()
+          assert 'CMSG_GROUP_INVITE_OPCODE: u32 = 0x006E' in p
+          assert 'compare_exchange(false, true' in p
+          assert 'retry_allowed=false' in p
+          assert 'SMSG_LOGIN_VERIFY_WORLD PASS' in p
+          for forbidden in ('CMSG_GROUP_ACCEPT', 'CMSG_GROUP_DECLINE', 'CMSG_GROUP_UNINVITE', 'CMSG_GROUP_SET_LEADER'):
+              assert forbidden not in p, f'unexpected mutation surface: {forbidden}'
+          print('TELE04_STATIC_SAFETY=PASS')
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Android x86_64 TELE-04 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --release --bin tele04_runtime
+
+      - name: Stage exact-SHA TELE-04 runtime bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$(find probes/Wow112HeadlessAndroid/target -type f -name tele04_runtime -perm -111 -print -quit)"
+          test -n "$BIN"
+          OUT="dist/tele04-runtime-invite-v2"
+          mkdir -p "$OUT"
+          cp "$BIN" "$OUT/tele04_runtime"
+          cp probes/Wow112HeadlessAndroid/RUN_TELE04_INVITE.cmd "$OUT/RUN_TELE04_INVITE.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_TELE04_INVITE.ps1 "$OUT/RUN_TELE04_INVITE.ps1"
+          BIN_SHA="$(sha256sum "$OUT/tele04_runtime" | awk '{print $1}')"
+          cat > "$OUT/BUILD_INFO.txt" <<INFO
+          POC=TELE-04-RUNTIME-INVITE-V2
+          PURPOSE=ONE_SHOT_GROUP_INVITE_FAIL_CLOSED
+          REPOSITORY=${GITHUB_REPOSITORY}
+          BRANCH=${GITHUB_REF_NAME}
+          EXACT_SHA=${GITHUB_SHA}
+          BASE_LIVE_PROVEN_TELE03=1221cd5ec20e09eff873655370db183d54f42d99
+          TARGET=x86_64-linux-android
+          ANDROID_API=21
+          BINARY=tele04_runtime
+          BINARY_SHA256=${BIN_SHA}
+          INVITE_OPCODE=0x006E
+          SAFETY=ATTEMPT_GUARD_COMMITTED_BEFORE_SOCKET_IO_NO_AUTO_RETRY_AFTER_ATTEMPT
+          INFO
+          cat > "$OUT/TEST_TELE04.txt" <<'INFO'
+          TELE-04 live smoke:
+          1. Run RUN_TELE04_INVITE.cmd.
+          2. Enter account/password and the headless character.
+          3. At invite target enter a SECOND graphical-client character that is online and not already grouped.
+          4. Leave whisper test reply blank unless you also want TELE-02 TX smoke.
+          5. PASS TX: after [WORLD] SMSG_LOGIN_VERIFY_WORLD PASS, exactly one [TELE-INVITE-TX] ... result=attempted_once retry_allowed=false.
+          6. Accept the invite on the graphical client. Party RX should continue to log [TELE-PARTY] events.
+          7. Critical safety: after any reconnect there must NOT be a second [TELE-INVITE-TX]. Expected instead: skip_already_attempted retry_allowed=false.
+          8. This build does NOT auto-accept, decline, uninvite, transfer leader, cast or use portals.
+          INFO
+          (
+            cd "$OUT"
+            sha256sum tele04_runtime RUN_TELE04_INVITE.cmd RUN_TELE04_INVITE.ps1 BUILD_INFO.txt TEST_TELE04.txt > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          grep -Fx "EXACT_SHA=${GITHUB_SHA}" "$OUT/BUILD_INFO.txt"
+          grep -Fx "BINARY_SHA256=${BIN_SHA}" "$OUT/BUILD_INFO.txt"
+
+      - name: Upload TELE-04 runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-TELE04-Runtime-Invite-${{ github.sha }}
+          path: dist/tele04-runtime-invite-v2
+          if-no-files-found: error
+          retention-days: 14
