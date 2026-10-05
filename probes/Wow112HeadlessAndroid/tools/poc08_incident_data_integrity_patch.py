@@ -209,8 +209,18 @@ if s.count(old_safe) != 1:
     raise SystemExit(f'incident data-integrity safe-price marker mismatch count={s.count(old_safe)}')
 s = s.replace(old_safe, new_safe, 1)
 
-old_unit = '            let unit = record.buyout / record.count;\n'
-new_unit = '            let unit = record.buyout.saturating_add(record.count.saturating_sub(1)) / record.count;\n'
+old_unit = '''                let unit = u64::from(record.buyout) / u64::from(record.count);
+                if unit == 0 { continue; }
+                let unit = u32::try_from(unit)
+                    .map_err(|_| "POC08 material unit price overflow".to_string())?;
+'''
+new_unit = '''                let unit = u64::from(record.buyout)
+                    .saturating_add(u64::from(record.count).saturating_sub(1))
+                    / u64::from(record.count);
+                if unit == 0 { continue; }
+                let unit = u32::try_from(unit)
+                    .map_err(|_| "POC08 material unit price overflow".to_string())?;
+'''
 if s.count(old_unit) != 1:
     raise SystemExit(f'incident data-integrity unit-normalization marker mismatch count={s.count(old_unit)}')
 s = s.replace(old_unit, new_unit, 1)
@@ -228,11 +238,11 @@ required = [
     'WOW112_DE_UPWARD_SHOCK_BPS',
     'status=QUARANTINE',
     'snapshot_commit=PASS schema=2',
-    'saturating_add(record.count.saturating_sub(1)) / record.count',
+    'saturating_add(u64::from(record.count).saturating_sub(1))',
 ]
 for marker in required:
     if marker not in s:
         raise SystemExit('incident data-integrity required marker missing: ' + marker)
 
 p.write_text(s, encoding='utf-8')
-print('[POC08-INCIDENT-DATA-INTEGRITY] PASS schema=2 atomic-snapshots epoch-dedupe stale-check shock-quarantine fail-closed')
+print('[POC08-INCIDENT-DATA-INTEGRITY] PASS schema=2 atomic-snapshots epoch-dedupe stale-check shock-quarantine fail-closed stack-ceiling')
