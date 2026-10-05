@@ -43,7 +43,6 @@ fn poc08_discrete_de_outcomes(disenchant_id: u32) -> Option<Vec<Poc08DiscreteDeO
         9 => vec![o(11176, 7500, 2, 5), o(16202, 2000, 1, 2), o(14343, 500, 1, 1)],
         10 => vec![o(16203, 2000, 1, 2), o(16204, 7500, 1, 2), o(14344, 500, 1, 1)],
         11 => vec![o(16203, 2000, 2, 3), o(16204, 7500, 2, 5), o(14344, 500, 1, 1)],
-
         21 => vec![o(10938, 8000, 1, 2), o(10940, 2000, 1, 2)],
         22 => vec![o(10939, 7500, 1, 2), o(10940, 2000, 2, 3), o(10978, 500, 1, 1)],
         23 => vec![o(10998, 7500, 1, 2), o(10940, 1500, 4, 6), o(10978, 1000, 1, 1)],
@@ -55,7 +54,6 @@ fn poc08_discrete_de_outcomes(disenchant_id: u32) -> Option<Vec<Poc08DiscreteDeO
         29 => vec![o(16202, 7500, 1, 2), o(11176, 2200, 2, 5), o(14343, 300, 1, 1)],
         30 => vec![o(16203, 7500, 1, 2), o(16204, 2200, 1, 2), o(14344, 300, 1, 1)],
         31 => vec![o(16203, 7500, 2, 3), o(16204, 2200, 2, 5), o(14344, 300, 1, 1)],
-
         41 => vec![o(10978, 10_000, 1, 1)],
         42 => vec![o(11084, 10_000, 1, 1)],
         43 => vec![o(11138, 10_000, 1, 1)],
@@ -81,11 +79,8 @@ fn poc08_de_loss_probability_bps(
     let outcomes = poc08_discrete_de_outcomes(disenchant_id)?;
     let mut total_probability = 0u64;
     let mut loss_probability = 0u64;
-
     for outcome in outcomes {
-        if outcome.max_count < outcome.min_count || outcome.min_count == 0 {
-            return None;
-        }
+        if outcome.max_count < outcome.min_count || outcome.min_count == 0 { return None; }
         total_probability = total_probability.saturating_add(u64::from(outcome.probability_bps));
         let span = u64::from(outcome.max_count - outcome.min_count + 1);
         let price = u64::from(safe_prices.get(&outcome.material_id).copied().unwrap_or(0));
@@ -93,22 +88,13 @@ fn poc08_de_loss_probability_bps(
         for count in outcome.min_count..=outcome.max_count {
             let gross = price.saturating_mul(u64::from(count));
             let net = gross.saturating_mul(u64::from(net_bps)) / 10_000;
-            if net < u64::from(buyout) {
-                losing = losing.saturating_add(1);
-            }
+            if net < u64::from(buyout) { losing = losing.saturating_add(1); }
         }
-        // Conservative rounding UP: never understate P(loss).
         let weighted = (u64::from(outcome.probability_bps)
-            .saturating_mul(losing)
-            .saturating_add(span - 1)) / span;
+            .saturating_mul(losing).saturating_add(span - 1)) / span;
         loss_probability = loss_probability.saturating_add(weighted);
     }
-
-    // The reference tables used by this build describe one complete mutually
-    // exclusive roll. Malformed probability mass fails closed.
-    if total_probability < 9_900 || total_probability > 10_100 {
-        return None;
-    }
+    if total_probability < 9_900 || total_probability > 10_100 { return None; }
     Some(loss_probability.min(10_000) as u32)
 }
 
@@ -122,61 +108,24 @@ fn poc08_roi_bps(value: u64, cost: u32) -> u32 {
 '''
 src = src[:idx] + helpers + src[idx:]
 
-# Dedicated DE risk gates. Vendor keeps the existing deterministic min-profit rule.
 needle = '    let max_buyout = poc07_env_u32_default("WOW112_AUTOBUY_MAX_BUYOUT", u32::MAX)?;\n'
-if needle not in src:
-    raise SystemExit('POC08-D max-buyout marker not found')
+if needle not in src: raise SystemExit('POC08-D max-buyout marker not found')
 insert = needle + r'''    let min_de_safe_profit = poc07_env_u32_default("WOW112_DE_MIN_SAFE_PROFIT", 2_000)?;
     let min_de_safe_roi_bps = poc07_env_u32_default("WOW112_DE_MIN_SAFE_ROI_BPS", 2_000)?;
     let max_de_ploss_bps = poc07_env_u32_default("WOW112_DE_MAX_PLOSS_BPS", 4_000)?;
     if min_de_safe_roi_bps > 100_000 { return Err("WOW112_DE_MIN_SAFE_ROI_BPS too large".to_string()); }
     if max_de_ploss_bps > 10_000 { return Err("WOW112_DE_MAX_PLOSS_BPS must be <=10000".to_string()); }
-    println!(
-        "[POC08-D-RISK] gates min_safe_profit={} ({}) min_safe_roi_bps={} max_ploss_bps={} mutation=DISABLED",
-        min_de_safe_profit, poc06_format_money(min_de_safe_profit), min_de_safe_roi_bps, max_de_ploss_bps
-    );
+    println!("[POC08-D-RISK] gates min_safe_profit={} ({}) min_safe_roi_bps={} max_ploss_bps={} mutation=DISABLED", min_de_safe_profit, poc06_format_money(min_de_safe_profit), min_de_safe_roi_bps, max_de_ploss_bps);
 '''
 src = src.replace(needle, insert, 1)
 
-replace_once(
-    'candidate risk fields',
-    '    safe_de_ev: u32,\n    de_profit: i64,\n',
-    '    safe_de_ev: u32,\n    de_profit: i64,\n    de_roi_bps: u32,\n    de_ploss_bps: u32,\n    de_risk_pass: bool,\n',
-)
+replace_once('candidate risk fields', '    safe_de_ev: u32,\n    de_profit: i64,\n', '    safe_de_ev: u32,\n    de_profit: i64,\n    de_roi_bps: u32,\n    de_ploss_bps: u32,\n    de_risk_pass: bool,\n')
+replace_once('decision signature', '    safe_de_values: &std::collections::HashMap<u32, u32>,\n    max_buyout: u32,', '    safe_de_values: &std::collections::HashMap<u32, u32>,\n    safe_mat_prices: &std::collections::HashMap<u32, u32>,\n    net_bps: u32,\n    min_de_safe_profit: u32,\n    min_de_safe_roi_bps: u32,\n    max_de_ploss_bps: u32,\n    max_buyout: u32,')
+replace_once('risk metric insertion', '        let de_profit = poc08_profit(de_gross, record.buyout);\n', '''        let de_profit = poc08_profit(de_gross, record.buyout);\n        let de_roi_bps = poc08_roi_bps(de_gross, record.buyout);\n        let de_ploss_bps = if record.count == 1 {\n            exact_de.and_then(|id| if id > 0 { poc08_de_loss_probability_bps(id, safe_mat_prices, net_bps, record.buyout) } else { None }).unwrap_or(10_000)\n        } else { 10_000 };\n        let de_risk_pass = safe_de_ev > 0\n            && record.count == 1\n            && de_profit >= i64::from(min_de_safe_profit)\n            && de_roi_bps >= min_de_safe_roi_bps\n            && de_ploss_bps <= max_de_ploss_bps;\n''')
+replace_once('DE gate replacement', '        let de_ok = safe_de_ev > 0 && de_profit >= min_profit;\n', '        let de_ok = de_risk_pass;\n')
+replace_once('candidate risk values', '                safe_de_ev,\n                de_profit,', '                safe_de_ev,\n                de_profit,\n                de_roi_bps,\n                de_ploss_bps,\n                de_risk_pass,')
+replace_once('decision call risk inputs', '        &safe_de_values,\n        max_buyout,', '        &safe_de_values,\n        &safe_mat_prices,\n        net_bps,\n        min_de_safe_profit,\n        min_de_safe_roi_bps,\n        max_de_ploss_bps,\n        max_buyout,')
 
-replace_once(
-    'decision signature',
-    '    safe_de_values: &std::collections::HashMap<u32, u32>,\n    max_buyout: u32,',
-    '    safe_de_values: &std::collections::HashMap<u32, u32>,\n    safe_mat_prices: &std::collections::HashMap<u32, u32>,\n    net_bps: u32,\n    min_de_safe_profit: u32,\n    min_de_safe_roi_bps: u32,\n    max_de_ploss_bps: u32,\n    max_buyout: u32,',
-)
-
-# Insert risk metrics immediately after DE profit. Small anchors are much less
-# brittle than replacing the whole A->B->C decision block.
-replace_once(
-    'risk metric insertion',
-    '        let de_profit = poc08_profit(de_gross, record.buyout);\n',
-    '''        let de_profit = poc08_profit(de_gross, record.buyout);\n        let de_roi_bps = poc08_roi_bps(de_gross, record.buyout);\n        let de_ploss_bps = if record.count == 1 {\n            exact_de.and_then(|id| if id > 0 {\n                poc08_de_loss_probability_bps(id, safe_mat_prices, net_bps, record.buyout)\n            } else { None }).unwrap_or(10_000)\n        } else {\n            // Stacked DE equipment remains unsupported/fail-closed.\n            10_000\n        };\n        let de_risk_pass = safe_de_ev > 0\n            && record.count == 1\n            && de_profit >= i64::from(min_de_safe_profit)\n            && de_roi_bps >= min_de_safe_roi_bps\n            && de_ploss_bps <= max_de_ploss_bps;\n''',
-)
-replace_once(
-    'DE gate replacement',
-    '        let de_ok = safe_de_ev > 0 && de_profit >= min_profit;\n',
-    '        let de_ok = de_risk_pass;\n',
-)
-
-replace_once(
-    'candidate risk values',
-    '                safe_de_ev,\n                de_profit,',
-    '                safe_de_ev,\n                de_profit,\n                de_roi_bps,\n                de_ploss_bps,\n                de_risk_pass,',
-)
-
-replace_once(
-    'decision call risk inputs',
-    '        &safe_de_values,\n        max_buyout,',
-    '        &safe_de_values,\n        &safe_mat_prices,\n        net_bps,\n        min_de_safe_profit,\n        min_de_safe_roi_bps,\n        max_de_ploss_bps,\n        max_buyout,',
-)
-
-# Rejected audit rows must tell us WHY DE was blocked, not collapse all risk
-# failures into NO_EXIT_MEETS_MIN_PROFIT.
 old_reason = '''            let reason = if exact_de.is_none() && vendor_unit == 0 {
                 "DE_ID_UNKNOWN_AND_NO_VENDOR"
             } else if exact_de == Some(0) && vendor_unit == 0 {
@@ -207,56 +156,25 @@ new_reason = '''            let reason = if exact_de.is_none() && vendor_unit ==
             };'''
 replace_once('risk rejection reasons', old_reason, new_reason)
 
-replace_once(
-    'candidate csv header',
-    'safe_de_ev,de_profit,chosen_exit',
-    'safe_de_ev,de_profit,de_roi_bps,de_ploss_bps,de_risk_pass,chosen_exit',
-)
-replace_once(
-    'candidate csv values',
-    '            c.safe_de_ev,\n            c.de_profit,\n            c.chosen_exit',
-    '            c.safe_de_ev,\n            c.de_profit,\n            c.de_roi_bps,\n            c.de_ploss_bps,\n            c.de_risk_pass,\n            c.chosen_exit',
-)
-replace_once(
-    'candidate csv formatter slots',
-    '"{rank},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\\n",',
-    '"{rank},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\\n",',
-)
+replace_once('candidate csv header', 'safe_de_ev,de_profit,chosen_exit', 'safe_de_ev,de_profit,de_roi_bps,de_ploss_bps,de_risk_pass,chosen_exit')
+replace_once('candidate csv values', '            c.safe_de_ev,\n            c.de_profit,\n            c.chosen_exit', '            c.safe_de_ev,\n            c.de_profit,\n            c.de_roi_bps,\n            c.de_ploss_bps,\n            c.de_risk_pass,\n            c.chosen_exit')
+replace_once('candidate csv formatter slots', '"{rank},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\\n",', '"{rank},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\\n",')
+replace_once('console risk header', 'safe_ev={} de_profit={} chosen_profit={} page={}",', 'safe_ev={} de_profit={} de_roi_bps={} de_ploss_bps={} de_risk_pass={} chosen_profit={} page={}",')
+replace_once('console risk values', '            c.safe_de_ev,\n            c.de_profit,\n            c.chosen_profit,', '            c.safe_de_ev,\n            c.de_profit,\n            c.de_roi_bps,\n            c.de_ploss_bps,\n            c.de_risk_pass,\n            c.chosen_profit,')
 
-replace_once(
-    'console risk header',
-    'safe_ev={} de_profit={} chosen_profit={} page={}",',
-    'safe_ev={} de_profit={} de_roi_bps={} de_ploss_bps={} de_risk_pass={} chosen_profit={} page={}",',
-)
-replace_once(
-    'console risk values',
-    '            c.safe_de_ev,\n            c.de_profit,\n            c.chosen_profit,',
-    '            c.safe_de_ev,\n            c.de_profit,\n            c.de_roi_bps,\n            c.de_ploss_bps,\n            c.de_risk_pass,\n            c.chosen_profit,',
-)
-
-needle2 = '    println!("[POC08-C] REAL COMBINED SCAN-ONLY PASS");\n'
-if needle2 not in src:
-    raise SystemExit('POC08-D final marker not found')
-summary = r'''    let de_candidates = economy_candidates.iter()
-        .filter(|c| matches!(c.chosen_exit, Poc08Exit::Disenchant)).count();
+engine_marker = 'println!("[POC08-C] ENGINE PASS mode=RiskPricebookAudit mutation=DISABLED zero_candidates_is_pass=YES");'
+if src.count(engine_marker) != 1:
+    raise SystemExit(f'POC08-D engine marker count expected=1 actual={src.count(engine_marker)}')
+summary = r'''let de_candidates = economy_candidates.iter().filter(|c| matches!(c.chosen_exit, Poc08Exit::Disenchant)).count();
     let risk_passed = economy_candidates.iter().filter(|c| c.de_risk_pass).count();
-    println!(
-        "[POC08-D-RISK] SUMMARY candidates={} de_chosen={} de_risk_passed={} thresholds=profit:{} roi_bps:{} ploss_bps:{}",
-        economy_candidates.len(), de_candidates, risk_passed,
-        min_de_safe_profit, min_de_safe_roi_bps, max_de_ploss_bps
-    );
-    println!("[POC08-D] REAL COMBINED RISK SCAN-ONLY PASS");
-'''
-src = src.replace(needle2, summary, 1)
+    println!("[POC08-D-RISK] SUMMARY candidates={} de_chosen={} de_risk_passed={} thresholds=profit:{} roi_bps:{} ploss_bps:{}", economy_candidates.len(), de_candidates, risk_passed, min_de_safe_profit, min_de_safe_roi_bps, max_de_ploss_bps);
+    println!("[POC08-D] ENGINE PASS mode=DiscreteRiskGateAudit mutation=DISABLED zero_candidates_is_pass=YES");'''
+src = src.replace(engine_marker, summary, 1)
 
 src = src.replace('[POC08-C] COMBINED AUDIT', '[POC08-D] COMBINED AUDIT', 1)
 src = src.replace('[POC08-C] NO_CANDIDATE_PASS', '[POC08-D] NO_CANDIDATE_PASS', 1)
 src = src.replace('[POC08-C] CANDIDATE AUDIT PASS', '[POC08-D] CANDIDATE AUDIT PASS', 1)
-src = src.replace(
-    '[POC08-C] ENGINE PASS mode=RiskPricebookAudit mutation=DISABLED zero_candidates_is_pass=YES',
-    '[POC08-D] ENGINE PASS mode=DiscreteRiskGateAudit mutation=DISABLED zero_candidates_is_pass=YES',
-    1,
-)
+src = src.replace('[POC08-C] REAL COMBINED SCAN-ONLY PASS', '[POC08-D] REAL COMBINED RISK SCAN-ONLY PASS', 1)
 
 Path(sys.argv[2]).write_text(src, encoding='utf-8')
 print('[POC08-D-PATCH] PASS discrete P(loss)+ROI+safe-profit risk gate generated')
