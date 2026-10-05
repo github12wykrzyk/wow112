@@ -15,6 +15,12 @@ def rep(label: str, old: str, new: str) -> None:
     src = src.replace(old, new, 1)
 
 
+# F0 currently emits literal backslash-n in its eligible export. F2 PASS 1
+# consumes that CSV with PowerShell Import-Csv, so convert exactly those two
+# Rust string fragments to real newline escapes in the generated F2 source.
+rep('F0 CSV header newline', 'disenchant_id\\\\n");', 'disenchant_id\\n");')
+rep('F0 CSV row newline', '{},{}\\\\n", rank,c.record.auction_id', '{},{}\\n", rank,c.record.auction_id')
+
 marker = 'pub fn login_poc08_economy_audit(\n'
 idx = src.index(marker)
 helpers = r'''
@@ -121,4 +127,4 @@ for required in [
         raise SystemExit(f'POC08-F2 required marker missing: {required}')
 
 Path(sys.argv[2]).write_text(src, encoding='utf-8')
-print('[POC08-F2-PATCH] PASS exact audited DE target guard generated')
+print('[POC08-F2-PATCH] PASS exact audited DE target guard + CSV newline fix generated')
