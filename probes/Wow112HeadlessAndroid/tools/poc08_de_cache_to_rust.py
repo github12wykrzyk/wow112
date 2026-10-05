@@ -14,32 +14,34 @@ def main() -> int:
     cache_path = Path(args.cache_csv)
     output_path = Path(args.output_rs)
 
-    rows: list[tuple[int, int]] = []
+    rows: list[tuple[int, int, str]] = []
     with cache_path.open('r', encoding='utf-8-sig', newline='') as f:
         for row in csv.DictReader(f):
             try:
                 item_id = int(row['item_id'])
                 disenchant_id = int(row['disenchant_id'])
+                source = (row.get('source') or 'SeedLegacy').strip() or 'SeedLegacy'
             except Exception as exc:
                 raise SystemExit(f'invalid cache row {row!r}: {exc}')
             if item_id <= 0 or disenchant_id < 0:
                 raise SystemExit(f'invalid cache values item_id={item_id} disenchant_id={disenchant_id}')
-            rows.append((item_id, disenchant_id))
+            rows.append((item_id, disenchant_id, source))
 
-    dedup: dict[int, int] = {}
-    for item_id, disenchant_id in rows:
+    dedup: dict[int, tuple[int, str]] = {}
+    for item_id, disenchant_id, source in rows:
         old = dedup.get(item_id)
-        if old is not None and old != disenchant_id:
+        if old is not None and old[0] != disenchant_id:
             raise SystemExit(
-                f'conflicting cache entries item_id={item_id}: {old} vs {disenchant_id}'
+                f'conflicting cache entries item_id={item_id}: {old[0]} vs {disenchant_id}'
             )
-        dedup[item_id] = disenchant_id
+        if old is None:
+            dedup[item_id] = (disenchant_id, source)
 
     # Permanent regressions from the real project history.
     for blocked in (20406, 20407, 20408):
-        if dedup.get(blocked) != 0:
+        if dedup.get(blocked, (-1, ''))[0] != 0:
             raise SystemExit(f'expected regression item {blocked} to have DisenchantID=0')
-    if dedup.get(41316, 0) <= 0:
+    if dedup.get(41316, (0, ''))[0] <= 0:
         raise SystemExit('expected known-positive item 41316 to have DisenchantID>0')
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,17 +51,28 @@ def main() -> int:
         f.write('fn poc08_exact_disenchant_id(item_id: u32) -> Option<u32> {\n')
         f.write('    match item_id {\n')
         for item_id in sorted(dedup):
-            f.write(f'        {item_id} => Some({dedup[item_id]}),\n')
+            f.write(f'        {item_id} => Some({dedup[item_id][0]}),\n')
+        f.write('        _ => None,\n')
+        f.write('    }\n')
+        f.write('}\n\n')
+        f.write('fn poc08_exact_disenchant_source(item_id: u32) -> Option<&\'static str> {\n')
+        f.write('    match item_id {\n')
+        for item_id in sorted(dedup):
+            source = dedup[item_id][1].replace('\\', '\\\\').replace('"', '\\"')
+            f.write(f'        {item_id} => Some("{source}"),\n')
         f.write('        _ => None,\n')
         f.write('    }\n')
         f.write('}\n\n')
         f.write(f'const POC08_DE_CACHE_ENTRIES: usize = {len(dedup)};\n')
 
-    zero = sum(1 for value in dedup.values() if value == 0)
+    zero = sum(1 for value, _ in dedup.values() if value == 0)
     positive = len(dedup) - zero
+    source_counts: dict[str, int] = {}
+    for _, source in dedup.values():
+        source_counts[source] = source_counts.get(source, 0) + 1
     print(
         f'[POC08-DE-CACHE] PASS entries={len(dedup)} positive={positive} zero={zero} '
-        f'output={output_path}'
+        f'sources={source_counts} output={output_path}'
     )
     return 0
 
