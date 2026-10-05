@@ -15,5 +15,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "TELE-01 safety invariant: chat receive/log only; zero chat TX, zero invite, zero cast, zero portal use. Runtime evidence pending real user smoke test. Temporary branch-only cargo-check workflow is used only to validate this first protocol slice."
+  "notes": "TELE-01 safety invariant: chat receive/log only; zero chat TX, zero invite, zero cast, zero portal use. Runtime evidence pending real user smoke test. Temporary branch-only Android bundle workflow builds an exact-SHA smoke package containing RUN_TELE_SNIFFER launchers and the x86_64 Android probe."
 }
