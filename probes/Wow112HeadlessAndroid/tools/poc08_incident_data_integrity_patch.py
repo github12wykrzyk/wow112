@@ -173,7 +173,7 @@ fn poc08_append_material_history(
 '''
 replace_between('fn poc08_append_material_history(', 'fn poc08_collect_material_pricebook(', append_v2, 'history writer')
 
-old_safe = r'''        let mut safe_price = if effective_conf >= 2 { raw_lowest } else { 0 };
+old_safe = r'''        let mut safe_price = if effective_conf >= 2 && !truncated { raw_lowest } else { 0 };
         if safe_price > 0 && history_count >= 3 && history_median > 0 {
             let history_cap = (u64::from(history_median).saturating_mul(120) / 100)
                 .min(u64::from(u32::MAX)) as u32;
@@ -188,7 +188,7 @@ old_safe = r'''        let mut safe_price = if effective_conf >= 2 { raw_lowest 
 new_safe = r'''        let min_history = poc07_env_u32_default("WOW112_DE_MIN_HISTORY_EPOCHS", 3)?.max(3) as usize;
         let shock_bps = poc07_env_u32_default("WOW112_DE_UPWARD_SHOCK_BPS", 2000)?.clamp(500, 5000);
         let mut safe_price = 0u32;
-        if effective_conf >= 2 && history_count >= min_history && history_median > 0 {
+        if effective_conf >= 2 && !truncated && history_count >= min_history && history_median > 0 {
             let max_allowed = (u64::from(history_median)
                 .saturating_mul(u64::from(10_000u32.saturating_add(shock_bps))) / 10_000)
                 .min(u64::from(u32::MAX)) as u32;
@@ -199,8 +199,8 @@ new_safe = r'''        let min_history = poc07_env_u32_default("WOW112_DE_MIN_HI
                     material_id, raw_lowest, history_median, history_count, shock_bps);
             }
         } else {
-            println!("[POC08-DATA-HEALTH] status=WARMUP item_id={} raw={} history_n={} min_history={} confidence={} action=DE_BLOCK",
-                material_id, raw_lowest, history_count, min_history, effective_conf);
+            println!("[POC08-DATA-HEALTH] status=WARMUP item_id={} raw={} history_n={} min_history={} confidence={} truncated={} action=DE_BLOCK",
+                material_id, raw_lowest, history_count, min_history, effective_conf, truncated);
         }
 '''
 replace_once(old_safe, new_safe, 'safe-price block')
@@ -259,10 +259,11 @@ required = [
     'snapshot_commit=PASS schema=2',
     'saturating_add(u64::from(record.count).saturating_sub(1))',
     'MANUAL_OVERRIDE_IGNORED_NOT_ARMED',
+    '!truncated && history_count >= min_history',
 ]
 for marker in required:
     if marker not in s:
         raise SystemExit('incident data-integrity required marker missing: ' + marker)
 
 p.write_text(s, encoding='utf-8')
-print('[POC08-INCIDENT-DATA-INTEGRITY] PASS schema=2 atomic-snapshots epoch-dedupe stale-check shock-quarantine override-guard stack-ceiling')
+print('[POC08-INCIDENT-DATA-INTEGRITY] PASS schema=2 atomic-snapshots epoch-dedupe stale-check shock-quarantine override-guard stack-ceiling truncation-fail-closed')
