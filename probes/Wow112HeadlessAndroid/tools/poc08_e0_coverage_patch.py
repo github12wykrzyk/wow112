@@ -49,8 +49,8 @@ replace_once(
 
 replace_once(
     'candidate csv values',
-    '            c.disenchant_id,\n            c.heuristic_de_ev,\n',
-    '            c.disenchant_id,\n            c.deid_status,\n            c.deid_source,\n            c.heuristic_de_ev,\n',
+    '            c.record.owner_guid,\n            c.vendor_unit,\n            c.vendor_profit,\n            c.disenchant_id,\n            c.heuristic_de_ev,\n',
+    '            c.record.owner_guid,\n            c.vendor_unit,\n            c.vendor_profit,\n            c.disenchant_id,\n            c.deid_status,\n            c.deid_source,\n            c.heuristic_de_ev,\n',
 )
 
 replace_once(
@@ -79,8 +79,8 @@ replace_once(
 
 replace_once(
     'candidate log args',
-    '            c.disenchant_id,\n            c.heuristic_de_ev,\n',
-    '            c.disenchant_id,\n            c.deid_status,\n            c.deid_source,\n            c.heuristic_de_ev,\n',
+    '            c.vendor_profit,\n            c.disenchant_id,\n            c.heuristic_de_ev,\n',
+    '            c.vendor_profit,\n            c.disenchant_id,\n            c.deid_status,\n            c.deid_source,\n            c.heuristic_de_ev,\n',
 )
 
 # Add unique-item provenance coverage next to the existing reference summary.
