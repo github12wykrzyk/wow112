@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - parallel
-      - 'feature/**'
     paths:
       - 'src/AutoLoginBridge/**'
       - 'tools/build_autologinbridge_candidate.py'

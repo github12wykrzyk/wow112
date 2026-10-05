@@ -1,100 +1,46 @@
 # AI START HERE
 
-This repository is optimized for fast repeated AI-assisted development of **World of Warcraft 1.12.1 build 5875, Windows x86**.
+`AGENTS.md` is authoritative. Target: **WoW 1.12.1 build 5875, Windows x86**.
 
-`AGENTS.md` is authoritative. The central rule is:
-
-> **`main` is the one canonical integration/development trunk. `parallel` is an exact compatibility/delivery alias, not a second development world.**
-
-## Fast startup
-
-For ordinary work:
-
-1. resolve live `main` HEAD once,
-2. verify `runtime/ai_startup_snapshot.json` against the five startup-source Git blob identities from that same HEAD,
-3. read `runtime/ai_experiment_index.json`,
-4. open only the affected module/owner files,
-5. optionally run:
+## Normal ChatGPT fast path
 
 ```text
-python tools/ai_task_context.py --branch main --module MODULE
+read live main HEAD once
+-> read runtime/ai_startup_snapshot.json once
+-> open known owner/module files directly
+-> implement
+-> targeted preflight
+-> optimistic CAS integration to main + parallel
+-> routed exact-SHA delivery
 ```
 
-Do not scan all branches, history, archives, the full experiment ledger or successful CI logs unless a concrete unresolved risk requires it.
+`main` is the canonical integration/development trunk. `parallel` is an exact compatibility/delivery alias, not a second development world. `feature/**` branches are short-lived tasks; `work` is legacy history; `promote/**` is release-only.
 
-Fallback read order for startup-contract edits, release work, ambiguous writes, stale snapshot or unresolved authority:
+For ordinary work **trust the generated startup snapshot on canonical main**. Do not spend chat/tool time re-verifying its five source hashes. Hash verification/full startup is only for startup-contract edits, stale-snapshot diagnosis, release work, or ambiguous recovery.
 
-1. `AGENTS.md`
-2. `AI_START_HERE.md`
-3. `AI_INDEX.json`
-4. `CURRENT.json`
-5. `runtime/current.json`
-6. only the evidence needed for the unresolved issue.
+Do **not** read `runtime/ai_experiment_index.json` by default. It contains historical experiment evidence and is consulted only for explicit continuation/ambiguity. If the module owner/path is known from the request, go straight to that owner.
 
-## Branches
+Do **not** enumerate branches, history, archives, all task records, or successful CI jobs on the success path.
 
-- `main` — canonical integration trunk and source of normal development truth.
-- `parallel` — atomically synchronized exact delivery alias.
-- `feature/**` — short-lived task branches from current `main`.
-- `promote/**` — curated release/stable-candidate snapshots.
-- `work` — legacy compatibility/history only.
-- `parallel-testpoint` — optional frozen user-test pointer, not a development trunk.
+## Integration
 
-Stable state is represented by baseline/runtime metadata and exact accepted artifacts, not by treating `main` as stable-only.
-
-Historical `parallel_*` / `work_*` filenames are compatibility names and do not imply independent branch authority.
-
-## Default task path
+Feature preflight/profile gates may run concurrently. Integration uses **optimistic atomic CAS**, not a serialized pending-slot queue:
 
 ```text
-main HEAD
--> compact routing/task context
--> owner files only
--> feature/<purpose>
--> smallest implementation
--> routed preflight
--> exact feature-SHA profile gates if required
--> serialized revalidation/integration into main
--> atomic main + parallel update
--> risk/path-routed exact-SHA delivery
--> delete integrated feature branch
+feature exact SHA
+-> fetch/revalidate current main
+-> local merge
+-> atomic push main + parallel
+-> lost race: refetch/revalidate/retry
+-> path/risk-routed exact-SHA delivery
 ```
 
-`PREFLIGHT PASS` is not `TEST READY`. Only the required exact integrated-SHA delivery gates and package verification can make a runnable candidate ready.
+Unknown or mixed runtime changes fail closed to STANDARD. Profile-contained changes use their profile. Task/docs-only changes avoid binary delivery.
 
-## Analysis discipline
+## Chat behavior
 
-Broaden beyond owner files only when there is a concrete reason: shared hook/ABI conflict, unknown owner, merge conflict, provenance mismatch, verifier/build failure, ambiguous experiment routing, or an explicit audit/history request.
+Default is **final-only** communication. No minute pings and no GitHub/API polling just to show progress. Report a blocker when one exists; otherwise return the result. Detailed jobs/logs are read only on failure, unexpected stall, or explicit `check`.
 
-The full experiment ledger (`runtime/ai_experiments.json`) is evidence/detail fallback. The compact generated index is the routing default.
+Heavy repository audits stay nightly/manual/PR/release.
 
-## Verification
-
-Normal micro-iterations use the routed feature preflight and only the checks selected for their changed paths/risk.
-
-Repository-wide verification is intentionally outside the hot path:
-- deep repository audit: nightly/manual/PR,
-- full AI registry suite: nightly/manual/PR,
-- broad native ABI audit: scheduled/manual,
-- stable release gates: `promote/**` + explicit stable build.
-
-Do not reintroduce these heavy checks into every feature.
-
-## Release path
-
-A release is a curated `promote/<purpose>` snapshot based on current `main`.
-
-Require `Pre-promote stable` PASS on the exact promote SHA, then run `Build stable candidate` explicitly on that same curated release SHA. Stable packaging uses exact accepted bytes through `tools/package_exact_current.py` and `tools/verify_candidate_package.py`.
-
-`main` remains the canonical integration trunk before and after release.
-
-## Ready-to-test
-
-A TEST artifact is ready only when:
-- feature preflight passed,
-- the feature was integrated into canonical `main`,
-- `parallel` equals the same integrated SHA,
-- all required routed delivery profiles passed on that exact SHA,
-- final runnable package verification passed when a game ZIP is required.
-
-For full rules see `AGENTS.md`.
+Full contract: `AGENTS.md`.
