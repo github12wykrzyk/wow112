@@ -1,0 +1,148 @@
+name: POC08-E0 Full DE Coverage Audit Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py'
+      - '.github/workflows/build_windows_poc08_e0_full_coverage.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate V5.3 base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build full live DEID cache with provenance
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py `
+            --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv `
+            --item-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt `
+            --output-cache "$env:RUNNER_TEMP/poc08-e0-cache.csv" `
+            --unresolved "$env:RUNNER_TEMP/poc08-e0-unresolved.csv" `
+            --workers 24 --timeout 10 --retries 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py --cache-csv "$env:RUNNER_TEMP/poc08-e0-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows=Import-Csv "$env:RUNNER_TEMP/poc08-e0-cache.csv"
+          $octo=@($rows | Where-Object { $_.source -eq 'OctoWow' }).Count
+          $capy=@($rows | Where-Object { $_.source -eq 'CapyDB' }).Count
+          $legacy=@($rows | Where-Object { $_.source -eq 'LEGACY_SEED' }).Count
+          $positive=@($rows | Where-Object { [int]$_.disenchant_id -gt 0 }).Count
+          $zero=@($rows | Where-Object { [int]$_.disenchant_id -eq 0 }).Count
+          $unresolved=@(Import-Csv "$env:RUNNER_TEMP/poc08-e0-unresolved.csv").Count
+          Write-Host "[POC08-E0-COVERAGE] resolved=$($rows.Count)/2343 positive=$positive zero=$zero unresolved=$unresolved octo=$octo capy=$capy legacy=$legacy"
+          if ($rows.Count -lt 2200) { throw "POC08-E0 resolved coverage too low: $($rows.Count)/2343" }
+
+      - name: Generate POC08-D risk source with E0 cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs'
+          foreach ($marker in @('POC08-D-RISK','de_ploss_bps','de_roi_bps','de_risk_pass','mutation=DISABLED','NO_CANDIDATE_PASS')) {
+            if (-not (Select-String -Path $p -Pattern $marker -Quiet)) { throw "POC08-E0 marker missing: $marker" }
+          }
+
+      - name: Select POC08-E0 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_d_risk;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_d_risk::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08-E0]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08E0 FULL COVERAGE SESSION PASS')
+          $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08E0 full DE coverage risk audit')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Static safety + regression assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs'
+          if (-not (Select-String -Path $p -Pattern 'hard read-only; BUY is disabled' -Quiet)) { throw 'read-only guard missing' }
+          if (-not (Select-String -Path $p -Pattern 'mutation=DISABLED' -Quiet)) { throw 'mutation disabled marker missing' }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '20406 => Some\(0\)' -Quiet)) { throw 'Twilight regression 20406 missing' }
+          if (-not (Select-String -Path $p -Pattern 'record.owner_guid == player_guid' -Quiet)) { throw 'own-listing exclusion missing' }
+          if (-not (Select-String -Path $p -Pattern 'record.count == 1' -Quiet)) { throw 'stacked-DE fail-closed guard missing' }
+          if (-not (Select-String -Path $p -Pattern 'loss_probability' -Quiet)) { throw 'P(loss) model missing' }
+          Write-Host '[POC08-E0-CI] READ-ONLY + REGRESSION + RISK GUARDS PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-e0'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_D_RISK_WINDOWS.ps1 "$d/RUN_POC08_E0_FULL_COVERAGE.ps1"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_D_RISK_WINDOWS.bat "$d/START_POC08_E0_FULL_COVERAGE.bat"
+          Copy-Item "$env:RUNNER_TEMP/poc08-e0-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-e0-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt "$d/runtime/LIVE_ITEM_IDS_2343.txt"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs "$d/source/world_poc08_d_risk.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs "$d/source/poc08_de_cache_generated.rs"
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-E0-FULL-DE-COVERAGE-AUDIT
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          MUTATION=DISABLED
+          ZERO_BUY=YES
+          LIVE_ITEM_COVERAGE_TARGET=2343
+          DE_CACHE_PROVENANCE=CSV_OctoWow_CapyDB_LEGACY_SEED
+          DE_REFERENCE=CLASSIC_NOT_OCTO_VERIFIED
+          RISK_ENGINE=POC08-D
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          POC08-E0 is READ ONLY.
+          It is POC08-D rebuilt with the full 2343-item live AH coverage snapshot.
+          The runtime cache CSV preserves DEID provenance: OctoWow / CapyDB / LEGACY_SEED.
+          This build cannot buy. Use it to verify DE coverage and candidate/risk counts before BUY-ONE.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC08-E0-FULL-COVERAGE-${{ github.sha }}
+          path: dist/poc08-e0
+          if-no-files-found: error
+          retention-days: 7
