@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "gpt-fast-execution-v1",
+  "goal": "Minimize ChatGPT interface latency by removing stale routing ambiguity, progress/polling chatter and duplicate AutoLogin feature builds while aligning active workflow instructions with optimistic CAS.",
+  "branch": "feature/gpt-fast-execution-v1",
+  "base_parallel_sha": "ad4d080eaaa8424d09777646055e4cc64fd113a1",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AI-workflow",
+    "AutoLoginBridge"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ai-startup-routing",
+    "chat-execution-policy",
+    "canonical-integration-policy"
+  ],
+  "delivery_profiles": [
+    "autologinbridge"
+  ],
+  "lease": null,
+  "notes": "GPT latency cleanup. Full experiment ledger/index and historical task namespace remain explicit fallback evidence, not normal startup input. AutoLogin feature validation is owned by exact-SHA profile dispatch, not a duplicate feature push build.",
+  "integrated_feature_sha": "ae6e09d89787bedf87c9c08a446247c16687b3e0"
+}

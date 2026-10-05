@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Machine-readable fast routing for one canonical main integration world. Stable state is metadata/artifact identity; parallel is a delivery alias.",
+  "purpose": "Machine-readable fast routing for one canonical main integration world. Optimized for minimum ChatGPT interface latency.",
   "target": {
     "game": "World of Warcraft",
     "version": "1.12.1",
@@ -69,7 +69,7 @@
     "deep_verify": "python tools/verify_repo.py",
     "status": "python tools/ai_status.py",
     "status_json": "python tools/ai_status.py --json",
-    "task_context": "python tools/ai_task_context.py --branch main --module MODULE",
+    "task_context": "python tools/ai_task_context_fast.py --branch main --module MODULE",
     "package_current": "python tools/package_current.py --output dist/current.zip --metadata dist/current_metadata.json",
     "package_exact_stable": "python tools/package_exact_current.py --output dist/WoW112_STABLE_CANDIDATE.zip --metadata dist/candidate_metadata.json",
     "finalize_package": "python tools/verify_candidate_package.py --package dist/WoW112_WORK_CANDIDATE.zip --package-metadata dist/candidate_metadata.json --summary dist/candidate_summary.json --finalize",
@@ -79,7 +79,6 @@
     "sync_source_metadata": "python tools/sync_source_metadata.py",
     "check_source_metadata": "python tools/sync_source_metadata.py --check",
     "validate_experiments": "python tools/ai_experiments.py validate",
-    "route_experiment": "python tools/ai_experiments.py route --module MODULE",
     "parallel_feature_preflight": "python tools/parallel_feature_preflight.py --base origin/main",
     "generate_experiment_fast_index": "python tools/ai_experiments.py index",
     "check_experiment_fast_index": "python tools/ai_experiments.py index --check",
@@ -88,41 +87,50 @@
   },
   "directories": {
     "src": "canonical editable source/evidence grouped by module",
-    "runtime": "machine-readable active runtime metadata, task coordination and verified fast indexes",
+    "runtime": "machine-readable runtime/task metadata; do not enumerate globally on normal tasks",
     "baseline": "stable rollback metadata",
     "manifests": "reference hashes",
-    "artifacts/runtime_cache": "content-addressed exact DLL bytes for stable packaging and rollback",
-    "artifacts": "recovery, binary audits and deterministic reproducers",
-    "archives": "deprecated/intermediate archive experiments; do not scan by default",
+    "artifacts/runtime_cache": "content-addressed exact DLL bytes",
+    "artifacts": "recovery/binary evidence; inspect only when required",
+    "archives": "historical/recovery; do not scan by default",
     "source": "legacy/historical material only",
-    "docs": "workflow/provenance/retention documentation",
-    "tools": "verification, build, packaging and maintenance scripts"
+    "docs": "workflow/provenance documentation",
+    "tools": "verification/build/packaging scripts"
   },
   "do_not_scan_by_default": [
     "archives",
     "src/history",
     "source/V20_SOURCE_PARTS",
-    "artifacts/V67"
+    "artifacts/V67",
+    "runtime/parallel_tasks",
+    "runtime/ai_experiments.json",
+    "runtime/ai_experiment_index.json"
   ],
   "rules": [
     "main is the canonical integration/development trunk",
-    "parallel is an exact compatibility/delivery alias and is never an independent development authority",
-    "work is legacy compatibility/history and is not the default branch for new tasks",
-    "ordinary new work starts on short-lived feature/** from current main",
-    "read compact startup/routing state before module source and do not enumerate all branches on the success path",
-    "broaden analysis only for concrete unresolved ownership, conflict, provenance, verification or recovery risk",
-    "normal multi-file changes should be one Git tree commit",
-    "the serialized queue revalidates against live main and atomically updates main plus parallel",
-    "post-integration delivery is fail-closed path/risk routed; unknown or mixed runtime changes require STANDARD",
-    "heavy repository-wide audits are scheduled/manual/PR/release and not part of every micro-iteration",
-    "PREFLIGHT PASS is not TEST READY; exact integrated-SHA delivery/package gates are authoritative",
-    "STABLE packages use exact accepted bytes, never an unchecked rebuild",
-    "stable state is baseline/artifact metadata, not a permanent branch role",
-    "release candidates use promote/** and exact-SHA pre-promotion plus explicit stable packaging",
-    "AI owns routine GitHub housekeeping",
-    "never mix TBC/Wrath/Retail assumptions into build 5875 code",
-    "inspect successful jobs/steps/logs only when a specific decision requires them"
+    "parallel is an exact compatibility/delivery alias",
+    "ordinary work starts on feature/** from current main",
+    "resolve main once and trust the generated startup snapshot on the ordinary chat success path",
+    "do not read the experiment index or full ledger unless explicit continuation or unresolved routing ambiguity requires it",
+    "open known owner paths directly; broad search is fallback only",
+    "one logical multi-file iteration should be one Git tree commit",
+    "integration attempts use optimistic atomic CAS against live main; there is no serialized pending-slot queue",
+    "post-integration delivery is fail-closed path/risk routed",
+    "heavy repository audits are scheduled/manual/PR/release",
+    "do not poll successful CI from chat; the integration workflow waits for exact-SHA downstream delivery",
+    "progress messages are blocker-only unless the user explicitly asks for them",
+    "PREFLIGHT PASS is not TEST READY",
+    "AI owns routine GitHub housekeeping"
   ],
+  "chat_execution_policy": {
+    "default_communication": "final_only",
+    "progress_updates": "only_explicit_request_or_real_blocker",
+    "api_calls_for_ping": false,
+    "ref_resolution": "once_per_phase_unless_known_state_change",
+    "refetch_unchanged_files": false,
+    "successful_ci_logs": "do_not_read",
+    "ci_polling": "no_subjob_polling; inspect latest top-level exact-SHA run only when needed"
+  },
   "startup_fast_path": {
     "schema_version": 1,
     "snapshot": "runtime/ai_startup_snapshot.json",
@@ -134,37 +142,38 @@
       "runtime/current.json"
     ],
     "verification": {
-      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live main HEAD",
+      "method": "CI/recovery may compare snapshot git_blob_sha1 values with Git tree metadata from the same main HEAD",
       "same_head_required": true,
-      "fallback_if_unverifiable": true
+      "fallback_if_unverifiable": true,
+      "ordinary_chat_policy": "trust the generated snapshot from live canonical main; do not hash-verify five sources per ordinary task"
     },
     "eligible_tasks": [
-      "ordinary module or feature diagnosis",
+      "ordinary module/feature diagnosis",
       "ordinary implementation from canonical main through feature/**",
-      "CI/status follow-up where startup authority files are unchanged"
+      "CI/status follow-up where startup authority is unchanged"
     ],
     "full_startup_required_for": [
       "release or promote/** work",
-      "editing any startup source file, snapshot or generator",
-      "recovery after unknown or ambiguous write/transport state",
-      "snapshot missing, stale, mismatched or unverifiable",
-      "authority ambiguity not resolved by compact state"
+      "editing startup source/snapshot/generator",
+      "recovery after ambiguous write/transport state",
+      "snapshot explicitly reported stale/mismatched",
+      "authority ambiguity unresolved by current main/snapshot"
     ],
     "after_verified_snapshot": [
-      "read runtime/ai_experiment_index.json before module source",
-      "resolve current main HEAD before creating/writing a feature",
-      "read only module/dependency files needed for the task",
+      "resolve current main HEAD once before writing",
+      "open only the named/known owner files",
+      "use experiment/task routing only for explicit continuation or unresolved ambiguity",
       "implement before broadening analysis unless a concrete risk is unresolved"
     ],
     "invariants": [
       "main is canonical integration authority",
       "parallel is an exact delivery alias",
       "work is not a normal development target",
+      "optimistic CAS arbitrates concurrent integration attempts",
       "one logical iteration uses one coherent commit when possible",
-      "never force-push or destructively reset unique work",
-      "fast startup never weakens exact-SHA runtime, package, provenance or release verification",
       "heavy audits stay outside the ordinary hot path",
-      "branch/history/archive archaeology is failure-driven, not default"
+      "branch/history/archive/task-ledger archaeology is failure-driven, not default",
+      "chat progress/polling must not create extra API traffic"
     ]
   }
 }

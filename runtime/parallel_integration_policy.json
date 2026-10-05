@@ -3,12 +3,12 @@
   "legacy_name": "parallel_integration_policy",
   "canonical_branch": "main",
   "delivery_alias_branch": "parallel",
-  "mode": "serialized_revalidate_then_atomic_alias_update",
-  "purpose": "Integrate exact preflighted feature SHAs into canonical main while keeping parallel as an exact delivery compatibility alias.",
+  "mode": "concurrent_optimistic_atomic_cas",
+  "purpose": "Integrate exact preflighted feature SHAs into canonical main while keeping parallel as the exact delivery alias without GitHub pending-slot serialization.",
   "preconditions": [
-    "feature/** exact SHA has passed routed feature preflight against main",
-    "required exact feature-SHA delivery profile gates have passed",
-    "current main HEAD is re-read inside the serialized integration queue"
+    "feature exact SHA passed routed preflight against main",
+    "required exact feature-SHA delivery profile gates passed",
+    "each integration attempt re-reads current main immediately before revalidation/merge"
   ],
   "integration_transaction": {
     "base_ref": "main",
@@ -23,31 +23,37 @@
       ],
       "atomic": true,
       "force": false,
-      "expected_behavior": "main and parallel advance together to one exact integrated SHA"
+      "expected_behavior": "only one contender wins a given ref state; main and parallel advance together"
     }
   },
-  "on_ref_rejected_or_head_changed": [
-    "do not force-update canonical refs",
-    "discard the stale integration commit",
-    "fetch current main",
-    "re-run routed feature preflight against the fresh main HEAD",
-    "create a fresh merge commit and retry within the queue"
-  ],
+  "race_policy": {
+    "model": "optimistic_compare_and_swap",
+    "max_attempts": 6,
+    "on_lost_race": [
+      "discard stale local integration result",
+      "fetch live main",
+      "revalidate exact feature SHA",
+      "create fresh merge commit",
+      "retry after short jitter"
+    ],
+    "never": [
+      "force-update canonical refs",
+      "cancel an unrelated pending feature merely because another integration is running"
+    ]
+  },
   "parallelism": {
     "allowed": [
       "independent feature coding",
-      "independent feature commits",
-      "feature preflight workflows",
-      "module-specific feature workflows"
+      "feature preflight/profile gates",
+      "independent integration attempts"
     ],
-    "serialized": [
-      "final canonical main integration and atomic main/parallel ref movement"
-    ]
+    "serialization": "none at GitHub job level; atomic ref CAS arbitrates canonical movement"
   },
   "prohibitions": [
     "treating parallel as an independent integration base",
-    "routing ordinary new work to work",
-    "force-pushing main or parallel to resolve queue races",
-    "reusing exact-SHA CI evidence for a different feature or integrated SHA"
+    "routing ordinary work to work",
+    "force-pushing main or parallel to resolve races",
+    "reusing exact-SHA CI evidence for a different SHA",
+    "reintroducing a single GitHub concurrency pending slot for integration"
   ]
 }

@@ -1,181 +1,104 @@
 # AGENTS.md — AI AUTOPILOT CONTRACT
 
-This repository is operated primarily by AI agents. The human user describes desired behavior and tests verified artifacts; AI owns routine GitHub edits, branch housekeeping, verification, packaging and rollback.
+This repository is operated primarily by AI agents. Target is permanently **World of Warcraft 1.12.1 build 5875, Windows x86** unless the user explicitly requests otherwise.
 
-Target is permanently **World of Warcraft 1.12.1 build 5875, Windows x86** unless the user explicitly requests a comparison.
+## 1. Authority and branch model
 
-## 1. Canonical authority
+- `main` = **canonical integration trunk and normal development authority**.
+- `parallel` = **exact compatibility/delivery alias**; successful integration advances `main` and `parallel` atomically to the same SHA.
+- `feature/**` = short-lived task branch from current `main`.
+- `promote/**` = curated release snapshot.
+- `work` = legacy compatibility/history only.
+- `parallel-testpoint` = optional frozen user-test pointer.
 
-Use this order of authority:
+Machine authority order when deeper evidence is actually needed:
+`CURRENT.json` -> `runtime/current.json` -> exact source/provenance metadata -> rollback artifacts/history.
 
-1. live GitHub `main` HEAD — canonical integration state,
-2. `CURRENT.json` — canonical routing/tool pointers and stable baseline metadata,
-3. `runtime/current.json` — exact active EXE/DLL identities and source provenance,
-4. `src/<Module>/...` — normal editable source when referenced by runtime metadata,
-5. exact-SHA candidate/package metadata,
-6. baseline/manifests and `artifacts/runtime_cache/` — rollback and exact-byte recovery,
-7. archives/history/legacy `source/` — recovery evidence only.
+Historical `parallel_*` / `work_*` filenames are compatibility names, not branch authority.
 
-If prose conflicts with live `main` plus machine-readable metadata, live `main` and machine-readable metadata win; repair the prose.
+## 2. GPT FAST EXECUTION — default
 
-## 2. Branch model — one development world
+The default objective is **minimum wall-clock time in the ChatGPT interface**, not maximum narration.
 
-- `main` = **canonical integration trunk and normal development authority**. It may be in candidate state.
-- `parallel` = exact compatibility/delivery alias. The queue moves `main` and `parallel` atomically to the same integrated SHA. Do not treat it as an independent development world.
-- `feature/**` = short-lived branch for one isolated task, normally created from current `main`.
-- `promote/**` = curated release/stable-candidate snapshot used only for release gates.
-- `work` = legacy compatibility/history branch. Do not route ordinary new work there.
-- `parallel-testpoint` = optional frozen user-test delivery pointer. It is not a development trunk.
-- Stable state is a **baseline/artifact property**, not a permanent branch role.
+For an ordinary understood task:
 
-Files/tools with historical names such as `parallel_*`, `work_*`, `runtime/parallel_*` remain valid compatibility interfaces. Their names do not override the branch model above.
+1. Resolve live `main` HEAD **once**.
+2. Read `runtime/ai_startup_snapshot.json` **once** and trust the generated snapshot on canonical `main`.
+3. Go directly to the named module/owner files.
+4. Implement the smallest coherent change.
+5. Run only routed validation/delivery.
 
-Never ask the user to merge, rebase, synchronize or clean routine branch state manually.
+Do **not** verify all five startup-source blob hashes on every ordinary task. Their hashes remain in the snapshot for CI/recovery; verify them only when editing startup authority, diagnosing a stale snapshot, recovering an ambiguous write, or preparing a release.
 
-## 3. Startup fast path — default
+Do **not** read `runtime/ai_experiment_index.json` by default. It is optional historical/continuation routing evidence. Use it or `tools/ai_task_context_fast.py` only when the user explicitly wants to continue prior experimental work or ownership/current-task ambiguity is unresolved.
 
-For an ordinary task:
+Do **not** enumerate all branches, scan history/archives, list all task records, or inspect successful CI logs on the normal success path.
 
-1. Resolve current live `main` HEAD once.
-2. Read `runtime/ai_startup_snapshot.json`.
-3. Verify its five `source_files[*].git_blob_sha1` values against Git tree metadata from that same `main` HEAD.
-4. If valid, read `runtime/ai_experiment_index.json` and only the affected module/owner files.
-5. Use `python tools/ai_task_context.py --branch main --module MODULE` when useful.
-6. Start implementation from that bounded context.
+### Chat/tool budget
 
-Do **not** enumerate all branches, scan commit history, read the full experiment ledger, inspect archives, or fetch broad CI logs on the normal success path.
+- No progress chatter by default. Send a progress message only for a real blocker or when the user explicitly asks for updates.
+- Never make GitHub/API calls solely to produce a ping.
+- Cache file content/blob SHA/ref state within the turn; do not re-fetch unchanged state.
+- Prefer direct known-path fetches over broad code search.
+- Batch one logical multi-file iteration into one Git tree commit when git-data tools are available.
+- The integration workflow already waits for exact-SHA downstream delivery. Chat should not repeatedly poll its sub-jobs.
+- Inspect job steps/logs only after failure/cancellation/unexpected stall, or when the user explicitly asks for a check.
+- A superseded same-feature run cancelled by `cancel-in-progress` is normal; diagnose only the newest exact feature SHA.
 
-Fall back to the full startup sequence only when the snapshot is missing/stale/unverifiable, startup authority files are being edited, a release/promotion is being prepared, a previous write is ambiguous, or ownership/authority cannot be resolved:
-
-1. `AGENTS.md`
-2. `AI_START_HERE.md`
-3. `AI_INDEX.json`
-4. `CURRENT.json`
-5. `runtime/current.json`
-6. only evidence needed for the unresolved risk.
-
-## 4. Analysis budget — implementation first
+## 3. Analysis budget — implementation first
 
 Default rule: **route, inspect the owner, implement, test**.
 
 Broad archaeology is justified only by a concrete trigger such as:
-
 - unknown mechanism owner,
 - shared hook/ABI/load-order conflict,
 - merge conflict,
-- provenance or exact-byte mismatch,
+- provenance/exact-byte mismatch,
 - verifier/build/package failure,
-- ambiguous active experiment that the compact index cannot resolve,
+- ambiguous active experiment that cannot be resolved from the current task,
 - explicit user request for history/audit/research.
 
-Do not broaden analysis merely because more repository history exists.
+For a small addon/Lua fix, inspect only the affected addon and direct contract. For native/shared code, inspect the relevant ABI/hook/build recipe. For workflow/control-plane changes, inspect the touched policy and its regression tests.
 
-For a small understood addon/Lua fix, inspect only the relevant addon files and direct dependency/contract files. For native/shared changes, inspect the hook/ABI/build recipe needed to make the change safely. For workflow/control-plane changes, inspect the touched contracts and tests.
+## 4. Normal implementation lifecycle
 
-## 5. Normal implementation lifecycle
+1. Resolve current `main` SHA.
+2. Create/reuse one `feature/<purpose>` from that SHA.
+3. Own one `runtime/parallel_tasks/<task-id>.json`.
+4. Implement one coherent change.
+5. Run routed feature preflight against `main`.
+6. Run exact feature-SHA profile gates only when required.
+7. Start an **optimistic CAS integration attempt**: re-read live `main`, revalidate, merge locally, atomically push `main + parallel`.
+8. If another integration wins the ref race, refetch/revalidate/retry; never force.
+9. Dispatch only delivery selected by the path/risk router.
+10. Delete the integrated feature branch after successful exact-SHA delivery.
 
-For ordinary new work:
+Independent feature integrations may run concurrently. There is no serialized GitHub pending-slot queue.
 
-1. resolve current `main` SHA,
-2. create/reuse the matching short-lived `feature/<purpose>` branch from that SHA,
-3. own exactly one `runtime/parallel_tasks/<task-id>.json` task record,
-4. make the smallest coherent change,
-5. run the routed feature preflight against `main`,
-6. run exact feature-SHA profile gates only when declared/required,
-7. let the serialized queue revalidate against current `main`,
-8. integrate with one merge commit,
-9. atomically move `main` and `parallel` to the same integrated SHA,
-10. dispatch only the exact-SHA delivery profiles selected by the risk/path router,
-11. delete the integrated feature branch after successful delivery.
+## 5. Verification and delivery
 
-The hot path is targeted. Repository-wide audits are nightly/manual/PR/release work, not a prerequisite for every micro-iteration.
+`PREFLIGHT PASS` is not `TEST READY`.
 
-One logical multi-file iteration should be one Git tree commit when git-data tools are available:
-`create_blob -> create_tree -> create_commit -> update_ref`.
+- addon/module-local: targeted syntax/contract checks,
+- native: relevant ABI/provenance/dependency checks + changed-module x86 build,
+- ECONOMY/UPDATER/AUTOLOGINBRIDGE: exact declared profile gate,
+- unknown/mixed/shared/native-core/workflow-control: fail closed to STANDARD,
+- docs/task-record-only: no unrelated binary delivery.
 
-## 6. Verification and delivery
+Repository-wide audits are nightly/manual/PR/release work, not a prerequisite for every micro-iteration.
 
-Do not equate `PREFLIGHT PASS` with `TEST READY`.
+Only offer a runnable artifact when the exact integrated SHA has all required delivery/package gates.
 
-Required checks are determined by changed paths and risk:
+## 6. Source, release and recovery
 
-- addon/module-local changes: targeted Lua/contract tests,
-- native changes: relevant ABI/provenance/dependency checks plus changed-module x86 build,
-- ECONOMY/UPDATER/AUTOLOGINBRIDGE changes: their exact profile gate,
-- uncovered/shared/native-core/workflow-control changes: fail closed to STANDARD,
-- docs/task-record-only changes: no unnecessary binary delivery.
+`src/` is the normal editable source root. Follow `runtime/current.json` provenance; never select source by filename similarity and never relabel reconstruction as original source.
 
-The post-integration router is fail-closed: unknown or mixed runtime changes require STANDARD.
+Stable release work uses a curated `promote/<purpose>` exact SHA, pre-promotion verification, exact accepted bytes, and final package verification. `main` remains the integration trunk.
 
-Only offer a runnable artifact when its exact integrated SHA has all required delivery gates and final package verification. Fetch jobs/steps/logs only on failure, cancellation, unexpected stall, or when a specific gate needs diagnosis.
+After an ambiguous ChatGPT/UI/network interruption, read the target ref and intended exact file/commit state once. Continue if the write exists; otherwise apply only the missing write. Never replay an uncertain write blindly.
 
-Heavy repository checks (`verify_repo.py`, full AI registry suite, deep baseline/recovery audit, broad ABI audit) run nightly/manual/PR/release and must not be reintroduced into every feature hot path.
+## 7. Definition of done
 
-## 7. Source and provenance rules
+Normal task: intended change integrated into canonical `main`, `parallel` equals the same SHA, required routed gates pass, and any promised artifact is verified.
 
-`src/` is the normal editable source root.
-
-When `runtime/current.json` names `source_path`, edit that lineage. Never choose source by filename similarity.
-
-Keep provenance explicit:
-- original/exact source,
-- reconstructed source,
-- functionally equivalent reconstruction,
-- binary-patch lineage,
-- exact archived/recoverable source.
-
-Never relabel reconstruction as original source. Do not weaken verifiers to make CI green.
-
-## 8. Stable/release flow
-
-`main` remains the canonical integration trunk; a stable release does **not** require redefining `main` as a stable-only branch.
-
-For a stable/release candidate:
-
-1. start from current `main`,
-2. curate only accepted runtime/source/metadata into `promote/<purpose>`,
-3. set stable metadata consistently,
-4. synchronize source fingerprints,
-5. require `.github/workflows/pre_promote_stable.yml` PASS on the exact promote SHA,
-6. require exact-byte stable packaging and final package verification,
-7. run `Build stable candidate` explicitly on that exact curated release SHA,
-8. preserve/update stable baseline metadata and rollback artifacts only after acceptance.
-
-Stable packages use exact accepted runtime bytes via `tools/package_exact_current.py`; a fresh rebuild is not a stable identity substitute. If accepted release metadata must return to the trunk, integrate that metadata through the normal feature/main queue.
-
-## 9. Recovery after interruption
-
-A ChatGPT/UI/network failure is not evidence that a GitHub operation failed.
-
-After an ambiguous operation:
-
-1. read the current target ref and exact relevant file/commit state,
-2. check Actions for the intended exact SHA,
-3. if the write exists, continue from it,
-4. if absent, refresh current hashes and apply only the missing change,
-5. never replay an uncertain write blindly or claim a different SHA's CI as current.
-
-Do not continuously poll successful CI. Progress updates should correspond to durable state transitions, not extra API traffic.
-
-## 10. Repository hygiene
-
-Do not commit generated `build/`, `dist/`, runtime debug logs/dumps, `.wow112_debug`, updater local state or unrelated artifacts.
-
-Historical material stays out of the normal read path. Prefer deterministic scripts and machine-readable metadata over duplicated prose.
-
-## 11. External research
-
-Public technical research is allowed when local evidence is insufficient and can materially improve the solution. Treat external claims/code as hypotheses until validated against WoW 1.12.1 build 5875 / Windows x86 and current repository evidence.
-
-Research is not mandatory for trivial already-proven edits and must not become a substitute for implementation.
-
-## 12. Communication and definition of done
-
-Report briefly:
-- what changed,
-- affected module/infrastructure surface,
-- exact integrated SHA when available,
-- required CI/delivery result,
-- artifact/test action only when relevant.
-
-A normal task is done when the intended change is integrated into canonical `main`, `parallel` matches that exact SHA, required routed gates pass, and any promised runnable artifact is verified. A release task is done only after the exact curated release SHA passes its release gates and exact-byte packaging.
+Report only the useful result: what changed, exact integrated SHA when available, required CI/delivery result, and user test action when relevant.

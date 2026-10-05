@@ -13,32 +13,32 @@
   },
   "fast_path": {
     "after_verified_snapshot": [
-      "read runtime/ai_experiment_index.json before module source",
-      "resolve current main HEAD before creating/writing a feature",
-      "read only module/dependency files needed for the task",
+      "resolve current main HEAD once before writing",
+      "open only the named/known owner files",
+      "use experiment/task routing only for explicit continuation or unresolved ambiguity",
       "implement before broadening analysis unless a concrete risk is unresolved"
     ],
     "eligible_tasks": [
-      "ordinary module or feature diagnosis",
+      "ordinary module/feature diagnosis",
       "ordinary implementation from canonical main through feature/**",
-      "CI/status follow-up where startup authority files are unchanged"
+      "CI/status follow-up where startup authority is unchanged"
     ],
     "full_startup_required_for": [
       "release or promote/** work",
-      "editing any startup source file, snapshot or generator",
-      "recovery after unknown or ambiguous write/transport state",
-      "snapshot missing, stale, mismatched or unverifiable",
-      "authority ambiguity not resolved by compact state"
+      "editing startup source/snapshot/generator",
+      "recovery after ambiguous write/transport state",
+      "snapshot explicitly reported stale/mismatched",
+      "authority ambiguity unresolved by current main/snapshot"
     ],
     "invariants": [
       "main is canonical integration authority",
       "parallel is an exact delivery alias",
       "work is not a normal development target",
+      "optimistic CAS arbitrates concurrent integration attempts",
       "one logical iteration uses one coherent commit when possible",
-      "never force-push or destructively reset unique work",
-      "fast startup never weakens exact-SHA runtime, package, provenance or release verification",
       "heavy audits stay outside the ordinary hot path",
-      "branch/history/archive archaeology is failure-driven, not default"
+      "branch/history/archive/task-ledger archaeology is failure-driven, not default",
+      "chat progress/polling must not create extra API traffic"
     ],
     "schema_version": 1,
     "snapshot": "runtime/ai_startup_snapshot.json",
@@ -51,7 +51,8 @@
     ],
     "verification": {
       "fallback_if_unverifiable": true,
-      "method": "compare snapshot git_blob_sha1 values with Git tree metadata from the same live main HEAD",
+      "method": "CI/recovery may compare snapshot git_blob_sha1 values with Git tree metadata from the same main HEAD",
+      "ordinary_chat_policy": "trust the generated snapshot from live canonical main; do not hash-verify five sources per ordinary task",
       "same_head_required": true
     }
   },
@@ -65,13 +66,13 @@
   "schema_version": 1,
   "source_files": {
     "AGENTS.md": {
-      "git_blob_sha1": "89cb2c341650d67a8b7ca3949a6edebbf6409748"
+      "git_blob_sha1": "d230f971251be79c7576bd09b92721fb9c18bacc"
     },
     "AI_INDEX.json": {
-      "git_blob_sha1": "165c876c1e919593027d0329f67a482f4b1ad739"
+      "git_blob_sha1": "04403407933ea7162fd94b98971a1a4462eec7aa"
     },
     "AI_START_HERE.md": {
-      "git_blob_sha1": "0e14962a4981dd0c4d4d2033a1f6d10c2d9bd939"
+      "git_blob_sha1": "5adb3c323546463cf64920cadae38214ef7cb0b3"
     },
     "CURRENT.json": {
       "git_blob_sha1": "5ccf3a6d52f88512a0615ef0470bc9d667d8caba"
