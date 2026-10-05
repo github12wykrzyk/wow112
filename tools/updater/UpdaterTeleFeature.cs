@@ -41,7 +41,7 @@ namespace WoW112Updater
             var timer = new Timer { Interval = 180 };
             timer.Tick += delegate
             {
-                var form = Application.OpenForms.OfType<MainForm>().FirstOrDefault();
+                var form = System.Windows.Forms.Application.OpenForms.OfType<MainForm>().FirstOrDefault();
                 if (form == null || form.IsDisposed || form.Disposing) return;
                 if (!form.dashboardReady) return;
                 timer.Stop();
