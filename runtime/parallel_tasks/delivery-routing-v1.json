@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "delivery-routing-v1",
+  "goal": "Route post-integration delivery by changed paths and declared delivery profiles so profile-contained or validation-only changes do not pay for unrelated STANDARD work while unknown/native/mixed changes remain fail-closed on STANDARD.",
+  "branch": "feature/delivery-routing-v1",
+  "base_parallel_sha": "a4b383dc1c06d9760c92e4879483aa5593233d92",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "WorkflowRouting"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-delivery-profile-routing",
+    "parallel-feature-preflight-workflow"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Workflow-only change. Routing policy and 11 fail-closed classifier tests passed the real feature preflight; queue integration must use STANDARD because the workflow/routing control surface itself is intentionally uncovered.",
+  "integrated_feature_sha": "2f6a8b7b0670c8a39e56a615791e5bcd46f840b8"
+}

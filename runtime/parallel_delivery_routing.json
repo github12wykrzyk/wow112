@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "purpose": "Fail-closed post-integration delivery routing. Profile-contained changes avoid unrelated STANDARD work; unknown or mixed runtime changes fall back to STANDARD.",
+  "validation_only_paths": [
+    "docs/",
+    "runtime/parallel_tasks/"
+  ],
+  "profile_coverage": {
+    "economy": [
+      "src/AHThrottleNative/",
+      "src/AddOns/AuxVmangos/",
+      "src/AddOns/AHThrottleTest/",
+      "src/AddOns/AuxFastBridge/",
+      "src/AddOns/AuxEconomyShadow/",
+      "AuxVmangos/",
+      "addons/AuxVmangos/",
+      "AHThrottleTest/",
+      "addons/AHThrottleTest/",
+      "AuxFastBridge/",
+      "addons/AuxFastBridge/",
+      "runtime/ah_consolidation_shadow_v2.json",
+      "runtime/parallel_economy.json",
+      "tools/ah_shadow_hot_bundle.py",
+      "tools/summonscout_hot_transform.py",
+      "tools/verify_ah_consolidation_shadow_v2.py",
+      "tools/package_parallel_economy_overlay.py",
+      "tools/parallel_economy_fingerprint.py",
+      ".github/workflows/build_parallel_economy.yml"
+    ],
+    "updater": [
+      "tools/updater/",
+      ".github/workflows/build_updater.yml"
+    ],
+    "autologinbridge": [
+      "src/AutoLoginBridge/",
+      "tools/build_autologinbridge_candidate.py",
+      ".github/workflows/build_autologinbridge.yml"
+    ]
+  },
+  "rules": [
+    "An empty diff never creates a shortcut.",
+    "The task's own runtime/parallel_tasks/<id>.json record is validation-only.",
+    "docs/ changes are validation-only and do not require a binary delivery build.",
+    "A runtime path is profile-contained only when at least one declared delivery profile covers it.",
+    "If every non-validation path is covered by declared delivery profiles, STANDARD is omitted and only those exact-SHA profile workflows run.",
+    "Any uncovered, unknown, native-core, shared-build, packaging-control or mixed path requires STANDARD.",
+    "parallel_delivery_route.py is the sole post-integration STANDARD decision authority; classifier errors fail closed to STANDARD."
+  ]
+}
