@@ -4,7 +4,7 @@
   "goal": "Realistic non-functional smoke shaped like a SummonScout CompetitionSmartHot parser/cooldown hotfix after workflow-vNext and active main ruleset.",
   "branch": "feature/real-smoke-summon-competition",
   "base_parallel_sha": "0e05a7c63d6b694b844cd077764bc5e4d2eee5bd",
-  "status": "preflight",
+  "status": "ready_for_integration",
   "auto_integrate": true,
   "modules": ["SummonScout"],
   "dependencies": [],
