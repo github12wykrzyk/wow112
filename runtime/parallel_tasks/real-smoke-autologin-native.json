@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "real-smoke-autologin-native",
+  "goal": "Realistic non-functional smoke shaped like an AutoLoginBridge native hotfix under workflow-vNext and active main ruleset.",
+  "branch": "feature/real-smoke-autologin-native",
+  "base_parallel_sha": "0e05a7c63d6b694b844cd077764bc5e4d2eee5bd",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AutoLoginBridge"
+  ],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": [
+    "autologinbridge"
+  ],
+  "lease": null,
+  "notes": "Smoke only. Unreferenced C file. Expected: native/AutoLoginBridge routed gates and changed-module compile, exact feature-SHA AutoLoginBridge profile gate, canonical integration under active ruleset, then AutoLoginBridge-only delivery unless risk router fail-closes to STANDARD.",
+  "integrated_feature_sha": "1d233544d7308babab292cf22de7800bc5af82c3"
+}
