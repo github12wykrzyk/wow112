@@ -5,6 +5,7 @@ on:
     branches: [feature/windows-headless-ah-fast]
     paths:
       - 'probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v3_audit_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v3_compilefix.py'
       - '.github/workflows/build_windows_poc07_vendorlive_multibuy_v3_audit_fast.yml'
   workflow_dispatch:
 
@@ -41,6 +42,8 @@ jobs:
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v3_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v3.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v3_compilefix.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v3.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $p='probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v3.rs'
           $a=Select-String -Path $p -Pattern 'DOUBLE-SWEEP START' -Quiet
