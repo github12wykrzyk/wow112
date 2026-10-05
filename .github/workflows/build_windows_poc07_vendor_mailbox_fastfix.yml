@@ -1,0 +1,83 @@
+name: POC07 Vendor Mailbox Fastfix Windows
+
+on:
+  push:
+    branches: [feature/vendor-mailbox-fastfix]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py'
+      - '.github/workflows/build_windows_poc07_vendor_mailbox_fastfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate guarded vendor source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke safety assertions
+        shell: pwsh
+        run: |
+          $g='probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs'
+          $c='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
+          foreach ($m in @('CAPY_GUARD_BLOCKED','[CAPY-GUARD] EXACT TARGET PASS','WOW112_BUY_EXPECT_AUCTION_ID')) { if (-not (Select-String -Path $g -SimpleMatch -Pattern $m -Quiet)) { throw "missing guard $m" } }
+          foreach ($m in @('[POC07-BUY] PRE-BUY MAILBOX BYPASS','NO_AUTO_RETRY_FROM_THIS_POINT=YES','[POC07-BUY] SERVER PASS','[POC07-BUY] POST-MAIL WARN','BUY-ONE PASS purchases=1 server_confirmed=YES postchecks=BEST_EFFORT','hard guard requires WOW112_AUTOBUY_MAX_PURCHASES=1')) { if (-not (Select-String -Path $c -SimpleMatch -Pattern $m -Quiet)) { throw "missing fastfix marker $m" } }
+          if (Select-String -Path $c -SimpleMatch -Pattern 'let before_mail = poc05_request_mail_list' -Quiet) { throw 'pre-buy mailbox dependency remains' }
+          $s=Get-Content $c -Raw
+          $a=$s.IndexOf('[POC07-BUY] PRE-BUY MAILBOX BYPASS'); $b=$s.IndexOf('[POC07-BUY] SENT'); $d=$s.IndexOf('[POC07-BUY] SERVER PASS'); $e=$s.IndexOf('[POC07-BUY] POST-MAIL')
+          if ($a -lt 0 -or $b -lt 0 -or $d -lt 0 -or $e -lt 0 -or -not ($a -lt $b -and $b -lt $d -and $d -lt $e)) { throw 'unsafe order' }
+          Write-Host '[SMOKE] PASS mailbox-bypass exact-target max1 no-retry best-effort-postchecks'
+
+      - name: Select entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_fullsweep;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendor-mailbox-fastfix'; New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/world_poc07_fastfix.rs"
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=POC07-VENDOR-MAILBOX-FASTFIX
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          HARD_MAX_PURCHASES_PER_PROCESS=1
+          FRESH_EXACT_AUCTION_PRECHECK=YES
+          PREBUY_MAILBOX=DISABLED
+          SERVER_RESULT_REQUIRED=YES
+          POSTCHECKS=BEST_EFFORT
+          NO_AUTO_RETRY_AFTER_BUY_SEND=YES
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDOR-MAILBOX-FASTFIX-${{ github.sha }}
+          path: dist/vendor-mailbox-fastfix
+          if-no-files-found: error
+          retention-days: 7
