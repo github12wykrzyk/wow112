@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "tele02-whisper-name-tx-v1",
+  "goal": "Extend the validated TELE-01 headless whisper RX path with deterministic GUID-to-character-name resolution and an explicitly armed one-shot whisper TX test, while keeping invite, cast, and portal-use disabled.",
+  "branch": "feature/tele02-whisper-name-tx-v1",
+  "base_parallel_sha": "0cac718c775b27378fa078e1d290a5b5a6c8542b",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": [
+    "HeadlessTele"
+  ],
+  "dependencies": [
+    "tele01-whisper-sniffer-v1"
+  ],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "TELE-01 runtime evidence PASS on OctoWoW: real whisper RX observed as [TELE-WHISPER] sender_guid + text. TELE-02 adds CMSG_NAME_QUERY/SMSG_NAME_QUERY_RESPONSE GUID resolution and optional one-shot CMSG_MESSAGECHAT whisper TX. TX remains disabled unless WOW112_TELE_TEST_REPLY is explicitly provided. Invite/cast/portal-use remain disabled."
+}
