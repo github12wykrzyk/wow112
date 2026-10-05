@@ -1,0 +1,121 @@
+name: Build TELE-03 party observer smoke bundle
+
+on:
+  push:
+    branches:
+      - feature/tele03-party-observer-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_tele03_party_observer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-tele03-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact TELE-03 revision
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: cargo install cargo-ndk --locked
+
+      - name: Launcher syntax check
+        shell: pwsh
+        run: |
+          $file = 'probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error "$file : $($_.Message)" }
+            exit 1
+          }
+
+      - name: Host cargo check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Build Android x86_64 executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --release
+
+      - name: Stage exact-SHA TELE-03 bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$(find probes/Wow112HeadlessAndroid/target -type f -name wow112-headless-android-probe -perm -111 -print -quit)"
+          test -n "$BIN"
+          OUT="dist/tele03-party-observer"
+          mkdir -p "$OUT"
+          cp "$BIN" "$OUT/wow112-headless-android-probe"
+          cp probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.cmd "$OUT/RUN_TELE_SNIFFER.cmd"
+          cp probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.ps1 "$OUT/RUN_TELE_SNIFFER.ps1"
+
+          BIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
+          cat > "$OUT/BUILD_INFO.txt" <<INFO
+          POC=TELE-03
+          PURPOSE=RX_ONLY_PARTY_OBSERVER
+          REPOSITORY=${GITHUB_REPOSITORY}
+          BRANCH=${GITHUB_REF_NAME}
+          EXACT_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          TARGET=x86_64-linux-android
+          ANDROID_API=21
+          BINARY=wow112-headless-android-probe
+          BINARY_SHA256=${BIN_SHA}
+          SAFETY=PARTY_RX_ONLY_NO_INVITE_NO_CAST_NO_PORTAL_USE
+          INFO
+
+          cat > "$OUT/TELE03_TEST.txt" <<'INFO'
+          TELE-03 party observer smoke test:
+          1. Run RUN_TELE_SNIFFER.cmd with TX test reply left blank.
+          2. Log the intended test character.
+          3. From a normal WoW client invite that character to a party; accept manually only if desired from a graphical client, or place the character in an already-existing party before starting the observer.
+          4. Trigger roster/leader/group changes from another client.
+          5. PASS evidence is one or more [TELE-PARTY] lines, especially GROUP_LIST / UPDATE_GROUP_MEMBERS / PARTY_COMMAND_RESULT.
+          6. TELE-03 itself must not send group invite/accept/decline/uninvite/leader mutations.
+          INFO
+
+          (
+            cd "$OUT"
+            sha256sum wow112-headless-android-probe RUN_TELE_SNIFFER.cmd RUN_TELE_SNIFFER.ps1 BUILD_INFO.txt TELE03_TEST.txt > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          grep -Fx "EXACT_SHA=${GITHUB_SHA}" "$OUT/BUILD_INFO.txt"
+          grep -Fx "BINARY_SHA256=${BIN_SHA}" "$OUT/BUILD_INFO.txt"
+
+      - name: Upload TELE-03 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-TELE03-Party-Observer-${{ github.sha }}
+          path: dist/tele03-party-observer
+          if-no-files-found: error
+          retention-days: 14
