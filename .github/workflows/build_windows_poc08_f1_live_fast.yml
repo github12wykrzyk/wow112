@@ -1,0 +1,144 @@
+name: POC08-F1 Guarded Live Buy-One Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_F1_LIVE_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC08_F1_LIVE_WINDOWS.bat'
+      - '.github/workflows/build_windows_poc08_f1_live_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify live input
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt'
+          $ids = Get-Content $p | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ } | Sort-Object -Unique
+          if ($ids.Count -ne 2343) { throw "expected 2343 unique live IDs, got $($ids.Count)" }
+          Write-Host "[POC08-F1-CI] live input PASS count=$($ids.Count)"
+
+      - name: Generate V5.3 base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build provenance cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_provenance.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/f1-base.csv" --unresolved "$env:RUNNER_TEMP/f1-base-unresolved.csv" --workers 16 --timeout 12 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_provenance.py --seed-cache "$env:RUNNER_TEMP/f1-base.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/f1-mid.csv" --unresolved "$env:RUNNER_TEMP/f1-mid-unresolved.csv" --workers 8 --timeout 12 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_provenance.py --seed-cache "$env:RUNNER_TEMP/f1-mid.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt --output-cache "$env:RUNNER_TEMP/f1-cache.csv" --unresolved "$env:RUNNER_TEMP/f1-unresolved.csv" --workers 32 --timeout 10 --retries 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv "$env:RUNNER_TEMP/f1-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate POC08-F1 source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_provenance_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f0_eligibility_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Select F1 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_f1_live;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_f1_live::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08-F1]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08F1 GUARDED LIVE SESSION PASS')
+          $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08F1 guarded live buy-one')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Static mutation safety assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs'
+          $main='probes/Wow112HeadlessAndroid/src/main.rs'
+          foreach ($marker in @('POC08-F1','BUY_ONE_NOW','WOW112_AUTOBUY_MAX_PURCHASES','poc07_buy_exact_one','DE_WHITELIST','PRE-BUY','hard_max_purchases=1')) {
+            if (-not (Select-String -Path $p -Pattern $marker -SimpleMatch -Quiet)) { throw "missing F1 safety marker: $marker" }
+          }
+          if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'AH mutation retry blocker missing from main' }
+          if (-not (Select-String -Path $p -Pattern 'WOW112_F1_DE_WHITELIST' -SimpleMatch -Quiet)) { throw 'DE whitelist guard missing' }
+          Write-Host '[POC08-F1-CI] MUTATION SAFETY ASSERTIONS PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-f1'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_F1_LIVE_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_F1_LIVE_WINDOWS.bat $d
+          Copy-Item "$env:RUNNER_TEMP/f1-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
+          Copy-Item "$env:RUNNER_TEMP/f1-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs "$d/source/world_poc08_f1_live.rs"
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-F1-GUARDED-LIVE-BUY-ONE
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          MUTATION=EXPLICITLY_ARMED_ONLY
+          HARD_MAX_PURCHASES=1
+          FRESH_EXACT_AUCTION_PRECHECK=YES
+          NO_AUTO_RETRY_AFTER_BUY_SEND=YES
+          DEFAULT_MODE=VENDOR_SMOKE
+          DE_MODE=WHITELIST_ONLY
+          INITIAL_DE_WHITELIST=9823
+          INITIAL_DE_HARD_MAX_BUYOUT=1500
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          POC08-F1 can perform a REAL AH purchase.
+          Recommended first run: [1] VENDOR SMOKE.
+          It requires typing BUY and is hard-limited to one purchase per process.
+          After any AH_MUTATION_UNCERTAIN result, do NOT rerun until AH/mail state is checked.
+          DE pilot mode is restricted to item_id 9823 and a 15s maximum buyout by the launcher.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC08-F1-LIVE-${{ github.sha }}
+          path: dist/poc08-f1
+          if-no-files-found: error
+          retention-days: 7
