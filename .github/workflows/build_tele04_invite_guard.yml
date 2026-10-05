@@ -1,0 +1,38 @@
+name: TELE-04 invite guard contract
+
+on:
+  push:
+    branches:
+      - feature/tele04-one-shot-invite-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/tele_invite_wire.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_invite_state.rs'
+      - 'probes/Wow112HeadlessAndroid/tests/tele_invite_guard.rs'
+      - '.github/workflows/build_tele04_invite_guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele04-invite-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact TELE-04 revision
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: One-shot invite contract tests
+        shell: bash
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele_invite_guard
+
+      - name: Host package check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
