@@ -11,5 +11,5 @@
   "shared_resources": [],
   "delivery_profiles": ["economy"],
   "lease": null,
-  "notes": "Smoke only. Non-loaded Lua file. Expected: economy targeted gate, exact feature-SHA ECONOMY gate, canonical queue integration under active ruleset, and ECONOMY-only post-merge delivery with no STANDARD."
+  "notes": "Smoke retry after optimistic CAS queue fix. Non-loaded Lua file. Expected: economy targeted gate, exact feature-SHA ECONOMY gate, canonical CAS integration under active ruleset, and ECONOMY-only post-merge delivery with no STANDARD."
 }
