@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "delivery-routing-v1",
+  "goal": "Route post-integration delivery by changed paths and declared delivery profiles so profile-contained or validation-only changes do not pay for unrelated STANDARD work while unknown/native/mixed changes remain fail-closed on STANDARD.",
+  "branch": "feature/delivery-routing-v1",
+  "base_parallel_sha": "a4b383dc1c06d9760c92e4879483aa5593233d92",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": [
+    "WorkflowRouting"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-delivery-profile-routing",
+    "parallel-feature-preflight-workflow"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Workflow-only change. No runtime binary/profile artifact is declared for this implementation branch; real feature branches continue to declare economy/updater/autologinbridge when applicable."
+}
