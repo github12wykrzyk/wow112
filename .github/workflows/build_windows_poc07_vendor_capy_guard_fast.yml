@@ -1,0 +1,83 @@
+name: POC07 Vendor Capy Guard Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py'
+      - '.github/workflows/build_windows_poc07_vendor_capy_guard_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate full-sweep vendor source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs'
+          foreach ($marker in @('CAPY_GUARD_BLOCKED','[CAPY-GUARD] EXACT TARGET PASS','WOW112_BUY_EXPECT_AUCTION_ID')) {
+            if (-not (Select-String -Path $p -SimpleMatch -Pattern $marker -Quiet)) { throw "guard marker missing: $marker" }
+          }
+
+      - name: Select guarded full-sweep entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_fullsweep;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep')
+          Set-Content $p $t -Encoding utf8
+          if ((Get-Content $p -Raw) -notmatch 'world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep') { throw 'guarded entrypoint not selected' }
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/vendor-capy-guard'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=POC07-VENDOR-CAPY-GUARD
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          ACCOUNT=octowar1
+          STRATEGY=VENDOR_ONLY
+          MIN_PROFIT_COPPER=2
+          MAX_BUYOUT_COPPER=200000
+          MAX_BUYOUT_GOLD=20
+          SCAN=FULL_SWEEP_UNTIL_SHORT_PAGE
+          EXTERNAL_DB_PRIMARY=CAPY_TURTLE_1.18.1
+          EXTERNAL_DB_SECONDARY=TURTLECRAFT_BEST_EFFORT
+          BUY_TARGET=EXACT_AUCTION_ITEM_BUYOUT_COUNT_VENDOR_UNIT
+          HARD_MAX_PURCHASES_PER_PROCESS=1
+          FAIL_CLOSED=YES
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          Guarded full-sweep binary. BUY requires exact expected auction/item/buyout/count/vendor-unit env tuple.
+          Intended launcher parameters: vendor-only, profit >=2 copper (>1c), buyout <=20g, Capy DB cross-check.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDOR-CAPY-GUARD-${{ github.sha }}
+          path: dist/vendor-capy-guard
+          if-no-files-found: error
+          retention-days: 7
