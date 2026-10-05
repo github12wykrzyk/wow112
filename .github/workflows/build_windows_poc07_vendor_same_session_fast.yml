@@ -1,0 +1,98 @@
+name: POC07 Vendor Same Session Fast Windows
+
+on:
+  push:
+    branches: [feature/vendor-mailbox-fastfix]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py'
+      - '.github/workflows/build_windows_poc07_vendor_same_session_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate same-session full sweep source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke safety assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs'
+          $src=Get-Content $p -Raw
+          foreach ($marker in @(
+            '[POC07-BUY] PRE-BUY MAILBOX BYPASS',
+            '[POC07-BUY] SENT auction_id=',
+            'NO_AUTO_RETRY_FROM_THIS_POINT=YES',
+            '[POC07-BUY] SERVER PASS',
+            'BUY-ONE PASS purchases=1 server_confirmed=YES postchecks=BEST_EFFORT',
+            'hard_max_purchases=1',
+            'poc07-fresh-precheck',
+            'POC07 fast-track hard guard requires WOW112_AUTOBUY_MAX_PURCHASES=1'
+          )) {
+            if (-not $src.Contains($marker)) { throw "missing safety marker: $marker" }
+          }
+          if ($src.Contains('let before_mail = poc05_request_mail_list')) { throw 'unsafe pre-buy mailbox dependency remains' }
+          $bypass=$src.IndexOf('[POC07-BUY] PRE-BUY MAILBOX BYPASS')
+          $sent=$src.IndexOf('[POC07-BUY] SENT auction_id=')
+          $server=$src.IndexOf('[POC07-BUY] SERVER PASS')
+          $post=$src.IndexOf('[POC07-BUY] POST-AH')
+          if (-not ($bypass -lt $sent -and $sent -lt $server -and $server -lt $post)) { throw 'unsafe mutation ordering' }
+          Write-Host '[SMOKE] PASS same-session candidate + fresh precheck + max1 + mailbox bypass + no-retry'
+
+      - name: Select same-session full sweep entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_fullsweep;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep')
+          Set-Content $p $t -Encoding utf8
+          if ((Get-Content $p -Raw) -notmatch 'world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep') { throw 'same-session entrypoint not selected' }
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendor-same-session-fast'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=POC07-VENDOR-SAME-SESSION-FAST
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          STRATEGY=VENDOR_ONLY
+          SCAN=FULL_SWEEP_THEN_BUY_IN_SAME_SESSION
+          CANDIDATE=FRESH_CURRENT_TOP_VENDOR
+          FRESH_EXACT_AUCTION_PRECHECK=YES
+          PREBUY_MAILBOX=BYPASSED
+          POSTCHECKS=BEST_EFFORT
+          HARD_MAX_PURCHASES_PER_PROCESS=1
+          NO_AUTO_RETRY_AFTER_BUY_SEND=YES
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDOR-SAME-SESSION-FAST-${{ github.sha }}
+          path: dist/vendor-same-session-fast
+          if-no-files-found: error
+          retention-days: 7
