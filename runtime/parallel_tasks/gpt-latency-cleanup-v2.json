@@ -4,8 +4,8 @@
   "goal": "Remove the remaining GPT/CI latency hazards: unsafe post-delivery feature cleanup, duplicate updater feature builds, and missing chat execution policy in the generated startup snapshot.",
   "branch": "feature/gpt-latency-cleanup-v2",
   "base_parallel_sha": "475a05ddf87d02f7dd3448a06346d1aada8c939f",
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "modules": [
     "AI-workflow",
     "Updater"
