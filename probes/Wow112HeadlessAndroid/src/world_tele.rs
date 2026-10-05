@@ -142,7 +142,7 @@ fn tele_sniffer_loop(
     let mut reply_sent = false;
 
     println!(
-        "[TELE] WHISPER SNIFFER ACTIVE rx_only=no name_resolution=cmsg-name-query chat_tx={} invite=disabled cast=disabled portal_use=disabled duration={}",
+        "[TELE] WHISPER SNIFFER ACTIVE rx_only=no name_resolution=cmsg-name-query party_rx=enabled chat_tx={} invite=disabled cast=disabled portal_use=disabled duration={}",
         if test_reply.is_empty() { "disabled" } else { "armed_once" },
         if soak_seconds == 0 {
             "infinite".to_string()
@@ -185,6 +185,10 @@ fn tele_sniffer_loop(
                             awaiting_pong = None;
                         }
                     }
+                    continue;
+                }
+
+                if crate::tele_party_observer::inspect_party_packet(opcode, &payload) {
                     continue;
                 }
 
