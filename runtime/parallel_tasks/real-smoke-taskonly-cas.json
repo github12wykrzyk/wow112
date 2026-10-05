@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "real-smoke-taskonly-cas",
+  "goal": "Task-record-only concurrent integration smoke for optimistic atomic CAS without binary delivery.",
+  "branch": "feature/real-smoke-taskonly-cas",
+  "base_parallel_sha": "3b902f309261c69b000ee42045b143e790e573cc",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AI-workflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Smoke only. Expected: task-record-only preflight, optimistic CAS integration, zero binary delivery.",
+  "integrated_feature_sha": "4e2e5c590a000d239399fafdb2d4c64e0df5c2df"
+}
