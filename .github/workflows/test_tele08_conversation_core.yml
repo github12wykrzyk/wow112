@@ -6,6 +6,8 @@ on:
       - feature/tele08-conversation-core-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/src/tele_conversation.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_conversation_store.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_unknown_report.rs'
       - 'probes/Wow112HeadlessAndroid/tests/tele_conversation_core.rs'
       - '.github/workflows/test_tele08_conversation_core.yml'
   workflow_dispatch:
