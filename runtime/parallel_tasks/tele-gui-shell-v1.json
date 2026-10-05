@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele-gui-shell-v1",
+  "goal": "Add a native TELE control-plane page to the existing WoW112 WinForms updater/loader with station role configuration and diagnostics, while compile-time locking all TELE runtime mutations until headless party/invite evidence is complete.",
+  "branch": "feature/tele-gui-shell-v1",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": ["UpdaterTeleUi"],
+  "dependencies": ["tele02-whisper-name-tx-v2"],
+  "shared_resources": ["tools/updater"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "UI-only shell. Reuses existing DPAPI-protected WowAccountVault; tele_config.json stores account IDs/roles only. TeleRuntimeEnabled=false. No worker start, invite, cast or portal use. Windows updater compile + UI smoke required before any integration decision."
+}
