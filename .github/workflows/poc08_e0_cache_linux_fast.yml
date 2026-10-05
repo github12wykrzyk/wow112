@@ -1,0 +1,50 @@
+name: POC08-E0 Cache Resolve Linux Fast
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - '.github/workflows/poc08_e0_cache_linux_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve 2343 live item DEIDs with provenance
+        shell: bash
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py \
+            --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv \
+            --item-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt \
+            --output-cache "$RUNNER_TEMP/poc08-e0-cache.csv" \
+            --unresolved "$RUNNER_TEMP/poc08-e0-unresolved.csv" \
+            --workers 24 --timeout 10 --retries 1
+          python - <<'PY'
+          import csv, os
+          from collections import Counter
+          cache=os.path.join(os.environ['RUNNER_TEMP'],'poc08-e0-cache.csv')
+          unresolved=os.path.join(os.environ['RUNNER_TEMP'],'poc08-e0-unresolved.csv')
+          rows=list(csv.DictReader(open(cache,encoding='utf-8-sig')))
+          missing=list(csv.DictReader(open(unresolved,encoding='utf-8-sig')))
+          sources=Counter(r['source'] for r in rows)
+          positive=sum(int(r['disenchant_id'])>0 for r in rows)
+          zero=sum(int(r['disenchant_id'])==0 for r in rows)
+          print(f"[POC08-E0-LINUX] COVERAGE resolved={len(rows)}/2343 positive={positive} zero={zero} unresolved={len(missing)} sources={dict(sources)}")
+          if len(rows) < 2200:
+              raise SystemExit(f"coverage too low: {len(rows)}/2343")
+          PY
+      - name: Upload cache evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: POC08-E0-CACHE-LINUX-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/poc08-e0-cache.csv
+            ${{ runner.temp }}/poc08-e0-unresolved.csv
+          if-no-files-found: error
+          retention-days: 7
