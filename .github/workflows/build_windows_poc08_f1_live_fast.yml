@@ -7,6 +7,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_F2_DE_2PASS_WINDOWS.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/START_POC08_F2_DE_2PASS_WINDOWS.bat'
       - '.github/workflows/build_windows_poc08_f1_live_fast.yml'
@@ -65,6 +66,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Select F2 entrypoint
         shell: pwsh
@@ -87,6 +90,10 @@ jobs:
             if (-not (Select-String -Path $p -Pattern $marker -SimpleMatch -Quiet)) { throw "missing F2 safety marker: $marker" }
           }
           if (-not (Select-String -Path $p -Pattern 'poc08_de_source_confidence(c.record.item_id) >= 2' -SimpleMatch -Quiet)) { throw 'F2 provenance>=2 gate missing' }
+          $src=Get-Content $p -Raw
+          $zero=$src.IndexOf('if truncated { safe_price = 0; }')
+          $insert=$src.IndexOf('if safe_price > 0 { safe_prices.insert(material_id, safe_price); }')
+          if ($zero -lt 0 -or $insert -lt 0 -or $zero -ge $insert) { throw 'unsafe truncation ordering: zero must precede SAFE-map insert' }
           if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'AH mutation retry blocker missing from main' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => Some\(5\)' -Quiet)) { throw 'DE pilot item 9823 missing' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => 2' -SimpleMatch -Quiet)) { throw 'DE pilot Octo provenance confidence=2 missing' }
@@ -118,7 +125,7 @@ jobs:
           HARD_MAX_PURCHASES=1
           FRESH_EXACT_AUCTION_PRECHECK=YES
           NO_AUTO_RETRY_AFTER_BUY_SEND=YES
-          MATERIAL_BOOK_TRUNCATION=FAIL_CLOSED
+          MATERIAL_BOOK_TRUNCATION=FAIL_CLOSED_ZERO_BEFORE_INSERT
           DE_PROVENANCE_MIN_CONFIDENCE=2
           DE_PILOT_ITEM=9823
           DE_PILOT_DEID=5
@@ -132,7 +139,7 @@ jobs:
           Material valuation FAILS CLOSED if a material result set is truncated by the page cap.
           Pilot provenance requires Octo-web confidence or stronger.
           The existing fresh-page exact precheck runs again immediately before the send.
-          After AH_MUTATION_UNCERTAIN: DO NOT rerun until AH/mail state is checked.
+          After any sent BUY without a full final PASS, do not rerun until AH/mail state is checked.
           '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
 
       - name: Upload
