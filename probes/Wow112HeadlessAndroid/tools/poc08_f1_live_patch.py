@@ -19,6 +19,12 @@ rep(
     '    ah_mutation_committed: &mut bool,\n) -> Result<(), String> {',
 )
 
+rep(
+    'mailbox guid live reuse',
+    '    let (auctioneer_candidates, _mailbox_guid) = discover_poc05_context_retry(stream, &mut crypto, player_guid)?;',
+    '    let (auctioneer_candidates, mailbox_guid) = discover_poc05_context_retry(stream, &mut crypto, player_guid)?;',
+)
+
 marker = 'pub fn login_poc08_economy_audit(\n'
 idx = src.index(marker)
 helpers = r'''
