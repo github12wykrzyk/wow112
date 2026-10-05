@@ -1,0 +1,37 @@
+name: TELE-08 conversation core contract
+
+on:
+  push:
+    branches:
+      - feature/tele08-conversation-core-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/tele_conversation.rs'
+      - 'probes/Wow112HeadlessAndroid/tests/tele_conversation_core.rs'
+      - '.github/workflows/test_tele08_conversation_core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele08-conversation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact TELE-08 revision
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Conversation core tests
+        shell: bash
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele_conversation_core
+
+      - name: Host package check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
