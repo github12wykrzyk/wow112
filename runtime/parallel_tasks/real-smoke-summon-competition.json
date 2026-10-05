@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "real-smoke-summon-competition",
+  "goal": "Realistic non-functional smoke shaped like a SummonScout CompetitionSmartHot parser/cooldown hotfix after workflow-vNext and active main ruleset.",
+  "branch": "feature/real-smoke-summon-competition",
+  "base_parallel_sha": "0e05a7c63d6b694b844cd077764bc5e4d2eee5bd",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Smoke only. Non-loaded Lua file. Expected: SummonScout targeted gate, canonical main+parallel integration under active ruleset, then router-selected delivery for a SummonScout-only diff.",
+  "integrated_feature_sha": "8af549c3c433f5cb440005f9f41ba33d0a20e25e"
+}
