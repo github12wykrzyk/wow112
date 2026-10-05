@@ -1,0 +1,69 @@
+name: POC08-E0 DEID Resolver Smoke
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_e0_smoke_ids.txt'
+      - '.github/workflows/poc08_e0_deid_smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare empty provenance seed
+        shell: bash
+        run: |
+          printf 'item_id,disenchant_id,source\n' > "$RUNNER_TEMP/empty.csv"
+
+      - name: Resolve representative DEIDs
+        shell: bash
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py \
+            --seed-cache "$RUNNER_TEMP/empty.csv" \
+            --missing-ids probes/Wow112HeadlessAndroid/tools/poc08_e0_smoke_ids.txt \
+            --output-cache "$RUNNER_TEMP/smoke-cache.csv" \
+            --unresolved "$RUNNER_TEMP/smoke-unresolved.csv" \
+            --workers 8 --timeout 10 --retries 2
+
+      - name: Generate Rust cache
+        shell: bash
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py \
+            --cache-csv "$RUNNER_TEMP/smoke-cache.csv" \
+            --output-rs "$RUNNER_TEMP/smoke-cache.rs"
+
+      - name: Smoke assertions
+        shell: python
+        run: |
+          import csv, os, pathlib
+          cache = pathlib.Path(os.environ['RUNNER_TEMP']) / 'smoke-cache.csv'
+          rows = list(csv.DictReader(cache.open(encoding='utf-8-sig')))
+          by_id = {int(r['item_id']): r for r in rows}
+          assert int(by_id[20406]['disenchant_id']) == 0, by_id.get(20406)
+          assert int(by_id[41316]['disenchant_id']) > 0, by_id.get(41316)
+          assert all(r.get('source') for r in rows), rows
+          sources = {}
+          for r in rows:
+              sources[r['source']] = sources.get(r['source'], 0) + 1
+          print(f'[POC08-E0-SMOKE] PASS resolved={len(rows)}/8 sources={sources}')
+          unresolved = pathlib.Path(os.environ['RUNNER_TEMP']) / 'smoke-unresolved.csv'
+          print(unresolved.read_text(encoding='utf-8-sig'))
+
+      - name: Upload smoke diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: poc08-e0-deid-smoke
+          path: |
+            ${{ runner.temp }}/smoke-cache.csv
+            ${{ runner.temp }}/smoke-unresolved.csv
+            ${{ runner.temp }}/smoke-cache.rs
