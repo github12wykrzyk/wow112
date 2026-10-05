@@ -106,10 +106,12 @@ fn poc08_audit_candidate_provenance(candidates: &[Poc08EconomyCandidate]) {
 '''
 src = src[:idx] + helpers + src[idx:]
 
-needle = '    let item_ids = item_ids.into_iter().collect::<Vec<_>>();\n'
-if needle not in src:
-    raise SystemExit('POC08-E item_ids marker not found')
-src = src.replace(needle, needle + '    poc08_export_de_provenance(&item_ids)?;\n', 1)
+# At this point the unique item_ids vector already exists and is about to feed
+# the vendor query. Anchoring here is stable across the old V5.x generators.
+needle = '    let vendor_values = poc08_query_vendor_values_turbo(\n'
+if src.count(needle) != 1:
+    raise SystemExit(f'POC08-E vendor query anchor count expected=1 actual={src.count(needle)}')
+src = src.replace(needle, '    poc08_export_de_provenance(&item_ids)?;\n' + needle, 1)
 
 # Diagnostic only: POC08-E does not modify D valuation/risk decisions.
 # Future BUY requires both authoritative DEID evidence and an Octo-validated
