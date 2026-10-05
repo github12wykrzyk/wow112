@@ -5,10 +5,11 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Exe = Join-Path $Root 'wow112-headless-windows.exe'
-$Resolver = Join-Path $Root 'RESOLVE_OCTOWOW_DE_GATE.ps1'
+$Resolver = Join-Path $Root 'RESOLVE_DE_GATE_OFFLINE.ps1'
 $Runtime = Join-Path $Root 'runtime'
 $Candidates = Join-Path $Runtime 'V5_RAW_CANDIDATES.csv'
 $Safe = Join-Path $Runtime 'V5_SAFE_CANDIDATES.csv'
+$Missing = Join-Path $Runtime 'V5_MISSING_ITEM_IDS.csv'
 $Cache = Join-Path $Runtime 'DE_DISENCHANT_CACHE.csv'
 $ScanLog = Join-Path $Runtime 'V5_WINDOWS_SCAN.log'
 $GateLog = Join-Path $Runtime 'V5_GATE.log'
@@ -28,7 +29,7 @@ function Write-Fatal([string]$Message) {
     $text | Set-Content -LiteralPath $FatalLog -Encoding UTF8
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Red
-    Write-Host '[WINDOWS-V5] FAIL' -ForegroundColor Red
+    Write-Host '[WINDOWS-V5.1-OFFLINE] FAIL' -ForegroundColor Red
     Write-Host $Message -ForegroundColor Red
     Write-Host "Fatal log: $FatalLog" -ForegroundColor Yellow
     if (Test-Path -LiteralPath $ScanLog) { Write-Host "Scan log : $ScanLog" -ForegroundColor Yellow }
@@ -41,12 +42,13 @@ Remove-Item -LiteralPath $FatalLog -ErrorAction SilentlyContinue
 
 try {
     if (-not (Test-Path -LiteralPath $Exe)) { throw "Missing executable: $Exe" }
-    if (-not (Test-Path -LiteralPath $Resolver)) { throw "Missing resolver: $Resolver" }
+    if (-not (Test-Path -LiteralPath $Resolver)) { throw "Missing offline resolver: $Resolver" }
+    if (-not (Test-Path -LiteralPath $Cache)) { throw "Missing offline DE cache: $Cache" }
 
     Write-Host '============================================================'
-    Write-Host 'WoW112 WINDOWS HEADLESS - POC07 DE V5'
-    Write-Host 'Native Windows -> AH scan -> DE EV -> exact DisenchantID gate'
-    Write-Host 'ZERO BUY / NO ADB / NO ANDROID'
+    Write-Host 'WoW112 WINDOWS HEADLESS - POC07 DE V5.1 OFFLINE'
+    Write-Host 'Native Windows -> AH scan -> DE EV -> LOCAL exact DisenchantID cache'
+    Write-Host 'RUNTIME HTTP DISABLED / ZERO BUY / NO ADB / NO ANDROID'
     Write-Host '============================================================'
 
     $account = Read-Host 'Login WoW'
@@ -81,12 +83,12 @@ try {
 
     Remove-Item -LiteralPath $Candidates -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $Safe -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $Missing -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $ScanLog -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $GateLog -ErrorAction SilentlyContinue
 
     Write-Host ''
-    Write-Host '[WINDOWS-V5] STEP 1/2 native WoW headless scan'
-    # Temporarily avoid treating native stderr records as terminating PowerShell errors.
+    Write-Host '[WINDOWS-V5.1] STEP 1/2 native WoW headless scan'
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     & $Exe 2>&1 | Tee-Object -FilePath $ScanLog
@@ -96,24 +98,27 @@ try {
     if (-not (Test-Path -LiteralPath $Candidates)) { throw "Candidate export missing: $Candidates" }
 
     Write-Host ''
-    Write-Host '[WINDOWS-V5] STEP 2/2 exact DisenchantID gate'
+    Write-Host '[WINDOWS-V5.1] STEP 2/2 OFFLINE exact DisenchantID gate'
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    & $Resolver -CandidateCsv $Candidates -CacheCsv $Cache -SafeCsv $Safe -TimeoutSec 15 -Retries 3 2>&1 | Tee-Object -FilePath $GateLog
+    & $Resolver -CandidateCsv $Candidates -CacheCsv $Cache -SafeCsv $Safe -MissingCsv $Missing 2>&1 | Tee-Object -FilePath $GateLog
     $resolverExit = $LASTEXITCODE
     $ErrorActionPreference = $oldEap
-    if ($resolverExit -ne 0 -and $null -ne $resolverExit) { throw "Disenchant gate exited with code $resolverExit. See $GateLog" }
+    if ($resolverExit -ne 0 -and $null -ne $resolverExit) { throw "Offline disenchant gate exited with code $resolverExit. See $GateLog" }
     if (-not (Test-Path -LiteralPath $Safe)) { throw "Safe candidate output missing: $Safe" }
 
     $rawCount = @(Import-Csv -LiteralPath $Candidates).Count
     $safeCount = @(Import-Csv -LiteralPath $Safe).Count
+    $missingCount = 0
+    if (Test-Path -LiteralPath $Missing) { $missingCount = @(Import-Csv -LiteralPath $Missing).Count }
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Green
-    Write-Host "[WINDOWS-V5] END-TO-END PASS raw_candidates=$rawCount safe_candidates=$safeCount" -ForegroundColor Green
-    Write-Host "[WINDOWS-V5] raw=$Candidates"
-    Write-Host "[WINDOWS-V5] safe=$Safe"
-    Write-Host "[WINDOWS-V5] cache=$Cache"
-    Write-Host '[WINDOWS-V5] MUTATION=DISABLED ZERO_BUY=YES'
+    Write-Host "[WINDOWS-V5.1] END-TO-END PASS raw_candidates=$rawCount safe_candidates=$safeCount missing_item_ids=$missingCount" -ForegroundColor Green
+    Write-Host "[WINDOWS-V5.1] raw=$Candidates"
+    Write-Host "[WINDOWS-V5.1] safe=$Safe"
+    Write-Host "[WINDOWS-V5.1] missing=$Missing"
+    Write-Host "[WINDOWS-V5.1] cache=$Cache"
+    Write-Host '[WINDOWS-V5.1] RUNTIME_HTTP=DISABLED MUTATION=DISABLED ZERO_BUY=YES'
     Write-Host '============================================================' -ForegroundColor Green
 }
 catch {
