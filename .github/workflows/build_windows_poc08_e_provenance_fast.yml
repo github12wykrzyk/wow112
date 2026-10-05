@@ -93,6 +93,7 @@ jobs:
           if (-not (Select-String -Path $cache -Pattern '20406 => Some\(0\)' -Quiet)) { throw 'Twilight regression 20406 missing' }
           if (-not (Select-String -Path $cache -Pattern 'fn poc08_de_source' -Quiet)) { throw 'DE source lookup missing' }
           if (-not (Select-String -Path $cache -Pattern 'CapyDB|OctoWow|SeedLegacy' -Quiet)) { throw 'provenance values missing' }
+          if (-not (Select-String -Path $p -Pattern 'positive_authoritative' -Quiet)) { throw 'authoritative source accounting missing' }
           if (-not (Select-String -Path $p -Pattern 'distribution_octowow_verified=NO' -Quiet)) { throw 'distribution uncertainty guard missing' }
           Write-Host '[POC08-E-CI] READ-ONLY + PROVENANCE GUARDS PASS'
 
@@ -122,17 +123,20 @@ jobs:
           ZERO_BUY=YES
           ZERO_CANDIDATES=NORMAL_PASS
           DEID_PROVENANCE=PRESERVED
-          OCTOWOW_SOURCE_CONFIDENCE=HIGH
-          CAPYDB_SOURCE_CONFIDENCE=REFERENCE_ONLY
-          SEEDLEGACY_SOURCE_CONFIDENCE=REFERENCE_ONLY
+          OCTOWOW_WEB_SOURCE_CONFIDENCE=MEDIUM_REFERENCE_ONLY
+          CAPYDB_SOURCE_CONFIDENCE=LOW_REFERENCE_ONLY
+          SEEDLEGACY_SOURCE_CONFIDENCE=LOW_REFERENCE_ONLY
+          AUTHORITATIVE_DEID_CURRENT=NONE
           DE_DISTRIBUTION_OCTOWOW_VERIFIED=NO
           FUTURE_DE_BUY_READY=NO
           "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
           @'
           POC08-E is READ ONLY.
           It preserves DEID source provenance end-to-end and audits risk candidates by source.
-          OctoWow source is server-specific evidence; CapyDB and SeedLegacy remain reference-only.
-          The DE output distribution is still not Octo-verified, therefore this artifact cannot buy.
+          OctoWow web DB is server-adjacent reference evidence, NOT authoritative: documented web-DB vs in-game discrepancies exist.
+          CapyDB and SeedLegacy remain lower-confidence reference sources.
+          Confidence level 3 is reserved for future authoritative/empirically validated evidence; no current source qualifies.
+          The DE output distribution is also not Octo-verified, therefore this artifact cannot buy.
           Run START_POC08_E_PROVENANCE_WINDOWS.bat.
           '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
 
