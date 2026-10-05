@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   preflight:
+    if: ${{ github.event_name != 'push' || github.event.created != true }}
     runs-on: windows-2022
     outputs:
       auto_integrate: ${{ steps.queue.outputs.eligible }}
