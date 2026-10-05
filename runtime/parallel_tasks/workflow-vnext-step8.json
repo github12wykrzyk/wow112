@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "workflow-vnext-step8",
+  "goal": "Rewrite startup and agent routing contracts around canonical main, targeted-first implementation and failure-driven archaeology so normal tasks stop treating work/parallel as independent development worlds.",
+  "branch": "feature/workflow-vnext-step8",
+  "base_parallel_sha": "010a79c3b2c5640b5c2bcd6cf130bc61cc3ee01c",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": ["WorkflowRouting"],
+  "dependencies": [],
+  "shared_resources": [
+    "startup-contract",
+    "canonical-main-routing",
+    "agent-analysis-budget",
+    "integration-policy-metadata"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Step 8 of workflow vNext. Control-plane/documentation only; final iteration must take the fail-closed STANDARD route because startup authority and routing metadata change together."
+}
