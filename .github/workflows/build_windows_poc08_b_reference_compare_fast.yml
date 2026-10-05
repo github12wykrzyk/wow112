@@ -1,0 +1,135 @@
+name: POC08-B Reference DE Compare Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_B_REFERENCE_COMPARE_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC08_B_REFERENCE_COMPARE_WINDOWS.bat'
+      - '.github/workflows/build_windows_poc08_b_reference_compare_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate V5.3 DE base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build exact offline DisenchantID cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/poc08-base-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-base-unresolved.csv" --workers 16 --timeout 15 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache "$env:RUNNER_TEMP/poc08-base-cache.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/poc08-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-unresolved.csv" --workers 4 --timeout 15 --retries 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py --cache-csv "$env:RUNNER_TEMP/poc08-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate POC08-A then POC08-B source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs'
+          foreach ($marker in @('REFERENCE_CLASSIC_NOT_OCTO_VERIFIED','heuristic_de_ev','reference_de_ev','POC08-B-REFERENCE','NO_CANDIDATE_PASS')) {
+            if (-not (Select-String -Path $p -Pattern $marker -Quiet)) { throw "POC08-B marker missing: $marker" }
+          }
+          Write-Host '[POC08-B-CI] source markers PASS'
+
+      - name: Select POC08-B entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_b_reference_compare;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_b_reference_compare::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08-B]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08B REFERENCE AUDIT SESSION PASS')
+          $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08B reference DE comparison audit')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Static safety + regression assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs'
+          if (-not (Select-String -Path $p -Pattern 'hard read-only; BUY is disabled' -Quiet)) { throw 'read-only guard missing' }
+          if (-not (Select-String -Path $p -Pattern 'mutation=DISABLED' -Quiet)) { throw 'mutation disabled marker missing' }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '20406 => Some\(0\)' -Quiet)) { throw 'Twilight regression 20406 missing' }
+          if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '41316 => Some\(' -Quiet)) { throw 'known-positive regression 41316 missing' }
+          Write-Host '[POC08-B-CI] READ-ONLY + REGRESSION PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-b'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_B_REFERENCE_COMPARE_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_B_REFERENCE_COMPARE_WINDOWS.bat $d
+          Copy-Item "$env:RUNNER_TEMP/poc08-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs "$d/source/world_poc08_b_reference_compare.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs "$d/source/poc08_de_cache_generated.rs"
+          $n=@(Import-Csv "$d/runtime/DE_DISENCHANT_CACHE.csv").Count
+          $u=@(Import-Csv "$d/runtime/DE_CACHE_UNRESOLVED.csv").Count
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-B-REFERENCE-DE-COMPARE
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          MUTATION=DISABLED
+          ZERO_BUY=YES
+          ZERO_CANDIDATES=NORMAL_PASS
+          DE_ID_GATE=IN_RUNTIME_OFFLINE_FAIL_CLOSED
+          HEURISTIC_MODEL=V4
+          REFERENCE_MODEL=CLASSIC_DISENCHANTID_TABLE
+          REFERENCE_PROVENANCE=REFERENCE_CLASSIC_NOT_OCTO_VERIFIED
+          DECISION_DE_MODEL=REFERENCE_WHEN_COVERED
+          VENDOR_VALUE=LIVE_SERVER_ITEM_QUERY_WINDOWED
+          MATERIAL_PRICE=LIVE_LOWEST_POSITIVE_FLOOR_UNIT
+          MATERIAL_DEPTH_HISTORY=NOT_YET_AVAILABLE
+          CACHE_ENTRIES=$n
+          CACHE_UNRESOLVED=$u
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          POC08-B is READ ONLY.
+          Run START_POC08_B_REFERENCE_COMPARE_WINDOWS.bat.
+          It compares the old class/quality/itemLevel heuristic EV with a public classic DisenchantID reference-table EV.
+          The reference table is deliberately labelled NOT_OCTO_VERIFIED. This build CANNOT buy.
+          Use its outputs to quantify model disagreement and reference coverage before any DE mutation is considered.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC08-B-REFERENCE-COMPARE-${{ github.sha }}
+          path: dist/poc08-b
+          if-no-files-found: error
+          retention-days: 7
