@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "tele01-whisper-sniffer-v1",
+  "goal": "Add a read-only WoW 1.12.1 headless TELE whisper sniffer mode that logs sender and raw whisper text without replying, inviting, casting, or otherwise mutating game state.",
+  "branch": "feature/tele01-whisper-sniffer-v1",
+  "status": "active",
+  "auto_integrate": false,
+  "modules": ["HeadlessTele"],
+  "dependencies": [],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": ["updater"],
+  "lease": null,
+  "notes": "TELE-01 safety invariant: chat receive/log only; zero chat TX, zero invite, zero cast, zero portal use. Runtime evidence pending real user smoke test."
+}
