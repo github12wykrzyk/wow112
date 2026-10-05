@@ -146,18 +146,18 @@ jobs:
               throw "feature no longer passes preflight against current parallel $base"
             }
 
-            $deliveryGateRaw = python tools/parallel_diagnostic_fastpath.py `
+            $deliveryGateRaw = python tools/parallel_delivery_route.py `
               --base refs/remotes/origin/parallel `
               --branch "$env:FEATURE_BRANCH" `
               --task-id "$env:TASK_ID"
             if ($LASTEXITCODE -ne 0) {
-              throw "diagnostic fast-path classifier failed"
+              throw "delivery route classifier failed"
             }
             $deliveryGate = (($deliveryGateRaw -join "`n") | ConvertFrom-Json)
             if ($null -eq $deliveryGate -or $null -eq $deliveryGate.require_standard) {
-              throw "diagnostic fast-path classifier returned invalid output"
+              throw "delivery route classifier returned invalid output"
             }
-            Write-Host "Post-integration delivery gate: require_standard=$($deliveryGate.require_standard) fast_path=$($deliveryGate.fast_path) reason=$($deliveryGate.reason)"
+            Write-Host "Post-integration delivery route: require_standard=$($deliveryGate.require_standard) fast_path=$($deliveryGate.fast_path) reason=$($deliveryGate.reason) profiles_used=$($deliveryGate.profiles_used -join ',')"
 
             git checkout -B __parallel_integrate refs/remotes/origin/parallel
             if ($LASTEXITCODE -ne 0) { throw "cannot create integration worktree" }
@@ -205,7 +205,7 @@ jobs:
                 throw "exact integrated parallel delivery gates failed for $integrated"
               }
 
-              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated profiles=$env:DELIVERY_PROFILES standard=$($deliveryGate.require_standard)"
+              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated profiles=$env:DELIVERY_PROFILES standard=$($deliveryGate.require_standard) route=$($deliveryGate.reason)"
               exit 0
             }
 
