@@ -1,65 +1,47 @@
 # wow112
 
-Private AI-first repository for **World of Warcraft 1.12.1 build 5875, Windows x86**.
+AI-first repository for **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
 ## Start here
 
-For every AI task, read in this order:
+Normal AI startup is intentionally small:
 
-1. `AGENTS.md`
-2. `AI_START_HERE.md`
-3. `AI_INDEX.json`
-4. `CURRENT.json`
-5. `runtime/current.json`
+1. live `main` HEAD,
+2. verified `runtime/ai_startup_snapshot.json`,
+3. `runtime/ai_experiment_index.json`,
+4. only the affected module/owner files.
 
-Do not infer the active baseline or stack from this README. `CURRENT.json` and `runtime/current.json` are canonical.
+Use the full five-file authority sequence (`AGENTS.md`, `AI_START_HERE.md`, `AI_INDEX.json`, `CURRENT.json`, `runtime/current.json`) only when the snapshot is stale/unverifiable, startup authority is being edited, a release is being prepared, or repository state is ambiguous.
 
-## Branches
+## Branch model
 
-- `main` — last accepted stable state.
-- `work` — current development candidate.
-- `promote/**` — temporary curated stable candidates; these must pass the pre-promotion gate before `main` moves.
+- `main` — canonical integration/development trunk.
+- `parallel` — exact compatibility/delivery alias synchronized atomically with `main`.
+- `feature/**` — short-lived task branches.
+- `promote/**` — curated release snapshots.
+- `work` — legacy compatibility/history.
+- `parallel-testpoint` — optional frozen user-test pointer.
 
-Normal feature/fix work happens on `work`. Accepted changes are curated onto current `main`; the entire accumulated `work` branch is not promoted wholesale.
+Stable state is baseline/artifact metadata, not a permanent branch role.
 
-## Build and verification
-
-Routine:
+## Normal workflow
 
 ```text
-python tools/verify_current.py
-python tools/verify_runtime_artifacts.py
-python tools/verify_verified_symbols.py
+main -> feature -> targeted preflight -> canonical integration ->
+atomic main+parallel -> routed exact-SHA delivery -> user test
 ```
 
-TEST artifact:
-- `.github/workflows/build_work_candidate.yml`
-- ends with `tools/verify_candidate_package.py`
-- publishes only after final package verification.
-
-Stable promotion:
-- `.github/workflows/pre_promote_stable.yml`
-- strict source/deep checks
-- exact-byte packaging with `tools/package_exact_current.py`
-- final ZIP verification before `main` is updated.
-
-Stable artifact:
-- `.github/workflows/build_stable_candidate.yml`
-- packages exact accepted runtime bytes; it does not silently replace them with a new rebuild.
+Heavy repository-wide audits are scheduled/manual/PR/release checks, not part of every microfix.
 
 ## Canonical layout
 
-- `CURRENT.json` — current baseline/branch/tool pointers.
+- `CURRENT.json` — routing/tool pointers and stable baseline metadata.
 - `runtime/current.json` — exact active EXE/DLL stack and provenance.
 - `src/` — canonical editable source root.
-- `baseline/` — stable rollback metadata.
-- `manifests/` — stable/reference hashes.
-- `artifacts/runtime_cache/` — content-addressed exact DLL bytes.
-- `artifacts/` — recovery/audit/reproducer evidence.
-- `archives/`, `src/history/`, `source/` — historical material; do not scan by default.
+- `runtime/parallel_tasks/` — short-lived task coordination metadata.
+- `baseline/`, `manifests/`, `artifacts/runtime_cache/` — stable rollback/exact-byte evidence.
+- `archives/`, `src/history/`, `source/` — historical/recovery material; do not scan by default.
 
-## Human role
-
-The human user describes desired behavior and tests ready artifacts. AI owns routine GitHub edits, branch housekeeping, verification, packaging, and promotion workflow.
+Historical filenames containing `parallel` or `work` may remain for compatibility; they do not define branch authority.
 
 Full contract: `AGENTS.md`.

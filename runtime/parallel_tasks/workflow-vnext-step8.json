@@ -4,9 +4,11 @@
   "goal": "Rewrite startup and agent routing contracts around canonical main, targeted-first implementation and failure-driven archaeology so normal tasks stop treating work/parallel as independent development worlds.",
   "branch": "feature/workflow-vnext-step8",
   "base_parallel_sha": "010a79c3b2c5640b5c2bcd6cf130bc61cc3ee01c",
-  "status": "coding",
-  "auto_integrate": false,
-  "modules": ["WorkflowRouting"],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": [
+    "WorkflowRouting"
+  ],
   "dependencies": [],
   "shared_resources": [
     "startup-contract",
@@ -16,5 +18,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Step 8 of workflow vNext. Control-plane/documentation only; final iteration must take the fail-closed STANDARD route because startup authority and routing metadata change together."
+  "notes": "Step 8 final contract migration. Full STANDARD is intentionally required because startup authority and integration-policy metadata change together."
 }

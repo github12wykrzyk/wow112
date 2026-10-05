@@ -1,7 +1,10 @@
 {
   "schema_version": 1,
   "branch": "parallel",
-  "purpose": "Concurrency-safe coordination for many independent ChatGPT feature threads without serializing development or using the central experiment ledger as per-step scratch state.",
+  "canonical_branch": "main",
+  "delivery_alias_branch": "parallel",
+  "legacy_namespace_note": "The branch field and parallel_* filenames are compatibility identifiers. Canonical integration authority is main.",
+  "purpose": "Concurrency-safe coordination for short-lived feature tasks based on canonical main without global branch/lease scanning in the hot path.",
   "task_dir": "runtime/parallel_tasks",
   "task_branch_prefix": "feature/",
   "integration_policy": "runtime/parallel_integration_policy.json",
@@ -29,7 +32,7 @@
   "task_record_enforcement": {
     "mode": "merge_base_marker",
     "marker_path": "runtime/parallel_task_enforcement_v1.marker",
-    "legacy_policy": "Feature branches whose merge-base predates the marker are grandfathered. Feature branches based on a parallel revision containing the marker must own exactly one task record."
+    "legacy_policy": "Feature branches based before the enforcement marker are grandfathered; newer feature branches own exactly one task record."
   },
   "lease_policy": {
     "mode": "exclusive_scopes",
@@ -37,22 +40,17 @@
     "default_ttl_seconds": 21600,
     "min_ttl_seconds": 900,
     "max_ttl_seconds": 86400,
-    "required_statuses": [
-      "coding",
-      "preflight",
-      "ready_for_integration",
-      "integrating"
-    ],
+    "required_statuses": [],
     "scope_model": "module:<module> and resource:<shared_resource>",
-    "conflict_resolution": "Oldest live lease wins per scope; ties break by branch then task id. Expired leases never block another task.",
-    "legacy_policy": "Branches whose merge-base predates the control-plane marker remain valid without leases. Newer feature branches must hold an active lease before preflight/integration."
+    "conflict_resolution": "Leases are optional diagnostic metadata only. Normal preflight/integration does not require a lease.",
+    "legacy_policy": "Existing lease records remain readable for diagnostics; no lease is required on the normal hot path."
   },
   "reconciler": {
     "remote_ref_prefix": "refs/remotes/origin/feature/",
     "stale_after_seconds": 86400,
     "workflow": ".github/workflows/parallel_control_plane_reconcile.yml",
-    "mutation_policy": "read_only_report",
-    "branch_cleanup_policy": "Never delete or rewrite branches automatically; report stale/resolved state for explicit housekeeping."
+    "mutation_policy": "manual_read_only_report",
+    "branch_cleanup_policy": "Persistent cleanup deletes only proven integrated feature refs; global reconciliation is not a hot-path prerequisite."
   },
   "delivery_profiles": {
     "economy": {
@@ -96,9 +94,9 @@
     "opt_in_field": "auto_integrate",
     "ready_status": "ready_for_integration",
     "integrated_status": "integrated",
-    "queue_concurrency_group": "parallel-integration-queue",
+    "queue_concurrency_group": "canonical-main-integration-queue",
     "cas_retry_limit": 3,
-    "profile_gate_policy": "Profile-routed file changes must declare the matching delivery_profiles. Declared profile workflows must pass on the exact feature SHA before integration and again on the exact integrated parallel SHA before the serialized queue is released."
+    "profile_gate_policy": "Profile-routed file changes declare matching delivery_profiles. Required profiles pass on the exact feature SHA and exact integrated delivery SHA."
   },
   "diagnostic_hotfix_fast_path": {
     "opt_in_field": "diagnostic_hotfix_fast_path",
@@ -127,42 +125,29 @@
       "autosell",
       "postauction"
     ],
-    "fallback": "Any ambiguity, extra path, unsupported module/profile, or forbidden added token requires the full STANDARD post-integration gate."
+    "fallback": "Any ambiguity, extra path, unsupported module/profile or forbidden token falls back to STANDARD."
   },
   "rules": [
-    "Each independent user request gets its own feature branch from the current verified parallel HEAD.",
-    "Each feature owns exactly one uniquely named runtime/parallel_tasks/<task-id>.json coordination record; unrelated feature threads must not edit one another's task files.",
-    "After the enforcement marker exists on parallel, a new feature preflight fails closed unless exactly one task record owns that feature branch. Existing feature branches based before the marker are grandfathered until they finish.",
-    "Independent coding, commits, preflights and module-specific builds may run concurrently.",
-    "shared_resources declare mechanisms that require ordered integration or explicit arbitration; a conflict is a scheduling signal, not a reason to block independent development.",
-    "After the control-plane marker exists on parallel, coding/preflight/integration states require an active exclusive-scope lease before preflight or queued integration.",
-    "Lease scopes are derived from declared modules and shared_resources. A task may lease a safe subset; undeclared scopes are rejected.",
-    "Lease heartbeat extends TTL only for the same owner. Expired leases are reclaimable and never require destructive branch operations.",
-    "When live leases conflict, deterministic oldest-lease priority selects one scope owner; losing tasks remain safe on their feature branches.",
-    "The scheduled reconciler is read-only: it discovers feature task records, expired/missing leases and live scope conflicts but never deletes, force-pushes or rewrites branches.",
-    "delivery_profiles are fail-closed routing declarations. A feature touching ECONOMY, updater or AutoLoginBridge profile paths cannot integrate without declaring the corresponding profile.",
-    "auto_integrate defaults to false. Automatic integration is allowed only for an explicitly opted-in task in ready_for_integration state with no unresolved declared task dependency.",
-    "Declared delivery profile workflows run and must PASS on the exact feature SHA before the integration queue can merge that feature.",
-    "The integration queue is globally serialized, re-runs Parallel feature preflight against the live parallel HEAD immediately before each merge attempt, and pushes parallel without force.",
-    "If parallel moves before the queued push, the queue fetches the new HEAD, re-runs preflight and retries from the fresh base; merge conflicts fail closed for explicit arbitration.",
-    "A successful queued merge records integrated status and the exact integrated feature SHA inside the merge commit, avoiding a follow-up metadata-only parallel commit.",
-    "After a queued merge, the exact integrated parallel SHA must PASS STANDARD Build work candidate and every declared delivery profile workflow before the queue releases the next integration, except for the explicit diagnostic_hotfix_fast_path described below.",
-    "diagnostic_hotfix_fast_path is opt-in and may omit only the post-integration STANDARD gate; Parallel feature preflight plus the exact feature-SHA and exact integrated-SHA ECONOMY gates remain mandatory.",
-    "diagnostic_hotfix_fast_path is limited to the policy allowlist of diagnostic/hot-payload Lua files and the task's own coordination record. Any DLL, ownership, transaction, auction action, workflow, packager, manifest or other file change falls back to STANDARD.",
-    "The diagnostic fast path never advances or weakens the STANDARD parallel-testpoint publication contract; it is profile-scoped ECONOMY delivery for live diagnostics/hot payloads only.",
-    "Final movement of parallel remains serialized by the optimistic compare-and-swap integration policy with force=false.",
-    "runtime/ai_experiments.json remains the evidence/routing ledger; per-task records carry durable coordination intent instead of every transient workflow observation.",
-    "A task file status is declared branch-local intent. Live updater status must be derived from live branch/workflow/artifact evidence; a merged task record alone never proves READY TO TEST.",
-    "A task marked test_ready must still be backed by the exact integrated parallel SHA and the required package/profile gates outside this coordination file.",
-    "Task records and leases never replace exact-SHA CI, provenance, candidate manifest, dependency registry, loader/update delivery gates or gameplay evidence."
+    "New ordinary tasks branch from current canonical main, not from work or an independent parallel world.",
+    "Each feature owns one runtime/parallel_tasks/<task-id>.json coordination record.",
+    "Independent coding and targeted preflight run concurrently; only canonical integration is serialized.",
+    "shared_resources signal ordered integration/arbitration when they overlap.",
+    "Global lease election/reconciliation is not required for normal preflight or integration.",
+    "delivery_profiles are fail-closed declarations for profile-routed paths.",
+    "auto_integrate is explicit and requires ready_for_integration plus resolved declared dependencies.",
+    "The queue revalidates against current main immediately before merge.",
+    "The queue atomically advances main and parallel to one integrated SHA without force.",
+    "Post-integration delivery is selected by the path/risk router; unknown or mixed runtime changes require STANDARD.",
+    "Successful exact-SHA delivery precedes feature branch cleanup.",
+    "Task metadata never replaces exact-SHA CI, provenance, package or gameplay evidence."
   ],
   "updater_states": {
     "coding": "WORKING",
     "preflight": "PREFLIGHT",
     "ready_for_integration": "WAITING INTEGRATION",
     "integrating": "INTEGRATING",
-    "integrated": "IN PARALLEL / BUILDING",
-    "parallel_ci": "PARALLEL BUILD",
+    "integrated": "IN MAIN / DELIVERY",
+    "parallel_ci": "DELIVERY BUILD",
     "test_ready": "READY TO TEST",
     "blocked": "BLOCKED",
     "done": "DONE",

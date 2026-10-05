@@ -1,111 +1,100 @@
 # AI START HERE
 
-This repository is optimized for repeated AI-assisted development of **World of Warcraft 1.12.1 build 5875, Windows x86**.
+This repository is optimized for fast repeated AI-assisted development of **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
-`AGENTS.md` is the operating contract. This file is the fast routing entrypoint after that contract has been read.
+`AGENTS.md` is authoritative. The central rule is:
 
-## Startup read path
+> **`main` is the one canonical integration/development trunk. `parallel` is an exact compatibility/delivery alias, not a second development world.**
 
-For ordinary non-promotion work, first read `runtime/ai_startup_snapshot.json` and verify its five `git_blob_sha1` identities against Git tree metadata from the live selected-branch HEAD. If all match, continue with `runtime/ai_experiment_index.json` and only the affected module.
+## Fast startup
 
-Fail closed to the full canonical order when the snapshot is missing/stale/unverifiable, when editing startup-contract files, during stable promotion, recovery after unknown state, or when authority is ambiguous:
+For ordinary work:
+
+1. resolve live `main` HEAD once,
+2. verify `runtime/ai_startup_snapshot.json` against the five startup-source Git blob identities from that same HEAD,
+3. read `runtime/ai_experiment_index.json`,
+4. open only the affected module/owner files,
+5. optionally run:
+
+```text
+python tools/ai_task_context.py --branch main --module MODULE
+```
+
+Do not scan all branches, history, archives, the full experiment ledger or successful CI logs unless a concrete unresolved risk requires it.
+
+Fallback read order for startup-contract edits, release work, ambiguous writes, stale snapshot or unresolved authority:
 
 1. `AGENTS.md`
 2. `AI_START_HERE.md`
 3. `AI_INDEX.json`
 4. `CURRENT.json`
 5. `runtime/current.json`
-6. only files for the affected module.
+6. only the evidence needed for the unresolved issue.
 
-Do not scan `archives/`, old baselines, `src/history/`, legacy `source/`, or recovery chunks unless the task actually needs rollback/reconstruction.
+## Branches
 
-## Hard invariants
+- `main` — canonical integration trunk and source of normal development truth.
+- `parallel` — atomically synchronized exact delivery alias.
+- `feature/**` — short-lived task branches from current `main`.
+- `promote/**` — curated release/stable-candidate snapshots.
+- `work` — legacy compatibility/history only.
+- `parallel-testpoint` — optional frozen user-test pointer, not a development trunk.
 
-- `main` = last accepted stable state.
-- `work` = existing development branch; `parallel` = independent alternative branch.
-- `feature/**` = short-lived branch for independent experiments.
-- `promote/**` = curated stable-candidate gate branches.
-- `work` must contain current `main`; preserve the independent `parallel` branch and its existing experiments.
-- `runtime/current.json` decides active runtime/source lineage.
-- `src/` is canonical editable source root.
-- Stable runtime packages use exact accepted bytes, never an unverified rebuild.
-- No direct promotion to `main` before the exact `promote/**` SHA passes `Pre-promote stable`.
+Stable state is represented by baseline/runtime metadata and exact accepted artifacts, not by treating `main` as stable-only.
 
-## Lightweight AI session
+Historical `parallel_*` / `work_*` filenames are compatibility names and do not imply independent branch authority.
 
-For a user-selected branch (including `parallel`), use that exact branch even if generic metadata names `work` as the default. Finish the smallest independent GitHub change first, confirm its commit SHA, and provide a short factual checkpoint. Do not perform unrelated edits or repeatedly query all Actions runs in one response. After interrupted streaming, recheck HEAD and workflow for the intended SHA before doing any write. See `AGENTS.md` section 14.
-
-Default latency path: batch the mandatory startup reads, make one focused atomic commit, check required feature workflows together at run level, integrate after PASS, then observe required `parallel` workflows together. **Do not inspect successful job/step progress or fetch logs on the success path.** Deep CI inspection is failure-driven. For a small already-understood one-module fix, aim for roughly 4–6 minutes end-to-end when runner capacity permits, without weakening any verification or package gate.
-
-## Experiment routing
-
-After verified startup context inspect the compact `runtime/ai_experiment_index.json` first, then relevant live branch heads and module/dependency ownership. It is generated from `runtime/ai_experiments.json` and intentionally omits heavy notes/test evidence; read the full ledger only when compact routing is insufficient or evidence must be updated. `python tools/ai_experiments.py route --module MODULE [--branch parallel]` provides advisory routing and `python tools/ai_experiments.py index --check` verifies the fast index. Explicitly selected `parallel` remains parallel; independent changes use a temporary `feature/<purpose>` from the appropriate verified base. See `docs/AI_EXPERIMENTS.md`.
-
-For ordinary module work, prefer one compact task-context read before opening source files:
+## Default task path
 
 ```text
-python tools/ai_task_context.py --branch parallel --module MODULE
+main HEAD
+-> compact routing/task context
+-> owner files only
+-> feature/<purpose>
+-> smallest implementation
+-> routed preflight
+-> exact feature-SHA profile gates if required
+-> serialized revalidation/integration into main
+-> atomic main + parallel update
+-> risk/path-routed exact-SHA delivery
+-> delete integrated feature branch
 ```
 
-The helper is read-only. It resolves the selected checkout/ref when available, shows the latest active experiments for that module in ledger order, canonical source hints, STANDARD/ECONOMY delivery eligibility, and the complete `feature preflight -> integrate -> exact parallel build -> profile build -> TEST READY` lifecycle. It exists specifically to prevent a successful feature preflight from being mistaken for delivered code. Live GitHub HEAD and the canonical manifests remain authoritative before every write.
+`PREFLIGHT PASS` is not `TEST READY`. Only the required exact integrated-SHA delivery gates and package verification can make a runnable candidate ready.
 
-## Fast TEST path
+## Analysis discipline
 
-```text
-read routing -> edit canonical source -> verify_current ->
-one logical commit on selected branch -> branch-specific candidate workflow ->
-verify_candidate_package -> artifact -> user test
-```
+Broaden beyond owner files only when there is a concrete reason: shared hook/ABI conflict, unknown owner, merge conflict, provenance mismatch, verifier/build failure, ambiguous experiment routing, or an explicit audit/history request.
 
-Useful commands:
+The full experiment ledger (`runtime/ai_experiments.json`) is evidence/detail fallback. The compact generated index is the routing default.
 
-```text
-python tools/ai_task_context.py --branch parallel --module MODULE
-python tools/ai_status.py
-python tools/verify_current.py
-python tools/verify_runtime_artifacts.py
-python tools/verify_verified_symbols.py
-```
+## Verification
 
-The work workflow builds changed active modules, packages the complete stack, appends enabled candidate companion modules, then runs one final fail-closed ZIP verifier.
+Normal micro-iterations use the routed feature preflight and only the checks selected for their changed paths/risk.
 
-## Stable promotion path
+Repository-wide verification is intentionally outside the hot path:
+- deep repository audit: nightly/manual/PR,
+- full AI registry suite: nightly/manual/PR,
+- broad native ABI audit: scheduled/manual,
+- stable release gates: `promote/**` + explicit stable build.
 
-Never promote the entire accumulated `work` branch just because one feature was accepted.
+Do not reintroduce these heavy checks into every feature.
 
-Curate accepted changes onto current `main`, create a `promote/<purpose>` branch, and require `Pre-promote stable` PASS on that exact SHA. Stable packaging must come from exact accepted runtime bytes:
+## Release path
 
-```text
-python tools/sync_source_metadata.py --check
-python tools/verify_current.py
-python tools/verify_runtime_artifacts.py
-python tools/verify_repo.py
-python tools/package_exact_current.py
-python tools/verify_candidate_package.py --finalize ...
-```
+A release is a curated `promote/<purpose>` snapshot based on current `main`.
 
-Only then may AI move `main`. Afterward, integrate the new main into work without deleting unrelated work experiments.
+Require `Pre-promote stable` PASS on the exact promote SHA, then run `Build stable candidate` explicitly on that same curated release SHA. Stable packaging uses exact accepted bytes through `tools/package_exact_current.py` and `tools/verify_candidate_package.py`.
 
-## Exact-byte runtime cache
+`main` remains the canonical integration trunk before and after release.
 
-An active stable DLL must be recoverable by exact SHA from either its `binary_artifact` metadata or:
-
-`artifacts/runtime_cache/<sha256>.dll.xz`
-
-Missing or mismatching exact bytes are a hard promotion failure.
-
-## Current state
-
-Do not copy the baseline number from this prose. Read `CURRENT.json`; it is the source of truth. `CURRENT_VERSION.md` is descriptive only.
-
-## Definition of ready-to-test
+## Ready-to-test
 
 A TEST artifact is ready only when:
-- fast repository gates pass,
-- changed x86 modules build,
-- final ZIP contains one root EXE + all root DLLs + exact `dlls.txt`,
-- all binary entries are PE32 x86,
-- metadata SHA matches the final ZIP,
-- `FINAL_PACKAGE: PASS`.
+- feature preflight passed,
+- the feature was integrated into canonical `main`,
+- `parallel` equals the same integrated SHA,
+- all required routed delivery profiles passed on that exact SHA,
+- final runnable package verification passed when a game ZIP is required.
 
-See `AGENTS.md` for the full operating contract.
+For full rules see `AGENTS.md`.

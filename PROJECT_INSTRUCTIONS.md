@@ -2,80 +2,56 @@
 
 Project scope is permanently **World of Warcraft 1.12.1 build 5875, Windows x86**.
 
-This document is intentionally short. `AGENTS.md` is the authoritative operating contract; do not maintain a competing copy of the workflow here.
+`AGENTS.md` is authoritative. This file is deliberately compact.
 
-## Startup
+## Canonical routing
 
-For ordinary non-promotion tasks, use the verified fast path: read `runtime/ai_startup_snapshot.json`, compare its five Git blob identities against tree metadata from the same live branch HEAD, then read `runtime/ai_experiment_index.json` and only the required module files.
+- `main` is the only normal integration/development trunk.
+- `parallel` is an exact delivery compatibility alias maintained atomically with `main`.
+- `feature/**` branches are short-lived task branches based on current `main`.
+- `promote/**` branches are curated release snapshots.
+- `work` is legacy compatibility/history only.
+- `parallel-testpoint` is an optional frozen user-test pointer, not a development branch.
 
-If the snapshot is missing/stale/unverifiable, startup files are being edited, stable promotion is involved, recovery state is ambiguous, or authority cannot be resolved, read the full canonical sequence:
+Do not infer authority from legacy filenames such as `parallel_*`, `work_*` or `runtime/parallel_*`.
 
-1. `AGENTS.md`
-2. `AI_START_HERE.md`
-3. `AI_INDEX.json`
-4. `CURRENT.json`
-5. `runtime/current.json`
+## Startup and execution
 
-The snapshot is generated cache only; it never replaces canonical authority.
+Ordinary task:
 
-## Canonical state
+```text
+resolve main HEAD
+-> verify runtime/ai_startup_snapshot.json
+-> read runtime/ai_experiment_index.json
+-> inspect owner files only
+-> implement on feature/<purpose>
+-> targeted preflight
+-> canonical queue integration
+-> routed exact-SHA delivery
+```
 
-- `CURRENT.json` — baseline, branches, canonical tool/data pointers.
-- `runtime/current.json` — exact active runtime and source provenance.
-- `src/` — normal editable source root.
-- baseline/manifests — stable rollback identity.
-- `artifacts/runtime_cache/<sha256>.dll.xz` — exact-byte stable recovery cache.
-- `source/`, `archives/`, `src/history/` — legacy/history only.
+Use the full startup sequence only for stale/unverifiable snapshot, startup-contract edits, release work, ambiguous writes or unresolved authority.
 
-Machine-readable routing wins over stale prose.
+Do not enumerate all feature branches, scan history/archives, read the full experiment ledger or inspect successful CI logs on the normal success path.
 
-## Branch contract
+## Concurrency
 
-- `main` = accepted stable.
-- `work` = existing development; `parallel` = independent alternative development.
-- `feature/**` = short-lived isolated experiments based on the correct live SHA.
-- `promote/**` = curated stable candidate only.
+Independent feature coding/preflight may run concurrently. Only final canonical trunk movement is serialized.
 
-Route new requests through the compact generated `runtime/ai_experiment_index.json` first, then live GitHub branch inspection. Use the full `runtime/ai_experiments.json` only for evidence/detail fallback or updates; `tools/ai_experiments.py index --check` prevents the compact view from drifting. Respect explicit `parallel`; do not transfer unaccepted state between branches. See `docs/AI_EXPERIMENTS.md`.
+Each new feature owns one `runtime/parallel_tasks/<task-id>.json` coordination record. Shared resources are a signal for ordered integration/arbitration, not a reason to globally lock development.
 
-### Parallel multi-thread mode
-
-The normal UX is that the user may discuss unrelated functions in many ChatGPT threads at the same time. Independent work must therefore be concurrent by default:
-
-- create a dedicated `feature/<purpose>` branch from the current verified `parallel` HEAD for each independent request;
-- keep a uniquely named coordination record at `runtime/parallel_tasks/<task-id>.json` on that feature branch;
-- allow independent coding, commits, preflights and module-specific builds to run concurrently;
-- declare shared mechanisms/hook/API ownership in `shared_resources`; overlap means ordered integration or arbitration, not a global development lock;
-- do not use `runtime/ai_experiments.json` as per-message scratch state from many concurrent sessions; keep transient progress in the task record and update the central evidence ledger at durable milestones;
-- before starting a potentially overlapping change, inspect relevant live `feature/**` branches/task records in addition to the compact experiment index;
-- serialize only the final `parallel` ref movement through `runtime/parallel_integration_policy.json` compare-and-swap rules;
-- expose task lifecycle as `WORKING / PREFLIGHT / WAITING INTEGRATION / PARALLEL BUILD / READY TO TEST / BLOCKED` rather than treating every green CI state as delivered.
-
-Validate coordination records with `python tools/parallel_task_state.py validate`; use `summary` or `route --module <Module>` for compact routing/conflict context. These records are coordination metadata only and never replace exact-SHA CI, package/provenance, updater delivery or gameplay evidence.
-
-Do not push an unverified promotion directly to `main`. The exact `promote/**` SHA must first pass `.github/workflows/pre_promote_stable.yml`.
-
-## Stable byte identity
-
-A stable package is assembled from exact accepted runtime bytes and verified against `runtime/current.json`. It is not defined by a fresh source rebuild.
-
-Use:
-- `tools/package_exact_current.py`
-- `tools/verify_candidate_package.py`
+Global lease reconciliation is diagnostic/manual; leases are not required in the normal hot path.
 
 ## Verification
 
-Routine:
-`python tools/verify_current.py`
+Use routed checks based on changed paths and risk. Unknown/mixed/shared runtime changes fail closed to STANDARD. Profile-contained changes run only their required profile gates. Docs/task-record-only changes do not pay for unrelated binary builds.
 
-Stable promotion additionally:
-`python tools/sync_source_metadata.py --check`
-`python tools/verify_runtime_artifacts.py`
-`python tools/verify_verified_symbols.py`
-`python tools/verify_repo.py`
+Deep repository, full AI registry and broad ABI audits are scheduled/manual/PR/release checks.
 
-Never weaken a verifier merely to obtain PASS.
+Never weaken a verifier to obtain PASS.
 
-## Operational latency
+## Stable byte identity
 
-Minimize time from an accepted change request to a verified test artifact. Use batch exact-SHA workflow checks, avoid per-job/per-step success polling, inspect logs only to diagnose failures, and let independent gates run concurrently. For a small already-understood one-module fix, 4–6 minutes is the operational target when runner capacity permits. Never skip or weaken verification to meet the target; `AGENTS.md` section 14 is authoritative.
+Stable/release packaging is performed from a curated `promote/**` exact SHA and uses exact accepted bytes via `tools/package_exact_current.py` plus `tools/verify_candidate_package.py`.
+
+`main` remains the canonical integration trunk; stable identity is baseline/artifact metadata.
