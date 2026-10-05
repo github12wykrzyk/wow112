@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele06-ritual-core-v1",
+  "goal": "Build a side-effect-free Ritual of Summoning state machine with hard shard guard, one cast attempt per request sequence, portal epoch identity, and helper click dedupe before enabling any cast mutation.",
+  "branch": "feature/tele06-ritual-core-v1",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": ["HeadlessTeleRitualCore"],
+  "dependencies": ["tele02-whisper-name-tx-v2"],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Offline-safe foundation while TELE-03 awaits party runtime evidence. No spell casts or portal writes. Shards <= 0 hard-pause. Cast attempts are one-shot per request_seq. Portal servicing identity is ritual_epoch + portal_guid + helper account."
+}
