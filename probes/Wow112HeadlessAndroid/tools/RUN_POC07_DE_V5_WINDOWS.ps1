@@ -62,7 +62,7 @@ try {
     $maxBuyout = Read-Default 'Max buyout do analizy (copper)' '4294967295'
     $minProfit = Read-Default 'Min DE profit (copper)' '1'
     $netBps = Read-Default 'DE net BPS' '8500'
-    $maxPages = Read-Default 'Safety max filtrowanych stron na klase' '128'
+    $maxPages = Read-Default 'Safety max filtrowanych stron na klase' '256'
 
     $env:WOW112_ACCOUNT = $account
     $env:WOW112_PASSWORD = $password
