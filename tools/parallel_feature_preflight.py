@@ -241,8 +241,9 @@ def verify_changed_text(changed):
         if b"\x00" in data:
             raise SystemExit("PARALLEL_FEATURE_PREFLIGHT: FAIL NUL byte in " + rel)
         text = data.decode("utf-8")
-        if any(marker in text for marker in ("<<<<<<< ", "=======\n", ">>>>>>> ")):
-            raise SystemExit("PARALLEL_FEATURE_PREFLIGHT: FAIL unresolved merge marker in " + rel)
+        for line in text.splitlines():
+            if line.startswith("<<<<<<< ") or line == "=======" or line.startswith(">>>>>>> "):
+                raise SystemExit("PARALLEL_FEATURE_PREFLIGHT: FAIL unresolved merge marker in " + rel)
         checked += 1
     print("PARALLEL_FEATURE_PREFLIGHT: text_sanity=%d" % checked)
 
@@ -258,6 +259,10 @@ def main():
     print("PARALLEL_FEATURE_PREFLIGHT: merge_base=" + merge_base)
     print("PARALLEL_FEATURE_PREFLIGHT: branch=" + (branch or "<detached>"))
     print("PARALLEL_FEATURE_PREFLIGHT: changed=" + json.dumps(changed))
+
+    if not changed:
+        print("PARALLEL_FEATURE_PREFLIGHT: PASS (mode=noop, gates=0, active_builds=0, companion_builds=0)")
+        return 0
 
     if branch.startswith("feature/"):
         run([
