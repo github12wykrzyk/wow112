@@ -13,6 +13,26 @@ The hot path is deliberately branch-local:
 
 No normal feature run fetches or reconciles every remote `feature/**` ref.
 
+## Fast feature preflight
+
+Ordinary feature preflight is path-routed instead of running every repository gate on every edit.
+
+- checkout starts shallow (`fetch-depth: 8`);
+- the integration base is fetched shallow as well;
+- if the feature fork point is older, history is deepened only for the current feature/base refs (32, 128, then 512 commits) and full history is a correctness fallback, not the default;
+- an empty diff is an immediate no-op PASS;
+- edited text receives a cheap NUL/unresolved-conflict-marker sanity check;
+- SummonScout changes run the SummonScout Lua upvalue guard;
+- Aux/AH changes run the relevant ECONOMY and AutoSell contracts;
+- PlayerESP changes run the GUI ABI/behavior contracts;
+- TargetAura/LazyScript changes run their bridge contract;
+- native changes run core runtime/provenance/dependency checks and compile only changed active/companion modules;
+- workflow/tooling/policy changes still run the broad `test_ai_*` suite and broad infrastructure gates.
+
+Integration deliberately keeps `fetch-depth: 0`: shallow history is an optimization for the feature hot path, never for the actual merge/CAS safety boundary.
+
+The separate `Verify AI experiment registry` workflow does not run on ordinary `feature/**` pushes; branch-local task validation is owned by feature preflight. Registry-wide verification remains on integration/trunk infrastructure paths and pull requests.
+
 ## Integration mutex
 
 The authoritative concurrency mechanism for trunk movement is the GitHub Actions concurrency group:
@@ -45,7 +65,7 @@ The reconciler remains read-only. Cleanup or task mutation is never inferred fro
 
 Removing global lease reconciliation does not weaken the delivery gates. The following remain authoritative:
 
-- exactly one task record for feature branches after the enforcement marker;
+- exactly one task record for feature branches after the enforcement marker when the feature has an actual diff;
 - delivery-profile routing checks;
 - exact-SHA feature preflight;
 - changed native-module compilation where applicable;
