@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Delete only feature refs already contained in main
+      - name: Delete only feature refs proven integrated
         shell: bash
         run: |
           set -euo pipefail
@@ -35,38 +35,76 @@ jobs:
           main_sha="$(git rev-parse refs/remotes/origin/main)"
           echo "canonical main: $main_sha"
 
+          # Legacy integration records are accepted only when they say status=integrated
+          # and the current remote feature HEAD still exactly matches integrated_feature_sha.
+          python3 - <<'PY' > /tmp/integrated_features.tsv
+          import json
+          from pathlib import Path
+
+          root = Path("runtime/parallel_tasks")
+          if root.exists():
+              for path in sorted(root.glob("*.json")):
+                  try:
+                      task = json.loads(path.read_text(encoding="utf-8"))
+                  except Exception:
+                      continue
+                  branch = task.get("branch")
+                  sha = task.get("integrated_feature_sha")
+                  if (task.get("status") == "integrated"
+                          and isinstance(branch, str) and branch.startswith("feature/")
+                          and isinstance(sha, str) and len(sha) == 40):
+                      print(f"{branch}\t{sha}")
+          PY
+
+          declare -A integrated_sha=()
+          while IFS=$'\t' read -r branch sha; do
+            [ -n "$branch" ] || continue
+            integrated_sha["$branch"]="$sha"
+          done < /tmp/integrated_features.tsv
+
           delete_specs=()
           lease_args=()
-          merged=0
+          ancestor_count=0
+          taskstate_count=0
           preserved=0
 
           while read -r ref sha; do
             [ -n "$ref" ] || continue
             branch="${ref#refs/remotes/origin/}"
+            reason=""
 
             if git merge-base --is-ancestor "$sha" "$main_sha"; then
-              echo "DELETE merged: $branch @ $sha"
+              reason="ancestor-of-main"
+              ancestor_count=$((ancestor_count + 1))
+            elif [ "${integrated_sha[$branch]-}" = "$sha" ]; then
+              reason="exact-integrated-task-state"
+              taskstate_count=$((taskstate_count + 1))
+            fi
+
+            if [ -n "$reason" ]; then
+              echo "DELETE $reason: $branch @ $sha"
               delete_specs+=(":refs/heads/$branch")
               lease_args+=("--force-with-lease=refs/heads/$branch:$sha")
-              merged=$((merged + 1))
             else
-              echo "KEEP unmerged: $branch @ $sha"
+              echo "KEEP unproven/unmerged: $branch @ $sha"
               preserved=$((preserved + 1))
             fi
           done < <(git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin/feature/)
 
+          total_delete=$((ancestor_count + taskstate_count))
           {
             echo "### Feature branch cleanup"
             echo "- canonical main: \`$main_sha\`"
-            echo "- merged refs eligible for deletion: **$merged**"
-            echo "- unmerged refs preserved: **$preserved**"
+            echo "- delete: ancestor of main: **$ancestor_count**"
+            echo "- delete: exact integrated task-state SHA: **$taskstate_count**"
+            echo "- unproven/unmerged refs preserved: **$preserved**"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$merged" -eq 0 ]; then
-            echo "No merged feature branches to delete."
+          if [ "$total_delete" -eq 0 ]; then
+            echo "No proven-integrated feature branches to delete."
             exit 0
           fi
 
-          # One atomic-ish remote update. Per-ref leases ensure a branch that moved
-          # after the fetch is not deleted accidentally.
+          # One remote update with a lease for every deleted ref. If any ref moved
+          # after fetch, Git refuses that deletion rather than deleting new work.
           git push "${lease_args[@]}" origin "${delete_specs[@]}"
