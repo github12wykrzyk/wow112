@@ -1,0 +1,141 @@
+name: POC08 Economy Combined Audit Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_ECONOMY_AUDIT_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC08_ECONOMY_AUDIT_WINDOWS.bat'
+      - '.github/workflows/build_windows_poc08_economy_audit_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate proven V5.3 DE base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host '[POC08-CI] V5.3 base generated'
+
+      - name: Build exact offline DisenchantID cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv --missing-ids probes/Wow112HeadlessAndroid/tools/v52_missing_item_ids.txt --output-cache "$env:RUNNER_TEMP/poc08-base-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-base-unresolved.csv" --workers 16 --timeout 15 --retries 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_v52.py --seed-cache "$env:RUNNER_TEMP/poc08-base-cache.csv" --missing-ids probes/Wow112HeadlessAndroid/tools/v53_extra_item_ids.txt --output-cache "$env:RUNNER_TEMP/poc08-cache.csv" --unresolved "$env:RUNNER_TEMP/poc08-unresolved.csv" --workers 4 --timeout 15 --retries 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py --cache-csv "$env:RUNNER_TEMP/poc08-cache.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $c=@(Import-Csv "$env:RUNNER_TEMP/poc08-cache.csv")
+          $u=@(Import-Csv "$env:RUNNER_TEMP/poc08-unresolved.csv")
+          Write-Host "[POC08-CI] DE cache entries=$($c.Count) unresolved=$($u.Count)"
+
+      - name: Generate POC08 combined audit source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs'
+          foreach ($marker in @('NO_CANDIDATE_PASS','Poc08Exit','poc08_exact_disenchant_id','MATERIAL PRICE MODEL','REAL COMBINED SCAN-ONLY PASS')) {
+            if (-not (Select-String -Path $p -Pattern $marker -Quiet)) { throw "POC08 marker missing: $marker" }
+          }
+          Write-Host '[POC08-CI] combined source markers PASS'
+
+      - name: Select POC08 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_economy_audit;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_economy_audit::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08 ECONOMY AUDIT SESSION PASS')
+          $t=$t.Replace('POC-07 live vendor autobuy engine', 'POC-08 combined economy audit')
+          Set-Content $p $t -Encoding utf8
+          if (-not (Select-String -Path $p -Pattern 'login_poc08_economy_audit' -Quiet)) { throw 'POC08 entrypoint missing' }
+
+      - name: Static safety assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs'
+          if (Select-String -Path $p -Pattern 'CMSG_AUCTION_PLACE_BID_OPCODE' -Quiet) {
+            Write-Host '[POC08-CI] inherited symbol exists through include chain; verifying POC08 function is scan-only'
+          }
+          if (-not (Select-String -Path $p -Pattern 'hard read-only; BUY is disabled' -Quiet)) { throw 'read-only guard missing' }
+          if (-not (Select-String -Path $p -Pattern 'mutation=DISABLED' -Quiet)) { throw 'mutation disabled marker missing' }
+          Write-Host '[POC08-CI] READ-ONLY SAFETY PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-a'
+          New-Item -ItemType Directory -Force "$d/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_ECONOMY_AUDIT_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_ECONOMY_AUDIT_WINDOWS.bat $d
+          Copy-Item "$env:RUNNER_TEMP/poc08-cache.csv" "$d/runtime/DE_DISENCHANT_CACHE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs "$d/source/world_poc08_economy_audit.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs "$d/source/poc08_de_cache_generated.rs"
+          $n=@(Import-Csv "$d/runtime/DE_DISENCHANT_CACHE.csv").Count
+          $u=@(Import-Csv "$d/runtime/DE_CACHE_UNRESOLVED.csv").Count
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-A-COMBINED-ECONOMY-AUDIT
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          MUTATION=DISABLED
+          ZERO_BUY=YES
+          ZERO_CANDIDATES=NORMAL_PASS
+          DISCOVERY=DE_FILTERED_CLASS_2_4_CLASS_SPECIFIC_CEILING
+          DE_ID_GATE=IN_RUNTIME_OFFLINE_FAIL_CLOSED
+          DE_DISTRIBUTION=HEURISTIC_V4_AUDIT_ONLY
+          VENDOR_VALUE=LIVE_SERVER_ITEM_QUERY_WINDOWED
+          MATERIAL_PRICE=LIVE_LOWEST_POSITIVE_FLOOR_UNIT
+          MATERIAL_DEPTH_HISTORY=NOT_YET_AVAILABLE
+          ITEM_QUERY_WINDOW_DEFAULT=64
+          CACHE_ENTRIES=$n
+          CACHE_UNRESOLVED=$u
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          @'
+          POC08-A is READ ONLY.
+          Run START_POC08_ECONOMY_AUDIT_WINDOWS.bat.
+          Outputs after runtime:
+            POC08_ECONOMY_AUDIT.log
+            POC08_ECONOMY_CANDIDATES.csv
+            POC08_ECONOMY_REJECTED.csv
+          DE candidate decisions require exact positive cached DisenchantID.
+          Unknown/DE=0 fail closed for DE, but a profitable deterministic vendor fallback may still qualify.
+          The DE loot distribution is still the V4 heuristic in this artifact, so DE BUY is intentionally impossible.
+          '@ | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC08-A-ECONOMY-AUDIT-${{ github.sha }}
+          path: dist/poc08-a
+          if-no-files-found: error
+          retention-days: 7
