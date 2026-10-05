@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele08-conversation-core-v1",
+  "goal": "Build a pure Rust, side-effect-free TELE whisper classifier and context policy using the proven SummonScout phrase corpus, with explicit handling for Hyjal, Winterspring and Hydraxian/Azshara and no runtime TX wiring yet.",
+  "branch": "feature/tele08-conversation-core-v1",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": ["HeadlessTeleConversationCore"],
+  "dependencies": ["tele02-whisper-name-tx-v2"],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Offline-safe foundation built while TELE-03 awaits real party runtime evidence. No socket writes or automatic actions. Ambiguous short signals such as +, 123, here, go and inv are contextual rather than globally actionable."
+}
