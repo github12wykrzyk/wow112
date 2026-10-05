@@ -85,16 +85,11 @@ namespace WoW112Updater
                 MessageBox.Show(this, "Najpierw dodaj konta w „Konta WoW”.", "MULTIBOX TERMINAL", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            if (string.IsNullOrWhiteSpace(token.Text))
-            {
-                MessageBox.Show(this, "Wpisz token GitHub. Jest potrzebny tylko do pobrania zweryfikowanej binarki Android z workflow parallel.", "MULTIBOX TERMINAL", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
 
             terminalPortalBusy = true;
             try
             {
-                SetBusy(true, "MULTIBOX TERMINAL: pobieram/weryfikuję Android headless...");
+                SetBusy(true, "MULTIBOX TERMINAL: sprawdzam lokalny Android headless...");
                 var bundle = await EnsureTerminalPortalAndroidBinaryAsync();
                 var adb = ResolveTerminalAdb();
                 await PrepareTerminalPortalAndroidAsync(adb, bundle);
@@ -297,6 +292,20 @@ namespace WoW112Updater
         {
             var companionDir = Path.Combine(configDir, "companions", "android-portal");
             Directory.CreateDirectory(companionDir);
+            var dest = Path.Combine(companionDir, TerminalAndroidBinaryName);
+            var stamp = Path.Combine(companionDir, "verified.txt");
+
+            TerminalAndroidBundle cached;
+            if (TryLoadTerminalPortalCachedBinary(dest, stamp, out cached))
+            {
+                Log("MULTIBOX TERMINAL: LOCAL CACHE HIT " + cached.GitSha.Substring(0, 8) + " / " + cached.Sha256.Substring(0, 12) + "…; GitHub pominięty.");
+                return cached;
+            }
+
+            if (string.IsNullOrWhiteSpace(token.Text))
+                throw new InvalidOperationException("Brak poprawnej lokalnej binarki Android portal clickera. Wpisz token GitHub jednorazowo, aby pobrać i zweryfikować cache.");
+
+            Log("MULTIBOX TERMINAL: local cache MISS/INVALID; pobieram zweryfikowaną binarkę z GitHub jako fallback.");
             using (var client = CreateClient())
             {
                 var runsUrl = ApiRoot + "/actions/workflows/" + TerminalAndroidWorkflow + "/runs?branch=parallel&per_page=20";
@@ -316,22 +325,6 @@ namespace WoW112Updater
                     { artifact = row; break; }
                 }
                 if (artifact == null) throw new InvalidOperationException("Brak zweryfikowanego Android headless artifactu dla latest successful parallel.");
-
-                var dest = Path.Combine(companionDir, TerminalAndroidBinaryName);
-                var stamp = Path.Combine(companionDir, "verified.txt");
-                if (File.Exists(dest) && File.Exists(stamp))
-                {
-                    var saved = File.ReadAllLines(stamp);
-                    var savedSha = saved.FirstOrDefault(x => x.StartsWith("GIT_SHA=", StringComparison.Ordinal));
-                    var savedBin = saved.FirstOrDefault(x => x.StartsWith("BINARY_SHA256=", StringComparison.Ordinal));
-                    if (savedSha == "GIT_SHA=" + runSha && savedBin != null)
-                    {
-                        var expected = savedBin.Substring("BINARY_SHA256=".Length);
-                        var actual = TerminalSha256(File.ReadAllBytes(dest));
-                        if (UpdaterSafety.IsSha256Hex(expected) && string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
-                            return new TerminalAndroidBundle { Path = dest, GitSha = runSha, Sha256 = actual };
-                    }
-                }
 
                 byte[] outer;
                 using (var response = await client.GetAsync(GetString(artifact, "archive_download_url"), HttpCompletionOption.ResponseHeadersRead))
@@ -381,6 +374,39 @@ namespace WoW112Updater
                 UpdaterSafety.WriteUtf8Atomic(stamp, "GIT_SHA=" + runSha + "\nBINARY_SHA256=" + binarySha + "\nRUN_ID=" + runId + "\n", ".tmp", ".previous");
                 Log("Android portal binary verified: " + runSha.Substring(0, Math.Min(8, runSha.Length)) + " / run " + runId + ".");
                 return new TerminalAndroidBundle { Path = dest, GitSha = runSha, Sha256 = binarySha };
+            }
+        }
+
+        private bool TryLoadTerminalPortalCachedBinary(string dest, string stamp, out TerminalAndroidBundle bundle)
+        {
+            bundle = null;
+            if (!File.Exists(dest) || !File.Exists(stamp)) return false;
+            try
+            {
+                var saved = File.ReadAllLines(stamp);
+                var savedSha = saved.FirstOrDefault(x => x.StartsWith("GIT_SHA=", StringComparison.Ordinal));
+                var savedBin = saved.FirstOrDefault(x => x.StartsWith("BINARY_SHA256=", StringComparison.Ordinal));
+                if (savedSha == null || savedBin == null) return false;
+
+                var gitSha = savedSha.Substring("GIT_SHA=".Length).Trim();
+                var expected = savedBin.Substring("BINARY_SHA256=".Length).Trim();
+                if (!Regex.IsMatch(gitSha, "^[0-9a-fA-F]{40}$") || !Regex.IsMatch(expected, "^[0-9a-fA-F]{64}$"))
+                    return false;
+
+                var actual = TerminalSha256(File.ReadAllBytes(dest));
+                if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log("MULTIBOX TERMINAL: local cache SHA256 mismatch; GitHub fallback wymagany.");
+                    return false;
+                }
+
+                bundle = new TerminalAndroidBundle { Path = dest, GitSha = gitSha, Sha256 = actual };
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log("MULTIBOX TERMINAL: local cache validation error: " + ShortTerminalText(ex.Message, 140));
+                return false;
             }
         }
 
