@@ -7,6 +7,7 @@ mod auth;
 mod wire_build;
 mod world_poc05_retry;
 mod world_portal;
+mod world_tele;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
 
@@ -83,17 +84,24 @@ fn run() -> Result<(), String> {
     let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
     let mut mail_mutation_committed = false;
 
-    if !matches!(mode.as_str(), "poc05" | "portal" | "portal-clicker" | "clicker") {
+    if !matches!(mode.as_str(), "poc05" | "portal" | "portal-clicker" | "clicker" | "tele" | "tele-sniffer" | "whisper-sniffer") {
         return Err(format!("unsupported WOW112_MODE={mode:?}"));
     }
     let portal_mode = matches!(mode.as_str(), "portal" | "portal-clicker" | "clicker");
+    let tele_mode = matches!(mode.as_str(), "tele" | "tele-sniffer" | "whisper-sniffer");
+    let mode_label = if tele_mode { "tele-sniffer" } else if portal_mode { "portal-clicker" } else { "poc05" };
 
     println!(
         "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless mode={}",
         OCTOWOW_WIRE_BUILD,
-        if portal_mode { "portal-clicker" } else { "poc05" }
+        mode_label
     );
-    if portal_mode {
+    if tele_mode {
+        println!(
+            "[TELE] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} rx_only=yes chat_tx=disabled invite=disabled cast=disabled portal_use=disabled",
+            soak_seconds, reconnect_limit, reconnect_delay_ms
+        );
+    } else if portal_mode {
         println!(
             "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled",
             soak_seconds, reconnect_limit, reconnect_delay_ms
@@ -118,14 +126,9 @@ fn run() -> Result<(), String> {
             &mut mail_mutation_committed,
         ) {
             Ok(()) => {
-                println!(
-                    "[RESILIENCE] {} RECONNECT/KEEPALIVE PASS attempts={attempt}",
-                    if portal_mode { "PORTAL" } else { "POC-05" }
-                );
-                println!(
-                    "[WOW112-ANDROID-PROBE] PASS: {} persistent world session",
-                    if portal_mode { "portal-clicker" } else { "POC-05" }
-                );
+                let pass_label = if tele_mode { "TELE" } else if portal_mode { "PORTAL" } else { "POC-05" };
+                println!("[RESILIENCE] {pass_label} RECONNECT/KEEPALIVE PASS attempts={attempt}");
+                println!("[WOW112-ANDROID-PROBE] PASS: {mode_label} persistent world session");
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
@@ -139,10 +142,7 @@ fn run() -> Result<(), String> {
         }
     }
 
-    Err(format!(
-        "{} reconnect limit exhausted after {reconnect_limit} attempts",
-        if portal_mode { "portal-clicker" } else { "POC-05" }
-    ))
+    Err(format!("{mode_label} reconnect limit exhausted after {reconnect_limit} attempts"))
 }
 
 fn run_session(
@@ -188,7 +188,16 @@ fn run_session(
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    if matches!(mode, "portal" | "portal-clicker" | "clicker") {
+    if matches!(mode, "tele" | "tele-sniffer" | "whisper-sniffer") {
+        world_tele::login_tele_sniffer(
+            &mut world_stream,
+            session_key,
+            realm.realm_id,
+            username,
+            character_name,
+            soak_seconds,
+        )?;
+    } else if matches!(mode, "portal" | "portal-clicker" | "clicker") {
         world_portal::login_portal_clicker(
             &mut world_stream,
             session_key,

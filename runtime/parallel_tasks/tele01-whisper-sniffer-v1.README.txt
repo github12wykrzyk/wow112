@@ -1,0 +1,1 @@
+TELE-01 runtime smoke PASS: reached SMSG_LOGIN_VERIFY_WORLD and received [TELE-WHISPER] seq=1 sender_guid=0x000000003B9F74DE text="x". RX-only safety held. Integration is temporarily paused until canonical main/parallel alias divergence is reconciled.

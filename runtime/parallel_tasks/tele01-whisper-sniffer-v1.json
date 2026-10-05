@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "tele01-whisper-sniffer-v1",
+  "goal": "Add a read-only WoW 1.12.1 headless TELE whisper sniffer mode that logs sender and raw whisper text without replying, inviting, casting, or otherwise mutating game state.",
+  "branch": "feature/tele01-whisper-sniffer-v1",
+  "base_parallel_sha": "0cac718c775b27378fa078e1d290a5b5a6c8542b",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "HeadlessTele"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "TELE-01 runtime smoke PASS on 2026-10-05: reached SMSG_LOGIN_VERIFY_WORLD and captured [TELE-WHISPER] seq=1 sender_guid=0x000000003B9F74DE text=\"x\". Safety invariant confirmed: RX-only; zero chat TX, zero invite, zero cast, zero portal use. Exact Android smoke build e6412fed31bcf843a12c1a865c653d10a996573c passed launcher syntax, cargo check, x86_64 Android build, staging and artifact upload. Repository canonical invariant was reconciled by fast-forwarding main to existing descendant parallel 7f6bd72c87878e4221390b124f828c19ff281f8a; main==parallel confirmed before integration retry. One-off TELE-01 smoke workflow was removed before canonical integration.",
+  "integrated_feature_sha": "5dd8ba0088441515e5cf28cd4b5b6ed55a9be211"
+}
