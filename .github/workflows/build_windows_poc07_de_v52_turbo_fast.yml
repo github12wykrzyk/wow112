@@ -33,8 +33,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Select-String probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs 'ITEM-QUERY PASS' -Quiet | Out-Null
-          if (-not $?) { throw 'turbo marker missing' }
+          $ok = Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs -Pattern 'ITEM-QUERY PASS' -Quiet
+          if (-not $ok) { throw 'turbo marker missing' }
 
       - name: Select V5.2 entrypoint
         shell: pwsh
