@@ -36,13 +36,13 @@ jobs:
           grep -q 'CANDIDATE EXPORT PASS' probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
           grep -q 'EXTERNAL_OCTO_DB_REQUIRED' probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
 
-      - name: Octo exact DisenchantID gate smoke
+      - name: Exact DisenchantID gate smoke via CapyDB mirror
         shell: pwsh
         run: |
           @'
           rank,auction_id,item_id,count,buyout,unit_value,gross_value,expected_profit,page,owner_guid
           0,1,20406,1,2015,19372,19372,17357,40032,1
-          1,2,65011,1,100,1530,1530,1430,20000,2
+          1,2,41316,1,100,1090,1090,990,40000,2
           '@ | Set-Content -LiteralPath "$env:RUNNER_TEMP/candidates.csv" -Encoding utf8
           & ./probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1 `
             -CandidateCsv "$env:RUNNER_TEMP/candidates.csv" `
@@ -52,13 +52,13 @@ jobs:
             -Retries 3
           $cache = @(Import-Csv "$env:RUNNER_TEMP/cache.csv")
           $twilight = $cache | Where-Object { $_.item_id -eq '20406' }
-          $claw = $cache | Where-Object { $_.item_id -eq '65011' }
-          if (-not $twilight -or [uint32]$twilight.disenchant_id -ne 0) { throw 'Octo smoke expected item 20406 DisenchantID=0' }
-          if (-not $claw -or [uint32]$claw.disenchant_id -le 0) { throw 'Octo smoke expected item 65011 DisenchantID>0' }
+          $binding = $cache | Where-Object { $_.item_id -eq '41316' }
+          if (-not $twilight -or [uint32]$twilight.disenchant_id -ne 0) { throw 'Gate smoke expected item 20406 DisenchantID=0' }
+          if (-not $binding -or [uint32]$binding.disenchant_id -le 0) { throw 'Gate smoke expected item 41316 DisenchantID>0' }
           $safe = @(Import-Csv "$env:RUNNER_TEMP/safe.csv")
           if ($safe.item_id -contains '20406') { throw 'V5 gate failed: 20406 leaked into safe candidates' }
-          if (-not ($safe.item_id -contains '65011')) { throw 'V5 gate failed: 65011 missing from safe candidates' }
-          Write-Host '[V5-GATE-SMOKE] PASS 20406=BLOCKED 65011=ALLOWED'
+          if (-not ($safe.item_id -contains '41316')) { throw 'V5 gate failed: 41316 missing from safe candidates' }
+          Write-Host '[V5-GATE-SMOKE] PASS 20406=BLOCKED 41316=ALLOWED'
 
       - name: Select DE V5 live entrypoint
         shell: bash
@@ -104,7 +104,7 @@ jobs:
           cp probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1 dist/poc07-de-v5/RESOLVE_OCTOWOW_DE_GATE.ps1
           BIN_SHA="$(sha256sum "$BIN" | awk '{print $1}')"
           {
-            echo 'POC=07-DE-LIVE-V5-OCTO-GATED-SCAN'
+            echo 'POC=07-DE-LIVE-V5-EXACT-GATED-SCAN'
             echo "REPOSITORY=${GITHUB_REPOSITORY}"
             echo "BRANCH=${GITHUB_REF_NAME}"
             echo "EXACT_SHA=${GITHUB_SHA}"
@@ -114,7 +114,8 @@ jobs:
             echo 'MUTATION=DISABLED'
             echo 'DE_MODEL=V4_STRICT_ITEMLEVEL'
             echo 'CANDIDATE_EXPORT=CSV'
-            echo 'DISENCHANT_GATE=OCTOWOW_DB_EXACT_DISENCHANT_ID'
+            echo 'DISENCHANT_GATE=CAPYDB_TURTLE_MIRROR_EXACT_DISENCHANT_ID'
+            echo 'DIRECT_OCTOWOW_HTTP=NOT_USED_ANTI_BOT'
             echo 'GATE_FAIL_CLOSED=YES'
             echo 'UNKNOWN_CUSTOM_ITEM=NO_SAFE_CANDIDATE'
           } > dist/poc07-de-v5/BUILD_INFO.txt
