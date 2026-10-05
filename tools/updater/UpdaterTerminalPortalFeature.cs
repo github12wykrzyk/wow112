@@ -427,13 +427,20 @@ namespace WoW112Updater
 
         private async Task PrepareTerminalPortalAndroidAsync(string adb, TerminalAndroidBundle bundle)
         {
+            Log("MULTIBOX TERMINAL: ADB 1/4 start-server...");
             var start = await RunTerminalProcessAsync(adb, new[] { "start-server" }, 15000);
             if (start.ExitCode != 0) throw new InvalidOperationException("adb start-server: " + start.Output);
+
+            Log("MULTIBOX TERMINAL: ADB 2/4 wait-for-device (max 20 s)...");
             var wait = await RunTerminalProcessAsync(adb, new[] { "wait-for-device" }, 20000);
             if (wait.ExitCode != 0) throw new InvalidOperationException("adb wait-for-device: " + wait.Output);
+
             var remoteTemp = TerminalAndroidRemoteBinary + ".new." + bundle.GitSha.Substring(0, Math.Min(8, bundle.GitSha.Length));
+            Log("MULTIBOX TERMINAL: ADB 3/4 push shared executable...");
             var push = await RunTerminalProcessAsync(adb, new[] { "push", bundle.Path, remoteTemp }, 30000);
             if (push.ExitCode != 0) throw new InvalidOperationException("adb push Android binary: " + push.Output);
+
+            Log("MULTIBOX TERMINAL: ADB 4/4 install shared executable...");
             var install = await RunTerminalAdbShellAsync(adb, "chmod 755 " + remoteTemp + " && mv -f " + remoteTemp + " " + TerminalAndroidRemoteBinary, false);
             if (install.ExitCode != 0) throw new InvalidOperationException("adb install Android binary: " + install.Output);
             Log("MULTIBOX TERMINAL: Android/ADB READY, shared executable " + bundle.Sha256.Substring(0, 12) + "…");
@@ -550,13 +557,16 @@ namespace WoW112Updater
                 using (var process = Process.Start(psi))
                 {
                     if (process == null) throw new InvalidOperationException("Nie udało się uruchomić: " + fileName);
-                    var stdout = process.StandardOutput.ReadToEnd();
-                    var stderr = process.StandardError.ReadToEnd();
+                    var stdoutTask = process.StandardOutput.ReadToEndAsync();
+                    var stderrTask = process.StandardError.ReadToEndAsync();
                     if (!process.WaitForExit(timeoutMs))
                     {
                         try { process.Kill(); } catch { }
+                        try { process.WaitForExit(2000); } catch { }
                         throw new TimeoutException(Path.GetFileName(fileName) + " timeout po " + timeoutMs + " ms.");
                     }
+                    var stdout = stdoutTask.GetAwaiter().GetResult();
+                    var stderr = stderrTask.GetAwaiter().GetResult();
                     var output = (stdout + (string.IsNullOrWhiteSpace(stderr) ? "" : ("\n" + stderr))).Trim();
                     return new TerminalCommandResult { ExitCode = process.ExitCode, Output = output };
                 }
