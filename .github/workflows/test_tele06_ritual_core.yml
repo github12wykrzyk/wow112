@@ -1,0 +1,37 @@
+name: TELE-06 ritual core contract
+
+on:
+  push:
+    branches:
+      - feature/tele06-ritual-core-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/tele_ritual.rs'
+      - 'probes/Wow112HeadlessAndroid/tests/tele_ritual_core.rs'
+      - '.github/workflows/test_tele06_ritual_core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele06-ritual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact TELE-06 revision
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Ritual core tests
+        shell: bash
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele_ritual_core
+
+      - name: Host package check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
