@@ -1,0 +1,115 @@
+name: POC07 VendorLive MultiBuy All Profitable Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_multibuy_names_patch.py'
+      - '.github/workflows/build_windows_poc07_vendorlive_multibuy_all_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate full-sweep base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate multibuy + live names
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_names_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $a=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs -Pattern 'POC07-MULTIBUY' -Quiet
+          $b=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs -Pattern 'POC07-VENDOR-NAME' -Quiet
+          $c=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs -Pattern 'login_poc07_vendorlive_multibuy' -Quiet
+          $d=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs -Pattern 'mailbox BEFORE final AH revalidation' -Quiet
+          if (-not ($a -and $b -and $c -and $d)) { throw 'multibuy source markers missing' }
+          Write-Host '[VENDOR-MULTIBUY] GENERATOR PASS'
+
+      - name: Select multibuy entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_multibuy;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_multibuy::login_poc07_vendorlive_multibuy')
+          Set-Content $p $t -Encoding utf8
+          if ((Get-Content $p -Raw) -notmatch 'world_poc07_vendorlive_multibuy::login_poc07_vendorlive_multibuy') { throw 'multibuy entrypoint not selected' }
+          Write-Host '[VENDOR-MULTIBUY] ENTRYPOINT PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendor-multibuy'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "POC=POC07-VENDORLIVE-MULTIBUY-ALL-PROFITABLE`nEXACT_SHA=$env:GITHUB_SHA`nBINARY_SHA256=$h`nAH_SCAN=FULL_SWEEP`nVENDOR_ITEM_QUERY_WINDOW_DEFAULT=64`nVALUATION=LIVE_SERVER_ITEM_QUERY`nLIVE_ITEM_NAMES=YES`nDEFAULT_MIN_PROFIT=1_COPPER`nDEFAULT_MAX_BUYOUT=UINT32_MAX`nDEFAULT_MAX_PURCHASES=ALL_QUALIFIED`nMAIL_BASELINE_BEFORE_FINAL_AH_REVALIDATION=YES`nPER_PURCHASE_EXACT_REVALIDATION=YES`nPER_PURCHASE_SERVER_ACK=YES`nPER_PURCHASE_MAIL_RECONCILE=YES`nNO_AUTO_RETRY_AFTER_SEND=YES" | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+          @'
+          $ErrorActionPreference='Stop'
+          Set-Location $PSScriptRoot
+          $env:WOW112_ACCOUNT='octowar1'
+          $env:WOW112_CHARACTER='Smokinpole'
+          $env:WOW112_REALM_INDEX='1'
+          $env:WOW112_AUTOBUY_ACTION='buy-all'
+          $env:WOW112_AUTOBUY_CONFIRM='YES'
+          $env:WOW112_AUTOBUY_MAX_PURCHASES='0'
+          $env:WOW112_AUTOBUY_STRATEGY='vendor'
+          $env:WOW112_AUTOBUY_MAX_BUYOUT='4294967295'
+          $env:WOW112_AUTOBUY_MIN_PROFIT='1'
+          $env:WOW112_AH_SCAN_PAGE_START='0'
+          $env:WOW112_AH_SCAN_PAGES='0'
+          $env:WOW112_VENDOR_ITEM_QUERY_WINDOW='64'
+          Write-Host '============================================================'
+          Write-Host 'WoW112 VENDOR FULL AH - BUY ALL PROFITABLE >= 1 COPPER'
+          Write-Host 'Live OctoWoW SellPrice + live item names'
+          Write-Host 'Every purchase: mail baseline -> exact AH revalidate -> ACK -> mail reconcile'
+          Write-Host '============================================================'
+          $sec=Read-Host 'Haslo WoW' -AsSecureString
+          $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+          try {
+            $env:WOW112_PASSWORD=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+            & "$PSScriptRoot\wow112-headless-windows.exe" 2>&1 | Tee-Object "$PSScriptRoot\VENDOR_MULTIBUY_ALL.log"
+            $code=$LASTEXITCODE
+          } finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+            Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
+          }
+          Write-Host "Log: $PSScriptRoot\VENDOR_MULTIBUY_ALL.log"
+          exit $code
+          '@ | Set-Content "$d/RUN_VENDOR_MULTIBUY_ALL.ps1" -Encoding utf8
+
+          @'
+          @echo off
+          cd /d "%~dp0"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0RUN_VENDOR_MULTIBUY_ALL.ps1"
+          echo.
+          pause
+          '@ | Set-Content "$d/START_VENDOR_MULTIBUY_ALL.bat" -Encoding ascii
+
+          'Double-click START_VENDOR_MULTIBUY_ALL.bat. This test scans the full AH and attempts every vendor-profitable auction with profit >= 1 copper. Item names are read live from the server. Any uncertain post-SEND state aborts the run; stale pre-SEND candidates are skipped.' | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDORLIVE-MULTIBUY-ALL-${{ github.sha }}
+          path: dist/vendor-multibuy
+          if-no-files-found: error
+          retention-days: 7
