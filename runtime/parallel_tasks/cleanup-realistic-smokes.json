@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "cleanup-realistic-smokes",
+  "goal": "Remove inert SMOKE payload files created by the realistic workflow-vNext validation campaign while preserving task audit records.",
+  "branch": "feature/cleanup-realistic-smokes",
+  "base_parallel_sha": "4fc8add1172aa7cf508f17f889e78213093f9c8c",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout",
+    "AuxEconomyShadow",
+    "AutoLoginBridge"
+  ],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": [
+    "economy",
+    "autologinbridge"
+  ],
+  "lease": null,
+  "notes": "Cleanup only. Delete five non-loaded/unreferenced realistic smoke payloads. Expected fail-closed STANDARD plus ECONOMY and AutoLoginBridge profile verification, then canonical cleanup integration.",
+  "integrated_feature_sha": "644c579ee8fa9a4f44ad5f05e8608e14fbfd38a7"
+}
