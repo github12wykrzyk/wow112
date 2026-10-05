@@ -7,13 +7,9 @@ if len(sys.argv) != 2:
 p = Path(sys.argv[1])
 s = p.read_text(encoding='utf-8')
 
-old_guard = '''            if raw_lowest == 0 || reference_price == 0 || safe_price == 0 || listing_count == 0 || unit_count == 0 || confidence < 2 {
-                continue;
-            }
+old_guard = '''            if raw_lowest == 0 || reference_price == 0 || safe_price == 0 || listing_count == 0 || unit_count == 0 || confidence < 2 { continue; }
             staged.push((item_id, unix_s, safe_price));'''
-new_guard = '''            if raw_lowest == 0 || reference_price == 0 || listing_count == 0 || unit_count == 0 || confidence < 2 {
-                continue;
-            }
+new_guard = '''            if raw_lowest == 0 || reference_price == 0 || listing_count == 0 || unit_count == 0 || confidence < 2 { continue; }
             // V2 history deliberately separates observation from decision.
             // A checksummed, complete market snapshot may warm the historical
             // reference even while LIVE DE remains fail-closed with safe_price=0.
@@ -26,6 +22,7 @@ s = s.replace(old_guard, new_guard, 1)
 for marker in [
     'staged.push((item_id, unix_s, reference_price));',
     'observation from decision',
+    'reference even while LIVE DE remains fail-closed',
 ]:
     if marker not in s:
         raise SystemExit('POC08 history warmup required marker missing: ' + marker)
