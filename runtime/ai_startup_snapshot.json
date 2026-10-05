@@ -11,6 +11,15 @@
     "promotion_pattern": "promote/**",
     "stable": "main"
   },
+  "chat_execution_policy": {
+    "api_calls_for_ping": false,
+    "ci_polling": "no_subjob_polling; inspect latest top-level exact-SHA run only when needed",
+    "default_communication": "final_only",
+    "progress_updates": "only_explicit_request_or_real_blocker",
+    "ref_resolution": "once_per_phase_unless_known_state_change",
+    "refetch_unchanged_files": false,
+    "successful_ci_logs": "do_not_read"
+  },
   "fast_path": {
     "after_verified_snapshot": [
       "resolve current main HEAD once before writing",

@@ -42,6 +42,10 @@ def build_snapshot():
     require(tuple(fast.get("source_files", [])) == SOURCES,
             "startup_fast_path source_files must match canonical startup sources")
 
+    chat_policy = ai_index.get("chat_execution_policy")
+    require(isinstance(chat_policy, dict),
+            "AI_INDEX.json chat_execution_policy is missing or invalid")
+
     active = []
     for dll in runtime.get("active_dlls", []):
         active.append({
@@ -56,6 +60,7 @@ def build_snapshot():
         "schema_version": 1,
         "purpose": "Verified compact startup context; generated cache only, never canonical authority.",
         "source_files": {path: source_meta(path) for path in SOURCES},
+        "chat_execution_policy": chat_policy,
         "fast_path": fast,
         "target": ai_index.get("target"),
         "branches": ai_index.get("branches"),

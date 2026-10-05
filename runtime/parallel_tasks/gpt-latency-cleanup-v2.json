@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "gpt-latency-cleanup-v2",
+  "goal": "Remove the remaining GPT/CI latency hazards: unsafe post-delivery feature cleanup, duplicate updater feature builds, and missing chat execution policy in the generated startup snapshot.",
+  "branch": "feature/gpt-latency-cleanup-v2",
+  "base_parallel_sha": "475a05ddf87d02f7dd3448a06346d1aada8c939f",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AI-workflow",
+    "Updater"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "canonical-feature-cleanup",
+    "chat-execution-policy",
+    "updater-profile-routing"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "Keep the normal path fail-closed while removing avoidable GPT/API/runner work. Feature cleanup must be exact-SHA lease-safe so a newer feature commit can never be deleted by an older integration run.",
+  "integrated_feature_sha": "bd6ad4dc15394eb9ed7a263bb0b24cb51c24dd17"
+}

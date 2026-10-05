@@ -37,6 +37,14 @@ class StartupSnapshotTests(unittest.TestCase):
         self.assertTrue(verification["fallback_if_unverifiable"])
         self.assertIn("trust the generated snapshot", verification["ordinary_chat_policy"])
 
+    def test_chat_execution_policy_is_embedded(self):
+        policy = self.snapshot["chat_execution_policy"]
+        self.assertEqual(policy["default_communication"], "final_only")
+        self.assertEqual(policy["progress_updates"], "only_explicit_request_or_real_blocker")
+        self.assertFalse(policy["api_calls_for_ping"])
+        self.assertFalse(policy["refetch_unchanged_files"])
+        self.assertEqual(policy["successful_ci_logs"], "do_not_read")
+
     def test_snapshot_is_materially_smaller_than_full_startup(self):
         full_size = sum((ROOT / relpath).stat().st_size for relpath in SOURCES)
         self.assertLess(SNAPSHOT.stat().st_size, full_size * 0.60)

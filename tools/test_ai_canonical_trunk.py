@@ -50,12 +50,15 @@ class CanonicalTrunkContract(unittest.TestCase):
         self.assertIn("workflow_dispatch:", on_block)
         self.assertNotIn("push:", on_block)
 
-    def test_successful_queue_cleans_exact_feature_branch(self):
+    def test_successful_queue_cleanup_is_exact_sha_lease_safe(self):
         text = PREFLIGHT.read_text(encoding="utf-8")
-        self.assertIn('git push origin --delete "$env:FEATURE_BRANCH"', text)
+        self.assertIn('$featureRef = "refs/heads/$env:FEATURE_BRANCH"', text)
+        self.assertIn('$leaseArg = "--force-with-lease=${featureRef}:$env:FEATURE_SHA"', text)
+        self.assertIn('git push $leaseArg origin ":$featureRef"', text)
+        self.assertNotIn('git push origin --delete "$env:FEATURE_BRANCH"', text)
         self.assertLess(
             text.index("exact integrated delivery gates failed"),
-            text.index('git push origin --delete "$env:FEATURE_BRANCH"'),
+            text.index('$featureRef = "refs/heads/$env:FEATURE_BRANCH"'),
         )
 
 
