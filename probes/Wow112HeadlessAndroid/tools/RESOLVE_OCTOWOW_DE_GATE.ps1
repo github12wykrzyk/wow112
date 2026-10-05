@@ -51,7 +51,7 @@ function Get-DatabaseDisenchantId([uint32]$ItemId) {
                 return [pscustomobject]@{ Ok=$true; DisenchantId=[uint32]$de; Url=$source.Url; Source=$source.Name; Error="" }
             }
             catch {
-                $errors.Add("$($source.Name) attempt=$attempt: $($_.Exception.Message)")
+                $errors.Add(("{0} attempt={1}: {2}" -f $source.Name, $attempt, $_.Exception.Message))
                 if ($attempt -lt $Retries) { Start-Sleep -Milliseconds (200 * $attempt) }
             }
         }
