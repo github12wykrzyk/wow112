@@ -1,0 +1,135 @@
+name: Build TELE loader GUI shell
+
+on:
+  push:
+    branches:
+      - feature/tele-gui-shell-v1
+    paths:
+      - 'tools/updater/UpdaterTeleFeature.cs'
+      - '.github/workflows/build_tele_gui_shell.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele-gui-shell-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact TELE GUI revision
+        uses: actions/checkout@v5
+
+      - name: Verify TELE GUI is runtime locked
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'tools/updater/UpdaterTeleFeature.cs'
+          $text = Get-Content $path -Raw
+          if (-not $text.Contains('private const bool TeleRuntimeEnabled = false;')) {
+            throw 'TELE GUI smoke requires TeleRuntimeEnabled=false'
+          }
+          if ($text.Contains('accountVault.Unprotect(')) {
+            throw 'TELE GUI shell must not decrypt account credentials'
+          }
+          if ($text.Contains('Process.Start(') -or $text.Contains('WOW112_MODE')) {
+            throw 'TELE GUI shell must not start TELE workers in UI-only stage'
+          }
+          Write-Host 'TELE GUI SAFETY CONTRACT: PASS'
+
+      - name: Compile full updater plus TELE GUI x86
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found' }
+          $vs = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vs) { throw 'Visual Studio/MSBuild installation not found' }
+          $csc = Join-Path $vs 'MSBuild\Current\Bin\Roslyn\csc.exe'
+          $ref = "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8"
+          if (-not (Test-Path $csc)) { throw "Roslyn csc.exe not found: $csc" }
+          if (-not (Test-Path $ref)) { throw '.NET Framework 4.8 reference assemblies not found' }
+
+          & $csc /nologo /target:winexe /platform:x86 /optimize+ /langversion:latest `
+            /out:dist\WoW112ParallelUpdater-TELE-GUI-SMOKE.exe `
+            /win32manifest:tools\updater\Updater.manifest `
+            /reference:"$ref\mscorlib.dll" `
+            /reference:"$ref\System.dll" `
+            /reference:"$ref\System.Core.dll" `
+            /reference:"$ref\System.Drawing.dll" `
+            /reference:"$ref\System.Windows.Forms.dll" `
+            /reference:"$ref\System.Net.Http.dll" `
+            /reference:"$ref\System.IO.Compression.dll" `
+            /reference:"$ref\System.IO.Compression.FileSystem.dll" `
+            /reference:"$ref\System.Security.dll" `
+            /reference:"$ref\System.Web.Extensions.dll" `
+            tools\updater\WoW112Updater.cs `
+            tools\updater\UpdaterStableUi.cs `
+            tools\updater\UpdaterUiSmoke.cs `
+            tools\updater\UpdaterHost.cs `
+            tools\updater\UpdaterGitHubMonitor.cs `
+            tools\updater\UpdaterReadyQueueBar.cs `
+            tools\updater\UpdaterLiveDashboardReconcile.cs `
+            tools\updater\UpdaterDllSelectionFeature.cs `
+            tools\updater\UpdaterDllCleanupFeature.cs `
+            tools\updater\UpdaterSafety.cs `
+            tools\updater\UpdaterAddons.cs `
+            tools\updater\UpdaterNetworkCompat.cs `
+            tools\updater\UpdaterProcessGuard.cs `
+            tools\updater\UpdaterRealmlistFeature.cs `
+            tools\updater\UpdaterAhEvidenceV2Bootstrap.cs `
+            tools\updater\UpdaterAhEvidenceV2Model.cs `
+            tools\updater\UpdaterAhEvidenceV2Logic.cs `
+            tools\updater\UpdaterAhEvidenceV2Support.cs `
+            tools\updater\UpdaterAccountsFeature.cs `
+            tools\updater\UpdaterTerminalPortalFeature.cs `
+            tools\updater\UpdaterSummonersFeature.cs `
+            tools\updater\UpdaterSummonCoordinatorFeature.cs `
+            tools\updater\UpdaterEconomyFeature.cs `
+            tools\updater\UpdaterMaintenanceFeature.cs `
+            tools\updater\UpdaterSummonUnknownReportFeature.cs `
+            tools\updater\UpdaterIssueReportFeature.cs `
+            tools\updater\UpdaterTeleFeature.cs
+          if ($LASTEXITCODE -ne 0) { throw "TELE updater csc failed with exit code $LASTEXITCODE" }
+
+      - name: Existing updater UI smoke with TELE feature loaded
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path (Resolve-Path dist) 'ui-checks'
+          $process = Start-Process -FilePath ./dist/WoW112ParallelUpdater-TELE-GUI-SMOKE.exe -ArgumentList '--ui-smoke', $out -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'TELE updater GUI smoke timed out' }
+          if ($process.ExitCode -ne 0) {
+            Get-Content (Join-Path $out 'failure.txt') -ErrorAction SilentlyContinue
+            throw "TELE updater GUI smoke failed: $($process.ExitCode)"
+          }
+          Get-Content (Join-Path $out 'result.txt') -ErrorAction SilentlyContinue
+
+      - name: Write exact-SHA TELE GUI test card
+        shell: pwsh
+        run: |
+          @"
+          TELE_GUI_SHELL=PASS
+          EXACT_SHA=${{ github.sha }}
+          RUNTIME_ENABLED=false
+          ENTRY=PPM MULTIBOX -> TELE headless control plane
+          CREDENTIAL_SOURCE=existing DPAPI WowAccountVault
+          TELE_CONFIG=account IDs and role assignments only
+          MUTATIONS=disabled
+          "@ | Set-Content -Path dist\TELE_GUI_TEST.txt -Encoding UTF8
+
+      - name: Upload TELE GUI smoke bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-TELE-GUI-SHELL-${{ github.sha }}
+          path: |
+            dist/WoW112ParallelUpdater-TELE-GUI-SMOKE.exe
+            dist/TELE_GUI_TEST.txt
+            dist/ui-checks
+          if-no-files-found: error
+          retention-days: 14
