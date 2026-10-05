@@ -201,12 +201,28 @@ jobs:
                 throw "exact integrated delivery gates failed for $integrated"
               }
 
-              # The feature is now provably contained in canonical main and exact
-              # delivery passed. Remove only this exact queue branch; failure to
-              # clean up is non-fatal and can be handled by the persistent sweeper.
-              git push origin --delete "$env:FEATURE_BRANCH"
+              # Cleanup is exact-SHA lease-safe. If somebody pushed a newer
+              # revision to this feature while delivery was running, preserve it.
+              $featureRef = "refs/heads/$env:FEATURE_BRANCH"
+              $featureLine = git ls-remote origin $featureRef
               if ($LASTEXITCODE -ne 0) {
-                Write-Warning "feature cleanup failed for $env:FEATURE_BRANCH"
+                Write-Warning "cannot inspect feature head for cleanup: $env:FEATURE_BRANCH"
+              }
+              elseif (-not $featureLine) {
+                Write-Host "Feature branch already absent: $env:FEATURE_BRANCH"
+              }
+              else {
+                $remoteFeatureSha = (($featureLine -split "`t")[0]).Trim()
+                if ($remoteFeatureSha -ne $env:FEATURE_SHA) {
+                  Write-Warning "feature moved during delivery; preserving newer head: branch=$env:FEATURE_BRANCH expected=$env:FEATURE_SHA current=$remoteFeatureSha"
+                }
+                else {
+                  $leaseArg = "--force-with-lease=${featureRef}:$env:FEATURE_SHA"
+                  git push $leaseArg origin ":$featureRef"
+                  if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "exact-SHA feature cleanup lease rejected for $env:FEATURE_BRANCH"
+                  }
+                }
               }
 
               Write-Host "CANONICAL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA main=$integrated parallel=$integrated profiles=$env:DELIVERY_PROFILES standard=$($deliveryGate.require_standard) route=$($deliveryGate.reason)"
