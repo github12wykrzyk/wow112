@@ -15,10 +15,24 @@ function Get-DatabaseDisenchantId([uint32]$ItemId) {
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
         try {
             $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec $TimeoutSec -Headers @{"User-Agent"="WoW112-POC07-DE-V5/1.0"}
-            $plain = [regex]::Replace([string]$response.Content, '<[^>]+>', ' ')
+            $html = [string]$response.Content
+            $plain = [regex]::Replace($html, '<[^>]+>', ' ')
             $plain = [System.Net.WebUtility]::HtmlDecode($plain)
-            $match = [regex]::Match($plain, 'Disenchant ID:\s*(\d+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if (-not $match.Success) { throw "Disenchant ID field not found" }
+            $patterns = @(
+                'Disenchant ID:\s*(\d+)',
+                'DisenchantId\s*(\d+)',
+                'disenchantId\s*(\d+)',
+                '"DisenchantId"\s*:\s*(\d+)',
+                '"disenchantId"\s*:\s*(\d+)'
+            )
+            $match = $null
+            foreach ($pattern in $patterns) {
+                $candidate = [regex]::Match($plain, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                if ($candidate.Success) { $match = $candidate; break }
+                $candidate = [regex]::Match($html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                if ($candidate.Success) { $match = $candidate; break }
+            }
+            if (-not $match -or -not $match.Success) { throw "Disenchant ID field not found" }
             return [pscustomobject]@{ Ok=$true; DisenchantId=[uint32]$match.Groups[1].Value; Url=$url; Error="" }
         }
         catch {
