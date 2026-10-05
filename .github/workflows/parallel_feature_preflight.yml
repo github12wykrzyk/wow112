@@ -30,29 +30,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch current parallel integration base and feature leases
+      - name: Fetch current parallel integration base
         shell: pwsh
         run: |
           git fetch origin parallel:refs/remotes/origin/parallel
           if ($LASTEXITCODE -ne 0) { throw "cannot fetch parallel integration base" }
-          git fetch origin '+refs/heads/feature/*:refs/remotes/origin/feature/*' --prune
-          if ($LASTEXITCODE -ne 0) { throw "cannot fetch feature control-plane refs" }
 
-      - name: Enforce Parallel Control Plane lease
+      - name: Run branch-local fast gates and compile changed native modules
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          python tools/parallel_control_plane.py gate `
-            --branch "${{ github.head_ref || github.ref_name }}" `
-            --base origin/parallel `
-            --output dist/control_plane_gate.json
-          if ($LASTEXITCODE -ne 0) { throw "parallel control-plane lease gate failed" }
-
-      - name: Run fast gates and compile changed native modules
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
+          # parallel_feature_preflight enforces this feature's own task record and
+          # delivery-profile declarations. It intentionally does not enumerate
+          # or reconcile every remote feature branch.
           python tools/parallel_feature_preflight.py --base origin/parallel --branch "${{ github.head_ref || github.ref_name }}"
           if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
 
@@ -104,6 +94,8 @@ jobs:
       contents: write
       actions: write
     concurrency:
+      # This is the single integration mutex. Independent feature coding and
+      # preflight remain concurrent; only trunk movement is serialized.
       group: parallel-integration-queue
       cancel-in-progress: false
     outputs:
@@ -142,20 +134,12 @@ jobs:
 
             git fetch origin +refs/heads/parallel:refs/remotes/origin/parallel
             if ($LASTEXITCODE -ne 0) { throw "cannot fetch current parallel" }
-            git fetch origin '+refs/heads/feature/*:refs/remotes/origin/feature/*' --prune
-            if ($LASTEXITCODE -ne 0) { throw "cannot refresh feature control-plane refs" }
 
             $base = (git rev-parse refs/remotes/origin/parallel).Trim()
             Write-Host "Current parallel base: $base"
 
-            python tools/parallel_control_plane.py gate `
-              --branch "$env:FEATURE_BRANCH" `
-              --base refs/remotes/origin/parallel `
-              --output dist/control_plane_integration_gate.json
-            if ($LASTEXITCODE -ne 0) {
-              throw "feature no longer owns a valid live lease against current parallel $base"
-            }
-
+            # Re-run the same branch-local task/profile/build checks against the
+            # live integration base. No global feature-ref scan or lease election.
             python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel --branch "$env:FEATURE_BRANCH"
             if ($LASTEXITCODE -ne 0) {
               throw "feature no longer passes preflight against current parallel $base"
