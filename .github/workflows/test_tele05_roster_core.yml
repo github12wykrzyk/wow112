@@ -1,4 +1,4 @@
-name: TELE-05 roster and mutation ledger contract
+name: TELE-05 roster ownership and mutation contract
 
 on:
   push:
@@ -7,6 +7,8 @@ on:
     paths:
       - 'probes/Wow112HeadlessAndroid/src/tele_roster.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele_mutation_ledger.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_station_ownership.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_leader_policy.rs'
       - 'probes/Wow112HeadlessAndroid/tests/tele_roster_core.rs'
       - '.github/workflows/test_tele05_roster_core.yml'
   workflow_dispatch:
@@ -29,7 +31,7 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Roster and mutation ledger tests
+      - name: Roster ownership and mutation tests
         shell: bash
         run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele_roster_core
 
