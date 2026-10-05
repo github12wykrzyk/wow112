@@ -25,10 +25,15 @@ class CanonicalTrunkContract(unittest.TestCase):
         )
         self.assertIn("parallel delivery alias diverged from canonical main", text)
 
-    def test_queue_is_serialized_on_one_canonical_mutex(self):
+    def test_integration_uses_optimistic_atomic_cas_not_github_pending_slot(self):
         text = PREFLIGHT.read_text(encoding="utf-8")
-        self.assertIn("group: canonical-main-integration-queue", text)
-        self.assertIn("cancel-in-progress: false", text)
+        integrate = text.split("\n  integrate:\n", 1)[1]
+        self.assertNotIn("group: canonical-main-integration-queue", integrate)
+        self.assertIn("$maxAttempts = 6", integrate)
+        self.assertIn("git push --atomic origin HEAD:refs/heads/main HEAD:refs/heads/parallel", integrate)
+        self.assertIn("Canonical refs moved before atomic push", integrate)
+        self.assertIn("Get-Random", integrate)
+        self.assertIn("Start-Sleep -Milliseconds", integrate)
 
     def test_heavy_repository_audits_have_no_push_trigger(self):
         for path in HEAVY:

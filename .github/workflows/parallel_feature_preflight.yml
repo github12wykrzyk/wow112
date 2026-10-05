@@ -91,9 +91,6 @@ jobs:
     permissions:
       contents: write
       actions: write
-    concurrency:
-      group: canonical-main-integration-queue
-      cancel-in-progress: false
     outputs:
       canonical_sha: ${{ steps.integrate.outputs.canonical_sha }}
       parallel_sha: ${{ steps.integrate.outputs.parallel_sha }}
@@ -122,7 +119,7 @@ jobs:
           git config user.name "wow112-ai-integration"
           git config user.email "github12wykrzyk@users.noreply.github.com"
 
-          $maxAttempts = 3
+          $maxAttempts = 6
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Write-Host "Integration attempt $attempt/$maxAttempts for $env:TASK_ID @ $env:FEATURE_SHA"
 
@@ -216,7 +213,10 @@ jobs:
               exit 0
             }
 
-            Write-Host "Canonical refs moved before atomic push; retrying from fresh main."
+            $jitterMax = 250 * $attempt + 1
+            $delayMs = 250 + (Get-Random -Minimum 0 -Maximum $jitterMax)
+            Write-Host "Canonical refs moved before atomic push; retrying from fresh main after ${delayMs}ms."
+            Start-Sleep -Milliseconds $delayMs
           }
 
           throw "canonical integration CAS retry limit exceeded; feature remains safe on $env:FEATURE_BRANCH"
