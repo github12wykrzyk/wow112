@@ -1,0 +1,85 @@
+name: POC07 VendorLive MultiBuy V3 Audit Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v3_audit_patch.py'
+      - '.github/workflows/build_windows_poc07_vendorlive_multibuy_v3_audit_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate full-sweep base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate multibuy base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_names_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate V2 neighborhood
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v2_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate V3 coverage audit
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v3_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v3.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v3.rs'
+          $a=Select-String -Path $p -Pattern 'DOUBLE-SWEEP START' -Quiet
+          $b=Select-String -Path $p -Pattern 'COVERAGE pass1_unique' -Quiet
+          $c=Select-String -Path $p -Pattern 'VALUATION coverage=' -Quiet
+          $d=Select-String -Path $p -Pattern 'REVALIDATE_RADIUS: u32 = 5' -Quiet
+          $e=Select-String -Path $p -Pattern 'login_poc07_vendorlive_multibuy_v3' -Quiet
+          if (-not ($a -and $b -and $c -and $d -and $e)) { throw 'V3 audit source markers missing' }
+          Write-Host '[VENDOR-MULTIBUY-V3] GENERATOR PASS'
+
+      - name: Select V3 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_multibuy_v3;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_multibuy_v3::login_poc07_vendorlive_multibuy_v3')
+          Set-Content $p $t -Encoding utf8
+          if ((Get-Content $p -Raw) -notmatch 'world_poc07_vendorlive_multibuy_v3::login_poc07_vendorlive_multibuy_v3') { throw 'V3 entrypoint not selected' }
+          Write-Host '[VENDOR-MULTIBUY-V3] ENTRYPOINT PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendor-multibuy-v3-audit'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v3.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "POC=POC07-VENDORLIVE-MULTIBUY-V3-AUDIT`nEXACT_SHA=$env:GITHUB_SHA`nBINARY_SHA256=$h`nDISCOVERY_AUDIT=DOUBLE_FULL_SWEEP_UNION`nCOVERAGE_DIFF=PASS1_VS_PASS2_BY_AUCTION_ID`nVALUATION_AUDIT=SELLABLE_ZERO_VENDOR_MISSING_TEMPLATE`nREVALIDATION=ORIGINAL_PAGE_PLUS_MINUS_5`nEXACT_TUPLE_REQUIRED=AUCTION_ID_ITEM_ID_COUNT_BUYOUT`nNO_AUTO_RETRY_AFTER_SEND=YES" | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDORLIVE-MULTIBUY-V3-AUDIT-${{ github.sha }}
+          path: dist/vendor-multibuy-v3-audit
+          if-no-files-found: error
+          retention-days: 7
