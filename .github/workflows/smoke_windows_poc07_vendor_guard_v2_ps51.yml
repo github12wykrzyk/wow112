@@ -6,6 +6,8 @@ on:
     paths:
       - 'probes/Wow112HeadlessAndroid/tools/SMOKE_VENDOR_CAPY_GUARD_V2.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_VENDOR_CAPY_GUARD_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py'
       - '.github/workflows/smoke_windows_poc07_vendor_guard_v2_ps51.yml'
   workflow_dispatch:
 
@@ -15,7 +17,7 @@ permissions:
 jobs:
   smoke-ps51:
     runs-on: windows-latest
-    timeout-minutes: 12
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +38,54 @@ jobs:
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tmp -ProductionScript (Resolve-Path 'probes/Wow112HeadlessAndroid/tools/RUN_VENDOR_CAPY_GUARD_WINDOWS.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate exact guarded source
+        shell: powershell
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_fullsweep;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Compile exact guarded Windows binary
+        shell: powershell
+        run: |
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Native EXE fail-fast startup smoke
+        shell: powershell
+        run: |
+          $exe='probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe'
+          if(-not (Test-Path $exe)){ throw 'EXE missing after build' }
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "[SMOKE-EXE] sha256=$hash size=$((Get-Item $exe).Length)"
+
+          Remove-Item Env:WOW112_ACCOUNT -ErrorAction SilentlyContinue
+          Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
+          $o=& $exe 2>&1; $c=$LASTEXITCODE
+          if($c -ne 2 -or ($o -join "`n") -notmatch 'missing WOW112_ACCOUNT'){ throw "missing-account fail-fast failed exit=$c output=$($o -join ' | ')" }
+          Write-Host '[SMOKE-EXE] missing account fail-closed PASS'
+
+          $env:WOW112_ACCOUNT='octowar1'
+          Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
+          $o=& $exe 2>&1; $c=$LASTEXITCODE
+          if($c -ne 2 -or ($o -join "`n") -notmatch 'missing WOW112_PASSWORD'){ throw "missing-password fail-fast failed exit=$c output=$($o -join ' | ')" }
+          Write-Host '[SMOKE-EXE] missing password fail-closed PASS'
+
+          $env:WOW112_PASSWORD='smoke-not-a-real-password'
+          $env:WOW112_AUTH_ADDR='127.0.0.1:9'
+          $o=& $exe 2>&1; $c=$LASTEXITCODE
+          if($c -ne 2 -or ($o -join "`n") -notmatch 'auth connect .* failed'){ throw "local-refused startup path failed exit=$c output=$($o -join ' | ')" }
+          Write-Host '[SMOKE-EXE] native startup/network error path PASS'
+
       - name: PS51 summary
         shell: powershell
         run: |
-          Write-Host 'POC07 VENDOR GUARD V2 - WINDOWS POWERSHELL 5.1 SMOKE PASS'
+          Write-Host 'POC07 VENDOR GUARD V2 - WINDOWS POWERSHELL 5.1 + NATIVE EXE SMOKE PASS'
