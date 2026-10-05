@@ -1,4 +1,4 @@
-name: Parallel feature preflight
+name: Feature preflight and canonical integration
 
 on:
   push:
@@ -6,14 +6,14 @@ on:
       - 'feature/**'
   pull_request:
     branches:
-      - parallel
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: parallel-feature-preflight-${{ github.ref }}
+  group: feature-preflight-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,21 +31,18 @@ jobs:
         with:
           fetch-depth: 8
 
-      - name: Fetch shallow current parallel integration base
+      - name: Fetch shallow canonical main integration base
         shell: pwsh
         run: |
-          git fetch --depth=8 origin +refs/heads/parallel:refs/remotes/origin/parallel
-          if ($LASTEXITCODE -ne 0) { throw "cannot fetch parallel integration base" }
+          git fetch --depth=8 origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw "cannot fetch canonical main integration base" }
 
       - name: Run routed fast gates and compile changed native modules
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # The preflight starts shallow. If an older feature needs a deeper
-          # fork point, parallel_feature_preflight deepens only the feature/base
-          # refs and falls back to full history only when required for correctness.
-          python tools/parallel_feature_preflight.py --base origin/parallel --branch "${{ github.head_ref || github.ref_name }}"
-          if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
+          python tools/parallel_feature_preflight.py --base origin/main --branch "${{ github.head_ref || github.ref_name }}"
+          if ($LASTEXITCODE -ne 0) { throw "feature preflight failed" }
 
       - name: Resolve explicit auto-integration opt-in
         id: queue
@@ -54,7 +51,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           python tools/parallel_task_state.py queue-check --branch "${{ github.ref_name }}" --github-output "$env:GITHUB_OUTPUT"
-          if ($LASTEXITCODE -ne 0) { throw "parallel task queue check failed" }
+          if ($LASTEXITCODE -ne 0) { throw "task queue check failed" }
 
   profile_gates:
     name: Verify declared delivery profiles
@@ -95,11 +92,10 @@ jobs:
       contents: write
       actions: write
     concurrency:
-      # This is the single integration mutex. Independent feature coding and
-      # preflight remain concurrent; only trunk movement is serialized.
-      group: parallel-integration-queue
+      group: canonical-main-integration-queue
       cancel-in-progress: false
     outputs:
+      canonical_sha: ${{ steps.integrate.outputs.canonical_sha }}
       parallel_sha: ${{ steps.integrate.outputs.parallel_sha }}
       standard_run_id: ${{ steps.integrate.outputs.standard_run_id }}
       economy_run_id: ${{ steps.integrate.outputs.economy_run_id }}
@@ -112,7 +108,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Revalidate, integrate and verify exact parallel delivery
+      - name: Revalidate, integrate canonical main and verify exact delivery
         id: integrate
         shell: pwsh
         env:
@@ -133,34 +129,34 @@ jobs:
             git checkout --detach $env:FEATURE_SHA
             if ($LASTEXITCODE -ne 0) { throw "cannot restore exact feature SHA" }
 
-            git fetch origin +refs/heads/parallel:refs/remotes/origin/parallel
-            if ($LASTEXITCODE -ne 0) { throw "cannot fetch current parallel" }
+            git fetch origin +refs/heads/main:refs/remotes/origin/main +refs/heads/parallel:refs/remotes/origin/parallel
+            if ($LASTEXITCODE -ne 0) { throw "cannot fetch canonical main and delivery alias" }
 
-            $base = (git rev-parse refs/remotes/origin/parallel).Trim()
-            Write-Host "Current parallel base: $base"
+            $base = (git rev-parse refs/remotes/origin/main).Trim()
+            $alias = (git rev-parse refs/remotes/origin/parallel).Trim()
+            if ($alias -ne $base) {
+              throw "parallel delivery alias diverged from canonical main: main=$base parallel=$alias"
+            }
+            Write-Host "Canonical main base: $base"
 
-            # Re-run the same branch-local routed checks against the live
-            # integration base. Integration keeps full history for merge safety.
-            python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel --branch "$env:FEATURE_BRANCH"
+            python tools/parallel_feature_preflight.py --base refs/remotes/origin/main --branch "$env:FEATURE_BRANCH"
             if ($LASTEXITCODE -ne 0) {
-              throw "feature no longer passes preflight against current parallel $base"
+              throw "feature no longer passes preflight against canonical main $base"
             }
 
             $deliveryGateRaw = python tools/parallel_delivery_route.py `
-              --base refs/remotes/origin/parallel `
+              --base refs/remotes/origin/main `
               --branch "$env:FEATURE_BRANCH" `
               --task-id "$env:TASK_ID"
-            if ($LASTEXITCODE -ne 0) {
-              throw "delivery route classifier failed"
-            }
+            if ($LASTEXITCODE -ne 0) { throw "delivery route classifier failed" }
             $deliveryGate = (($deliveryGateRaw -join "`n") | ConvertFrom-Json)
             if ($null -eq $deliveryGate -or $null -eq $deliveryGate.require_standard) {
               throw "delivery route classifier returned invalid output"
             }
             Write-Host "Post-integration delivery route: require_standard=$($deliveryGate.require_standard) fast_path=$($deliveryGate.fast_path) reason=$($deliveryGate.reason) profiles_used=$($deliveryGate.profiles_used -join ',')"
 
-            git checkout -B __parallel_integrate refs/remotes/origin/parallel
-            if ($LASTEXITCODE -ne 0) { throw "cannot create integration worktree" }
+            git checkout -B __canonical_integrate refs/remotes/origin/main
+            if ($LASTEXITCODE -ne 0) { throw "cannot create canonical integration worktree" }
 
             git merge --no-ff $env:FEATURE_SHA -m "merge(queue): $env:TASK_ID"
             if ($LASTEXITCODE -ne 0) {
@@ -175,15 +171,18 @@ jobs:
             git commit --amend --no-edit
             if ($LASTEXITCODE -ne 0) { throw "cannot amend integration commit with task state" }
 
-            git push origin HEAD:refs/heads/parallel
+            git push --atomic origin HEAD:refs/heads/main HEAD:refs/heads/parallel
             if ($LASTEXITCODE -eq 0) {
               $integrated = (git rev-parse HEAD).Trim()
-              $remoteHead = ((git ls-remote origin refs/heads/parallel) -split "`t")[0].Trim()
-              if ($remoteHead -ne $integrated) {
-                throw "parallel moved before downstream dispatch; expected $integrated got $remoteHead"
+              $remoteMain = ((git ls-remote origin refs/heads/main) -split "`t")[0].Trim()
+              $remoteParallel = ((git ls-remote origin refs/heads/parallel) -split "`t")[0].Trim()
+              if ($remoteMain -ne $integrated -or $remoteParallel -ne $integrated) {
+                throw "canonical refs diverged after atomic push: expected=$integrated main=$remoteMain parallel=$remoteParallel"
               }
 
+              "canonical_sha=$integrated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
               "parallel_sha=$integrated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
               if ($deliveryGate.require_standard -eq $true) {
                 python tools/parallel_ci_dispatch.py `
                   --repo "${{ github.repository }}" `
@@ -202,14 +201,22 @@ jobs:
                   --github-output "$env:GITHUB_OUTPUT"
               }
               if ($LASTEXITCODE -ne 0) {
-                throw "exact integrated parallel delivery gates failed for $integrated"
+                throw "exact integrated delivery gates failed for $integrated"
               }
 
-              Write-Host "PARALLEL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA parallel=$integrated profiles=$env:DELIVERY_PROFILES standard=$($deliveryGate.require_standard) route=$($deliveryGate.reason)"
+              # The feature is now provably contained in canonical main and exact
+              # delivery passed. Remove only this exact queue branch; failure to
+              # clean up is non-fatal and can be handled by the persistent sweeper.
+              git push origin --delete "$env:FEATURE_BRANCH"
+              if ($LASTEXITCODE -ne 0) {
+                Write-Warning "feature cleanup failed for $env:FEATURE_BRANCH"
+              }
+
+              Write-Host "CANONICAL_QUEUE: PASS task=$env:TASK_ID feature=$env:FEATURE_SHA main=$integrated parallel=$integrated profiles=$env:DELIVERY_PROFILES standard=$($deliveryGate.require_standard) route=$($deliveryGate.reason)"
               exit 0
             }
 
-            Write-Host "Parallel moved before push; retrying from fresh HEAD."
+            Write-Host "Canonical refs moved before atomic push; retrying from fresh main."
           }
 
-          throw "parallel integration CAS retry limit exceeded; feature remains safe on $env:FEATURE_BRANCH"
+          throw "canonical integration CAS retry limit exceeded; feature remains safe on $env:FEATURE_BRANCH"

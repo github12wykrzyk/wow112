@@ -1,10 +1,8 @@
-name: Verify repository state
+name: Deep repository audit
 
 on:
-  push:
-    branches:
-      - main
-      - work
+  schedule:
+    - cron: '17 3 * * *'
   pull_request:
     branches:
       - main
@@ -15,44 +13,15 @@ permissions:
   actions: read
 
 concurrency:
-  group: verify-${{ github.workflow }}-${{ github.ref }}
+  group: deep-repository-audit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  fast-current-state:
+  current-state-audit:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout current tree
         uses: actions/checkout@v5
-
-      - name: Require exact pre-promote attestation on main push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=100" --jq '[.workflow_runs[] | select(.name == "Pre-promote stable" and .path == ".github/workflows/pre_promote_stable.yml" and .event == "push" and (.head_branch | startswith("promote/")) and .head_sha == env.GITHUB_SHA and .status == "completed" and .conclusion == "success")] | length')"
-          echo "successful promote/** pre-promote attestations for ${GITHUB_SHA}: ${count}"
-          if [ "${count}" -lt 1 ]; then
-            echo "ERROR: main SHA has no successful push-triggered Pre-promote stable attestation from promote/**."
-            exit 1
-          fi
-
-      - name: Reject stale or diverged work branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/work'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${GITHUB_SHA}" --jq '.status')"
-          echo "main...work status: ${status}"
-          case "${status}" in
-            ahead|identical) ;;
-            *)
-              echo "ERROR: work does not contain current main."
-              exit 1
-              ;;
-          esac
 
       - name: Print compact AI status and source hashes
         run: python3 tools/ai_status.py
@@ -70,11 +39,12 @@ jobs:
         run: python3 tools/verify_verified_symbols.py
 
   deep-baseline-audit:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout full history
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Verify source promotion fingerprints
         run: python3 tools/sync_source_metadata.py --check
