@@ -8,6 +8,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_f2_history_fix.py'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_F2_DE_2PASS_WINDOWS.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/START_POC08_F2_DE_2PASS_WINDOWS.bat'
       - '.github/workflows/build_windows_poc08_f1_live_fast.yml'
@@ -68,6 +69,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_history_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Select F2 entrypoint
         shell: pwsh
@@ -94,11 +97,14 @@ jobs:
           $zero=$src.IndexOf('if truncated { safe_price = 0; }')
           $insert=$src.IndexOf('if safe_price > 0 { safe_prices.insert(material_id, safe_price); }')
           if ($zero -lt 0 -or $insert -lt 0 -or $zero -ge $insert) { throw 'unsafe truncation ordering: zero must precede SAFE-map insert' }
+          foreach ($historyMarker in @('cols.len() < 7','safe_price = cols[5]','matches!(conf, "MEDIUM" | "HIGH")','values.push(safe_price)')) {
+            if (-not (Select-String -Path $p -Pattern $historyMarker -SimpleMatch -Quiet)) { throw "history safety marker missing: $historyMarker" }
+          }
           if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'AH mutation retry blocker missing from main' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => Some\(5\)' -Quiet)) { throw 'DE pilot item 9823 missing' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => 2' -SimpleMatch -Quiet)) { throw 'DE pilot Octo provenance confidence=2 missing' }
           if (Select-String -Path $p -Pattern 'let (auctioneer_candidates, _mailbox_guid)' -SimpleMatch -Quiet) { throw 'mailbox_guid integration regression' }
-          Write-Host '[POC08-F2-CI] MUTATION+VALUATION SAFETY ASSERTIONS PASS'
+          Write-Host '[POC08-F2-CI] MUTATION+VALUATION+HISTORY SAFETY ASSERTIONS PASS'
 
       - name: Build native Windows
         shell: pwsh
@@ -126,6 +132,7 @@ jobs:
           FRESH_EXACT_AUCTION_PRECHECK=YES
           NO_AUTO_RETRY_AFTER_BUY_SEND=YES
           MATERIAL_BOOK_TRUNCATION=FAIL_CLOSED_ZERO_BEFORE_INSERT
+          HISTORY_INPUT=SAFE_PRICE_MEDIUM_HIGH_ONLY
           DE_PROVENANCE_MIN_CONFIDENCE=2
           DE_PILOT_ITEM=9823
           DE_PILOT_DEID=5
@@ -137,6 +144,7 @@ jobs:
           PASS 1 is read-only and displays the exact candidate.
           PASS 2 can buy only that exact auction/item/buyout/count if it still passes every risk gate.
           Material valuation FAILS CLOSED if a material result set is truncated by the page cap.
+          History reads only prior SAFE prices with MEDIUM/HIGH confidence.
           Pilot provenance requires Octo-web confidence or stronger.
           The existing fresh-page exact precheck runs again immediately before the send.
           After any sent BUY without a full final PASS, do not rerun until AH/mail state is checked.
