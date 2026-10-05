@@ -94,8 +94,10 @@
     "opt_in_field": "auto_integrate",
     "ready_status": "ready_for_integration",
     "integrated_status": "integrated",
-    "queue_concurrency_group": "canonical-main-integration-queue",
-    "cas_retry_limit": 3,
+    "queue_model": "optimistic_atomic_cas",
+    "queue_concurrency_group": null,
+    "cas_retry_limit": 6,
+    "cas_backoff_policy": "After a lost atomic main+parallel push race, refetch/revalidate from live main and retry after randomized 250ms plus up to 250ms times attempt jitter.",
     "profile_gate_policy": "Profile-routed file changes declare matching delivery_profiles. Required profiles pass on the exact feature SHA and exact integrated delivery SHA."
   },
   "diagnostic_hotfix_fast_path": {
@@ -130,12 +132,13 @@
   "rules": [
     "New ordinary tasks branch from current canonical main, not from work or an independent parallel world.",
     "Each feature owns one runtime/parallel_tasks/<task-id>.json coordination record.",
-    "Independent coding and targeted preflight run concurrently; only canonical integration is serialized.",
+    "Independent coding, targeted preflight and integration attempts may run concurrently; canonical ref movement is arbitrated by atomic CAS.",
     "shared_resources signal ordered integration/arbitration when they overlap.",
     "Global lease election/reconciliation is not required for normal preflight or integration.",
     "delivery_profiles are fail-closed declarations for profile-routed paths.",
     "auto_integrate is explicit and requires ready_for_integration plus resolved declared dependencies.",
-    "The queue revalidates against current main immediately before merge.",
+    "Every integration attempt revalidates against current main immediately before merge.",
+    "Only one atomic main+parallel push can win a given ref state; losing integrators refetch, revalidate and retry.",
     "The queue atomically advances main and parallel to one integrated SHA without force.",
     "Post-integration delivery is selected by the path/risk router; unknown or mixed runtime changes require STANDARD.",
     "Successful exact-SHA delivery precedes feature branch cleanup.",

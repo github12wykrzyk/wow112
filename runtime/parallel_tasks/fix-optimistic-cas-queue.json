@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "fix-optimistic-cas-queue",
+  "goal": "Replace GitHub job-concurrency pseudo-queue with optimistic atomic CAS integration so three or more ready features cannot cancel the middle pending integration.",
+  "branch": "feature/fix-optimistic-cas-queue",
+  "base_parallel_sha": "aec747d3f2e59f358d1cfd3c2ad860272b0db475",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "WorkflowRouting"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "canonical-main-integration"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Realistic smoke campaign exposed that GitHub concurrency keeps only one running plus one pending job; a third integrator cancelled the middle ECONOMY integration. This fix removes job-level integration concurrency and relies on existing atomic main+parallel CAS with revalidation, six retries and jitter.",
+  "integrated_feature_sha": "6f5471ac1bb6668bcd463bad9226d387daa5bea1"
+}

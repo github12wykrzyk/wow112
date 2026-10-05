@@ -56,10 +56,10 @@ class StartupContractVNextTests(unittest.TestCase):
         policy = json.loads((ROOT / "runtime" / "parallel_thread_policy.json").read_text(encoding="utf-8"))
         self.assertEqual(policy["canonical_branch"], "main")
         self.assertEqual(policy["lease_policy"]["required_statuses"], [])
-        self.assertEqual(
-            policy["auto_integration"]["queue_concurrency_group"],
-            "canonical-main-integration-queue",
-        )
+        auto = policy["auto_integration"]
+        self.assertEqual(auto["queue_model"], "optimistic_atomic_cas")
+        self.assertIsNone(auto["queue_concurrency_group"])
+        self.assertEqual(auto["cas_retry_limit"], 6)
 
     def test_preflight_command_targets_main(self):
         index = json.loads((ROOT / "AI_INDEX.json").read_text(encoding="utf-8"))
