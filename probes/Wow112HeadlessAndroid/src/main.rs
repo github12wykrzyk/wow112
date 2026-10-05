@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 mod auth;
+mod tele_party_observer;
 mod wire_build;
 mod world_poc05_retry;
 mod world_portal;
@@ -98,7 +99,7 @@ fn run() -> Result<(), String> {
     );
     if tele_mode {
         println!(
-            "[TELE] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} rx_only=yes chat_tx=disabled invite=disabled cast=disabled portal_use=disabled",
+            "[TELE] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} party_rx=enabled whisper_tx=explicit_one_shot invite=disabled cast=disabled portal_use=disabled",
             soak_seconds, reconnect_limit, reconnect_delay_ms
         );
     } else if portal_mode {
