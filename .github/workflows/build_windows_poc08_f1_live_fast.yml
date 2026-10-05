@@ -100,7 +100,7 @@ jobs:
           $zero=$src.IndexOf('if truncated { safe_price = 0; }')
           $insert=$src.IndexOf('if safe_price > 0 { safe_prices.insert(material_id, safe_price); }')
           if ($zero -lt 0 -or $insert -lt 0 -or $zero -ge $insert) { throw 'unsafe truncation ordering: zero must precede SAFE-map insert' }
-          foreach ($historyMarker in @('cols.len() < 7','safe_price = cols[5]','matches!(conf, "MEDIUM" | "HIGH")','values.push(safe_price)')) {
+          foreach ($historyMarker in @('cols.len() < 7','cols[5].trim().parse::<u32>()','matches!(conf, "MEDIUM" | "HIGH")','values.push(safe_price)')) {
             if (-not (Select-String -Path $p -Pattern $historyMarker -SimpleMatch -Quiet)) { throw "history safety marker missing: $historyMarker" }
           }
           foreach ($pageMarker in @('expected_total: Option<u32>','previous_total != total','records.len() < 50','if list_from < total { truncated = true; }')) {
