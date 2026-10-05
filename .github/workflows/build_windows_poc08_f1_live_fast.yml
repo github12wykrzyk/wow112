@@ -26,6 +26,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Apply live-proven mailbox fastfix to BUY primitive
+        shell: pwsh
+        run: |
+          git fetch --no-tags --depth=1 origin feature/vendor-mailbox-fastfix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $patch='probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py'
+          git show FETCH_HEAD:$patch | Set-Content $patch -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python $patch probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host '[POC08-F2-CI] LIVE-PROVEN MAILBOX FASTFIX APPLIED'
+
       - name: Generate V5.3 base
         shell: pwsh
         run: |
@@ -91,6 +103,7 @@ jobs:
         shell: pwsh
         run: |
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs'
+          $buy='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
           $main='probes/Wow112HeadlessAndroid/src/main.rs'
           foreach ($marker in @('WOW112_F2_EXPECT_AUCTION_ID','WOW112_F2_EXPECT_ITEM_ID','WOW112_F2_EXPECT_BUYOUT','WOW112_F2_EXPECT_COUNT','[POC08-F2] EXACT AUDIT TARGET PASS','audited-exact-tuple+fresh-page','poc07_buy_exact_one','hard_max_purchases=1','let mut truncated = false;','truncated={}')) {
             if (-not (Select-String -Path $p -Pattern $marker -SimpleMatch -Quiet)) { throw "missing F2 safety marker: $marker" }
@@ -106,11 +119,15 @@ jobs:
           foreach ($pageMarker in @('expected_total: Option<u32>','previous_total != total','records.len() < 50','if list_from < total { truncated = true; }')) {
             if (-not (Select-String -Path $p -Pattern $pageMarker -SimpleMatch -Quiet)) { throw "pagination safety marker missing: $pageMarker" }
           }
+          foreach ($buyMarker in @('PRE-BUY MAILBOX BYPASS enabled=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES','SERVER PASS auction_id={} action={} result=0','POST-AH WARN auction_id={} best_effort=YES server_confirmed=YES no_retry=YES','POST-MAIL WARN auction_id={} best_effort=YES server_confirmed=YES no_retry=YES','BUY-ONE PASS purchases=1 server_confirmed=YES postchecks=BEST_EFFORT')) {
+            if (-not (Select-String -Path $buy -Pattern $buyMarker -SimpleMatch -Quiet)) { throw "live-proven BUY fastfix marker missing: $buyMarker" }
+          }
+          if (Select-String -Path $buy -Pattern 'let before_mail = poc05_request_mail_list' -SimpleMatch -Quiet) { throw 'unsafe pre-buy mailbox dependency remains' }
+          if (Select-String -Path $buy -Pattern 'poc06_reconcile_buy(target, &after_auctions, &before_mail, &after_mail)?;' -SimpleMatch -Quiet) { throw 'unsafe blocking mailbox reconcile remains' }
           if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'AH mutation retry blocker missing from main' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => Some\(5\)' -Quiet)) { throw 'DE pilot item 9823 missing' }
           if (-not (Select-String -Path probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs -Pattern '9823 => 2' -SimpleMatch -Quiet)) { throw 'DE pilot Octo provenance confidence=2 missing' }
-          if (Select-String -Path $p -Pattern 'let (auctioneer_candidates, _mailbox_guid)' -SimpleMatch -Quiet) { throw 'mailbox_guid integration regression' }
-          Write-Host '[POC08-F2-CI] MUTATION+VALUATION+HISTORY+PAGINATION SAFETY ASSERTIONS PASS'
+          Write-Host '[POC08-F2-CI] MUTATION+VALUATION+HISTORY+PAGINATION+MAILBOX-BYPASS SAFETY ASSERTIONS PASS'
 
       - name: Build native Windows
         shell: pwsh
@@ -127,6 +144,7 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_F2_DE_2PASS_WINDOWS.bat $d
           Copy-Item probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv "$d/runtime/DE_PILOT_CACHE.csv"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs "$d/source/world_poc08_f2_live.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_fastfix.rs"
           $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           @"
           POC=08-F2-EXACT-AUDITED-DE-2PASS-HARDENED
@@ -137,6 +155,8 @@ jobs:
           HARD_MAX_PURCHASES=1
           FRESH_EXACT_AUCTION_PRECHECK=YES
           NO_AUTO_RETRY_AFTER_BUY_SEND=YES
+          PREBUY_MAILBOX=DISABLED_LIVE_PROVEN
+          POSTBUY_AH_MAIL=BEST_EFFORT_AFTER_SERVER_CONFIRM
           MATERIAL_BOOK_TRUNCATION=FAIL_CLOSED_ZERO_BEFORE_INSERT
           MATERIAL_PAGINATION=FAIL_CLOSED_ON_UNSTABLE_TOTAL_OR_SHORT_NONFINAL_PAGE
           HISTORY_INPUT=SAFE_PRICE_MEDIUM_HIGH_ONLY
@@ -150,6 +170,8 @@ jobs:
           POC08-F2 hardened performs a two-pass guarded DE pilot.
           PASS 1 is read-only and displays the exact candidate.
           PASS 2 can buy only that exact auction/item/buyout/count if it still passes every risk gate.
+          Pre-buy mailbox is disabled using the live-proven vendor BUY semantics.
+          Server ACK is the primary mutation confirmation; post-buy AH/mail checks are best-effort and never trigger a retry.
           Material valuation fails closed on a truncated or unstable paginated material book.
           History reads only prior SAFE prices with MEDIUM/HIGH confidence.
           Pilot provenance requires Octo-web confidence or stronger.
