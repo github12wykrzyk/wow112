@@ -1,0 +1,38 @@
+name: TELE-05 roster and mutation ledger contract
+
+on:
+  push:
+    branches:
+      - feature/tele05-roster-core-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/tele_roster.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_mutation_ledger.rs'
+      - 'probes/Wow112HeadlessAndroid/tests/tele_roster_core.rs'
+      - '.github/workflows/test_tele05_roster_core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele05-roster-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact TELE-05 revision
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Roster and mutation ledger tests
+        shell: bash
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele_roster_core
+
+      - name: Host package check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
