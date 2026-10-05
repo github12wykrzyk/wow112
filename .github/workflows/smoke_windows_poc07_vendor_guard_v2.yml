@@ -1,0 +1,109 @@
+name: POC07 Vendor Guard V2 Smoke Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/SMOKE_VENDOR_CAPY_GUARD_V2.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_VENDOR_CAPY_GUARD_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py'
+      - '.github/workflows/smoke_windows_poc07_vendor_guard_v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deterministic launcher + DB + GUID smoke matrix
+        shell: pwsh
+        run: |
+          pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File probes/Wow112HeadlessAndroid/tools/SMOKE_VENDOR_CAPY_GUARD_V2.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate guarded full-sweep source and assert immutable policy
+        shell: pwsh
+        run: |
+          $out="$env:RUNNER_TEMP/world_poc07_vendor_guard_smoke.rs"
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $t=Get-Content $out -Raw
+          $must=@(
+            'CAPY_GUARD_MAX_BUYOUT_COPPER: u32 = 200_000',
+            'CAPY_GUARD_MIN_PROFIT_COPPER: i64 = 2',
+            'strategy must be vendor-only',
+            'WOW112_BUY_EXPECT_AUCTION_ID',
+            'WOW112_BUY_EXPECT_ITEM_ID',
+            'WOW112_BUY_EXPECT_BUYOUT',
+            'WOW112_BUY_EXPECT_COUNT',
+            'WOW112_BUY_EXPECT_VENDOR_UNIT',
+            'candidate.expected_profit >= CAPY_GUARD_MIN_PROFIT_COPPER',
+            '[CAPY-GUARD] EXACT TARGET PASS'
+          )
+          foreach($m in $must){ if(-not $t.Contains($m)){ throw "missing hard guard marker: $m" } }
+          if($t -match 'candidates\.first\(\)'){ throw 'unguarded first-candidate BUY selector still present' }
+          Write-Host '[SMOKE-CORE] immutable policy + exact tuple PASS'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile exact guarded Windows binary
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_capy_guard_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_fullsweep;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep')
+          Set-Content $p $t -Encoding utf8
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Native EXE fail-fast startup smoke
+        shell: pwsh
+        run: |
+          $exe='probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe'
+          if(-not (Test-Path $exe)){ throw 'EXE missing after build' }
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "[SMOKE-EXE] sha256=$hash size=$((Get-Item $exe).Length)"
+
+          Remove-Item Env:WOW112_ACCOUNT -ErrorAction SilentlyContinue
+          Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
+          $o=& $exe 2>&1; $c=$LASTEXITCODE
+          if($c -ne 2 -or ($o -join "`n") -notmatch 'missing WOW112_ACCOUNT'){ throw "missing-account fail-fast failed exit=$c output=$($o -join ' | ')" }
+          Write-Host '[SMOKE-EXE] missing account fail-closed PASS'
+
+          $env:WOW112_ACCOUNT='OCTOWAR1'
+          Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
+          $o=& $exe 2>&1; $c=$LASTEXITCODE
+          if($c -ne 2 -or ($o -join "`n") -notmatch 'missing WOW112_PASSWORD'){ throw "missing-password fail-fast failed exit=$c output=$($o -join ' | ')" }
+          Write-Host '[SMOKE-EXE] missing password fail-closed PASS'
+
+          $env:WOW112_PASSWORD='smoke-not-a-real-password'
+          $env:WOW112_AUTH_ADDR='127.0.0.1:9'
+          $o=& $exe 2>&1; $c=$LASTEXITCODE
+          if($c -ne 2 -or ($o -join "`n") -notmatch 'auth connect .* failed'){ throw "local-refused startup path failed exit=$c output=$($o -join ' | ')" }
+          Write-Host '[SMOKE-EXE] native startup/network error path PASS'
+
+      - name: Smoke summary
+        shell: pwsh
+        run: |
+          Write-Host '============================================================'
+          Write-Host 'POC07 VENDOR CAPY/TURTLE GUARD V2 - MAX SMOKE PASS'
+          Write-Host 'deterministic negative paths: PASS'
+          Write-Host 'deterministic positive BUY path: PASS'
+          Write-Host 'external DB parser/endpoint probe: PASS/WARN according to source availability'
+          Write-Host 'GUID cache learn + 3-failure reset: PASS'
+          Write-Host 'hard 20g / 2c / vendor-only / exact-target source guards: PASS'
+          Write-Host 'native Windows compile + fail-fast startup: PASS'
+          Write-Host '============================================================'
