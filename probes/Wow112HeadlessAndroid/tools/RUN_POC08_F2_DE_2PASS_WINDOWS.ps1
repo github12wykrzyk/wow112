@@ -15,6 +15,12 @@ $env:WOW112_SOAK_SECONDS='0'
 $env:WOW112_RECONNECT_LIMIT='20'
 $env:WOW112_RECONNECT_DELAY_MS='0'
 
+# Reuse the existing shared AH-open primitive, but seed it with the auctioneer GUID
+# already proven LIVE end-to-end by the vendor path. The primitive still validates
+# MSG_AUCTION_HELLO and retains bounded failover to any additionally discovered
+# auctioneer candidates; no opcode/request format is changed here.
+$env:WOW112_AH_GUID='0xF130003D4100023A'
+
 $env:WOW112_AUTOBUY_MAX_BUYOUT='150000'
 $env:WOW112_AUTOBUY_MIN_PROFIT='1'
 $env:WOW112_DE_NET_BPS='8500'
@@ -44,6 +50,7 @@ Write-Host 'PASS 2 = exact audited tuple + current gates + fresh AH precheck'
 Write-Host 'Pilot: item_id=9823, DisenchantID=5, max buyout 15s'
 Write-Host 'Gates: SAFE profit >=5s, ROI >=20%, P(loss) <=40%, model disagreement=0'
 Write-Host 'Hard max purchases per process: 1'
+Write-Host 'AH open: shared vendor/DE primitive; preferred LIVE-proven guid=0xF130003D4100023A'
 Write-Host 'NO automatic retry after BUY send.'
 Write-Host '============================================================'
 Write-Host ''
@@ -142,7 +149,12 @@ try {
         Write-Host 'Target disappeared or no longer passes gates. Purchase blocked; zero mutation.' -ForegroundColor Yellow
         exit 4
     }
-    Write-Host "DE pass ended without BUY-ONE PASS (exit=$buyExit). Upload POC08_F2_DE_BUY.log." -ForegroundColor Yellow
+    if (Select-String -Path $buyLog -Pattern '[POC07-BUY] SENT' -SimpleMatch -Quiet) {
+        Write-Host 'STOP: BUY packet was SENT but final LIVE BUY-ONE PASS is missing. DO NOT RERUN.' -ForegroundColor Red
+        Write-Host 'Treat mutation state as uncertain; inspect AH/mail and upload POC08_F2_DE_BUY.log.' -ForegroundColor Red
+        exit 3
+    }
+    Write-Host "DE pass ended without BUY-ONE PASS (exit=$buyExit). No SENT marker observed." -ForegroundColor Yellow
     exit $buyExit
 }
 finally {
