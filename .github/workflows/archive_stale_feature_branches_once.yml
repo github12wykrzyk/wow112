@@ -1,0 +1,137 @@
+name: Archive stale feature branches once
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: archive-stale-feature-branches-once
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout canonical trunk
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Archive stale inactive feature refs and remove active namespace refs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive_prefix="archive/stale-feature-2026-10-05"
+          now="$(date +%s)"
+          stale_after="$(python3 - <<'PY'
+          import json
+          print(json.load(open('runtime/parallel_thread_policy.json', encoding='utf-8'))['reconciler']['stale_after_seconds'])
+          PY
+          )"
+
+          git fetch origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            '+refs/heads/feature/*:refs/remotes/origin/feature/*' \
+            '+refs/heads/archive/stale-feature-2026-10-05/*:refs/remotes/origin/archive/stale-feature-2026-10-05/*' \
+            --prune
+
+          python3 - <<'PY' > /tmp/task_status.tsv
+          import json
+          from pathlib import Path
+
+          policy = json.load(open('runtime/parallel_thread_policy.json', encoding='utf-8'))
+          active = set(policy.get('active_statuses', []))
+          root = Path('runtime/parallel_tasks')
+          if root.exists():
+              for path in sorted(root.glob('*.json')):
+                  try:
+                      task = json.loads(path.read_text(encoding='utf-8'))
+                  except Exception:
+                      continue
+                  branch = task.get('branch')
+                  status = task.get('status')
+                  if isinstance(branch, str) and branch.startswith('feature/'):
+                      print(f"{branch}\t{status}\t{1 if status in active else 0}")
+          PY
+
+          declare -A task_status=()
+          declare -A task_active=()
+          while IFS=$'\t' read -r branch status active; do
+            [ -n "$branch" ] || continue
+            task_status["$branch"]="$status"
+            task_active["$branch"]="$active"
+          done < /tmp/task_status.tsv
+
+          declare -A archive_exists=()
+          while read -r ref; do
+            [ -n "$ref" ] || continue
+            archive_exists["${ref#refs/remotes/origin/}"]=1
+          done < <(git for-each-ref --format='%(refname)' refs/remotes/origin/archive/stale-feature-2026-10-05/)
+
+          create_specs=()
+          delete_specs=()
+          lease_args=()
+          archived=0
+          kept_active=0
+          kept_recent=0
+          collision=0
+
+          while read -r ref sha; do
+            [ -n "$ref" ] || continue
+            branch="${ref#refs/remotes/origin/}"
+            suffix="${branch#feature/}"
+            archive_branch="$archive_prefix/$suffix"
+            ts="$(git show -s --format=%ct "$sha")"
+            age=$((now - ts))
+
+            if [ "${task_active[$branch]-0}" = "1" ]; then
+              echo "KEEP active task status=${task_status[$branch]-unknown}: $branch @ $sha"
+              kept_active=$((kept_active + 1))
+              continue
+            fi
+
+            if [ "$age" -lt "$stale_after" ]; then
+              echo "KEEP recent age=${age}s status=${task_status[$branch]-untracked}: $branch @ $sha"
+              kept_recent=$((kept_recent + 1))
+              continue
+            fi
+
+            if [ "${archive_exists[$archive_branch]-0}" = "1" ]; then
+              archive_sha="$(git rev-parse "refs/remotes/origin/$archive_branch")"
+              if [ "$archive_sha" != "$sha" ]; then
+                echo "KEEP archive collision: $branch @ $sha target=$archive_branch @ $archive_sha"
+                collision=$((collision + 1))
+                continue
+              fi
+            else
+              echo "ARCHIVE: $branch @ $sha -> $archive_branch"
+              create_specs+=("$sha:refs/heads/$archive_branch")
+            fi
+
+            delete_specs+=(":refs/heads/$branch")
+            lease_args+=("--force-with-lease=refs/heads/$branch:$sha")
+            archived=$((archived + 1))
+          done < <(git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin/feature/)
+
+          if [ "${#create_specs[@]}" -gt 0 ]; then
+            git push --atomic origin "${create_specs[@]}"
+          fi
+
+          if [ "${#delete_specs[@]}" -gt 0 ]; then
+            git push "${lease_args[@]}" origin "${delete_specs[@]}"
+          fi
+
+          {
+            echo "### One-time stale feature archival"
+            echo "- stale threshold: **${stale_after}s**"
+            echo "- archived out of feature namespace: **$archived**"
+            echo "- kept active task refs: **$kept_active**"
+            echo "- kept recent refs: **$kept_recent**"
+            echo "- archive collisions preserved: **$collision**"
+          } >> "$GITHUB_STEP_SUMMARY"
