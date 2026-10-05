@@ -6,6 +6,7 @@ on:
       - feature/tele-gui-shell-v1
     paths:
       - 'tools/updater/UpdaterTeleFeature.cs'
+      - 'runtime/parallel_tasks/tele-gui-shell-v1.json'
       - '.github/workflows/build_tele_gui_shell.yml'
   workflow_dispatch:
 
