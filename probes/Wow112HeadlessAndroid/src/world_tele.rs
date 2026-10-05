@@ -1,11 +1,13 @@
 include!("world.rs");
 
-use wow_world_messages::vanilla::SMSG_MESSAGECHAT_ChatType;
+use wow_world_messages::vanilla::{CMSG_GROUP_INVITE, SMSG_MESSAGECHAT_ChatType};
 
 const SMSG_MESSAGECHAT_OPCODE: u16 = 0x0096;
 const CMSG_MESSAGECHAT_OPCODE: u32 = 0x0095;
 const CMSG_NAME_QUERY_OPCODE: u32 = 0x0050;
 const SMSG_NAME_QUERY_RESPONSE_OPCODE: u16 = 0x0051;
+const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
+const SMSG_PARTY_COMMAND_RESULT_OPCODE: u16 = 0x007F;
 const CHAT_TYPE_WHISPER: u32 = 6;
 const LANGUAGE_UNIVERSAL: u32 = 0;
 
@@ -87,6 +89,23 @@ fn tele_send_whisper(
     Ok(())
 }
 
+fn tele_send_group_invite(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    target: &str,
+) -> Result<(), String> {
+    if target.is_empty() || target.as_bytes().contains(&0) {
+        return Err("invalid TELE invite target".to_string());
+    }
+    CMSG_GROUP_INVITE {
+        name: target.to_string(),
+    }
+    .write_encrypted_client(&mut *stream, crypto.encrypter())
+    .map_err(|e| format!("write TELE group invite failed: {e:?}"))?;
+    println!("[TELE-INVITE] target={target:?} result=sent_once");
+    Ok(())
+}
+
 fn tele_emit_resolved_whisper(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
@@ -96,6 +115,8 @@ fn tele_emit_resolved_whisper(
     text: &str,
     test_reply: &str,
     reply_sent: &mut bool,
+    test_invite_trigger: &str,
+    invite_sent: &mut bool,
 ) -> Result<(), String> {
     println!(
         "[TELE-WHISPER] seq={} sender_name={:?} sender_guid=0x{:016X} text={:?}",
@@ -109,7 +130,50 @@ fn tele_emit_resolved_whisper(
         tele_send_whisper(stream, crypto, sender_name, test_reply)?;
         *reply_sent = true;
     }
+
+    if !test_invite_trigger.is_empty()
+        && !*invite_sent
+        && text.trim().eq_ignore_ascii_case(test_invite_trigger)
+    {
+        tele_send_group_invite(stream, crypto, sender_name)?;
+        *invite_sent = true;
+    }
     Ok(())
+}
+
+fn tele_log_party_packet(opcode: u16, payload: &[u8]) -> Result<bool, String> {
+    if opcode != SMSG_GROUP_LIST_OPCODE && opcode != SMSG_PARTY_COMMAND_RESULT_OPCODE {
+        return Ok(false);
+    }
+
+    let message = parse_raw_server_message(opcode, payload)
+        .map_err(|error| format!("parse TELE party packet opcode=0x{opcode:04X} failed: {error}"))?;
+    match message {
+        ServerOpcodeMessage::SMSG_GROUP_LIST(group) => {
+            println!(
+                "[TELE-PARTY] roster members={} leader_guid=0x{:016X} group_type={:?}",
+                group.members.len(),
+                group.leader.guid(),
+                group.group_type
+            );
+            for (index, member) in group.members.iter().enumerate() {
+                println!(
+                    "[TELE-PARTY] member[{index}] name={:?} guid=0x{:016X} online={} flags={}",
+                    member.name,
+                    member.guid.guid(),
+                    member.is_online,
+                    member.flags
+                );
+            }
+        }
+        ServerOpcodeMessage::SMSG_PARTY_COMMAND_RESULT(result) => {
+            println!("[TELE-PARTY] command_result={result:?}");
+        }
+        other => {
+            println!("[TELE-DIAG] unexpected party decode opcode=0x{opcode:04X} message={other:?}");
+        }
+    }
+    Ok(true)
 }
 
 fn tele_sniffer_loop(
@@ -139,17 +203,27 @@ fn tele_sniffer_loop(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_default();
+    let test_invite_trigger = std::env::var("WOW112_TELE_TEST_INVITE_TRIGGER")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
     let mut reply_sent = false;
+    let mut invite_sent = false;
 
     println!(
-        "[TELE] WHISPER SNIFFER ACTIVE rx_only=no name_resolution=cmsg-name-query chat_tx={} invite=disabled cast=disabled portal_use=disabled duration={}",
+        "[TELE] SESSION ACTIVE name_resolution=cmsg-name-query chat_tx={} invite={} cast=disabled portal_use=disabled duration={}",
         if test_reply.is_empty() { "disabled" } else { "armed_once" },
+        if test_invite_trigger.is_empty() { "disabled" } else { "armed_once" },
         if soak_seconds == 0 {
             "infinite".to_string()
         } else {
             format!("{soak_seconds}s")
         }
     );
+    if !test_invite_trigger.is_empty() {
+        println!("[TELE-INVITE] armed trigger={test_invite_trigger:?}");
+    }
 
     loop {
         if deadline.is_some_and(|value| Instant::now() >= value) {
@@ -188,6 +262,10 @@ fn tele_sniffer_loop(
                     continue;
                 }
 
+                if tele_log_party_packet(opcode, &payload)? {
+                    continue;
+                }
+
                 if opcode == SMSG_NAME_QUERY_RESPONSE_OPCODE {
                     match tele_parse_name_query_response(&payload) {
                         Ok((guid, character_name)) => {
@@ -207,6 +285,8 @@ fn tele_sniffer_loop(
                                         &text,
                                         &test_reply,
                                         &mut reply_sent,
+                                        &test_invite_trigger,
+                                        &mut invite_sent,
                                     )?;
                                 }
                             }
@@ -250,6 +330,8 @@ fn tele_sniffer_loop(
                                     &text,
                                     &test_reply,
                                     &mut reply_sent,
+                                    &test_invite_trigger,
+                                    &mut invite_sent,
                                 )?;
                             } else {
                                 let first_pending = !pending_whispers.contains_key(&guid);
@@ -403,6 +485,6 @@ pub fn login_tele_sniffer(
     }
 
     tele_sniffer_loop(stream, &mut crypto, soak_seconds)?;
-    println!("[TELE] WHISPER SNIFFER PASS");
+    println!("[TELE] SESSION PASS");
     Ok(())
 }
