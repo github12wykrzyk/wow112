@@ -1,5 +1,6 @@
 name: TELE-01 compile gate
 
+# Temporary branch-only exact-SHA compile gate for TELE-01.
 on:
   push:
     branches:
