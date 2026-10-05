@@ -1,0 +1,182 @@
+name: POC08 Incident Verify Build
+
+on:
+  push:
+    branches: [feature/poc08-de-incident-hardening]
+    paths:
+      - '.github/workflows/poc08_incident_verify.yml'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_incident_*.py'
+      - 'probes/Wow112HeadlessAndroid/tools/test_poc08_incident_*.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_INCIDENT_DE_2PASS_WINDOWS.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Regression matrix 16 cases
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/test_poc08_incident_data_integrity.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/test_poc08_incident_risk_controller.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/test_poc08_incident_regression_matrix.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply live-proven Vendor BUY primitive
+        shell: pwsh
+        run: |
+          git fetch --no-tags --depth=1 origin feature/vendor-mailbox-fastfix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $patch='probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py'
+          git show FETCH_HEAD:$patch | Set-Content $patch -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python $patch probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate V5.3 base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate provenance cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv probes/Wow112HeadlessAndroid/tools/poc08_f1_pilot_cache.csv --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate authoritative F2 source chain
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_provenance_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f0_eligibility_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_history_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_pagination_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply incident Data Integrity
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_incident_data_integrity_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply history warm-up separation
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_incident_history_warmup_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply persistent DE Risk Controller
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_incident_risk_controller_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Select incident F2 entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_f2_live;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_f2_live::login_poc08_economy_audit')
+          $t=$t.Replace('[POC07-LIVE]', '[POC08-INCIDENT]')
+          $t=$t.Replace('POC-07 LIVE SESSION PASS', 'POC-08 INCIDENT SESSION PASS')
+          Set-Content $p $t -Encoding utf8
+
+      - name: Static fail-closed assertions
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs'
+          $buy='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
+          $main='probes/Wow112HeadlessAndroid/src/main.rs'
+          foreach ($m in @(
+            'schema_version,snapshot_id,scan_id,unix_s,source_client',
+            'staged.push((item_id, unix_s, reference_price));',
+            'MALFORMED_OR_PARTIAL_V2_SNAPSHOT',
+            'WOW112_DE_MIN_HISTORY_EPOCHS',
+            'WOW112_DE_UPWARD_SHOCK_BPS',
+            'status=QUARANTINE',
+            'WOW112_DE_MUTATION_ENABLED',
+            'SESSION_SPEND_CAP','ROLLING_SPEND_CAP','MATERIAL_EXPOSURE_CAP','DEID_EXPOSURE_CAP',
+            'MAX_BUYS_PER_PRICE_EPOCH','CANDIDATE_EXPLOSION','status=UNKNOWN','incident-risk-controller',
+            'expected_total: Option<u32>','records.len() < 50',
+            'WOW112_F2_EXPECT_AUCTION_ID','poc07_buy_exact_one'
+          )) { if (-not (Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)) { throw "missing incident marker: $m" } }
+          foreach ($m in @('PRE-BUY MAILBOX BYPASS enabled=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES','SERVER PASS auction_id={} action={} result=0')) {
+            if (-not (Select-String -Path $buy -Pattern $m -SimpleMatch -Quiet)) { throw "Vendor BUY primitive regression: $m" }
+          }
+          if (-not (Select-String -Path $main -Pattern 'error.contains("AH_MUTATION_")' -SimpleMatch -Quiet)) { throw 'mutation retry blocker missing' }
+          Write-Host '[POC08-INCIDENT] STATIC ASSERTIONS PASS'
+
+      - name: Build Windows release
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage incident artifact
+        shell: pwsh
+        run: |
+          $d='dist/poc08-incident-v2'
+          New-Item -ItemType Directory -Force "$d/source" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_INCIDENT_DE_2PASS_WINDOWS.ps1 $d
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs "$d/source/world_poc08_f2_live.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_vendor_buy_primitive.rs"
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=08-DE-INCIDENT-HARDENED-V2
+          EXACT_SHA=$env:GITHUB_SHA
+          BINARY_SHA256=$h
+          DE_MUTATION_DEFAULT=OFF
+          HISTORY_SCHEMA=V2_CHECKSUMMED_IMMUTABLE
+          HISTORY_MIN_INDEPENDENT_EPOCHS=3
+          HISTORY_EPOCH_SECONDS=900
+          UPWARD_SHOCK_QUARANTINE_BPS=2000
+          HISTORY_MISSING_OR_STALE=FAIL_CLOSED
+          PERSISTENT_UNKNOWN_EXPOSURE=YES
+          PREBUY_RISK_RECHECK=YES
+          VENDOR_BUY_PRIMITIVE=UNCHANGED
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload incident artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-POC08-INCIDENT-V2-${{ github.sha }}
+          path: dist/poc08-incident-v2
+          if-no-files-found: error
+          retention-days: 7
