@@ -7,6 +7,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust.py'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py'
       - 'probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py'
       - 'probes/Wow112HeadlessAndroid/tools/RUN_POC08_B_REFERENCE_COMPARE_WINDOWS.ps1'
       - 'probes/Wow112HeadlessAndroid/tools/START_POC08_B_REFERENCE_COMPARE_WINDOWS.bat'
       - '.github/workflows/build_windows_poc08_b_reference_compare_fast.yml'
@@ -51,6 +52,8 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs'
           foreach ($marker in @('REFERENCE_CLASSIC_NOT_OCTO_VERIFIED','heuristic_de_ev','reference_de_ev','POC08-B-REFERENCE','NO_CANDIDATE_PASS')) {
