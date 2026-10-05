@@ -9,38 +9,54 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+function Parse-DisenchantId([string]$Html) {
+    if ([string]::IsNullOrWhiteSpace($Html)) { return $null }
+    $plain = [regex]::Replace($Html, '<[^>]+>', ' ')
+    $plain = [System.Net.WebUtility]::HtmlDecode($plain)
+    $patterns = @(
+        'Disenchant ID:\s*(\d+)',
+        'DisenchantId\s*[:=]?\s*(\d+)',
+        'disenchantId\s*[:=]?\s*(\d+)',
+        '"DisenchantId"\s*:\s*(\d+)',
+        '"disenchantId"\s*:\s*(\d+)'
+    )
+    foreach ($pattern in $patterns) {
+        $m = [regex]::Match($plain, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($m.Success) { return [uint32]$m.Groups[1].Value }
+        $m = [regex]::Match($Html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($m.Success) { return [uint32]$m.Groups[1].Value }
+    }
+    return $null
+}
+
 function Get-DatabaseDisenchantId([uint32]$ItemId) {
-    $url = "https://db.capycraft.org/item/$ItemId"
-    $lastError = $null
-    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
-        try {
-            $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec $TimeoutSec -Headers @{"User-Agent"="WoW112-POC07-DE-V5/1.0"}
-            $html = [string]$response.Content
-            $plain = [regex]::Replace($html, '<[^>]+>', ' ')
-            $plain = [System.Net.WebUtility]::HtmlDecode($plain)
-            $patterns = @(
-                'Disenchant ID:\s*(\d+)',
-                'DisenchantId\s*(\d+)',
-                'disenchantId\s*(\d+)',
-                '"DisenchantId"\s*:\s*(\d+)',
-                '"disenchantId"\s*:\s*(\d+)'
-            )
-            $match = $null
-            foreach ($pattern in $patterns) {
-                $candidate = [regex]::Match($plain, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-                if ($candidate.Success) { $match = $candidate; break }
-                $candidate = [regex]::Match($html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-                if ($candidate.Success) { $match = $candidate; break }
+    $sources = @(
+        [pscustomobject]@{ Name='OctoWow'; Url="https://octowow.st/db/?item=$ItemId" },
+        [pscustomobject]@{ Name='CapyDB';  Url="https://db.capycraft.org/item/$ItemId" }
+    )
+    $headers = @{
+        'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36'
+        'Accept'='text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        'Accept-Language'='en-US,en;q=0.9'
+        'Cache-Control'='no-cache'
+    }
+    $errors = New-Object System.Collections.Generic.List[string]
+
+    foreach ($source in $sources) {
+        for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+            try {
+                $response = Invoke-WebRequest -UseBasicParsing -Uri $source.Url -TimeoutSec $TimeoutSec -Headers $headers
+                $de = Parse-DisenchantId ([string]$response.Content)
+                if ($null -eq $de) { throw "Disenchant ID field not found" }
+                return [pscustomobject]@{ Ok=$true; DisenchantId=[uint32]$de; Url=$source.Url; Source=$source.Name; Error="" }
             }
-            if (-not $match -or -not $match.Success) { throw "Disenchant ID field not found" }
-            return [pscustomobject]@{ Ok=$true; DisenchantId=[uint32]$match.Groups[1].Value; Url=$url; Error="" }
-        }
-        catch {
-            $lastError = $_.Exception.Message
-            if ($attempt -lt $Retries) { Start-Sleep -Milliseconds (250 * $attempt) }
+            catch {
+                $errors.Add("$($source.Name) attempt=$attempt: $($_.Exception.Message)")
+                if ($attempt -lt $Retries) { Start-Sleep -Milliseconds (200 * $attempt) }
+            }
         }
     }
-    return [pscustomobject]@{ Ok=$false; DisenchantId=$null; Url=$url; Error=$lastError }
+    return [pscustomobject]@{ Ok=$false; DisenchantId=$null; Url=''; Source=''; Error=($errors -join ' | ') }
 }
 
 if (-not (Test-Path -LiteralPath $CandidateCsv)) { throw "Candidate CSV not found: $CandidateCsv" }
@@ -71,7 +87,8 @@ foreach ($itemId in $itemIds) {
     if ($result.Ok) {
         $cache[$itemId] = [uint32]$result.DisenchantId
         $resolvedNow++
-        Write-Host "[V5-GATE] RESOLVED item_id=$itemId disenchant_id=$($result.DisenchantId)"
+        Write-Host "[V5-GATE] RESOLVED item_id=$itemId disenchant_id=$($result.DisenchantId) source=$($result.Source)"
+        Start-Sleep -Milliseconds 40
     }
     else {
         $lookupFailed++
@@ -118,7 +135,7 @@ $ordered | Export-Csv -LiteralPath $SafeCsv -NoTypeInformation -Encoding UTF8
 
 Write-Host ""
 Write-Host "[V5-GATE] PASS raw_candidates=$($rows.Count) unique_items=$($itemIds.Count) cache_entries=$($cache.Count) resolved_now=$resolvedNow blocked_de0=$blockedZero blocked_unknown=$blockedUnknown lookup_failed=$lookupFailed safe_candidates=$($ordered.Count)"
-Write-Host "[V5-GATE] source=CapyDB_TurtleMirror exact_Disenchant_ID positive_only=YES unknown_fail_closed=YES"
+Write-Host "[V5-GATE] source=OctoWow_primary_CapyDB_fallback exact_Disenchant_ID positive_only=YES unknown_fail_closed=YES"
 Write-Host "[V5-GATE] safe_csv=$SafeCsv cache_csv=$CacheCsv"
 for ($i = 0; $i -lt [Math]::Min(20, $ordered.Count); $i++) {
     $row = $ordered[$i]
