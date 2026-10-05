@@ -44,6 +44,6 @@
     "A runtime path is profile-contained only when at least one declared delivery profile covers it.",
     "If every non-validation path is covered by declared delivery profiles, STANDARD is omitted and only those exact-SHA profile workflows run.",
     "Any uncovered, unknown, native-core, shared-build, packaging-control or mixed path requires STANDARD.",
-    "The legacy diagnostic hotfix classifier remains an additional narrow compatibility shortcut, never a broader one."
+    "parallel_delivery_route.py is the sole post-integration STANDARD decision authority; classifier errors fail closed to STANDARD."
   ]
 }
