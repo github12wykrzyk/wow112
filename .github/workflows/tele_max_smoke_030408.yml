@@ -1,0 +1,220 @@
+name: TELE MAX smoke 03-04-08
+
+on:
+  push:
+    branches:
+      - feature/tele-max-smoke-030408-v1
+    paths:
+      - '.github/workflows/tele_max_smoke_030408.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele-max-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TELE03_SHA: 1221cd5ec20e09eff873655370db183d54f42d99
+  TELE04_SHA: c70c306c88e0d45dc783569c6b02528c156aaf80
+  TELE08_SHA: d3239a3e7c642a9d531f21078ba5eaafcbde6280
+  CANONICAL_SHA: ae3eb1b1b4b180f56082e162ac902ea166951915
+
+jobs:
+  max-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout TELE-03 exact SHA
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TELE03_SHA }}
+          path: tele03
+
+      - name: Checkout TELE-04 exact SHA
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TELE04_SHA }}
+          path: tele04
+
+      - name: Checkout TELE-08 exact SHA
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TELE08_SHA }}
+          path: tele08
+
+      - name: Exact-SHA and canonical isolation gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C tele03 rev-parse HEAD)" = "$TELE03_SHA"
+          test "$(git -C tele04 rev-parse HEAD)" = "$TELE04_SHA"
+          test "$(git -C tele08 rev-parse HEAD)" = "$TELE08_SHA"
+          REMOTE_MAIN="$(git -C tele03 ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$REMOTE_MAIN" = "$CANONICAL_SHA"
+          printf 'TELE03=%s\nTELE04=%s\nTELE08=%s\nCANONICAL=%s\n' "$TELE03_SHA" "$TELE04_SHA" "$TELE08_SHA" "$REMOTE_MAIN"
+
+      - name: Cross-layer static safety gates
+        shell: python
+        run: |
+          from pathlib import Path
+
+          t03 = Path('tele03/probes/Wow112HeadlessAndroid/src/tele_party_observer.rs').read_text()
+          for forbidden in ('write_encrypted_raw', 'TcpStream', 'CMSG_GROUP_', 'CMSG_MESSAGECHAT'):
+              assert forbidden not in t03, f'TELE-03 RX observer contains forbidden TX surface: {forbidden}'
+          for required in ('SMSG_GROUP_LIST_OPCODE', 'SMSG_PARTY_COMMAND_RESULT_OPCODE', 'UMSG_UPDATE_GROUP_MEMBERS_OPCODE'):
+              assert required in t03, f'TELE-03 missing observer surface: {required}'
+
+          t04w = Path('tele04/probes/Wow112HeadlessAndroid/src/tele_invite_wire.rs').read_text()
+          t04s = Path('tele04/probes/Wow112HeadlessAndroid/src/tele_invite_state.rs').read_text()
+          assert '0x006E' in t04w, 'TELE-04 CMSG_GROUP_INVITE opcode contract missing'
+          assert 'OneShotInviteGuard' in t04w, 'TELE-04 one-shot guard missing'
+          for forbidden in ('CMSG_GROUP_ACCEPT', 'CMSG_GROUP_DECLINE', 'CMSG_GROUP_UNINVITE', 'CMSG_GROUP_SET_LEADER'):
+              assert forbidden not in t04w + t04s, f'TELE-04 unexpectedly widened mutation surface: {forbidden}'
+          assert 'retry_allowed' in t04s, 'TELE-04 retry gate missing'
+
+          convo_files = [
+              Path('tele08/probes/Wow112HeadlessAndroid/src/tele_conversation.rs'),
+              Path('tele08/probes/Wow112HeadlessAndroid/src/tele_conversation_store.rs'),
+              Path('tele08/probes/Wow112HeadlessAndroid/src/tele_unknown_report.rs'),
+          ]
+          convo = '\n'.join(p.read_text() for p in convo_files)
+          for forbidden in ('std::net', 'TcpStream', 'write_encrypted_raw', 'CMSG_', 'SMSG_'):
+              assert forbidden not in convo, f'TELE-08 policy core contains transport coupling: {forbidden}'
+          for required in ('Hyjal', 'Winterspring', 'Hydraxian'):
+              assert required in convo, f'TELE-08 missing destination: {required}'
+          print('STATIC_SAFETY_GATES=PASS')
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: cargo install cargo-ndk --locked
+
+      - name: TELE-03 launcher syntax
+        shell: pwsh
+        run: |
+          $file = 'tele03/probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error "$file : $($_.Message)" }; exit 1 }
+
+      - name: TELE-03 host package check
+        shell: bash
+        run: cargo check --manifest-path tele03/probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: TELE-03 synthetic Vanilla party-result parser smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          TEST='tele03/probes/Wow112HeadlessAndroid/tests/tele03_synthetic_party_result.rs'
+          cat > "$TEST" <<'RS'
+          use std::io::Cursor;
+          use wow_world_messages::vanilla::opcodes::ServerOpcodeMessage;
+
+          fn parse(opcode: u16, payload: &[u8]) -> Result<ServerOpcodeMessage, String> {
+              let size = u16::try_from(payload.len() + 2).map_err(|_| "oversize".to_string())?;
+              let mut wire = Vec::with_capacity(payload.len() + 4);
+              wire.extend_from_slice(&size.to_be_bytes());
+              wire.extend_from_slice(&opcode.to_le_bytes());
+              wire.extend_from_slice(payload);
+              ServerOpcodeMessage::read_unencrypted(&mut Cursor::new(wire)).map_err(|e| format!("{e:?}"))
+          }
+
+          #[test]
+          fn party_command_result_success_decodes() {
+              let mut payload = Vec::new();
+              payload.extend_from_slice(&0u32.to_le_bytes());
+              payload.extend_from_slice(b"Target\0");
+              payload.extend_from_slice(&0u32.to_le_bytes());
+              let msg = parse(0x007F, &payload).expect("Vanilla SMSG_PARTY_COMMAND_RESULT must decode");
+              let dbg = format!("{msg:?}");
+              assert!(dbg.contains("SMSG_PARTY_COMMAND_RESULT"), "{dbg}");
+              assert!(dbg.contains("Target"), "{dbg}");
+          }
+          RS
+          cargo test --manifest-path tele03/probes/Wow112HeadlessAndroid/Cargo.toml --test tele03_synthetic_party_result -- --nocapture
+
+      - name: TELE-04 one-shot mutation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path tele04/probes/Wow112HeadlessAndroid/Cargo.toml --test tele_invite_guard -- --nocapture
+          cargo check --manifest-path tele04/probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: TELE-08 conversation corpus and state contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path tele08/probes/Wow112HeadlessAndroid/Cargo.toml --test tele_conversation_core -- --nocapture
+          cargo check --manifest-path tele08/probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Full all-target host regression on TELE-04
+        shell: bash
+        run: cargo test --manifest-path tele04/probes/Wow112HeadlessAndroid/Cargo.toml --all-targets
+
+      - name: Full all-target host regression on TELE-08
+        shell: bash
+        run: cargo test --manifest-path tele08/probes/Wow112HeadlessAndroid/Cargo.toml --all-targets
+
+      - name: TELE-03 Android x86_64 release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tele03/probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --release
+
+      - name: TELE-04 Android x86_64 test compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tele04/probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --tests
+
+      - name: TELE-08 Android x86_64 test compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tele08/probes/Wow112HeadlessAndroid
+          cargo ndk -t x86_64 --platform 21 build --tests
+
+      - name: Produce smoke manifest
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p smoke-report
+          {
+            echo 'TELE_MAX_SMOKE=03-04-08'
+            echo "TELE03_SHA=$TELE03_SHA"
+            echo "TELE04_SHA=$TELE04_SHA"
+            echo "TELE08_SHA=$TELE08_SHA"
+            echo "CANONICAL_SHA=$CANONICAL_SHA"
+            echo "RUN_ID=$GITHUB_RUN_ID"
+            echo "RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo 'LIVE_WOW_RUNTIME=NOT_AVAILABLE_IN_GITHUB_RUNNER'
+          } > smoke-report/SMOKE_MANIFEST.txt
+          sha256sum smoke-report/SMOKE_MANIFEST.txt > smoke-report/SHA256SUMS.txt
+
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TELE-MAX-SMOKE-${{ github.sha }}
+          path: smoke-report
+          if-no-files-found: error
+          retention-days: 14
