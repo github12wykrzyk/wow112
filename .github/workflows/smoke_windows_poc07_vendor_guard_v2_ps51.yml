@@ -1,0 +1,42 @@
+name: POC07 Vendor Guard V2 Smoke PS51
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/SMOKE_VENDOR_CAPY_GUARD_V2.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_VENDOR_CAPY_GUARD_WINDOWS.ps1'
+      - '.github/workflows/smoke_windows_poc07_vendor_guard_v2_ps51.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-ps51:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Production self-test under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File probes/Wow112HeadlessAndroid/tools/RUN_VENDOR_CAPY_GUARD_WINDOWS.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Full deterministic matrix under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $src='probes/Wow112HeadlessAndroid/tools/SMOKE_VENDOR_CAPY_GUARD_V2.ps1'
+          $tmp=Join-Path $env:RUNNER_TEMP 'SMOKE_VENDOR_CAPY_GUARD_V2_PS51.ps1'
+          $t=Get-Content $src -Raw
+          $t=$t.Replace('& pwsh ', '& powershell.exe ')
+          Set-Content -Encoding UTF8 $tmp $t
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tmp -ProductionScript (Resolve-Path 'probes/Wow112HeadlessAndroid/tools/RUN_VENDOR_CAPY_GUARD_WINDOWS.ps1')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: PS51 summary
+        shell: powershell
+        run: |
+          Write-Host 'POC07 VENDOR GUARD V2 - WINDOWS POWERSHELL 5.1 SMOKE PASS'
