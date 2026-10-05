@@ -124,11 +124,13 @@ def ensure_merge_base(base, branch):
             print("PARALLEL_FEATURE_PREFLIGHT: merge-base recovered without full history")
             return value
 
-    print("PARALLEL_FEATURE_PREFLIGHT: shallow fallback -> unshallow relevant refs")
-    result = git(["fetch", "--unshallow", "origin", *refspecs], check=False)
+    print("PARALLEL_FEATURE_PREFLIGHT: shallow fallback -> full relevant refs")
+    # --unshallow can reject explicit refspecs on some Git versions. First
+    # complete the shallow repository, then refresh just feature/base refs.
+    result = git(["fetch", "--unshallow", "origin"], check=False)
     if result.returncode:
-        # Another fetch may already have converted the repository to complete.
-        git(["fetch", "origin", *refspecs], check=True)
+        print("PARALLEL_FEATURE_PREFLIGHT: unshallow warning: " + result.stderr.strip())
+    git(["fetch", "origin", *refspecs], check=True)
     value = merge_base_once(base)
     if not value:
         raise RuntimeError("cannot resolve merge-base after safe shallow fallback")
