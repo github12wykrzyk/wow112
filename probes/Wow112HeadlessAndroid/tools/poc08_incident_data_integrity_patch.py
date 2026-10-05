@@ -17,6 +17,14 @@ def replace_between(start_marker: str, end_marker: str, replacement: str, label:
     s = s[:a] + replacement.rstrip() + '\n\n' + s[b:]
 
 
+def replace_once(old: str, new: str, label: str) -> None:
+    global s
+    count = s.count(old)
+    if count != 1:
+        raise SystemExit(f'incident data-integrity {label}: marker count={count}')
+    s = s.replace(old, new, 1)
+
+
 history_v2 = r'''
 fn poc08_history_v2_dir(path: &str) -> String {
     format!("{path}.v2.d")
@@ -80,10 +88,7 @@ fn poc08_load_material_history(path: &str) -> std::collections::HashMap<u32, Vec
             if line_no == 0 { continue; }
             if line.trim().is_empty() { continue; }
             let cols = line.split(',').collect::<Vec<_>>();
-            if cols.len() != 13 || cols[0] != "2" {
-                valid_snapshot = false;
-                break;
-            }
+            if cols.len() != 13 || cols[0] != "2" { valid_snapshot = false; break; }
             let unix_s = match cols[3].parse::<u64>() { Ok(v) => v, Err(_) => { valid_snapshot = false; break; } };
             let item_id = match cols[5].parse::<u32>() { Ok(v) if v > 0 => v, _ => { valid_snapshot = false; break; } };
             let raw_lowest = match cols[6].parse::<u32>() { Ok(v) => v, Err(_) => { valid_snapshot = false; break; } };
@@ -94,15 +99,10 @@ fn poc08_load_material_history(path: &str) -> std::collections::HashMap<u32, Vec
             let confidence = match cols[11].parse::<u8>() { Ok(v) => v, Err(_) => { valid_snapshot = false; break; } };
             let checksum = match u64::from_str_radix(cols[12], 16) { Ok(v) => v, Err(_) => { valid_snapshot = false; break; } };
             let payload = cols[..12].join(",");
-            if poc08_history_fnv1a64(payload.as_bytes()) != checksum {
-                valid_snapshot = false;
-                break;
-            }
+            if poc08_history_fnv1a64(payload.as_bytes()) != checksum { valid_snapshot = false; break; }
             if unix_s > now.saturating_add(60) { valid_snapshot = false; break; }
             if now.saturating_sub(unix_s) > max_age { continue; }
-            if raw_lowest == 0 || reference_price == 0 || safe_price == 0 || listing_count == 0 || unit_count == 0 || confidence < 2 {
-                continue;
-            }
+            if raw_lowest == 0 || reference_price == 0 || safe_price == 0 || listing_count == 0 || unit_count == 0 || confidence < 2 { continue; }
             staged.push((item_id, unix_s, safe_price));
         }
         if !valid_snapshot {
@@ -161,10 +161,8 @@ fn poc08_append_material_history(
 
     let mut file = std::fs::OpenOptions::new().create_new(true).write(true).open(&tmp_path)
         .map_err(|e| format!("POC08 V2 history temp open failed path={tmp_path:?}: {e}"))?;
-    file.write_all(body.as_bytes())
-        .map_err(|e| format!("POC08 V2 history temp write failed path={tmp_path:?}: {e}"))?;
-    file.sync_all()
-        .map_err(|e| format!("POC08 V2 history temp fsync failed path={tmp_path:?}: {e}"))?;
+    file.write_all(body.as_bytes()).map_err(|e| format!("POC08 V2 history temp write failed path={tmp_path:?}: {e}"))?;
+    file.sync_all().map_err(|e| format!("POC08 V2 history temp fsync failed path={tmp_path:?}: {e}"))?;
     drop(file);
     std::fs::rename(&tmp_path, &final_path)
         .map_err(|e| format!("POC08 V2 history atomic rename failed tmp={tmp_path:?} final={final_path:?}: {e}"))?;
@@ -205,9 +203,7 @@ new_safe = r'''        let min_history = poc07_env_u32_default("WOW112_DE_MIN_HI
                 material_id, raw_lowest, history_count, min_history, effective_conf);
         }
 '''
-if s.count(old_safe) != 1:
-    raise SystemExit(f'incident data-integrity safe-price marker mismatch count={s.count(old_safe)}')
-s = s.replace(old_safe, new_safe, 1)
+replace_once(old_safe, new_safe, 'safe-price block')
 
 old_unit = '''                let unit = u64::from(record.buyout) / u64::from(record.count);
                 if unit == 0 { continue; }
@@ -221,15 +217,38 @@ new_unit = '''                let unit = u64::from(record.buyout)
                 let unit = u32::try_from(unit)
                     .map_err(|_| "POC08 material unit price overflow".to_string())?;
 '''
-if s.count(old_unit) != 1:
-    raise SystemExit(f'incident data-integrity unit-normalization marker mismatch count={s.count(old_unit)}')
-s = s.replace(old_unit, new_unit, 1)
+replace_once(old_unit, new_unit, 'unit normalization')
 
-old_override = '            safe_prices.insert(material_id, value);\n'
-new_override = '''            if env::var("WOW112_DE_ALLOW_MANUAL_OVERRIDE").unwrap_or_default() == "YES" {\n                safe_prices.insert(material_id, value);\n            } else {\n                println!("[POC08-DATA-HEALTH] status=FAIL_CLOSED item_id={} reason=MANUAL_OVERRIDE_NOT_ARMED action=DE_BLOCK", material_id);\n            }\n'''
-if s.count(old_override) < 1:
-    raise SystemExit('incident data-integrity manual override marker not found')
-s = s.replace(old_override, new_override, 1)
+old_override = '''        if let Some(value) = overrides.get(&material_id).copied() {
+            raw_prices.insert(material_id, value);
+            safe_prices.insert(material_id, value);
+            confidence.insert(material_id, 3);
+            points.push(Poc08MaterialBookPoint {
+                item_id: material_id, raw_lowest: value, safe_price: value,
+                listing_count: 0, unit_count: 0, history_count: 0,
+                history_median: 0, confidence: 3,
+            });
+            println!("[POC08-C-PRICEBOOK] OVERRIDE item_id={} value={} confidence=HIGH", material_id, value);
+            continue;
+        }
+'''
+new_override = '''        if let Some(value) = overrides.get(&material_id).copied() {
+            if env::var("WOW112_DE_ALLOW_MANUAL_OVERRIDE").unwrap_or_default() == "YES" {
+                raw_prices.insert(material_id, value);
+                safe_prices.insert(material_id, value);
+                confidence.insert(material_id, 3);
+                points.push(Poc08MaterialBookPoint {
+                    item_id: material_id, raw_lowest: value, safe_price: value,
+                    listing_count: 0, unit_count: 0, history_count: 0,
+                    history_median: 0, confidence: 3,
+                });
+                println!("[POC08-C-PRICEBOOK] OVERRIDE item_id={} value={} confidence=HIGH armed=YES", material_id, value);
+                continue;
+            }
+            println!("[POC08-DATA-HEALTH] status=FAIL_CLOSED item_id={} reason=MANUAL_OVERRIDE_IGNORED_NOT_ARMED action=LIVE_QUERY", material_id);
+        }
+'''
+replace_once(old_override, new_override, 'manual override block')
 
 required = [
     'schema_version,snapshot_id,scan_id,unix_s,source_client',
@@ -239,10 +258,11 @@ required = [
     'status=QUARANTINE',
     'snapshot_commit=PASS schema=2',
     'saturating_add(u64::from(record.count).saturating_sub(1))',
+    'MANUAL_OVERRIDE_IGNORED_NOT_ARMED',
 ]
 for marker in required:
     if marker not in s:
         raise SystemExit('incident data-integrity required marker missing: ' + marker)
 
 p.write_text(s, encoding='utf-8')
-print('[POC08-INCIDENT-DATA-INTEGRITY] PASS schema=2 atomic-snapshots epoch-dedupe stale-check shock-quarantine fail-closed stack-ceiling')
+print('[POC08-INCIDENT-DATA-INTEGRITY] PASS schema=2 atomic-snapshots epoch-dedupe stale-check shock-quarantine override-guard stack-ceiling')
