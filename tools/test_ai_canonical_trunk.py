@@ -18,7 +18,8 @@ class CanonicalTrunkContract(unittest.TestCase):
         self.assertIn("refs/heads/main:refs/remotes/origin/main", text)
         self.assertIn("--base origin/main", text)
         self.assertIn("--base refs/remotes/origin/main", text)
-        self.assertIn("git checkout -B __canonical_integrate refs/remotes/origin/main", text)
+        self.assertIn("git checkout -f --detach $env:FEATURE_SHA", text)
+        self.assertIn("git checkout -f -B __canonical_integrate refs/remotes/origin/main", text)
         self.assertIn(
             "git push --atomic origin HEAD:refs/heads/main HEAD:refs/heads/parallel",
             text,
