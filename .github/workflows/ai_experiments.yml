@@ -6,7 +6,6 @@ on:
       - main
       - work
       - parallel
-      - 'feature/**'
     paths:
       - 'runtime/ai_experiments.json'
       - 'runtime/ai_experiment_index.json'
