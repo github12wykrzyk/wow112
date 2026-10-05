@@ -26,11 +26,11 @@ class StartupSnapshotTests(unittest.TestCase):
     def test_fast_path_is_fail_closed(self):
         required = set(self.snapshot["fast_path"]["full_startup_required_for"])
         expected = {
-            "stable promotion or promote/** work",
+            "release or promote/** work",
             "editing any startup source file, snapshot or generator",
             "recovery after unknown or ambiguous write/transport state",
             "snapshot missing, stale, mismatched or unverifiable",
-            "authority or branch ambiguity not resolved by compact state",
+            "authority ambiguity not resolved by compact state",
         }
         self.assertTrue(expected.issubset(required))
         self.assertTrue(self.snapshot["fast_path"]["verification"]["same_head_required"])
