@@ -1,10 +1,14 @@
 include!("world.rs");
 
+const CMSG_GROUP_SET_LEADER_OPCODE: u32 = 0x0078;
+const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
 const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
 const SUMMONING_PORTAL_ENTRY: i32 = 36727;
 const GAMEOBJECT_TYPE_RITUAL: i32 = 18;
 const PORTAL_RETRY_GAP_MS: u64 = 180;
 const PORTAL_DEFAULT_ATTEMPTS: u32 = 3;
+const PARTY_LEADER_RETRY_GAP_MS: u64 = 5000;
+const DEFAULT_SUMMONER_NAMES: &str = "teletanaris,bolthyjal,feltaxi";
 
 #[derive(Debug, Clone)]
 struct PortalAttemptState {
@@ -14,12 +18,142 @@ struct PortalAttemptState {
     last_attempt: Option<Instant>,
 }
 
+#[derive(Debug, Clone)]
+struct PartyMember {
+    name: String,
+    guid: u64,
+}
+
 fn portal_attempt_limit() -> u32 {
     env::var("WOW112_PORTAL_ATTEMPTS")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(PORTAL_DEFAULT_ATTEMPTS)
         .clamp(1, 8)
+}
+
+fn configured_summoner_names() -> Vec<String> {
+    let raw = env::var("WOW112_SUMMONER_NAMES")
+        .unwrap_or_else(|_| DEFAULT_SUMMONER_NAMES.to_string());
+    let mut names = Vec::new();
+    for value in raw.split(|ch: char| ch == ',' || ch == ';' || ch.is_whitespace()) {
+        let name = value.trim().to_ascii_lowercase();
+        if !name.is_empty() && !names.iter().any(|item| item == &name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn read_party_u8(payload: &[u8], offset: &mut usize) -> Result<u8, String> {
+    if *offset + 1 > payload.len() {
+        return Err("SMSG_GROUP_LIST truncated u8".to_string());
+    }
+    let value = payload[*offset];
+    *offset += 1;
+    Ok(value)
+}
+
+fn read_party_u32(payload: &[u8], offset: &mut usize) -> Result<u32, String> {
+    if *offset + 4 > payload.len() {
+        return Err("SMSG_GROUP_LIST truncated u32".to_string());
+    }
+    let value = u32::from_le_bytes(payload[*offset..*offset + 4].try_into().unwrap());
+    *offset += 4;
+    Ok(value)
+}
+
+fn read_party_u64(payload: &[u8], offset: &mut usize) -> Result<u64, String> {
+    if *offset + 8 > payload.len() {
+        return Err("SMSG_GROUP_LIST truncated u64".to_string());
+    }
+    let value = u64::from_le_bytes(payload[*offset..*offset + 8].try_into().unwrap());
+    *offset += 8;
+    Ok(value)
+}
+
+fn read_party_cstring(payload: &[u8], offset: &mut usize) -> Result<String, String> {
+    if *offset >= payload.len() {
+        return Err("SMSG_GROUP_LIST truncated string".to_string());
+    }
+    let tail = &payload[*offset..];
+    let end = tail
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or_else(|| "SMSG_GROUP_LIST unterminated string".to_string())?;
+    let value = String::from_utf8_lossy(&tail[..end]).to_string();
+    *offset += end + 1;
+    Ok(value)
+}
+
+fn service_party_leader_handoff(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    payload: &[u8],
+    summoner_names: &[String],
+    last_transfer: &mut Option<(u64, Instant)>,
+) -> Result<(), String> {
+    let mut offset = 0usize;
+    let _group_type = read_party_u8(payload, &mut offset)?;
+    let _own_flags = read_party_u8(payload, &mut offset)?;
+    let member_count = read_party_u32(payload, &mut offset)? as usize;
+    if member_count > 39 {
+        return Err(format!("SMSG_GROUP_LIST unreasonable member_count={member_count}"));
+    }
+
+    let mut members = Vec::with_capacity(member_count);
+    for _ in 0..member_count {
+        let name = read_party_cstring(payload, &mut offset)?;
+        let guid = read_party_u64(payload, &mut offset)?;
+        let _status = read_party_u8(payload, &mut offset)?;
+        let _flags = read_party_u8(payload, &mut offset)?;
+        members.push(PartyMember { name, guid });
+    }
+
+    let leader_guid = read_party_u64(payload, &mut offset)?;
+    if leader_guid == 0 {
+        return Ok(());
+    }
+
+    // SMSG_GROUP_LIST excludes this client from the member list. If the leader GUID
+    // belongs to one of the listed members, somebody else already owns leadership.
+    if members.iter().any(|member| member.guid == leader_guid) {
+        return Ok(());
+    }
+
+    let mut target = None;
+    for wanted in summoner_names {
+        if let Some(member) = members
+            .iter()
+            .find(|member| member.name.eq_ignore_ascii_case(wanted))
+        {
+            target = Some(member);
+            break;
+        }
+    }
+
+    let Some(target) = target else {
+        return Ok(());
+    };
+
+    if let Some((guid, sent_at)) = *last_transfer {
+        if guid == target.guid && sent_at.elapsed() < Duration::from_millis(PARTY_LEADER_RETRY_GAP_MS) {
+            return Ok(());
+        }
+    }
+
+    println!(
+        "[PARTY] I am leader -> transfer to {} guid=0x{:016X}",
+        target.name, target.guid
+    );
+    write_encrypted_raw(
+        stream,
+        crypto.encrypter(),
+        CMSG_GROUP_SET_LEADER_OPCODE,
+        &target.guid.to_le_bytes(),
+    )?;
+    *last_transfer = Some((target.guid, Instant::now()));
+    Ok(())
 }
 
 fn portal_mask_match(mask: &UpdateMask) -> Option<(i32, i32)> {
@@ -159,12 +293,14 @@ fn portal_click_loop(
         .map_err(|e| format!("set portal read timeout failed: {e}"))?;
 
     let max_attempts = portal_attempt_limit();
+    let summoner_names = configured_summoner_names();
     let deadline = if soak_seconds == 0 {
         None
     } else {
         Some(Instant::now() + Duration::from_secs(soak_seconds))
     };
     let mut portals = std::collections::HashMap::<u64, PortalAttemptState>::new();
+    let mut last_leader_transfer: Option<(u64, Instant)> = None;
     let mut last_ping = Instant::now();
     let mut ping_sequence = 1u32;
     let mut awaiting_pong: Option<(u32, Instant)> = None;
@@ -176,6 +312,10 @@ fn portal_click_loop(
         max_attempts,
         PORTAL_RETRY_GAP_MS,
         if soak_seconds == 0 { "infinite".to_string() } else { format!("{soak_seconds}s") }
+    );
+    println!(
+        "[PARTY] auto leader handoff enabled summoners={}",
+        summoner_names.join(",")
     );
 
     loop {
@@ -215,6 +355,17 @@ fn portal_click_loop(
                         }
                     }
                     continue;
+                }
+                if opcode == SMSG_GROUP_LIST_OPCODE {
+                    if let Err(error) = service_party_leader_handoff(
+                        stream,
+                        crypto,
+                        &payload,
+                        &summoner_names,
+                        &mut last_leader_transfer,
+                    ) {
+                        println!("[PARTY-DIAG] roster parse/handoff skipped: {error}");
+                    }
                 }
                 inspect_portal_update_packet(opcode, &payload, &mut portals);
                 service_portal_clicks(stream, crypto, &mut portals, max_attempts)?;
