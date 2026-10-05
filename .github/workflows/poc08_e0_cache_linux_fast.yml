@@ -2,7 +2,7 @@ name: POC08-E0 Cache Resolve Linux Fast
 
 on:
   push:
-    branches: [feature/windows-headless-ah-fast]
+    branches: [feature/poc08-e0-deid-coverage]
     paths:
       - '.github/workflows/poc08_e0_cache_linux_fast.yml'
   workflow_dispatch:
