@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele04-one-shot-invite-v1",
+  "goal": "Add an explicitly armed one-shot CMSG_GROUP_INVITE test on top of TELE-03 party observation, with process-lifetime mutation dedupe and zero automatic retry after any attempted send.",
+  "branch": "feature/tele04-one-shot-invite-v1",
+  "base_parallel_sha": "77c72e1702741c64613b8caa77954ccc8f4c1bf5",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": ["HeadlessTele"],
+  "dependencies": ["tele03-party-observer-v1"],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Stacked development branch only; TELE-03 is not canonical until runtime party evidence arrives. CMSG_GROUP_INVITE=0x006E with CString target. WOW112_TELE_TEST_INVITE arms exactly one invite attempt. Atomic process-lifetime guard is set before socket write, so any uncertain/failed write still forbids retry across reconnect. No auto accept, kick, leader change, cast, or portal mutation."
+}
