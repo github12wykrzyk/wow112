@@ -1,0 +1,72 @@
+name: Cleanup merged feature branches
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cleanup-merged-feature-branches
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout canonical trunk
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Delete only feature refs already contained in main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            '+refs/heads/feature/*:refs/remotes/origin/feature/*' \
+            --prune
+
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          echo "canonical main: $main_sha"
+
+          delete_specs=()
+          lease_args=()
+          merged=0
+          preserved=0
+
+          while read -r ref sha; do
+            [ -n "$ref" ] || continue
+            branch="${ref#refs/remotes/origin/}"
+
+            if git merge-base --is-ancestor "$sha" "$main_sha"; then
+              echo "DELETE merged: $branch @ $sha"
+              delete_specs+=(":refs/heads/$branch")
+              lease_args+=("--force-with-lease=refs/heads/$branch:$sha")
+              merged=$((merged + 1))
+            else
+              echo "KEEP unmerged: $branch @ $sha"
+              preserved=$((preserved + 1))
+            fi
+          done < <(git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin/feature/)
+
+          {
+            echo "### Feature branch cleanup"
+            echo "- canonical main: \`$main_sha\`"
+            echo "- merged refs eligible for deletion: **$merged**"
+            echo "- unmerged refs preserved: **$preserved**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$merged" -eq 0 ]; then
+            echo "No merged feature branches to delete."
+            exit 0
+          fi
+
+          # One atomic-ish remote update. Per-ref leases ensure a branch that moved
+          # after the fetch is not deleted accidentally.
+          git push "${lease_args[@]}" origin "${delete_specs[@]}"
