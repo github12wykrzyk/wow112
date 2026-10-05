@@ -9,22 +9,16 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Get-OctoDisenchantId([uint32]$ItemId) {
-    $url = "https://octowow.st/db/?item=$ItemId"
+function Get-DatabaseDisenchantId([uint32]$ItemId) {
+    $url = "https://db.capycraft.org/item/$ItemId"
     $lastError = $null
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
         try {
-            $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec $TimeoutSec -Headers @{"User-Agent"="Mozilla/5.0 WoW112-POC07-DE-V5"}
-            $html = [string]$response.Content
-            $plain = [regex]::Replace($html, '<[^>]+>', ' ')
+            $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec $TimeoutSec -Headers @{"User-Agent"="WoW112-POC07-DE-V5/1.0"}
+            $plain = [regex]::Replace([string]$response.Content, '<[^>]+>', ' ')
             $plain = [System.Net.WebUtility]::HtmlDecode($plain)
             $match = [regex]::Match($plain, 'Disenchant ID:\s*(\d+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if (-not $match.Success) {
-                $snippet = $html
-                if ($snippet.Length -gt 1200) { $snippet = $snippet.Substring(0, 1200) }
-                $snippet = $snippet -replace '[\r\n]+',' '
-                throw "Disenchant ID field not found RAW_PREFIX=$snippet"
-            }
+            if (-not $match.Success) { throw "Disenchant ID field not found" }
             return [pscustomobject]@{ Ok=$true; DisenchantId=[uint32]$match.Groups[1].Value; Url=$url; Error="" }
         }
         catch {
@@ -59,7 +53,7 @@ $resolvedNow = 0
 $lookupFailed = 0
 foreach ($itemId in $itemIds) {
     if ($cache.ContainsKey($itemId)) { continue }
-    $result = Get-OctoDisenchantId $itemId
+    $result = Get-DatabaseDisenchantId $itemId
     if ($result.Ok) {
         $cache[$itemId] = [uint32]$result.DisenchantId
         $resolvedNow++
@@ -81,24 +75,42 @@ $blockedZero = 0
 $blockedUnknown = 0
 foreach ($row in $rows) {
     $id = [uint32]$row.item_id
-    if (-not $cache.ContainsKey($id)) { $blockedUnknown++; continue }
+    if (-not $cache.ContainsKey($id)) {
+        $blockedUnknown++
+        continue
+    }
     $de = [uint32]$cache[$id]
-    if ($de -eq 0) { $blockedZero++; continue }
+    if ($de -eq 0) {
+        $blockedZero++
+        continue
+    }
     $safe.Add([pscustomobject]@{
-        rank=$row.rank; auction_id=$row.auction_id; item_id=$row.item_id; count=$row.count; buyout=$row.buyout;
-        unit_value=$row.unit_value; gross_value=$row.gross_value; expected_profit=$row.expected_profit; page=$row.page;
-        owner_guid=$row.owner_guid; disenchant_id=$de
+        rank = $row.rank
+        auction_id = $row.auction_id
+        item_id = $row.item_id
+        count = $row.count
+        buyout = $row.buyout
+        unit_value = $row.unit_value
+        gross_value = $row.gross_value
+        expected_profit = $row.expected_profit
+        page = $row.page
+        owner_guid = $row.owner_guid
+        disenchant_id = $de
     })
 }
 
 $ordered = @($safe | Sort-Object @{Expression={[int64]$_.expected_profit};Descending=$true}, @{Expression={[uint64]$_.buyout};Ascending=$true}, @{Expression={[uint64]$_.auction_id};Ascending=$true})
 $ordered | Export-Csv -LiteralPath $SafeCsv -NoTypeInformation -Encoding UTF8
+
 Write-Host ""
 Write-Host "[V5-GATE] PASS raw_candidates=$($rows.Count) unique_items=$($itemIds.Count) cache_entries=$($cache.Count) resolved_now=$resolvedNow blocked_de0=$blockedZero blocked_unknown=$blockedUnknown lookup_failed=$lookupFailed safe_candidates=$($ordered.Count)"
-Write-Host "[V5-GATE] source=OctoWow_DB exact_Disenchant_ID positive_only=YES unknown_fail_closed=YES"
+Write-Host "[V5-GATE] source=CapyDB_TurtleMirror exact_Disenchant_ID positive_only=YES unknown_fail_closed=YES"
 Write-Host "[V5-GATE] safe_csv=$SafeCsv cache_csv=$CacheCsv"
 for ($i = 0; $i -lt [Math]::Min(20, $ordered.Count); $i++) {
     $row = $ordered[$i]
     Write-Host "[V5-SAFE-CANDIDATE] rank=$i auction_id=$($row.auction_id) item_id=$($row.item_id) disenchant_id=$($row.disenchant_id) buyout=$($row.buyout) expected_profit=$($row.expected_profit)"
 }
-if ($lookupFailed -gt 0) { Write-Host "[V5-GATE] NOTE lookup failures were excluded; rerun later to fill cache." }
+
+if ($lookupFailed -gt 0) {
+    Write-Host "[V5-GATE] NOTE lookup failures were excluded; rerun later to fill cache."
+}
