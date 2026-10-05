@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "real-smoke-economy-livebuy",
+  "goal": "Realistic non-functional smoke shaped like an Aux ECONOMY direct-live/live-buy/vendor-DE hotfix under workflow-vNext and active main ruleset.",
+  "branch": "feature/real-smoke-economy-livebuy",
+  "base_parallel_sha": "0e05a7c63d6b694b844cd077764bc5e4d2eee5bd",
+  "status": "preflight",
+  "auto_integrate": true,
+  "modules": ["AuxEconomyShadow"],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": ["economy"],
+  "lease": null,
+  "notes": "Smoke only. Non-loaded Lua file. Expected: economy targeted gate, exact feature-SHA ECONOMY gate, canonical queue integration under active ruleset, and ECONOMY-only post-merge delivery with no STANDARD."
+}
