@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "real-smoke-mixed-summon-economy",
+  "goal": "Realistic non-functional mixed SummonScout plus ECONOMY smoke to verify fail-closed delivery routing and optimistic CAS integration.",
+  "branch": "feature/real-smoke-mixed-summon-economy",
+  "base_parallel_sha": "3b902f309261c69b000ee42045b143e790e573cc",
+  "status": "preflight",
+  "auto_integrate": false,
+  "modules": ["SummonScout", "AuxEconomyShadow"],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": ["economy"],
+  "lease": null,
+  "notes": "Smoke only. Two non-loaded Lua files. Expected: targeted Summon+ECONOMY preflight, exact feature-SHA ECONOMY gate, and fail-closed STANDARD post-merge because generic SummonScout is not profile-contained."
+}
