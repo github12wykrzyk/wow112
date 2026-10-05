@@ -1,0 +1,126 @@
+name: POC07 DE V5 Windows Fast Build
+
+on:
+  push:
+    branches:
+      - feature/windows-headless-ah-fast
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/**'
+      - 'probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py'
+      - 'probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V5_WINDOWS.ps1'
+      - 'probes/Wow112HeadlessAndroid/tools/START_POC07_DE_V5_WINDOWS.bat'
+      - 'probes/Wow112HeadlessAndroid/Cargo.toml'
+      - '.github/workflows/build_windows_poc07_de_v5_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate DE V4 then V5 source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py `
+            probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs `
+            probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py `
+            probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs `
+            probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs -Pattern 'login_poc07_delive_v5' -Quiet | Out-Null
+          if (-not $?) { throw 'V5 source gate missing' }
+
+      - name: Select V5 entrypoint
+        shell: pwsh
+        run: |
+          $main = 'probes/Wow112HeadlessAndroid/src/main.rs'
+          $text = Get-Content -LiteralPath $main -Raw
+          if (-not $text.Contains('mod world_poc07_vendorlive;')) { throw 'vendorlive module marker missing' }
+          if (-not $text.Contains('world_poc07_vendorlive::login_poc07_vendorlive')) { throw 'vendorlive entrypoint marker missing' }
+          $text = $text.Replace('mod world_poc07_vendorlive;', 'mod world_poc07_delive_v5;')
+          $text = $text.Replace('world_poc07_vendorlive::login_poc07_vendorlive', 'world_poc07_delive_v5::login_poc07_delive_v5')
+          Set-Content -LiteralPath $main -Value $text -Encoding utf8
+
+      - name: Exact DisenchantID gate smoke
+        shell: pwsh
+        run: |
+          @'
+          rank,auction_id,item_id,count,buyout,unit_value,gross_value,expected_profit,page,owner_guid
+          0,1,20406,1,2015,19372,19372,17357,40032,1
+          1,2,41316,1,100,1090,1090,990,40000,2
+          '@ | Set-Content -LiteralPath "$env:RUNNER_TEMP/candidates.csv" -Encoding utf8
+          & ./probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1 `
+            -CandidateCsv "$env:RUNNER_TEMP/candidates.csv" `
+            -CacheCsv "$env:RUNNER_TEMP/cache.csv" `
+            -SafeCsv "$env:RUNNER_TEMP/safe.csv" `
+            -TimeoutSec 20 `
+            -Retries 3
+          $cache = @(Import-Csv "$env:RUNNER_TEMP/cache.csv")
+          $bad = $cache | Where-Object { $_.item_id -eq '20406' }
+          $good = $cache | Where-Object { $_.item_id -eq '41316' }
+          if (-not $bad -or [uint32]$bad.disenchant_id -ne 0) { throw 'Expected 20406 DisenchantID=0' }
+          if (-not $good -or [uint32]$good.disenchant_id -le 0) { throw 'Expected 41316 DisenchantID>0' }
+          $safe = @(Import-Csv "$env:RUNNER_TEMP/safe.csv")
+          if ($safe.item_id -contains '20406') { throw '20406 leaked through gate' }
+          if (-not ($safe.item_id -contains '41316')) { throw '41316 missing from safe output' }
+          Write-Host '[WINDOWS-V5-GATE-SMOKE] PASS'
+
+      - name: Build native Windows x64
+        shell: pwsh
+        run: |
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage Windows package
+        shell: pwsh
+        run: |
+          $src = 'probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe'
+          if (-not (Test-Path -LiteralPath $src)) { throw "Missing exe: $src" }
+          $dist = 'dist/poc07-de-v5-windows'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item $src "$dist/wow112-headless-windows.exe"
+          Copy-Item 'probes/Wow112HeadlessAndroid/tools/RUN_POC07_DE_V5_WINDOWS.ps1' $dist
+          Copy-Item 'probes/Wow112HeadlessAndroid/tools/START_POC07_DE_V5_WINDOWS.bat' $dist
+          Copy-Item 'probes/Wow112HeadlessAndroid/tools/RESOLVE_OCTOWOW_DE_GATE.ps1' $dist
+          Copy-Item 'probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs' $dist
+          New-Item -ItemType Directory -Force -Path "$dist/runtime" | Out-Null
+          'item_id,disenchant_id' | Set-Content -LiteralPath "$dist/runtime/DE_DISENCHANT_CACHE.csv" -Encoding utf8
+          $sha = (Get-FileHash "$dist/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          POC=07-DE-LIVE-V5-WINDOWS-NATIVE
+          REPOSITORY=$env:GITHUB_REPOSITORY
+          BRANCH=$env:GITHUB_REF_NAME
+          EXACT_SHA=$env:GITHUB_SHA
+          TARGET=x86_64-pc-windows-msvc
+          BINARY_SHA256=$sha
+          MUTATION=DISABLED
+          ADB=NOT_USED
+          ANDROID=NOT_REQUIRED
+          DE_MODEL=V4_STRICT_ITEMLEVEL
+          DISENCHANT_GATE=CAPYDB_EXACT_DISENCHANT_ID
+          GATE_FAIL_CLOSED=YES
+          "@ | Set-Content -LiteralPath "$dist/BUILD_INFO.txt" -Encoding utf8
+          Get-ChildItem $dist -File | ForEach-Object {
+            "{0}  {1}" -f ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()), $_.Name
+          } | Set-Content -LiteralPath "$dist/SHA256SUMS.txt" -Encoding ascii
+          Get-Content "$dist/BUILD_INFO.txt"
+
+      - name: Upload Windows V5 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-DE-V5-${{ github.sha }}
+          path: dist/poc07-de-v5-windows
+          if-no-files-found: error
+          retention-days: 7
