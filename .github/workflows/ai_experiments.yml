@@ -1,38 +1,11 @@
 name: Verify AI experiment registry
 
 on:
-  push:
-    branches:
-      - main
-      - work
-      - parallel
-    paths:
-      - 'runtime/ai_experiments.json'
-      - 'runtime/ai_experiment_index.json'
-      - 'runtime/parallel_thread_policy.json'
-      - 'runtime/parallel_tasks/**'
-      - 'tools/ai_experiments.py'
-      - 'tools/test_ai_experiments.py'
-      - 'tools/ai_task_context.py'
-      - 'tools/test_ai_task_context.py'
-      - 'tools/parallel_task_state.py'
-      - 'tools/test_ai_parallel_task_state.py'
-      - '.github/workflows/ai_experiments.yml'
-      - 'AGENTS.md'
-      - 'AI_START_HERE.md'
-      - 'AI_INDEX.json'
-      - 'CURRENT.json'
-      - 'runtime/current.json'
-      - 'runtime/ai_startup_snapshot.json'
-      - 'tools/ai_startup_snapshot.py'
-      - 'tools/test_ai_startup_snapshot.py'
-      - 'PROJECT_INSTRUCTIONS.md'
-      - 'docs/AI_EXPERIMENTS.md'
+  schedule:
+    - cron: '47 3 * * *'
   pull_request:
     branches:
       - main
-      - work
-      - parallel
     paths:
       - 'runtime/ai_experiments.json'
       - 'runtime/ai_experiment_index.json'
@@ -72,7 +45,7 @@ jobs:
         uses: actions/checkout@v5
       - name: Validate experiment registry
         run: python3 tools/ai_experiments.py validate
-      - name: Validate concurrency-safe Parallel task records
+      - name: Validate concurrency-safe task records
         run: python3 tools/parallel_task_state.py validate
       - name: Verify compact experiment routing index
         run: python3 tools/ai_experiments.py index --check

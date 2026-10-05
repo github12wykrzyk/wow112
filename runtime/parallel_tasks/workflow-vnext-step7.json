@@ -4,8 +4,8 @@
   "goal": "Make main the canonical integration trunk, keep parallel as an exact delivery alias, and move repository-wide audits out of the micro-iteration hot path into scheduled/manual/release workflows.",
   "branch": "feature/workflow-vnext-step7",
   "base_parallel_sha": "13f1ef9da43958cfc271d97e12bd6a234cf398d4",
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready",
+  "auto_integrate": true,
   "modules": [
     "WorkflowRouting"
   ],
@@ -18,5 +18,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Step 7 migration. This is workflow/control-plane only and must take the full STANDARD route when integrated."
+  "notes": "Step 7 migration. Full STANDARD is required because this changes integration and audit control surfaces. After integration, main is authoritative and parallel is updated atomically as the compatibility delivery alias."
 }
