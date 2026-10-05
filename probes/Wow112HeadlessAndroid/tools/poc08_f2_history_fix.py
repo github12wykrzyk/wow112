@@ -24,7 +24,7 @@ new='''    for line in text.lines().skip(1) {
 if s.count(old)!=1:
     raise SystemExit('history-fix marker mismatch')
 s=s.replace(old,new,1)
-for marker in ['cols.len() < 7','safe_price = cols[5]','matches!(conf, "MEDIUM" | "HIGH")','values.push(safe_price)']:
+for marker in ['cols.len() < 7','cols[5].trim().parse::<u32>()','matches!(conf, "MEDIUM" | "HIGH")','values.push(safe_price)']:
     if marker not in s:
         raise SystemExit('history-fix missing marker: '+marker)
 p.write_text(s,encoding='utf-8')
