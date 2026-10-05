@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele03-party-observer-v1",
+  "goal": "Extend canonical TELE with RX-only observation of Vanilla party/group server packets so roster, leader and party command state can be proven before enabling invite mutations.",
+  "branch": "feature/tele03-party-observer-v1",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "status": "coding",
+  "auto_integrate": false,
+  "modules": ["HeadlessTele"],
+  "dependencies": ["tele02-whisper-name-tx-v2"],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "TELE-03 is RX-only for group state. Observe SMSG_GROUP_INVITE/GROUP_CANCEL/GROUP_DECLINE/GROUP_UNINVITE/GROUP_SET_LEADER/GROUP_DESTROYED/GROUP_LIST/PARTY_COMMAND_RESULT/UMSG_UPDATE_GROUP_MEMBERS. No CMSG_GROUP_* mutations are permitted in this stage."
+}
