@@ -25,24 +25,24 @@ jobs:
       queue_reason: ${{ steps.queue.outputs.reason }}
       delivery_profiles: ${{ steps.queue.outputs.delivery_profiles }}
     steps:
-      - name: Checkout exact feature revision
+      - name: Checkout exact feature revision (shallow fast path)
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 8
 
-      - name: Fetch current parallel integration base
+      - name: Fetch shallow current parallel integration base
         shell: pwsh
         run: |
-          git fetch origin parallel:refs/remotes/origin/parallel
+          git fetch --depth=8 origin +refs/heads/parallel:refs/remotes/origin/parallel
           if ($LASTEXITCODE -ne 0) { throw "cannot fetch parallel integration base" }
 
-      - name: Run branch-local fast gates and compile changed native modules
+      - name: Run routed fast gates and compile changed native modules
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # parallel_feature_preflight enforces this feature's own task record and
-          # delivery-profile declarations. It intentionally does not enumerate
-          # or reconcile every remote feature branch.
+          # The preflight starts shallow. If an older feature needs a deeper
+          # fork point, parallel_feature_preflight deepens only the feature/base
+          # refs and falls back to full history only when required for correctness.
           python tools/parallel_feature_preflight.py --base origin/parallel --branch "${{ github.head_ref || github.ref_name }}"
           if ($LASTEXITCODE -ne 0) { throw "parallel feature preflight failed" }
 
@@ -106,7 +106,7 @@ jobs:
       autologinbridge_run_id: ${{ steps.integrate.outputs.autologinbridge_run_id }}
       delivery_run_ids: ${{ steps.integrate.outputs.delivery_run_ids }}
     steps:
-      - name: Checkout exact preflighted feature revision
+      - name: Checkout exact preflighted feature revision (full merge history)
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -138,8 +138,8 @@ jobs:
             $base = (git rev-parse refs/remotes/origin/parallel).Trim()
             Write-Host "Current parallel base: $base"
 
-            # Re-run the same branch-local task/profile/build checks against the
-            # live integration base. No global feature-ref scan or lease election.
+            # Re-run the same branch-local routed checks against the live
+            # integration base. Integration keeps full history for merge safety.
             python tools/parallel_feature_preflight.py --base refs/remotes/origin/parallel --branch "$env:FEATURE_BRANCH"
             if ($LASTEXITCODE -ne 0) {
               throw "feature no longer passes preflight against current parallel $base"
