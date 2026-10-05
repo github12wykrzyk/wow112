@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "smoke-vnext-queue",
+  "goal": "Non-functional task-record-only smoke for canonical integration queue and no-binary delivery routing.",
+  "branch": "feature/smoke-vnext-queue",
+  "base_parallel_sha": "bfc712a09cecd065fd2c432ecd9191cd87752b49",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AI-workflow"
+  ],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Smoke only. Expected route: task-record-only preflight, canonical main+parallel atomic integration, no STANDARD or profile build.",
+  "integrated_feature_sha": "0e0ff9d3f9a4426cd428f9ced2cfa00e3a4e8e0a"
+}
