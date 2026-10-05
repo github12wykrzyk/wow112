@@ -1,0 +1,65 @@
+name: POC07 VendorLive FullSweep Turbo Windows
+
+on:
+  push:
+    branches: [feature/windows-headless-ah-fast]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py'
+      - '.github/workflows/build_windows_poc07_vendorlive_fullsweep_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate full-sweep turbo vendor source
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $a=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs -Pattern 'AH SCAN PASS pages=' -Quiet
+          $b=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs -Pattern 'POC07-VENDOR-TURBO' -Quiet
+          $c=Select-String -Path probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs -Pattern 'login_poc07_vendorlive_fullsweep' -Quiet
+          if (-not ($a -and $b -and $c)) { throw 'full-sweep turbo source markers missing' }
+          Write-Host '[VENDOR-FULL] GENERATOR PASS'
+
+      - name: Select full-sweep entrypoint
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_fullsweep;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep')
+          Set-Content $p $t -Encoding utf8
+          if ((Get-Content $p -Raw) -notmatch 'world_poc07_vendorlive_fullsweep::login_poc07_vendorlive_fullsweep') { throw 'full-sweep entrypoint not selected' }
+          Write-Host '[VENDOR-FULL] ENTRYPOINT PASS'
+
+      - name: Build native Windows
+        shell: pwsh
+        run: cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $d='dist/vendor-fullsweep'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-headless-windows.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs $d
+          $h=(Get-FileHash "$d/wow112-headless-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "POC=POC07-VENDORLIVE-FULLSWEEP-TURBO`nEXACT_SHA=$env:GITHUB_SHA`nBINARY_SHA256=$h`nAH_SCAN_PAGES_0=FULL_SWEEP_UNTIL_SHORT_PAGE`nAH_MAX_PAGES=2048`nVENDOR_ITEM_QUERY_WINDOW_DEFAULT=64`nVALUATION=LIVE_SERVER_ITEM_QUERY`nHARD_MAX_PURCHASES=1`nNO_AUTO_RETRY_AFTER_SEND=YES" | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+          'Runtime intent for first live test: vendor-only, min profit 1 copper, max buyout 1 gold, full AH sweep, max one purchase.' | Set-Content "$d/00_START_HERE.txt" -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-POC07-VENDORLIVE-FULLSWEEP-TURBO-${{ github.sha }}
+          path: dist/vendor-fullsweep
+          if-no-files-found: error
+          retention-days: 7
