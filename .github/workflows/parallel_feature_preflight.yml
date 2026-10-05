@@ -123,7 +123,7 @@ jobs:
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Write-Host "Integration attempt $attempt/$maxAttempts for $env:TASK_ID @ $env:FEATURE_SHA"
 
-            git checkout --detach $env:FEATURE_SHA
+            git checkout -f --detach $env:FEATURE_SHA
             if ($LASTEXITCODE -ne 0) { throw "cannot restore exact feature SHA" }
 
             git fetch origin +refs/heads/main:refs/remotes/origin/main +refs/heads/parallel:refs/remotes/origin/parallel
@@ -152,7 +152,7 @@ jobs:
             }
             Write-Host "Post-integration delivery route: require_standard=$($deliveryGate.require_standard) fast_path=$($deliveryGate.fast_path) reason=$($deliveryGate.reason) profiles_used=$($deliveryGate.profiles_used -join ',')"
 
-            git checkout -B __canonical_integrate refs/remotes/origin/main
+            git checkout -f -B __canonical_integrate refs/remotes/origin/main
             if ($LASTEXITCODE -ne 0) { throw "cannot create canonical integration worktree" }
 
             git merge --no-ff $env:FEATURE_SHA -m "merge(queue): $env:TASK_ID"
