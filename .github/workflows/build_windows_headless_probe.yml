@@ -1,0 +1,100 @@
+name: Build Windows WoW112 headless portal
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - parallel
+      - feature/native-windows-portal-clicker-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_windows_headless_probe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-wow112-headless-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Host compile check
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Build native Windows x86 executable
+        shell: pwsh
+        run: cargo build --release --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Verify and stage Windows portal bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = 'probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
+          if (-not (Test-Path $src)) { throw "Native worker not found: $src" }
+          $out = 'dist/windows-headless-portal'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $dst = Join-Path $out 'wow112-headless-windows.exe'
+          Copy-Item $src $dst -Force
+
+          @'
+          import hashlib, struct
+          from pathlib import Path
+          p = Path(r'dist/windows-headless-portal/wow112-headless-windows.exe')
+          data = p.read_bytes()
+          if data[:2] != b'MZ':
+              raise SystemExit('native worker is not PE/MZ')
+          pe = struct.unpack_from('<I', data, 0x3C)[0]
+          if data[pe:pe+4] != b'PE\0\0':
+              raise SystemExit('native worker missing PE signature')
+          machine = struct.unpack_from('<H', data, pe + 4)[0]
+          if machine != 0x014C:
+              raise SystemExit(f'expected x86 PE machine 0x014C, got 0x{machine:04X}')
+          print(f'PE32 x86 verified, bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
+          '@ | python -
+
+          $binSha = (Get-FileHash -Algorithm SHA256 $dst).Hash.ToLowerInvariant()
+          @"
+          POC=WINDOWS-PORTAL-01
+          REPOSITORY=${{ github.repository }}
+          BRANCH=${{ github.ref_name }}
+          EXACT_SHA=${{ github.sha }}
+          WORKFLOW_RUN_ID=${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT=${{ github.run_attempt }}
+          TARGET=i686-pc-windows-msvc
+          BINARY=wow112-headless-windows.exe
+          BINARY_SHA256=$binSha
+          PORTAL_BACKEND=windows-native-v1
+          "@ | Set-Content -Path (Join-Path $out 'BUILD_INFO.txt') -Encoding ascii
+
+          Push-Location $out
+          try {
+            $lines = @()
+            foreach ($name in @('wow112-headless-windows.exe','BUILD_INFO.txt')) {
+              $sha = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()
+              $lines += "$sha  $name"
+            }
+            $lines | Set-Content -Path 'SHA256SUMS.txt' -Encoding ascii
+          } finally { Pop-Location }
+
+      - name: Upload Windows portal bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Windows-Headless-Portal-${{ github.sha }}
+          path: dist/windows-headless-portal
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
