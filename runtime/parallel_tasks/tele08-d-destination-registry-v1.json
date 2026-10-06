@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele08-d-destination-registry-v1",
+  "goal": "Build the canonical TELE08 destination registry, deterministic alias resolution, execution-team metadata, fail-closed availability and shard-threshold policy, atomic config reload boundary, and alternatives/status APIs without mutating WoW runtime behavior.",
+  "branch": "feature/tele08-d-destination-registry-v1",
+  "base_parallel_sha": "04e8337fec7ba0d76c8267e03c1324f7039f2487",
+  "status": "preflight",
+  "auto_integrate": false,
+  "modules": ["HeadlessTele"],
+  "dependencies": [],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Track D only. No WoW login, whispers, queue execution, ritual/click execution, inventory scraping, shard auto-detection, or changes to TELE06/TELE07 runtime cores. Integration consumers: Track B aliases/DestinationId, Track C DestinationId/resource_key, Track E availability/alternatives."
+}
