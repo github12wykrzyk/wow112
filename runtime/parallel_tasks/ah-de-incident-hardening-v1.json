@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "ah-de-incident-hardening-v1",
+  "goal": "Fail-close AuxVmangos DE live buying against sudden material-price shocks and correlated burst exposure after the 2026-10-05 Nether Essence incident, while leaving the proven Vendor BUY path unchanged.",
+  "branch": "feature/avm-de-incident-hardening",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "auction-house-auto-purchase",
+    "aux-de-economics"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "Incident evidence: AuxVmangos purchaseHistory recorded 50 confirmed buys in 60 seconds during a Nether Essence price shock. This task adds a post-core DE-only safety controller: session-local explicit arm, fail-closed history/shock quarantine, independent external depth observations excluding own auctions, 3 confirmations spaced 15 minutes before promoting a shocked upward anchor, candidate-explosion protection, 10-buy/15g session caps and 3 buys per disenchantId. Core warm/exact material prices may block but cannot promote an upward anchor because their book does not retain owner identity. Guard v2 additionally requires at least 3 AUX history data points for history-backed anchors and rechecks after each AUX callback to close the pre/post callback race. Vendor BUY thresholds and execution code are not modified. Exact feature SHA df4cd387bdddb570bb19d2f1d18545c4356930cf passed feature preflight, ECONOMY profile gates, ECONOMY build/package and direct artifact-content verification before integration opt-in.",
+  "integrated_feature_sha": "bcea5e2307d3bba6a7a17bc6db0c66573470e11d"
+}

@@ -9,6 +9,8 @@ AuxVmangos_VendorData.lua
 AuxVmangos_DisenchantData.lua
 AuxVmangos.lua
 AuxVmangos_DEProfitFloor.lua
+AuxVmangos_DEIncidentGuard.lua
+AuxVmangos_DEIncidentGuardV2.lua
 AuxVmangos_BuyBlacklist.lua
 AuxVmangos_AuxPurchases.lua
 AuxVmangos_AuxLedger.lua
