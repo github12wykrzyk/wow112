@@ -1,0 +1,48 @@
+name: Diagnose OctoWoW loginserver
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele06b-portal-completion-v1
+    paths:
+      - .github/workflows/diagnose_octowow_login.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: DNS + ICMP + TCP 3724 probe
+        shell: pwsh
+        run: |
+          $hostName = 'play.octowow.st'
+          $port = 3724
+          Write-Host "=== DNS ==="
+          try {
+            Resolve-DnsName $hostName -ErrorAction Stop | Format-Table -AutoSize | Out-String | Write-Host
+          } catch {
+            Write-Host "DNS_FAIL: $($_.Exception.Message)"
+          }
+
+          Write-Host "=== ICMP ==="
+          try {
+            $p = Test-Connection -TargetName $hostName -Count 4 -ErrorAction Stop
+            $p | Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host 'ICMP_RESULT=PASS'
+          } catch {
+            Write-Host "ICMP_RESULT=FAIL detail=$($_.Exception.Message)"
+          }
+
+          Write-Host "=== TCP 3724 ==="
+          $tcp = Test-NetConnection -ComputerName $hostName -Port $port -InformationLevel Detailed
+          $tcp | Format-List * | Out-String | Write-Host
+          if ($tcp.TcpTestSucceeded) {
+            Write-Host 'TCP_3724_RESULT=OPEN'
+            exit 0
+          }
+          Write-Host 'TCP_3724_RESULT=CLOSED_OR_UNREACHABLE'
+          exit 2
