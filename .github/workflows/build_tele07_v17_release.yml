@@ -1,0 +1,106 @@
+name: TELE07 V1.7 release bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele07-stationary-supervisor-v1
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply frozen child runtime patch chain
+        shell: pwsh
+        run: |
+          ./tools/patch_tele06a_v4.ps1
+          ./tools/patch_live_runner_v11.ps1
+          ./tools/patch_tele06a_party_seq_v12.ps1
+          ./tools/patch_tele06b_portal_v1.ps1
+          ./tools/patch_login_watchdog_3s.ps1
+          ./tools/patch_tele06b_range_safe_v15.ps1
+          ./tools/patch_tele06c_auto_position_v16.ps1
+
+      - name: Frozen V1.6 regression
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+
+      - name: TELE07 supervisor contract
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor
+          cargo run --quiet --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --self-test
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor
+
+      - name: Stage bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe dist/tele06a_acceptor_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe dist/tele06a_ritual_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele07_supervisor.exe dist/tele07_supervisor.exe
+          Copy-Item probes/Wow112HeadlessAndroid/windows/TELE07_RUNNER.ps1 dist/TELE07_RUNNER.ps1
+          Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_TELE07.cmd dist/RUN_TELE07.cmd
+          Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_TELE07_10X_FAULT_TEST.cmd dist/RUN_TELE07_10X_FAULT_TEST.cmd
+          @'
+          WoW112 TELE07 V1.7 STATIONARY SUPERVISOR
+
+          Frozen child core: TELE06C V1.6.
+          Supervisor is persistent; completed cycles recycle child runtimes for fresh one-shot mutation guards.
+          CUSTOMER/SLAVE1/SLAVE2 must be READY and stable for 2 seconds before SUMMONER starts.
+          Pre-active dead/stale acceptors can be restarted individually with a bounded restart budget.
+          During active summon mutation, role exit/stale/uncertain outcome FAILS CLOSED and is never auto-replayed.
+          PASS requires child-confirmed PASS_RITUAL_COMPLETE/0x02AB and both PORTAL_USE_SENT states.
+
+          RUN_TELE07.cmd = normal single-cycle validation.
+          RUN_TELE07_10X_FAULT_TEST.cmd = 10-cycle validation; cycle 2 kills SLAVE1 pre-active and expects single-role recovery.
+          Upload LATEST_TELE07_RESULT.zip after the run.
+          '@ | Set-Content -Encoding UTF8 dist/00_README_FIRST.txt
+          @"
+          WoW112 TELE07 V1.7 STATIONARY SUPERVISOR
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+          Frozen V1.6 baseline: baseline/tele06c-v16-auto-position-green-20261006 @ 8e09ea265924dc3138f2ff1e0f57f2607feb4646
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+
+      - name: Packaged self-test and integrity
+        shell: pwsh
+        run: |
+          Push-Location dist
+          try {
+            & .\tele07_supervisor.exe --self-test
+            if ($LASTEXITCODE -ne 0) { throw "supervisor self-test rc=$LASTEXITCODE" }
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\TELE07_RUNNER.ps1 -SelfTest
+            if ($LASTEXITCODE -ne 0) { throw "runner self-test rc=$LASTEXITCODE" }
+          } finally { Pop-Location }
+          $required = @('dist/tele06a_acceptor_runtime.exe','dist/tele06a_ritual_runtime.exe','dist/tele07_supervisor.exe','dist/TELE07_RUNNER.ps1','dist/RUN_TELE07.cmd','dist/RUN_TELE07_10X_FAULT_TEST.cmd','dist/00_README_FIRST.txt','dist/BUILD_INFO.txt')
+          foreach ($path in $required) { if (!(Test-Path $path)) { throw "missing staged file: $path" } }
+          $src = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs -Raw
+          foreach ($needle in @('READY_GATE PASS','restart_only_this_role','FAIL_CLOSED active/uncertain outcome','FAULT_INJECT','PASS_TELE07','PASS_RITUAL_COMPLETE','0x02AB')) {
+            if ($src -notmatch [regex]::Escape($needle)) { throw "supervisor marker missing: $needle" }
+          }
+          $readme = Get-Content dist/00_README_FIRST.txt -Raw
+          foreach ($needle in @('persistent','READY and stable for 2 seconds','FAILS CLOSED and is never auto-replayed','RUN_TELE07_10X_FAULT_TEST.cmd','LATEST_TELE07_RESULT.zip')) {
+            if ($readme -notmatch [regex]::Escape($needle)) { throw "README marker missing: $needle" }
+          }
+          Write-Host 'TELE07 V1.7 RELEASE BUNDLE PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE07_V1_7_STATIONARY_SUPERVISOR
+          path: dist/*
+          if-no-files-found: error
