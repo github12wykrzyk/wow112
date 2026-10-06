@@ -1,0 +1,95 @@
+name: TELE06C V1.6 auto-position contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele06c-auto-position-v1
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply TELE-06A V4 runtime patch
+        shell: pwsh
+        run: ./tools/patch_tele06a_v4.ps1
+
+      - name: Apply runner V1.1 runtime-state patch
+        shell: pwsh
+        run: ./tools/patch_live_runner_v11.ps1
+
+      - name: Apply TELE-06A sequential party V1.2 patch
+        shell: pwsh
+        run: ./tools/patch_tele06a_party_seq_v12.ps1
+
+      - name: Apply TELE-06B portal completion patch
+        shell: pwsh
+        run: ./tools/patch_tele06b_portal_v1.ps1
+
+      - name: Apply 3s login watchdog
+        shell: pwsh
+        run: ./tools/patch_login_watchdog_3s.ps1
+
+      - name: Apply frozen V1.5 range-safe patch
+        shell: pwsh
+        run: ./tools/patch_tele06b_range_safe_v15.ps1
+
+      - name: Apply TELE06C V1.6 bounded auto-position patch
+        shell: pwsh
+        run: ./tools/patch_tele06c_auto_position_v16.ps1
+
+      - name: V1.6 acceptor contract tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+
+      - name: Apply runner V1.1 script patch
+        shell: pwsh
+        run: ./tools/patch_live_runner_script_v11.ps1
+
+      - name: Apply TELE-06B runner V1.2 patch
+        shell: pwsh
+        run: ./tools/patch_tele06b_runner_v1.ps1
+
+      - name: Apply runner V1.3 reconnect tolerance
+        shell: pwsh
+        run: ./tools/patch_runner_reconnect_tolerance_v13.ps1
+
+      - name: Apply frozen runner V1.5 semantics
+        shell: pwsh
+        run: ./tools/patch_tele06b_runner_v15.ps1
+
+      - name: Apply TELE06C V1.6 runner states
+        shell: pwsh
+        run: ./tools/patch_tele06c_runner_v16.ps1
+
+      - name: Runner V1.6 parser self-test
+        shell: pwsh
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1 -SelfTest
+
+      - name: Check V1.6 acceptor
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+
+      - name: Check summoner regression
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: V1.6 marker smoke
+        shell: pwsh
+        run: |
+          $src = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs -Raw
+          foreach ($needle in @('TELE06C_HEARTBEAT_OPCODE','TELE06C_TARGET_RANGE','TELE06C_MAX_RECOVERY_MOVE','FAIL_AUTO_POSITION_LIMIT','FAIL_AUTO_POSITION_UNCERTAIN','TELE06C_MOVE_MUTATION_UNCERTAIN','[TELE-06C-MOVE-TX]')) {
+            if ($src -notmatch [regex]::Escape($needle)) { throw "missing V1.6 runtime marker: $needle" }
+          }
+          $runner = Get-Content probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1 -Raw
+          foreach ($needle in @('AUTO_POSITIONING','AUTO_POSITION_SENT','FAIL_AUTO_POSITION_LIMIT','FAIL_AUTO_POSITION_UNCERTAIN','V1.6 TELE06C AUTO-POSITION')) {
+            if ($runner -notmatch [regex]::Escape($needle)) { throw "missing V1.6 runner marker: $needle" }
+          }
+          Write-Host 'TELE06C V1.6 CONTRACT PASS'
