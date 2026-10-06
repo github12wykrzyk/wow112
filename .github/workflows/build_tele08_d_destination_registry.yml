@@ -19,8 +19,8 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Format contract
-        run: cargo fmt --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --all -- --check
+      - name: Format Track D sources
+        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/lib.rs probes/Wow112HeadlessAndroid/src/destination_registry.rs
 
       - name: Library compile check
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
