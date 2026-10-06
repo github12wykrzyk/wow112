@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Apply V3 minimal resilience patch
+      - name: Apply V3 minimal resilience and cast-diagnostic patch
         shell: pwsh
         run: |
           $acceptor = 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
@@ -34,6 +34,41 @@ jobs:
           $s = Get-Content $summoner -Raw
           $s = $s.Replace('"world keepalive pong timeout",', '"world keepalive pong timeout", "10060",')
           $s = $s.Replace('println!("[RESILIENCE] transient network failure: {error}");', 'let display_error = if error.contains("10060") { "network timeout (WinSock 10060: remote host did not respond)".to_string() } else { error.clone() }; println!("[RESILIENCE] transient network failure: {display_error}");')
+
+          $needle = '                        let is_ritual = parsed.contains("698") || parsed.contains("0x02BA");'
+          $diag = @'
+                        if opcode == SMSG_CAST_RESULT_OPCODE && payload.len() >= 6 {
+                            let raw_spell = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+                            let status = payload[4];
+                            let reason = payload[5];
+                            let reason_name = match reason {
+                                0x09 => "BAD_IMPLICIT_TARGETS",
+                                0x0A => "BAD_TARGETS",
+                                0x13 => "CASTER_DEAD",
+                                0x3C => "NOT_READY",
+                                0x3E => "NOT_STANDING",
+                                0x4D => "NO_POWER",
+                                0x59 => "OUT_OF_RANGE",
+                                0x5C => "REAGENTS",
+                                0x61 => "SPELL_IN_PROGRESS",
+                                0x65 => "TARGETS_DEAD",
+                                0x66 => "TARGET_AFFECTING_COMBAT",
+                                _ => "OTHER",
+                            };
+                            let raw_hex = payload
+                                .iter()
+                                .map(|byte| format!("{byte:02X}"))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            println!(
+                                "[TELE-06A-CAST-RESULT-RAW] spell={} status={} reason=0x{:02X} reason_name={} raw={}",
+                                raw_spell, status, reason, reason_name, raw_hex
+                            );
+                        }
+                        let is_ritual = parsed.contains("698") || parsed.contains("0x02BA");
+'@
+          if (-not $s.Contains($needle)) { throw 'cast-result diagnostic insertion point missing' }
+          $s = $s.Replace($needle, $diag.TrimEnd())
           Set-Content -Path $summoner -Value $s -Encoding UTF8
 
           $acheck = Get-Content $acceptor -Raw
@@ -42,7 +77,8 @@ jobs:
           if ($acheck -notmatch 'wait=infinite') { throw 'acceptor infinite-wait marker missing' }
           if ($acheck -notmatch '"10060"') { throw 'acceptor 10060 transient classifier missing' }
           if ($scheck -notmatch '"10060"') { throw 'summoner 10060 transient classifier missing' }
-          Write-Host 'TELE06A V3 MINIMAL RESILIENCE PATCH PASS'
+          if ($scheck -notmatch 'TELE-06A-CAST-RESULT-RAW') { throw 'raw cast result diagnostic missing' }
+          Write-Host 'TELE06A V3 RESILIENCE + RAW CAST DIAGNOSTIC PATCH PASS'
 
       - name: Ritual contract tests
         shell: pwsh
@@ -92,11 +128,12 @@ jobs:
           Branch: $env:GITHUB_REF_NAME
           SHA: $env:GITHUB_SHA
 
-          V3 minimal changes only:
+          V3 changes:
           - acceptor invite wait remains infinite
           - WinSock/os error 10060 is transient even during TcpStream::connect()
           - 10060 display is short English text
           - default taxi3 summoner character is Teletanaris
+          - raw SMSG_CAST_RESULT status/reason diagnostic is logged
           - auth/SRP6 timing unchanged
           - reset/invite/accept/cast wire unchanged
           - portal use still disabled
