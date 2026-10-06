@@ -1,0 +1,57 @@
+name: TELE-05 Windows live party bundle
+
+on:
+  push:
+    branches:
+      - feature/tele05-windows-party-live-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Contract tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele05_party_runtime
+      - name: Check
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele05_party_runtime
+      - name: Build release
+        shell: pwsh
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele05_party_runtime
+      - name: Startup smoke
+        shell: pwsh
+        run: |
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele05_party_runtime.exe'
+          $outFile = Join-Path $env:RUNNER_TEMP 'tele05_stdout.txt'
+          $errFile = Join-Path $env:RUNNER_TEMP 'tele05_stderr.txt'
+          $p = Start-Process -FilePath $exe -NoNewWindow -Wait -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+          $out = ((Get-Content $outFile -Raw -ErrorAction SilentlyContinue) + (Get-Content $errFile -Raw -ErrorAction SilentlyContinue))
+          if ($p.ExitCode -ne 2) { throw "expected fail-fast rc=2 without credentials, got $($p.ExitCode)" }
+          if ($out -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup smoke output: $out" }
+          Write-Host 'WINDOWS TELE05 STARTUP SMOKE PASS'
+      - name: Stage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele05_party_runtime.exe dist/tele05_party_runtime.exe
+          @"
+          WoW112 TELE-05 Windows Native Live Party Handshake
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+          Tests: PASS
+          Smoke: PASS
+          Runtime: auth/world + whisper RX/TX + one-shot group invite + whitelist one-shot group accept + party observer
+          Safety: invite and accept fail-closed after first socket attempt; cast/portal mutation disabled
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE05_WINDOWS_PARTY_LIVE
+          path: dist/*
+          if-no-files-found: error
