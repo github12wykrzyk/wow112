@@ -20,3 +20,4 @@ AuxVmangos_ArbitrageRules.lua
 AuxVmangos_AuxArbitrageRules.lua
 AuxVmangos_WatchUI.lua
 AuxVmangos_LiquidDepth.lua
+AuxVmangos_MemoryGuard.lua
