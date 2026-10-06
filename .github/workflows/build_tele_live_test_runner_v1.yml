@@ -1,4 +1,4 @@
-name: TELE live test runner V1.3 TELE06B LOGINWATCH
+name: TELE live test runner V1.4 TELE06B TRACE
 
 on:
   workflow_dispatch:
@@ -43,6 +43,14 @@ jobs:
           rustc --edition 2021 --test probes/Wow112HeadlessAndroid/src/tele_party_seq.rs -o $env:TEMP/tele_party_seq_test.exe
           & "$env:TEMP/tele_party_seq_test.exe"
           if ($LASTEXITCODE -ne 0) { throw 'party state machine tests failed' }
+
+      - name: TELE-06B ritual/portal trace module unit tests (dependency-free)
+        shell: pwsh
+        run: |
+          rustc --edition 2021 --test probes/Wow112HeadlessAndroid/src/tele_trace.rs -o $env:TEMP/tele_trace_test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'tele_trace test build failed' }
+          & "$env:TEMP/tele_trace_test.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'tele_trace tests failed' }
 
       - name: Apply runner V1.1 script patch
         shell: pwsh
@@ -93,7 +101,7 @@ jobs:
             if ($p.ExitCode -ne 2) { throw "expected rc=2 without credentials for $exe, got $($p.ExitCode)" }
             if ($text -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup output for $exe : $text" }
           }
-          Write-Host 'TELE LIVE TEST RUNNER V1.3 LOGINWATCH RUNTIME SMOKE PASS'
+          Write-Host 'TELE LIVE TEST RUNNER V1.4 TELE06B TRACE RUNTIME SMOKE PASS'
 
       - name: Stage runner bundle
         shell: pwsh
@@ -105,7 +113,7 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_LIVE_TEST.cmd dist/RUN_LIVE_TEST.cmd
           Copy-Item probes/Wow112HeadlessAndroid/windows/LIVE_TEST_README.txt dist/00_README_FIRST.txt
           @"
-          WoW112 TELE LOCAL LIVE TEST RUNNER V1.3 TELE06B LOGINWATCH
+          WoW112 TELE LOCAL LIVE TEST RUNNER V1.4 TELE06B TRACE
           Branch: $env:GITHUB_REF_NAME
           SHA: $env:GITHUB_SHA
 
@@ -118,6 +126,12 @@ jobs:
           - mutation guard is committed before socket I/O; no automatic portal re-click
           - PASS requires both PORTAL_USED states plus CUSTOMER PASS_RITUAL_COMPLETE
           - PASS_RITUAL_STARTED is a checkpoint only, not a terminal success
+          TELE-06B TRACE (V1.4, observe-only; no change to mutation guards, retries or party/cast paths):
+          - every process logs [T6B-RX] ritual/spell/channel/summon/chat opcodes with UTC time + unix ms
+          - clickers log exact outgoing CMSG_GAMEOBJ_USE bytes and [TELE-06B-PORTAL-EVIDENCE] / [TELE-06B-PORTAL-OUTCOME]
+          - summoner keeps logging spell/channel/failure packets after SMSG_SPELL_START
+          - portal Create object is dumped once ([TELE-06B-PORTAL-OBJECT]); Values updates the library rejects are decoded ([T6B-UPDATE-VALUES])
+          - PORTAL_USED still means socket write only; success remains CUSTOMER SMSG_SUMMON_REQUEST/0x02AB
           Login resilience V1.3:
           - AUTH TCP connect timeout: 3000 ms
           - WORLD TCP connect timeout: 3000 ms
@@ -150,16 +164,16 @@ jobs:
           if ($runner -notmatch "WOW112_RECONNECT_DELAY_MS = '0'") { throw 'zero reconnect delay marker missing' }
           $ainfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe 2>$null | Out-String
           $sinfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe 2>$null | Out-String
-          foreach ($needle in @('WOW112_RUNNER_STATE_FILE','WOW112_TELE06B_ROLE','PORTAL_USED','PASS_RITUAL_COMPLETE','SMSG_SUMMON_REQUEST','LOGIN-WATCHDOG')) {
+          foreach ($needle in @('WOW112_RUNNER_STATE_FILE','WOW112_TELE06B_ROLE','PORTAL_USED','PASS_RITUAL_COMPLETE','SMSG_SUMMON_REQUEST','LOGIN-WATCHDOG','T6B-RX','T6B-CLICK-TX','TELE-06B-PORTAL-OUTCOME','TELE-06B-PORTAL-EVIDENCE','TELE-06B-PORTAL-OBJECT')) {
             if ($ainfo -notmatch [regex]::Escape($needle)) { throw "acceptor runtime marker missing: $needle" }
           }
-          foreach ($needle in @('PASS_RITUAL_STARTED','LOGIN-WATCHDOG')) {
+          foreach ($needle in @('PASS_RITUAL_STARTED','LOGIN-WATCHDOG','T6B-RX','T6B-SUMMARY')) {
             if ($sinfo -notmatch [regex]::Escape($needle)) { throw "summoner runtime marker missing: $needle" }
           }
-          Write-Host 'TELE LIVE TEST RUNNER V1.3 LOGINWATCH BUNDLE INTEGRITY PASS'
+          Write-Host 'TELE LIVE TEST RUNNER V1.4 TELE06B TRACE BUNDLE INTEGRITY PASS'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WoW112_TELE_LIVE_TEST_RUNNER_V1_3_LOGINWATCH
+          name: WoW112_TELE_LIVE_TEST_RUNNER_V1_4_TELE06B_TRACE
           path: dist/*
           if-no-files-found: error

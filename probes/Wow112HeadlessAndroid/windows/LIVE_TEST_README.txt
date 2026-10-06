@@ -1,4 +1,4 @@
-WoW112 LOCAL LIVE TEST RUNNER V1.3 TELE06B LOGINWATCH
+WoW112 LOCAL LIVE TEST RUNNER V1.3 TELE06B LOGINWATCH (+ V1.4 TELE06B TRACE diagnostics)
 ====================================================
 
 PURPOSE
@@ -22,6 +22,27 @@ LOGIN RESILIENCE V1.3
 - The runner no longer aborts merely because an acceptor reconnects before ROSTER_PASS.
 - A real process exit remains terminal.
 - Sequential party state-machine timeouts remain authoritative for party convergence.
+
+TELE06B TRACE V1.4 (observe-only diagnostics)
+No behaviour change: same single guarded click per slave, no retry, no serialization.
+New log lines (never contain credentials or keys):
+  [TELE-06B-PORTAL-OBJECT]    parsed portal object dump (position/fields) when first observed
+  [T6B-CLICK-TX]              exact outgoing CMSG_GAMEOBJ_USE bytes + ms timestamp (commit / write done)
+  [T6B-RX]                    every spell/channel/summon/chat/notification packet after the click, with ms offsets
+  [TELE-06B-PORTAL-EVIDENCE]  per-clicker counters: participant spell, channel start, failure, summon-to-other, portal destroyed
+  [TELE-06B-PORTAL-OUTCOME]   20 s after click: classification of what the server did with the click
+  [T6B-SUMMARY]               summoner 40 s after cast: spell/channel packets that followed SMSG_SPELL_START
+How to read the result (decision table):
+  A  Both clickers show participant spell/channel evidence, customer still no 0x02AB
+     -> clicks were accepted; inspect summoner failure packets, chat/notification text, summon target.
+  B  No transition on clickers, summoner channel still alive
+     -> clicks ignored; compare click time vs owner SPELL_GO, portal position/distance, group state.
+  C  Summoner shows SPELL_FAILURE / CAST_RESULT / interrupt before the clicks
+     -> channel was lost before clickers acted.
+  D  SUMMON_REQUEST addressed to a clicker (not the customer)
+     -> wrong summon target (selection).
+PASS still requires CUSTOMER to receive SMSG_SUMMON_REQUEST 0x02AB (PASS_RITUAL_COMPLETE).
+Upload only LATEST_RESULT.zip.
 
 DEFAULT ROLES
 CUSTOMER : octowar1    / Smokinpole   -> completion watcher

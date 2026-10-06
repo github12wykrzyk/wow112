@@ -80,6 +80,11 @@ $tele06bCore = @'
             if let Some(guid) = guid {
                 if portals.insert(guid) {
                     println!("[TELE-06B-PORTAL] observed valid summoning portal guid=0x{guid:016X}");
+                    println!(
+                        "[TELE-06B-PORTAL-OBJECT] {}",
+                        tele_trace::truncate_chars(&format!("{object:?}"), 2400)
+                    );
+                    tele_trace::mark_portal_observed(guid);
                 }
             }
         }
@@ -167,6 +172,12 @@ $tele06bCore = @'
             Tele06bRole::Observer => unreachable!(),
         }
 
+        let role_label: &str = match role {
+            Tele06bRole::Customer => "Customer",
+            Tele06bRole::Clicker => "Clicker",
+            Tele06bRole::Observer => "Observer",
+        };
+
         println!(
             "[TELE-06B] post-handshake active role={role:?} portal_use=guarded_once completion=SMSG_SUMMON_REQUEST/0x02AB duration={}",
             if soak_seconds == 0 {
@@ -177,6 +188,7 @@ $tele06bCore = @'
         );
 
         loop {
+            tele_trace::poll_outcome(role_label);
             if deadline.is_some_and(|value| Instant::now() >= value) {
                 let _ = stream.set_read_timeout(previous_timeout);
                 return Ok(());
@@ -212,6 +224,8 @@ $tele06bCore = @'
                         }
                         continue;
                     }
+
+                    tele_trace::trace_packet(role_label, opcode, &payload);
 
                     if role == Tele06bRole::Customer && opcode == SMSG_SUMMON_REQUEST_OPCODE {
                         if payload.len() == 16 {
@@ -261,6 +275,7 @@ $tele06bCore = @'
                                     println!(
                                         "[TELE-06B-PORTAL-TX] state=COMMITTED guid=0x{guid:016X} opcode=0x00B1 retry_allowed=false"
                                     );
+                                    tele_trace::mark_click_commit(guid, &guid.to_le_bytes());
                                     if let Err(error) = write_encrypted_raw(
                                         stream,
                                         crypto.encrypter(),
@@ -282,6 +297,7 @@ $tele06bCore = @'
                                         );
                                     }
                                     PORTAL_USE_SUCCEEDED.store(true, Ordering::SeqCst);
+                                    tele_trace::mark_click_write_done(guid);
                                     publish_runner_state(
                                         "PORTAL_USED",
                                         &format!(
@@ -324,7 +340,12 @@ foreach ($needle in @(
     'PORTAL_USE_ATTEMPTED',
     'PASS_RITUAL_COMPLETE',
     'FAIL_PORTAL_MUTATION_UNCERTAIN',
-    'tele06b_post_handshake_loop'
+    'tele06b_post_handshake_loop',
+    'tele_trace::trace_packet(role_label, opcode, &payload);',
+    'tele_trace::mark_click_commit(guid, &guid.to_le_bytes());',
+    'tele_trace::mark_click_write_done(guid);',
+    'tele_trace::mark_portal_observed(guid);',
+    'tele_trace::poll_outcome(role_label);'
 )) {
     if (-not $check.Contains($needle)) { throw "TELE-06B runtime patch missing: $needle" }
 }

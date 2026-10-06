@@ -472,6 +472,7 @@ mod tele06a {
             None => &characters.characters[0],
         };
         println!("[WORLD] logging character={}", selected.name);
+        tele_trace::set_local_guid(selected.guid.guid());
         CMSG_PLAYER_LOGIN { guid: selected.guid }
             .write_encrypted_client(&mut *stream, crypto.encrypter())
             .map_err(|e| format!("write player login failed: {e:?}"))?;
