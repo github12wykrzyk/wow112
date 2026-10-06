@@ -4,12 +4,14 @@
   "goal": "Build a pure, reusable TELE08 whisper intake/classification module with configurable destinations and competition rules, bounded typo handling, unknown preservation, and deterministic duplicate fingerprints.",
   "branch": "feature/tele08-b-whisper-parser-v1",
   "base_parallel_sha": "04e8337fec7ba0d76c8267e03c1324f7039f2487",
-  "status": "in_progress",
+  "status": "ready",
   "auto_integrate": false,
   "modules": ["HeadlessTele", "Tele08WhisperParser"],
   "dependencies": [],
   "shared_resources": ["probes/Wow112HeadlessAndroid"],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Track B only. Pure parser/classifier library API; no invite, party mutation, cast, ritual, portal, movement, blacklist, persistence, or Track E dependency. Track D remains canonical destination registry owner. Branching authority is the user-provided TELE07 exact SHA, not current main. No auto-integration."
+  "validated_feature_sha": "ef61231a16b367cd1a1c7153a8ab2576db6dae11",
+  "validation_run_id": 37541260400,
+  "notes": "Track B only. Pure parser/classifier library API; no invite, party mutation, cast, ritual, portal, movement, blacklist, persistence, or Track E dependency. Track D remains canonical destination registry owner. Branching authority is the user-provided TELE07 exact SHA, not current main. Dedicated TELE08 B Rust CI passed fmt/check/test. No live WoW validation. No auto-integration."
 }
