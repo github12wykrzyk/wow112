@@ -365,10 +365,7 @@ impl DestinationRegistry {
             .collect()
     }
 
-    pub fn unavailable_destination_reason(
-        &self,
-        id: &DestinationId,
-    ) -> Option<AvailabilityReason> {
+    pub fn unavailable_destination_reason(&self, id: &DestinationId) -> Option<AvailabilityReason> {
         self.statuses.get(id).and_then(|status| {
             (status.availability != Availability::Enabled).then(|| status.reason.clone())
         })
@@ -577,9 +574,7 @@ fn validate_role(
     exclusive_characters: &mut BTreeMap<String, String>,
 ) -> Result<(), RegistryError> {
     if assignment.role.trim().is_empty() {
-        return Err(validation(format!(
-            "team {team_id} contains an empty role"
-        )));
+        return Err(validation(format!("team {team_id} contains an empty role")));
     }
     if let Some(character) = assignment.character.as_ref() {
         let character = character.trim();
@@ -608,9 +603,7 @@ fn register_alias(
 ) -> Result<(), RegistryError> {
     let key = normalize_key(alias);
     if key.is_empty() {
-        return Err(validation(format!(
-            "destination {id} has an empty alias"
-        )));
+        return Err(validation(format!("destination {id} has an empty alias")));
     }
     if let Some(existing) = aliases.get(&key) {
         if existing != id {
