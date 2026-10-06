@@ -1,4 +1,4 @@
-name: TELE live test runner V1
+name: TELE live test runner V1.1
 
 on:
   workflow_dispatch:
@@ -21,7 +21,15 @@ jobs:
         shell: pwsh
         run: ./tools/patch_tele06a_v4.ps1
 
-      - name: Runner parser self-test
+      - name: Apply runner V1.1 runtime-state patch
+        shell: pwsh
+        run: ./tools/patch_live_runner_v11.ps1
+
+      - name: Apply runner V1.1 script patch
+        shell: pwsh
+        run: ./tools/patch_live_runner_script_v11.ps1
+
+      - name: Runner V1.1 parser self-test
         shell: pwsh
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1 -SelfTest
 
@@ -58,7 +66,7 @@ jobs:
             if ($p.ExitCode -ne 2) { throw "expected rc=2 without credentials for $exe, got $($p.ExitCode)" }
             if ($text -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup output for $exe : $text" }
           }
-          Write-Host 'TELE LIVE TEST RUNNER RUNTIME SMOKE PASS'
+          Write-Host 'TELE LIVE TEST RUNNER V1.1 RUNTIME SMOKE PASS'
 
       - name: Stage runner bundle
         shell: pwsh
@@ -70,22 +78,25 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_LIVE_TEST.cmd dist/RUN_LIVE_TEST.cmd
           Copy-Item probes/Wow112HeadlessAndroid/windows/LIVE_TEST_README.txt dist/00_README_FIRST.txt
           @"
-          WoW112 TELE LOCAL LIVE TEST RUNNER V1
+          WoW112 TELE LOCAL LIVE TEST RUNNER V1.1
           Branch: $env:GITHUB_REF_NAME
           SHA: $env:GITHUB_SHA
 
-          Bundled runtime: TELE-06A V4
+          Bundled runtime: TELE-06A V4 + runner-state channel
           Defaults:
           - octowar1 / Smokinpole = CUSTOMER
           - taxi3 / Teletanaris = SUMMONER
           - octowinter1 / Winterone = SLAVE1
           - octowinter2 / Wintertwoo = SLAVE2
 
-          Runner behavior:
+          Runner V1.1 behavior:
           - one command launches three acceptors
-          - READY requires ARMED + fresh keepalive PONG in current session
-          - reconnect invalidates READY
+          - control plane uses dedicated STATE_*.txt files written by Rust runtime
+          - READY requires runtime-published fresh PONG in current session
+          - reconnect publishes CONNECTING and invalidates READY
           - summoner launches automatically only after stable 3/3 READY
+          - ritual checkpoints/verdict are published through SUMMONER state file
+          - stdout/stderr logs are diagnostic only and may remain locked while child runs
           - result is packed into LATEST_RESULT.zip
           - optional local password persistence uses Windows DPAPI
           - password is excluded from result artifacts
@@ -104,13 +115,17 @@ jobs:
           )
           foreach ($path in $required) { if (!(Test-Path $path)) { throw "missing staged file: $path" } }
           $runner = Get-Content dist/LIVE_TEST_RUNNER.ps1 -Raw
-          foreach ($needle in @('READY 3/3','fresh keepalive pong','LATEST_RESULT.zip','Teletanaris','PASS_RITUAL_STARTED')) {
+          foreach ($needle in @('READY 3/3','WOW112_RUNNER_STATE_FILE','Get-AcceptorRuntimeState','Get-SummonerRuntimeVerdict','LATEST_RESULT.zip','Teletanaris','PASS_RITUAL_STARTED')) {
             if ($runner -notmatch [regex]::Escape($needle)) { throw "runner marker missing: $needle" }
           }
-          Write-Host 'TELE LIVE TEST RUNNER BUNDLE INTEGRITY PASS'
+          $ainfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe 2>$null | Out-String
+          $sinfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe 2>$null | Out-String
+          if ($ainfo -notmatch 'WOW112_RUNNER_STATE_FILE') { throw 'acceptor runtime state channel marker missing' }
+          if ($sinfo -notmatch 'PASS_RITUAL_STARTED') { throw 'summoner runtime state verdict marker missing' }
+          Write-Host 'TELE LIVE TEST RUNNER V1.1 BUNDLE INTEGRITY PASS'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WoW112_TELE_LIVE_TEST_RUNNER_V1
+          name: WoW112_TELE_LIVE_TEST_RUNNER_V1_1
           path: dist/*
           if-no-files-found: error
