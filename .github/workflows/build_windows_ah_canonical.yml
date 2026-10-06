@@ -1,0 +1,168 @@
+name: WoW112 AH Canonical Windows
+
+on:
+  push:
+    branches: [dev/windows-ah-canonical]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_windows_ah_canonical.yml'
+      - 'AH_CANONICAL.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout canonical source
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # -------------------- VENDOR: same canonical checkout --------------------
+      - name: Generate FULL-AH Vendor V2 profit-first
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_fullsweep_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_names_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/vendor_multibuy_v2_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs'
+          foreach ($m in @('REVALIDATE_RADIUS: u32 = 5','login_poc07_vendorlive_multibuy_v2','PROFIT_DESC_PAGE_DESC_TIE')) {
+            if (-not (Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)) { throw "Vendor marker missing: $m" }
+          }
+          $main='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $main -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc07_vendorlive_multibuy_v2;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc07_vendorlive_multibuy_v2::login_poc07_vendorlive_multibuy_v2')
+          Set-Content $main $t -Encoding utf8
+
+      - name: Build Vendor native Windows
+        shell: pwsh
+        run: |
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/canonical-bin" | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$env:RUNNER_TEMP/canonical-bin/wow112-vendor-windows.exe"
+
+      # Restore tracked canonical source before generating the DE entrypoint.
+      - name: Restore canonical tree for DE build
+        shell: pwsh
+        run: |
+          git reset --hard $env:GITHUB_SHA
+          Remove-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_fullsweep.rs -Force -ErrorAction SilentlyContinue
+          Remove-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy.rs -Force -ErrorAction SilentlyContinue
+          Remove-Item probes/Wow112HeadlessAndroid/src/world_poc07_vendorlive_multibuy_v2.rs -Force -ErrorAction SilentlyContinue
+
+      # -------------------- DE: same canonical checkout --------------------
+      - name: Apply canonical BUY mailbox fastfix
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate DE V5.3 base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build full 2343-item DE cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py `
+            --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv `
+            --item-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt `
+            --output-cache "$env:RUNNER_TEMP/poc08-full-cache.csv" `
+            --unresolved "$env:RUNNER_TEMP/poc08-full-unresolved.csv" `
+            --workers 24 --timeout 10 --retries 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows=@(Import-Csv "$env:RUNNER_TEMP/poc08-full-cache.csv")
+          foreach($r in $rows){ if($r.source -eq 'LEGACY_SEED'){ $r.source='SeedLegacy' } }
+          $rows | Export-Csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" -NoTypeInformation -Encoding utf8
+          $unresolved=@(Import-Csv "$env:RUNNER_TEMP/poc08-full-unresolved.csv").Count
+          $positive=@($rows|Where-Object {[int]$_.disenchant_id -gt 0}).Count
+          $capy=@($rows|Where-Object {$_.source -eq 'CapyDB'}).Count
+          $octo=@($rows|Where-Object {$_.source -eq 'OctoWow'}).Count
+          Write-Host "[CANONICAL-DE-CACHE] rows=$($rows.Count)/2343 positive=$positive octo=$octo capy=$capy unresolved=$unresolved"
+          if($rows.Count -lt 2200){throw "DE coverage too low: $($rows.Count)/2343"}
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate and harden POC08-F2 broad DE
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_provenance_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f0_eligibility_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_history_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_pagination_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs'
+          foreach($m in @('poc08_de_source(c.record.item_id) == Some("CapyDB")','poc08_f0_model_agreement_bps(c.heuristic_de_ev, c.reference_de_ev) == 0','WOW112_F2_EXPECT_AUCTION_ID','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){
+            if(-not (Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "F2 marker missing: $m"}
+          }
+          $main='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $main -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_f2_live;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_f2_live::login_poc08_economy_audit')
+          Set-Content $main $t -Encoding utf8
+
+      - name: Build DE native Windows
+        shell: pwsh
+        run: |
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$env:RUNNER_TEMP/canonical-bin/wow112-de-windows.exe"
+
+      - name: Stage canonical Windows artifact
+        shell: pwsh
+        run: |
+          $d='dist/windows-ah-canonical'
+          New-Item -ItemType Directory -Force "$d/vendor" | Out-Null
+          New-Item -ItemType Directory -Force "$d/de/runtime" | Out-Null
+          New-Item -ItemType Directory -Force "$d/de/source" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP/canonical-bin/wow112-vendor-windows.exe" "$d/vendor/"
+          Copy-Item "$env:RUNNER_TEMP/canonical-bin/wow112-de-windows.exe" "$d/de/"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/RUN_POC08_F2_DE_2PASS_WINDOWS.ps1 "$d/de/"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/START_POC08_F2_DE_2PASS_WINDOWS.bat "$d/de/"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs "$d/de/source/"
+          Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/de/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/de/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt "$d/de/runtime/LIVE_ITEM_IDS_2343.txt"
+          $vh=(Get-FileHash "$d/vendor/wow112-vendor-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $dh=(Get-FileHash "$d/de/wow112-de-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          CANONICAL_BRANCH=dev/windows-ah-canonical
+          EXACT_SHA=$env:GITHUB_SHA
+          PLATFORM=WINDOWS_FIRST
+          VENDOR=FULL_AH_PROFIT_FIRST_EXACT_REVALIDATION
+          DE=FULL_CACHE_F2_EXACT_BUY
+          DE_CAPY_RULE=CAPYDB_REQUIRES_MODEL_AGREEMENT_0
+          DE_LEGACY=BLOCKED
+          VENDOR_BINARY_SHA256=$vh
+          DE_BINARY_SHA256=$dh
+          ANDROID_STATUS=PORT_ONLY_AFTER_WINDOWS_CORE_STABLE
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload canonical Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-AH-CANONICAL-WINDOWS-${{ github.sha }}
+          path: dist/windows-ah-canonical
+          if-no-files-found: error
+          retention-days: 14
