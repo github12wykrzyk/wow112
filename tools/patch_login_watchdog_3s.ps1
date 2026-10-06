@@ -10,6 +10,12 @@ function Require-Replace([string]$Text,[string]$Old,[string]$New,[string]$Label)
     return $Text.Replace($Old,$New)
 }
 
+function Require-RegexReplace([string]$Text,[string]$Pattern,[string]$Replacement,[string]$Label) {
+    $rx = [regex]::new($Pattern, [Text.RegularExpressions.RegexOptions]::Singleline)
+    if (-not $rx.IsMatch($Text)) { throw "missing regex patch anchor: $Label" }
+    return $rx.Replace($Text, $Replacement, 1)
+}
+
 foreach ($path in $targets) {
     $t = Get-Content $path -Raw
 
@@ -40,7 +46,7 @@ fn connect_with_login_watchdog(addr: &str, label: &str) -> Result<TcpStream, Str
             }
         }
     }
-    Err(format!("{label} connect {addr} watchdog timeout/failure after {LOGIN_WATCHDOG_MS}ms last={}", last_error.unwrap_or_else(|| "unknown".to_string())))
+    Err(format!("TimedOut login watchdog label={label} addr={addr} timeout_ms={LOGIN_WATCHDOG_MS} last={}", last_error.unwrap_or_else(|| "unknown".to_string())))
 }
 
 fn arm_login_watchdog(stream: &TcpStream, label: &str) -> Result<(), String> {
@@ -53,19 +59,20 @@ fn arm_login_watchdog(stream: &TcpStream, label: &str) -> Result<(), String> {
 '@
     $t = Require-Replace $t $constAnchor $helper.TrimEnd() "$path watchdog helper"
 
-    $oldAuth = 'let mut auth_stream = TcpStream::connect(auth_addr).map_err(|e| format!("auth connect {auth_addr} failed: {e}"))?;'
-    $newAuth = @'
+    # Handles both one-line and rustfmt-style multiline TcpStream::connect + map_err forms.
+    $authPattern = 'let\s+mut\s+auth_stream\s*=\s*TcpStream::connect\(auth_addr\)\s*\.map_err\(\|e\|\s*format!\(\"auth connect \{auth_addr\} failed: \{e\}\"\)\)\?;'
+    $authReplacement = @'
 let mut auth_stream = connect_with_login_watchdog(auth_addr, "AUTH")?;
     arm_login_watchdog(&auth_stream, "AUTH")?;
 '@
-    $t = Require-Replace $t $oldAuth $newAuth.TrimEnd() "$path auth connect"
+    $t = Require-RegexReplace $t $authPattern $authReplacement.TrimEnd() "$path auth connect"
 
-    $oldWorld = 'let mut world_stream = TcpStream::connect(&world_addr).map_err(|e| format!("world connect {world_addr} failed: {e}"))?;'
-    $newWorld = @'
+    $worldPattern = 'let\s+mut\s+world_stream\s*=\s*TcpStream::connect\(&world_addr\)\s*\.map_err\(\|e\|\s*format!\(\"world connect \{world_addr\} failed: \{e\}\"\)\)\?;'
+    $worldReplacement = @'
 let mut world_stream = connect_with_login_watchdog(&world_addr, "WORLD")?;
     arm_login_watchdog(&world_stream, "WORLD")?;
 '@
-    $t = Require-Replace $t $oldWorld $newWorld.TrimEnd() "$path world connect"
+    $t = Require-RegexReplace $t $worldPattern $worldReplacement.TrimEnd() "$path world connect"
 
     $old20 = 'set_read_timeout(Some(Duration::from_secs(20)))'
     if (-not $t.Contains($old20)) { throw "missing 20s world login timeout anchor: $path" }
@@ -75,6 +82,7 @@ let mut world_stream = connect_with_login_watchdog(&world_addr, "WORLD")?;
     if ($t -notmatch 'connect_with_login_watchdog') { throw "watchdog connect helper missing: $path" }
     if ($t -match 'TcpStream::connect\(auth_addr\)') { throw "old auth connect survived: $path" }
     if ($t -match 'TcpStream::connect\(&world_addr\)') { throw "old world connect survived: $path" }
+    if ($t -notmatch 'TimedOut login watchdog') { throw "retryable timeout marker missing: $path" }
 
     Set-Content -Path $path -Value $t -Encoding UTF8
 }
