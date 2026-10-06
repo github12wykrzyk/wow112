@@ -101,4 +101,23 @@ if 'let before_mail = poc05_request_mail_list' in s:
     raise SystemExit('unsafe pre-buy mailbox dependency remains')
 
 p.write_text(s, encoding='utf-8')
+
+# Canonical AH hello hardening: a cached/configured GUID is only a preference.
+# It must never satisfy live discovery by itself, otherwise a stale persisted GUID
+# can prematurely seed the candidate set after a server restart.
+retry_path = p.with_name('world_poc05_retry.rs')
+r = retry_path.read_text(encoding='utf-8')
+old_guid = '''    if let Ok(value) = env::var("WOW112_AH_GUID") {\n        let guid = parse_guid_override("WOW112_AH_GUID", &value)?;\n        println!("[AH] using configured auctioneer guid=0x{guid:016X}");\n        auctioneers.insert(guid);\n    }\n'''
+new_guid = '''    if let Ok(value) = env::var("WOW112_AH_GUID") {\n        let guid = parse_guid_override("WOW112_AH_GUID", &value)?;\n        println!(\n            "[AH] configured auctioneer guid=0x{guid:016X} preferred_only=YES live_observation_required=YES"\n        );\n        // Do not insert here. The GUID becomes eligible only if observed in\n        // the current world update stream.\n    }\n'''
+if r.count(old_guid) != 1:
+    raise SystemExit(f'AH hello live-discovery marker mismatch count={r.count(old_guid)}')
+r = r.replace(old_guid, new_guid, 1)
+if 'preferred_only=YES live_observation_required=YES' not in r:
+    raise SystemExit('AH hello live-discovery marker missing after patch')
+segment = r.split('fn discover_poc05_context_retry', 1)[1].split('fn poc05_send_auction_hello_candidates', 1)[0]
+if 'auctioneers.insert(guid);' in segment:
+    raise SystemExit('configured AH GUID still contaminates live discovery set')
+retry_path.write_text(r, encoding='utf-8')
+
 print('[VENDOR-MAILBOX-FASTFIX] PASS prebuy_mailbox=BYPASSED postchecks=BEST_EFFORT hard_max_purchases=1')
+print('[AH-HELLO-LIVE-GUARD] PASS configured_guid=preferred_only live_observation_required=YES')
