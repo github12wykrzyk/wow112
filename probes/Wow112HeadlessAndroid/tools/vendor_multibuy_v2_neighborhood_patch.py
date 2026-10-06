@@ -136,6 +136,32 @@ if old_post not in src:
     raise SystemExit('V2 post-reconcile page marker not found')
 src = src.replace(old_post, new_post, 1)
 
+# Prioritize economically best opportunities. Exact tuple + neighborhood revalidation
+# remains mandatory before each SEND, so this changes only purchase order.
+old_order = r'''            // Buy from highest page downward. Removing a later auction cannot shift earlier pages,
+            // which keeps each candidate's original page stable for exact fresh revalidation.
+            let mut purchase_order = candidates.clone();
+            purchase_order.sort_by(|a, b| {
+                b.page.cmp(&a.page)
+                    .then_with(|| b.record.auction_id.cmp(&a.record.auction_id))
+            });'''
+new_order = r'''            // Buy highest expected vendor profit first.
+            // Page descending is only a tie-breaker; exact tuple + neighborhood revalidation
+            // remains mandatory immediately before every SEND.
+            let mut purchase_order = candidates.clone();
+            purchase_order.sort_by(|a, b| {
+                b.expected_profit.cmp(&a.expected_profit)
+                    .then_with(|| b.page.cmp(&a.page))
+                    .then_with(|| b.record.auction_id.cmp(&a.record.auction_id))
+            });'''
+if old_order not in src:
+    raise SystemExit('V2 profit-order marker not found')
+src = src.replace(old_order, new_order, 1)
+
+if 'order=PAGE_DESC' not in src:
+    raise SystemExit('V2 order log marker not found')
+src = src.replace('order=PAGE_DESC', 'order=PROFIT_DESC_PAGE_DESC_TIE', 1)
+
 # Make the generated entrypoint/version unmistakable in logs and CI selection.
 src = src.replace('pub fn login_poc07_vendorlive_multibuy(', 'pub fn login_poc07_vendorlive_multibuy_v2(', 1)
 src = src.replace('[POC07-MULTIBUY] START', '[POC07-MULTIBUY-V2] START', 1)
