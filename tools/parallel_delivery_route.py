@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Classify post-integration delivery from the exact feature diff.
 
-The router is intentionally fail-closed.  STANDARD may be omitted only when all
-changed paths are either validation-only or covered by delivery profiles already
-declared by the task.  Unknown, native-core, shared-build, packaging-control and
-mixed changes continue through STANDARD.
+The router is intentionally fail-closed.  Until the desktop updater can safely
+reuse the last verified STANDARD artifact across profile-only Parallel HEADs,
+profile-contained changes still require an exact-HEAD STANDARD delivery.  The
+profile-specific workflows continue to run as before.  Validation-only changes
+may still omit binary delivery.
 """
 from __future__ import annotations
 
@@ -92,17 +93,35 @@ def classify(task, config, task_id, changed_paths):
         result["profiles_used"] = sorted(profiles_used)
         return result
 
-    reason = "profile_contained" if profile_covered else "validation_only"
+    if profile_covered:
+        # Compatibility gate: the current desktop updater requires a successful
+        # Build work candidate run for the exact Parallel HEAD.  Omitting STANDARD
+        # on a profile-only merge leaves the updater waiting forever for a run that
+        # was intentionally never dispatched.  Keep the profile workflows, but
+        # also materialize STANDARD until updater-side inherited-artifact routing
+        # is implemented and proven fail-closed.
+        return {
+            "require_standard": True,
+            "fast_path": False,
+            "standard_mode": "standard",
+            "reason": "profile_contained_standard_compat",
+            "changed_paths": changed,
+            "profile_covered_paths": profile_covered,
+            "validation_only_paths": validation_only,
+            "uncovered_paths": [],
+            "profiles_used": sorted(profiles_used),
+        }
+
     return {
         "require_standard": False,
         "fast_path": True,
         "standard_mode": "none",
-        "reason": reason,
+        "reason": "validation_only",
         "changed_paths": changed,
-        "profile_covered_paths": profile_covered,
+        "profile_covered_paths": [],
         "validation_only_paths": validation_only,
         "uncovered_paths": [],
-        "profiles_used": sorted(profiles_used),
+        "profiles_used": [],
     }
 
 
