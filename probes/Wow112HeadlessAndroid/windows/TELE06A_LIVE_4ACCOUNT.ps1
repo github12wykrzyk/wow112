@@ -28,7 +28,7 @@ Write-Host '  SLAVE 2  : octowinter2'
 Write-Host ''
 
 $customerChar = Read-Default 'Customer character' 'Smokinpole'
-$summonerChar = Read-Default 'Summoner character' 'Feltaxi'
+$summonerChar = Read-Default 'Summoner character' 'Teletanaris'
 $slave1Char = Read-Default 'Slave 1 character' 'Winterone'
 $slave2Char = Read-Default 'Slave 2 character' 'Wintertwoo'
 
