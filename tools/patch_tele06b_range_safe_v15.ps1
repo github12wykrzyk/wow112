@@ -41,7 +41,7 @@ $newStatics = @'
             Object::CreateObject { movement2, .. } | Object::CreateObject2 { movement2, .. } => movement2,
             _ => return None,
         };
-        let living = movement.update_flag.living.as_ref()?;
+        let living = movement.update_flag.get_living()?;
         match living {
             wow_world_messages::vanilla::MovementBlock_UpdateFlag_Living::HasPosition { position, .. } => {
                 Some([position.x, position.y, position.z])
