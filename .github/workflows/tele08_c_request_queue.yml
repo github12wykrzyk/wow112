@@ -1,0 +1,34 @@
+name: TELE08 C request queue
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele08-c-request-queue-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - '.github/workflows/tele08_c_request_queue.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: probes/Wow112HeadlessAndroid/tele08_request_queue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo check
+        run: cargo check --all-targets
+      - name: cargo test
+        run: cargo test --all-targets
