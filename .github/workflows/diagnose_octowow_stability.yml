@@ -1,0 +1,43 @@
+name: Diagnose OctoWoW stability
+on:
+  push:
+    branches: [ feature/tele06b-portal-completion-v1 ]
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: 30 TCP samples to loginserver
+        shell: pwsh
+        run: |
+          $hostName = 'play.octowow.st'
+          $port = 3724
+          $results = @()
+          1..30 | ForEach-Object {
+            $i = $_
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $client = [Net.Sockets.TcpClient]::new()
+            try {
+              $task = $client.ConnectAsync($hostName,$port)
+              if (-not $task.Wait(3000)) { throw 'TIMEOUT_3000MS' }
+              $sw.Stop()
+              $ms = $sw.ElapsedMilliseconds
+              Write-Host ("SAMPLE {0:D2} PASS {1}ms" -f $i,$ms)
+              $results += [pscustomobject]@{N=$i;OK=$true;Ms=$ms;Error=''}
+            } catch {
+              $sw.Stop()
+              Write-Host ("SAMPLE {0:D2} FAIL {1}ms {2}" -f $i,$sw.ElapsedMilliseconds,$_.Exception.Message)
+              $results += [pscustomobject]@{N=$i;OK=$false;Ms=$sw.ElapsedMilliseconds;Error=$_.Exception.Message}
+            } finally { $client.Dispose() }
+            if ($i -lt 30) { Start-Sleep -Seconds 3 }
+          }
+          $ok = @($results | Where-Object OK)
+          $fail = @($results | Where-Object { -not $_.OK })
+          if ($ok.Count) {
+            $avg=[math]::Round(($ok | Measure-Object Ms -Average).Average,1)
+            $min=($ok | Measure-Object Ms -Minimum).Minimum
+            $max=($ok | Measure-Object Ms -Maximum).Maximum
+          } else { $avg=$min=$max=-1 }
+          Write-Host "=== SUMMARY ==="
+          Write-Host "TOTAL=30 PASS=$($ok.Count) FAIL=$($fail.Count) SUCCESS_RATE=$([math]::Round($ok.Count/30*100,1))%"
+          Write-Host "CONNECT_MS min=$min avg=$avg max=$max"
+          if ($fail.Count) { Write-Host "FAIL_SAMPLES=$($fail.N -join ',')" }
