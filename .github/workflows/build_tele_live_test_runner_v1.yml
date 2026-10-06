@@ -25,6 +25,17 @@ jobs:
         shell: pwsh
         run: ./tools/patch_live_runner_v11.ps1
 
+      - name: Apply TELE-06A sequential party V1.2 patch
+        shell: pwsh
+        run: ./tools/patch_tele06a_party_seq_v12.ps1
+
+      - name: Party state machine unit tests (dependency-free)
+        shell: pwsh
+        run: |
+          rustc --edition 2021 --test probes/Wow112HeadlessAndroid/src/tele_party_seq.rs -o $env:TEMP/tele_party_seq_test.exe
+          & "$env:TEMP/tele_party_seq_test.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'party state machine tests failed' }
+
       - name: Apply runner V1.1 script patch
         shell: pwsh
         run: ./tools/patch_live_runner_script_v11.ps1
