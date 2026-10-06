@@ -1,0 +1,152 @@
+name: WoW112 AH DE Hardening V1 Windows
+
+on:
+  push:
+    branches: [dev/windows-ah-de-price-hardening-v1]
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/build_windows_ah_de_hardening_v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout hardening source
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Harden shared BUY primitive
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_buy_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate DE model base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build full DE cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py `
+            --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv `
+            --item-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt `
+            --output-cache "$env:RUNNER_TEMP/poc08-full-cache.csv" `
+            --unresolved "$env:RUNNER_TEMP/poc08-full-unresolved.csv" `
+            --workers 24 --timeout 10 --retries 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows=@(Import-Csv "$env:RUNNER_TEMP/poc08-full-cache.csv")
+          foreach($r in $rows){ if($r.source -eq 'LEGACY_SEED'){ $r.source='SeedLegacy' } }
+          $rows | Export-Csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" -NoTypeInformation -Encoding utf8
+          if($rows.Count -lt 2200){throw "DE coverage too low: $($rows.Count)/2343"}
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate F2 risk engine
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_provenance_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f0_eligibility_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_history_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_pagination_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Merge unified V3 and apply DE price hardening
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_scan_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_action_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_multibuy_v3_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_price_hardening_v1_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $main='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $main -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_unified;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_unified::login_poc08_economy_audit')
+          Set-Content $main $t -Encoding utf8
+
+      - name: Static hardening smoke
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/smoke_unified_ah.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs probes/Wow112HeadlessAndroid/src/world_poc07.rs | Tee-Object -FilePath "$env:RUNNER_TEMP/unified-smoke.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
+          foreach($m in @('POC08-UNIFIED-MULTI','POC08_ESSENCE_PARITY_PAIRS','POC08_MAT_GUARD_PARITY_BLOCK','POC08_MAT_GUARD_SPIKE_BLOCK','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','unique_sellers','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "Hardening marker missing: $m"}}
+
+      - name: Rust check and tests
+        shell: pwsh
+        run: |
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build hardened Windows EXE
+        shell: pwsh
+        run: |
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe='probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe'
+          $b=[IO.File]::ReadAllBytes($exe)
+          if($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1] -ne 0x5a){throw 'PE smoke failed: MZ header missing'}
+          Write-Host "[PE-SMOKE] PASS bytes=$($b.Length) sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Stage hardening artifact
+        shell: pwsh
+        run: |
+          $d='dist/windows-ah-de-hardening-v1';New-Item -ItemType Directory -Force "$d/runtime"|Out-Null;New-Item -ItemType Directory -Force "$d/source"|Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-ah-de-hardening-v1.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs "$d/source/"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive.rs"
+          Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item "$env:RUNNER_TEMP/unified-smoke.txt" "$d/SMOKE_TESTS.txt"
+          $h=(Get-FileHash "$d/wow112-ah-de-hardening-v1.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          BRANCH=dev/windows-ah-de-price-hardening-v1
+          EXACT_SHA=$env:GITHUB_SHA
+          PRODUCT=UNIFIED_VENDOR_DE_MULTIBUY_DE_PRICE_HARDENING_V1
+          SCAN=FULL_AH_ALL_CLASSES_ALL_QUALITIES_ALL_STACKS
+          ROUTES=VENDOR_PLUS_DISENCHANT
+          ORDER=PROFIT_DESC_VENDOR_TIE
+          DE_PRICE_PARITY=ALL_5_ESSENCE_FAMILIES_3_TO_1
+          DE_HISTORY_UP_CAP=120_PERCENT_MEDIAN_AFTER_3_OBSERVATIONS
+          DE_SPIKE_BLOCK=150_PERCENT_MEDIAN
+          DE_COLD_START_HAIRCUT=30_PERCENT
+          DE_SELLER_DIVERSITY=ENABLED
+          DE_MAX_PER_DEID_DEFAULT=3
+          DE_MAX_SPEND_PER_SNAPSHOT_DEFAULT=250000
+          BUY_REVALIDATION=EXACT_TUPLE_PAGE_PLUS_MINUS_5
+          NO_AUTO_RETRY_AFTER_UNCERTAIN_SEND=YES
+          BINARY_SHA256=$h
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Upload hardening artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-AH-DE-HARDENING-V1-WINDOWS-${{ github.sha }}
+          path: dist/windows-ah-de-hardening-v1
+          if-no-files-found: error
+          retention-days: 14
