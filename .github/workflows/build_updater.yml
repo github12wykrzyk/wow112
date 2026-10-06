@@ -76,44 +76,26 @@ jobs:
           $text = $text.Replace('                for (var i = 0; i < 8; i++) host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12.5F));', '                if (host.ColumnStyles.Count < 6) host.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));')
           $text = $text.Replace('                host.Controls.Add(button, 7, 0);', '                host.Controls.Add(button, 5, 0);')
 
-          # Native worker logs must never reuse a file that a previous cmd/worker may still hold open.
-          # Use an immutable per-launch log and a tiny pointer file for the status reader.
+          # Never reuse a log file that an old cmd/worker may still hold open.
           $oldLogDelete = '                if (File.Exists(paths.Item2)) File.Delete(paths.Item2);'
-          $newLogSetup = @'
-                var attemptLog = paths.Item2 + "." + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + attempt + ".run.log";
-                File.WriteAllText(paths.Item2 + ".current", attemptLog, Encoding.UTF8);
-          '@
+          $newLogSetup = '                var attemptLog = paths.Item2 + "." + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + attempt + ".run.log";' + [Environment]::NewLine + '                File.WriteAllText(paths.Item2 + ".current", attemptLog, Encoding.UTF8);'
           if (-not $text.Contains($oldLogDelete)) { throw 'Expected native terminal fixed-log delete line not found' }
-          $text = $text.Replace($oldLogDelete, $newLogSetup.TrimEnd())
+          $text = $text.Replace($oldLogDelete, $newLogSetup)
 
-          $oldWrapper = @'
-                var wrapper = paths.Item1 + ".cmd";
-                File.WriteAllText(wrapper, "@echo off\r\n\"" + binary.Replace("\"", "\"\"") + "\" >> \"" + paths.Item2.Replace("\"", "\"\"") + "\" 2>&1\r\nexit /b %errorlevel%\r\n", Encoding.ASCII);
-          '@
-          $newWrapper = @'
-                var wrapper = paths.Item1 + "." + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + attempt + ".cmd";
-                File.WriteAllText(wrapper, "@echo off\r\n\"" + binary.Replace("\"", "\"\"") + "\" >> \"" + attemptLog.Replace("\"", "\"\"") + "\" 2>&1\r\nexit /b %errorlevel%\r\n", Encoding.ASCII);
-          '@
-          if (-not $text.Contains($oldWrapper.Trim())) { throw 'Expected native terminal wrapper block not found' }
-          $text = $text.Replace($oldWrapper.Trim(), $newWrapper.Trim())
+          $oldWrapperLine = '                var wrapper = paths.Item1 + ".cmd";'
+          $newWrapperLine = '                var wrapper = paths.Item1 + "." + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + attempt + ".cmd";'
+          if (-not $text.Contains($oldWrapperLine)) { throw 'Expected native terminal wrapper path line not found' }
+          $text = $text.Replace($oldWrapperLine, $newWrapperLine)
+
+          $oldLogTarget = 'paths.Item2.Replace("\"", "\"\"")'
+          $newLogTarget = 'attemptLog.Replace("\"", "\"\"")'
+          if (-not $text.Contains($oldLogTarget)) { throw 'Expected native terminal wrapper log target not found' }
+          $text = $text.Replace($oldLogTarget, $newLogTarget)
 
           $oldProbeLog = '                var tail = ReadTerminalWindowsTail(paths.Item2, 24);'
-          $newProbeLog = @'
-                var activeLog = paths.Item2;
-                var currentLogPointer = paths.Item2 + ".current";
-                if (File.Exists(currentLogPointer))
-                {
-                    try
-                    {
-                        var candidate = File.ReadAllText(currentLogPointer).Trim();
-                        if (!string.IsNullOrWhiteSpace(candidate)) activeLog = candidate;
-                    }
-                    catch { }
-                }
-                var tail = ReadTerminalWindowsTail(activeLog, 24);
-          '@
+          $newProbeLog = '                var activeLog = paths.Item2;' + [Environment]::NewLine + '                var currentLogPointer = paths.Item2 + ".current";' + [Environment]::NewLine + '                if (File.Exists(currentLogPointer))' + [Environment]::NewLine + '                {' + [Environment]::NewLine + '                    try' + [Environment]::NewLine + '                    {' + [Environment]::NewLine + '                        var candidate = File.ReadAllText(currentLogPointer).Trim();' + [Environment]::NewLine + '                        if (!string.IsNullOrWhiteSpace(candidate)) activeLog = candidate;' + [Environment]::NewLine + '                    }' + [Environment]::NewLine + '                    catch { }' + [Environment]::NewLine + '                }' + [Environment]::NewLine + '                var tail = ReadTerminalWindowsTail(activeLog, 24);'
           if (-not $text.Contains($oldProbeLog)) { throw 'Expected native terminal fixed-log probe line not found' }
-          $text = $text.Replace($oldProbeLog, $newProbeLog.TrimEnd())
+          $text = $text.Replace($oldProbeLog, $newProbeLog)
 
           Set-Content -Path $path -Value $text -Encoding UTF8
 
