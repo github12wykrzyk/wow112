@@ -1,0 +1,109 @@
+name: TELE-06A Windows live ritual bundle V3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele06a-windows-ritual-live-v3
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply V3 minimal resilience patch
+        shell: pwsh
+        run: |
+          $acceptor = 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
+          $summoner = 'probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs'
+
+          $a = Get-Content $acceptor -Raw
+          $a = $a -replace '(?m)^\s*let deadline = Instant::now\(\) \+ Duration::from_secs\(180\);\r?\n', ''
+          $a = $a -replace '(?ms)^\s*if Instant::now\(\) >= deadline \{\r?\n\s*let _ = stream\.set_read_timeout\(previous_timeout\);\r?\n\s*return Err\("TELE06A_ACCEPT_TIMEOUT no whitelisted invite observed"\.to_string\(\)\);\r?\n\s*\}\r?\n', ''
+          $a = $a.Replace('println!("[TELE-06A-ACCEPTOR] ARMED ONCE whitelist={expected_inviter:?} deadline=180s");', 'println!("[TELE-06A-ACCEPTOR] ARMED ONCE whitelist={expected_inviter:?} wait=infinite");')
+          $a = $a.Replace('"world keepalive pong timeout"]', '"world keepalive pong timeout", "10060"]')
+          $a = $a.Replace('println!("[RESILIENCE] transient network failure: {error}");', 'let display_error = if error.contains("10060") { "network timeout (WinSock 10060: remote host did not respond)".to_string() } else { error.clone() }; println!("[RESILIENCE] transient network failure: {display_error}");')
+          Set-Content -Path $acceptor -Value $a -Encoding UTF8
+
+          $s = Get-Content $summoner -Raw
+          $s = $s.Replace('"world keepalive pong timeout",', '"world keepalive pong timeout", "10060",')
+          $s = $s.Replace('println!("[RESILIENCE] transient network failure: {error}");', 'let display_error = if error.contains("10060") { "network timeout (WinSock 10060: remote host did not respond)".to_string() } else { error.clone() }; println!("[RESILIENCE] transient network failure: {display_error}");')
+          Set-Content -Path $summoner -Value $s -Encoding UTF8
+
+          $acheck = Get-Content $acceptor -Raw
+          $scheck = Get-Content $summoner -Raw
+          if ($acheck -match 'deadline=180s|TELE06A_ACCEPT_TIMEOUT') { throw 'acceptor infinite-wait patch did not apply' }
+          if ($acheck -notmatch 'wait=infinite') { throw 'acceptor infinite-wait marker missing' }
+          if ($acheck -notmatch '"10060"') { throw 'acceptor 10060 transient classifier missing' }
+          if ($scheck -notmatch '"10060"') { throw 'summoner 10060 transient classifier missing' }
+          Write-Host 'TELE06A V3 MINIMAL RESILIENCE PATCH PASS'
+
+      - name: Ritual contract tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Check acceptor
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+
+      - name: Check summoner
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Startup smoke
+        shell: pwsh
+        run: |
+          $bins = @(
+            'probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe',
+            'probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe'
+          )
+          foreach ($exe in $bins) {
+            $out = Join-Path $env:TEMP ((Split-Path $exe -Leaf) + '.out')
+            $err = Join-Path $env:TEMP ((Split-Path $exe -Leaf) + '.err')
+            $p = Start-Process -FilePath $exe -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+            $text = (Get-Content $out -Raw -ErrorAction SilentlyContinue) + (Get-Content $err -Raw -ErrorAction SilentlyContinue)
+            if ($p.ExitCode -ne 2) { throw "expected fail-fast rc=2 without credentials for $exe, got $($p.ExitCode)" }
+            if ($text -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup smoke output for $exe : $text" }
+          }
+          Write-Host 'TELE06A V3 WINDOWS STARTUP SMOKE PASS'
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe dist/tele06a_acceptor_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe dist/tele06a_ritual_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/windows/TELE06A_LIVE_4ACCOUNT.ps1 dist/TELE06A_LIVE_4ACCOUNT.ps1
+          Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_TELE06A_LIVE.cmd dist/RUN_TELE06A_LIVE.cmd
+          @"
+          WoW112 TELE-06A Windows Native Live Ritual Cast V3
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+
+          V3 minimal changes only:
+          - acceptor invite wait remains infinite
+          - WinSock/os error 10060 is transient even during TcpStream::connect()
+          - 10060 display is short English text
+          - default taxi3 summoner character is Teletanaris
+          - auth/SRP6 timing unchanged
+          - reset/invite/accept/cast wire unchanged
+          - portal use still disabled
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE06A_WINDOWS_RITUAL_LIVE_V3
+          path: dist/*
+          if-no-files-found: error
