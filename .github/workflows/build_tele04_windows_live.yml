@@ -27,9 +27,12 @@ jobs:
         run: |
           $exe = 'probes/Wow112HeadlessAndroid/target/release/tele04_runtime.exe'
           $out = (& $exe 2>&1 | Out-String)
-          if ($LASTEXITCODE -ne 2) { throw "expected fail-fast rc=2 without credentials, got $LASTEXITCODE" }
+          $rc = $LASTEXITCODE
+          if ($rc -ne 2) { throw "expected fail-fast rc=2 without credentials, got $rc" }
           if ($out -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup smoke output: $out" }
           Write-Host 'WINDOWS STARTUP SMOKE PASS'
+          $global:LASTEXITCODE = 0
+          exit 0
       - name: Stage
         shell: pwsh
         run: |
