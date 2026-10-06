@@ -57,15 +57,23 @@ fn two_independent_destinations_can_be_active() {
     engine.enqueue(req("w", "p2", "Winterspring", 2));
     let _jh = activate(&mut engine, "team-a", 10);
     let _jw = activate(&mut engine, "team-b", 10);
-    assert!(engine.active_job_by_resource(&ResourceKey::from("team-a")).is_some());
-    assert!(engine.active_job_by_resource(&ResourceKey::from("team-b")).is_some());
+    assert!(engine
+        .active_job_by_resource(&ResourceKey::from("team-a"))
+        .is_some());
+    assert!(engine
+        .active_job_by_resource(&ResourceKey::from("team-b"))
+        .is_some());
     engine.validate_invariants().unwrap();
 }
 
 #[test]
 fn duplicate_same_player_destination_preserves_original_identity() {
     let mut engine = QueueEngine::new(config());
-    assert!(engine.enqueue(req("original", "Same", "Hyjal", 10)).accepted);
+    assert!(
+        engine
+            .enqueue(req("original", "Same", "Hyjal", 10))
+            .accepted
+    );
     let duplicate = engine.enqueue(req("new-id", "Same", "Hyjal", 50));
     assert!(!duplicate.accepted);
     assert_eq!(duplicate.duplicate_of.as_deref(), Some("original"));
@@ -79,7 +87,11 @@ fn duplicate_same_player_destination_preserves_original_identity() {
 fn same_player_different_destination_is_not_duplicate() {
     let mut engine = QueueEngine::new(config());
     assert!(engine.enqueue(req("h", "Same", "Hyjal", 10)).accepted);
-    assert!(engine.enqueue(req("w", "Same", "Winterspring", 11)).accepted);
+    assert!(
+        engine
+            .enqueue(req("w", "Same", "Winterspring", 11))
+            .accepted
+    );
 }
 
 #[test]
@@ -104,8 +116,13 @@ fn cancellation_first_middle_last_repairs_positions() {
         engine.enqueue(req("1", "p1", "Hyjal", 1));
         engine.enqueue(req("2", "p2", "Hyjal", 2));
         engine.enqueue(req("3", "p3", "Hyjal", 3));
-        engine.cancel(CancelSelector::RequestId(target.to_owned()), 20).unwrap();
-        assert_eq!(engine.request(target).unwrap().state, LifecycleState::Cancelled);
+        engine
+            .cancel(CancelSelector::RequestId(target.to_owned()), 20)
+            .unwrap();
+        assert_eq!(
+            engine.request(target).unwrap().state,
+            LifecycleState::Cancelled
+        );
         let positions: Vec<_> = ["1", "2", "3"]
             .into_iter()
             .filter(|id| *id != target)
@@ -149,11 +166,15 @@ fn safe_retry_requeues_at_front_without_auto_activation() {
     engine.enqueue(req("1", "p1", "Hyjal", 1));
     engine.enqueue(req("2", "p2", "Hyjal", 2));
     let job = activate(&mut engine, "team-a", 10);
-    engine.fail(&job, FailureDisposition::RetryableSafe, 11).unwrap();
+    engine
+        .fail(&job, FailureDisposition::RetryableSafe, 11)
+        .unwrap();
     assert_eq!(engine.request("1").unwrap().state, LifecycleState::Queued);
     assert_eq!(engine.position("1"), Some(1));
     assert_eq!(engine.position("2"), Some(2));
-    assert!(engine.active_job_by_resource(&ResourceKey::from("team-a")).is_none());
+    assert!(engine
+        .active_job_by_resource(&ResourceKey::from("team-a"))
+        .is_none());
     engine.validate_invariants().unwrap();
 }
 
@@ -175,8 +196,13 @@ fn uncertain_failure_never_replays() {
     let mut engine = QueueEngine::new(config());
     engine.enqueue(req("1", "p1", "Hyjal", 1));
     let job = activate(&mut engine, "team-a", 10);
-    let out = engine.fail(&job, FailureDisposition::UncertainDoNotReplay, 11).unwrap();
-    assert_eq!(engine.request("1").unwrap().state, LifecycleState::BlockedReconciliation);
+    let out = engine
+        .fail(&job, FailureDisposition::UncertainDoNotReplay, 11)
+        .unwrap();
+    assert_eq!(
+        engine.request("1").unwrap().state,
+        LifecycleState::BlockedReconciliation
+    );
     assert!(out.events.iter().any(|event| matches!(
         event,
         QueueEvent::JobBlockedUncertain { request_id, .. } if request_id == "1"
@@ -205,8 +231,13 @@ fn crash_restore_active_is_fail_closed_and_not_replayed() {
     engine.enqueue(req("1", "p1", "Hyjal", 1));
     let _job = activate(&mut engine, "team-a", 10);
     let (mut restored, events) = QueueEngine::restore(engine.snapshot(), 100).unwrap();
-    assert_eq!(restored.request("1").unwrap().state, LifecycleState::BlockedReconciliation);
-    assert!(restored.active_job_by_resource(&ResourceKey::from("team-a")).is_none());
+    assert_eq!(
+        restored.request("1").unwrap().state,
+        LifecycleState::BlockedReconciliation
+    );
+    assert!(restored
+        .active_job_by_resource(&ResourceKey::from("team-a"))
+        .is_none());
     assert!(events.iter().any(|event| matches!(
         event,
         QueueEvent::JobBlockedUncertain { request_id, .. } if request_id == "1"
@@ -225,7 +256,9 @@ fn queue_queries_do_not_mutate_hidden_state() {
     let audit_len = engine.audit_log().len();
     assert_eq!(engine.position("2"), Some(2));
     assert_eq!(engine.queued_count_by_destination("Hyjal"), 2);
-    assert!(engine.next_eligible_request(&ResourceKey::from("team-a")).is_some());
+    assert!(engine
+        .next_eligible_request(&ResourceKey::from("team-a"))
+        .is_some());
     assert_eq!(engine.audit_log().len(), audit_len);
 }
 
@@ -275,7 +308,11 @@ fn next_selection_is_deterministic_independent_of_mapping_order() {
     for reverse in [false, true] {
         let engine = build(reverse);
         assert_eq!(
-            engine.next_eligible_request(&ResourceKey::from("shared")).unwrap().request.request_id,
+            engine
+                .next_eligible_request(&ResourceKey::from("shared"))
+                .unwrap()
+                .request
+                .request_id,
             "earlier"
         );
     }
@@ -287,7 +324,10 @@ fn unknown_destination_is_rejected_without_state() {
     let out = engine.enqueue(req("x", "p", "Feralas", 1));
     assert!(!out.accepted);
     assert!(engine.request("x").is_none());
-    assert!(matches!(out.events.as_slice(), [QueueEvent::RequestRejected { .. }]));
+    assert!(matches!(
+        out.events.as_slice(),
+        [QueueEvent::RequestRejected { .. }]
+    ));
 }
 
 #[test]
@@ -305,18 +345,29 @@ fn completed_cancelled_and_terminal_failed_never_auto_reactivate() {
     completed.enqueue(req("c", "p1", "Hyjal", 1));
     let job = activate(&mut completed, "team-a", 2);
     completed.complete(&job, 3).unwrap();
-    assert!(matches!(completed.activate_next(&ResourceKey::from("team-a"), 4), Err(QueueError::NoEligibleRequest(_))));
+    assert!(matches!(
+        completed.activate_next(&ResourceKey::from("team-a"), 4),
+        Err(QueueError::NoEligibleRequest(_))
+    ));
 
     let mut cancelled = QueueEngine::new(config());
     cancelled.enqueue(req("x", "p2", "Hyjal", 1));
-    cancelled.cancel(CancelSelector::RequestId("x".to_owned()), 2).unwrap();
-    assert!(matches!(cancelled.activate_next(&ResourceKey::from("team-a"), 3), Err(QueueError::NoEligibleRequest(_))));
+    cancelled
+        .cancel(CancelSelector::RequestId("x".to_owned()), 2)
+        .unwrap();
+    assert!(matches!(
+        cancelled.activate_next(&ResourceKey::from("team-a"), 3),
+        Err(QueueError::NoEligibleRequest(_))
+    ));
 
     let mut failed = QueueEngine::new(config());
     failed.enqueue(req("f", "p3", "Hyjal", 1));
     let job = activate(&mut failed, "team-a", 2);
     failed.fail(&job, FailureDisposition::Terminal, 3).unwrap();
-    assert!(matches!(failed.activate_next(&ResourceKey::from("team-a"), 4), Err(QueueError::NoEligibleRequest(_))));
+    assert!(matches!(
+        failed.activate_next(&ResourceKey::from("team-a"), 4),
+        Err(QueueError::NoEligibleRequest(_))
+    ));
 }
 
 #[test]
@@ -326,12 +377,15 @@ fn audit_records_every_state_transition() {
     let job = activate(&mut engine, "team-a", 2);
     engine.complete(&job, 3).unwrap();
     let states: Vec<_> = engine.audit_log().iter().map(|entry| entry.to).collect();
-    assert_eq!(states, vec![
-        LifecycleState::Received,
-        LifecycleState::Queued,
-        LifecycleState::Active,
-        LifecycleState::Completed,
-    ]);
+    assert_eq!(
+        states,
+        vec![
+            LifecycleState::Received,
+            LifecycleState::Queued,
+            LifecycleState::Active,
+            LifecycleState::Completed,
+        ]
+    );
 }
 
 #[test]
@@ -340,7 +394,9 @@ fn randomized_invariant_sequence_stays_valid() {
     let mut seed = 0xC0FFEE_u64;
     let mut next_id = 0_u64;
     for step in 0..2_000_u64 {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         match seed % 7 {
             0 | 1 | 2 => {
                 let destinations = ["Hyjal", "Winterspring", "Azshara"];
@@ -356,13 +412,19 @@ fn randomized_invariant_sequence_stays_valid() {
             }
             4 => {
                 let job = ["team-a", "team-b"].into_iter().find_map(|resource| {
-                    engine.active_job_by_resource(&ResourceKey::from(resource)).map(|job| job.job_id.clone())
+                    engine
+                        .active_job_by_resource(&ResourceKey::from(resource))
+                        .map(|job| job.job_id.clone())
                 });
-                if let Some(job) = job { let _ = engine.complete(&job, step); }
+                if let Some(job) = job {
+                    let _ = engine.complete(&job, step);
+                }
             }
             5 => {
                 let job = ["team-a", "team-b"].into_iter().find_map(|resource| {
-                    engine.active_job_by_resource(&ResourceKey::from(resource)).map(|job| job.job_id.clone())
+                    engine
+                        .active_job_by_resource(&ResourceKey::from(resource))
+                        .map(|job| job.job_id.clone())
                 });
                 if let Some(job) = job {
                     let disposition = match (seed >> 24) % 3 {
@@ -373,7 +435,9 @@ fn randomized_invariant_sequence_stays_valid() {
                     let _ = engine.fail(&job, disposition, step);
                 }
             }
-            _ => { let _ = engine.expire(step.saturating_add(2_000)); }
+            _ => {
+                let _ = engine.expire(step.saturating_add(2_000));
+            }
         }
         engine.validate_invariants().unwrap();
     }
