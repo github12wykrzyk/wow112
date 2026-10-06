@@ -97,6 +97,65 @@ jobs:
           if (-not $text.Contains($oldProbeLog)) { throw 'Expected native terminal fixed-log probe line not found' }
           $text = $text.Replace($oldProbeLog, $newProbeLog)
 
+          # START clears the stop tombstone only after the previous instance had a chance to exit.
+          $oldStartPaths = '            await StopTerminalWindowsWorkerAsync(account);' + [Environment]::NewLine + [Environment]::NewLine + '            var paths = TerminalWindowsPaths(account);'
+          $newStartPaths = '            await StopTerminalWindowsWorkerAsync(account);' + [Environment]::NewLine + [Environment]::NewLine + '            var paths = TerminalWindowsPaths(account);' + [Environment]::NewLine + '            var stopFile = paths.Item1 + ".stop";' + [Environment]::NewLine + '            try { if (File.Exists(stopFile)) File.Delete(stopFile); } catch { }'
+          if (-not $text.Contains($oldStartPaths)) { throw 'Expected native terminal start paths block not found' }
+          $text = $text.Replace($oldStartPaths, $newStartPaths)
+
+          $oldSummonerEnv = '                psi.EnvironmentVariables["WOW112_SUMMONER_NAMES"] = GetConfiguredSummonerNamesCsv();'
+          $newSummonerEnv = $oldSummonerEnv + [Environment]::NewLine + '                psi.EnvironmentVariables["WOW112_STOP_FILE"] = stopFile;'
+          if (-not $text.Contains($oldSummonerEnv)) { throw 'Expected native terminal summoner env line not found' }
+          $text = $text.Replace($oldSummonerEnv, $newSummonerEnv)
+
+          # STOP is cooperative first: leave a per-account tombstone that the worker sees within <=1 s,
+          # close the world socket from inside the worker, then force-kill the wrapper tree only as fallback.
+          $stopPattern = '(?s)        private async Task StopTerminalWindowsWorkerAsync\(WowAccount account\)\r?\n        \{.*?\r?\n        \}\r?\n\r?\n        private Task<TerminalWindowsProbe> ProbeTerminalWindowsWorkerAsync'
+          $stopReplacement = @'
+        private async Task StopTerminalWindowsWorkerAsync(WowAccount account)
+        {
+            var paths = TerminalWindowsPaths(account);
+            var stopFile = paths.Item1 + ".stop";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(paths.Item1));
+                File.WriteAllText(stopFile, "STOP " + DateTime.UtcNow.ToString("O"), Encoding.ASCII);
+            }
+            catch { }
+
+            Log("TERMINAL WIN: " + account.Label + " cooperative STOP requested; czekam na zamknięcie world socket.");
+            await Task.Delay(1500);
+
+            int pid;
+            if (File.Exists(paths.Item1) && int.TryParse(File.ReadAllText(paths.Item1).Trim(), out pid) && pid > 0)
+            {
+                var wrapperStillRunning = false;
+                try
+                {
+                    using (var process = System.Diagnostics.Process.GetProcessById(pid)) wrapperStillRunning = !process.HasExited;
+                }
+                catch { wrapperStillRunning = false; }
+
+                if (wrapperStillRunning)
+                {
+                    try { await RunTerminalProcessAsync("taskkill.exe", new[] { "/PID", pid.ToString(), "/T", "/F" }, 12000); }
+                    catch { }
+                    await Task.Delay(300);
+                }
+            }
+
+            try { if (File.Exists(paths.Item1)) File.Delete(paths.Item1); } catch { }
+            Log("TERMINAL WIN: " + account.Label + " STOP complete; stop tombstone pozostaje do następnego START.");
+        }
+
+        private Task<TerminalWindowsProbe> ProbeTerminalWindowsWorkerAsync
+'@
+          $rx = [regex]::new($stopPattern)
+          if (-not $rx.IsMatch($text)) { throw 'Expected native terminal stop method block not found' }
+          $text = $rx.Replace($text, $stopReplacement.TrimEnd(), 1)
+
+          $text = $text.Replace('Text = "Status co 3 s. Worker ma retry + pełny log lokalny. STOP zabija cały process tree danego konta."', 'Text = "Status co 3 s. STOP: sygnał do workera -> zamknięcie world socket -> force-kill wrappera tylko awaryjnie."')
+
           Set-Content -Path $path -Value $text -Encoding UTF8
 
       - name: Compile WinForms updater and bootstrap x86
@@ -249,7 +308,7 @@ jobs:
               'bootstrap_sha256': hashlib.sha256(bootstrap_data).hexdigest(),
               'bootstrap_size': len(bootstrap_data),
               'bootstrap_pe_machine': f'0x{bootstrap_machine:04X}',
-              'portal_backend': 'android-detached-v5+windows-native-v1',
+              'portal_backend': 'android-detached-v5+windows-native-v2-stop-safe',
               'git_sha': '${{ github.sha }}',
               'channel': '${{ github.ref_name }}',
           }
