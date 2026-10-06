@@ -257,18 +257,14 @@ $newRange = @'
 $a = Require-Replace $a $oldRange.Trim() $newRange.Trim() 'V1.6 recover before range failure'
 
 # Movement mutation uncertainty must never enter the generic transient reconnect path.
-$oldTransient = @'
-fn is_transient_network_error(error: &str) -> bool {
-    ["ConnectionReset", "Connection reset by peer", "BrokenPipe", "UnexpectedEof", "TimedOut", "timed out", "WouldBlock", "ConnectionRefused", "connection refused", "world socket closed", "world keepalive pong timeout"]
-'@
-$newTransient = @'
+$transientSignature = 'fn is_transient_network_error(error: &str) -> bool {'
+$transientWithGuard = @'
 fn is_transient_network_error(error: &str) -> bool {
     if error.contains("TELE06C_MOVE_MUTATION_UNCERTAIN") {
         return false;
     }
-    ["ConnectionReset", "Connection reset by peer", "BrokenPipe", "UnexpectedEof", "TimedOut", "timed out", "WouldBlock", "ConnectionRefused", "connection refused", "world socket closed", "world keepalive pong timeout"]
 '@
-$a = Require-Replace $a $oldTransient.Trim() $newTransient.Trim() 'V1.6 no reconnect after uncertain movement'
+$a = Require-Replace $a $transientSignature $transientWithGuard.TrimEnd() 'V1.6 no reconnect after uncertain movement'
 
 foreach ($needle in @(
     'TELE06C_MOVE_ATTEMPTED',
