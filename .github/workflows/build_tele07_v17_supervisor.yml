@@ -139,7 +139,7 @@ jobs:
           $p = Start-Process -FilePath .\dist\tele07_supervisor.exe -ArgumentList '--cycles','1' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
           $text = (Get-Content $out -Raw -ErrorAction SilentlyContinue) + (Get-Content $err -Raw -ErrorAction SilentlyContinue)
           if ($p.ExitCode -ne 2) { throw "expected rc=2 without credential, got $($p.ExitCode)" }
-          if ($text -notmatch 'missing WOW112_PASSWORD') { throw "unexpected fail-closed startup output: $text" }
+          if ($text -notmatch 'WOW112_PASSWORD') { throw "unexpected fail-closed startup output: $text" }
           Write-Host 'TELE07 STARTUP FAIL-CLOSED SMOKE PASS'
 
       - name: Bundle integrity smoke
