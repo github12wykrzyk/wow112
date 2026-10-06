@@ -207,13 +207,21 @@ $newSelfPass = @'
 '@
 $r = Require-Replace $r $oldSelfPass $newSelfPass.Trim() 'TELE06B selftest'
 
-$oldColor = "Write-Host ('VERDICT: ' + $FinalCode) -ForegroundColor $(if ($FinalCode -eq 'PASS_RITUAL_STARTED') { 'Green' } else { 'Yellow' })"
-$newColor = "Write-Host ('VERDICT: ' + $FinalCode) -ForegroundColor $(if ($FinalCode -eq 'PASS_RITUAL_COMPLETE') { 'Green' } else { 'Yellow' })"
-$r = Require-Replace $r $oldColor $newColor 'TELE06B verdict color'
+$oldColor = @'
+Write-Host ('VERDICT: ' + $FinalCode) -ForegroundColor $(if ($FinalCode -eq 'PASS_RITUAL_STARTED') { 'Green' } else { 'Yellow' })
+'@
+$newColor = @'
+Write-Host ('VERDICT: ' + $FinalCode) -ForegroundColor $(if ($FinalCode -eq 'PASS_RITUAL_COMPLETE') { 'Green' } else { 'Yellow' })
+'@
+$r = Require-Replace $r $oldColor.Trim() $newColor.Trim() 'TELE06B verdict color'
 
-$oldExit = "if ($FinalCode -eq 'PASS_RITUAL_STARTED') { exit 0 }"
-$newExit = "if ($FinalCode -eq 'PASS_RITUAL_COMPLETE') { exit 0 }"
-$r = Require-Replace $r $oldExit $newExit 'TELE06B success exit'
+$oldExit = @'
+if ($FinalCode -eq 'PASS_RITUAL_STARTED') { exit 0 }
+'@
+$newExit = @'
+if ($FinalCode -eq 'PASS_RITUAL_COMPLETE') { exit 0 }
+'@
+$r = Require-Replace $r $oldExit.Trim() $newExit.Trim() 'TELE06B success exit'
 
 # Fail closed if V1.2 control-plane markers drift.
 foreach ($needle in @(
