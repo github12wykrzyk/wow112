@@ -90,10 +90,12 @@ jobs:
       - name: Static hardening smoke
         shell: pwsh
         run: |
-          python probes/Wow112HeadlessAndroid/tools/smoke_unified_ah.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs probes/Wow112HeadlessAndroid/src/world_poc07.rs | Tee-Object -FilePath "$env:RUNNER_TEMP/unified-smoke.txt"
+          $orig='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
+          $copy="$env:RUNNER_TEMP/world_poc08_unified_smoke.rs"
+          Copy-Item $orig $copy
+          python probes/Wow112HeadlessAndroid/tools/smoke_unified_ah.py $copy probes/Wow112HeadlessAndroid/src/world_poc07.rs | Tee-Object -FilePath "$env:RUNNER_TEMP/unified-smoke.txt"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
-          foreach($m in @('POC08-UNIFIED-MULTI','POC08_ESSENCE_PARITY_PAIRS','POC08_MAT_GUARD_PARITY_BLOCK','POC08_MAT_GUARD_SPIKE_BLOCK','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','unique_sellers','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "Hardening marker missing: $m"}}
+          foreach($m in @('POC08-UNIFIED-MULTI','POC08_ESSENCE_PARITY_PAIRS','POC08_MAT_GUARD_PARITY_BLOCK','POC08_MAT_GUARD_SPIKE_BLOCK','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','unique_sellers','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $orig -Pattern $m -SimpleMatch -Quiet)){throw "Hardening marker missing: $m"}}
 
       - name: Rust check and tests
         shell: pwsh
