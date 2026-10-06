@@ -186,7 +186,7 @@ jobs:
             if ($readme -notmatch [regex]::Escape($needle)) { throw "README marker missing: $needle" }
           }
           $ainfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe 2>$null | Out-String
-          foreach ($needle in @('TELE06C_HEARTBEAT_OPCODE','FAIL_AUTO_POSITION_LIMIT','FAIL_AUTO_POSITION_UNCERTAIN','TELE06C_MOVE_MUTATION_UNCERTAIN','TELE-06C-MOVE-TX','PORTAL_USE_SENT','SMSG_SUMMON_REQUEST')) {
+          foreach ($needle in @('opcode=0x00EE','FAIL_AUTO_POSITION_LIMIT','FAIL_AUTO_POSITION_UNCERTAIN','TELE06C_MOVE_MUTATION_UNCERTAIN','TELE-06C-MOVE-TX','PORTAL_USE_SENT','SMSG_SUMMON_REQUEST')) {
             if ($ainfo -notmatch [regex]::Escape($needle)) { throw "acceptor binary marker missing: $needle" }
           }
           Write-Host 'TELE06C V1.6 BUNDLE INTEGRITY PASS'
