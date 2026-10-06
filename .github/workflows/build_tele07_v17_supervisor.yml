@@ -1,0 +1,173 @@
+name: TELE07 V1.7 stationary supervisor
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele07-stationary-supervisor-v1
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply TELE-06A V4 runtime patch
+        shell: pwsh
+        run: ./tools/patch_tele06a_v4.ps1
+
+      - name: Apply V1.1 runtime-state patch
+        shell: pwsh
+        run: ./tools/patch_live_runner_v11.ps1
+
+      - name: Apply TELE-06A sequential party V1.2 patch
+        shell: pwsh
+        run: ./tools/patch_tele06a_party_seq_v12.ps1
+
+      - name: Apply TELE-06B portal completion patch
+        shell: pwsh
+        run: ./tools/patch_tele06b_portal_v1.ps1
+
+      - name: Apply 3s login watchdog
+        shell: pwsh
+        run: ./tools/patch_login_watchdog_3s.ps1
+
+      - name: Apply frozen V1.5 range-safe patch
+        shell: pwsh
+        run: ./tools/patch_tele06b_range_safe_v15.ps1
+
+      - name: Apply frozen V1.6 bounded auto-position patch
+        shell: pwsh
+        run: ./tools/patch_tele06c_auto_position_v16.ps1
+
+      - name: Frozen V1.6 acceptor regression tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+
+      - name: TELE07 supervisor unit tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor
+
+      - name: TELE07 supervisor built-in self-test
+        shell: pwsh
+        run: cargo run --quiet --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --self-test
+
+      - name: Check frozen summoner regression
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor
+
+      - name: Stage TELE07 V1.7 bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe dist/tele06a_acceptor_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe dist/tele06a_ritual_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele07_supervisor.exe dist/tele07_supervisor.exe
+          Copy-Item probes/Wow112HeadlessAndroid/windows/TELE07_RUNNER.ps1 dist/TELE07_RUNNER.ps1
+          Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_TELE07.cmd dist/RUN_TELE07.cmd
+          Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_TELE07_10X_FAULT_TEST.cmd dist/RUN_TELE07_10X_FAULT_TEST.cmd
+          @'
+          WoW112 TELE07 V1.7 STATIONARY SUPERVISOR
+
+          Core rule:
+          - TELE06C V1.6 child runtime semantics remain frozen and fail-closed.
+          - Supervisor is persistent; one-shot child mutation guards are refreshed by controlled child recycle between completed cycles, never reset in-process.
+
+          Roles:
+          - CUSTOMER  octowar1 / Smokinpole
+          - SLAVE1    octowinter1 / Winterone
+          - SLAVE2    octowinter2 / Wintertwoo
+          - SUMMONER  taxi3 / Teletanaris
+
+          Supervisor behavior:
+          - starts CUSTOMER/SLAVE1/SLAVE2 first;
+          - requires 3/3 READY stable for 2 seconds;
+          - before active mutation, a dead/stale acceptor is restarted individually with a bounded restart budget;
+          - starts SUMMONER only after the READY gate;
+          - during active summon mutation, role exit/stale/uncertain outcome FAILS CLOSED and is never auto-replayed;
+          - PASS requires CUSTOMER SMSG_SUMMON_REQUEST/0x02AB plus both PORTAL_USE_SENT states;
+          - after PASS children are recycled for fresh one-shot guards and the persistent supervisor can start the next cycle;
+          - Ctrl+C requests graceful supervisor shutdown and child cleanup.
+
+          Run:
+          - RUN_TELE07.cmd = normal single-cycle validation.
+          - RUN_TELE07_10X_FAULT_TEST.cmd = 10 cycles; cycle 2 intentionally kills SLAVE1 before SUMMONER starts, expects restart of SLAVE1 only, restores 3/3 READY, then continues.
+
+          Result:
+          - results/TELE07_*/SUPERVISOR.log
+          - results/TELE07_*/CYCLE_RESULTS.txt
+          - results/TELE07_*/SUPERVISOR_VERDICT.txt
+          - LATEST_TELE07_RESULT.zip
+          '@ | Set-Content -Encoding UTF8 dist/00_README_FIRST.txt
+          @"
+          WoW112 TELE07 V1.7 STATIONARY SUPERVISOR
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+          Frozen V1.6 baseline: baseline/tele06c-v16-auto-position-green-20261006 @ 8e09ea265924dc3138f2ff1e0f57f2607feb4646
+          Safety: pre-active single-role recovery; active mutation fail-closed; no uncertain replay
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+
+      - name: TELE07 packaged self-test
+        shell: pwsh
+        run: |
+          Push-Location dist
+          try {
+            & .\tele07_supervisor.exe --self-test
+            if ($LASTEXITCODE -ne 0) { throw "supervisor self-test rc=$LASTEXITCODE" }
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\TELE07_RUNNER.ps1 -SelfTest
+            if ($LASTEXITCODE -ne 0) { throw "runner self-test rc=$LASTEXITCODE" }
+          } finally { Pop-Location }
+
+      - name: TELE07 startup fail-closed smoke
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:TEMP 'tele07_start.out'
+          $err = Join-Path $env:TEMP 'tele07_start.err'
+          [Environment]::SetEnvironmentVariable('WOW112_PASSWORD', $null, 'Process')
+          $p = Start-Process -FilePath .\dist\tele07_supervisor.exe -ArgumentList '--cycles','1' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          $text = (Get-Content $out -Raw -ErrorAction SilentlyContinue) + (Get-Content $err -Raw -ErrorAction SilentlyContinue)
+          if ($p.ExitCode -ne 2) { throw "expected rc=2 without credential, got $($p.ExitCode)" }
+          if ($text -notmatch 'missing WOW112_PASSWORD') { throw "unexpected fail-closed startup output: $text" }
+          Write-Host 'TELE07 STARTUP FAIL-CLOSED SMOKE PASS'
+
+      - name: Bundle integrity smoke
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist/tele06a_acceptor_runtime.exe',
+            'dist/tele06a_ritual_runtime.exe',
+            'dist/tele07_supervisor.exe',
+            'dist/TELE07_RUNNER.ps1',
+            'dist/RUN_TELE07.cmd',
+            'dist/RUN_TELE07_10X_FAULT_TEST.cmd',
+            'dist/00_README_FIRST.txt',
+            'dist/BUILD_INFO.txt'
+          )
+          foreach ($path in $required) { if (!(Test-Path $path)) { throw "missing staged file: $path" } }
+          $src = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs -Raw
+          foreach ($needle in @('READY_GATE PASS','restart_only_this_role','FAIL_CLOSED active/uncertain outcome','FAULT_INJECT','PASS_TELE07','SMSG_SUMMON_REQUEST')) {
+            if ($src -notmatch [regex]::Escape($needle)) { throw "supervisor marker missing: $needle" }
+          }
+          $readme = Get-Content dist/00_README_FIRST.txt -Raw
+          foreach ($needle in @('persistent supervisor','3/3 READY','active mutation fail-closed','RUN_TELE07_10X_FAULT_TEST.cmd','LATEST_TELE07_RESULT.zip')) {
+            if ($readme -notmatch [regex]::Escape($needle)) { throw "README marker missing: $needle" }
+          }
+          Write-Host 'TELE07 V1.7 BUNDLE INTEGRITY PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE07_V1_7_STATIONARY_SUPERVISOR
+          path: dist/*
+          if-no-files-found: error
