@@ -89,17 +89,58 @@ fn positive_operational_matrix_has_at_least_50_cases() {
 #[test]
 fn negative_matrix_has_at_least_30_cases_and_stays_non_actionable() {
     let cases = [
-        "hello", "hi", "hey", "thanks", "ty", "good luck", "nice service", "how are you",
-        "lol", "brb", "afk", "one sec", "wait", "ok", "okay", "cool", "gg", "bye", "cya",
-        "what level are you", "what level are you?", "where are you from", "hello + hyjal", "math 2+2",
-        "invoice please", "invoices", "invent something", "inside now", "invisible", "invitation sent",
-        "winter is coming", "azsharalalala", "hyjacking", "portal looks nice", "telephone", "summary",
-        "consumer", "need gold", "invitees are here", "plus sign + in middle", "we met yesterday",
+        "hello",
+        "hi",
+        "hey",
+        "thanks",
+        "ty",
+        "good luck",
+        "nice service",
+        "how are you",
+        "lol",
+        "brb",
+        "afk",
+        "one sec",
+        "wait",
+        "ok",
+        "okay",
+        "cool",
+        "gg",
+        "bye",
+        "cya",
+        "what level are you",
+        "what level are you?",
+        "where are you from",
+        "hello + hyjal",
+        "math 2+2",
+        "invoice please",
+        "invoices",
+        "invent something",
+        "inside now",
+        "invisible",
+        "invitation sent",
+        "winter is coming",
+        "azsharalalala",
+        "hyjacking",
+        "portal looks nice",
+        "telephone",
+        "summary",
+        "consumer",
+        "need gold",
+        "invitees are here",
+        "plus sign + in middle",
+        "we met yesterday",
     ];
     assert!(cases.len() >= 30, "fixture count={}", cases.len());
     for text in cases {
         let result = classify(text);
-        assert!(matches!(result.intent, WhisperIntent::Irrelevant | WhisperIntent::Unknown), "unsafe false positive for {text:?}: {result:?}");
+        assert!(
+            matches!(
+                result.intent,
+                WhisperIntent::Irrelevant | WhisperIntent::Unknown
+            ),
+            "unsafe false positive for {text:?}: {result:?}"
+        );
     }
 }
 
@@ -114,7 +155,9 @@ fn required_regressions() {
         ("here", WhisperIntent::PresenceReady),
         ("winterspring pls", WhisperIntent::SummonRequest),
     ];
-    for (text, expected) in cases { assert_eq!(classify(text).intent, expected, "input={text:?}"); }
+    for (text, expected) in cases {
+        assert_eq!(classify(text).intent, expected, "input={text:?}");
+    }
 }
 
 #[test]
@@ -122,7 +165,10 @@ fn feralas_query_never_fakes_availability() {
     let result = classify("do you have feralas?");
     assert_eq!(result.intent, WhisperIntent::DestinationQuery);
     assert_eq!(result.destination, None);
-    assert!(result.signals.iter().any(|s| s.contains("unconfigured_candidate:feralas")));
+    assert!(result
+        .signals
+        .iter()
+        .any(|s| s.contains("unconfigured_candidate:feralas")));
 }
 
 #[test]
@@ -136,27 +182,46 @@ fn destination_registry_is_injectable_and_hydraxian_is_legacy_only() {
     assert_eq!(feralas.destination, Some(DestinationKey::new("feralas")));
     let hydraxian = classify_whisper(&obs("hydraxian waterlords pls"), &config);
     assert_eq!(hydraxian.intent, WhisperIntent::SummonRequest);
-    assert_eq!(hydraxian.destination, Some(DestinationKey::new("hydraxian_waterlords")));
+    assert_eq!(
+        hydraxian.destination,
+        Some(DestinationKey::new("hydraxian_waterlords"))
+    );
 }
 
 #[test]
 fn fuzzy_invite_is_explainable_and_bounded() {
     let result = classify("invi");
     assert_eq!(result.intent, WhisperIntent::InviteRequest);
-    assert!(result.signals.iter().any(|s| s == "fuzzy:invi->inv:distance=1"));
+    assert!(result
+        .signals
+        .iter()
+        .any(|s| s == "fuzzy:invi->inv:distance=1"));
     assert_eq!(result.reason, "bounded_short_operational_fuzzy_match");
     for text in ["invoice", "invent", "inside", "invitation"] {
-        assert_ne!(classify(text).intent, WhisperIntent::InviteRequest, "input={text:?}");
+        assert_ne!(
+            classify(text).intent,
+            WhisperIntent::InviteRequest,
+            "input={text:?}"
+        );
     }
 }
 
 #[test]
 fn plus_policy_and_competition_precedence_are_conservative() {
-    assert_ne!(classify("hello + hyjal").intent, WhisperIntent::GenericPositive);
-    assert_eq!(classify("+ selling summons").intent, WhisperIntent::CompetitionMessage);
+    assert_ne!(
+        classify("hello + hyjal").intent,
+        WhisperIntent::GenericPositive
+    );
+    assert_eq!(
+        classify("+ selling summons").intent,
+        WhisperIntent::CompetitionMessage
+    );
     let result = classify("selling summons cheaper today");
     assert_eq!(result.intent, WhisperIntent::CompetitionMessage);
-    assert!(result.signals.iter().any(|s| s == "competition_pattern:selling summons"));
+    assert!(result
+        .signals
+        .iter()
+        .any(|s| s == "competition_pattern:selling summons"));
 }
 
 #[test]
@@ -183,22 +248,39 @@ fn unknown_preserves_reporting_payload() {
 fn explicit_destination_overrides_context() {
     let mut observation = obs("need one");
     observation.destination_context = Some("hyjal".into());
-    assert_eq!(classify_whisper(&observation, &ParserConfig::default()).destination, Some(DestinationKey::new("hyjal")));
+    assert_eq!(
+        classify_whisper(&observation, &ParserConfig::default()).destination,
+        Some(DestinationKey::new("hyjal"))
+    );
     observation.text = "azshara".into();
-    assert_eq!(classify_whisper(&observation, &ParserConfig::default()).destination, Some(DestinationKey::new("azshara")));
+    assert_eq!(
+        classify_whisper(&observation, &ParserConfig::default()).destination,
+        Some(DestinationKey::new("azshara"))
+    );
 }
 
 #[test]
 fn destination_queries_cover_configured_and_unconfigured_names_only() {
-    for text in ["do you have hyjal?", "can i get winterspring?", "got azshara?"] {
+    for text in [
+        "do you have hyjal?",
+        "can i get winterspring?",
+        "got azshara?",
+    ] {
         let result = classify(text);
-        assert_eq!(result.intent, WhisperIntent::DestinationQuery, "input={text:?}");
+        assert_eq!(
+            result.intent,
+            WhisperIntent::DestinationQuery,
+            "input={text:?}"
+        );
         assert!(result.destination.is_some());
     }
     let unknown = classify("do you have silithus?");
     assert_eq!(unknown.intent, WhisperIntent::DestinationQuery);
     assert_eq!(unknown.destination, None);
-    assert_eq!(classify("what level are you?").intent, WhisperIntent::Irrelevant);
+    assert_eq!(
+        classify("what level are you?").intent,
+        WhisperIntent::Irrelevant
+    );
 }
 
 #[test]
@@ -211,14 +293,20 @@ fn fingerprint_is_deterministic_and_timestamp_independent() {
     assert_eq!(request_fingerprint(&first).len(), 16);
     let mut other = obs("+ hyjal");
     other.sender = "OtherCustomer".into();
-    assert_ne!(request_fingerprint(&first), request_fingerprint(&classify_whisper(&other, &ParserConfig::default())));
+    assert_ne!(
+        request_fingerprint(&first),
+        request_fingerprint(&classify_whisper(&other, &ParserConfig::default()))
+    );
 }
 
 #[test]
 fn config_and_normalization_helpers_are_deterministic() {
     let mut config = ParserConfig::default();
     config.competition_patterns.push("cheap ports here".into());
-    assert_eq!(classify_whisper(&obs("CHEAP ports here!!!"), &config).intent, WhisperIntent::CompetitionMessage);
+    assert_eq!(
+        classify_whisper(&obs("CHEAP ports here!!!"), &config).intent,
+        WhisperIntent::CompetitionMessage
+    );
     assert_eq!(normalize_whisper_text("  +   HyJAL!!!  "), "+ hyjal");
     assert_eq!(normalize_whisper_text("INV... pls"), "inv pls");
     let aliases = destination_alias_map(&ParserConfig::default());
