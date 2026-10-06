@@ -1,0 +1,50 @@
+name: TELE-04 Windows live bundle
+
+on:
+  push:
+    branches:
+      - feature/tele04-windows-live-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele04_runtime
+      - name: Build release
+        shell: pwsh
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele04_runtime
+      - name: Startup smoke
+        shell: pwsh
+        run: |
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele04_runtime.exe'
+          $out = (& $exe 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 2) { throw "expected fail-fast rc=2 without credentials, got $LASTEXITCODE" }
+          if ($out -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup smoke output: $out" }
+          Write-Host 'WINDOWS STARTUP SMOKE PASS'
+      - name: Stage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele04_runtime.exe dist/tele04_runtime.exe
+          @"
+          WoW112 TELE-04 Windows Native Live Server
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+          Smoke: PASS
+          Runtime: auth/world + whisper RX/TX + one-shot real group invite + party observer
+          Safety: invite fail-closed after first socket attempt; cast/portal mutation disabled
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE04_WINDOWS_LIVE
+          path: dist/*
+          if-no-files-found: error
