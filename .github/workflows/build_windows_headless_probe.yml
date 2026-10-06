@@ -31,6 +31,33 @@ jobs:
         with:
           targets: i686-pc-windows-msvc
 
+      - name: Native Windows realm-list guard
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'probes/Wow112HeadlessAndroid/src/main.rs'
+          $text = Get-Content $path -Raw
+          $old = @'
+              let realm = realms
+                  .realms
+                  .get(realm_index)
+                  .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
+          '@
+          $new = @'
+              let effective_realm_index = if realm_index < realms.realms.len() {
+                  realm_index
+              } else if realms.realms.len() == 1 {
+                  println!("[AUTH] configured realm index {} unavailable; single-realm fallback -> 0", realm_index);
+                  0
+              } else {
+                  return Err(format!("WOW112_REALM_INDEX={realm_index} is out of range for {} realms", realms.realms.len()));
+              };
+              let realm = &realms.realms[effective_realm_index];
+          '@
+          if (-not $text.Contains($old.Trim())) { throw 'Expected realm-index selection block not found' }
+          $text = $text.Replace($old.Trim(), $new.Trim())
+          Set-Content -Path $path -Value $text -Encoding UTF8
+
       - name: Host compile check
         shell: pwsh
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
