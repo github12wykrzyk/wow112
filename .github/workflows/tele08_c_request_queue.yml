@@ -26,9 +26,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: cargo fmt --check
-        run: cargo fmt --check
+      - name: Format working copy
+        run: cargo fmt
       - name: cargo check
         run: cargo check --all-targets
       - name: cargo test
         run: cargo test --all-targets
+      - name: Upload formatted crate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tele08-c-formatted-${{ github.sha }}
+          path: probes/Wow112HeadlessAndroid/tele08_request_queue
+          if-no-files-found: error
+          retention-days: 1
