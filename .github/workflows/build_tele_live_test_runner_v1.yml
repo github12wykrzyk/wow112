@@ -1,0 +1,116 @@
+name: TELE live test runner V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele-live-test-runner-v1
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply TELE-06A V4 runtime patch
+        shell: pwsh
+        run: ./tools/patch_tele06a_v4.ps1
+
+      - name: Runner parser self-test
+        shell: pwsh
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1 -SelfTest
+
+      - name: Ritual V4 contract tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Check acceptor
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+
+      - name: Check summoner
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+
+      - name: Runtime startup smoke
+        shell: pwsh
+        run: |
+          $bins = @(
+            'probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe',
+            'probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe'
+          )
+          foreach ($exe in $bins) {
+            $out = Join-Path $env:TEMP ((Split-Path $exe -Leaf) + '.out')
+            $err = Join-Path $env:TEMP ((Split-Path $exe -Leaf) + '.err')
+            $p = Start-Process -FilePath $exe -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+            $text = (Get-Content $out -Raw -ErrorAction SilentlyContinue) + (Get-Content $err -Raw -ErrorAction SilentlyContinue)
+            if ($p.ExitCode -ne 2) { throw "expected rc=2 without credentials for $exe, got $($p.ExitCode)" }
+            if ($text -notmatch 'missing WOW112_ACCOUNT') { throw "unexpected startup output for $exe : $text" }
+          }
+          Write-Host 'TELE LIVE TEST RUNNER RUNTIME SMOKE PASS'
+
+      - name: Stage runner bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe dist/tele06a_acceptor_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe dist/tele06a_ritual_runtime.exe
+          Copy-Item probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1 dist/LIVE_TEST_RUNNER.ps1
+          Copy-Item probes/Wow112HeadlessAndroid/windows/RUN_LIVE_TEST.cmd dist/RUN_LIVE_TEST.cmd
+          Copy-Item probes/Wow112HeadlessAndroid/windows/LIVE_TEST_README.txt dist/00_README_FIRST.txt
+          @"
+          WoW112 TELE LOCAL LIVE TEST RUNNER V1
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+
+          Bundled runtime: TELE-06A V4
+          Defaults:
+          - octowar1 / Smokinpole = CUSTOMER
+          - taxi3 / Teletanaris = SUMMONER
+          - octowinter1 / Winterone = SLAVE1
+          - octowinter2 / Wintertwoo = SLAVE2
+
+          Runner behavior:
+          - one command launches three acceptors
+          - READY requires ARMED + fresh keepalive PONG in current session
+          - reconnect invalidates READY
+          - summoner launches automatically only after stable 3/3 READY
+          - result is packed into LATEST_RESULT.zip
+          - optional local password persistence uses Windows DPAPI
+          - password is excluded from result artifacts
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+
+      - name: Bundle integrity smoke
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist/tele06a_acceptor_runtime.exe',
+            'dist/tele06a_ritual_runtime.exe',
+            'dist/LIVE_TEST_RUNNER.ps1',
+            'dist/RUN_LIVE_TEST.cmd',
+            'dist/00_README_FIRST.txt',
+            'dist/BUILD_INFO.txt'
+          )
+          foreach ($path in $required) { if (!(Test-Path $path)) { throw "missing staged file: $path" } }
+          $runner = Get-Content dist/LIVE_TEST_RUNNER.ps1 -Raw
+          foreach ($needle in @('READY 3/3','fresh keepalive pong','LATEST_RESULT.zip','Teletanaris','PASS_RITUAL_STARTED')) {
+            if ($runner -notmatch [regex]::Escape($needle)) { throw "runner marker missing: $needle" }
+          }
+          Write-Host 'TELE LIVE TEST RUNNER BUNDLE INTEGRITY PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE_LIVE_TEST_RUNNER_V1
+          path: dist/*
+          if-no-files-found: error
