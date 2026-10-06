@@ -132,7 +132,7 @@ namespace WoW112Updater
                     var footer = new Label
                     {
                         Location = new Point(14, 510), Size = new Size(870, 34),
-                        Text = "Status co 3 s. Worker ma retry + pełny log lokalny. STOP zabija cały process tree danego konta."
+                        Text = "Status co 3 s. STOP: worker zamyka world socket; taskkill tylko jako awaryjny fallback."
                     };
                     dialog.Controls.AddRange(new Control[] { info, accounts, states, start, stop, refresh, all, clear, close, footer });
 
@@ -393,6 +393,8 @@ namespace WoW112Updater
             await StopTerminalWindowsWorkerAsync(account);
 
             var paths = TerminalWindowsPaths(account);
+            var stopFile = paths.Item1 + ".stop";
+            try { if (File.Exists(stopFile)) File.Delete(stopFile); } catch { }
             Directory.CreateDirectory(Path.GetDirectoryName(paths.Item1));
             TerminalWindowsProbe last = null;
             for (var attempt = 1; attempt <= 2; attempt++)
@@ -421,6 +423,7 @@ namespace WoW112Updater
                 psi.EnvironmentVariables["WOW112_RECONNECT_DELAY_MS"] = "0";
                 psi.EnvironmentVariables["WOW112_PORTAL_ATTEMPTS"] = "3";
                 psi.EnvironmentVariables["WOW112_SUMMONER_NAMES"] = GetConfiguredSummonerNamesCsv();
+                psi.EnvironmentVariables["WOW112_STOP_FILE"] = stopFile;
 
                 var process = System.Diagnostics.Process.Start(psi);
                 if (process == null) throw new InvalidOperationException(account.Label + ": nie udało się uruchomić native workera.");
@@ -450,13 +453,37 @@ namespace WoW112Updater
         private async Task StopTerminalWindowsWorkerAsync(WowAccount account)
         {
             var paths = TerminalWindowsPaths(account);
+            var stopFile = paths.Item1 + ".stop";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(paths.Item1));
+                File.WriteAllText(stopFile, "STOP " + DateTime.UtcNow.ToString("O"), Encoding.ASCII);
+            }
+            catch { }
+
+            Log("TERMINAL WIN: " + account.Label + " cooperative STOP requested; czekam na zamknięcie world socket.");
+            await Task.Delay(1500);
+
             int pid;
             if (File.Exists(paths.Item1) && int.TryParse(File.ReadAllText(paths.Item1).Trim(), out pid) && pid > 0)
             {
-                try { await RunTerminalProcessAsync("taskkill.exe", new[] { "/PID", pid.ToString(), "/T", "/F" }, 12000); }
-                catch { }
+                var wrapperStillRunning = false;
+                try
+                {
+                    using (var process = Process.GetProcessById(pid)) wrapperStillRunning = !process.HasExited;
+                }
+                catch { wrapperStillRunning = false; }
+
+                if (wrapperStillRunning)
+                {
+                    try { await RunTerminalProcessAsync("taskkill.exe", new[] { "/PID", pid.ToString(), "/T", "/F" }, 12000); }
+                    catch { }
+                    await Task.Delay(300);
+                }
             }
+
             try { if (File.Exists(paths.Item1)) File.Delete(paths.Item1); } catch { }
+            Log("TERMINAL WIN: " + account.Label + " STOP complete; stop tombstone pozostaje do następnego START.");
         }
 
         private Task<TerminalWindowsProbe> ProbeTerminalWindowsWorkerAsync(WowAccount account)
@@ -539,9 +566,10 @@ namespace WoW112Updater
         {
             var root = new Dictionary<string, object>();
             root["schema_version"] = 1;
-            root["backend"] = "windows-native-v1";
+            root["backend"] = "windows-native-v2-stop-safe";
             root["account_ids"] = ids.OrderBy(x => x, StringComparer.Ordinal).ToArray();
             UpdaterSafety.WriteUtf8Atomic(path, json.Serialize(root), ".tmp", ".previous");
         }
     }
 }
+
