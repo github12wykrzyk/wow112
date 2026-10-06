@@ -157,7 +157,7 @@ jobs:
           )
           foreach ($path in $required) { if (!(Test-Path $path)) { throw "missing staged file: $path" } }
           $src = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs -Raw
-          foreach ($needle in @('READY_GATE PASS','restart_only_this_role','FAIL_CLOSED active/uncertain outcome','FAULT_INJECT','PASS_TELE07','SMSG_SUMMON_REQUEST')) {
+          foreach ($needle in @('READY_GATE PASS','restart_only_this_role','FAIL_CLOSED active/uncertain outcome','FAULT_INJECT','PASS_TELE07','PASS_RITUAL_COMPLETE','0x02AB')) {
             if ($src -notmatch [regex]::Escape($needle)) { throw "supervisor marker missing: $needle" }
           }
           $readme = Get-Content dist/00_README_FIRST.txt -Raw
