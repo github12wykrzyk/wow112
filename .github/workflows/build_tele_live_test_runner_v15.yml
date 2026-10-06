@@ -76,6 +76,10 @@ jobs:
         shell: pwsh
         run: ./tools/patch_tele06b_runner_v15.ps1
 
+      - name: Apply V1.5 range-safe README
+        shell: pwsh
+        run: ./tools/patch_tele06b_readme_v15.ps1
+
       - name: Runner V1.5 parser self-test
         shell: pwsh
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1 -SelfTest
@@ -173,6 +177,11 @@ jobs:
           if ($runner -match 'PORTAL_USED') { throw 'legacy PORTAL_USED state survived in runner' }
           if ($runner -match 'FAIL_ACCEPTOR_LOST_DURING_HANDSHAKE') { throw 'obsolete pre-roster hard fail survived' }
           if ($runner -notmatch "WOW112_RECONNECT_DELAY_MS = '0'") { throw 'zero reconnect delay marker missing' }
+          $readme = Get-Content dist/00_README_FIRST.txt -Raw
+          foreach ($needle in @('V1.5 TELE06B RANGE-SAFE','PORTAL_USE_SENT','FAIL_PORTAL_OUT_OF_RANGE','FAIL_PORTAL_RANGE_UNKNOWN','WOW112_TELE06B_MAX_RANGE=5.8','does NOT move a clicker into range')) {
+            if ($readme -notmatch [regex]::Escape($needle)) { throw "V1.5 README marker missing: $needle" }
+          }
+          if ($readme -match 'Each slave must reach PORTAL_USED') { throw 'stale V1.4 README semantics survived' }
           $ainfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe 2>$null | Out-String
           $sinfo = & strings.exe probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe 2>$null | Out-String
           foreach ($needle in @('WOW112_RUNNER_STATE_FILE','WOW112_TELE06B_ROLE','WOW112_TELE06B_MAX_RANGE','WOW112_TELE06B_CLICK_SETTLE_MS','PORTAL_USE_SENT','FAIL_PORTAL_OUT_OF_RANGE','FAIL_PORTAL_RANGE_UNKNOWN','PASS_RITUAL_COMPLETE','SMSG_SUMMON_REQUEST','TELE-06B-RANGE','T6B-RX','T6B-CLICK-TX','TELE-06B-PORTAL-OUTCOME')) {
