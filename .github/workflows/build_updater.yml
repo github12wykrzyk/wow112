@@ -48,9 +48,15 @@ jobs:
           $old = '                env.Add("WOW112_PORTAL_ATTEMPTS=''3''");'
           $new = $old + [Environment]::NewLine + '                env.Add("WOW112_SUMMONER_NAMES=" + TerminalShellQuote(GetConfiguredSummonerNamesCsv()));'
           if (-not $text.Contains($old)) { throw 'Expected terminal portal attempts line not found' }
-          Set-Content -Path $path -Value ($text.Replace($old, $new)) -Encoding UTF8
+          $text = $text.Replace($old, $new)
 
-      - name: Normalize native Windows terminal symbols
+          $oldFailure = 'ShortTerminalText(last == null ? "" : last.Tail, 180)'
+          $newFailure = 'TerminalWindowsFailureText(last == null ? "" : last.Tail, 300)'
+          if (-not $text.Contains($oldFailure)) { throw 'Expected Android terminal failure formatter not found' }
+          $text = $text.Replace($oldFailure, $newFailure)
+          Set-Content -Path $path -Value $text -Encoding UTF8
+
+      - name: Normalize native Windows terminal integration
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -58,6 +64,17 @@ jobs:
           $text = Get-Content $path -Raw
           $text = $text.Replace('Application.OpenForms', 'System.Windows.Forms.Application.OpenForms')
           $text = $text.Replace('Process.GetProcessById', 'System.Diagnostics.Process.GetProcessById')
+
+          $oldHost = '            var host = multibox == null ? null : multibox.Parent as TableLayoutPanel;'
+          $newHost = '            var host = rollbackButton == null ? null : rollbackButton.Parent as TableLayoutPanel;'
+          if (-not $text.Contains($oldHost)) { throw 'Expected native terminal host line not found' }
+          $text = $text.Replace('            var multibox = featureControls.ContainsKey("multibox") ? featureControls["multibox"] as Button : null;' + [Environment]::NewLine, '')
+          $text = $text.Replace($oldHost, $newHost)
+
+          $text = $text.Replace('                host.ColumnCount = 8;', '                host.ColumnCount = 6;')
+          $text = $text.Replace('                host.ColumnStyles.Clear();' + [Environment]::NewLine, '')
+          $text = $text.Replace('                for (var i = 0; i < 8; i++) host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12.5F));', '                if (host.ColumnStyles.Count < 6) host.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));')
+          $text = $text.Replace('                host.Controls.Add(button, 7, 0);', '                host.Controls.Add(button, 5, 0);')
           Set-Content -Path $path -Value $text -Encoding UTF8
 
       - name: Compile WinForms updater and bootstrap x86
