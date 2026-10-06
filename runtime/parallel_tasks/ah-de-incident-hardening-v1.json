@@ -12,11 +12,11 @@
     "auction-house-auto-purchase",
     "aux-de-economics"
   ],
-  "status": "preflight",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [
     "economy"
   ],
   "lease": null,
-  "notes": "Incident evidence: AuxVmangos purchaseHistory recorded 50 confirmed buys in 60 seconds during a Nether Essence price shock. This task adds a post-core DE-only safety controller: session-local explicit arm, fail-closed history/shock quarantine, independent external depth observations excluding own auctions, 3 confirmations spaced 15 minutes before promoting a shocked upward anchor, candidate-explosion protection, 10-buy/15g session caps and 3 buys per disenchantId. Core warm/exact material prices may block but cannot promote an upward anchor because their book does not retain owner identity. Vendor BUY thresholds and execution code are not modified. No auto-integration until exact-SHA preflight/profile gates pass and the change is explicitly promoted to ready_for_integration."
+  "notes": "Incident evidence: AuxVmangos purchaseHistory recorded 50 confirmed buys in 60 seconds during a Nether Essence price shock. This task adds a post-core DE-only safety controller: session-local explicit arm, fail-closed history/shock quarantine, independent external depth observations excluding own auctions, 3 confirmations spaced 15 minutes before promoting a shocked upward anchor, candidate-explosion protection, 10-buy/15g session caps and 3 buys per disenchantId. Core warm/exact material prices may block but cannot promote an upward anchor because their book does not retain owner identity. Guard v2 additionally requires at least 3 AUX history data points for history-backed anchors and rechecks after each AUX callback to close the pre/post callback race. Vendor BUY thresholds and execution code are not modified. Exact feature SHA df4cd387bdddb570bb19d2f1d18545c4356930cf passed feature preflight, ECONOMY profile gates, ECONOMY build/package and direct artifact-content verification before integration opt-in."
 }
