@@ -15,6 +15,23 @@ fn poc08_full_ah_scan(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer_
     let mut out=Vec::<(u32,Poc06AuctionRecord)>::new();
     let mut seen=HashSet::<u32>::new();
     let mut dup=0usize;
+
+    if let Ok(raw_page)=env::var("WOW112_F2_EXPECT_PAGE"){
+        let expected_page=raw_page.trim().parse::<u32>().map_err(|e|format!("invalid WOW112_F2_EXPECT_PAGE={raw_page:?}: {e}"))?;
+        const R:u32=5;
+        let start=expected_page.saturating_sub(R);
+        let end=expected_page.saturating_add(R);
+        println!("[POC08-F2-FAST] TARGET-WINDOW START expected_page={expected_page} start={start} end={end} radius={R} full_ah_rescan=NO");
+        for page in start..=end{
+            let records=poc07_request_auction_page(stream,crypto,auctioneer_guid,auction_house,page,"poc08-f2-fast-target-window")?;
+            let n=records.len();
+            for r in records{if seen.insert(r.auction_id){out.push((page,r));}else{dup+=1;}}
+            println!("[POC08-F2-FAST] TARGET-WINDOW page={page} records={n} unique_records={} duplicates={dup}",out.len());
+        }
+        println!("[POC08-F2-FAST] TARGET-WINDOW PASS pages={} unique_records={} duplicates={} full_ah_rescan=NO",end-start+1,out.len(),dup);
+        return Ok(out);
+    }
+
     for page in 0..max_pages{
         let records=poc07_request_auction_page(stream,crypto,auctioneer_guid,auction_house,page,"poc08-unified-full-ah")?;
         let n=records.len();
@@ -44,7 +61,7 @@ s=s[:a]+block+s[b:]
 login=s[s.find('pub fn login_poc08_economy_audit('):]
 for bad in ['poc07_de_scan_class_v4(stream, &mut crypto','source=server-filtered(class=2+4,min_quality=2)']:
  if bad in login: raise SystemExit('filtered scan remains: '+bad)
-for m in ['FULL_AH_ALL_CLASSES_ALL_QUALITIES_ALL_STACKS','POC08_UNIFIED_FULL_AH_TRUNCATED','dedupe=AUCTION_ID']:
+for m in ['FULL_AH_ALL_CLASSES_ALL_QUALITIES_ALL_STACKS','POC08_UNIFIED_FULL_AH_TRUNCATED','dedupe=AUCTION_ID','POC08-F2-FAST']:
  if m not in s: raise SystemExit('missing '+m)
 Path(sys.argv[2]).write_text(s,encoding='utf-8')
 print('[POC08-UNIFIED-SCAN] PASS')
