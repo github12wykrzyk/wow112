@@ -13,7 +13,7 @@
     "AVM_DB SavedVariables",
     "AuxVmangos addon load order"
   ],
-  "status": "active",
+  "status": "ready_for_integration",
   "auto_integrate": true,
   "delivery_profiles": [
     "economy"
