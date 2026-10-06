@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - parallel
+      - feature/native-windows-portal-clicker-v1
     paths:
       - 'tools/updater/**'
       - '.github/workflows/build_updater.yml'
@@ -104,6 +105,7 @@ jobs:
             tools\updater\UpdaterAhEvidenceV2Support.cs `
             tools\updater\UpdaterAccountsFeature.cs `
             tools\updater\UpdaterTerminalPortalFeature.cs `
+            tools\updater\UpdaterWindowsTerminalPortalFeature.cs `
             tools\updater\UpdaterSummonersFeature.cs `
             tools\updater\UpdaterSummonCoordinatorFeature.cs `
             tools\updater\UpdaterEconomyFeature.cs `
@@ -198,7 +200,7 @@ jobs:
               'bootstrap_sha256': hashlib.sha256(bootstrap_data).hexdigest(),
               'bootstrap_size': len(bootstrap_data),
               'bootstrap_pe_machine': f'0x{bootstrap_machine:04X}',
-              'portal_backend': 'android-detached-v5',
+              'portal_backend': 'android-detached-v5+windows-native-v1',
               'git_sha': '${{ github.sha }}',
               'channel': '${{ github.ref_name }}',
           }
