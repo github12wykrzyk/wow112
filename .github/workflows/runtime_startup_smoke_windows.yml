@@ -1,0 +1,56 @@
+name: WoW112 AH Runtime Startup Smoke
+
+on:
+  workflow_run:
+    workflows: ["WoW112 AH Canonical Windows"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  startup-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'dev/windows-ah-canonical'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download exact canonical artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          pattern: WoW112-AH-CANONICAL-UNIFIED-WINDOWS-*
+          path: artifact
+          merge-multiple: true
+
+      - name: Bare process startup smoke
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem artifact -Recurse -Filter wow112-ah-windows.exe | Select-Object -First 1).FullName
+          if (-not $exe) { throw 'canonical EXE not found in artifact' }
+          Remove-Item Env:WOW112_ACCOUNT -ErrorAction SilentlyContinue
+          Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
+          $out = & $exe 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          Write-Host $out
+          if ($rc -ne 2) { throw "bare startup expected exit=2, got $rc" }
+          if ($out -notmatch 'missing WOW112_ACCOUNT') { throw 'bare startup did not reach environment validation' }
+          Write-Host '[RUNTIME-SMOKE] bare-start PASS'
+
+      - name: Configured process startup smoke
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem artifact -Recurse -Filter wow112-ah-windows.exe | Select-Object -First 1).FullName
+          $env:WOW112_ACCOUNT='SMOKETEST'
+          $env:WOW112_PASSWORD='SMOKETEST'
+          $env:WOW112_AUTH_ADDR='127.0.0.1:9'
+          $env:WOW112_RECONNECT_LIMIT='1'
+          $env:WOW112_F1_ACTION='audit'
+          $out = & $exe 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          Write-Host $out
+          if ($rc -ne 2) { throw "configured startup expected network exit=2, got $rc" }
+          if ($out -notmatch 'binary-build=5875') { throw 'binary startup banner missing' }
+          if ($out -notmatch '\[AUTH\] connecting to 127.0.0.1:9') { throw 'process did not reach AUTH connect stage' }
+          Write-Host '[RUNTIME-SMOKE] configured-start PASS process_reached_auth=YES'
