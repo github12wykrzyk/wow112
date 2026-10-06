@@ -30,12 +30,15 @@ $r = $r.Replace($oldFailureList, $newFailureList)
 
 $oldSelf = "    Write-Host 'LIVE TEST RUNNER V1.5 TELE06B RANGE-SAFE SELFTEST PASS'"
 $newSelf = @'
+    # Parse-RunnerStateText owns State/Session/Detail only. Ready is assigned later
+    # by Get-AcceptorRuntimeState, so this self-test intentionally validates the
+    # raw parser contract rather than asking it for a field it does not own.
     $moving = Parse-RunnerStateText "state=AUTO_POSITIONING`nsession=8`ndetail=steps=2`n"
-    if ($moving.State -ne 'AUTO_POSITIONING' -or -not $moving.Ready) { throw 'SELFTEST V1.6 auto-positioning parser failed' }
+    if ($moving.State -ne 'AUTO_POSITIONING' -or $moving.Session -ne 8) { throw 'SELFTEST V1.6 auto-positioning parser failed' }
     $moveSent = Parse-RunnerStateText "state=AUTO_POSITION_SENT`nsession=8`ndetail=server acceptance unconfirmed`n"
-    if ($moveSent.State -ne 'AUTO_POSITION_SENT' -or -not $moveSent.Ready) { throw 'SELFTEST V1.6 auto-position-sent parser failed' }
+    if ($moveSent.State -ne 'AUTO_POSITION_SENT' -or $moveSent.Session -ne 8) { throw 'SELFTEST V1.6 auto-position-sent parser failed' }
     $moveFail = Parse-RunnerStateText "state=FAIL_AUTO_POSITION_LIMIT`nsession=8`ndetail=move_needed=4.200`n"
-    if ($moveFail.State -ne 'FAIL_AUTO_POSITION_LIMIT' -or $moveFail.Ready) { throw 'SELFTEST V1.6 auto-position-limit parser failed' }
+    if ($moveFail.State -ne 'FAIL_AUTO_POSITION_LIMIT' -or $moveFail.Session -ne 8) { throw 'SELFTEST V1.6 auto-position-limit parser failed' }
     Write-Host 'LIVE TEST RUNNER V1.6 TELE06C AUTO-POSITION SELFTEST PASS'
 '@
 $r = Require-Replace $r $oldSelf $newSelf.Trim() 'V1.6 runner selftest'
