@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "ah-memory-guard-v1",
+  "goal": "Reduce persistent WoW 1.12 Lua memory pressure on the AH character by compacting AuxVmangos per-item MARKET history arrays after login and idle periods while preserving transparent history access for flip/MARKET logic, and by dropping redundant diagnostic history copies from SavedVariables.",
+  "branch": "feature/aux-memory-cold-runtime-v1",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "modules": [
+    "AuxVmangos"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "AVM.marketDB runtime history",
+    "AVM_DB SavedVariables",
+    "AuxVmangos addon load order"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "economy"
+  ],
+  "lease": null,
+  "notes": "Observed AH account Lua working set remained ~209 MB after /reload and ~191 MB after forced Lua 5.0 GC. SavedVariables show marketPackedItems=8188 and duplicated diagnostic purchase/sale/bid histories. Core avm_market_storage_init currently expands packed MARKET history into thousands of row.history arrays at PLAYER_LOGIN. This fix adds a last-loaded Lua 5.0-compatible memory guard: after main initialization it converts each row.history array to one packed runtime string and installs a shared __index metatable that reconstructs only the accessed row history on demand. It recompacts when idle/AH closes, forces GC only after actual compaction, and scrubs redundant diagnostic history aliases before load/logout serialization. It does not delete marketPacked, top-level purchase/sale/bid history, pricing history, or change Vendor/DE/Flip thresholds. /avmmem reports current guard status; no gameplay result is claimed before runtime test.",
+  "integrated_feature_sha": "50e5a805190883da7d603ef32a121f1a91638c69"
+}
