@@ -422,7 +422,7 @@ namespace WoW112Updater
                 psi.EnvironmentVariables["WOW112_PORTAL_ATTEMPTS"] = "3";
                 psi.EnvironmentVariables["WOW112_SUMMONER_NAMES"] = GetConfiguredSummonerNamesCsv();
 
-                var process = Process.Start(psi);
+                var process = System.Diagnostics.Process.Start(psi);
                 if (process == null) throw new InvalidOperationException(account.Label + ": nie udało się uruchomić native workera.");
                 File.WriteAllText(paths.Item1, process.Id.ToString(), Encoding.ASCII);
                 process.Dispose();
