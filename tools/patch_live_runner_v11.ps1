@@ -8,15 +8,9 @@ function Require-Replace([string]$Text, [string]$Old, [string]$New, [string]$Lab
     return $Text.Replace($Old, $New)
 }
 
-# -----------------------------------------------------------------------------
-# Acceptor: publish a tiny state file that the runner can read while stdout is
-# redirected/locked by Start-Process on Windows PowerShell 5.1.
-# -----------------------------------------------------------------------------
 $a = Get-Content $acceptor -Raw
-
-$oldImports = "use std::env;`nuse std::net::TcpStream;"
-$newImports = "use std::env;`nuse std::fs;`nuse std::net::TcpStream;"
-$a = Require-Replace $a $oldImports $newImports 'acceptor imports'
+$a = [regex]::Replace($a, 'use std::env;\r?\nuse std::net::TcpStream;', "use std::env;`r`nuse std::fs;`r`nuse std::net::TcpStream;", 1)
+if (-not $a.Contains('use std::fs;')) { throw 'acceptor imports patch failed' }
 
 $anchor = 'const DEFAULT_RECONNECT_LIMIT: u32 = 60;'
 $stateHelper = @'
@@ -69,18 +63,11 @@ $newAttempt = @'
         publish_runner_state("CONNECTING", "new session attempt");
 '@
 $a = Require-Replace $a $oldAttempt $newAttempt.TrimEnd() 'acceptor session state'
-
 Set-Content -Path $acceptor -Value $a -Encoding UTF8
 
-# -----------------------------------------------------------------------------
-# Summoner: publish verdict/checkpoint state directly as well, so the runner
-# never has to tail an active redirected stdout file.
-# -----------------------------------------------------------------------------
 $s = Get-Content $summoner -Raw
-
-$oldImportsS = "use std::env;`nuse std::net::TcpStream;"
-$newImportsS = "use std::env;`nuse std::fs;`nuse std::net::TcpStream;"
-$s = Require-Replace $s $oldImportsS $newImportsS 'summoner imports'
+$s = [regex]::Replace($s, 'use std::env;\r?\nuse std::net::TcpStream;', "use std::env;`r`nuse std::fs;`r`nuse std::net::TcpStream;", 1)
+if (-not $s.Contains('use std::fs;')) { throw 'summoner imports patch failed' }
 
 $anchorS = 'const DEFAULT_RECONNECT_LIMIT: u32 = 60;'
 $stateHelperS = @'
@@ -96,7 +83,6 @@ fn publish_runner_state(state: &str, detail: &str) {
 }
 '@
 $s = Require-Replace $s $anchorS $stateHelperS.TrimEnd() 'summoner state helper'
-
 $s = Require-Replace $s $oldAttempt $newAttempt.TrimEnd() 'summoner session state'
 
 $oldRosterPass = '                        println!("[TELE-06A-ROSTER] PASS target={:?} target_guid=0x{:016X}", ritual_target_name, target_guid);'
@@ -154,7 +140,6 @@ $rejectNew = @'
                                 println!("[TELE-06A-RITUAL] SERVER_REJECT spell=698 retry_allowed=false");
 '@
 $s = Require-Replace $s $reject $rejectNew.TrimEnd() 'summoner reject state'
-
 Set-Content -Path $summoner -Value $s -Encoding UTF8
 
 $acheck = Get-Content $acceptor -Raw
