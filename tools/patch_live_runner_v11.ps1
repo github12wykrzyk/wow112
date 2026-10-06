@@ -26,7 +26,7 @@ fn publish_runner_state(state: &str, detail: &str) {
     let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else { return; };
     if path.trim().is_empty() { return; }
     let session = env::var("WOW112_RUNNER_SESSION_ATTEMPT").unwrap_or_else(|_| "0".to_string());
-    let safe_detail = detail.replace(['\r', '\n'], " ");
+    let safe_detail = detail.replace('\r', " ").replace('\n', " ");
     let body = format!("state={state}\nsession={session}\ndetail={safe_detail}\n");
     let _ = fs::write(path, body);
 }
@@ -34,8 +34,11 @@ fn publish_runner_state(state: &str, detail: &str) {
 $a = Require-Replace $a $anchor $stateHelper.TrimEnd() 'acceptor state helper'
 
 $oldArmed = '        println!("[TELE-06A-ACCEPTOR] ARMED ONCE whitelist={expected_inviter:?} wait=infinite");'
-$newArmed = $oldArmed + "`n        publish_runner_state(\"ARMED\", \"waiting for fresh keepalive pong\");"
-$a = Require-Replace $a $oldArmed $newArmed 'acceptor armed state'
+$newArmed = @'
+        println!("[TELE-06A-ACCEPTOR] ARMED ONCE whitelist={expected_inviter:?} wait=infinite");
+        publish_runner_state("ARMED", "waiting for fresh keepalive pong");
+'@
+$a = Require-Replace $a $oldArmed $newArmed.TrimEnd() 'acceptor armed state'
 
 $oldPong = @'
                             println!("[TELE-06A-ACCEPTOR] keepalive pong sequence={sequence}");
@@ -53,8 +56,11 @@ $newPong = @'
 $a = Require-Replace $a $oldPong.Trim() $newPong.Trim() 'acceptor ready state'
 
 $oldHandshake = '        println!("[TELE-06A-ACCEPTOR] handshake complete; observer active");'
-$newHandshake = '        publish_runner_state("HANDSHAKE", "invite accepted");' + "`n" + $oldHandshake
-$a = Require-Replace $a $oldHandshake $newHandshake 'acceptor handshake state'
+$newHandshake = @'
+        publish_runner_state("HANDSHAKE", "invite accepted");
+        println!("[TELE-06A-ACCEPTOR] handshake complete; observer active");
+'@
+$a = Require-Replace $a $oldHandshake $newHandshake.TrimEnd() 'acceptor handshake state'
 
 $oldAttempt = '        println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");'
 $newAttempt = @'
@@ -62,7 +68,7 @@ $newAttempt = @'
         env::set_var("WOW112_RUNNER_SESSION_ATTEMPT", attempt.to_string());
         publish_runner_state("CONNECTING", "new session attempt");
 '@
-$a = Require-Replace $a $oldAttempt $newAttempt.Trim() 'acceptor session state'
+$a = Require-Replace $a $oldAttempt $newAttempt.TrimEnd() 'acceptor session state'
 
 Set-Content -Path $acceptor -Value $a -Encoding UTF8
 
@@ -84,18 +90,21 @@ fn publish_runner_state(state: &str, detail: &str) {
     let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else { return; };
     if path.trim().is_empty() { return; }
     let session = env::var("WOW112_RUNNER_SESSION_ATTEMPT").unwrap_or_else(|_| "0".to_string());
-    let safe_detail = detail.replace(['\r', '\n'], " ");
+    let safe_detail = detail.replace('\r', " ").replace('\n', " ");
     let body = format!("state={state}\nsession={session}\ndetail={safe_detail}\n");
     let _ = fs::write(path, body);
 }
 '@
 $s = Require-Replace $s $anchorS $stateHelperS.TrimEnd() 'summoner state helper'
 
-$s = Require-Replace $s $oldAttempt $newAttempt.Trim() 'summoner session state'
+$s = Require-Replace $s $oldAttempt $newAttempt.TrimEnd() 'summoner session state'
 
 $oldRosterPass = '                        println!("[TELE-06A-ROSTER] PASS target={:?} target_guid=0x{:016X}", ritual_target_name, target_guid);'
-$newRosterPass = $oldRosterPass + "`n                        publish_runner_state(\"ROSTER_PASS\", &format!(\"target={} guid=0x{:016X}\", ritual_target_name, target_guid));"
-$s = Require-Replace $s $oldRosterPass $newRosterPass 'summoner roster pass state'
+$newRosterPass = @'
+                        println!("[TELE-06A-ROSTER] PASS target={:?} target_guid=0x{:016X}", ritual_target_name, target_guid);
+                        publish_runner_state("ROSTER_PASS", &format!("target={} guid=0x{:016X}", ritual_target_name, target_guid));
+'@
+$s = Require-Replace $s $oldRosterPass $newRosterPass.TrimEnd() 'summoner roster pass state'
 
 $oldSelection = @'
         println!(
@@ -104,7 +113,14 @@ $oldSelection = @'
             target_guid
         );
 '@
-$newSelection = $oldSelection.TrimEnd() + "`n        publish_runner_state(\"SELECTION_SENT\", &format!(\"target={} guid=0x{:016X}\", target_name, target_guid));`n"
+$newSelection = @'
+        println!(
+            "[TELE-06A-SELECTION-TX] opcode=0x013D target={:?} target_guid=0x{:016X} bytes=8 result=attempted_once retry_allowed=false",
+            target_name,
+            target_guid
+        );
+        publish_runner_state("SELECTION_SENT", &format!("target={} guid=0x{:016X}", target_name, target_guid));
+'@
 $s = Require-Replace $s $oldSelection.Trim() $newSelection.Trim() 'summoner selection state'
 
 $oldCast = @'
@@ -118,23 +134,29 @@ $newCast = @'
 '@
 $s = Require-Replace $s $oldCast.Trim() $newCast.Trim() 'summoner cast state'
 
-# PASS markers.
 $passStart = '                                println!("[TELE-06A-RITUAL] LIVE_CAST_START_PASS spell=698");'
-$passStartNew = '                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_START spell=698");' + "`n" + $passStart
-$s = Require-Replace $s $passStart $passStartNew 'summoner spell start pass state'
+$passStartNew = @'
+                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_START spell=698");
+                                println!("[TELE-06A-RITUAL] LIVE_CAST_START_PASS spell=698");
+'@
+$s = Require-Replace $s $passStart $passStartNew.TrimEnd() 'summoner spell start pass state'
 
 $passGo = '                                println!("[TELE-06A-RITUAL] LIVE_CAST_GO_PASS spell=698");'
-$passGoNew = '                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_GO spell=698");' + "`n" + $passGo
-$s = Require-Replace $s $passGo $passGoNew 'summoner spell go pass state'
+$passGoNew = @'
+                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_GO spell=698");
+                                println!("[TELE-06A-RITUAL] LIVE_CAST_GO_PASS spell=698");
+'@
+$s = Require-Replace $s $passGo $passGoNew.TrimEnd() 'summoner spell go pass state'
 
-# Server reject marker: publish the parsed raw reason when available.
 $reject = '                                println!("[TELE-06A-RITUAL] SERVER_REJECT spell=698 retry_allowed=false");'
-$rejectNew = '                                publish_runner_state("FAIL_SERVER_REJECT", "spell=698 see raw cast-result log for reason");' + "`n" + $reject
-$s = Require-Replace $s $reject $rejectNew 'summoner reject state'
+$rejectNew = @'
+                                publish_runner_state("FAIL_SERVER_REJECT", "spell=698 see raw cast-result log for reason");
+                                println!("[TELE-06A-RITUAL] SERVER_REJECT spell=698 retry_allowed=false");
+'@
+$s = Require-Replace $s $reject $rejectNew.TrimEnd() 'summoner reject state'
 
 Set-Content -Path $summoner -Value $s -Encoding UTF8
 
-# Assertions.
 $acheck = Get-Content $acceptor -Raw
 $scheck = Get-Content $summoner -Raw
 foreach ($needle in @('WOW112_RUNNER_STATE_FILE','publish_runner_state("ARMED"','publish_runner_state("READY"','publish_runner_state("HANDSHAKE"')) {
