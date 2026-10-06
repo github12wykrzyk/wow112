@@ -1,0 +1,29 @@
+name: TELE08 D destination registry
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele08-d-destination-registry-v1
+
+permissions:
+  contents: read
+
+jobs:
+  registry-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format contract
+        run: cargo fmt --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --all -- --check
+
+      - name: Library compile check
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+
+      - name: Registry unit and contract tests
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
