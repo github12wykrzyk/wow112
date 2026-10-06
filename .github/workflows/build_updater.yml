@@ -50,6 +50,16 @@ jobs:
           if (-not $text.Contains($old)) { throw 'Expected terminal portal attempts line not found' }
           Set-Content -Path $path -Value ($text.Replace($old, $new)) -Encoding UTF8
 
+      - name: Normalize native Windows terminal symbols
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'tools/updater/UpdaterWindowsTerminalPortalFeature.cs'
+          $text = Get-Content $path -Raw
+          $text = $text.Replace('Application.OpenForms', 'System.Windows.Forms.Application.OpenForms')
+          $text = $text.Replace('Process.GetProcessById', 'System.Diagnostics.Process.GetProcessById')
+          Set-Content -Path $path -Value $text -Encoding UTF8
+
       - name: Compile WinForms updater and bootstrap x86
         shell: pwsh
         run: |
