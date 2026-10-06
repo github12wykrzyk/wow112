@@ -58,6 +58,33 @@ jobs:
           $text = $text.Replace($old.Trim(), $new.Trim())
           Set-Content -Path $path -Value $text -Encoding UTF8
 
+      - name: Native Windows cooperative stop control
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'probes/Wow112HeadlessAndroid/src/world_portal.rs'
+          $text = Get-Content $path -Raw
+          $old = @'
+              loop {
+                  if deadline.is_some_and(|value| Instant::now() >= value) {
+          '@
+          $new = @'
+              loop {
+                  if let Ok(stop_file) = env::var("WOW112_STOP_FILE") {
+                      let stop_file = stop_file.trim();
+                      if !stop_file.is_empty() && std::path::Path::new(stop_file).exists() {
+                          println!("[CONTROL] STOP requested file={stop_file}");
+                          let _ = stream.shutdown(std::net::Shutdown::Both);
+                          let _ = stream.set_read_timeout(previous_timeout);
+                          return Ok(());
+                      }
+                  }
+                  if deadline.is_some_and(|value| Instant::now() >= value) {
+          '@
+          if (-not $text.Contains($old.Trim())) { throw 'Expected portal loop anchor not found' }
+          $text = $text.Replace($old.Trim(), $new.Trim())
+          Set-Content -Path $path -Value $text -Encoding UTF8
+
       - name: Host compile check
         shell: pwsh
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
@@ -95,7 +122,7 @@ jobs:
 
           $binSha = (Get-FileHash -Algorithm SHA256 $dst).Hash.ToLowerInvariant()
           @"
-          POC=WINDOWS-PORTAL-01
+          POC=WINDOWS-PORTAL-02
           REPOSITORY=${{ github.repository }}
           BRANCH=${{ github.ref_name }}
           EXACT_SHA=${{ github.sha }}
@@ -104,7 +131,7 @@ jobs:
           TARGET=i686-pc-windows-msvc
           BINARY=wow112-headless-windows.exe
           BINARY_SHA256=$binSha
-          PORTAL_BACKEND=windows-native-v1
+          PORTAL_BACKEND=windows-native-v2-stop-safe
           "@ | Set-Content -Path (Join-Path $out 'BUILD_INFO.txt') -Encoding ascii
 
           Push-Location $out
