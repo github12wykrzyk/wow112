@@ -82,18 +82,18 @@ jobs:
           $newLogSetup = @'
                 var attemptLog = paths.Item2 + "." + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + attempt + ".run.log";
                 File.WriteAllText(paths.Item2 + ".current", attemptLog, Encoding.UTF8);
-'@
+          '@
           if (-not $text.Contains($oldLogDelete)) { throw 'Expected native terminal fixed-log delete line not found' }
           $text = $text.Replace($oldLogDelete, $newLogSetup.TrimEnd())
 
           $oldWrapper = @'
                 var wrapper = paths.Item1 + ".cmd";
                 File.WriteAllText(wrapper, "@echo off\r\n\"" + binary.Replace("\"", "\"\"") + "\" >> \"" + paths.Item2.Replace("\"", "\"\"") + "\" 2>&1\r\nexit /b %errorlevel%\r\n", Encoding.ASCII);
-'@
+          '@
           $newWrapper = @'
                 var wrapper = paths.Item1 + "." + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + attempt + ".cmd";
                 File.WriteAllText(wrapper, "@echo off\r\n\"" + binary.Replace("\"", "\"\"") + "\" >> \"" + attemptLog.Replace("\"", "\"\"") + "\" 2>&1\r\nexit /b %errorlevel%\r\n", Encoding.ASCII);
-'@
+          '@
           if (-not $text.Contains($oldWrapper.Trim())) { throw 'Expected native terminal wrapper block not found' }
           $text = $text.Replace($oldWrapper.Trim(), $newWrapper.Trim())
 
@@ -111,7 +111,7 @@ jobs:
                     catch { }
                 }
                 var tail = ReadTerminalWindowsTail(activeLog, 24);
-'@
+          '@
           if (-not $text.Contains($oldProbeLog)) { throw 'Expected native terminal fixed-log probe line not found' }
           $text = $text.Replace($oldProbeLog, $newProbeLog.TrimEnd())
 
