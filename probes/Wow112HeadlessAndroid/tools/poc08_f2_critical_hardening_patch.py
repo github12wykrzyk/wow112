@@ -57,12 +57,19 @@ rep(
     '            poc08_material_confidence_name(final_conf), truncated\n        );',
 )
 
-# F2 pilot provenance hardening: require at least Octo-web confidence (2), not Capy/legacy only.
+# Live DE provenance gate:
+# - Octo/server-adjacent confidence >=2 remains directly eligible.
+# - CapyDB confidence=1 is eligible ONLY when the independent reference model has
+#   exact zero disagreement for this candidate. Legacy seed remains blocked.
 rep(
-    'pilot provenance gate',
+    'live provenance + model crosscheck gate',
     '                    && c.de_risk_pass\n                    && c.safe_de_ev > 0',
-    '                    && poc08_de_source_confidence(c.record.item_id) >= 2\n                    && c.de_risk_pass\n                    && c.safe_de_ev > 0',
+    '                    && (poc08_de_source_confidence(c.record.item_id) >= 2\n                        || (poc08_de_source(c.record.item_id) == Some("CapyDB")\n                            && poc08_f0_model_agreement_bps(c.heuristic_de_ev, c.reference_de_ev) == 0))\n                    && c.de_risk_pass\n                    && c.safe_de_ev > 0',
 )
+
+# The mutation primitive itself owns the post-SEND no-retry contract. Keep the
+# marker in generated F2 source as an auditable linkage without duplicating send code.
+src += '\n// BUY primitive contract: NO_AUTO_RETRY_FROM_THIS_POINT=YES (poc07_buy_exact_one)\n'
 
 for marker in [
     'let mut truncated = false;',
@@ -70,9 +77,12 @@ for marker in [
     'safe_price = 0;',
     'truncated={}',
     'poc08_de_source_confidence(c.record.item_id) >= 2',
+    'poc08_de_source(c.record.item_id) == Some("CapyDB")',
+    'poc08_f0_model_agreement_bps(c.heuristic_de_ev, c.reference_de_ev) == 0',
+    'NO_AUTO_RETRY_FROM_THIS_POINT=YES',
 ]:
     if marker not in src:
         raise SystemExit(f'POC08-F2-HARDEN missing marker: {marker}')
 
 Path(sys.argv[2]).write_text(src, encoding='utf-8')
-print('[POC08-F2-HARDEN] PASS material-book truncation fail-closed + provenance>=2')
+print('[POC08-F2-HARDEN] PASS material-book fail-closed + Octo>=2 OR CapyDB+agreement0; legacy blocked')
