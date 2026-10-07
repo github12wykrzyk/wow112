@@ -1,0 +1,4 @@
+CHANNEL=ah-de-latest
+PRODUCT=DE_FAST_PREFILTER_V3_2
+SOURCE_BUILD_SHA=07602e61375a445c0892912870c2d94fa64a4b47
+PURPOSE=Trigger rolling release refresh after successful DE fast build.
