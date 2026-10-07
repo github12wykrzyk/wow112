@@ -1,0 +1,111 @@
+name: TELE08 B live E2E harness
+
+on:
+  push:
+    branches:
+      - feature/tele08-b-live-e2e-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Format gate
+        shell: pwsh
+        run: cargo fmt --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime -- --check
+
+      - name: Contract tests
+        shell: pwsh
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+
+      - name: Check
+        shell: pwsh
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+
+      - name: Build release
+        shell: pwsh
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+
+      - name: Harness self-test
+        shell: pwsh
+        run: |
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
+          & $exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "self-test failed rc=$LASTEXITCODE" }
+
+      - name: Fail-fast without credentials
+        shell: pwsh
+        run: |
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
+          $outFile = Join-Path $env:RUNNER_TEMP 'tele08_b_live_stdout.txt'
+          $errFile = Join-Path $env:RUNNER_TEMP 'tele08_b_live_stderr.txt'
+          $p = Start-Process -FilePath $exe -NoNewWindow -Wait -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+          $out = ((Get-Content $outFile -Raw -ErrorAction SilentlyContinue) + (Get-Content $errFile -Raw -ErrorAction SilentlyContinue))
+          if ($p.ExitCode -ne 2) { throw "expected rc=2 without credentials, got $($p.ExitCode)" }
+          if ($out -notmatch 'missing WOW112_PASSWORD') { throw "unexpected startup output: $out" }
+          Write-Host 'TELE08 B LIVE CREDENTIAL FAIL-CLOSED PASS'
+
+      - name: Stage autonomous live bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe dist/tele08_b_live_runtime.exe
+          @'
+          param()
+          $ErrorActionPreference = 'Stop'
+          $hadPassword = Test-Path Env:WOW112_PASSWORD
+          if (-not $hadPassword) {
+            $secure = Read-Host 'WoW password (used only for this process tree)' -AsSecureString
+            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+            try {
+              $env:WOW112_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+            } finally {
+              [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            }
+          }
+          try {
+            & "$PSScriptRoot\tele08_b_live_runtime.exe"
+            exit $LASTEXITCODE
+          } finally {
+            if (-not $hadPassword) { Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue }
+          }
+          '@ | Set-Content -Encoding UTF8 dist/RUN_TELE08_B_LIVE.ps1
+          @"
+          WoW112 TELE08 Track B autonomous live E2E harness
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+
+          One command launches four terminal/headless sessions:
+          CUSTOMER  octowar1 / Smokinpole     -> real whisper sender
+          SLAVE1    octowinter1 / Winterone   -> passive control session
+          SLAVE2    octowinter2 / Wintertwoo  -> passive control session
+          SUMMONER  taxi3 / Teletanaris       -> real whisper receiver + Track B classifier
+
+          Flow:
+          auth -> realm -> world -> 4/4 LOGIN_VERIFY_WORLD -> GO -> 12 real CMSG_MESSAGECHAT whispers
+          -> real SMSG_MESSAGECHAT receive -> GUID/name resolution -> TELE08 classify_whisper
+          -> exact expected comparison -> RESULTS.json + SUMMARY.txt -> PASS/FAIL.
+
+          Safety: chat-only mutation. No group invite, party accept, ritual cast, portal use, movement, mail, AH, or economy mutation.
+          Runtime evidence is written under tele08_b_live_runs/run_<timestamp>/.
+          "@ | Set-Content -Encoding UTF8 dist/README_LIVE_TEST.txt
+          @"
+          WoW112 TELE08 B LIVE E2E
+          Branch: $env:GITHUB_REF_NAME
+          SHA: $env:GITHUB_SHA
+          fmt/test/check/build/self-test: PASS
+          live server execution: NOT RUN IN GITHUB-HOSTED CI
+          "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE08_B_LIVE_E2E
+          path: dist/*
+          if-no-files-found: error
