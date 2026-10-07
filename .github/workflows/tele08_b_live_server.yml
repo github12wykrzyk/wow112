@@ -18,9 +18,61 @@ jobs:
       WOW112_REALM_INDEX: '1'
       WOW112_RECONNECT_LIMIT: '1'
       WOW112_RECONNECT_DELAY_MS: '0'
+      WOW112_TELE08_CUSTOMER_ACCOUNT: 'taxi1'
+      WOW112_TELE08_CUSTOMER_CHARACTER: '__FIRST__'
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Enable first-character customer selection
+        shell: pwsh
+        run: |
+          $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
+          $text = Get-Content -Raw $path
+
+          $old = @'
+                  let selected = characters
+                      .characters
+                      .iter()
+                      .find(|character| character.name.eq_ignore_ascii_case(character_name))
+                      .ok_or_else(|| format!("character not found: {character_name}"))?;
+          '@
+          $new = @'
+                  let selected = if character_name.eq_ignore_ascii_case("__FIRST__") {
+                      characters
+                          .characters
+                          .first()
+                          .ok_or_else(|| "character list empty".to_string())?
+                  } else {
+                      characters
+                          .characters
+                          .iter()
+                          .find(|character| character.name.eq_ignore_ascii_case(character_name))
+                          .ok_or_else(|| format!("character not found: {character_name}"))?
+                  };
+                  println!("[TELE08-B-LIVE:{role_label}] selected_character={}", selected.name);
+          '@
+
+          if (-not $text.Contains($old)) {
+            throw 'character-selection anchor not found'
+          }
+          $text = $text.Replace($old, $new)
+
+          $oldFilter = 'if name.eq_ignore_ascii_case(expected_sender) {'
+          $newFilter = @'
+          if (expected_sender.eq_ignore_ascii_case("__FIRST__") || name.eq_ignore_ascii_case(expected_sender))
+              && crate::CASES
+                  .get(results.len())
+                  .map(|case| case.text == text.as_str())
+                  .unwrap_or(false)
+          {
+          '@
+          $count = ([regex]::Matches($text, [regex]::Escape($oldFilter))).Count
+          if ($count -ne 2) {
+            throw "expected 2 sender-filter anchors, got $count"
+          }
+          $text = $text.Replace($oldFilter, $newFilter.TrimEnd())
+          Set-Content -Path $path -Value $text -Encoding UTF8
 
       - name: Build exact live runner
         shell: pwsh
@@ -44,6 +96,8 @@ jobs:
           @"
           result=RUNNING
           sha=$env:GITHUB_SHA
+          customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
+          customer_character_mode=FIRST
           "@ | Set-Content -Encoding UTF8 $status
 
           $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
@@ -54,6 +108,8 @@ jobs:
           result=PASS
           detail=Four real headless sessions completed the 12-case whisper TX/RX/classification suite.
           sha=$env:GITHUB_SHA
+          customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
+          customer_character_mode=FIRST
           "@ | Set-Content -Encoding UTF8 $status
             Write-Host 'TELE08 B LIVE E2E PASS'
           } else {
@@ -61,6 +117,8 @@ jobs:
           result=FAIL
           detail=tele08_b_live_runtime exited rc=$rc. Inspect uploaded tele08_b_live_runs evidence.
           sha=$env:GITHUB_SHA
+          customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
+          customer_character_mode=FIRST
           "@ | Set-Content -Encoding UTF8 $status
             throw "TELE08 B LIVE E2E failed rc=$rc"
           }
