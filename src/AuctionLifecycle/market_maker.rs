@@ -64,6 +64,12 @@ fn mm_cmp_unit(a:&LifecycleAuction,b:&LifecycleAuction)->std::cmp::Ordering{
 fn mm_unit_ceil(a:&LifecycleAuction)->u32{if a.row.count==0{u32::MAX}else{((u128::from(a.row.buyout)+u128::from(a.row.count)-1)/u128::from(a.row.count)).min(u128::from(u32::MAX)) as u32}}
 fn mm_strict_below(a:&LifecycleAuction)->u32{if a.row.buyout==0||a.row.count==0{0}else{(a.row.buyout-1)/a.row.count}}
 fn mm_floor(own:&LifecycleAuction,c:&MmConfig)->u32{c.default_floor_unit.max(*c.floors.get(&own.row.item_id).unwrap_or(&0))}
+fn mm_effective_floor(own:&LifecycleAuction,c:&MmConfig)->u32{
+    if own.row.count==0{return u32::MAX;}
+    let den=u128::from(own.row.count)*10000;
+    let pct=((u128::from(own.row.buyout)*u128::from(c.min_price_bps_of_own)+den-1)/den).min(u128::from(u32::MAX)) as u32;
+    mm_floor(own,c).max(pct)
+}
 fn mm_policy_for(own:&LifecycleAuction,player:u64,s:&MmSnapshot,c:&MmConfig)->mm_policy::Decision{
     let competitors:Vec<_>=s.rows.iter().filter(|r|r.auction.row.owner_guid!=player&&r.auction.row.buyout>0&&r.auction.row.count>0&&mm_same_item(own,&r.auction)).map(|r|mm_policy::Quote{auction_id:r.auction.row.auction_id,buyout:r.auction.row.buyout,count:r.auction.row.count}).collect();
     mm_policy::decide(mm_policy::Quote{auction_id:own.row.auction_id,buyout:own.row.buyout,count:own.row.count},&competitors,mm_policy::PolicyConfig{floor_unit:mm_floor(own,c),min_price_bps_of_own:c.min_price_bps_of_own,ah_cut_bps:c.ah_cut_bps,max_clear_spend:c.max_clear_spend,max_clear_units:c.max_clear_units,clear_min_profit:c.clear_min_profit,clear_min_roi_bps:c.clear_min_roi_bps,clear_min_jump_bps:c.clear_min_jump_bps},s.complete&&s.stable)
@@ -100,21 +106,29 @@ fn mm_post_units(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,player:u
 
 fn mm_clear_prefix(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,house:u32,mailbox:u64,player:u64,own_id:u32,c:&MmConfig)->Result<(),String>{
     let mut acquired:Vec<MmOwnedStack>=Vec::new();let mut reference:Option<(u32,[u32;3],u32,u32)>=None;
+    let mut spent=0u64;let mut units_bought=0u64;
     for n in 0..c.max_clear_buys {
+        if spent>=u64::from(c.max_clear_spend)||units_bought>=u64::from(c.max_clear_units){break;}
         let mine=lifecycle_owner_list(stream,crypto,npc,player)?;let own=match mine.iter().find(|x|x.row.auction_id==own_id){Some(x)=>x.clone(),None=>break};
         if own.row.highest_bid!=0{return Err("MARKET_MAKER clear stopped: own auction acquired a bid".into());}
         if own.signature!=[0,0,0]{return Err("MARKET_MAKER V1 live supports plain-stack market making only".into());}
-        reference.get_or_insert((own.row.item_id,own.signature,mm_unit_ceil(&own),mm_floor(&own,c)));
-        let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-revalidate")?;let d=mm_policy_for(&own,player,&snap,c);mm_print(&own,&d);
+        reference.get_or_insert((own.row.item_id,own.signature,mm_unit_ceil(&own),mm_effective_floor(&own,c)));
+        let mut scoped=c.clone();
+        scoped.max_clear_spend=c.max_clear_spend.saturating_sub(spent.min(u64::from(u32::MAX)) as u32);
+        scoped.max_clear_units=c.max_clear_units.saturating_sub(units_bought.min(u64::from(u32::MAX)) as u32);
+        if scoped.max_clear_spend==0||scoped.max_clear_units==0{break;}
+        let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-revalidate")?;let d=mm_policy_for(&own,player,&snap,&scoped);mm_print(&own,&d);
         let ids=match d{mm_policy::Decision::ClearThenRelist{auction_ids,..}=>auction_ids,_=>break};
         let id=*ids.first().ok_or("MARKET_MAKER empty clear plan")?;
         let row=snap.rows.iter().find(|r|r.auction.row.auction_id==id&&r.auction.row.owner_guid!=player&&mm_same_item(&own,&r.auction)).ok_or("MARKET_MAKER clear target vanished before BUY")?.clone();
-        println!("[MARKET-MAKER] CLEAR step={} auction={} item={} count={} buyout={}",n+1,id,row.auction.row.item_id,row.auction.row.count,row.auction.row.buyout);
-        acquired.push(mm_execute_clear_buy(stream,crypto,npc,house,mailbox,&row)?);
+        let new_spend=spent.saturating_add(u64::from(row.auction.row.buyout));let new_units=units_bought.saturating_add(u64::from(row.auction.row.count));
+        if new_spend>u64::from(c.max_clear_spend)||new_units>u64::from(c.max_clear_units){return Err("MARKET_MAKER cumulative clear budget guard".into());}
+        println!("[MARKET-MAKER] CLEAR step={} auction={} item={} count={} buyout={} cumulative_spend={} cumulative_units={}",n+1,id,row.auction.row.item_id,row.auction.row.count,row.auction.row.buyout,new_spend,new_units);
+        acquired.push(mm_execute_clear_buy(stream,crypto,npc,house,mailbox,&row)?);spent=new_spend;units_bought=new_units;
     }
     if acquired.is_empty(){return Ok(());}let(item,sig,ceiling,floor)=reference.unwrap();
     let fresh=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-post-reprice")?;let target=mm_target_for_stock(item,sig,player,&fresh,ceiling,floor)?;
-    println!("[MARKET-MAKER] CLEAR_RELIST acquired_stacks={} target_unit={} floor={}",acquired.len(),target,floor);
+    println!("[MARKET-MAKER] CLEAR_RELIST acquired_stacks={} spend={} units={} target_unit={} floor={}",acquired.len(),spent,units_bought,target,floor);
     for stack in acquired { let units=mm_split_all_to_units(stream,crypto,stack,c.max_post_units)?;mm_post_units(stream,crypto,npc,player,item,units,target,floor,c.minutes)?; }
     Ok(())
 }
@@ -125,7 +139,7 @@ fn mm_reprice_one(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,house:u
     if own.signature!=[0,0,0]{return Err("MARKET_MAKER V1 live supports plain-stack repricing only".into());}
     let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"reprice-pre-cancel")?;
     let witness=snap.rows.iter().find(|r|r.auction.row.auction_id==witness_id&&r.auction.row.owner_guid!=player&&mm_same_item(own,&r.auction)&&lifecycle_cheaper(own,&r.auction)).ok_or("MARKET_MAKER undercut witness stale")?.clone();
-    let before=poc05_request_mail_list(stream,crypto,mailbox)?;let ceiling=mm_unit_ceil(own);let floor=mm_floor(own,c).max(((u128::from(own.row.buyout)*u128::from(c.min_price_bps_of_own)+u128::from(own.row.count)*9999)/(u128::from(own.row.count)*10000)).min(u128::from(u32::MAX)) as u32);
+    let before=poc05_request_mail_list(stream,crypto,mailbox)?;let ceiling=mm_unit_ceil(own);let floor=mm_effective_floor(own,c);
     lifecycle_cancel(stream,crypto,npc,house,player,own,(witness.page,witness.auction.clone()))?;
     let mail=mm_wait_new_mail(stream,crypto,mailbox,&before,own.row.item_id,own.row.count)?;let returned=mm_take_mail_stack(stream,crypto,mailbox,&mail)?;
     let units=mm_split_all_to_units(stream,crypto,returned,c.max_post_units)?;
