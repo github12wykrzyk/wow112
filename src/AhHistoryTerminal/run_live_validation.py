@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -50,6 +51,14 @@ def main():
             report["checks"][name]="PASS" if marker in output else "NOT_REACHED"
         report["process_exit_code"]=process.returncode
         if process.returncode:
+            if report["checks"]["character_login"]=="PASS":
+                error_lines=[line for line in process.stderr.splitlines() if line.startswith("[AH-HISTORY] ERROR: ")]
+                if error_lines:
+                    detail=error_lines[-1][len("[AH-HISTORY] ERROR: "):][:512]
+                    # Only the terminal's final post-login error, no raw packet/auth logs.
+                    for secret_value in (password,password.upper(),password.lower()):
+                        if secret_value:detail=re.sub(re.escape(secret_value),"MASKED",detail,flags=re.IGNORECASE)
+                    report["terminal_error_after_login"]=re.sub(r"[^a-zA-Z0-9 _:=.()/,-]","",detail)
             reasons=[("world auth rejected","WORLD_AUTH_REJECTED"),("auth connect failed","AUTH_CONNECT_FAILED"),("account has no characters","NO_CHARACTERS"),("character not found","CHARACTER_NOT_FOUND"),("invalid password","PASSWORD_FORMAT_INVALID"),("invalid auction tuple","INVALID_AUCTION_TUPLE"),("auction payload length mismatch","AUCTION_PAYLOAD_LENGTH_MISMATCH"),("not return MSG_AUCTION_HELLO","AUCTION_HOUSE_NOT_OPENED"),("truncated at page limit","SCAN_PAGE_LIMIT"),("world connect failed","WORLD_CONNECT_FAILED")]
             report["failure_reason"]=next((reason for marker,reason in reasons if marker in output),"TERMINAL_FAILED_SEE_REACHED_STAGES")
             report["live_scan"]="FAIL";return

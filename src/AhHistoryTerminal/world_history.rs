@@ -179,7 +179,15 @@ pub fn login_history(
         return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());
     }
 
-    let (candidates, _) = discover_poc05_context_retry(stream, &mut crypto, player_guid)?;
+    // A history scan needs an auctioneer, not gold, bags or a mailbox snapshot.
+    // Reuse the proven explicit AH target when supplied; retain discovery fallback.
+    let candidates = if let Ok(raw_guid) = env::var("WOW112_AH_GUID") {
+        let mut targets = HashSet::new();
+        targets.insert(parse_guid_override("WOW112_AH_GUID", &raw_guid)?);
+        targets
+    } else {
+        discover_poc05_context_retry(stream, &mut crypto, player_guid)?.0
+    };
     let (auctioneer_guid, _) = poc05_send_auction_hello_candidates(stream, &mut crypto, candidates)?;
     let max_pages: u32 = env::var("WOW112_AH_FULL_SCAN_MAX_PAGES").unwrap_or_else(|_| "2048".into()).parse().map_err(|_| "invalid max pages")?;
     if max_pages == 0 || max_pages > 4096 { return Err("max pages must be 1..4096".into()); }

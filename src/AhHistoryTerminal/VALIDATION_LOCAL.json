@@ -7,38 +7,38 @@
     {
       "name": "compiled_terminal_full_scan_60000",
       "status": "PASS",
-      "seconds": 1.24,
+      "seconds": 1.51,
       "detail": {
         "records": 60000,
         "pages": 1201,
-        "capture_seconds": 0.41,
-        "raw_bytes": 21181074,
+        "capture_seconds": 0.535,
+        "raw_bytes": 21181116,
         "buyout_zero_retained": true
       }
     },
     {
       "name": "duplicate_segment_noop",
       "status": "PASS",
-      "seconds": 0.361,
+      "seconds": 0.507,
       "detail": {
         "state": "duplicate_noop",
-        "scan_id": "1791369359370675458-68",
+        "scan_id": "1791370209228127933-69",
         "inserted": 0
       }
     },
     {
       "name": "conflicting_segment_rejected",
       "status": "PASS",
-      "seconds": 0.676,
+      "seconds": 0.886,
       "detail": null
     },
     {
       "name": "bundle_restore_identical_view",
       "status": "PASS",
-      "seconds": 2.788,
+      "seconds": 3.62,
       "detail": {
-        "gzip_bytes": 808993,
-        "view_id": "e59b7e9b994c3a1651bf60b46f006e11fea1ca7b69923f57f00c4f40e1b7241a",
+        "gzip_bytes": 809603,
+        "view_id": "ae9382b23f5b172e668b2f943ec233fae368cb271a72fd74faa4282800f1b572",
         "items": 20
       }
     },
@@ -51,7 +51,7 @@
     {
       "name": "page_limit_never_full",
       "status": "PASS",
-      "seconds": 0.005,
+      "seconds": 0.006,
       "detail": null
     },
     {
@@ -63,7 +63,7 @@
     {
       "name": "process_kill_partial_recovery",
       "status": "PASS",
-      "seconds": 0.014,
+      "seconds": 0.015,
       "detail": {
         "recovered_status": "aborted",
         "records": 50
@@ -84,13 +84,13 @@
     {
       "name": "killed_import_transaction_rollback_and_retry",
       "status": "PASS",
-      "seconds": 1.279,
+      "seconds": 1.362,
       "detail": null
     },
     {
       "name": "multi_producer_no_double_supply",
       "status": "PASS",
-      "seconds": 1.515,
+      "seconds": 1.499,
       "detail": null
     }
   ],
@@ -102,12 +102,15 @@
     "src/AhHistoryTerminal/capture.rs": "87463cc1189ced0cceff8884309503ca1ad21784f80f1e86193decb5cb40af80",
     "src/AhHistoryTerminal/history_worker.py": "e958cdb589c4dfc08be7ce32484cadc534e893ed138e4de5a4075c5a9cf2e081",
     "src/AhHistoryTerminal/main.rs": "b750da77f7af1213c7dd5c85d4213b2d7cd3f7657c326cffcb8c704b4f58d3af",
+    "src/AhHistoryTerminal/run_live_validation.py": "48f5d4d20d1e4e66a23862c275430e8dc8bd0ed8f3693c01ca654c8c19d44a48",
     "src/AhHistoryTerminal/test_autonomous.py": "ec60c32e19410da45021a9fff88c2107fb6518ec23a0e94169ebcb8f065cf672",
-    "src/AhHistoryTerminal/world_history.rs": "8e12a495fcd52198aa0bc4d7ac142ee1f9bc7fbeb194bfc9907a8462bd78cd98"
+    "src/AhHistoryTerminal/world_history.rs": "7d37759391fc44e2742962c1642ad7405facd088773aeb934b514b2050d2990a"
   },
   "platform": "Linux x86_64",
   "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
   "python": "3.12.14",
-  "ci_windows": "NOT_RUN",
-  "github_data_publisher": "NOT_IMPLEMENTED"
+  "ci_windows": "PENDING_FOR_AH_TARGET_CHANGE",
+  "github_data_publisher": "NOT_IMPLEMENTED",
+  "live_first_attempt": "AUTH_AND_CHARACTER_PASS_AH_NOT_REACHED",
+  "integration_parent": "b59a10ffdb1ed1bfd6a4a859341c2e3d7367111d"
 }

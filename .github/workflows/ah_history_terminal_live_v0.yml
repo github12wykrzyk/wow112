@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Build read-only terminal
+      - name: Build read-only terminal with explicit AH target
         run: cargo build --locked --release --manifest-path src/AhHistoryTerminal/Cargo.toml --target i686-pc-windows-msvc
       - name: Verify offline suite before live connection
         env:
