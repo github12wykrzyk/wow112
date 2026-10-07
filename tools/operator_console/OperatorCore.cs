@@ -11,7 +11,7 @@ using System.Web.Script.Serialization;
 namespace WoW112.OperatorConsole
 {
     internal enum OperatorSeverity { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 }
-    internal enum OperatorStatus { Ok, Active, Idle, Warning, Error, Uncertain, Blocked }
+    internal enum OperatorStatus { Ok, Active, Idle, Warning, Error, Blocked }
     internal enum OperatorDirection { None, Incoming, OutgoingAutomation, OutgoingManual, System }
 
     internal sealed class OperatorEvent
@@ -54,7 +54,7 @@ namespace WoW112.OperatorConsole
     {
         public string SessionId = "", Account = "", Profile = "", Character = "", Module = "", CurrentAction = "", LastEvent = "", LastError = "";
         public DateTime LastActivityUtc, StartedUtc;
-        public OperatorStatus World = OperatorStatus.Idle, Ah = OperatorStatus.Idle, Summon = OperatorStatus.Idle, Mail = OperatorStatus.Idle, Coordinator = OperatorStatus.Idle, Whispers = OperatorStatus.Idle;
+        public OperatorStatus World = OperatorStatus.Idle, Summon = OperatorStatus.Idle, Payment = OperatorStatus.Idle, Whispers = OperatorStatus.Idle;
         public int WhisperQueue, SummonQueue;
         public bool Connected;
 
@@ -63,7 +63,7 @@ namespace WoW112.OperatorConsole
             return new SessionState {
                 SessionId = SessionId, Account = Account, Profile = Profile, Character = Character, Module = Module,
                 CurrentAction = CurrentAction, LastEvent = LastEvent, LastError = LastError, LastActivityUtc = LastActivityUtc,
-                StartedUtc = StartedUtc, World = World, Ah = Ah, Summon = Summon, Mail = Mail, Coordinator = Coordinator,
+                StartedUtc = StartedUtc, World = World, Summon = Summon, Payment = Payment,
                 Whispers = Whispers, WhisperQueue = WhisperQueue, SummonQueue = SummonQueue, Connected = Connected
             };
         }
@@ -139,23 +139,19 @@ namespace WoW112.OperatorConsole
                 case "LoginSucceeded":
                 case "CharacterEnteredWorld": s.World = OperatorStatus.Ok; s.Connected = true; s.CurrentAction = ""; break;
                 case "LoginFailed":
-                case "Disconnected": if (s.Coordinator != OperatorStatus.Uncertain) s.World = OperatorStatus.Error; s.Connected = false; break;
+                case "Disconnected": s.World = OperatorStatus.Error; s.Connected = false; break;
                 case "ReconnectStarted": s.World = OperatorStatus.Active; s.CurrentAction = "Reconnect"; break;
                 case "ReconnectSucceeded": s.World = OperatorStatus.Ok; s.Connected = true; s.CurrentAction = ""; break;
                 case "WhisperReceived": s.Whispers = OperatorStatus.Active; break;
+                case "WhisperSent": s.Whispers = OperatorStatus.Ok; break;
+                case "UnhandledWhisper": s.Whispers = OperatorStatus.Warning; break;
                 case "SummonQueued": s.Summon = OperatorStatus.Active; s.SummonQueue++; break;
                 case "SummonStarted": s.Summon = OperatorStatus.Active; s.CurrentAction = "Summon"; break;
-                case "SummonCompleted": s.Summon = OperatorStatus.Ok; if (s.SummonQueue > 0) s.SummonQueue--; s.CurrentAction = ""; break;
+                case "SummonCompleted": s.Summon = OperatorStatus.Ok; if (s.SummonQueue > 0) s.SummonQueue--; s.CurrentAction = "Await payment"; break;
                 case "SummonFailed": s.Summon = OperatorStatus.Error; s.CurrentAction = ""; break;
-                case "AHScanStarted": s.Ah = OperatorStatus.Active; s.CurrentAction = "AH scan"; break;
-                case "AHScanFinished": s.Ah = OperatorStatus.Ok; s.CurrentAction = ""; break;
-                case "MailMutationStarted": s.Mail = OperatorStatus.Active; break;
-                case "MailMutationConfirmed": if (s.Mail != OperatorStatus.Uncertain) s.Mail = OperatorStatus.Ok; break;
-                case "MailMutationUncertain": s.Mail = OperatorStatus.Uncertain; s.Coordinator = OperatorStatus.Uncertain; break;
-                case "MutationCoordinatorLocked": if (s.Coordinator != OperatorStatus.Uncertain) s.Coordinator = OperatorStatus.Active; break;
-                case "MutationCoordinatorReleased": if (s.Coordinator != OperatorStatus.Uncertain) s.Coordinator = OperatorStatus.Ok; break;
-                case "MutationCoordinatorUncertain":
-                case "BuyUncertain": s.Coordinator = OperatorStatus.Uncertain; break;
+                case "PaymentExpected": s.Payment = OperatorStatus.Active; s.CurrentAction = "Await payment"; break;
+                case "PaymentReceived": s.Payment = OperatorStatus.Ok; s.CurrentAction = ""; break;
+                case "PaymentMissing": s.Payment = OperatorStatus.Warning; s.CurrentAction = "Payment missing"; break;
             }
         }
 
@@ -351,7 +347,7 @@ namespace WoW112.OperatorConsole
                 case OperatorCommandType.ReplyToWhisper:
                 case OperatorCommandType.PauseAutomation:
                 case OperatorCommandType.ResumeAutomation: break;
-                default: throw new InvalidOperationException("Operator Console refuses unsupported command type.");
+                default: throw new InvalidOperationException("Summon Operator Console refuses unsupported command type.");
             }
             command.Text = SecretSanitizer.Sanitize(command.Text);
             lock (commandGate)
@@ -379,7 +375,7 @@ namespace WoW112.OperatorConsole
                             }
                             catch (Exception ex)
                             {
-                                bus.Publish(new OperatorEvent { Severity = OperatorSeverity.Warn, Category = "Bridge", Module = "OperatorBridge", EventType = "Warning", Message = "Rejected malformed backend event: " + ex.Message });
+                                bus.Publish(new OperatorEvent { Severity = OperatorSeverity.Warn, Category = "Bridge", Module = "SummonOperatorBridge", EventType = "Warning", Message = "Rejected malformed summon backend event: " + ex.Message });
                             }
                         }
                     }
