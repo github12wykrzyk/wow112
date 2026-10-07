@@ -1,14 +1,16 @@
 name: AH history archive recovery without game connection
 on:
   push:
-    branches: [dev/windows-ah-canonical]
+    branches:
+      - dev/windows-ah-canonical
+      - feature/ah-history-recover-fresh-bundle
     paths: ['.github/workflows/ah_history_terminal_archive_recovery.yml']
   workflow_dispatch:
     inputs:
       run_id:
         description: 'Live workflow run containing the recovery and summary artifacts'
         required: true
-        default: '37616595769'
+        default: '37633055477'
 permissions:
   contents: write
   actions: read
@@ -31,18 +33,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.run_id || '37616595769' }}
-          name: ah-history-archive-recovery-${{ inputs.run_id || '37616595769' }}
+          run-id: ${{ inputs.run_id || '37633055477' }}
+          name: ah-history-archive-recovery-${{ inputs.run_id || '37633055477' }}
           path: src/AhHistoryTerminal/recovered-data
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.run_id || '37616595769' }}
+          run-id: ${{ inputs.run_id || '37633055477' }}
           name: ah-history-live-v0-summary
           path: src/AhHistoryTerminal/recovered-data
       - name: Reconcile interrupted receipt with verified captured status
         env:
-          RECOVERY_RUN_ID: ${{ inputs.run_id || '37616595769' }}
+          RECOVERY_RUN_ID: ${{ inputs.run_id || '37633055477' }}
         run: |
           python - <<'PY'
           import json, os, sys
