@@ -1,0 +1,2 @@
+trigger=2026-10-07T11:11:00+02:00
+purpose=verify WOW112_PASSWORD secret and run TELE08 B live E2E
