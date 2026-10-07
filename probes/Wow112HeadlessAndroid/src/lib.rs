@@ -5,6 +5,7 @@ pub mod tele08_bc_adapter;
 pub mod tele08_whisper_parser;
 pub mod tele_response_engine;
 pub mod tele10_trade_payment;
+pub mod tele11_service_core;
 
 #[cfg(test)]
 mod tele08_bc_adapter_tests;
