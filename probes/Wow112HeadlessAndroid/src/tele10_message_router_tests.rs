@@ -21,7 +21,10 @@ fn normal_destination_request_stays_direct_and_queueable() {
     assert_eq!(request.player, "Alice");
     assert_eq!(request.destination, "winterspring");
     assert_eq!(
-        request.metadata.get("tele10_message_route").map(String::as_str),
+        request
+            .metadata
+            .get("tele10_message_route")
+            .map(String::as_str),
         Some("direct")
     );
 }
@@ -40,7 +43,10 @@ fn typo_with_destination_clarifies_then_becomes_request() {
     };
     assert_eq!(request.destination, "hyjal");
     assert_eq!(
-        request.metadata.get("tele10_message_route").map(String::as_str),
+        request
+            .metadata
+            .get("tele10_message_route")
+            .map(String::as_str),
         Some("clarification_confirmed")
     );
     assert_eq!(router.pending_clarifications(), 0);
@@ -122,7 +128,10 @@ fn explicit_plus_with_destination_remains_direct_request() {
     };
     assert_eq!(request.destination, "hyjal");
     assert_eq!(
-        request.metadata.get("tele10_message_route").map(String::as_str),
+        request
+            .metadata
+            .get("tele10_message_route")
+            .map(String::as_str),
         Some("direct")
     );
 }
