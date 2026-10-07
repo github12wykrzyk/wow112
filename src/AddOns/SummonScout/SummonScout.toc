@@ -23,4 +23,5 @@ SummonScout_UnknownWhisperReportHot.lua
 SummonScout_DestinationInfoGuardHot.lua
 SummonScout_CompetitionSmartHot.lua
 SummonScout_EngineApiAnchorHot.lua
+SummonScout_ShardGuardObservationHot.lua
 SummonScout_CoreErrorGuardHot.lua
