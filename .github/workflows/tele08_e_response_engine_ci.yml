@@ -10,7 +10,7 @@ on:
       - '.github/workflows/tele08_e_response_engine_ci.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -21,27 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Format Track E only
-        run: |
-          rustfmt --edition 2021 \
-            probes/Wow112HeadlessAndroid/src/lib.rs \
-            probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
-      - name: Commit Track E formatting if needed
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- \
-            probes/Wow112HeadlessAndroid/src/lib.rs \
-            probes/Wow112HeadlessAndroid/src/tele_response_engine.rs; then
-            echo "Track E sources already rustfmt-clean"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add probes/Wow112HeadlessAndroid/src/lib.rs probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
-          git commit -m "TELE08 E: rustfmt response engine"
-          git push origin HEAD:feature/tele08-e-response-engine-v1
-      - name: Verify Track E formatting
+      - name: Format check Track E only
         run: |
           rustfmt --edition 2021 --check \
             probes/Wow112HeadlessAndroid/src/lib.rs \
