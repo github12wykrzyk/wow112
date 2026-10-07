@@ -6,6 +6,13 @@ on:
       - 'feature/operator-console-v1'
     paths:
       - 'tools/operator_console/**'
+      - 'src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c'
+      - 'src/AutoLoginBridge/WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc'
+      - 'src/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua'
+      - 'src/AddOns/SummonScout/SummonScout.toc'
+      - 'tools/build_autologinbridge_candidate.py'
+      - 'runtime/parallel_candidate.json'
+      - 'runtime/parallel_tasks/operator-console-v1.json'
       - '.github/workflows/build_operator_console.yml'
   workflow_dispatch:
 
@@ -26,6 +33,59 @@ jobs:
       - name: Verify canonical repository invariants
         shell: pwsh
         run: python tools/verify_current.py
+
+      - name: Verify Operator Bridge protocol and safety surface
+        shell: pwsh
+        run: |
+          @'
+          import re
+          from pathlib import Path
+
+          native = Path('src/AutoLoginBridge/WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc').read_text(encoding='utf-8')
+          console = Path('tools/operator_console/OperatorRuntimeBridge.cs').read_text(encoding='utf-8')
+          lua = Path('src/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua').read_text(encoding='utf-8')
+          toc = Path('src/AddOns/SummonScout/SummonScout.toc').read_text(encoding='utf-8')
+
+          required_native = {
+              'OPERATOR_BRIDGE_MAGIC': '0x4F323157u',
+              'OPERATOR_BRIDGE_VERSION': '1u',
+              'OPERATOR_BRIDGE_RING_COUNT': '16u',
+              'OPERATOR_COMMAND_WHISPER': '1u',
+          }
+          for name, value in required_native.items():
+              if not re.search(r'#define\s+' + re.escape(name) + r'\s+' + re.escape(value), native):
+                  raise SystemExit(f'native protocol mismatch: {name}')
+
+          required_console = [
+              'private const uint Magic = 0x4F323157u;',
+              'private const uint Version = 1u;',
+              'private const int HeaderSize = 556;',
+              'private const int SlotSize = 896;',
+              'private const int RingCount = 16;',
+              'private const uint CommandWhisper = 1u;',
+          ]
+          for token in required_console:
+              if token not in console:
+                  raise SystemExit('console protocol mismatch: ' + token)
+
+          if 'SendChatMessage, text, "WHISPER"' not in lua:
+              raise SystemExit('Lua bridge does not use existing SendChatMessage whisper primitive')
+          if 'H.ManualChatLock' not in lua:
+              raise SystemExit('Lua bridge does not reuse existing manual-chat lock')
+          if 'CHAT_MSG_WHISPER_INFORM' not in lua:
+              raise SystemExit('Lua bridge lacks final send confirmation event')
+          if 'SummonScout_OperatorBridgeHot.lua' not in toc:
+              raise SystemExit('Operator Bridge Lua missing from TOC')
+
+          forbidden = ['BUY', 'CANCEL', 'POST', 'MAIL', 'PlaceAuctionBid', 'StartAuction', 'CancelAuction']
+          command_region = native[native.find('#define OPERATOR_COMMAND_NONE'):native.find('typedef const char*')]
+          for token in forbidden:
+              if token.lower() in command_region.lower():
+                  raise SystemExit('economic command leaked into native operator command surface: ' + token)
+          if 'CommandWhisper = 1u' not in console:
+              raise SystemExit('manual whisper command is not the single native command opcode')
+          print('OPERATOR BRIDGE PROTOCOL/SAFETY PASS')
+          '@ | python -
 
       - name: Compile Operator Console x64 and tests
         shell: pwsh
@@ -48,7 +108,10 @@ jobs:
           )
 
           & $csc @common /target:winexe /out:dist/operator-console/WoW112-Operator-Console-V1.exe `
-            tools/operator_console/OperatorCore.cs tools/operator_console/ExistingRuntimeTelemetry.cs tools/operator_console/OperatorConsole.cs
+            tools/operator_console/OperatorCore.cs `
+            tools/operator_console/ExistingRuntimeTelemetry.cs `
+            tools/operator_console/OperatorRuntimeBridge.cs `
+            tools/operator_console/OperatorConsole.cs
           if ($LASTEXITCODE -ne 0) { throw "Operator Console compile failed" }
 
           & $csc @common /target:exe /out:dist/operator-console/OperatorConsoleTests.exe /main:WoW112.OperatorConsole.OperatorConsoleTests `
@@ -60,6 +123,24 @@ jobs:
         run: |
           & ./dist/operator-console/OperatorConsoleTests.exe
           if ($LASTEXITCODE -ne 0) { throw "Operator Console tests failed" }
+
+      - name: Build existing AutoLoginBridge x86 with Operator transport
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist/operator-console/runtime-overlay | Out-Null
+          python tools/build_autologinbridge_candidate.py --compile-only `
+            --output dist/operator-console/runtime-overlay/WoWAutoLoginBridge_5875_v1.dll `
+            --build-metadata dist/operator-console/operator_bridge_build.json
+          if ($LASTEXITCODE -ne 0) { throw "Operator AutoLoginBridge build failed" }
+
+      - name: Stage SummonScout runtime overlay
+        shell: pwsh
+        run: |
+          $dst = 'dist/operator-console/runtime-overlay/Interface/AddOns/SummonScout'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item src/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua $dst/SummonScout_OperatorBridgeHot.lua
+          Copy-Item src/AddOns/SummonScout/SummonScout.toc $dst/SummonScout.toc
 
       - name: Render GUI smoke evidence
         shell: pwsh
@@ -73,32 +154,55 @@ jobs:
           }
           Get-Content dist/operator-console/ui-evidence/result.txt
 
-      - name: Verify x64 PE and create SHA manifest
+      - name: Verify x64 console and x86 bridge PE plus hashes
         shell: pwsh
         run: |
           @'
           import hashlib, json, struct
           from pathlib import Path
+
+          def inspect(path, expected):
+              p = Path(path)
+              data = p.read_bytes()
+              if data[:2] != b'MZ': raise SystemExit(f'{p}: not MZ')
+              pe = struct.unpack_from('<I', data, 0x3C)[0]
+              if data[pe:pe+4] != b'PE\0\0': raise SystemExit(f'{p}: missing PE signature')
+              machine = struct.unpack_from('<H', data, pe + 4)[0]
+              if machine != expected: raise SystemExit(f'{p}: expected 0x{expected:04X}, got 0x{machine:04X}')
+              return data, machine
+
           exe = Path('dist/operator-console/WoW112-Operator-Console-V1.exe')
-          data = exe.read_bytes()
-          if data[:2] != b'MZ': raise SystemExit('not MZ')
-          pe = struct.unpack_from('<I', data, 0x3C)[0]
-          if data[pe:pe+4] != b'PE\0\0': raise SystemExit('missing PE signature')
-          machine = struct.unpack_from('<H', data, pe + 4)[0]
-          if machine != 0x8664: raise SystemExit(f'expected AMD64 0x8664, got 0x{machine:04X}')
+          dll = Path('dist/operator-console/runtime-overlay/WoWAutoLoginBridge_5875_v1.dll')
+          exe_data, exe_machine = inspect(exe, 0x8664)
+          dll_data, dll_machine = inspect(dll, 0x014C)
           meta = {
               'artifact': 'WoW112-Operator-Console-V1-${{ github.sha }}',
               'git_sha': '${{ github.sha }}',
-              'base_branch': 'dev/windows-ah-canonical',
-              'exe': exe.name,
-              'sha256': hashlib.sha256(data).hexdigest(),
-              'size': len(data),
-              'pe_machine': '0x8664',
-              'framework': '.NET Framework 4.8',
-              'architecture': 'x64'
+              'canonical_base_branch': 'dev/windows-ah-canonical',
+              'console': {
+                  'name': exe.name,
+                  'sha256': hashlib.sha256(exe_data).hexdigest(),
+                  'size': len(exe_data),
+                  'pe_machine': f'0x{exe_machine:04X}',
+                  'framework': '.NET Framework 4.8',
+                  'architecture': 'x64'
+              },
+              'runtime_bridge': {
+                  'name': dll.name,
+                  'sha256': hashlib.sha256(dll_data).hexdigest(),
+                  'size': len(dll_data),
+                  'pe_machine': f'0x{dll_machine:04X}',
+                  'architecture': 'x86',
+                  'shared_map': 'Local\\WoW112_OperatorBridge_<pid>',
+                  'protocol_version': 1,
+                  'economic_commands': False,
+                  'uncertain_auto_retry': False
+              }
           }
           Path('dist/operator-console/manifest.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
-          Path('dist/operator-console/SHA256SUMS.txt').write_text(meta['sha256'] + '  ' + exe.name + '\n', encoding='ascii')
+          Path('dist/operator-console/SHA256SUMS.txt').write_text(
+              meta['console']['sha256'] + '  ' + exe.name + '\n' +
+              meta['runtime_bridge']['sha256'] + '  runtime-overlay/' + dll.name + '\n', encoding='ascii')
           print(json.dumps(meta, indent=2))
           '@ | python -
 
