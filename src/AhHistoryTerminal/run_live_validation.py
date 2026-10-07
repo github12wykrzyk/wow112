@@ -51,18 +51,21 @@ def main():
         report["process_exit_code"]=process.returncode
         if process.returncode:
             error_lines=[line for line in process.stderr.splitlines() if line.startswith("[AH-HISTORY] ERROR: ")]
+            report["terminal_error_line_count"]=len(error_lines)
+            report["stderr_bytes"]=len(process.stderr.encode("utf-8","replace"))
             if error_lines:
                 detail=error_lines[-1][len("[AH-HISTORY] ERROR: "):][:512]
                 for secret_value in (password,password.upper(),password.lower()):
                     if secret_value:detail=re.sub(re.escape(secret_value),"MASKED",detail,flags=re.IGNORECASE)
+                detail=re.sub(r"[0-9a-fA-F]{16,}","HEX",detail)
                 safe_detail=re.sub(r"[^a-zA-Z0-9 _:=.()/,-]","",detail)
                 report["terminal_error"] = safe_detail
             reasons=[("world auth rejected","WORLD_AUTH_REJECTED"),("auth connect failed","AUTH_CONNECT_FAILED"),("account has no characters","NO_CHARACTERS"),("character not found","CHARACTER_NOT_FOUND"),("invalid password","PASSWORD_FORMAT_INVALID"),("invalid auction tuple","INVALID_AUCTION_TUPLE"),("auction payload length mismatch","AUCTION_PAYLOAD_LENGTH_MISMATCH"),("not return MSG_AUCTION_HELLO","AUCTION_HOUSE_NOT_OPENED"),("truncated at page limit","SCAN_PAGE_LIMIT"),("world connect failed","WORLD_CONNECT_FAILED"),("already logged","ALREADY_LOGGED_IN"),("missing WOW112_","RUNTIME_CONFIG_MISSING")]
             report["failure_reason"]=next((reason for marker,reason in reasons if marker.lower() in output.lower()),"TERMINAL_FAILED_SEE_REACHED_STAGES")
             report["live_scan"]="FAIL"
         captures=list((root/"capture").glob("*.ndjson"))
+        report["capture_count"]=len(captures)
         if len(captures)!=1:
-            report["capture_count"]=len(captures)
             report["live_scan"]="FAIL"
             report.setdefault("failure_reason","CAPTURE_COUNT_MISMATCH")
             return
