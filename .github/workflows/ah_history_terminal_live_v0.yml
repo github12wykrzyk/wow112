@@ -1,7 +1,9 @@
 name: AH history terminal live archive
 on:
   push:
-    branches: [dev/windows-ah-canonical]
+    branches:
+      - dev/windows-ah-canonical
+      - feature/ah-history-shadow-canonical
     paths:
       - '.github/workflows/ah_history_terminal_live_v0.yml'
   workflow_dispatch:
@@ -12,8 +14,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   live:
-    # Live capture requires explicit manual dispatch. Code pushes never log in.
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    # Manual dispatch remains the default. A push may run only with the explicit
+    # one-shot commit marker below; ordinary code pushes never log in.
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[RUN_REAL_SHADOW_ONCE]') }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
