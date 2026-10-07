@@ -10,6 +10,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs'
+      - 'tools/tele09_apply_near_teleport_fix.py'
 
 permissions:
   contents: read
@@ -42,6 +43,8 @@ jobs:
             if ($updated -eq $text) { throw 'tele09 source anchor not found' }
             Set-Content -Encoding UTF8 $path $updated
           }
+          python tools/tele09_apply_near_teleport_fix.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustfmt --edition 2021 --config skip_children=true $path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Force -Path tele09_formatted_source | Out-Null
@@ -82,7 +85,7 @@ jobs:
           if ($null -eq $status) { throw 'No STATUS.txt produced.' }
           $text = Get-Content $status.FullName -Raw
           Write-Host $text
-          if ($text -notmatch 'result=PASS' -or $text -notmatch 'SMSG_NEW_WORLD>MSG_MOVE_WORLDPORT_ACK') {
+          if ($text -notmatch 'result=PASS' -or $text -notmatch 'teleport_instruction>teleport_ack' -or $text -notmatch 'teleport_mode=(near|far)') {
             throw "Full teleport evidence is not canonical PASS: $text"
           }
 
