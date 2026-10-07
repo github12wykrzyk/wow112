@@ -16,6 +16,14 @@
   "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": null,
-  "notes": "Read-only shadow path only. Immutable archive replay materializes a V2 pricebook; missing history fails open for scan/BUY and disables only the shadow audit. Shadow values are exported separately and are forbidden from BUY authorization, queue ordering, exact-tuple revalidation, mutation retries, and current Vendor/DE valuation inputs. Full Windows V4+shadow build passed on ba7df3b38abff2be81df700389ebc13a466c8f79; task metadata corrected to the current full parallel base SHA."
+  "lease": {
+    "owner": "chatgpt-ah-history-shadow-v4",
+    "acquired_at": "2026-10-07T16:04:00Z",
+    "heartbeat_at": "2026-10-07T16:04:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AhHistoryV2ShadowValuation"
+    ]
+  },
+  "notes": "Read-only shadow path only. Immutable archive replay materializes a V2 pricebook; missing history fails open for scan/BUY and disables only the shadow audit. Shadow values are exported separately and are forbidden from BUY authorization, queue ordering, exact-tuple revalidation, mutation retries, and current Vendor/DE valuation inputs. Full Windows V4+shadow build passed on ba7df3b38abff2be81df700389ebc13a466c8f79. Narrow lease intentionally covers only the shadow valuation module to avoid blocking independent Auction Lifecycle/canonical work."
 }
