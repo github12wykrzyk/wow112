@@ -48,7 +48,7 @@ jobs:
           )
 
           & $csc @common /target:winexe /out:dist/operator-console/WoW112-Operator-Console-V1.exe `
-            tools/operator_console/OperatorCore.cs tools/operator_console/OperatorConsole.cs
+            tools/operator_console/OperatorCore.cs tools/operator_console/ExistingRuntimeTelemetry.cs tools/operator_console/OperatorConsole.cs
           if ($LASTEXITCODE -ne 0) { throw "Operator Console compile failed" }
 
           & $csc @common /target:exe /out:dist/operator-console/OperatorConsoleTests.exe /main:WoW112.OperatorConsole.OperatorConsoleTests `
