@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('EnsureProfile','Setup','Vendor','DeLive3','DeAudit')]
+    [ValidateSet('EnsureProfile','Setup','Vendor','DeLive3','DeAudit','UnifiedLive','UnifiedAudit')]
     [string]$Mode='EnsureProfile'
 )
 
@@ -82,13 +82,25 @@ try{
         'DeLive3'{
             Write-Host 'HOTKEY D: DE FAST LIVE x3 - REAL BUY AUTO ARMED' -ForegroundColor Red
             $env:WOW112_LAUNCHER_ARM='DE_LIVE3'
-            & (Join-Path $PSScriptRoot 'RUN_DE_LAB.ps1') -Root $Root -RunMode Live3
+            & (Join-Path $PSScriptRoot 'RUN_DE_LAB.ps1') -Root $Root -RunMode Live3 -Strategy De
             exit $LASTEXITCODE
         }
         'DeAudit'{
             Write-Host 'HOTKEY A: DE FAST AUDIT - ZERO BUY' -ForegroundColor Cyan
             Remove-Item Env:WOW112_LAUNCHER_ARM -ErrorAction SilentlyContinue
-            & (Join-Path $PSScriptRoot 'RUN_DE_LAB.ps1') -Root $Root -RunMode Audit
+            & (Join-Path $PSScriptRoot 'RUN_DE_LAB.ps1') -Root $Root -RunMode Audit -Strategy De
+            exit $LASTEXITCODE
+        }
+        'UnifiedLive'{
+            Write-Host 'HOTKEY U: UNIFIED VENDOR+DE V4 - REAL BUY AUTO ARMED' -ForegroundColor Red
+            $env:WOW112_LAUNCHER_ARM='VENDOR_DE_V4'
+            & (Join-Path $PSScriptRoot 'RUN_DE_LAB.ps1') -Root $Root -RunMode Live3 -Strategy VendorDe
+            exit $LASTEXITCODE
+        }
+        'UnifiedAudit'{
+            Write-Host 'HOTKEY T: UNIFIED VENDOR+DE V4 AUDIT - ZERO BUY' -ForegroundColor Cyan
+            Remove-Item Env:WOW112_LAUNCHER_ARM -ErrorAction SilentlyContinue
+            & (Join-Path $PSScriptRoot 'RUN_DE_LAB.ps1') -Root $Root -RunMode Audit -Strategy VendorDe
             exit $LASTEXITCODE
         }
     }
