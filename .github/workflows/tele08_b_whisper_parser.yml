@@ -12,6 +12,8 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/tele10_clarification.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele10_clarification_tests.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele10_message_router.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele10_message_router_tests.rs'
       - 'runtime/parallel_tasks/tele08-b-whisper-parser-v1.json'
       - 'HANDOFF_TELE08_B_WHISPER_PARSER.md'
       - '.github/workflows/tele08_b_whisper_parser.yml'
@@ -44,7 +46,9 @@ jobs:
             probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs \
             probes/Wow112HeadlessAndroid/src/tele10_clarification.rs \
             probes/Wow112HeadlessAndroid/src/tele10_clarification_tests.rs \
-            probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs
+            probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs \
+            probes/Wow112HeadlessAndroid/src/tele10_message_router.rs \
+            probes/Wow112HeadlessAndroid/src/tele10_message_router_tests.rs
       - name: Library check
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
       - name: Parser and clarification tests
