@@ -1,0 +1,44 @@
+name: TELE10 canonicalize stored source
+on:
+  push:
+    branches: [feature/tele10-full-summon-accept-v1]
+    paths:
+      - '.github/workflows/tele10_canonicalize.yml'
+permissions:
+  contents: write
+jobs:
+  canonicalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Apply proven TELE10 live patch to stored source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/tele10_patch.py
+          python .github/scripts/tele10_same_map_hotfix.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/tele10_full_summon_accept_live.yml')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace("      - '.github/scripts/tele10_patch.py'\n      - '.github/scripts/tele10_same_map_hotfix.py'\n", "      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'\n      - 'probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs'\n")
+          s = s.replace('      - name: Patch and build\n', '      - name: Stored-source build\n', 1)
+          s = s.replace("          python .github/scripts/tele10_patch.py\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n          python .github/scripts/tele10_same_map_hotfix.py\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n", "", 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+          rm .github/scripts/tele10_patch.py .github/scripts/tele10_same_map_hotfix.py
+          git diff --check
+      - name: Persist canonical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs
+          git add probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          git add .github/workflows/tele10_full_summon_accept_live.yml
+          git add -u .github/scripts
+          git commit -m 'feat(tele10): canonicalize full summon teleport source'
+          git push origin HEAD:feature/tele10-full-summon-accept-v1
