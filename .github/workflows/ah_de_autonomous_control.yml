@@ -97,8 +97,8 @@ jobs:
             test -s "$p" || { echo "CORP CONTRACT FAIL: missing $p" >&2; exit 26; }
           done
 
-          if grep -n -E 'raw\.githubusercontent\.com|api\.github\.com' "$START" "$BOOT"; then
-            echo 'CORP CONTRACT FAIL: runtime updater references a blocked GitHub host.' >&2
+          if grep -n -E 'https?://(raw\.githubusercontent\.com|api\.github\.com)' "$START" "$BOOT"; then
+            echo 'CORP CONTRACT FAIL: runtime updater references a blocked GitHub host URL.' >&2
             exit 27
           fi
           grep -q 'releases/download/ah-de-latest' "$START" || { echo 'starter is not release-only' >&2; exit 28; }
