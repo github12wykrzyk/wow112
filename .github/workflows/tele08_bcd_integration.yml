@@ -1,0 +1,62 @@
+name: TELE08 B-D-C integration
+
+on:
+  push:
+    branches:
+      - feature/tele08-cd-integration-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/Cargo.toml'
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/destination_registry.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bcd_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bcd_adapter_tests.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/config/tele08_destinations.example.json'
+      - 'probes/Wow112HeadlessAndroid/tests/tele08_d_smoke.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - '.github/workflows/tele08_bcd_integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele08-bcd-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: |
+          rustfmt --edition 2021 --check \
+            probes/Wow112HeadlessAndroid/src/lib.rs \
+            probes/Wow112HeadlessAndroid/src/destination_registry.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_bcd_adapter.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_bcd_adapter_tests.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs \
+            probes/Wow112HeadlessAndroid/tests/tele08_d_smoke.rs \
+            probes/Wow112HeadlessAndroid/tele08_request_queue/src/lib.rs \
+            probes/Wow112HeadlessAndroid/tele08_request_queue/tests/queue_contract.rs
+
+      - name: Root B-D-C compile
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib --tests
+
+      - name: Root B-D-C tests
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+
+      - name: Track D public API smoke
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele08_d_smoke -- --nocapture
+
+      - name: Track C contract regression
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
