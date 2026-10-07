@@ -5,7 +5,9 @@ use crate::destination_registry::{
 use crate::tele08_bc_adapter::classification_to_request;
 use crate::tele08_de_adapter::{request_queued_context, unavailable_destination_context};
 use crate::tele08_whisper_parser::{WhisperClassification, WhisperIntent};
-use crate::tele_response_engine::{ResponseContext, ResponseDecision, ResponseEngine, ResponseEngineConfig};
+use crate::tele_response_engine::{
+    ResponseContext, ResponseDecision, ResponseEngine, ResponseEngineConfig,
+};
 use tele08_request_queue::{QueueConfig, QueueEngine, QueueEvent, ResourceKey};
 
 const SEEDED_DESTINATIONS: &str = include_str!("../config/tele08_destinations.example.json");
@@ -58,10 +60,21 @@ impl LiveResponseLogic {
             );
         }
 
+        let mut response_config = ResponseEngineConfig::default();
+        response_config.templates.unavailable_low_shards =
+            "{destination} is temporarily unavailable: low shards. Available: {alternatives}."
+                .into();
+        response_config.templates.unavailable_maintenance =
+            "{destination} is temporarily unavailable. Available: {alternatives}.".into();
+        response_config.templates.unavailable_unhealthy_team =
+            "{destination} is temporarily unavailable. Available: {alternatives}.".into();
+        response_config.templates.unavailable_temporary =
+            "{destination} is temporarily unavailable. Available: {alternatives}.".into();
+
         Ok(Self {
             registry,
             queue: QueueEngine::new(queue_config),
-            responses: ResponseEngine::new(ResponseEngineConfig::default()),
+            responses: ResponseEngine::new(response_config),
         })
     }
 
@@ -225,7 +238,13 @@ mod tests {
         assert_eq!(response.text, "Queued for Hyjal. Position: 1.");
         assert_eq!(
             result.trace,
-            vec!["B:SummonRequest", "D:Enabled", "C:accepted=true", "C:Queued(1)", "E:Queued"]
+            vec![
+                "B:SummonRequest",
+                "D:Enabled",
+                "C:accepted=true",
+                "C:Queued(1)",
+                "E:Queued"
+            ]
         );
     }
 
@@ -240,11 +259,15 @@ mod tests {
         assert!(response.should_send);
         assert_eq!(
             response.text,
-            "Winterspring is temporarily unavailable."
+            "Winterspring is temporarily unavailable. Available: Azshara, Hyjal."
         );
         assert_eq!(
             result.trace,
-            vec!["B:SummonRequest", "D:DisabledUnhealthyTeam", "E:DestinationUnavailable"]
+            vec![
+                "B:SummonRequest",
+                "D:DisabledUnhealthyTeam",
+                "E:DestinationUnavailable"
+            ]
         );
     }
 
