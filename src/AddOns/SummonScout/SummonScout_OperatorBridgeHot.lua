@@ -1,21 +1,32 @@
--- WoW112 Operator Console bridge for SummonScout / WoW 1.12.1 / Lua 5.0.
--- Transport only: observes the existing whisper flow and accepts a narrowly typed
--- manual-whisper command. It does not own summon parsing, invites, payment logic,
--- login/world protocol, AH logic or any economic mutation.
+-- WoW112 Summon Operator Console bridge for SummonScout / WoW 1.12.1 / Lua 5.0.
+-- Transport/telemetry only. The canonical SummonScout parser, summon engine and
+-- trusted payment ledger remain authoritative. This module observes their state,
+-- exposes live events and accepts one narrowly typed manual-whisper command.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local OB_VERSION = "1"
+local OB_VERSION = "2-summon-telemetry"
 local OB_MAX_EVENTS = 128
+local OB_MAX_SUMMON_LOG = 1000
+local OB_MAX_PAYMENT_LOG = 1000
 local OB = H.GetState("operatorbridge")
 OB.queue = OB.queue or {}
 OB.seq = tonumber(OB.seq) or 0
 OB.dropped = tonumber(OB.dropped) or 0
 OB.pendingManual = OB.pendingManual or {}
 OB.lastCommandSeq = tonumber(OB.lastCommandSeq) or 0
+OB.pendingSeen = OB.pendingSeen or {}
+OB.paymentSeenCounts = OB.paymentSeenCounts or {}
+OB.replayedSummonSeq = tonumber(OB.replayedSummonSeq) or 0
+OB.replayedPaymentSeq = tonumber(OB.replayedPaymentSeq) or 0
+OB.prevActiveName = OB.prevActiveName or ""
+OB.prevActiveStarted = OB.prevActiveStarted and true or false
+OB.prevActiveRequestSeq = OB.prevActiveRequestSeq or ""
+OB.prevActiveDestination = OB.prevActiveDestination or ""
+OB.prevActiveError = OB.prevActiveError or ""
 
 local function obTrim(s)
     s = s or ""
@@ -28,46 +39,43 @@ local function obLower(s)
     return string.lower(obTrim(s or ""))
 end
 
-local function obFindDecisionApi(fn, depth)
-    if type(fn) ~= "function" or depth > 3 then return nil end
-    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then return nil end
-    local i
-    for i = 1, 32 do
-        local ok, name, value
-        if pcall then
-            ok, name, value = pcall(debug.getupvalue, fn, i)
-            if not ok then return nil end
-        else
-            name, value = debug.getupvalue(fn, i)
-        end
-        if not name then break end
-        if type(value) == "table" and type(value.whisperInviteDecision) == "function" then
-            return value
-        end
-    end
-    for i = 1, 32 do
-        local ok, name, value
-        if pcall then
-            ok, name, value = pcall(debug.getupvalue, fn, i)
-            if not ok then return nil end
-        else
-            name, value = debug.getupvalue(fn, i)
-        end
-        if not name then break end
-        if type(value) == "function" then
-            local found = obFindDecisionApi(value, depth + 1)
-            if found then return found end
-        end
-    end
+local function obNow()
+    if GetTime then return GetTime() end
+    return 0
+end
+
+local function obWallTime()
+    if time then return tonumber(time()) or 0 end
+    return 0
+end
+
+local function obApi()
+    local api = W112_SUMMONSCOUT_API_V1
+    if type(api) == "table" then return api end
     return nil
 end
 
-local function obDecision(message)
-    local frame = SummonScoutFrame
-    if not frame or not frame.GetScript then
-        return false, "", "parser-unavailable"
+local function obCoreState()
+    local state = W112_SUMMONSCOUT_STATE
+    if type(state) == "table" then return state end
+    return nil
+end
+
+local function obDestination()
+    local api = obApi()
+    if api and type(api.summonDestinationLabel) == "function" then
+        if pcall then
+            local ok, value = pcall(api.summonDestinationLabel)
+            if ok then return tostring(value or "") end
+        else
+            return tostring(api.summonDestinationLabel() or "")
+        end
     end
-    local api = obFindDecisionApi(frame:GetScript("OnEvent"), 0)
+    return ""
+end
+
+local function obDecision(message)
+    local api = obApi()
     if not api or type(api.whisperInviteDecision) ~= "function" then
         return false, "", "parser-unavailable"
     end
@@ -80,7 +88,8 @@ local function obDecision(message)
     return accepted and true or false, tostring(loc or ""), tostring(reason or "")
 end
 
-local function obQueue(kind, player, text, result, destination, intent, reason, correlation, summonRequest)
+local function obQueue(kind, player, text, result, destination, intent, reason, correlation, summonRequest, extras)
+    extras = type(extras) == "table" and extras or {}
     OB.seq = OB.seq + 1
     local item = {
         seq = OB.seq,
@@ -91,12 +100,12 @@ local function obQueue(kind, player, text, result, destination, intent, reason, 
         result = tostring(result or ""),
         destination = tostring(destination or ""),
         intent = tostring(intent or ""),
-        keywords = "",
-        matchedRule = "",
+        keywords = tostring(extras.keywords or ""),
+        matchedRule = tostring(extras.matchedRule or ""),
         reason = tostring(reason or ""),
         correlation = tostring(correlation or ""),
-        confidenceMilli = 0,
-        competition = false,
+        confidenceMilli = tonumber(extras.confidenceMilli) or 0,
+        competition = extras.competition and true or false,
         summonRequest = summonRequest and true or false
     }
     table.insert(OB.queue, item)
@@ -182,9 +191,7 @@ local function obReceive(seq, playerHex, textHex, correlationHex)
         obCommandAck(seq, 3, "invalid sequence")
         return false
     end
-    if seq == OB.lastCommandSeq then
-        return true
-    end
+    if seq == OB.lastCommandSeq then return true end
 
     local player = obDecodeHex(playerHex)
     local text = obDecodeHex(textHex)
@@ -222,10 +229,204 @@ local function obReceive(seq, playerHex, textHex, correlationHex)
         seq = seq,
         text = text,
         correlation = correlation,
-        at = GetTime and GetTime() or 0
+        at = obNow()
     }
     obCommandAck(seq, 2, "")
     return true
+end
+
+local function obEnsureTelemetryTables()
+    SummonScoutDB = SummonScoutDB or {}
+    if type(SummonScoutDB.operatorSummonLog) ~= "table" then SummonScoutDB.operatorSummonLog = {} end
+    if type(SummonScoutDB.operatorPaymentLog) ~= "table" then SummonScoutDB.operatorPaymentLog = {} end
+    SummonScoutDB.operatorSummonSeq = tonumber(SummonScoutDB.operatorSummonSeq) or 0
+    SummonScoutDB.operatorPaymentSeq = tonumber(SummonScoutDB.operatorPaymentSeq) or 0
+end
+
+local function obTrimLog(log, limit)
+    while table.getn(log) > limit do table.remove(log, 1) end
+end
+
+local function obAppendSummon(eventName, player, destination, reason, requestSeq)
+    obEnsureTelemetryTables()
+    SummonScoutDB.operatorSummonSeq = SummonScoutDB.operatorSummonSeq + 1
+    local entry = {
+        id = SummonScoutDB.operatorSummonSeq,
+        ts = obWallTime(),
+        event = tostring(eventName or ""),
+        player = obTrim(player or ""),
+        destination = tostring(destination or ""),
+        reason = tostring(reason or ""),
+        requestSeq = tostring(requestSeq or "")
+    }
+    table.insert(SummonScoutDB.operatorSummonLog, entry)
+    obTrimLog(SummonScoutDB.operatorSummonLog, OB_MAX_SUMMON_LOG)
+    return entry
+end
+
+local function obFindLastDestination(player)
+    obEnsureTelemetryTables()
+    local wanted = obLower(player)
+    local i
+    for i = table.getn(SummonScoutDB.operatorSummonLog), 1, -1 do
+        local e = SummonScoutDB.operatorSummonLog[i]
+        if type(e) == "table" and e.event == "completed" and obLower(e.player) == wanted then
+            return tostring(e.destination or "")
+        end
+    end
+    return ""
+end
+
+local function obPaymentFingerprint(ts, player, copper)
+    return tostring(tonumber(ts) or 0) .. "\31" .. obLower(player) .. "\31" .. tostring(tonumber(copper) or 0)
+end
+
+local function obRebuildPaymentSeen()
+    obEnsureTelemetryTables()
+    OB.paymentSeenCounts = {}
+    local i
+    for i = 1, table.getn(SummonScoutDB.operatorPaymentLog) do
+        local e = SummonScoutDB.operatorPaymentLog[i]
+        if type(e) == "table" then
+            local fp = tostring(e.fingerprint or obPaymentFingerprint(e.ts, e.player, e.copper))
+            OB.paymentSeenCounts[fp] = (OB.paymentSeenCounts[fp] or 0) + 1
+        end
+    end
+end
+
+local function obScanTrustedPayments()
+    obEnsureTelemetryTables()
+    local source = SummonScoutDB.paymentLog
+    if type(source) ~= "table" then return end
+    local occurrences = {}
+    local i
+    for i = 1, table.getn(source) do
+        local p = source[i]
+        if type(p) == "table" then
+            local ts = tonumber(p.ts) or 0
+            local player = obTrim(p.player or "")
+            local copper = tonumber(p.copper) or 0
+            if player ~= "" and copper > 0 then
+                local fp = obPaymentFingerprint(ts, player, copper)
+                occurrences[fp] = (occurrences[fp] or 0) + 1
+                local known = OB.paymentSeenCounts[fp] or 0
+                if occurrences[fp] > known then
+                    SummonScoutDB.operatorPaymentSeq = SummonScoutDB.operatorPaymentSeq + 1
+                    local e = {
+                        id = SummonScoutDB.operatorPaymentSeq,
+                        ts = ts,
+                        player = player,
+                        copper = copper,
+                        destination = obFindLastDestination(player),
+                        fingerprint = fp
+                    }
+                    table.insert(SummonScoutDB.operatorPaymentLog, e)
+                    obTrimLog(SummonScoutDB.operatorPaymentLog, OB_MAX_PAYMENT_LOG)
+                    OB.paymentSeenCounts[fp] = known + 1
+                end
+            end
+        end
+    end
+end
+
+local function obSummonKind(eventName)
+    if eventName == "queued" then return 4 end
+    if eventName == "started" then return 5 end
+    if eventName == "completed" then return 6 end
+    if eventName == "failed" then return 7 end
+    return 0
+end
+
+local function obReplayTelemetry()
+    obEnsureTelemetryTables()
+    local i
+    for i = 1, table.getn(SummonScoutDB.operatorSummonLog) do
+        local e = SummonScoutDB.operatorSummonLog[i]
+        local id = type(e) == "table" and tonumber(e.id) or 0
+        if id > OB.replayedSummonSeq then
+            local kind = obSummonKind(e.event)
+            if kind > 0 then
+                local summary = "Summon " .. tostring(e.event) .. ": " .. tostring(e.player or "?")
+                if tostring(e.destination or "") ~= "" then summary = summary .. " -> " .. tostring(e.destination) end
+                obQueue(kind, e.player, summary, e.event, e.destination, "summon", e.reason,
+                    "summon:" .. tostring(id), false,
+                    { keywords = e.requestSeq, matchedRule = e.ts })
+            end
+            OB.replayedSummonSeq = id
+        end
+    end
+
+    for i = 1, table.getn(SummonScoutDB.operatorPaymentLog) do
+        local e = SummonScoutDB.operatorPaymentLog[i]
+        local id = type(e) == "table" and tonumber(e.id) or 0
+        if id > OB.replayedPaymentSeq then
+            local copper = tonumber(e.copper) or 0
+            obQueue(8, e.player,
+                "Payment received: " .. tostring(e.player or "?") .. " -> " .. tostring(copper) .. " copper",
+                "paid", e.destination, "payment", "trusted SummonScoutDB.paymentLog",
+                "payment:" .. tostring(id), false,
+                { keywords = copper, matchedRule = e.ts })
+            OB.replayedPaymentSeq = id
+        end
+    end
+end
+
+local function obObservePending(state, destination)
+    if type(state.summonPending) ~= "table" then return end
+    local key, item
+    for key, item in pairs(state.summonPending) do
+        if type(item) == "table" then
+            local player = obTrim(item.name or key or "")
+            local queuedAt = tonumber(item.queuedAt) or 0
+            local signature = obLower(player) .. ":" .. tostring(queuedAt)
+            if player ~= "" and not OB.pendingSeen[signature] then
+                OB.pendingSeen[signature] = obNow()
+                obAppendSummon("queued", player, destination, "canonical summonPending", "")
+            end
+        end
+    end
+end
+
+local function obObserveActive(state, destination)
+    local active = obTrim(state.summonActiveName or "")
+    local started = state.summonActiveStarted and true or false
+    local requestSeq = tostring(state.summonActiveRequestSeq or "")
+    local err = tostring(state.lastSummonError or "")
+
+    if OB.prevActiveName ~= "" and active ~= OB.prevActiveName then
+        if OB.prevActiveStarted then
+            obAppendSummon("completed", OB.prevActiveName, OB.prevActiveDestination, "canonical active summon completed", OB.prevActiveRequestSeq)
+        else
+            local reason = OB.prevActiveError ~= "" and OB.prevActiveError or "canonical active summon ended before cast start"
+            obAppendSummon("failed", OB.prevActiveName, OB.prevActiveDestination, reason, OB.prevActiveRequestSeq)
+        end
+    end
+
+    if active ~= "" and started and (OB.prevActiveName ~= active or not OB.prevActiveStarted) then
+        obAppendSummon("started", active, destination, "canonical summonActiveStarted", requestSeq)
+    end
+
+    OB.prevActiveName = active
+    OB.prevActiveStarted = started
+    OB.prevActiveRequestSeq = requestSeq
+    OB.prevActiveDestination = active ~= "" and destination or ""
+    OB.prevActiveError = err
+end
+
+local function obObserveSummons()
+    local state = obCoreState()
+    if not state then return end
+    local destination = obDestination()
+    obObservePending(state, destination)
+    obObserveActive(state, destination)
+end
+
+local function obSweepPendingSeen()
+    local t = obNow()
+    local key, at
+    for key, at in pairs(OB.pendingSeen) do
+        if t - (tonumber(at) or t) > 600 then OB.pendingSeen[key] = nil end
+    end
 end
 
 local M = {}
@@ -239,6 +440,8 @@ function M.Init()
     obSet("W112_OPERATOR_CMD_ACK_SEQ", 0)
     obSet("W112_OPERATOR_CMD_ACK_STATUS", 0)
     obSet("W112_OPERATOR_CMD_ACK_ERROR", "")
+    obEnsureTelemetryTables()
+    obRebuildPaymentSeen()
 end
 
 function M.Shutdown()
@@ -278,13 +481,23 @@ function M.OnEvent(ev, a1, a2)
 end
 
 function M.OnUpdate()
-    local t = GetTime and GetTime() or 0
+    local t = obNow()
     local key, pending
     for key, pending in pairs(OB.pendingManual) do
         if type(pending) ~= "table" or t - (tonumber(pending.at) or t) > 30 then
+            if type(pending) == "table" then
+                obQueue(9, key, tostring(pending.text or ""), "uncertain", "", "manual",
+                    "no CHAT_MSG_WHISPER_INFORM within 30s; no automatic retry",
+                    tostring(pending.correlation or ""), false)
+            end
             OB.pendingManual[key] = nil
         end
     end
+
+    obObserveSummons()
+    obScanTrustedPayments()
+    obReplayTelemetry()
+    obSweepPendingSeen()
 end
 
 H.Register("operatorbridge", M, OB_VERSION)
