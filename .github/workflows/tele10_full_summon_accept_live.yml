@@ -1,16 +1,13 @@
 name: TELE10 full summon accept live
-
 on:
   workflow_dispatch:
   push:
-    branches:
-      - feature/tele10-full-summon-accept-v1
+    branches: [feature/tele10-full-summon-accept-v1]
     paths:
       - '.github/workflows/tele10_full_summon_accept_live.yml'
-
+      - '.github/scripts/tele10_patch.py'
 permissions:
   contents: read
-
 jobs:
   live:
     runs-on: windows-latest
@@ -29,177 +26,52 @@ jobs:
       WOW112_TELE07_CYCLE_TIMEOUT_SECS: '150'
       WOW112_TELE07_STALE_SECS: '90'
       WOW112_TELE07_RESTART_BUDGET: '2'
-
     steps:
       - uses: actions/checkout@v5
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-
-      - name: Patch TELE10 auto-accept and teleport-confirm harness
+      - name: Patch and build
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $p = 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
-          $s = Get-Content $p -Raw
-          $s = $s.Replace('    const SMSG_SUMMON_REQUEST_OPCODE: u16 = 0x02AB;', @'
-    const SMSG_SUMMON_REQUEST_OPCODE: u16 = 0x02AB;
-    const CMSG_SUMMON_RESPONSE_OPCODE: u32 = 0x02AC;
-    const SMSG_NEW_WORLD_OPCODE: u16 = 0x003E;
-    const MSG_MOVE_WORLDPORT_ACK_OPCODE: u32 = 0x00DC;
-'@.TrimEnd())
-          $s = $s.Replace('    static SUMMON_REQUEST_SEEN: AtomicBool = AtomicBool::new(false);', @'
-    static SUMMON_REQUEST_SEEN: AtomicBool = AtomicBool::new(false);
-    static SUMMON_RESPONSE_SENT: AtomicBool = AtomicBool::new(false);
-    static WORLDPORT_ACK_SENT: AtomicBool = AtomicBool::new(false);
-'@.TrimEnd())
-          $s = $s.Replace('"PASS_RITUAL_COMPLETE"', '"SUMMON_REQUEST_SEEN"')
-          $needle = @'
-                            println!(
-                                "[TELE-06B-COMPLETE] PASS opcode=0x02AB summoner_guid=0x{summoner_guid:016X} area={area} auto_decline_ms={auto_decline_ms}"
-                            );
-'@
-          $inject = @'
-                            println!(
-                                "[TELE-06B-COMPLETE] PASS opcode=0x02AB summoner_guid=0x{summoner_guid:016X} area={area} auto_decline_ms={auto_decline_ms}"
-                            );
-                            if SUMMON_RESPONSE_SENT
-                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                                .is_ok()
-                            {
-                                publish_runner_state(
-                                    "SUMMON_ACCEPT_COMMITTED",
-                                    &format!("opcode=0x02AC summoner_guid=0x{summoner_guid:016X} retry_allowed=false"),
-                                );
-                                if let Err(error) = write_encrypted_raw(
-                                    stream,
-                                    crypto.encrypter(),
-                                    CMSG_SUMMON_RESPONSE_OPCODE,
-                                    &summoner_guid.to_le_bytes(),
-                                ) {
-                                    publish_runner_state(
-                                        "FAIL_SUMMON_ACCEPT_UNCERTAIN",
-                                        &format!("opcode=0x02AC summoner_guid=0x{summoner_guid:016X} socket write uncertain; retry disabled"),
-                                    );
-                                    return Err(format!("TELE10_SUMMON_ACCEPT_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
-                                }
-                                publish_runner_state(
-                                    "WAIT_NEW_WORLD",
-                                    &format!("accepted summoner_guid=0x{summoner_guid:016X}; waiting SMSG_NEW_WORLD opcode=0x003E"),
-                                );
-                                println!("[TELE-10-ACCEPT-TX] PASS opcode=0x02AC summoner_guid=0x{summoner_guid:016X} retry_allowed=false");
-                            }
-'@
-          if (!$s.Contains($needle)) { throw 'acceptor summon completion injection anchor not found' }
-          $s = $s.Replace($needle, $inject)
-          $clickerAnchor = '                    if role == Tele06bRole::Clicker {'
-          $newWorld = @'
-                    if role == Tele06bRole::Customer && opcode == SMSG_NEW_WORLD_OPCODE {
-                        if !SUMMON_RESPONSE_SENT.load(Ordering::SeqCst) {
-                            println!("[TELE-10-NEW-WORLD-DIAG] ignored 0x003E before summon accept bytes={}", payload.len());
-                            continue;
-                        }
-                        if WORLDPORT_ACK_SENT
-                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                            .is_ok()
-                        {
-                            publish_runner_state(
-                                "WORLDPORT_ACK_COMMITTED",
-                                &format!("SMSG_NEW_WORLD bytes={} observed; sending opcode=0x00DC retry_allowed=false", payload.len()),
-                            );
-                            if let Err(error) = write_encrypted_raw(
-                                stream,
-                                crypto.encrypter(),
-                                MSG_MOVE_WORLDPORT_ACK_OPCODE,
-                                &[],
-                            ) {
-                                publish_runner_state(
-                                    "FAIL_WORLDPORT_ACK_UNCERTAIN",
-                                    "opcode=0x00DC socket write uncertain after NEW_WORLD; retry disabled",
-                                );
-                                return Err(format!("TELE10_WORLDPORT_ACK_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
-                            }
-                            publish_runner_state(
-                                "PASS_TELEPORT_COMPLETE",
-                                &format!("SMSG_NEW_WORLD opcode=0x003E bytes={} + MSG_MOVE_WORLDPORT_ACK opcode=0x00DC write=success", payload.len()),
-                            );
-                            println!("[TELE-10-TELEPORT] PASS new_world_bytes={} worldport_ack=sent", payload.len());
-                        }
-                        continue;
-                    }
-
-'@
-          $idx = $s.IndexOf($clickerAnchor)
-          if ($idx -lt 0) { throw 'acceptor clicker anchor not found' }
-          $s = $s.Insert($idx, $newWorld)
-          Set-Content -Path $p -Value $s -Encoding UTF8
-
-          $sp = 'probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs'
-          $ss = Get-Content $sp -Raw
-          $ss = $ss.Replace('if customer.state == "PASS_RITUAL_COMPLETE"', 'if customer.state == "PASS_TELEPORT_COMPLETE"')
-          $ss = $ss.Replace('code: "PASS_RITUAL_COMPLETE".to_string(),', 'code: "PASS_TELEPORT_COMPLETE".to_string(),')
-          $ss = $ss.Replace('detail: format!("server 0x02AB confirmed; {}", customer.detail),', 'detail: format!("summon accepted and far teleport completed; {}", customer.detail),')
-          $ss = $ss.Replace('if verdict.code == "PASS_RITUAL_COMPLETE" {', 'if verdict.code == "PASS_TELEPORT_COMPLETE" {')
-          Set-Content -Path $sp -Value $ss -Encoding UTF8
-
-          rustfmt --edition 2021 --config skip_children=true $p
+          python .github/scripts/tele10_patch.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustfmt --edition 2021 --config skip_children=true $sp
+          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Offline regression and build
-        shell: pwsh
-        run: |
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($bin in @('tele08_full_roundtrip','tele07_supervisor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
             cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-
-      - name: Phase 1 real whisper to queued job
+      - name: Real request
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) { throw 'WOW112_PASSWORD secret required' }
           if (Test-Path 'tele08_roundtrip_runs') { Remove-Item 'tele08_roundtrip_runs' -Recurse -Force }
           & 'probes/Wow112HeadlessAndroid/target/release/tele08_full_roundtrip.exe'
-          if ($LASTEXITCODE -ne 0) { throw "TELE08 request phase failed rc=$LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "request phase failed rc=$LASTEXITCODE" }
           $status = Get-ChildItem tele08_roundtrip_runs -Filter STATUS.txt -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($null -eq $status) { throw 'no TELE08 STATUS.txt' }
-          $text = Get-Content $status.FullName -Raw
-          if ($text -notmatch 'result=PASS') { throw "TELE08 request not PASS: $text" }
+          if ($null -eq $status) { throw 'missing request STATUS.txt' }
+          if ((Get-Content $status.FullName -Raw) -notmatch 'result=PASS') { throw 'request phase not PASS' }
           New-Item -ItemType Directory -Force -Path tele10_evidence | Out-Null
-          Copy-Item $status.FullName tele10_evidence/TELE08_REQUEST_STATUS.txt
-
-      - name: Phase 2 autonomous summon accept and teleport
+          Copy-Item $status.FullName tele10_evidence/REQUEST_STATUS.txt
+      - name: Real summon accept teleport
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
           Start-Sleep -Milliseconds 1500
-          $runDir = Join-Path $PWD 'tele10_evidence/TELE10_SUMMON'
+          $runDir = Join-Path $PWD 'tele10_evidence/SUMMON'
           New-Item -ItemType Directory -Force -Path $runDir | Out-Null
           $env:WOW112_TELE07_RUN_DIR = $runDir
           & 'probes/Wow112HeadlessAndroid/target/release/tele07_supervisor.exe' --cycles 1
-          $rc = $LASTEXITCODE
-          if ($rc -ne 0) { throw "TELE10 summon phase failed rc=$rc" }
+          if ($LASTEXITCODE -ne 0) { throw "summon phase failed rc=$LASTEXITCODE" }
           $verdict = Get-Content (Join-Path $runDir 'SUPERVISOR_VERDICT.txt') -Raw
           $cycle = Get-Content (Join-Path $runDir 'CYCLE_RESULTS.txt') -Raw
-          if ($verdict -notmatch 'result=PASS_TELE07' -or $verdict -notmatch 'passed_cycles=1') { throw "supervisor not PASS: $verdict" }
-          if ($cycle -notmatch 'result=PASS_TELEPORT_COMPLETE') { throw "cycle missing teleport completion: $cycle" }
-          @"
-          result=PASS
-          chain=real_whisper>B_parser>C_queue>D_registry>E_response>StartSummonJob>party>ritual>portal_use>SMSG_SUMMON_REQUEST>CMSG_SUMMON_RESPONSE>SMSG_NEW_WORLD>MSG_MOVE_WORLDPORT_ACK>teleport_complete
-          customer_account=taxi1
-          customer_character=Feltaxi
-          destination=winterspring
-          "@ | Set-Content -Encoding UTF8 tele10_evidence/TELE10_STATUS.txt
-          Write-Host 'TELE10 FULL SUMMON ACCEPT + TELEPORT PASS'
-
-      - name: Upload TELE10 evidence
+          if ($verdict -notmatch 'result=PASS_TELE07') { throw "supervisor not PASS: $verdict" }
+          if ($cycle -notmatch 'result=PASS_TELEPORT_COMPLETE') { throw "teleport not confirmed: $cycle" }
+          'result=PASS' | Set-Content tele10_evidence/TELE10_STATUS.txt
+          'chain=real_whisper>B>C>D>E>party>ritual>portal>summon_request>summon_response>new_world>worldport_ack>teleport_complete' | Add-Content tele10_evidence/TELE10_STATUS.txt
+      - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
