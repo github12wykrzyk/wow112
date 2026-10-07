@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,58 @@ from pathlib import Path
 import github_archive
 import history_worker as hw
 import shadow_quality_v2 as q
+
+
+def write_pricebook_csv(view, output_path):
+    """Export an audit-only, point-in-time V2 pricebook from the reconciled immutable view.
+
+    Prices are floored to whole copper so this exporter never rounds a historical
+    unit price upward.  The file is evidence only; the terminal must not use it to
+    authorize, retry, reorder, or mutate BUY.
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for item in view.get("items", []):
+        price = item.get("unit_price") or {}
+        numerator = int(price.get("numerator_copper") or 0)
+        denominator = int(price.get("denominator_units") or 0)
+        unit_price = numerator // denominator if numerator > 0 and denominator > 0 else 0
+        if unit_price <= 0:
+            continue
+        rows.append({
+            "item_id": int(item["item_id"]),
+            "history_unit_price_copper": unit_price,
+            "confidence_bps": int(round(float(item.get("confidence", 0.0)) * 10_000)),
+            "sample_scans": int(item.get("sample_scans", 0)),
+            "freshness_bps": int(round(float(item.get("freshness", 0.0)) * 10_000)),
+            "coverage_bps": int(round(float(item.get("coverage", 0.0)) * 10_000)),
+            "observed_supply_units_mean": item.get("observed_supply_units_mean", 0),
+            "observed_depth_listings_mean": item.get("observed_depth_listings_mean", 0),
+            "latest_observed_ms": int(item.get("latest_observed_ms", 0)),
+            "view_id": view.get("view_id") or "",
+            "quality_rule_version": view.get("quality_rule_version") or "",
+            "material_view_version": view.get("material_view_version") or "",
+        })
+    fieldnames = [
+        "item_id",
+        "history_unit_price_copper",
+        "confidence_bps",
+        "sample_scans",
+        "freshness_bps",
+        "coverage_bps",
+        "observed_supply_units_mean",
+        "observed_depth_listings_mean",
+        "latest_observed_ms",
+        "view_id",
+        "quality_rule_version",
+        "material_view_version",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return len(rows)
 
 
 def main():
@@ -18,6 +71,7 @@ def main():
     ap.add_argument("--realm-id", required=True)
     ap.add_argument("--ah-pool-id", required=True)
     ap.add_argument("--market-epoch", required=True)
+    ap.add_argument("--pricebook-csv")
     args = ap.parse_args()
 
     identity = {
@@ -84,8 +138,12 @@ def main():
         canonical_market = q.canonical_market_id(identity)
         cutoff = max((a["ended_ms"] for a in admissions), default=0) + 1
         view = q.material_history_view(db, canonical_market, None, cutoff) if cutoff else {
-            "items": [], "view_id": None, "material_view_version": q.MATERIAL_VIEW_VERSION
+            "items": [], "view_id": None, "material_view_version": q.MATERIAL_VIEW_VERSION,
+            "quality_rule_version": q.QUALITY_RULE_VERSION,
         }
+        pricebook_rows = 0
+        if args.pricebook_csv:
+            pricebook_rows = write_pricebook_csv(view, args.pricebook_csv)
         eligible = sum(1 for a in admissions if a.get("v2_eligible"))
         report = {
             "schema_version": 1,
@@ -104,6 +162,8 @@ def main():
             "cutoff_ms": cutoff,
             "material_view_items": len(view.get("items", [])),
             "view_id": view.get("view_id"),
+            "pricebook_csv": args.pricebook_csv,
+            "pricebook_rows": pricebook_rows,
             "admissions": admissions,
             "skipped": skipped,
             "safety": {
@@ -111,6 +171,8 @@ def main():
                 "immutable_capture_rewritten": False,
                 "v0_quality_mutated": False,
                 "history_can_authorize_buy": False,
+                "history_can_retry_buy": False,
+                "history_can_reorder_buy": False,
                 "buy_decision_changed": 0,
             },
         }
@@ -118,6 +180,8 @@ def main():
         print(json.dumps(report, indent=2))
         if not admissions:
             raise SystemExit("no live archive scans were reconciled")
+        if args.pricebook_csv and pricebook_rows == 0:
+            raise SystemExit("shadow pricebook export produced zero rows")
     finally:
         db.close()
 
