@@ -3,6 +3,8 @@
 pub mod destination_registry;
 pub mod tele08_bc_adapter;
 pub mod tele08_whisper_parser;
+pub mod tele10_trade_ledger;
+pub mod tele10_trade_runtime;
 pub mod tele_response_engine;
 
 #[cfg(test)]
