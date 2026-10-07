@@ -10,13 +10,21 @@ if len(sys.argv) != 3:
 unified = Path(sys.argv[1])
 patch = Path(__file__).with_name('poc08_unified_multibuy_v3_patch.py')
 
-# Smoke must never mutate the build artifact it validates. The historical
-# multibuy-v3 patch is exercised against a temporary copy only.
+# Smoke must never mutate the build artifact it validates. If the input is an
+# older pre-multibuy source, exercise the historical patch against a temporary
+# copy. Fully integrated V4 sources already contain POC08-UNIFIED-MULTI and
+# must be validated as-is; reapplying the legacy patch can hit unrelated
+# audit-only anchors and produce a false policy failure.
 with tempfile.TemporaryDirectory(prefix='wow112-unified-smoke-') as td:
     smoke_unified = Path(td) / unified.name
     shutil.copy2(unified, smoke_unified)
-    subprocess.run([sys.executable, str(patch), str(smoke_unified)], check=True)
     u = smoke_unified.read_text(encoding='utf-8')
+    if 'POC08-UNIFIED-MULTI' not in u:
+        subprocess.run([sys.executable, str(patch), str(smoke_unified)], check=True)
+        u = smoke_unified.read_text(encoding='utf-8')
+        print('[SMOKE] multibuy_patch=APPLIED_TO_TEMP_COPY')
+    else:
+        print('[SMOKE] multibuy_patch=SKIP_ALREADY_APPLIED')
 
 w = Path(sys.argv[2]).read_text(encoding='utf-8')
 checks = {
