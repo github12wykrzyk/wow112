@@ -9,8 +9,9 @@ use wow112_headless_android_probe::tele10_trade_payment::{
 fn tele10_pay_target() -> Option<String> {
     std::env::var("WOW112_TELE10_PAY_SUMMONER")
         .ok()
+        .or_else(|| std::env::var("WOW112_TELE08_SUMMONER_CHARACTER").ok())
         .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+        .filter(|v| !v.is_empty() && v != "__FIRST__")
 }
 
 fn tele10_pay_amount() -> u32 {
@@ -19,6 +20,17 @@ fn tele10_pay_amount() -> u32 {
         .and_then(|v| v.trim().parse::<u32>().ok())
         .filter(|v| *v > 0)
         .unwrap_or(40_000)
+}
+
+fn tele10_publish_teleport_checkpoint(detail: &str) {
+    if let Some(target) = tele10_pay_target() {
+        publish_runner_state(
+            "WAIT_PAYMENT_CLIENT",
+            &format!("teleport_complete=true payment_target={target} detail={detail}"),
+        );
+    } else {
+        publish_runner_state("PASS_TELEPORT_COMPLETE", detail);
+    }
 }
 
 fn tele10_customer_pay_after_teleport(
@@ -35,6 +47,10 @@ fn tele10_customer_pay_after_teleport(
         return Ok(());
     }
     let amount = tele10_pay_amount();
+    publish_runner_state(
+        "WAIT_PAYMENT_CLIENT",
+        &format!("target={} amount={} teleport_complete=true", target_name, amount),
+    );
     let settle_ms = std::env::var("WOW112_TELE10_PAY_SETTLE_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -132,9 +148,9 @@ fn tele10_customer_pay_after_teleport(
                     TRADE_STATUS_TRADE_COMPLETE => {
                         let _ = stream.set_read_timeout(previous_timeout);
                         publish_runner_state(
-                            "PASS_PAYMENT_SENT",
+                            "PASS_TELEPORT_COMPLETE",
                             &format!(
-                                "target={} amount={} server_trade_complete=true",
+                                "payment_sent=PASS target={} amount={} proof=server_TRADE_COMPLETE",
                                 target_name, amount
                             ),
                         );
