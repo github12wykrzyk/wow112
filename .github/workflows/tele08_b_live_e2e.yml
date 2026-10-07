@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -23,6 +23,24 @@ jobs:
           $p = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
           if (!(Test-Path $p)) { throw "missing $p" }
           if ((Get-Item $p).Length -lt 1000) { throw "unexpectedly small B-LIVE runner" }
+
+      - name: Normalize live-module imports
+        shell: pwsh
+        run: |
+          $p = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
+          $s = Get-Content $p -Raw
+          $s = [regex]::Replace($s, '(?m)^    use std::thread;\r?\n', '')
+          $s = [regex]::Replace($s, '(?m)^    use std::time::\{Duration, Instant, SystemTime, UNIX_EPOCH\};\r?\n', "    use std::time::{SystemTime, UNIX_EPOCH};`n")
+          [IO.File]::WriteAllText((Resolve-Path $p), $s, [Text.UTF8Encoding]::new($false))
+          if (git diff --quiet -- $p) {
+            Write-Host 'TELE08 B live imports already normalized'
+          } else {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -- $p
+            git commit -m 'fix(tele08): normalize B live module imports'
+            git push origin HEAD:feature/tele08-b-live-e2e-v1
+          }
 
       - name: Contract tests
         shell: pwsh
@@ -63,14 +81,27 @@ jobs:
           @'
           param()
           $ErrorActionPreference = 'Stop'
+          $localDir = Join-Path $PSScriptRoot '.local'
+          $passwordFile = Join-Path $localDir 'wow_password.dpapi'
+          New-Item -ItemType Directory -Force -Path $localDir | Out-Null
           $hadPassword = Test-Path Env:WOW112_PASSWORD
           if (-not $hadPassword) {
-            $secure = Read-Host 'WoW password (used only for this process tree)' -AsSecureString
-            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-            try {
-              $env:WOW112_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-            } finally {
-              [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            if (Test-Path $passwordFile) {
+              try {
+                $secure = ConvertTo-SecureString (Get-Content $passwordFile -Raw)
+                $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+                try { $env:WOW112_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+                finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+                Write-Host '[CREDENTIAL] using DPAPI-encrypted local password'
+              } catch { Remove-Item $passwordFile -Force -ErrorAction SilentlyContinue }
+            }
+            if (-not (Test-Path Env:WOW112_PASSWORD)) {
+              $secure = Read-Host 'Common WoW password' -AsSecureString
+              $secure | ConvertFrom-SecureString | Set-Content -Encoding ASCII $passwordFile
+              $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+              try { $env:WOW112_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+              finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+              Write-Host '[CREDENTIAL] password saved locally with Windows DPAPI for future one-click runs'
             }
           }
           try {
@@ -96,6 +127,7 @@ jobs:
           -> real SMSG_MESSAGECHAT receive -> GUID/name resolution -> TELE08 classify_whisper
           -> exact expected comparison -> RESULTS.json + SUMMARY.txt -> PASS/FAIL.
 
+          Password can be cached locally using Windows DPAPI; it is not included in result artifacts.
           Safety: chat-only mutation. No group invite, party accept, ritual cast, portal use, movement, mail, AH, or economy mutation.
           Runtime evidence is written under tele08_b_live_runs/run_<timestamp>/.
           "@ | Set-Content -Encoding UTF8 dist/README_LIVE_TEST.txt
