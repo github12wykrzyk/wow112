@@ -21,6 +21,13 @@ def require_once(text, needle, label):
 if 'mod ah_history_observer;' not in main:
     require_once(main, 'mod auth;\n', 'main module anchor')
     main = main.replace('mod auth;\n', 'mod ah_history_observer;\nmod auth;\n', 1)
+if 'mod ah_history_observer_tests;' not in main:
+    require_once(main, 'mod ah_history_observer;\n', 'history observer test module anchor')
+    main = main.replace(
+        'mod ah_history_observer;\n',
+        'mod ah_history_observer;\n#[cfg(test)]\nmod ah_history_observer_tests;\n',
+        1,
+    )
 if 'ah_history_observer::configure_realm(' not in main:
     anchor = '    let world_addr = env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_| realm.address.clone());\n'
     require_once(main, anchor, 'main realm anchor')
@@ -94,7 +101,7 @@ if 'observe_targeted_page_best_effort' not in v2:
     )
 
 for label, text, markers in [
-    ('main', main, ['mod ah_history_observer;', 'configure_realm(auth_addr']),
+    ('main', main, ['mod ah_history_observer;', 'mod ah_history_observer_tests;', 'configure_realm(auth_addr']),
     ('poc07', poc07, ['fn poc08_history_records(', 'observe_full_page_best_effort', 'observe_revalidation_page_best_effort']),
     ('v2', v2, ['observe_targeted_page_best_effort']),
 ]:
@@ -105,4 +112,4 @@ for label, text, markers in [
 main_path.write_text(main, encoding='utf-8')
 poc07_path.write_text(poc07, encoding='utf-8')
 v2_path.write_text(v2, encoding='utf-8')
-print('[AH-HISTORY-SAME-SESSION-PATCH] PASS full=YES targeted=YES revalidation=YES second_login=NO')
+print('[AH-HISTORY-SAME-SESSION-PATCH] PASS full=YES targeted=YES revalidation=YES second_login=NO offline_writer_test=YES')
