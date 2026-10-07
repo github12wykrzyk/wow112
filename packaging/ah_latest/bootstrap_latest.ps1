@@ -9,17 +9,10 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 }
 $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 
-$Owner = 'github12wykrzyk'
-$Repo = 'wow112'
-$Branch = 'dev/windows-ah-de-liquidation-v3'
-$Workflow = 'build_windows_ah_de_liquidation_v3.yml'
-$ArtifactPrefix = 'WoW112-AH-DE-LIQUIDATION-V31-WINDOWS-'
-$Api = 'https://api.github.com'
-$Headers = @{
-    'User-Agent' = 'WoW112-AH-Latest-Bootstrap/1.0'
-    'Accept' = 'application/vnd.github+json'
-    'X-GitHub-Api-Version' = '2022-11-28'
-}
+$ReleaseBase = 'https://github.com/github12wykrzyk/wow112/releases/download/ah-de-latest'
+$ZipUrl = "$ReleaseBase/WoW112_DE_LATEST.zip"
+$ManifestUrl = "$ReleaseBase/WoW112_DE_LATEST.txt"
+$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/2.0' }
 
 function Say([string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Text -ForegroundColor $Color
@@ -27,7 +20,7 @@ function Say([string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
 
 Say '============================================================' Cyan
 Say 'WoW112 AH - UNIVERSAL LATEST BOOTSTRAP' Cyan
-Say 'Vendor Stable is preserved. Only DE_LAB executable is updated.' DarkCyan
+Say 'Vendor Stable is preserved. DE_LAB is updated from public GitHub Release.' DarkCyan
 Say '============================================================' Cyan
 
 $deDir = Join-Path $InstallRoot 'DE_LAB'
@@ -36,31 +29,22 @@ $localExe = Join-Path $deDir 'wow112-ah-de-liquidation-v31.exe'
 $versionFile = Join-Path $deDir 'LATEST_GITHUB_BUILD.txt'
 $history = Join-Path $deDir 'POC08_MATERIAL_HISTORY_V3.csv'
 
-# Never overwrite accumulated market history during an update.
-$historyBackup = $null
-if (Test-Path $history) {
-    $historyBackup = Join-Path $env:TEMP ('wow112_history_' + [guid]::NewGuid().ToString('N') + '.csv')
-    Copy-Item $history $historyBackup -Force
+Say 'Checking rolling DE release manifest...'
+$remoteManifest = (Invoke-WebRequest -UseBasicParsing -Uri $ManifestUrl -Headers $Headers).Content
+if ([string]::IsNullOrWhiteSpace($remoteManifest)) { throw 'Rolling release manifest is empty.' }
+
+$remote = @{}
+foreach ($line in ($remoteManifest -split "`r?`n")) {
+    if ($line -match '^([^=]+)=(.*)$') { $remote[$Matches[1].Trim()] = $Matches[2].Trim() }
+}
+if (-not $remote.ContainsKey('ZIP_SHA256') -or -not $remote.ContainsKey('HEAD_SHA')) {
+    throw 'Rolling release manifest is missing ZIP_SHA256 or HEAD_SHA.'
 }
 
-$runsUrl = "$Api/repos/$Owner/$Repo/actions/workflows/$Workflow/runs?branch=$([uri]::EscapeDataString($Branch))&status=success&per_page=10"
-Say 'Checking latest successful DE build on GitHub...'
-$runs = Invoke-RestMethod -Uri $runsUrl -Headers $Headers -Method Get
-$run = @($runs.workflow_runs | Where-Object { $_.conclusion -eq 'success' -and $_.head_branch -eq $Branch } | Sort-Object run_number -Descending | Select-Object -First 1)
-if (-not $run) { throw 'No successful DE workflow run found.' }
-$run = $run[0]
-
-$artUrl = "$Api/repos/$Owner/$Repo/actions/runs/$($run.id)/artifacts?per_page=100"
-$arts = Invoke-RestMethod -Uri $artUrl -Headers $Headers -Method Get
-$artifact = @($arts.artifacts | Where-Object { -not $_.expired -and $_.name.StartsWith($ArtifactPrefix) } | Sort-Object id -Descending | Select-Object -First 1)
-if (-not $artifact) { throw "No non-expired artifact matching $ArtifactPrefix found for run $($run.id)." }
-$artifact = $artifact[0]
-
-$remoteVersion = "run_id=$($run.id)`nrun_number=$($run.run_number)`nhead_sha=$($run.head_sha)`nartifact_id=$($artifact.id)`nartifact_name=$($artifact.name)`n"
 if ((Test-Path $localExe) -and (Test-Path $versionFile)) {
     $localVersion = Get-Content $versionFile -Raw -ErrorAction SilentlyContinue
-    if ($localVersion -eq $remoteVersion) {
-        Say "Already latest: run #$($run.run_number), sha=$($run.head_sha.Substring(0,12))" Green
+    if ($localVersion -eq $remoteManifest) {
+        Say ("Already latest: sha={0}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length))) Green
         if (-not $NoLaunch) {
             $launcher = Join-Path $InstallRoot 'START_AH.bat'
             if (Test-Path $launcher) { & $launcher; exit $LASTEXITCODE }
@@ -71,52 +55,58 @@ if ((Test-Path $localExe) -and (Test-Path $versionFile)) {
 }
 
 $tmpRoot = Join-Path $env:TEMP ('wow112_ah_latest_' + [guid]::NewGuid().ToString('N'))
-$tmpZip = Join-Path $tmpRoot 'artifact.zip'
+$tmpZip = Join-Path $tmpRoot 'WoW112_DE_LATEST.zip'
 $tmpOut = Join-Path $tmpRoot 'out'
 New-Item -ItemType Directory -Force -Path $tmpRoot,$tmpOut | Out-Null
 
+$historyBackup = $null
+if (Test-Path $history) {
+    $historyBackup = Join-Path $tmpRoot 'POC08_MATERIAL_HISTORY_V3.csv'
+    Copy-Item $history $historyBackup -Force
+}
+
 try {
-    Say "Downloading artifact $($artifact.name)..."
-    try {
-        Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $Headers -OutFile $tmpZip -MaximumRedirection 10
-    }
-    catch {
-        $fallback = "$Api/repos/$Owner/$Repo/actions/artifacts/$($artifact.id)/zip"
-        Say 'Primary artifact URL failed; trying direct artifact endpoint...' Yellow
-        Invoke-WebRequest -Uri $fallback -Headers $Headers -OutFile $tmpZip -MaximumRedirection 10
+    Say 'Downloading public WoW112_DE_LATEST.zip...'
+    Invoke-WebRequest -UseBasicParsing -Uri $ZipUrl -Headers $Headers -OutFile $tmpZip
+    if (-not (Test-Path $tmpZip) -or (Get-Item $tmpZip).Length -lt 10000) {
+        throw 'Downloaded release ZIP is missing or unexpectedly small.'
     }
 
-    if (-not (Test-Path $tmpZip) -or (Get-Item $tmpZip).Length -lt 10000) {
-        throw 'Downloaded artifact ZIP is missing or unexpectedly small.'
+    $zipSha = (Get-FileHash $tmpZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedZipSha = ([string]$remote['ZIP_SHA256']).ToLowerInvariant()
+    if ($zipSha -ne $expectedZipSha) {
+        throw "Release ZIP SHA256 mismatch. expected=$expectedZipSha actual=$zipSha"
     }
+
     Expand-Archive -LiteralPath $tmpZip -DestinationPath $tmpOut -Force
     $exe = Get-ChildItem -Path $tmpOut -Recurse -File -Filter '*.exe' |
         Where-Object { $_.Name -like 'wow112-ah-de-liquidation-*.exe' -or $_.Name -eq 'wow112-headless-android-probe.exe' } |
         Sort-Object Length -Descending | Select-Object -First 1
-    if (-not $exe) { throw 'DE executable not found inside artifact.' }
+    if (-not $exe) { throw 'DE executable not found inside release ZIP.' }
 
     $bytes = [IO.File]::ReadAllBytes($exe.FullName)
-    if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'Downloaded executable failed PE/MZ smoke check.' }
-    $sha = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+        throw 'Downloaded executable failed PE/MZ smoke check.'
+    }
+    $exeSha = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $staged = Join-Path $deDir 'wow112-ah-de-liquidation-v31.exe.new'
     Copy-Item $exe.FullName $staged -Force
-    if (Test-Path $localExe) {
-        Copy-Item $localExe ($localExe + '.previous') -Force
-    }
+    if (Test-Path $localExe) { Copy-Item $localExe ($localExe + '.previous') -Force }
     Move-Item $staged $localExe -Force
-    Set-Content -Path $versionFile -Value $remoteVersion -Encoding ASCII
-    Set-Content -Path (Join-Path $deDir 'LATEST_EXE_SHA256.txt') -Value $sha -Encoding ASCII
 
     if ($historyBackup -and (Test-Path $historyBackup)) {
         Copy-Item $historyBackup $history -Force
     }
 
-    Say "UPDATED DE_LAB: run #$($run.run_number) sha=$($run.head_sha.Substring(0,12))" Green
-    Say "EXE SHA256: $sha" DarkGreen
+    Set-Content -Path $versionFile -Value $remoteManifest -Encoding ASCII
+    Set-Content -Path (Join-Path $deDir 'LATEST_EXE_SHA256.txt') -Value $exeSha -Encoding ASCII
+
+    Say ("UPDATED DE_LAB: sha={0}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length))) Green
+    Say "Release ZIP SHA256: $zipSha" DarkGreen
+    Say "EXE SHA256: $exeSha" DarkGreen
 }
 finally {
-    if ($historyBackup -and (Test-Path $historyBackup)) { Remove-Item $historyBackup -Force -ErrorAction SilentlyContinue }
     if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
