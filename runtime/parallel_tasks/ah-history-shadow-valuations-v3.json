@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "ah-history-shadow-valuations-v3",
+  "goal": "Align the authoritative Windows AH canonical build with the already validated full Vendor/DE V4 patch chain and calibrated immutable AH history contract before adding history-vs-current shadow valuations.",
+  "branch": "feature/ah-history-shadow-valuations-v3",
+  "base_parallel_sha": "9a593097308865b2e67f61671500bde42108af0d",
+  "modules": [
+    "AhCanonicalV4",
+    "AhHistoryV2"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-canonical-workflow",
+    "ah-history-v2-contract"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt-ah-v4-align",
+    "acquired_at": "2026-10-07T15:22:00Z",
+    "heartbeat_at": "2026-10-07T15:22:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AhCanonicalV4",
+      "module:AhHistoryV2",
+      "resource:ah-canonical-workflow",
+      "resource:ah-history-v2-contract"
+    ]
+  },
+  "notes": "Canonical baseline is dev/windows-ah-canonical at ea95b25a80c78887883b029d78dd90e9eb2a0d71. The task changes only the canonical build contract/documentation first; history remains audit-only and BUY authorization/retry semantics are unchanged. Auto-integration is intentionally disabled because the target is the separate canonical branch, not parallel."
+}
