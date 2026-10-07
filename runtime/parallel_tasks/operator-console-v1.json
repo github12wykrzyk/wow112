@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "operator-console-v1",
+  "goal": "Build an isolated Windows x64 Operator Console over the existing WoW112 runtime: structured event/state/history views, existing IPC telemetry, live SummonScout whisper observation and explicitly routed manual whisper commands, without reimplementing login/world/AH/summon/business logic or exposing economic mutation bypasses.",
+  "branch": "feature/operator-console-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "OperatorConsole",
+    "AutoLoginBridge",
+    "SummonScoutOperatorBridge"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "operator-console-ipc",
+    "Local\\WoW112_OperatorBridge_<PID>",
+    "SummonScout whisper observer and manual-send transport"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [
+    "autologinbridge"
+  ],
+  "lease": {
+    "owner": "chatgpt:operator-console-v1",
+    "acquired_at": "2026-10-07T20:20:00Z",
+    "heartbeat_at": "2026-10-07T20:20:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:operator-console-ipc"
+    ]
+  },
+  "notes": "Feature is intentionally isolated from feature/ah-auction-lifecycle-v1. AutoLoginBridge changes are transport-only and preserve existing login/retry/hot-watch semantics. Native command protocol exposes whisper only; BUY/CANCEL/POST/MAIL are absent. Manual whisper uncertain outcomes are hard-stopped with no automatic retry. No automatic integration into parallel is requested."
+}
