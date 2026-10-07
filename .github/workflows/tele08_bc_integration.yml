@@ -1,0 +1,54 @@
+name: TELE08 B-C integration
+
+on:
+  push:
+    branches:
+      - feature/tele08-bc-integration-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/Cargo.toml'
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter_tests.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - '.github/workflows/tele08_bc_integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele08-bc-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format check
+        shell: bash
+        run: |
+          rustfmt --edition 2021 --check \
+            probes/Wow112HeadlessAndroid/src/lib.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_bc_adapter_tests.rs \
+            probes/Wow112HeadlessAndroid/tele08_request_queue/src/lib.rs \
+            probes/Wow112HeadlessAndroid/tele08_request_queue/tests/queue_contract.rs
+      - name: Track C check
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+      - name: Track C tests
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+      - name: B-C library check
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+      - name: B-C integration tests
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
