@@ -72,6 +72,13 @@ jobs:
             throw "expected 2 sender-filter anchors, got $count"
           }
           $text = $text.Replace($oldFilter, $newFilter.TrimEnd())
+
+          $gapAnchor = 'const SEND_GAP_MS: u64 = 450;'
+          if (-not $text.Contains($gapAnchor)) {
+            throw 'send-gap anchor not found'
+          }
+          $text = $text.Replace($gapAnchor, 'const SEND_GAP_MS: u64 = 1200;')
+
           Set-Content -Path $path -Value $text -Encoding UTF8
 
       - name: Build exact live runner
@@ -98,6 +105,7 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          send_gap_ms=1200
           "@ | Set-Content -Encoding UTF8 $status
 
           $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
@@ -110,6 +118,7 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          send_gap_ms=1200
           "@ | Set-Content -Encoding UTF8 $status
             Write-Host 'TELE08 B LIVE E2E PASS'
           } else {
@@ -119,6 +128,7 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          send_gap_ms=1200
           "@ | Set-Content -Encoding UTF8 $status
             throw "TELE08 B LIVE E2E failed rc=$rc"
           }
