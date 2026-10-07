@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "journal_path": "tele11_state/tele11_journal.jsonl",
+  "run_root": "tele11_state/runs",
+  "listener": {
+    "account": "REPLACE_LISTENER_ACCOUNT",
+    "character": "REPLACE_LISTENER_CHARACTER",
+    "inbox_dir": "tele11_state/inbox",
+    "unknown_log": "tele11_state/unknown_whispers.jsonl",
+    "default_destination": null
+  },
+  "dedup_window_ms": 30000,
+  "expiry_ms": 180000,
+  "ready_timeout_secs": 180,
+  "active_timeout_secs": 360,
+  "offer_settle_ms": 3000,
+  "realm_index": 1,
+  "teams": [
+    {
+      "destination": "azshara",
+      "aliases": [
+        "azsh",
+        "hydraxian",
+        "hydraxian waterlords",
+        "waterlords",
+        "waterlord"
+      ],
+      "resource": "summon/azshara",
+      "enabled": true,
+      "summoner": {
+        "account": "REPLACE_AZSHARA_SUMMONER_ACCOUNT",
+        "character": "REPLACE_AZSHARA_SUMMONER_CHARACTER"
+      },
+      "clicker1": {
+        "account": "REPLACE_AZSHARA_CLICKER1_ACCOUNT",
+        "character": "REPLACE_AZSHARA_CLICKER1_CHARACTER"
+      },
+      "clicker2": {
+        "account": "REPLACE_AZSHARA_CLICKER2_ACCOUNT",
+        "character": "REPLACE_AZSHARA_CLICKER2_CHARACTER"
+      }
+    },
+    {
+      "destination": "hyjal",
+      "aliases": ["mount hyjal"],
+      "resource": "summon/hyjal",
+      "enabled": true,
+      "summoner": {
+        "account": "REPLACE_HYJAL_SUMMONER_ACCOUNT",
+        "character": "REPLACE_HYJAL_SUMMONER_CHARACTER"
+      },
+      "clicker1": {
+        "account": "REPLACE_HYJAL_CLICKER1_ACCOUNT",
+        "character": "REPLACE_HYJAL_CLICKER1_CHARACTER"
+      },
+      "clicker2": {
+        "account": "REPLACE_HYJAL_CLICKER2_ACCOUNT",
+        "character": "REPLACE_HYJAL_CLICKER2_CHARACTER"
+      }
+    },
+    {
+      "destination": "winterspring",
+      "aliases": ["everlook"],
+      "resource": "summon/winterspring",
+      "enabled": true,
+      "summoner": {
+        "account": "REPLACE_WINTERSPRING_SUMMONER_ACCOUNT",
+        "character": "REPLACE_WINTERSPRING_SUMMONER_CHARACTER"
+      },
+      "clicker1": {
+        "account": "REPLACE_WINTERSPRING_CLICKER1_ACCOUNT",
+        "character": "REPLACE_WINTERSPRING_CLICKER1_CHARACTER"
+      },
+      "clicker2": {
+        "account": "REPLACE_WINTERSPRING_CLICKER2_ACCOUNT",
+        "character": "REPLACE_WINTERSPRING_CLICKER2_CHARACTER"
+      }
+    }
+  ]
+}
