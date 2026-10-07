@@ -1,0 +1,29 @@
+name: TELE08 E response engine CI
+
+on:
+  push:
+    branches:
+      - feature/tele08-e-response-engine-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
+      - '.github/workflows/tele08_e_response_engine_ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format
+        run: cargo fmt --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+      - name: Test
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
