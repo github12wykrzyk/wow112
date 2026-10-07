@@ -1,0 +1,52 @@
+name: TELE08 E apply live runtime patch
+
+on:
+  push:
+    branches:
+      - feature/tele08-e-integrated-live-v1
+    paths:
+      - 'tools/patch_tele08_e_live_runtime.py'
+      - 'tools/patch_tele08_e_live_runtime_import_fix.py'
+      - '.github/workflows/tele08_e_live_apply_patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/tele08-e-integrated-live-v1
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply fail-closed E live patch
+        run: |
+          python tools/patch_tele08_e_live_runtime.py
+          python tools/patch_tele08_e_live_runtime_import_fix.py
+      - name: Canonical format patched runtime
+        run: rustfmt --edition 2021 probes/Wow112HeadlessAndroid/src/bin/tele08_e_live_runtime.rs
+      - name: Build E live runtime
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_e_live_runtime
+      - name: Test E live runtime binary
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_e_live_runtime
+      - name: Self-test E live runtime
+        run: cargo run --quiet --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_e_live_runtime -- --self-test
+      - name: Commit validated patched runtime
+        shell: bash
+        run: |
+          git status --short
+          git diff --check
+          git add probes/Wow112HeadlessAndroid/src/bin/tele08_e_live_runtime.rs
+          if git diff --cached --quiet; then
+            echo 'No runtime changes to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(tele08): wire E live B-C-D-E whisper response path'
+          git push origin HEAD:feature/tele08-e-integrated-live-v1
