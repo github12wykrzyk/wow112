@@ -41,26 +41,22 @@ checks = {
     'mutation_latch': 'AH_MUTATION_BLOCKED' in w,
     'stale_skip': 'POC07_BUY_TARGET_STALE' in u and 'STALE SKIP' in u,
 }
-login = u[u.find('pub fn login_poc08_economy_audit('):]
+
+login_start = u.find('pub fn login_poc08_economy_audit(')
+if login_start < 0:
+    raise SystemExit('live login function missing')
+login = u[login_start:]
 checks['no_filtered_scan_call'] = 'poc07_de_scan_class_v4(stream, &mut crypto' not in login
 
-# Scope route-policy assertions to the real combined decision function. Audit-only
-# helpers are allowed to independently reconstruct route predicates and must not
-# change the meaning of this smoke test.
-decision_start = u.find('fn poc08_build_combined_decisions(')
-if decision_start < 0:
-    raise SystemExit('combined decision function missing')
-decision_end = u.find('\nfn ', decision_start + 4)
-if decision_end < 0:
-    decision_end = len(u)
-decision = u[decision_start:decision_end]
-vendor_start = decision.find('let vendor_ok=')
-de_start = decision.find('let de_ok=')
-whitelist_start = decision.find('if matches!(f1_action,Poc08F1Action::DeWhitelist)')
+# Vendor/DE route predicates live in the live login/queue policy. Audit-only
+# helpers are intentionally outside this slice and cannot affect these checks.
+vendor_start = login.find('let vendor_ok=')
+de_start = login.find('let de_ok=')
+whitelist_start = login.find('if matches!(f1_action,Poc08F1Action::DeWhitelist)')
 if min(vendor_start, de_start, whitelist_start) < 0 or not (vendor_start < de_start < whitelist_start):
-    raise SystemExit('combined decision policy anchors missing or reordered')
-vg = decision[vendor_start:de_start]
-dg = decision[de_start:whitelist_start]
+    raise SystemExit('live route policy anchors missing or reordered')
+vg = login[vendor_start:de_start]
+dg = login[de_start:whitelist_start]
 checks['vendor_stacks'] = 'count==1' not in vg and 'count == 1' not in vg
 checks['de_count1'] = 'count==1' in dg or 'count == 1' in dg
 checks['de_risk'] = 'de_risk_pass' in dg and 'in_f0(c)' in dg
@@ -70,4 +66,4 @@ for key, ok in checks.items():
     print(f'[SMOKE] {key}={"PASS" if ok else "FAIL"}')
 if not all(checks.values()):
     raise SystemExit('UNIFIED V3 STATIC SMOKE FAIL')
-print('[SMOKE] UNIFIED MULTIBUY V3 STATIC+POLICY PASS non_destructive=YES scoped_decision=YES')
+print('[SMOKE] UNIFIED MULTIBUY V3 STATIC+POLICY PASS non_destructive=YES scoped_live_policy=YES')
