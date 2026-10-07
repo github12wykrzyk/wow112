@@ -598,8 +598,7 @@ mod live {
 
     use std::collections::HashMap;
     use std::path::Path;
-    use std::thread;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::tele08_whisper_parser::{ParserConfig, WhisperObservation};
 
