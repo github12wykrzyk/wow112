@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One read-only live capture. Persist only a sanitized validation summary."""
+"""One read-only live capture; verified bundle is handed to the archive publisher."""
 import hashlib
 import json
 import os
@@ -66,6 +66,10 @@ def main():
         if len(captures)!=1:
             report.update(live_scan="FAIL",failure_reason="CAPTURE_COUNT_MISMATCH");return
         events=w.read_segment(captures[0])
+        report["pagination"]=w.pagination_metrics(events)
+        report["owner_token_scope"]="scan_local"
+        report["scan_id"]=events[0]["scan_id"]
+        report["market_evidence"]=events[1].get("market_evidence") if len(events)>2 else None
         db=w.connect(root/"history.sqlite")
         result=w.ingest_events(db,events)
         report.update(live_scan="PASS",records=result["inserted"],quality=result["quality"],quality_reasons=result["reasons"],pages=events[-1]["pages"],status=events[-1]["status"])
@@ -76,6 +80,7 @@ def main():
         if duplicate["state"]!="duplicate_noop":raise ValueError("duplicate import failed")
         report["checks"]["duplicate_import"]="PASS"
         bundle=w.export_bundle(db,root/"bundles")
+        report["bundle_id"]=bundle.name
         restored=w.connect(root/"restored.sqlite")
         w.restore_bundle(restored,bundle)
         cutoff=events[-1]["observed_at_utc_ms"]+1

@@ -188,7 +188,8 @@ pub fn login_history(
     } else {
         discover_poc05_context_retry(stream, &mut crypto, player_guid)?.0
     };
-    let (auctioneer_guid, _) = poc05_send_auction_hello_candidates(stream, &mut crypto, candidates)?;
+    let (auctioneer_guid, auction_house_id) = poc05_send_auction_hello_candidates(stream, &mut crypto, candidates)?;
+    capture.identify_market(server_id as u32, auction_house_id as u32);
     let max_pages: u32 = env::var("WOW112_AH_FULL_SCAN_MAX_PAGES").unwrap_or_else(|_| "2048".into()).parse().map_err(|_| "invalid max pages")?;
     if max_pages == 0 || max_pages > 4096 { return Err("max pages must be 1..4096".into()); }
     for page in 0..max_pages {

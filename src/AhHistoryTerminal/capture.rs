@@ -7,6 +7,7 @@ pub struct Capture {
     writer: BufWriter<File>, partial: PathBuf, final_path: PathBuf,
     pub scan_id: String, market: String, producer: String, source: String, scope: String,
     key: Vec<u8>, seq: u64, pages: u32, started: Instant, finished: bool,
+    market_evidence: Value,
 }
 
 pub fn validate_config() -> Result<(), String> {
@@ -36,7 +37,7 @@ impl Capture {
         let mut c = Self { writer: BufWriter::new(file), partial, final_path, scan_id,
             market: env::var("WOW112_MARKET_ID").unwrap(), producer: env::var("WOW112_PRODUCER_ID").unwrap(),
             key: env::var("WOW112_OWNER_HMAC_KEY").unwrap().into_bytes(), source: source.into(), scope: scope.into(),
-            seq: 0, pages: 0, started: Instant::now(), finished: false };
+            seq: 0, pages: 0, started: Instant::now(), finished: false, market_evidence: Value::Null };
         c.emit(json!({"event_type":"ScanStarted", "max_page_size":50}))?;
         Ok(c)
     }
@@ -53,7 +54,8 @@ impl Capture {
         o.insert("scope".into(), json!(self.scope));
         o.insert("observed_at_utc_ms".into(), json!(now_ms() as u64));
         o.insert("received_monotonic_ms".into(), json!(self.started.elapsed().as_millis() as u64));
-        o.insert("source_build_sha".into(), json!("f78d4305a4c12fde33767cad85d94f755c1e120a"));
+        o.insert("source_build_sha".into(), json!(option_env!("GITHUB_SHA").unwrap_or("local-unidentified")));
+        o.insert("canonical_protocol_base_sha".into(), json!("f78d4305a4c12fde33767cad85d94f755c1e120a"));
         o.insert("parser_version".into(), json!("vanilla64-history-v1"));
         serde_json::to_writer(&mut self.writer, &v).map_err(|e| e.to_string())?;
         self.writer.write_all(b"\n").map_err(|e| e.to_string())?;
@@ -64,12 +66,17 @@ impl Capture {
         mac.update(self.market.as_bytes()); mac.update(&[0]); mac.update(&owner.to_le_bytes());
         mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
     }
+    pub fn identify_market(&mut self, realm_id: u32, auction_house_id: u32) {
+        self.market_evidence = json!({"realm_id":realm_id,"auction_house_id":auction_house_id,
+            "identity_status":"observed_not_reconciled"});
+    }
     pub fn page(&mut self, page: u32, total: u32, payload: &[u8], records: Vec<Value>) -> Result<(), String> {
         use sha2::Digest;
         self.pages += 1;
         let hash: String = Sha256::digest(payload).iter().map(|b| format!("{b:02x}")).collect();
         self.emit(json!({"event_type":"PageObserved", "page":page, "listfrom":page*50,
-            "total":total, "record_count":records.len(), "payload_sha256":hash, "records":records}))
+            "total":total, "record_count":records.len(), "payload_sha256":hash,
+            "market_evidence":self.market_evidence, "records":records}))
     }
     pub fn finish(&mut self, status: &str, reason: &str) -> Result<(), String> {
         self.emit(json!({"event_type":"ScanFinished", "status":status, "reason":reason, "pages":self.pages}))?;

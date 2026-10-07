@@ -41,6 +41,8 @@ jobs:
         env:
           WOW112_HISTORY_BINARY: src/AhHistoryTerminal/target/${{ matrix.target }}/release/${{ matrix.binary }}
         run: python src/AhHistoryTerminal/test_autonomous.py src/AhHistoryTerminal/test-results
+      - name: Verify immutable archive lifecycle
+        run: python src/AhHistoryTerminal/test_github_archive.py
       - name: Upload validation report
         if: success()
         uses: actions/upload-artifact@v4
@@ -48,4 +50,3 @@ jobs:
           name: ah-history-v0-${{ matrix.target }}-report
           path: src/AhHistoryTerminal/test-results/AUTONOMOUS_TEST_REPORT.json
           if-no-files-found: error
-

@@ -108,6 +108,8 @@ def validate(events):
             rows.append((e,index,r))
     if status!="completed": reasons.append("scan_"+status)
     if first["scope"]!="full_market": reasons.append("partial_scope")
+    if first["source"]=="live" and first["market_id"].startswith("live-test:"):
+        reasons.append("unverified_market_identity")
     if not pages or pages[-1]["record_count"]>=50: reasons.append("no_terminal_page")
     if any(e["record_count"]<50 for e in pages[:-1]): reasons.append("early_terminal_page")
     if totals and max(totals)-min(totals)>max(5,max(totals)//10): reasons.append("total_drift")
@@ -117,6 +119,27 @@ def validate(events):
     reasons=sorted(set(reasons))
     quality="eligible" if not reasons else "diagnostic_only"
     return first,status,quality,reasons,rows,len(seen)
+
+def pagination_metrics(events):
+    """Exact evidence for scan churn; does not relax eligibility rules."""
+    validate(events)
+    pages=events[1:-1]; totals=[e["total"] for e in pages]
+    seen={}; duplicates=0; conflicts=0
+    for page in pages:
+        for row in page["records"]:
+            identity=tuple(row.get(f) for f in ("item_id","count","buyout_total_copper","owner_token"))
+            aid=row["auction_id"]
+            if aid in seen:
+                duplicates+=1; conflicts+=seen[aid]!=identity
+            seen[aid]=identity
+    return {"page_count":len(pages),"observations":sum(e["record_count"] for e in pages),
+            "unique_auction_ids":len(seen),"duplicate_observations":duplicates,
+            "conflicting_identity_observations":conflicts,
+            "server_total_first":totals[0] if totals else None,"server_total_last":totals[-1] if totals else None,
+            "server_total_min":min(totals) if totals else None,"server_total_max":max(totals) if totals else None,
+            "unique_minus_last_total":len(seen)-totals[-1] if totals else None,
+            "last_page_records":pages[-1]["record_count"] if pages else None,
+            "duration_ms":events[-1]["observed_at_utc_ms"]-events[0]["observed_at_utc_ms"]}
 
 def ingest_events(db, events):
     first,status,quality,reasons,rows,unique=validate(events)
