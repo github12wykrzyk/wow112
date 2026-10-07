@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/tele10-trade-payment-ledger-v1
+      - feature/tele10-canonical-stored-source-v1
     paths:
       - 'src/AddOns/SummonScout/**'
       - 'src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c'
