@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 
 if len(sys.argv) != 2:
@@ -60,16 +61,15 @@ new_scope = '''    poc08_export_de_provenance(&item_ids)?;
 '''
 rep('split vendor/de scope', old_scope, new_scope)
 
-old_limits = '''    let min_live_de_liquidation_profit=i64::from(poc07_env_u32_default("WOW112_F1_DE_MIN_LIQUIDATION_PROFIT",2_500)?);
-    let de_limit=poc07_env_u32_default("WOW112_UNIFIED_DE_MAX_PURCHASES",5)?;
-    let in_f0='''
-new_limits = '''    let min_live_de_liquidation_profit=i64::from(poc07_env_u32_default("WOW112_F1_DE_MIN_LIQUIDATION_PROFIT",2_500)?);
-    let de_limit=poc07_env_u32_default("WOW112_UNIFIED_DE_MAX_PURCHASES",5)?;
-    let vendor_limit=poc07_env_u32_default("WOW112_UNIFIED_VENDOR_MAX_PURCHASES",25)?;
-    let total_limit=poc07_env_u32_default("WOW112_UNIFIED_MAX_PURCHASES",25)?;
-    let spend_limit=poc07_env_u32_default("WOW112_UNIFIED_MAX_SPEND",100_000)?;
-    let in_f0='''
-rep('unified hard limits', old_limits, new_limits)
+limit_pattern = re.compile(r'(?m)^(\s*let de_limit=poc07_env_u32_default\("WOW112_UNIFIED_DE_MAX_PURCHASES",\s*[0-9_]+\)\?;\s*)$')
+m = limit_pattern.search(s)
+if not m:
+    raise SystemExit('unified hard limits: de_limit anchor missing')
+if 'WOW112_UNIFIED_VENDOR_MAX_PURCHASES' in s:
+    raise SystemExit('unified hard limits: already applied unexpectedly')
+indent = re.match(r'\s*', m.group(1)).group(0)
+insert = m.group(1) + '\n' + indent + 'let vendor_limit=poc07_env_u32_default("WOW112_UNIFIED_VENDOR_MAX_PURCHASES",25)?;' + '\n' + indent + 'let total_limit=poc07_env_u32_default("WOW112_UNIFIED_MAX_PURCHASES",25)?;' + '\n' + indent + 'let spend_limit=poc07_env_u32_default("WOW112_UNIFIED_MAX_SPEND",100_000)?;'
+s = s[:m.start()] + insert + s[m.end():]
 
 old_queue_log = '''    println!("[POC08-UNIFIED-MULTI] QUEUE action={:?} eligible={} vendor={} de={} de_limit={} vendor_limit=UNLIMITED order=PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),de_limit);'''
 new_queue_log = '''    println!("[POC08-UNIFIED-V4] QUEUE action={:?} eligible={} vendor={} de={} limits_total={} limits_vendor={} limits_de={} max_spend={} order=RISK_ADJUSTED_PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),total_limit,vendor_limit,de_limit,spend_limit);'''
