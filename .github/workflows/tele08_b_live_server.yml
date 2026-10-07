@@ -70,8 +70,8 @@ jobs:
           $slave1Replacement = @'
               RoleSpec {
                   label: "SLAVE1",
-                  account: "octowinter1",
-                  character: "Winterone",
+                  account: "taxi2",
+                  character: "__FIRST__",
                   mode: "sender_tail",
               },
           '@
@@ -301,6 +301,8 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          second_sender_account=taxi2
+          second_sender_character_mode=FIRST
           sender_identity=direct_guid_two_sender
           pacing=ack_per_case
           send_gap_ms=2500
@@ -313,10 +315,12 @@ jobs:
           if ($rc -eq 0) {
             @"
           result=PASS
-          detail=Four real headless sessions completed the 12-case whisper TX/RX/classification suite using two sequential senders.
+          detail=Four real headless sessions completed the 12-case whisper TX/RX/classification suite using taxi1 and taxi2 as sequential senders.
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          second_sender_account=taxi2
+          second_sender_character_mode=FIRST
           sender_identity=direct_guid_two_sender
           pacing=ack_per_case
           send_gap_ms=2500
@@ -330,6 +334,8 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          second_sender_account=taxi2
+          second_sender_character_mode=FIRST
           sender_identity=direct_guid_two_sender
           pacing=ack_per_case
           send_gap_ms=2500
