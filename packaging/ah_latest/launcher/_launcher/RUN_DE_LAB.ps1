@@ -1,12 +1,13 @@
 param(
     [Parameter(Mandatory=$true)][string]$Root,
-    [ValidateSet('Audit','Live3')][string]$RunMode='Audit'
+    [ValidateSet('Audit','Live3')][string]$RunMode='Audit',
+    [ValidateSet('De','VendorDe')][string]$Strategy='De'
 )
 $ErrorActionPreference='Stop'
 $deDir=Join-Path $Root 'DE_LAB'
 Set-Location $deDir
 $exe=Join-Path $deDir 'wow112-ah-de-liquidation-v31.exe'
-if(-not(Test-Path $exe)){throw 'DE executable not found. Run START_AH_LATEST_CORP updater first.'}
+if(-not(Test-Path $exe)){throw 'DE executable not found. Run START_AH_LATEST updater first.'}
 
 $account=$env:WOW112_ACCOUNT
 $character=$env:WOW112_CHARACTER
@@ -21,7 +22,11 @@ if([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)){
 }
 
 $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'
-$prefix=if($RunMode -eq 'Live3'){'DE_FAST_LIVE3'}else{'DE_FAST_AUDIT'}
+if($Strategy -eq 'VendorDe'){
+    $prefix=if($RunMode -eq 'Live3'){'VENDOR_DE_V4_LIVE'}else{'VENDOR_DE_V4_AUDIT'}
+}else{
+    $prefix=if($RunMode -eq 'Live3'){'DE_FAST_LIVE3'}else{'DE_FAST_AUDIT'}
+}
 $log=Join-Path $deDir ($prefix+'_'+$stamp+'.log')
 $reports=Join-Path $deDir 'REPORTS'
 New-Item -ItemType Directory -Force $reports | Out-Null
@@ -48,7 +53,8 @@ function Test-TransientPreSend([string]$Path){
 
 foreach($name in @(
   'WOW112_DE_MAT_VALUES','WOW112_F1_DE_MAX_MODEL_DISAGREEMENT_BPS','WOW112_F0_MAX_MODEL_DISAGREEMENT_BPS',
-  'WOW112_F1_DE_WHITELIST','WOW112_F2_EXPECT_AUCTION_ID','WOW112_F2_EXPECT_ITEM_ID','WOW112_F2_EXPECT_BUYOUT','WOW112_F2_EXPECT_COUNT'
+  'WOW112_F1_DE_WHITELIST','WOW112_F2_EXPECT_AUCTION_ID','WOW112_F2_EXPECT_ITEM_ID','WOW112_F2_EXPECT_BUYOUT','WOW112_F2_EXPECT_COUNT',
+  'WOW112_VENDOR_FULL_SCOPE','WOW112_UNIFIED_VENDOR_MAX_PURCHASES','WOW112_UNIFIED_MAX_PURCHASES','WOW112_UNIFIED_MAX_SPEND'
 )){Remove-Item ("Env:"+$name) -ErrorAction SilentlyContinue}
 
 $env:WOW112_ACCOUNT=$account
@@ -59,10 +65,12 @@ $env:WOW112_RECONNECT_LIMIT='1'
 $env:WOW112_RECONNECT_DELAY_MS='1000'
 $env:WOW112_AH_GUID='0xF130003D4100023A'
 $env:WOW112_AH_FULL_SCAN_MAX_PAGES='2048'
+$env:WOW112_AH_HELLO_TIMEOUT_SECS='20'
 
-# V3.2 speed path: full raw AH snapshot stays intact for materials/history;
-# only post-snapshot DE template/decision work is narrowed locally.
+# Full raw AH snapshot is always preserved. DE keeps a local model-supported prefilter.
+# VendorDe V4 independently expands Vendor valuation to the full affordable snapshot.
 $env:WOW112_DE_FAST_PREFILTER='1'
+$env:WOW112_VENDOR_FULL_SCOPE=if($Strategy -eq 'VendorDe'){'1'}else{'0'}
 $env:WOW112_DE_ITEM_QUERY_WINDOW='128'
 
 $env:WOW112_AUTOBUY_MAX_BUYOUT='20000'
@@ -100,23 +108,49 @@ $env:WOW112_F0_ELIGIBLE_EXPORT=$f0
 $env:WOW112_DE_PROVENANCE_EXPORT=$prov
 
 if($RunMode -eq 'Live3'){
-    if($env:WOW112_LAUNCHER_ARM -ne 'DE_LIVE3'){
-        $arm=Read-Host 'REAL BUY: wpisz V32LIVE3 aby uzbroic max 3 DE BUY'
-        if($arm -cne 'V32LIVE3'){Write-Host 'Zero BUY.' -ForegroundColor Cyan;exit 2}
+    if($Strategy -eq 'VendorDe'){
+        if($env:WOW112_LAUNCHER_ARM -ne 'VENDOR_DE_V4'){
+            $arm=Read-Host 'REAL BUY Vendor+DE: wpisz V4BOTH aby uzbroic wspolny tryb'
+            if($arm -cne 'V4BOTH'){Write-Host 'Zero BUY.' -ForegroundColor Cyan;exit 2}
+        }
+        $env:WOW112_F1_ACTION='vendor+de'
+        # Initial unified live envelope: one shared snapshot, bounded burst and spend.
+        $env:WOW112_UNIFIED_VENDOR_MAX_PURCHASES='10'
+        $env:WOW112_UNIFIED_DE_MAX_PURCHASES='3'
+        $env:WOW112_UNIFIED_MAX_PURCHASES='10'
+        $env:WOW112_UNIFIED_MAX_SPEND='100000'
+        $env:WOW112_UNIFIED_DE_MAX_PER_DEID='3'
+        $env:WOW112_UNIFIED_DE_MAX_SPEND='30000'
+        Write-Host 'VENDOR+DE V4 LIVE ARMED: shared scan / max10 total / max3 DE / max10g total / max3g DE.' -ForegroundColor Red
+    }else{
+        if($env:WOW112_LAUNCHER_ARM -ne 'DE_LIVE3'){
+            $arm=Read-Host 'REAL BUY: wpisz V32LIVE3 aby uzbroic max 3 DE BUY'
+            if($arm -cne 'V32LIVE3'){Write-Host 'Zero BUY.' -ForegroundColor Cyan;exit 2}
+        }
+        $env:WOW112_F1_ACTION='de-best'
+        $env:WOW112_UNIFIED_VENDOR_MAX_PURCHASES='0'
+        $env:WOW112_UNIFIED_DE_MAX_PURCHASES='3'
+        $env:WOW112_UNIFIED_MAX_PURCHASES='3'
+        $env:WOW112_UNIFIED_MAX_SPEND='30000'
+        $env:WOW112_UNIFIED_DE_MAX_PER_DEID='3'
+        $env:WOW112_UNIFIED_DE_MAX_SPEND='30000'
+        Write-Host 'DE FAST LIVE3 ARMED: max3 / max3g total / max2g each / exact tuple revalidation.' -ForegroundColor Red
     }
-    $env:WOW112_F1_ACTION='de-best'
     $env:WOW112_F1_LIVE_CONFIRM='BUY_ONE_NOW'
     $env:WOW112_AUTOBUY_CONFIRM='YES'
     $env:WOW112_AUTOBUY_MAX_PURCHASES='1'
-    $env:WOW112_UNIFIED_DE_MAX_PURCHASES='3'
-    $env:WOW112_UNIFIED_DE_MAX_PER_DEID='3'
-    $env:WOW112_UNIFIED_DE_MAX_SPEND='30000'
-    Write-Host 'DE FAST LIVE3 ARMED: max3 / max3g total / max2g each / exact tuple revalidation.' -ForegroundColor Red
 }else{
     $env:WOW112_F1_ACTION='audit'
     $env:WOW112_UNIFIED_DE_MAX_PURCHASES='0'
+    $env:WOW112_UNIFIED_VENDOR_MAX_PURCHASES='0'
+    $env:WOW112_UNIFIED_MAX_PURCHASES='0'
+    $env:WOW112_UNIFIED_MAX_SPEND='0'
     Remove-Item Env:WOW112_F1_LIVE_CONFIRM,Env:WOW112_AUTOBUY_CONFIRM -ErrorAction SilentlyContinue
-    Write-Host 'DE FAST AUDIT: zero mutation.' -ForegroundColor Cyan
+    if($Strategy -eq 'VendorDe'){
+        Write-Host 'VENDOR+DE V4 AUDIT: shared full scan, full Vendor scope, DE risk model, zero mutation.' -ForegroundColor Cyan
+    }else{
+        Write-Host 'DE FAST AUDIT: zero mutation.' -ForegroundColor Cyan
+    }
 }
 
 $started=Get-Date
@@ -131,7 +165,7 @@ try{
         $attempt++
         $attemptLog=Join-Path $deDir ($prefix+'_'+$stamp+('_TRY{0}.log' -f $attempt))
         $attemptLogs += $attemptLog
-        Write-Host ("[DE-SUPERVISOR] attempt {0}/{1} fresh login + fresh scan" -f $attempt,$maxAttempts) -ForegroundColor Cyan
+        Write-Host ("[AH-SUPERVISOR] strategy={0} attempt {1}/{2} fresh login + fresh scan" -f $Strategy,$attempt,$maxAttempts) -ForegroundColor Cyan
 
         $oldEap=$ErrorActionPreference
         $ErrorActionPreference='Continue'
@@ -140,7 +174,7 @@ try{
             if($null -eq $LASTEXITCODE){$code=1}else{$code=[int]$LASTEXITCODE}
         }catch{
             if($null -eq $LASTEXITCODE){$code=1}else{$code=[int]$LASTEXITCODE}
-            ("[DE-SUPERVISOR] native invocation caught: " + $_.Exception.Message) | Tee-Object -FilePath $attemptLog -Append | Write-Host
+            ("[AH-SUPERVISOR] native invocation caught: " + $_.Exception.Message) | Tee-Object -FilePath $attemptLog -Append | Write-Host
         }finally{
             $ErrorActionPreference=$oldEap
         }
@@ -151,7 +185,7 @@ try{
         if($code -eq 0){$stopReason='PASS';break}
         if($attemptSent -gt 0 -or $attemptUncertain -gt 0){
             $stopReason='MUTATION_BOUNDARY_NO_RETRY'
-            Write-Host '[DE-SUPERVISOR] HARD STOP: SEND/UNCERTAIN observed. No automatic retry.' -ForegroundColor Red
+            Write-Host '[AH-SUPERVISOR] HARD STOP: SEND/UNCERTAIN observed. No automatic retry.' -ForegroundColor Red
             break
         }
 
@@ -159,7 +193,7 @@ try{
         if($transient -and $attempt -lt $maxAttempts){
             $retryCount++
             $delay=2*$attempt
-            Write-Host ("[DE-SUPERVISOR] safe transient pre-SEND failure; retry {0}/{1} in {2}s" -f $retryCount,($maxAttempts-1),$delay) -ForegroundColor Yellow
+            Write-Host ("[AH-SUPERVISOR] safe transient pre-SEND failure; retry {0}/{1} in {2}s" -f $retryCount,($maxAttempts-1),$delay) -ForegroundColor Yellow
             Start-Sleep -Seconds $delay
             continue
         }
@@ -172,7 +206,6 @@ try{
 }
 $elapsed=[int]((Get-Date)-$started).TotalSeconds
 
-# Build one aggregate log regardless of PASS/failure, while preserving per-attempt logs.
 if(Test-Path $log){Remove-Item $log -Force}
 foreach($attemptLog in $attemptLogs){
     if(Test-Path $attemptLog){
@@ -183,15 +216,20 @@ foreach($attemptLog in $attemptLogs){
 
 $sent=Count-Marker $log '[POC07-BUY] SENT'
 $server=Count-Marker $log '[POC07-BUY] SERVER PASS'
-$confirmed=Count-Marker $log '[POC08-UNIFIED-MULTI] CONFIRMED'
+$confirmed=(Count-Marker $log '[POC08-UNIFIED-V4] CONFIRMED')+(Count-Marker $log '[POC08-UNIFIED-MULTI] CONFIRMED')
 $uncertain=Count-Marker $log 'AH_MUTATION_UNCERTAIN'
-$livepass=Count-Marker $log '[POC08-UNIFIED-MULTI] LIVE PASS'
+$livepass=(Count-Marker $log '[POC08-UNIFIED-V4] LIVE PASS')+(Count-Marker $log '[POC08-UNIFIED-MULTI] LIVE PASS')
 $prefilter=''
-if(Test-Path $log){$prefilter=(Select-String -Path $log -SimpleMatch '[POC08-DE-FAST-PREFILTER] stage=LOCAL_DEID' -ErrorAction SilentlyContinue | Select-Object -Last 1).Line}
+$scope=''
+if(Test-Path $log){
+    $prefilter=(Select-String -Path $log -SimpleMatch '[POC08-DE-FAST-PREFILTER] stage=LOCAL_DEID' -ErrorAction SilentlyContinue | Select-Object -Last 1).Line
+    $scope=(Select-String -Path $log -SimpleMatch '[POC08-UNIFIED-V4] one_snapshot=YES' -ErrorAction SilentlyContinue | Select-Object -Last 1).Line
+}
 
 $summary=Join-Path $deDir ($prefix+'_RUN_SUMMARY.txt')
 @(
   "mode=$RunMode",
+  "strategy=$Strategy",
   "stamp=$stamp",
   "exit_code=$code",
   "elapsed_seconds=$elapsed",
@@ -204,6 +242,7 @@ $summary=Join-Path $deDir ($prefix+'_RUN_SUMMARY.txt')
   "uncertain=$uncertain",
   "live_pass=$livepass",
   "fast_prefilter=$prefilter",
+  "unified_scope=$scope",
   "exe_sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
 ) | Set-Content $summary -Encoding UTF8
 
@@ -214,18 +253,23 @@ $files=@($files | Where-Object {Test-Path $_} | Select-Object -Unique)
 try{
     Compress-Archive -Path $files -DestinationPath $report -CompressionLevel Optimal -Force
     Copy-Item $report (Join-Path $reports 'LATEST_DE_REPORT.zip') -Force
+    if($Strategy -eq 'VendorDe'){Copy-Item $report (Join-Path $reports 'LATEST_VENDOR_DE_REPORT.zip') -Force}
 }catch{
     Write-Host ("REPORT ZIP ERROR: "+$_.Exception.Message) -ForegroundColor Red
 }
 
 Write-Host ''
-Write-Host ("RUN summary: exit={0} elapsed={1}s attempts={2} retries={3} stop={4} sent/server/confirmed={5}/{6}/{7} uncertain={8}" -f $code,$elapsed,$attempt,$retryCount,$stopReason,$sent,$server,$confirmed,$uncertain)
+Write-Host ("RUN summary: strategy={0} exit={1} elapsed={2}s attempts={3} retries={4} stop={5} sent/server/confirmed={6}/{7}/{8} uncertain={9}" -f $Strategy,$code,$elapsed,$attempt,$retryCount,$stopReason,$sent,$server,$confirmed,$uncertain)
 if(Test-Path $report){
     Write-Host ("AUTO REPORT ZIP: {0}" -f $report) -ForegroundColor Green
-    Write-Host 'Do wyslania tutaj wystarczy DE_LAB\REPORTS\LATEST_DE_REPORT.zip' -ForegroundColor Green
+    if($Strategy -eq 'VendorDe'){
+        Write-Host 'Do wyslania tutaj: DE_LAB\REPORTS\LATEST_VENDOR_DE_REPORT.zip' -ForegroundColor Green
+    }else{
+        Write-Host 'Do wyslania tutaj: DE_LAB\REPORTS\LATEST_DE_REPORT.zip' -ForegroundColor Green
+    }
 }
 
-if($RunMode -eq 'Live3' -and ($uncertain -gt 0 -or $sent -gt 3 -or $sent -ne $server -or $server -ne $confirmed)){
+if($RunMode -eq 'Live3' -and ($uncertain -gt 0 -or $sent -ne $server -or $server -ne $confirmed)){
     Write-Host 'SAFETY ALERT: mutation reconciliation mismatch. DO NOT RERUN before review.' -ForegroundColor Red
     if($code -eq 0){$code=3}
 }
