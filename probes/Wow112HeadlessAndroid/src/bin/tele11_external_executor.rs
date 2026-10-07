@@ -1,3 +1,7 @@
+use std::path::Path;
+use std::thread;
+use std::time::{Duration, Instant};
+
 use wow112_headless_android_probe::tele11_executor_contract::{
     classify_external_executor, ExecutorRuntimeState, ExecutorVerdictClass,
 };
@@ -14,6 +18,11 @@ fn main() {
         return;
     }
 
+    if let Err(error) = wait_for_start_gate() {
+        eprintln!("[TELE11-EXTERNAL] START GATE ERROR: {error}");
+        std::process::exit(2);
+    }
+
     let config = match ExternalExecutorConfig::from_env() {
         Ok(value) => value,
         Err(error) => {
@@ -27,6 +36,39 @@ fn main() {
             eprintln!("[TELE11-EXTERNAL] ERROR: {error}");
             std::process::exit(2);
         }
+    }
+}
+
+fn wait_for_start_gate() -> Result<(), String> {
+    let Ok(path) = std::env::var("WOW112_TELE11_START_GATE") else {
+        return Ok(());
+    };
+    if path.trim().is_empty() {
+        return Ok(());
+    }
+    let timeout_ms = std::env::var("WOW112_TELE11_START_GATE_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30_000)
+        .max(1_000);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let gate = Path::new(&path);
+    println!(
+        "[TELE11-EXTERNAL] waiting containment start gate={} timeout_ms={timeout_ms}",
+        gate.display()
+    );
+    loop {
+        if gate.exists() {
+            println!("[TELE11-EXTERNAL] containment start gate PASS");
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "containment start gate timeout path={} role processes were never spawned",
+                gate.display()
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
     }
 }
 
