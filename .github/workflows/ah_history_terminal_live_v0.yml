@@ -9,9 +9,12 @@ permissions:
   contents: write
 concurrency:
   group: ah-history-octowar1-live
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   live:
+    # User account is busy with AH DE. Pushes only cancel older automatic runs.
+    # Live capture is available solely through explicit manual workflow dispatch.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
