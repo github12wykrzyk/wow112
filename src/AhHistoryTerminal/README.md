@@ -100,6 +100,12 @@ python src/AhHistoryTerminal/github_archive.py restore history.sqlite --reposito
 python src/AhHistoryTerminal/test_github_archive.py
 ```
 
+Ordinary code pushes do not open the game connection. Live validation requires
+manual dispatch (or the single explicitly authorized resume commit). The separate
+`ah_history_terminal_archive_recovery.yml` workflow can publish retained captures
+from a chosen live run via its `run_id` input, without contacting the game server.
+This also recovers canceled runs whose publisher step could not execute.
+
 Restore verifies each immutable bundle before its SQLite transaction and is
 idempotent. The database is reconstructed from archived observations; SQLite
 binary files are never committed to source Git. A later corrupt bundle stops

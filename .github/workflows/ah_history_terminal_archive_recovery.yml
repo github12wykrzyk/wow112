@@ -1,0 +1,75 @@
+name: AH history archive recovery without game connection
+on:
+  push:
+    branches: [dev/windows-ah-canonical]
+    paths: ['.github/workflows/ah_history_terminal_archive_recovery.yml']
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Live workflow run containing the recovery and summary artifacts'
+        required: true
+        default: '37616595769'
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: ah-history-archive-recovery
+  cancel-in-progress: false
+jobs:
+  restore-and-publish:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'AH history: archive recovered live observations without game login' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify archive and interruption handling
+        run: python src/AhHistoryTerminal/test_github_archive.py
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id || '37616595769' }}
+          name: ah-history-archive-recovery-${{ inputs.run_id || '37616595769' }}
+          path: src/AhHistoryTerminal/recovered-data
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id || '37616595769' }}
+          name: ah-history-live-v0-summary
+          path: src/AhHistoryTerminal/recovered-data
+      - name: Reconcile interrupted receipt with verified captured status
+        env:
+          RECOVERY_RUN_ID: ${{ inputs.run_id || '37616595769' }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0,'src/AhHistoryTerminal')
+          import history_worker as w
+          root=Path('src/AhHistoryTerminal/recovered-data')
+          path=root/'LIVE_VALIDATION_SUMMARY.json'
+          receipt=json.loads(path.read_text())
+          events=w.verify_bundle(root/'bundles'/receipt['bundle_id'])
+          if events[-1]['status']!='completed':
+              receipt['live_scan']='FAIL'
+              receipt.setdefault('failure_reason','PROCESS_INTERRUPTED')
+          receipt['recovered_from_workflow_run']=os.environ['RECOVERY_RUN_ID']
+          path.write_text(json.dumps(receipt,indent=2)+'\n')
+          PY
+      - name: Publish and remotely verify recovered bundle
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python src/AhHistoryTerminal/github_archive.py publish-run src/AhHistoryTerminal/recovered-data
+      - name: Upload recovery publication receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ah-history-recovered-archive-receipt
+          path: |
+            src/AhHistoryTerminal/recovered-data/LIVE_VALIDATION_SUMMARY.json
+            src/AhHistoryTerminal/recovered-data/archive-outbox.json
+          if-no-files-found: warn
+          retention-days: 90

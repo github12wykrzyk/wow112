@@ -123,6 +123,7 @@ class ArchiveTests(unittest.TestCase):
             name="scan.ndjson.partial" if timeout else "scan.ndjson"
             retained=es[:-1] if timeout else es
             (path/name).write_text("\n".join(json.dumps(e) for e in retained)+"\n")
+            if timeout=="interrupt":raise KeyboardInterrupt()
             if timeout:raise subprocess.TimeoutExpired("synthetic",600)
             return types.SimpleNamespace(returncode=1,stdout="[AUTH] SRP6 PASS\n[WORLD] auth PASS\nSMSG_LOGIN_VERIFY_WORLD PASS\nMSG_AUCTION_HELLO PASS",stderr="[AH-HISTORY] ERROR: simulated EOF\n")
         with mock.patch.dict(os.environ,{"WOW112_PASSWORD":"synthetic-password-never-publish","WOW112_HISTORY_BINARY":str(binary)}),mock.patch.object(live.sys,"argv",["live",str(root)]),mock.patch.object(live.socket,"getaddrinfo",return_value=[]),mock.patch.object(live.socket,"create_connection",return_value=contextlib.nullcontext()),mock.patch.object(live.subprocess,"run",side_effect=failed_process),contextlib.redirect_stdout(io.StringIO()):
@@ -142,5 +143,8 @@ class ArchiveTests(unittest.TestCase):
 
     def test_process_timeout_recovers_and_archives_partial(self):
         self.run_failed_harness(timeout=True)
+
+    def test_cancellation_reports_failure_and_retains_partial(self):
+        self.run_failed_harness(timeout="interrupt")
 
 if __name__=="__main__":unittest.main(verbosity=2)

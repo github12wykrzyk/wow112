@@ -97,6 +97,9 @@ def main():
         # Only error class is emitted. Exception text may originate in auth diagnostics.
         report.update(live_scan="FAIL",failure_reason="HARNESS_ERROR",error_class=type(e).__name__)
     finally:
+        if report["live_scan"]=="RUNNING" and code!=0:
+            report["live_scan"]="FAIL"
+            report.setdefault("failure_reason","PROCESS_INTERRUPTED")
         # Timeout/hard kill leaves a .partial; retain valid prefix as aborted data.
         # Ordinary terminal failures already finish an aborted segment via Drop.
         if "bundle_id" not in report:
