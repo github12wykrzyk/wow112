@@ -3,6 +3,7 @@
 pub mod destination_registry;
 pub mod tele08_bc_adapter;
 pub mod tele08_de_adapter;
+pub mod tele08_e_live_logic;
 pub mod tele08_whisper_parser;
 pub mod tele_response_engine;
 
