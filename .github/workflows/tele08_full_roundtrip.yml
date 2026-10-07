@@ -36,18 +36,10 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Normalize roundtrip runner source
+      - name: Format gate
         shell: pwsh
         run: |
-          $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs'
-          $raw = Get-Content $path -Raw
-          if ($raw -notmatch 'mod live \{\s*use std::fs;') {
-            $raw = $raw -replace 'mod live \{', "mod live {`n    use std::fs;"
-            Set-Content -Path $path -Value $raw -NoNewline
-          }
-          rustfmt --edition 2021 $path
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustfmt --edition 2021 --check $path
+          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Offline full-chain contract
