@@ -16,6 +16,7 @@ jobs:
   live:
     # Manual dispatch remains the default. A push may run only with the explicit
     # one-shot commit marker below; ordinary code pushes never log in.
+    # Diagnostic rerun: preserve the real pre-login terminal failure if capture never starts.
     if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[RUN_REAL_SHADOW_ONCE]') }}
     runs-on: windows-latest
     timeout-minutes: 20
