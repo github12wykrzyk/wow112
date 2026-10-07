@@ -72,8 +72,11 @@ jobs:
         run: |
           $mm='src/AuctionLifecycle/market_maker.rs'
           $inv='src/AuctionLifecycle/market_maker_inventory.rs'
+          $coord='src/AuctionLifecycle/coordinator.rs'
           foreach($m in @('ClearThenRelist','poc07_buy_exact_one(','lifecycle_cancel(','mm_split_all_to_units(','lifecycle_post(','reprice-post-mail')){if(-not(Select-String -Path $mm -Pattern $m -SimpleMatch -Quiet)){throw "market-maker marker missing: $m"}}
-          foreach($m in @('CMSG_SPLIT_ITEM','MM_SPLIT_INTENT','SMSG_ITEM_PUSH_RESULT','mail merged into existing stack')){if(-not(Select-String -Path $inv -Pattern $m -SimpleMatch -Quiet)){throw "inventory marker missing: $m"}}
+          foreach($m in @('CMSG_SPLIT_ITEM','MutationKind::Split','SMSG_ITEM_PUSH_RESULT','mail merged into existing stack')){if(-not(Select-String -Path $inv -Pattern $m -SimpleMatch -Quiet)){throw "inventory marker missing: $m"}}
+          foreach($m in @('Split','0x10e','AH_MUTATION_COORDINATOR_HARD_STOP')){if(-not(Select-String -Path $coord -Pattern $m -SimpleMatch -Quiet)){throw "coordinator split marker missing: $m"}}
+          if(Select-String -Path $inv -Pattern 'MM_SPLIT_INTENT' -SimpleMatch -Quiet){throw 'legacy split bridge must be absent'}
           Write-Host 'MARKET_MAKER_STATIC_CONTRACT_PASS'
 
       - name: Stage artifact
@@ -83,7 +86,9 @@ jobs:
           $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
           Copy-Item $exe "$d/wow112-ah-market-maker-v1.exe"
           Copy-Item src/AuctionLifecycle/market_maker*.rs $d
+          Copy-Item src/AuctionLifecycle/coordinator.rs $d
           Copy-Item src/AuctionLifecycle/adapter.rs $d
+          Copy-Item src/AuctionLifecycle/MARKET_MAKER_V1.md $d
           Copy-Item src/AuctionLifecycle/README.md $d
           "SHA=$env:GITHUB_SHA`nEXE_SHA256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())" | Set-Content "$d/MANIFEST.txt"
 
