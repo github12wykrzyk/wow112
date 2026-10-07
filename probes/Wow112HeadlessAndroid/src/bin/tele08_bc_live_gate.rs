@@ -3,86 +3,82 @@ use std::fs;
 use std::path::PathBuf;
 
 use tele08_request_queue::{QueueConfig, QueueEngine, ResourceKey};
-use wow112_headless_android_probe::tele08_bc_adapter::{
-    classification_to_request, AdmissionRejection,
-};
-use wow112_headless_android_probe::tele08_whisper_parser::{
-    classify_whisper, ParserConfig, WhisperObservation,
-};
+use wow112_headless_android_probe::tele08_whisper_parser::WhisperObservation;
+use wow112_headless_android_probe::tele10_message_router::{MessageRoute, Tele10MessageRouter};
 
 #[derive(Clone, Copy)]
 struct ExpectedCase {
     id: usize,
     text: &'static str,
-    queue_outcome: &'static str,
+    route_outcome: &'static str,
 }
 
 const CASES: [ExpectedCase; 12] = [
     ExpectedCase {
         id: 1,
         text: "+",
-        queue_outcome: "missing_destination",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 2,
         text: "+ hyjal",
-        queue_outcome: "queued",
+        route_outcome: "queued",
     },
     ExpectedCase {
         id: 3,
         text: "inv pls",
-        queue_outcome: "missing_destination",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 4,
         text: "invi",
-        queue_outcome: "missing_destination",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 5,
         text: "I need one",
-        queue_outcome: "missing_destination",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 6,
         text: "here",
-        queue_outcome: "non_queueable",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 7,
         text: "winterspring pls",
-        queue_outcome: "queued",
+        route_outcome: "queued",
     },
     ExpectedCase {
         id: 8,
         text: "do you have feralas?",
-        queue_outcome: "non_queueable",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 9,
         text: "selling summons cheaper today",
-        queue_outcome: "non_queueable",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 10,
         text: "what level are you?",
-        queue_outcome: "non_queueable",
+        route_outcome: "ignore",
     },
     ExpectedCase {
         id: 11,
         text: "sumon plz???",
-        queue_outcome: "non_queueable",
+        route_outcome: "clarify",
     },
     ExpectedCase {
         id: 12,
         text: "azshara please",
-        queue_outcome: "queued",
+        route_outcome: "queued",
     },
 ];
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("TELE08_BC_LIVE_GATE_FAIL reason={error}");
+        eprintln!("TELE10_ROUTER_LIVE_GATE_FAIL reason={error}");
         std::process::exit(2);
     }
 }
@@ -107,9 +103,12 @@ fn run() -> Result<(), String> {
         .map_destination_resource("winterspring", team.clone())
         .map_destination_resource("azshara", team);
     let mut queue = QueueEngine::new(config);
-    let parser = ParserConfig::default();
+    let mut router = Tele10MessageRouter::default();
 
     let mut timestamp_ms = 1_000_000u64;
+    let mut clarification_count = 0usize;
+    let mut ignored_count = 0usize;
+
     for (index, (sender, text)) in observations.iter().enumerate() {
         let expected = CASES[index];
         if text != expected.text {
@@ -119,53 +118,67 @@ fn run() -> Result<(), String> {
             ));
         }
 
-        let classification = classify_whisper(
-            &WhisperObservation {
-                sender: sender.clone(),
-                text: text.clone(),
-                timestamp_ms,
-                source_role: Some("SUMMONER_LIVE_EVIDENCE".into()),
-                destination_context: None,
-            },
-            &parser,
-        );
+        let route = router.handle(&WhisperObservation {
+            sender: sender.clone(),
+            text: text.clone(),
+            timestamp_ms,
+            source_role: Some("SUMMONER_LIVE_EVIDENCE".into()),
+            destination_context: None,
+        });
         timestamp_ms = timestamp_ms.saturating_add(20_000);
 
-        let actual = match classification_to_request(&classification) {
-            Ok(request) => {
+        let (actual, detail) = match route {
+            MessageRoute::Request(request) => {
+                let destination = request.destination.clone();
                 let outcome = queue.enqueue(request);
                 if outcome.accepted {
-                    "queued"
+                    ("queued", format!("destination={destination}"))
                 } else if outcome.duplicate_of.is_some() {
-                    "duplicate"
+                    ("duplicate", format!("destination={destination}"))
                 } else {
-                    "queue_rejected"
+                    ("queue_rejected", format!("destination={destination}"))
                 }
             }
-            Err(AdmissionRejection::MissingDestination) => "missing_destination",
-            Err(AdmissionRejection::NonQueueableIntent(_)) => "non_queueable",
+            MessageRoute::Clarify { recipient, text } => {
+                if recipient != *sender {
+                    return Err(format!(
+                        "case {} clarification recipient mismatch expected={:?} actual={:?}",
+                        expected.id, sender, recipient
+                    ));
+                }
+                if expected.id == 11 && text != "Do you want a summon?" {
+                    return Err(format!(
+                        "case 11 clarification text mismatch actual={text:?}"
+                    ));
+                }
+                clarification_count += 1;
+                ("clarify", format!("reply={text:?}"))
+            }
+            MessageRoute::Ignore { reason } => {
+                ignored_count += 1;
+                ("ignore", format!("reason={reason}"))
+            }
         };
 
         println!(
-            "TELE08_BC_LIVE_CASE id={} sender={:?} raw={:?} intent={:?} destination={} expected_queue={} actual_queue={} result={}",
+            "TELE10_ROUTER_LIVE_CASE id={} sender={:?} raw={:?} expected_route={} actual_route={} detail={} result={}",
             expected.id,
             sender,
             text,
-            classification.intent,
-            classification
-                .destination
-                .as_ref()
-                .map(|d| d.0.as_str())
-                .unwrap_or("-"),
-            expected.queue_outcome,
+            expected.route_outcome,
             actual,
-            if actual == expected.queue_outcome { "PASS" } else { "FAIL" }
+            detail,
+            if actual == expected.route_outcome {
+                "PASS"
+            } else {
+                "FAIL"
+            }
         );
 
-        if actual != expected.queue_outcome {
+        if actual != expected.route_outcome {
             return Err(format!(
-                "case {} queue mismatch expected={} actual={}",
-                expected.id, expected.queue_outcome, actual
+                "case {} route mismatch expected={} actual={}",
+                expected.id, expected.route_outcome, actual
             ));
         }
     }
@@ -182,10 +195,32 @@ fn run() -> Result<(), String> {
             "final queue counts mismatch hyjal={hyjal} winterspring={winterspring} azshara={azshara}"
         ));
     }
+    if clarification_count != 1 {
+        return Err(format!(
+            "clarification count mismatch expected=1 actual={clarification_count}"
+        ));
+    }
+    if ignored_count != 8 {
+        return Err(format!(
+            "ignored count mismatch expected=8 actual={ignored_count}"
+        ));
+    }
+    if router.pending_clarifications() != 1 {
+        return Err(format!(
+            "pending clarification mismatch expected=1 actual={}",
+            router.pending_clarifications()
+        ));
+    }
 
     println!(
-        "TELE08_BC_LIVE_GATE_PASS observations={} queued=3 hyjal={} winterspring={} azshara={} invariants=OK",
-        observations.len(), hyjal, winterspring, azshara
+        "TELE10_ROUTER_LIVE_GATE_PASS observations={} direct_queued=3 clarifications={} ignored={} pending={} hyjal={} winterspring={} azshara={} invariants=OK",
+        observations.len(),
+        clarification_count,
+        ignored_count,
+        router.pending_clarifications(),
+        hyjal,
+        winterspring,
+        azshara
     );
     Ok(())
 }
@@ -236,12 +271,18 @@ mod tests {
     }
 
     #[test]
-    fn live_contract_has_exactly_three_queueable_destinations() {
+    fn live_contract_has_three_direct_requests_and_one_clarification() {
         let queued: Vec<_> = CASES
             .iter()
-            .filter(|case| case.queue_outcome == "queued")
+            .filter(|case| case.route_outcome == "queued")
+            .map(|case| case.id)
+            .collect();
+        let clarified: Vec<_> = CASES
+            .iter()
+            .filter(|case| case.route_outcome == "clarify")
             .map(|case| case.id)
             .collect();
         assert_eq!(queued, vec![2, 7, 12]);
+        assert_eq!(clarified, vec![11]);
     }
 }
