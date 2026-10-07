@@ -41,10 +41,22 @@ checks = {
     'mutation_latch': 'AH_MUTATION_BLOCKED' in w,
     'stale_skip': 'POC07_BUY_TARGET_STALE' in u and 'STALE SKIP' in u,
 }
-login = u[u.find('pub fn login_poc08_economy_audit('):]
+
+login_start = u.find('pub fn login_poc08_economy_audit(')
+if login_start < 0:
+    raise SystemExit('live login function missing')
+login = u[login_start:]
 checks['no_filtered_scan_call'] = 'poc07_de_scan_class_v4(stream, &mut crypto' not in login
-vg = u[u.find('let vendor_ok='):u.find('let de_ok=')]
-dg = u[u.find('let de_ok='):u.find('if matches!(f1_action,Poc08F1Action::DeWhitelist)')]
+
+# Vendor/DE route predicates live in the live login/queue policy. Audit-only
+# helpers are intentionally outside this slice and cannot affect these checks.
+vendor_start = login.find('let vendor_ok=')
+de_start = login.find('let de_ok=')
+whitelist_start = login.find('if matches!(f1_action,Poc08F1Action::DeWhitelist)')
+if min(vendor_start, de_start, whitelist_start) < 0 or not (vendor_start < de_start < whitelist_start):
+    raise SystemExit('live route policy anchors missing or reordered')
+vg = login[vendor_start:de_start]
+dg = login[de_start:whitelist_start]
 checks['vendor_stacks'] = 'count==1' not in vg and 'count == 1' not in vg
 checks['de_count1'] = 'count==1' in dg or 'count == 1' in dg
 checks['de_risk'] = 'de_risk_pass' in dg and 'in_f0(c)' in dg
@@ -54,4 +66,4 @@ for key, ok in checks.items():
     print(f'[SMOKE] {key}={"PASS" if ok else "FAIL"}')
 if not all(checks.values()):
     raise SystemExit('UNIFIED V3 STATIC SMOKE FAIL')
-print('[SMOKE] UNIFIED MULTIBUY V3 STATIC+POLICY PASS non_destructive=YES')
+print('[SMOKE] UNIFIED MULTIBUY V3 STATIC+POLICY PASS non_destructive=YES scoped_live_policy=YES')

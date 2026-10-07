@@ -2,7 +2,7 @@ name: AH history V2 archive replay
 
 on:
   push:
-    branches: [feature/ah-history-shadow-canonical, dev/windows-ah-canonical]
+    branches: [feature/ah-history-shadow-canonical, feature/ah-history-shadow-valuations-v4, dev/windows-ah-canonical]
     paths:
       - 'src/AhHistoryTerminal/shadow_quality_v2.py'
       - 'src/AhHistoryTerminal/reconcile_archive_v2.py'
@@ -38,10 +38,25 @@ jobs:
           --realm-id 0
           --ah-pool-id 1
           --market-epoch baseline-2026-10-07
-      - name: Upload cumulative V2 report
+          --pricebook-csv src/AhHistoryTerminal/HISTORY_V2_PRICEBOOK.csv
+      - name: Validate audit-only pricebook contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s src/AhHistoryTerminal/HISTORY_V2_PRICEBOOK.csv
+          test "$(wc -l < src/AhHistoryTerminal/HISTORY_V2_PRICEBOOK.csv)" -gt 1
+          grep -q 'history_unit_price_copper' src/AhHistoryTerminal/HISTORY_V2_PRICEBOOK.csv
+          grep -q '"history_can_authorize_buy": false' src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          grep -q '"history_can_retry_buy": false' src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          grep -q '"history_can_reorder_buy": false' src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          grep -q '"buy_decision_changed": 0' src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          echo 'AH_HISTORY_V2_SHADOW_PRICEBOOK_CONTRACT=PASS'
+      - name: Upload cumulative V2 report and shadow pricebook
         uses: actions/upload-artifact@v4
         with:
           name: ah-history-v2-archive-${{ github.run_id }}
-          path: src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          path: |
+            src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+            src/AhHistoryTerminal/HISTORY_V2_PRICEBOOK.csv
           if-no-files-found: error
           retention-days: 30
