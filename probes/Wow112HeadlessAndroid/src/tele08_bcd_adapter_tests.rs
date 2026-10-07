@@ -103,11 +103,17 @@ fn healthy_registry_admits_and_attaches_execution_resource() {
 
     assert_eq!(request.destination, "hyjal");
     assert_eq!(
-        request.metadata.get("execution_resource").map(String::as_str),
+        request
+            .metadata
+            .get("execution_resource")
+            .map(String::as_str),
         Some("summon/hyjal")
     );
     assert_eq!(
-        request.metadata.get("destination_source").map(String::as_str),
+        request
+            .metadata
+            .get("destination_source")
+            .map(String::as_str),
         Some("tele08_registry")
     );
 }
