@@ -27,6 +27,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc07_buy_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc05_ah_hello_resilience_patch.py probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Generate DE model base
         shell: pwsh
@@ -95,7 +97,9 @@ jobs:
         run: |
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
           foreach($m in @('POC08-UNIFIED-MULTI','POC08_ESSENCE_PARITY_PAIRS','POC08-C-HISTORY-V2','POC08-C-LIQUIDATION-V3','SAME_FULL_AH_SNAPSHOT','POC08_MAT_GUARD_OWN_EXPOSURE','POC08_MAT_GUARD_OWN_EXPOSURE_BLOCK','POC08_MAT_GUARD_MARKET_SATURATION','POC08_MAT_GUARD_OWN_AT_FLOOR','WOW112_MATERIAL_OWN_SHARE_BLOCK_BPS','WOW112_MATERIAL_OWN_UNITS_BLOCK_MIN','depth_10_units','exposure_factor_bps','saturation_factor_bps','POC08-F0-V31','CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH','WOW112_F1_DE_MIN_LIQUIDATION_PROFIT','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "V3.1 marker missing: $m"}}
-          'DE LIQUIDATION V3.1 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
+          $hello='probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
+          foreach($m in @('[AH-HELLO-V2]','HELLO_TIMEOUT_SECS','HELLO_PACKET_SAFETY_CAP','Freshly discovered NPC wins')){if(-not(Select-String -Path $hello -Pattern $m -SimpleMatch -Quiet)){throw "AH hello resilience marker missing: $m"}}
+          'DE LIQUIDATION V3.1 + AH HELLO RESILIENCE STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
 
       - name: Rust check and tests
         shell: pwsh
@@ -112,7 +116,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $exe='probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe'
           $b=[IO.File]::ReadAllBytes($exe)
-          if($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1] -ne 0x5a){throw 'PE smoke failed: MZ header missing'}
+          if($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1]-ne 0x5a){throw 'PE smoke failed: MZ header missing'}
           Write-Host "[PE-SMOKE] PASS bytes=$($b.Length) sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
 
       - name: Stage liquidation V3.1 artifact
@@ -122,6 +126,7 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-ah-de-liquidation-v31.exe"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs "$d/source/"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs "$d/source/world_poc05_retry.rs"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
           Copy-Item "$env:RUNNER_TEMP/unified-smoke.txt" "$d/SMOKE_TESTS.txt"
@@ -151,6 +156,7 @@ jobs:
           F0_MODEL_CONFIDENCE_FACTOR_FLOOR_BPS=8500
           DE_MAX_PER_DEID_DEFAULT=3
           DE_MAX_SPEND_PER_SNAPSHOT_DEFAULT=250000
+          AH_HELLO_RESILIENCE=TIME_BUDGET_BACKGROUND_EXEMPT_FRESH_NPC_FIRST
           BUY_REVALIDATION=EXACT_TUPLE_PAGE_PLUS_MINUS_5
           NO_AUTO_RETRY_AFTER_UNCERTAIN_SEND=YES
           BINARY_SHA256=$h
