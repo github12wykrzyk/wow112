@@ -11,6 +11,12 @@ SRC=Path('probes/Wow112HeadlessAndroid/src')
 spec=importlib.util.spec_from_file_location('integration',Path(__file__).with_name('integrate.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
+SUFFIX=(
+    '\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'
+    'include!("../../../src/AuctionLifecycle/market_maker_inventory.rs");\n'
+    'include!("../../../src/AuctionLifecycle/market_maker.rs");\n'
+)
+
 class Integration(unittest.TestCase):
     def test_actual_canonical_anchors_and_buy_body_preserved(self):
         with tempfile.TemporaryDirectory() as td:
@@ -19,17 +25,27 @@ class Integration(unittest.TestCase):
             before=(root/SRC/'world_poc07.rs').read_text()
             m.integrate(root)
             after=(root/SRC/'world_poc07.rs').read_text()
-            self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix('\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'),before)
+            self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix(SUFFIX),before)
+            main=(root/SRC/'main.rs').read_text()
+            self.assertIn('mod market_maker_policy;',main)
             files={p:p.read_bytes() for p in (root/SRC).glob('*.rs')}
             with self.assertRaises(ValueError):m.integrate(root)
             self.assertEqual(files,{p:p.read_bytes() for p in (root/SRC).glob('*.rs')})
-    def test_buy_safety_and_reconnect_contract_unchanged(self):
+    def test_buy_safety_and_market_maker_contract(self):
         main=(ROOT/SRC/'main.rs').read_text()
         self.assertIn('error.contains("MAIL_MUTATION_") || error.contains("AH_MUTATION_")',main)
         core=Path(__file__).with_name('coordinator.rs').read_text()
         self.assertIn('AH_MUTATION_COORDINATOR_HARD_STOP',core)
         self.assertIn('create_new(true)',core)
         self.assertIn('p.sync_all()',core)
+        mm=Path(__file__).with_name('market_maker.rs').read_text()
+        self.assertIn('poc07_buy_exact_one(',mm)
+        self.assertIn('lifecycle_cancel(',mm)
+        self.assertIn('mm_split_all_to_units(',mm)
+        self.assertIn('lifecycle_post(',mm)
+        inv=Path(__file__).with_name('market_maker_inventory.rs').read_text()
+        self.assertIn('MM_SPLIT_INTENT',inv)
+        self.assertIn('mutations::transaction(MutationKind::Post',inv)
     def test_all_v4_generation_then_integration(self):
         import yaml
         with tempfile.TemporaryDirectory() as td:
@@ -46,7 +62,7 @@ class Integration(unittest.TestCase):
             unified=(root/SRC/'world_poc08_unified.rs').read_text()
             m.integrate(root)
             after=(root/SRC/'world_poc07.rs').read_text()
-            self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix('\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'),buy)
+            self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix(SUFFIX),buy)
             self.assertIn('POC08-UNIFIED-V4',unified)
-            self.assertIn('return lifecycle_run', (root/SRC/'world_poc08_unified.rs').read_text())
+            self.assertIn('return lifecycle_dispatch', (root/SRC/'world_poc08_unified.rs').read_text())
 if __name__=='__main__':unittest.main()
