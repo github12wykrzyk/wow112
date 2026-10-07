@@ -5,6 +5,7 @@ on:
     branches:
       - feature/tele08-e-integrated-live-v1
     paths:
+      - 'probes/Wow112HeadlessAndroid/Cargo.toml'
       - 'probes/Wow112HeadlessAndroid/src/lib.rs'
       - 'probes/Wow112HeadlessAndroid/src/destination_registry.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
