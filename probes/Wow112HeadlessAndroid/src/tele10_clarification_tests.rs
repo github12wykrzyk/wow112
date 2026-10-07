@@ -1,7 +1,9 @@
 use crate::tele08_whisper_parser::{
     classify_whisper, ParserConfig, WhisperClassification, WhisperIntent, WhisperObservation,
 };
-use crate::tele10_clarification::{ClarificationConfig, ClarificationDecision, ClarificationGate};
+use crate::tele10_clarification::{
+    ClarificationConfig, ClarificationDecision, ClarificationGate, ClarificationStage,
+};
 
 fn classify_at(sender: &str, text: &str, timestamp_ms: u64) -> WhisperClassification {
     classify_whisper(
@@ -39,6 +41,10 @@ fn ambiguous_operational_message_prompts_without_becoming_action() {
         }
     );
     assert_eq!(gate.pending_count(), 1);
+    assert_eq!(
+        gate.pending_for("Customer").map(|pending| &pending.stage),
+        Some(&ClarificationStage::ConfirmSummon)
+    );
 }
 
 #[test]
@@ -74,6 +80,40 @@ fn destination_is_preserved_in_prompt_and_confirmed_request() {
 }
 
 #[test]
+fn confirmation_without_destination_requests_location_before_admission() {
+    let mut gate = default_gate();
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "sumon plz", 1_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+
+    assert_eq!(
+        gate.process(&classify_at("Customer", "yes", 2_000)),
+        ClarificationDecision::Prompt {
+            recipient: "Customer".into(),
+            text: "Which location: Hyjal, Winterspring or Azshara?".into(),
+            destination: None,
+        }
+    );
+    assert_eq!(
+        gate.pending_for("Customer").map(|pending| &pending.stage),
+        Some(&ClarificationStage::ChooseDestination)
+    );
+
+    let decision = gate.process(&classify_at("Customer", "winterspring", 3_000));
+    let ClarificationDecision::Confirmed(confirmed) = decision else {
+        panic!("destination choice should complete clarification");
+    };
+    assert_eq!(confirmed.intent, WhisperIntent::SummonRequest);
+    assert_eq!(
+        confirmed.destination.as_ref().map(|value| value.0.as_str()),
+        Some("winterspring")
+    );
+    assert_eq!(confirmed.reason, "clarification_destination_selected");
+    assert_eq!(gate.pending_count(), 0);
+}
+
+#[test]
 fn plus_confirms_only_inside_active_pending_context() {
     let mut gate = default_gate();
     let plus_without_pending = classify_at("Customer", "+", 1_000);
@@ -84,7 +124,7 @@ fn plus_confirms_only_inside_active_pending_context() {
     );
 
     assert!(matches!(
-        gate.process(&classify_at("Customer", "summn pls", 2_000)),
+        gate.process(&classify_at("Customer", "summn hyjal pls", 2_000)),
         ClarificationDecision::Prompt { .. }
     ));
     let decision = gate.process(&classify_at("Customer", "+", 3_000));
@@ -92,6 +132,10 @@ fn plus_confirms_only_inside_active_pending_context() {
         panic!("pending '+' should confirm");
     };
     assert_eq!(confirmed.intent, WhisperIntent::SummonRequest);
+    assert_eq!(
+        confirmed.destination.as_ref().map(|value| value.0.as_str()),
+        Some("hyjal")
+    );
 }
 
 #[test]
@@ -122,6 +166,24 @@ fn explicit_decline_closes_pending_state() {
 }
 
 #[test]
+fn decline_also_closes_destination_selection_stage() {
+    let mut gate = default_gate();
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "sumon plz", 1_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "yes", 2_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+    assert_eq!(
+        gate.process(&classify_at("Customer", "nah", 3_000)),
+        ClarificationDecision::Declined
+    );
+    assert_eq!(gate.pending_count(), 0);
+}
+
+#[test]
 fn late_confirmation_after_timeout_is_not_actionable() {
     let mut gate = default_gate();
     assert!(matches!(
@@ -130,6 +192,24 @@ fn late_confirmation_after_timeout_is_not_actionable() {
     ));
     assert_eq!(
         gate.process(&classify_at("Customer", "yes", 46_001)),
+        ClarificationDecision::PassThrough
+    );
+    assert_eq!(gate.pending_count(), 0);
+}
+
+#[test]
+fn destination_stage_gets_its_own_bounded_timeout() {
+    let mut gate = default_gate();
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "sumon plz", 1_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "yes", 40_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+    assert_eq!(
+        gate.process(&classify_at("Customer", "hyjal", 85_001)),
         ClarificationDecision::PassThrough
     );
     assert_eq!(gate.pending_count(), 0);
@@ -147,6 +227,27 @@ fn repeated_ambiguous_message_does_not_spam_prompts() {
         ClarificationDecision::Suppressed
     );
     assert_eq!(gate.pending_count(), 1);
+}
+
+#[test]
+fn repeated_confirmation_does_not_skip_destination_requirement() {
+    let mut gate = default_gate();
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "sumon plz", 1_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+    assert!(matches!(
+        gate.process(&classify_at("Customer", "yes", 2_000)),
+        ClarificationDecision::Prompt { .. }
+    ));
+    assert_eq!(
+        gate.process(&classify_at("Customer", "yes", 3_000)),
+        ClarificationDecision::Suppressed
+    );
+    assert_eq!(
+        gate.pending_for("Customer").map(|pending| &pending.stage),
+        Some(&ClarificationStage::ChooseDestination)
+    );
 }
 
 #[test]
@@ -212,7 +313,7 @@ fn competitor_message_cancels_existing_pending_fallback() {
 fn pending_state_is_isolated_per_sender() {
     let mut gate = default_gate();
     assert!(matches!(
-        gate.process(&classify_at("Alice", "sumon plz", 1_000)),
+        gate.process(&classify_at("Alice", "sumon hyjal plz", 1_000)),
         ClarificationDecision::Prompt { .. }
     ));
     assert_eq!(
@@ -262,7 +363,7 @@ fn common_confirmation_variants_are_bounded_to_pending_state() {
     ] {
         let mut gate = default_gate();
         assert!(matches!(
-            gate.process(&classify_at("Customer", "sumon plz", 1_000)),
+            gate.process(&classify_at("Customer", "sumon hyjal plz", 1_000)),
             ClarificationDecision::Prompt { .. }
         ));
         assert!(
