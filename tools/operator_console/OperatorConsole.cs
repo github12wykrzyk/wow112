@@ -21,20 +21,28 @@ namespace WoW112.OperatorConsole
             using (var app = new OperatorApplication(root))
             using (var form = new OperatorConsoleForm(app))
             {
-                if (demo) app.EmitDemoEvents();
+                if (demo)
+                {
+                    form.Shown += delegate
+                    {
+                        app.EmitDemoEvents();
+                        if (!string.IsNullOrEmpty(smokeDir)) Application.DoEvents();
+                    };
+                }
                 if (!string.IsNullOrEmpty(smokeDir))
                 {
                     form.Shown += delegate
                     {
                         try
                         {
+                            Application.DoEvents();
                             Directory.CreateDirectory(smokeDir);
                             using (var bitmap = new Bitmap(form.Width, form.Height))
                             {
                                 form.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
                                 bitmap.Save(Path.Combine(smokeDir, "operator-console.png"));
                             }
-                            File.WriteAllText(Path.Combine(smokeDir, "result.txt"), "PASS Summon Operator Console UI rendered.\r\n", Encoding.UTF8);
+                            File.WriteAllText(Path.Combine(smokeDir, "result.txt"), "PASS Summon Operator Console UI rendered with demo summon/payment state.\r\n", Encoding.UTF8);
                         }
                         catch (Exception ex)
                         {
