@@ -323,6 +323,7 @@ static void operator_bridge_attach(void)
     g_operator_timer=0u;
     g_operator_last_event_seq=0u;
     g_operator_transport_dropped=0u;
+    if(!g_pid) g_pid=GetCurrentProcessId();
     operator_map_init();
     if(g_operator_map)
         g_operator_timer=SetTimer(NULL,0u,OPERATOR_BRIDGE_POLL_MS,operator_timer_tick);
