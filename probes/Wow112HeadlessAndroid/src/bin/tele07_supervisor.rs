@@ -128,7 +128,9 @@ fn parse_runtime_state(text: &str) -> RuntimeState {
     let mut session = 0u32;
     let mut detail = "waiting for runtime state file".to_string();
     for line in text.lines() {
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         match key.trim() {
             "state" => state = value.trim().to_string(),
             "session" => session = value.trim().parse::<u32>().unwrap_or(0),
@@ -136,7 +138,11 @@ fn parse_runtime_state(text: &str) -> RuntimeState {
             _ => {}
         }
     }
-    RuntimeState { state, session, detail }
+    RuntimeState {
+        state,
+        session,
+        detail,
+    }
 }
 
 fn read_runtime_state(path: &Path) -> RuntimeState {
@@ -257,10 +263,18 @@ fn config_from_args() -> Result<Config, String> {
     let cycles = parse_u32_arg(&args, "--cycles")
         .unwrap_or_else(|| env_u32("WOW112_TELE07_CYCLES", 10))
         .max(1);
-    let ready_timeout_secs = parse_u64_arg(&args, "--ready-timeout-secs")
-        .unwrap_or_else(|| env_u64("WOW112_TELE07_READY_TIMEOUT_SECS", DEFAULT_READY_TIMEOUT_SECS));
-    let cycle_timeout_secs = parse_u64_arg(&args, "--cycle-timeout-secs")
-        .unwrap_or_else(|| env_u64("WOW112_TELE07_CYCLE_TIMEOUT_SECS", DEFAULT_CYCLE_TIMEOUT_SECS));
+    let ready_timeout_secs = parse_u64_arg(&args, "--ready-timeout-secs").unwrap_or_else(|| {
+        env_u64(
+            "WOW112_TELE07_READY_TIMEOUT_SECS",
+            DEFAULT_READY_TIMEOUT_SECS,
+        )
+    });
+    let cycle_timeout_secs = parse_u64_arg(&args, "--cycle-timeout-secs").unwrap_or_else(|| {
+        env_u64(
+            "WOW112_TELE07_CYCLE_TIMEOUT_SECS",
+            DEFAULT_CYCLE_TIMEOUT_SECS,
+        )
+    });
     let stale_secs = parse_u64_arg(&args, "--stale-secs")
         .unwrap_or_else(|| env_u64("WOW112_TELE07_STALE_SECS", DEFAULT_STALE_SECS));
     let restart_budget = parse_u32_arg(&args, "--restart-budget")
@@ -268,15 +282,21 @@ fn config_from_args() -> Result<Config, String> {
     let fault_role = parse_string_arg(&args, "--fault-role")
         .or_else(|| env::var("WOW112_TELE07_FAULT_ROLE").ok())
         .filter(|value| !value.trim().is_empty());
-    let fault_cycle = parse_u32_arg(&args, "--fault-cycle")
-        .or_else(|| env::var("WOW112_TELE07_FAULT_CYCLE").ok().and_then(|v| v.parse::<u32>().ok()));
+    let fault_cycle = parse_u32_arg(&args, "--fault-cycle").or_else(|| {
+        env::var("WOW112_TELE07_FAULT_CYCLE")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+    });
 
     if let Some(role) = fault_role.as_deref() {
         let Some(spec) = role_spec(role) else {
             return Err(format!("invalid --fault-role={role:?}"));
         };
         if spec.kind != RoleKind::Acceptor {
-            return Err("fault injection is restricted to CUSTOMER/SLAVE1/SLAVE2 before active mutation".to_string());
+            return Err(
+                "fault injection is restricted to CUSTOMER/SLAVE1/SLAVE2 before active mutation"
+                    .to_string(),
+            );
         }
     }
 
@@ -327,7 +347,11 @@ fn read_text(path: &Path) -> String {
 }
 
 fn role_has_uncertain_marker(role: &ManagedRole) -> bool {
-    let text = format!("{}\n{}", read_text(&role.stdout_path), read_text(&role.stderr_path));
+    let text = format!(
+        "{}\n{}",
+        read_text(&role.stdout_path),
+        read_text(&role.stderr_path)
+    );
     [
         "TELE06A_CAST_MUTATION_UNCERTAIN",
         "TELE06A_SELECTION_MUTATION_UNCERTAIN",
@@ -359,9 +383,35 @@ fn spawn_role(
     let stem = format!("CYCLE_{cycle:03}_{}_R{restart_index:02}", spec.label);
     let stdout_path = run_dir.join(format!("{stem}.stdout.log"));
     let stderr_path = run_dir.join(format!("{stem}.stderr.log"));
-    let state_path = run_dir.join(format!("STATE_{}_C{cycle:03}_R{restart_index:02}.txt", spec.label));
-    let stdout = File::create(&stdout_path).map_err(|e| format!("create stdout log failed: {e}"))?;
-    let stderr = File::create(&stderr_path).map_err(|e| format!("create stderr log failed: {e}"))?;
+    let state_path = run_dir.join(format!(
+        "STATE_{}_C{cycle:03}_R{restart_index:02}.txt",
+        spec.label
+    ));
+    let stdout =
+        File::create(&stdout_path).map_err(|e| format!("create stdout log failed: {e}"))?;
+    let stderr =
+        File::create(&stderr_path).map_err(|e| format!("create stderr log failed: {e}"))?;
+
+    let customer_account = env::var("WOW112_TELE09_CUSTOMER_ACCOUNT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| CUSTOMER.account.to_string());
+    let customer_character = env::var("WOW112_TELE09_CUSTOMER_CHARACTER")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| CUSTOMER.character.to_string());
+    let effective_account = if spec.label == CUSTOMER.label {
+        customer_account.as_str()
+    } else {
+        spec.account
+    };
+    let effective_character = if spec.label == CUSTOMER.label {
+        customer_character.as_str()
+    } else {
+        spec.character
+    };
 
     let mut command = Command::new(&exe);
     command
@@ -370,8 +420,8 @@ fn spawn_role(
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .env("WOW112_PASSWORD", password)
-        .env("WOW112_ACCOUNT", spec.account)
-        .env("WOW112_CHARACTER", spec.character)
+        .env("WOW112_ACCOUNT", effective_account)
+        .env("WOW112_CHARACTER", effective_character)
         .env("WOW112_REALM_INDEX", "1")
         .env("WOW112_RECONNECT_LIMIT", "60")
         .env("WOW112_RECONNECT_DELAY_MS", "0")
@@ -391,10 +441,14 @@ fn spawn_role(
             }
         }
         RoleKind::Summoner => {
+            let invite_list = format!(
+                "{},{},{}",
+                customer_character, SLAVE1.character, SLAVE2.character
+            );
             command
                 .env("WOW112_TELE_RESET_GROUP", "1")
-                .env("WOW112_TELE_INVITE_LIST", "Smokinpole,Winterone,Wintertwoo")
-                .env("WOW112_RITUAL_TARGET_NAME", "Smokinpole");
+                .env("WOW112_TELE_INVITE_LIST", &invite_list)
+                .env("WOW112_RITUAL_TARGET_NAME", &customer_character);
         }
     }
 
@@ -429,7 +483,10 @@ fn spawn_role(
 fn stop_role(mut role: ManagedRole, log: &mut SupervisorLog) {
     match role.child.try_wait() {
         Ok(Some(status)) => {
-            log.log(&format!("STOP role={} already_exited status={status}", role.spec.label));
+            log.log(&format!(
+                "STOP role={} already_exited status={status}",
+                role.spec.label
+            ));
         }
         _ => {
             let pid = role.child.id();
@@ -476,15 +533,27 @@ fn restart_role_pre_active(
 ) -> Result<(), String> {
     let spec = role_spec(label).ok_or_else(|| format!("unknown role {label}"))?;
     if spec.kind != RoleKind::Acceptor {
-        return Err(format!("unsafe pre-active restart requested for non-acceptor {label}"));
+        return Err(format!(
+            "unsafe pre-active restart requested for non-acceptor {label}"
+        ));
     }
     let count = restart_counts.entry(spec.label.to_string()).or_insert(0);
     if *count >= config.restart_budget {
-        return Err(format!("restart budget exhausted role={} count={} reason={reason}", spec.label, count));
+        return Err(format!(
+            "restart budget exhausted role={} count={} reason={reason}",
+            spec.label, count
+        ));
     }
     *count += 1;
-    write_supervisor_state(run_dir, "RECOVERING", &format!("role={} reason={reason}", spec.label));
-    log.log(&format!("RECOVER role={} action=restart_only_this_role reason={reason} restart={}", spec.label, *count));
+    write_supervisor_state(
+        run_dir,
+        "RECOVERING",
+        &format!("role={} reason={reason}", spec.label),
+    );
+    log.log(&format!(
+        "RECOVER role={} action=restart_only_this_role reason={reason} restart={}",
+        spec.label, *count
+    ));
     if let Some(old) = managed.remove(spec.label) {
         stop_role(old, log);
     }
@@ -522,12 +591,18 @@ fn wait_for_acceptors_ready(
             match role.child.try_wait() {
                 Ok(Some(status)) => {
                     all_ready = false;
-                    restart_request = Some((spec.label.to_string(), format!("process exited status={status}")));
+                    restart_request = Some((
+                        spec.label.to_string(),
+                        format!("process exited status={status}"),
+                    ));
                     break;
                 }
                 Err(error) => {
                     all_ready = false;
-                    restart_request = Some((spec.label.to_string(), format!("process status error={error}")));
+                    restart_request = Some((
+                        spec.label.to_string(),
+                        format!("process status error={error}"),
+                    ));
                     break;
                 }
                 Ok(None) => {}
@@ -540,7 +615,11 @@ fn wait_for_acceptors_ready(
                 all_ready = false;
                 restart_request = Some((
                     spec.label.to_string(),
-                    format!("stale control-plane state={} for {:?}", state.state, role.last_progress.elapsed()),
+                    format!(
+                        "stale control-plane state={} for {:?}",
+                        state.state,
+                        role.last_progress.elapsed()
+                    ),
                 ));
                 break;
             }
@@ -599,51 +678,105 @@ fn monitor_active_cycle(
 
     loop {
         if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
-            return CycleVerdict { code: "SHUTDOWN".to_string(), detail: "shutdown requested during active cycle".to_string() };
+            return CycleVerdict {
+                code: "SHUTDOWN".to_string(),
+                detail: "shutdown requested during active cycle".to_string(),
+            };
         }
         if Instant::now() >= deadline {
-            return CycleVerdict { code: "FAIL_CYCLE_TIMEOUT".to_string(), detail: "active cycle deadline exceeded".to_string() };
+            return CycleVerdict {
+                code: "FAIL_CYCLE_TIMEOUT".to_string(),
+                detail: "active cycle deadline exceeded".to_string(),
+            };
         }
 
         for label in ["CUSTOMER", "SLAVE1", "SLAVE2", "SUMMONER"] {
             let Some(role) = managed.get_mut(label) else {
-                return CycleVerdict { code: "FAIL_ACTIVE_ROLE_MISSING".to_string(), detail: format!("role missing: {label}") };
+                return CycleVerdict {
+                    code: "FAIL_ACTIVE_ROLE_MISSING".to_string(),
+                    detail: format!("role missing: {label}"),
+                };
             };
             match role.child.try_wait() {
                 Ok(Some(status)) => {
-                    return CycleVerdict { code: "FAIL_ACTIVE_ROLE_EXITED".to_string(), detail: format!("role={label} exited status={status}; active phase never auto-restarts") };
+                    return CycleVerdict {
+                        code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
+                        detail: format!(
+                            "role={label} exited status={status}; active phase never auto-restarts"
+                        ),
+                    };
                 }
                 Err(error) => {
-                    return CycleVerdict { code: "FAIL_ACTIVE_ROLE_EXITED".to_string(), detail: format!("role={label} status error={error}; active phase never auto-restarts") };
+                    return CycleVerdict {
+                        code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
+                        detail: format!(
+                            "role={label} status error={error}; active phase never auto-restarts"
+                        ),
+                    };
                 }
                 Ok(None) => {}
             }
             let state = observe_role(role, log);
             if role_has_uncertain_marker(role) || is_acceptor_uncertain_state(&state.state) {
-                return CycleVerdict { code: "FAIL_MUTATION_UNCERTAIN".to_string(), detail: format!("role={label} state={} detail={}", state.state, state.detail) };
+                return CycleVerdict {
+                    code: "FAIL_MUTATION_UNCERTAIN".to_string(),
+                    detail: format!("role={label} state={} detail={}", state.state, state.detail),
+                };
             }
             if role.last_progress.elapsed() >= config.stale_timeout {
-                return CycleVerdict { code: "FAIL_ACTIVE_STALE".to_string(), detail: format!("role={label} state={} stale={:?}; active phase never auto-restarts", state.state, role.last_progress.elapsed()) };
+                return CycleVerdict {
+                    code: "FAIL_ACTIVE_STALE".to_string(),
+                    detail: format!(
+                        "role={label} state={} stale={:?}; active phase never auto-restarts",
+                        state.state,
+                        role.last_progress.elapsed()
+                    ),
+                };
             }
         }
 
-        let summoner_state = managed.get("SUMMONER").map(|r| read_runtime_state(&r.state_path)).unwrap_or_else(|| RuntimeState::connecting("missing summoner"));
+        let summoner_state = managed
+            .get("SUMMONER")
+            .map(|r| read_runtime_state(&r.state_path))
+            .unwrap_or_else(|| RuntimeState::connecting("missing summoner"));
         if summoner_state.state == "FAIL_SERVER_REJECT" {
-            return CycleVerdict { code: "FAIL_SERVER_REJECT".to_string(), detail: summoner_state.detail };
+            return CycleVerdict {
+                code: "FAIL_SERVER_REJECT".to_string(),
+                detail: summoner_state.detail,
+            };
         }
         if summoner_state.state == "PASS_RITUAL_STARTED" && ritual_started_at.is_none() {
             ritual_started_at = Some(Instant::now());
-            write_supervisor_state(run_dir, "HEALTHY", "Ritual 698 started; waiting for portal completion");
-            log.log(&format!("CHECKPOINT PASS_RITUAL_STARTED detail={}", summoner_state.detail));
+            write_supervisor_state(
+                run_dir,
+                "HEALTHY",
+                "Ritual 698 started; waiting for portal completion",
+            );
+            log.log(&format!(
+                "CHECKPOINT PASS_RITUAL_STARTED detail={}",
+                summoner_state.detail
+            ));
         }
 
-        let customer = managed.get("CUSTOMER").map(|r| read_runtime_state(&r.state_path)).unwrap_or_else(|| RuntimeState::connecting("missing customer"));
-        let slave1 = managed.get("SLAVE1").map(|r| read_runtime_state(&r.state_path)).unwrap_or_else(|| RuntimeState::connecting("missing slave1"));
-        let slave2 = managed.get("SLAVE2").map(|r| read_runtime_state(&r.state_path)).unwrap_or_else(|| RuntimeState::connecting("missing slave2"));
+        let customer = managed
+            .get("CUSTOMER")
+            .map(|r| read_runtime_state(&r.state_path))
+            .unwrap_or_else(|| RuntimeState::connecting("missing customer"));
+        let slave1 = managed
+            .get("SLAVE1")
+            .map(|r| read_runtime_state(&r.state_path))
+            .unwrap_or_else(|| RuntimeState::connecting("missing slave1"));
+        let slave2 = managed
+            .get("SLAVE2")
+            .map(|r| read_runtime_state(&r.state_path))
+            .unwrap_or_else(|| RuntimeState::connecting("missing slave2"));
 
         for (label, state) in [("SLAVE1", &slave1), ("SLAVE2", &slave2)] {
             if is_acceptor_terminal_failure(&state.state) {
-                return CycleVerdict { code: state.state.clone(), detail: format!("{label}: {}", state.detail) };
+                return CycleVerdict {
+                    code: state.state.clone(),
+                    detail: format!("{label}: {}", state.detail),
+                };
             }
         }
 
@@ -659,12 +792,28 @@ fn monitor_active_cycle(
 
         if let Some(started) = ritual_started_at {
             if started.elapsed() >= Duration::from_secs(PORTAL_TIMEOUT_SECS) {
-                let (code, detail) = if slave1.state != "PORTAL_USE_SENT" || slave2.state != "PORTAL_USE_SENT" {
-                    ("FAIL_PORTAL_TIMEOUT", format!("45s after ritual start SLAVE1={} SLAVE2={}", slave1.state, slave2.state))
-                } else {
-                    ("FAIL_COMPLETION_TIMEOUT", format!("portal uses sent but CUSTOMER={} without 0x02AB", customer.state))
+                let (code, detail) =
+                    if slave1.state != "PORTAL_USE_SENT" || slave2.state != "PORTAL_USE_SENT" {
+                        (
+                            "FAIL_PORTAL_TIMEOUT",
+                            format!(
+                                "45s after ritual start SLAVE1={} SLAVE2={}",
+                                slave1.state, slave2.state
+                            ),
+                        )
+                    } else {
+                        (
+                            "FAIL_COMPLETION_TIMEOUT",
+                            format!(
+                                "portal uses sent but CUSTOMER={} without 0x02AB",
+                                customer.state
+                            ),
+                        )
+                    };
+                return CycleVerdict {
+                    code: code.to_string(),
+                    detail,
                 };
-                return CycleVerdict { code: code.to_string(), detail };
             }
         }
         thread::sleep(Duration::from_millis(POLL_MS));
@@ -674,15 +823,24 @@ fn monitor_active_cycle(
 fn append_cycle_result(run_dir: &Path, cycle: u32, verdict: &CycleVerdict) {
     let path = run_dir.join("CYCLE_RESULTS.txt");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "cycle={cycle} result={} detail={}", verdict.code, verdict.detail.replace('\n', " "));
+        let _ = writeln!(
+            file,
+            "cycle={cycle} result={} detail={}",
+            verdict.code,
+            verdict.detail.replace('\n', " ")
+        );
     }
 }
 
 fn run_service(config: Config) -> Result<i32, String> {
     install_shutdown_handler();
     let exe_path = env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
-    let root = exe_path.parent().ok_or_else(|| "supervisor executable has no parent directory".to_string())?.to_path_buf();
-    let password = env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let root = exe_path
+        .parent()
+        .ok_or_else(|| "supervisor executable has no parent directory".to_string())?
+        .to_path_buf();
+    let password =
+        env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
     if password.is_empty() {
         return Err("WOW112_PASSWORD cannot be empty".to_string());
     }
@@ -694,9 +852,18 @@ fn run_service(config: Config) -> Result<i32, String> {
 
     let run_dir = env::var("WOW112_TELE07_RUN_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| root.join("results").join(format!("TELE07_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())));
+        .unwrap_or_else(|_| {
+            root.join("results").join(format!(
+                "TELE07_{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ))
+        });
     fs::create_dir_all(&run_dir).map_err(|e| format!("create run directory failed: {e}"))?;
-    let mut log = SupervisorLog::new(&run_dir.join("SUPERVISOR.log")).map_err(|e| format!("open supervisor log failed: {e}"))?;
+    let mut log = SupervisorLog::new(&run_dir.join("SUPERVISOR.log"))
+        .map_err(|e| format!("open supervisor log failed: {e}"))?;
     log.log(&format!("TELE07 START cycles={} ready_timeout={:?} cycle_timeout={:?} stale_timeout={:?} restart_budget={} fault_role={:?} fault_cycle={:?}",
         config.cycles, config.ready_timeout, config.cycle_timeout, config.stale_timeout, config.restart_budget, config.fault_role, config.fault_cycle));
     log.log("BASELINE TELE06C V1.6 immutable; child mutation guards are never reset in-process");
@@ -710,7 +877,11 @@ fn run_service(config: Config) -> Result<i32, String> {
         if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
             break;
         }
-        write_supervisor_state(&run_dir, "BOOTING", &format!("cycle={cycle} arming fresh one-shot child guards"));
+        write_supervisor_state(
+            &run_dir,
+            "BOOTING",
+            &format!("cycle={cycle} arming fresh one-shot child guards"),
+        );
         log.log(&format!("CYCLE_START cycle={cycle}/{}", config.cycles));
         let mut restart_counts: HashMap<String, u32> = HashMap::new();
 
@@ -730,12 +901,25 @@ fn run_service(config: Config) -> Result<i32, String> {
             &config,
             &mut log,
         ) {
-            let verdict = CycleVerdict { code: "FAIL_READY_RECOVERY".to_string(), detail: error };
+            let verdict = CycleVerdict {
+                code: "FAIL_READY_RECOVERY".to_string(),
+                detail: error,
+            };
             append_cycle_result(&run_dir, cycle, &verdict);
             write_supervisor_state(&run_dir, "DEGRADED", &verdict.detail);
-            log.log(&format!("CYCLE_FAIL cycle={cycle} code={} detail={}", verdict.code, verdict.detail));
+            log.log(&format!(
+                "CYCLE_FAIL cycle={cycle} code={} detail={}",
+                verdict.code, verdict.detail
+            ));
             stop_all(&mut managed, &mut log);
-            write_summary(&run_dir, &config, total_pass, total_restarts + restart_counts.values().sum::<u32>(), &verdict.code, &verdict.detail);
+            write_summary(
+                &run_dir,
+                &config,
+                total_pass,
+                total_restarts + restart_counts.values().sum::<u32>(),
+                &verdict.code,
+                &verdict.detail,
+            );
             return Ok(2);
         }
 
@@ -773,27 +957,49 @@ fn run_service(config: Config) -> Result<i32, String> {
         }
 
         total_restarts += restart_counts.values().sum::<u32>();
-        write_supervisor_state(&run_dir, "HEALTHY", &format!("cycle={cycle} starting summoner after stable 3/3 READY"));
+        write_supervisor_state(
+            &run_dir,
+            "HEALTHY",
+            &format!("cycle={cycle} starting summoner after stable 3/3 READY"),
+        );
         let summoner = spawn_role(&root, &run_dir, &password, cycle, SUMMONER, 0, &mut log)?;
         managed.insert(SUMMONER.label.to_string(), summoner);
         let verdict = monitor_active_cycle(&run_dir, &mut managed, &config, &mut log);
         append_cycle_result(&run_dir, cycle, &verdict);
-        log.log(&format!("CYCLE_VERDICT cycle={cycle} code={} detail={}", verdict.code, verdict.detail));
+        log.log(&format!(
+            "CYCLE_VERDICT cycle={cycle} code={} detail={}",
+            verdict.code, verdict.detail
+        ));
 
         if verdict.code == "PASS_RITUAL_COMPLETE" {
             total_pass += 1;
             stop_all(&mut managed, &mut log);
-            write_supervisor_state(&run_dir, "HEALTHY", &format!("cycle={cycle} PASS; recycling child processes for fresh one-shot guards"));
+            write_supervisor_state(
+                &run_dir,
+                "HEALTHY",
+                &format!("cycle={cycle} PASS; recycling child processes for fresh one-shot guards"),
+            );
             thread::sleep(Duration::from_millis(750));
             continue;
         }
 
-        let uncertain = is_uncertain_code(&verdict.code)
-            || managed.values().any(role_has_uncertain_marker);
+        let uncertain =
+            is_uncertain_code(&verdict.code) || managed.values().any(role_has_uncertain_marker);
         stop_all(&mut managed, &mut log);
         let state = if uncertain { "BLOCKED" } else { "DEGRADED" };
-        write_supervisor_state(&run_dir, state, &format!("cycle={cycle} {}: {}", verdict.code, verdict.detail));
-        write_summary(&run_dir, &config, total_pass, total_restarts, &verdict.code, &verdict.detail);
+        write_supervisor_state(
+            &run_dir,
+            state,
+            &format!("cycle={cycle} {}: {}", verdict.code, verdict.detail),
+        );
+        write_summary(
+            &run_dir,
+            &config,
+            total_pass,
+            total_restarts,
+            &verdict.code,
+            &verdict.detail,
+        );
         if uncertain {
             log.log("FAIL_CLOSED active/uncertain outcome: no automatic cycle replay");
             return Ok(3);
@@ -804,19 +1010,43 @@ fn run_service(config: Config) -> Result<i32, String> {
     stop_all(&mut managed, &mut log);
     if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
         write_supervisor_state(&run_dir, "SHUTDOWN", "graceful shutdown requested");
-        write_summary(&run_dir, &config, total_pass, total_restarts, "SHUTDOWN", "operator/console shutdown");
+        write_summary(
+            &run_dir,
+            &config,
+            total_pass,
+            total_restarts,
+            "SHUTDOWN",
+            "operator/console shutdown",
+        );
         log.log("TELE07 SHUTDOWN graceful child cleanup complete");
         return Ok(0);
     }
 
-    let detail = format!("all {} requested cycles completed; pass={} restarts={}", config.cycles, total_pass, total_restarts);
+    let detail = format!(
+        "all {} requested cycles completed; pass={} restarts={}",
+        config.cycles, total_pass, total_restarts
+    );
     write_supervisor_state(&run_dir, "COMPLETE", &detail);
-    write_summary(&run_dir, &config, total_pass, total_restarts, "PASS_TELE07", &detail);
+    write_summary(
+        &run_dir,
+        &config,
+        total_pass,
+        total_restarts,
+        "PASS_TELE07",
+        &detail,
+    );
     log.log(&format!("TELE07 COMPLETE {detail}"));
     Ok(0)
 }
 
-fn write_summary(run_dir: &Path, config: &Config, pass: u32, restarts: u32, result: &str, detail: &str) {
+fn write_summary(
+    run_dir: &Path,
+    config: &Config,
+    pass: u32,
+    restarts: u32,
+    result: &str,
+    detail: &str,
+) {
     let body = format!(
         "result={result}\ndetail={}\nrequested_cycles={}\npassed_cycles={}\nrole_restarts={}\ncore_baseline=TELE06C_V1_6\n",
         detail.replace('\r', " ").replace('\n', " "),
@@ -859,7 +1089,9 @@ mod tests {
 
     #[test]
     fn parses_control_plane_state() {
-        let state = parse_runtime_state("state=AUTO_POSITION_SENT\nsession=8\ndetail=server acceptance unconfirmed\n");
+        let state = parse_runtime_state(
+            "state=AUTO_POSITION_SENT\nsession=8\ndetail=server acceptance unconfirmed\n",
+        );
         assert_eq!(state.state, "AUTO_POSITION_SENT");
         assert_eq!(state.session, 8);
     }
