@@ -29,7 +29,7 @@ namespace WoW112.OperatorConsole
                 ParserDiagnostics();
                 CommandSafety(root);
                 Sanitization();
-                Load(root);
+                Load();
             }
             finally { try { Directory.Delete(root, true); } catch { } }
             Console.WriteLine(failed == 0 ? "ALL OPERATOR CONSOLE TESTS PASS" : (failed + " TEST(S) FAILED"));
@@ -57,7 +57,7 @@ namespace WoW112.OperatorConsole
             {
                 var loaded = reopened.Load(100);
                 Check(loaded.Count == 2, "persistent history survives store reopen");
-                Check(loaded[0].TimestampUtc <= loaded[1].TimestampUtc, "event ordering on reopen");
+                Check(loaded.Count == 2 && loaded[0].TimestampUtc <= loaded[1].TimestampUtc, "event ordering on reopen");
             }
         }
 
@@ -69,6 +69,7 @@ namespace WoW112.OperatorConsole
             state.Apply(new OperatorEvent { EventType = "WhisperReceived", SessionId = "s1", Character = "A" });
             state.Apply(new OperatorEvent { EventType = "WhisperParsed", SessionId = "s1", Character = "A" });
             state.Apply(new OperatorEvent { EventType = "MutationCoordinatorUncertain", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "MutationCoordinatorReleased", SessionId = "s1", Character = "A" });
             var s = state.Sessions().Single();
             var c = state.Counters();
             Check(s.Connected && s.Coordinator == OperatorStatus.Uncertain, "state projector preserves UNCERTAIN hard-stop visibility");
@@ -79,7 +80,12 @@ namespace WoW112.OperatorConsole
         {
             var state = new OperatorStateStore();
             var e = new OperatorEvent { EventType = "WhisperReceived", SessionId = "s1", EventId = "evt-parser" };
-            e.Metadata["parser"] = new Dictionary<string, object> { { "sender", "PlayerX" }, { "raw", "invi hyjal" }, { "normalized", "invi hyjal" }, { "result", "unhandled" }, { "destination", "Hyjal" }, { "intent", "unknown" }, { "keywords", "hyjal" }, { "matched_rule", "" }, { "ignore_reason", "" }, { "reason", "no request verb" }, { "confidence", 0.25 }, { "competition", false }, { "summon_request", false } };
+            e.Metadata["parser"] = new Dictionary<string, object> {
+                { "sender", "PlayerX" }, { "raw", "invi hyjal" }, { "normalized", "invi hyjal" },
+                { "result", "unhandled" }, { "destination", "Hyjal" }, { "intent", "unknown" }, { "keywords", "hyjal" },
+                { "matched_rule", "" }, { "ignore_reason", "" }, { "reason", "no request verb" }, { "confidence", 0.25 },
+                { "competition", false }, { "summon_request", false }
+            };
             state.Apply(e);
             var p = state.ParserFor("evt-parser");
             Check(p != null && p.RawText == "invi hyjal" && p.Destination == "Hyjal" && !p.SummonRequest, "parser diagnostic mapping without semantic rewrite");
@@ -92,10 +98,15 @@ namespace WoW112.OperatorConsole
             using (var bridge = new FileOperatorBridge(dir, bus))
             {
                 bridge.Submit(new OperatorCommand { CommandType = OperatorCommandType.ReplyToWhisper, SessionId = "s1", Player = "PlayerX", Text = "hello" });
-                var line = File.ReadAllText(Path.Combine(dir, "operator-commands.jsonl"));
-                Check(line.Contains("ReplyToWhisper") && line.Contains("PlayerX"), "manual whisper command routing");
+                var line = File.ReadAllText(Path.Combine(dir, "operator-commands.jsonl")).Trim();
+                var decoded = new JavaScriptSerializer().Deserialize<OperatorCommand>(line);
+                Check(decoded != null && decoded.CommandType == OperatorCommandType.ReplyToWhisper && decoded.Player == "PlayerX" && decoded.SessionId == "s1" && decoded.Text == "hello", "manual whisper typed command routing");
             }
-            var forbidden = Enum.GetNames(typeof(OperatorCommandType)).Any(x => x.IndexOf("Buy", StringComparison.OrdinalIgnoreCase) >= 0 || x.IndexOf("Mail", StringComparison.OrdinalIgnoreCase) >= 0 || x.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0 || x.IndexOf("Post", StringComparison.OrdinalIgnoreCase) >= 0);
+            var forbidden = Enum.GetNames(typeof(OperatorCommandType)).Any(x =>
+                x.IndexOf("Buy", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                x.IndexOf("Mail", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                x.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                x.IndexOf("Post", StringComparison.OrdinalIgnoreCase) >= 0);
             Check(!forbidden, "operator command surface contains no economic mutation bypass");
         }
 
@@ -107,12 +118,14 @@ namespace WoW112.OperatorConsole
             Check(Convert.ToString(m["password"]) == "[REDACTED]" && Convert.ToString(m["message"]) == "ok", "metadata key sanitization");
         }
 
-        private static void Load(string root)
+        private static void Load()
         {
             var state = new OperatorStateStore();
             var sw = Stopwatch.StartNew();
-            for (int i = 0; i < 50000; i++) state.Apply(new OperatorEvent { TimestampUtc = DateTime.UtcNow.AddMilliseconds(i), EventType = i % 5 == 0 ? "AHScanStarted" : "Debug", SessionId = "load-" + (i % 8), Character = "Char" + (i % 8), Severity = OperatorSeverity.Info });
-            for (int i = 0; i < 10000; i++) state.Apply(new OperatorEvent { EventType = "WhisperReceived", SessionId = "load-0", Character = "Char0" });
+            for (int i = 0; i < 50000; i++)
+                state.Apply(new OperatorEvent { TimestampUtc = DateTime.UtcNow.AddMilliseconds(i), EventType = i % 5 == 0 ? "AHScanStarted" : "Debug", SessionId = "load-" + (i % 8), Character = "Char" + (i % 8), Severity = OperatorSeverity.Info });
+            for (int i = 0; i < 10000; i++)
+                state.Apply(new OperatorEvent { EventType = "WhisperReceived", SessionId = "load-0", Character = "Char0" });
             sw.Stop();
             Check(state.Sessions().Count == 8, "50k event multi-session projection");
             Check(state.Counters().Total == 10000, "10k whisper projection");
