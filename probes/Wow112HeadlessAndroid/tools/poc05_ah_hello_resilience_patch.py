@@ -22,10 +22,17 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
         return Err("POC-05 has no auctioneer candidates".to_string());
     }
 
-    const HELLO_TIMEOUT_SECS: u64 = 12;
+    const HELLO_TIMEOUT_DEFAULT_SECS: u64 = 20;
+    const HELLO_TIMEOUT_MIN_SECS: u64 = 8;
+    const HELLO_TIMEOUT_MAX_SECS: u64 = 30;
     const HELLO_PACKET_SAFETY_CAP: usize = 4096;
     const HELLO_FALLBACK_AFTER_MS: u128 = 1500;
     const HELLO_RESEND_AFTER_MS: u128 = 5000;
+    let hello_timeout_secs = env::var("WOW112_AH_HELLO_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(HELLO_TIMEOUT_DEFAULT_SECS)
+        .clamp(HELLO_TIMEOUT_MIN_SECS, HELLO_TIMEOUT_MAX_SECS);
 
     let configured = env::var("WOW112_AH_GUID")
         .ok()
@@ -48,12 +55,12 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
     let mut background_packets = 0usize;
 
     println!(
-        "[AH-HELLO-V2] opening auction house guid=0x{first_guid:016X} seeded_candidates={} configured_fallback={} timeout={}s",
+        "[AH-HELLO-V3] opening auction house guid=0x{first_guid:016X} seeded_candidates={} configured_fallback={} timeout={}s",
         discovered.len(),
         configured
             .map(|guid| format!("0x{guid:016X}"))
             .unwrap_or_else(|| "none".to_string()),
-        HELLO_TIMEOUT_SECS
+        hello_timeout_secs
     );
     write_encrypted_raw(
         stream,
@@ -64,7 +71,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
     attempted.insert(first_guid);
 
     while total_packets < HELLO_PACKET_SAFETY_CAP
-        && started.elapsed() < Duration::from_secs(HELLO_TIMEOUT_SECS)
+        && started.elapsed() < Duration::from_secs(hello_timeout_secs)
     {
         let (opcode, payload) = read_encrypted_raw(stream, crypto.decrypter())?;
         total_packets = total_packets.saturating_add(1);
@@ -79,7 +86,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
             let response_guid = u64::from_le_bytes(payload[0..8].try_into().unwrap());
             let auction_house = u32::from_le_bytes(payload[8..12].try_into().unwrap());
             println!(
-                "[AH-HELLO-V2] PASS guid=0x{response_guid:016X} house={auction_house} attempted={} candidates={} elapsed_ms={} total_packets={} meaningful_packets={} background_packets={}",
+                "[AH-HELLO-V3] PASS guid=0x{response_guid:016X} house={auction_house} attempted={} candidates={} elapsed_ms={} total_packets={} meaningful_packets={} background_packets={}",
                 attempted.len(),
                 discovered.len(),
                 started.elapsed().as_millis(),
@@ -102,7 +109,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
             meaningful_packets = meaningful_packets.saturating_add(1);
             if meaningful_packets <= 8 {
                 println!(
-                    "[AH-HELLO-V2-DIAG] wait meaningful={} opcode=0x{opcode:04X} payload={} attempted={} candidates={} elapsed_ms={}",
+                    "[AH-HELLO-V3-DIAG] wait meaningful={} opcode=0x{opcode:04X} payload={} attempted={} candidates={} elapsed_ms={}",
                     meaningful_packets,
                     payload.len(),
                     attempted.len(),
@@ -120,7 +127,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
                 .find(|guid| !attempted.contains(guid))
             {
                 println!(
-                    "[AH-HELLO-V2] fallback auctioneer guid=0x{next_guid:016X} elapsed_ms={elapsed_ms}"
+                    "[AH-HELLO-V3] fallback auctioneer guid=0x{next_guid:016X} elapsed_ms={elapsed_ms}"
                 );
                 write_encrypted_raw(
                     stream,
@@ -134,7 +141,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
 
         if !resent_first && elapsed_ms >= HELLO_RESEND_AFTER_MS {
             println!(
-                "[AH-HELLO-V2] one-shot resend first guid=0x{first_guid:016X} elapsed_ms={elapsed_ms}"
+                "[AH-HELLO-V3] one-shot resend first guid=0x{first_guid:016X} elapsed_ms={elapsed_ms}"
             );
             write_encrypted_raw(
                 stream,
@@ -154,7 +161,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
         total_packets,
         meaningful_packets,
         background_packets,
-        HELLO_TIMEOUT_SECS
+        hello_timeout_secs
     ))
 }
 
@@ -165,8 +172,9 @@ if n != 1:
     raise SystemExit(f'AH hello resilience patch: expected one function replacement, got {n}')
 
 for marker in [
-    '[AH-HELLO-V2]',
-    'HELLO_TIMEOUT_SECS',
+    '[AH-HELLO-V3]',
+    'WOW112_AH_HELLO_TIMEOUT_SECS',
+    'HELLO_TIMEOUT_DEFAULT_SECS',
     'HELLO_PACKET_SAFETY_CAP',
     'SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE',
     'configured_fallback',
@@ -176,4 +184,4 @@ for marker in [
         raise SystemExit('missing marker after patch: ' + marker)
 
 p.write_text(new_s, encoding='utf-8')
-print('[POC05-AH-HELLO-RESILIENCE] PASS')
+print('[POC05-AH-HELLO-RESILIENCE-V3] PASS')
