@@ -1,0 +1,81 @@
+name: TELE10 headless trade payment ledger
+on:
+  push:
+    branches:
+      - 'feature/tele10-headless-trade-payment-ledger-*'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-test-store:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply deterministic stored-source integration
+        shell: pwsh
+        run: |
+          python .github/scripts/tele10_headless_trade_patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Format affected Rust source
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/tele10_trade_payment.rs probes/Wow112HeadlessAndroid/src/tele10_trade_receiver_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_payer_roster_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_payer_driver_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Headless ledger unit and edge tests
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib tele10_trade_payment -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build terminal runtime
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele10_ledger','tele07_supervisor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Stored-source guard
+        shell: pwsh
+        run: |
+          $r = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs -Raw
+          $a = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs -Raw
+          $s = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs -Raw
+          if ($r -notmatch 'tele10_trade_receiver_runtime') { throw 'summoner stored-source hook missing' }
+          if ($a -notmatch 'tele10_payer_driver_runtime') { throw 'payer stored-source hook missing' }
+          if ($s -notmatch 'PASS_TELEPORT_PAYMENT_COMPLETE') { throw 'supervisor payment gate missing' }
+          if (Test-Path src/AddOns/SummonScout/SummonScout_TradePaymentLedger.lua) { throw 'addon payment ledger must not exist on headless branch' }
+      - name: Commit stored-source integration
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add probes/Wow112HeadlessAndroid/src probes/Wow112HeadlessAndroid/src/bin
+          if (git diff --cached --quiet) {
+            'stored source already canonical'
+          } else {
+            git commit -m 'feat(tele10): integrate headless trade payment stored source'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            git push origin HEAD:${{ github.ref_name }}
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Upload terminal binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE10_HEADLESS_TRADE_PAYMENT
+          path: |
+            probes/Wow112HeadlessAndroid/target/release/tele10_ledger.exe
+            probes/Wow112HeadlessAndroid/target/release/tele07_supervisor.exe
+            probes/Wow112HeadlessAndroid/target/release/tele06a_acceptor_runtime.exe
+            probes/Wow112HeadlessAndroid/target/release/tele06a_ritual_runtime.exe
+          if-no-files-found: error
