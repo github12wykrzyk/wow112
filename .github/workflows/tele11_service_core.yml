@@ -1,0 +1,26 @@
+name: TELE11 service core
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/tele11-service-v1]
+    paths:
+      - '.github/workflows/tele11_service_core.yml'
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele11_service_core.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: TELE11 core tests
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml tele11_service_core -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
