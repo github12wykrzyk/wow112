@@ -1,7 +1,7 @@
 {
   "enabled": false,
-  "request_id": "disabled-template",
+  "request_id": "disabled-smoke-20261007-main-v1",
   "target_ref": "main",
   "tier": "cheap",
-  "task": "Disabled template. Future ChatGPT conversations should replace this request on branch claude-requests and set enabled=true with a unique request_id."
+  "task": "Disabled bridge smoke. This must not invoke Claude."
 }
