@@ -12,6 +12,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele10_*.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs'
       - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
 permissions:
   contents: read
@@ -29,8 +30,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build ledger CLI
+      - name: Build exact stored runtime
         shell: pwsh
         run: |
-          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele10_ledger
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($bin in @('tele10_ledger','tele06a_ritual_runtime')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
