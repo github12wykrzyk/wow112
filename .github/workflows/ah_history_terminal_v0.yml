@@ -1,15 +1,17 @@
 name: AH history terminal V0 offline validation
 on:
   push:
-    branches: [dev/windows-ah-canonical]
+    branches: [dev/windows-ah-canonical, feature/ah-history-shadow-canonical]
     paths:
       - 'src/AhHistoryTerminal/**'
+      - 'probes/Wow112HeadlessAndroid/tools/poc08_history_shadow_capture_patch.py'
       - '.github/workflows/ah_history_terminal_v0.yml'
       - 'probes/Wow112HeadlessAndroid/src/auth.rs'
       - 'probes/Wow112HeadlessAndroid/src/wire_build.rs'
       - 'probes/Wow112HeadlessAndroid/src/world.rs'
       - 'probes/Wow112HeadlessAndroid/src/world_poc05.rs'
       - 'probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
+      - 'probes/Wow112HeadlessAndroid/src/world_poc07.rs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -43,6 +45,14 @@ jobs:
         run: python src/AhHistoryTerminal/test_autonomous.py src/AhHistoryTerminal/test-results
       - name: Verify immutable archive lifecycle
         run: python src/AhHistoryTerminal/test_github_archive.py
+      - name: Verify shared shadow history, PIT material view and storage isolation
+        run: python src/AhHistoryTerminal/test_shadow_history.py
+      - name: Verify calibrated V2 churn admission and reconciled PIT view
+        run: python src/AhHistoryTerminal/test_shadow_quality_v2.py
+      - name: Verify Vendor-DE terminal spool bridge
+        run: python src/AhHistoryTerminal/test_terminal_spool.py
+      - name: Verify Rust capture hook against shared AH request source
+        run: python src/AhHistoryTerminal/test_rust_shadow_patch.py
       - name: Upload validation report
         if: success()
         uses: actions/upload-artifact@v4

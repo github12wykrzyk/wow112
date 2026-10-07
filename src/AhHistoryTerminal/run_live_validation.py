@@ -22,7 +22,7 @@ def main():
             report["failure_reason"]="MISSING_REPOSITORY_SECRET_WOW112_PASSWORD";return
         host="play.octowow.st"
         try:
-            infos=socket.getaddrinfo(host,3724,type=socket.SOCK_STREAM)
+            socket.getaddrinfo(host,3724,type=socket.SOCK_STREAM)
             report["checks"]["auth_dns"]="PASS"
         except OSError:
             report["failure_reason"]="AUTH_DNS_UNAVAILABLE";return
@@ -46,25 +46,29 @@ def main():
             report.update(live_scan="FAIL",failure_reason="LIVE_PROCESS_TIMEOUT");return
         report["seconds"]=round(time.perf_counter()-start,3)
         output=process.stdout+process.stderr
-        # Inspect expected markers in memory; never persist inherited raw auth logs.
         for marker,name in [("[AUTH] SRP6 PASS","srp_auth"),("[WORLD] auth PASS","world_auth"),("SMSG_LOGIN_VERIFY_WORLD PASS","character_login"),("MSG_AUCTION_HELLO PASS","auction_house_open")]:
             report["checks"][name]="PASS" if marker in output else "NOT_REACHED"
         report["process_exit_code"]=process.returncode
         if process.returncode:
-            if report["checks"]["character_login"]=="PASS":
-                error_lines=[line for line in process.stderr.splitlines() if line.startswith("[AH-HISTORY] ERROR: ")]
-                if error_lines:
-                    detail=error_lines[-1][len("[AH-HISTORY] ERROR: "):][:512]
-                    # Only the terminal's final post-login error, no raw packet/auth logs.
-                    for secret_value in (password,password.upper(),password.lower()):
-                        if secret_value:detail=re.sub(re.escape(secret_value),"MASKED",detail,flags=re.IGNORECASE)
-                    report["terminal_error_after_login"]=re.sub(r"[^a-zA-Z0-9 _:=.()/,-]","",detail)
-            reasons=[("world auth rejected","WORLD_AUTH_REJECTED"),("auth connect failed","AUTH_CONNECT_FAILED"),("account has no characters","NO_CHARACTERS"),("character not found","CHARACTER_NOT_FOUND"),("invalid password","PASSWORD_FORMAT_INVALID"),("invalid auction tuple","INVALID_AUCTION_TUPLE"),("auction payload length mismatch","AUCTION_PAYLOAD_LENGTH_MISMATCH"),("not return MSG_AUCTION_HELLO","AUCTION_HOUSE_NOT_OPENED"),("truncated at page limit","SCAN_PAGE_LIMIT"),("world connect failed","WORLD_CONNECT_FAILED")]
-            report["failure_reason"]=next((reason for marker,reason in reasons if marker in output),"TERMINAL_FAILED_SEE_REACHED_STAGES")
+            error_lines=[line for line in process.stderr.splitlines() if line.startswith("[AH-HISTORY] ERROR: ")]
+            report["terminal_error_line_count"]=len(error_lines)
+            report["stderr_bytes"]=len(process.stderr.encode("utf-8","replace"))
+            if error_lines:
+                detail=error_lines[-1][len("[AH-HISTORY] ERROR: "):][:512]
+                for secret_value in (password,password.upper(),password.lower()):
+                    if secret_value:detail=re.sub(re.escape(secret_value),"MASKED",detail,flags=re.IGNORECASE)
+                detail=re.sub(r"[0-9a-fA-F]{16,}","HEX",detail)
+                safe_detail=re.sub(r"[^a-zA-Z0-9 _:=.()/,-]","",detail)
+                report["terminal_error"] = safe_detail
+            reasons=[("world auth rejected","WORLD_AUTH_REJECTED"),("auth connect failed","AUTH_CONNECT_FAILED"),("account has no characters","NO_CHARACTERS"),("character not found","CHARACTER_NOT_FOUND"),("invalid password","PASSWORD_FORMAT_INVALID"),("invalid auction tuple","INVALID_AUCTION_TUPLE"),("auction payload length mismatch","AUCTION_PAYLOAD_LENGTH_MISMATCH"),("not return MSG_AUCTION_HELLO","AUCTION_HOUSE_NOT_OPENED"),("truncated at page limit","SCAN_PAGE_LIMIT"),("world connect failed","WORLD_CONNECT_FAILED"),("already logged","ALREADY_LOGGED_IN"),("missing WOW112_","RUNTIME_CONFIG_MISSING")]
+            report["failure_reason"]=next((reason for marker,reason in reasons if marker.lower() in output.lower()),"TERMINAL_FAILED_SEE_REACHED_STAGES")
             report["live_scan"]="FAIL"
         captures=list((root/"capture").glob("*.ndjson"))
+        report["capture_count"]=len(captures)
         if len(captures)!=1:
-            report.update(live_scan="FAIL",failure_reason="CAPTURE_COUNT_MISMATCH");return
+            report["live_scan"]="FAIL"
+            report.setdefault("failure_reason","CAPTURE_COUNT_MISMATCH")
+            return
         events=w.read_segment(captures[0])
         report["pagination"]=w.pagination_metrics(events)
         report["owner_token_scope"]="scan_local"
@@ -73,7 +77,6 @@ def main():
         db=w.connect(root/"history.sqlite")
         result=w.ingest_events(db,events)
         report.update(live_scan="PASS" if process.returncode==0 else "FAIL",records=result["inserted"],quality=result["quality"],quality_reasons=result["reasons"],pages=events[-1]["pages"],status=events[-1]["status"])
-        # Actual market namespace remains provisional until realm/pool metadata is reconciled.
         report["market_namespace"]="provisional_live_test"
         report["checks"]["sqlite_import"]="PASS"
         duplicate=w.ingest_events(db,events)
@@ -94,14 +97,11 @@ def main():
         report["gzip_bytes"]=(bundle/"events.ndjson.gz").stat().st_size
         restored.close();db.close();code=0 if process.returncode==0 else 1
     except Exception as e:
-        # Only error class is emitted. Exception text may originate in auth diagnostics.
         report.update(live_scan="FAIL",failure_reason="HARNESS_ERROR",error_class=type(e).__name__)
     finally:
         if report["live_scan"]=="RUNNING" and code!=0:
             report["live_scan"]="FAIL"
             report.setdefault("failure_reason","PROCESS_INTERRUPTED")
-        # Timeout/hard kill leaves a .partial; retain valid prefix as aborted data.
-        # Ordinary terminal failures already finish an aborted segment via Drop.
         if "bundle_id" not in report:
             try:
                 partials=list((root/"capture").glob("*.partial"))

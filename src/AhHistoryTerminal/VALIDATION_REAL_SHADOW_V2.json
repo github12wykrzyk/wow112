@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evidence": "immutable_live_bundle_replay",
+  "source_live_commit": "2b5c20ee55ee6a4cc1e015e95cb5362d7ff70d4f",
+  "bundle_id": "a38e53314bd11490cd5a80ac7be607f97f8a8490117f78b8fbffe57e349e8631",
+  "raw_market_id": "live-test:octowow:realm-index1:pool-unverified:epoch-unspecified",
+  "canonical_market_id": "market-v2:octowow:realm=0:ah=1:epoch=baseline-2026-10-07",
+  "identity": {
+    "server_id": "octowow",
+    "realm_id": "0",
+    "ah_pool_id": "1",
+    "market_epoch": "baseline-2026-10-07"
+  },
+  "v0": {
+    "quality": "diagnostic_only",
+    "reasons": [
+      "unique_total_mismatch",
+      "unverified_market_identity"
+    ]
+  },
+  "v2": {
+    "quality_rule_version": "ah-quality-v2-live-churn-calibrated",
+    "eligible": true,
+    "exclusion_reasons": [],
+    "metrics": {
+      "page_count": 1158,
+      "observations": 57865,
+      "unique_auction_ids": 57332,
+      "duplicate_observations": 533,
+      "conflicting_identity_observations": 0,
+      "server_total_first": 57877,
+      "server_total_last": 57865,
+      "server_total_min": 57862,
+      "server_total_max": 57979,
+      "unique_minus_last_total": -533,
+      "last_page_records": 15,
+      "duration_ms": 332616,
+      "duplicate_ratio": 0.00921109,
+      "server_total_drift_ratio": 0.00201797,
+      "unique_total_gap_ratio": 0.00921109,
+      "observation_total_gap_ratio": 0.0,
+      "quality_rule_version": "ah-quality-v2-live-churn-calibrated",
+      "v0_quality": "diagnostic_only",
+      "v0_reasons": [
+        "unique_total_mismatch",
+        "unverified_market_identity"
+      ]
+    },
+    "material_view_version": "de-material-history-v2-reconciled",
+    "material_view_items": 5350,
+    "view_id": "17592f5b8cb6a2fa1c582907d2b54882539c86644c2ded42755a1a9ba2a7e2ac",
+    "buy_decision_changed": 0
+  },
+  "safety": {
+    "immutable_capture_rewritten": false,
+    "v0_quality_mutated": false,
+    "history_can_authorize_buy": false,
+    "future_observations_allowed": false
+  }
+}

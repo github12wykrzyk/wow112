@@ -1,0 +1,47 @@
+name: AH history V2 archive replay
+
+on:
+  push:
+    branches: [feature/ah-history-shadow-canonical, dev/windows-ah-canonical]
+    paths:
+      - 'src/AhHistoryTerminal/shadow_quality_v2.py'
+      - 'src/AhHistoryTerminal/reconcile_archive_v2.py'
+      - 'src/AhHistoryTerminal/github_archive.py'
+      - 'src/AhHistoryTerminal/history_worker.py'
+      - '.github/workflows/ah_history_v2_archive_replay.yml'
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    if: ${{ github.event_name != 'release' || startsWith(github.event.release.tag_name, 'ah-history-v1-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore all immutable AH bundles and reconcile V2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python src/AhHistoryTerminal/reconcile_archive_v2.py
+          src/AhHistoryTerminal/archive-v2.sqlite
+          src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          --repository github12wykrzyk/wow112
+          --server-id octowow
+          --realm-id 0
+          --ah-pool-id 1
+          --market-epoch baseline-2026-10-07
+      - name: Upload cumulative V2 report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ah-history-v2-archive-${{ github.run_id }}
+          path: src/AhHistoryTerminal/ARCHIVE_V2_REPORT.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,163 @@
+name: Publish WoW112 AH DE Latest Release
+
+on:
+  push:
+    branches: [dev/windows-ah-de-liquidation-v3]
+    paths:
+      - 'packaging/ah_latest/**'
+      - '.github/workflows/publish_ah_de_latest_release.yml'
+  workflow_run:
+    workflows: ['WoW112 AH DE Liquidation V3.1 Windows']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    if: >-
+      ${{
+        github.event_name != 'workflow_run' ||
+        (github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.head_branch == 'dev/windows-ah-de-liquidation-v3')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release packaging source
+        uses: actions/checkout@v5
+
+      - name: Resolve latest successful DE build
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(gh api "/repos/$REPO/actions/workflows/build_windows_ah_de_liquidation_v3.yml/runs?branch=dev/windows-ah-de-liquidation-v3&status=success&per_page=10" --jq '.workflow_runs[0].id')
+          HEAD_SHA=$(gh api "/repos/$REPO/actions/runs/$RUN_ID" --jq '.head_sha')
+          ART_NAME=$(gh api "/repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | select(.name | startswith("WoW112-AH-DE-LIQUIDATION-V31-WINDOWS-")) | .name' | head -n1)
+          if [[ -z "$RUN_ID" || -z "$ART_NAME" ]]; then
+            echo 'No usable latest DE artifact found.' >&2
+            exit 2
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ART_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved run=$RUN_ID sha=$HEAD_SHA artifact=$ART_NAME"
+
+      - name: Download latest DE artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
+          ART_NAME: ${{ steps.resolve.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          gh run download "$RUN_ID" --repo "$REPO" --name "$ART_NAME" --dir payload
+          test -n "$(find payload -type f -name '*.exe' -print -quit)"
+
+      - name: Build release-only DE plus launcher bundle
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+          ART_NAME: ${{ steps.resolve.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          for p in \
+            packaging/ah_latest/launcher/START_AH.bat \
+            packaging/ah_latest/launcher/_launcher/START_AH.ps1 \
+            packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1 \
+            packaging/ah_latest/START_AH_LATEST.bat \
+            packaging/ah_latest/bootstrap_latest.ps1; do
+            test -s "$p" || { echo "missing release packaging file: $p" >&2; exit 3; }
+          done
+
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          payload=Path('payload')
+          out=Path('WoW112_DE_LATEST.zip')
+          extras={
+              Path('packaging/ah_latest/launcher/START_AH.bat'): 'launcher/START_AH.bat',
+              Path('packaging/ah_latest/launcher/_launcher/START_AH.ps1'): 'launcher/_launcher/START_AH.ps1',
+              Path('packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1'): 'launcher/_launcher/RUN_DE_LAB.ps1',
+              Path('packaging/ah_latest/START_AH_LATEST.bat'): 'bootstrap/START_AH_LATEST.bat',
+              Path('packaging/ah_latest/bootstrap_latest.ps1'): 'bootstrap/bootstrap_latest.ps1',
+          }
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(payload.rglob('*')):
+                  if p.is_file():
+                      z.write(p,p.relative_to(payload).as_posix())
+              for src,arc in extras.items():
+                  z.write(src,arc)
+          with zipfile.ZipFile(out,'r') as z:
+              names=set(z.namelist())
+              required=set(extras.values())
+              missing=sorted(required-names)
+              if missing:
+                  raise SystemExit('release launcher bundle missing: '+','.join(missing))
+          print('RELEASE_LAUNCHER_BUNDLE=PASS')
+          PY
+
+          cp packaging/ah_latest/bootstrap_latest.ps1 WoW112_AH_BOOTSTRAP_LATEST.ps1
+          cp packaging/ah_latest/START_AH_LATEST.bat WoW112_AH_START_LATEST.bat
+          BOOT_SHA=$(sha256sum WoW112_AH_BOOTSTRAP_LATEST.ps1 | awk '{print $1}')
+          START_SHA=$(sha256sum WoW112_AH_START_LATEST.bat | awk '{print $1}')
+          printf '%s  %s\n' "$BOOT_SHA" 'WoW112_AH_BOOTSTRAP_LATEST.ps1' > WoW112_AH_BOOTSTRAP_LATEST.sha256
+          printf '%s  %s\n' "$START_SHA" 'WoW112_AH_START_LATEST.bat' > WoW112_AH_START_LATEST.sha256
+
+          ZIP_SHA=$(sha256sum WoW112_DE_LATEST.zip | awk '{print $1}')
+          {
+            echo "CHANNEL=ah-de-latest"
+            echo "RUNTIME_CHANNEL=GITHUB_RELEASE_ONLY"
+            echo "LAUNCHER_BUNDLE=YES"
+            echo "RUN_ID=$RUN_ID"
+            echo "HEAD_SHA=$HEAD_SHA"
+            echo "ARTIFACT_NAME=$ART_NAME"
+            echo "ZIP_SHA256=$ZIP_SHA"
+            echo "BOOTSTRAP_SHA256=$BOOT_SHA"
+            echo "STARTER_SHA256=$START_SHA"
+          } > WoW112_DE_LATEST.txt
+          cat WoW112_DE_LATEST.txt
+
+      - name: Static corporate-channel contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'https?://(raw\.githubusercontent\.com|api\.github\.com)' packaging/ah_latest/START_AH_LATEST.bat packaging/ah_latest/bootstrap_latest.ps1; then
+            echo 'Corporate runtime contract failed: blocked host URL referenced by runtime updater.' >&2
+            exit 10
+          fi
+          grep -q 'releases/download/ah-de-latest' packaging/ah_latest/START_AH_LATEST.bat
+          grep -q 'releases/download/ah-de-latest' packaging/ah_latest/bootstrap_latest.ps1
+          grep -q 'RUNTIME_CHANNEL=GITHUB_RELEASE_ONLY' WoW112_DE_LATEST.txt
+          grep -q 'LAUNCHER_BUNDLE=YES' WoW112_DE_LATEST.txt
+          echo 'CORP_RELEASE_ONLY_CONTRACT=PASS'
+
+      - name: Publish or replace rolling GitHub Release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          ASSETS=(
+            WoW112_DE_LATEST.zip
+            WoW112_DE_LATEST.txt
+            WoW112_AH_BOOTSTRAP_LATEST.ps1
+            WoW112_AH_BOOTSTRAP_LATEST.sha256
+            WoW112_AH_START_LATEST.bat
+            WoW112_AH_START_LATEST.sha256
+          )
+          if gh release view ah-de-latest --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload ah-de-latest "${ASSETS[@]}" --repo "$REPO" --clobber
+          else
+            gh release create ah-de-latest "${ASSETS[@]}" --repo "$REPO" --target "$HEAD_SHA" --title 'WoW112 AH DE Latest' --notes 'Rolling DE Lab build with release-only corporate-friendly bootstrap and launcher bundle.' --prerelease
+          fi

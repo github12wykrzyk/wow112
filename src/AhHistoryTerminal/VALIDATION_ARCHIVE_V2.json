@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "mode": "CUMULATIVE_IMMUTABLE_ARCHIVE_REPLAY_V2",
+  "source_run_id": 37640838494,
+  "archive_restore": {
+    "restored": 3,
+    "duplicate": 0,
+    "incomplete": 0
+  },
+  "canonical_market_id": "market-v2:octowow:realm=0:ah=1:epoch=baseline-2026-10-07",
+  "quality_rule_version": "ah-quality-v2-live-churn-calibrated",
+  "material_view_version": "de-material-history-v2-reconciled",
+  "scans_total": 3,
+  "scans_reconciled": 3,
+  "scans_v2_eligible": 2,
+  "scans_v2_diagnostic": 1,
+  "scans_skipped": 0,
+  "material_view_items": 5440,
+  "view_id": "5bed737448c0a7cf38ff5238e06a155f018b2cd807420b9596407d7a5897b31e",
+  "admissions": [
+    {
+      "scan_id": "1791373823285021800-8744",
+      "status": "aborted",
+      "v2_eligible": false,
+      "page_count": 132,
+      "observations": 6600,
+      "server_total_last": 57454,
+      "duplicate_ratio": 0.00712121,
+      "unique_total_gap_ratio": 0.88594354,
+      "v2_exclusion_reasons": [
+        "not_completed",
+        "observation_total_gap_above_limit",
+        "terminal_page_missing",
+        "unique_total_gap_above_limit",
+        "v0:no_terminal_page",
+        "v0:scan_aborted"
+      ]
+    },
+    {
+      "scan_id": "1791374096233346900-8236",
+      "status": "completed",
+      "v2_eligible": true,
+      "page_count": 1154,
+      "observations": 57656,
+      "unique_auction_ids": 57160,
+      "duplicate_observations": 496,
+      "conflicting_identity_observations": 0,
+      "server_total_min": 57548,
+      "server_total_max": 57700,
+      "duplicate_ratio": 0.00860275,
+      "server_total_drift_ratio": 0.00263432,
+      "unique_total_gap_ratio": 0.00860275,
+      "last_page_records": 6
+    },
+    {
+      "scan_id": "1791381717125322400-9316",
+      "status": "completed",
+      "v2_eligible": true,
+      "page_count": 1158,
+      "observations": 57865,
+      "unique_auction_ids": 57332,
+      "duplicate_observations": 533,
+      "conflicting_identity_observations": 0,
+      "server_total_min": 57862,
+      "server_total_max": 57979,
+      "duplicate_ratio": 0.00921109,
+      "server_total_drift_ratio": 0.00201797,
+      "unique_total_gap_ratio": 0.00921109,
+      "last_page_records": 15
+    }
+  ],
+  "safety": {
+    "live_game_connection": false,
+    "immutable_capture_rewritten": false,
+    "v0_quality_mutated": false,
+    "history_can_authorize_buy": false,
+    "buy_decision_changed": 0
+  }
+}
