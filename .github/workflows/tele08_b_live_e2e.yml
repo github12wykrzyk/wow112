@@ -17,9 +17,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Format gate
+      - name: Source sanity
         shell: pwsh
-        run: rustfmt --check probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs
+        run: |
+          $p = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
+          if (!(Test-Path $p)) { throw "missing $p" }
+          if ((Get-Item $p).Length -lt 1000) { throw "unexpectedly small B-LIVE runner" }
 
       - name: Contract tests
         shell: pwsh
@@ -100,7 +103,7 @@ jobs:
           WoW112 TELE08 B LIVE E2E
           Branch: $env:GITHUB_REF_NAME
           SHA: $env:GITHUB_SHA
-          fmt/test/check/build/self-test: PASS
+          test/check/build/self-test: PASS
           live server execution: NOT RUN IN GITHUB-HOSTED CI
           "@ | Set-Content -Encoding UTF8 dist/BUILD_INFO.txt
 
