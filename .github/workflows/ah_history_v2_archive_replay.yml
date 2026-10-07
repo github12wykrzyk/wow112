@@ -10,12 +10,15 @@ on:
       - 'src/AhHistoryTerminal/history_worker.py'
       - '.github/workflows/ah_history_v2_archive_replay.yml'
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
   replay:
+    if: ${{ github.event_name != 'release' || startsWith(github.event.release.tag_name, 'ah-history-v1-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
