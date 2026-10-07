@@ -12,7 +12,7 @@ $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 $ReleaseBase = 'https://github.com/github12wykrzyk/wow112/releases/download/ah-de-latest'
 $ZipUrl = "$ReleaseBase/WoW112_DE_LATEST.zip"
 $ManifestUrl = "$ReleaseBase/WoW112_DE_LATEST.txt"
-$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/2.1' }
+$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/2.2' }
 
 function Say([string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Text -ForegroundColor $Color
@@ -22,11 +22,9 @@ function Refresh-LiveWrapperHash([string]$Directory, [string]$ExeSha) {
     $patched = 0
     foreach ($file in @(Get-ChildItem -Path $Directory -File -Filter 'RUN_DE_*.ps1' -ErrorAction SilentlyContinue)) {
         $text = Get-Content $file.FullName -Raw
-        $new = [regex]::Replace(
-            $text,
-            "(?m)^\$expectedExeSha='[0-9a-fA-F]{64}'\s*$",
-            "`$expectedExeSha='$ExeSha'"
-        )
+        $pattern = "(?m)^`$expectedExeSha='[0-9a-fA-F]{64}'\s*$"
+        $replacement = "`$expectedExeSha='$ExeSha'"
+        $new = [regex]::Replace($text, $pattern, $replacement)
         if ($new -ne $text) {
             Set-Content -Path $file.FullName -Value $new -Encoding UTF8
             $patched++
