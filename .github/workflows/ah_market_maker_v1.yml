@@ -1,0 +1,95 @@
+name: AH Market Maker V1 Windows x86
+
+on:
+  push:
+    branches: [feature/ah-market-maker-v1]
+    paths:
+      - 'src/AuctionLifecycle/**'
+      - '.github/workflows/ah_market_maker_v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Market-maker policy and integration tests
+        shell: pwsh
+        run: |
+          python -m pip install pyyaml
+          python src/AuctionLifecycle/test_integration.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_policy.rs -o "$env:RUNNER_TEMP/mm-policy-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/mm-policy-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition=2021 --test src/AuctionLifecycle/coordinator.rs -o "$env:RUNNER_TEMP/coordinator-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/coordinator-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Replay authoritative Lifecycle V4 generation and native build
+        shell: pwsh
+        run: |
+          @'
+          import os, subprocess, sys, yaml
+          from pathlib import Path
+          wf=yaml.safe_load(Path('.github/workflows/ah_auction_lifecycle_v1.yml').read_text(encoding='utf-8'))
+          wanted=[
+            'Harden shared BUY primitive and attach best-effort history capture',
+            'Generate DE model base',
+            'Build full DE cache',
+            'Generate F2 risk engine',
+            'Merge unified engine and apply V1 V2 V3 V3.1 V3.2 V4',
+            'Attach Lifecycle to canonical V4 primitives',
+            'Static unified V4 plus shadow-history policy smoke',
+            'Rust check and tests',
+            'Build unified V4 Windows EXE',
+          ]
+          steps={s.get('name'):s for s in wf['jobs']['build']['steps'] if s.get('name')}
+          for name in wanted:
+            step=steps.get(name)
+            if not step or 'run' not in step:
+              raise SystemExit(f'missing authoritative build step: {name}')
+            print(f'\n===== REPLAY: {name} =====', flush=True)
+            r=subprocess.run(['pwsh','-NoProfile','-Command',step['run']],env=os.environ.copy())
+            if r.returncode:
+              raise SystemExit(r.returncode)
+          '@ | Set-Content "$env:RUNNER_TEMP/replay.py" -Encoding utf8
+          python "$env:RUNNER_TEMP/replay.py"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Market-maker static contract smoke
+        shell: pwsh
+        run: |
+          $mm='src/AuctionLifecycle/market_maker.rs'
+          $inv='src/AuctionLifecycle/market_maker_inventory.rs'
+          foreach($m in @('ClearThenRelist','poc07_buy_exact_one(','lifecycle_cancel(','mm_split_all_to_units(','lifecycle_post(','reprice-post-mail')){if(-not(Select-String -Path $mm -Pattern $m -SimpleMatch -Quiet)){throw "market-maker marker missing: $m"}}
+          foreach($m in @('CMSG_SPLIT_ITEM','MM_SPLIT_INTENT','SMSG_ITEM_PUSH_RESULT','mail merged into existing stack')){if(-not(Select-String -Path $inv -Pattern $m -SimpleMatch -Quiet)){throw "inventory marker missing: $m"}}
+          Write-Host 'MARKET_MAKER_STATIC_CONTRACT_PASS'
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $d='dist/ah-market-maker-v1';New-Item -ItemType Directory -Force $d|Out-Null
+          $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
+          Copy-Item $exe "$d/wow112-ah-market-maker-v1.exe"
+          Copy-Item src/AuctionLifecycle/market_maker*.rs $d
+          Copy-Item src/AuctionLifecycle/adapter.rs $d
+          Copy-Item src/AuctionLifecycle/README.md $d
+          "SHA=$env:GITHUB_SHA`nEXE_SHA256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())" | Set-Content "$d/MANIFEST.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-AH-MARKET-MAKER-V1-${{ github.sha }}
+          path: dist/ah-market-maker-v1
+          if-no-files-found: error
+          retention-days: 14
