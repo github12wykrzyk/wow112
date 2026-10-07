@@ -1,0 +1,154 @@
+name: TELE09 parameterize TELE07 customer job
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele09-autonomous-summon-orchestrator-v1
+    paths:
+      - '.github/workflows/tele09_dynamic_customer_supervisor.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  parameterize:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/tele09-autonomous-summon-orchestrator-v1
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Apply exact dynamic-customer source transform
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          from pathlib import Path
+
+          path = Path('probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs')
+          text = path.read_text(encoding='utf-8')
+
+          old_command = '''    let mut command = Command::new(&exe);
+              command
+                  .current_dir(root)
+                  .stdin(Stdio::null())
+                  .stdout(Stdio::from(stdout))
+                  .stderr(Stdio::from(stderr))
+                  .env("WOW112_PASSWORD", password)
+                  .env("WOW112_ACCOUNT", spec.account)
+                  .env("WOW112_CHARACTER", spec.character)
+          '''
+          new_command = '''    let customer_account = env::var("WOW112_TELE09_CUSTOMER_ACCOUNT")
+                  .ok()
+                  .map(|value| value.trim().to_string())
+                  .filter(|value| !value.is_empty())
+                  .unwrap_or_else(|| CUSTOMER.account.to_string());
+              let customer_character = env::var("WOW112_TELE09_CUSTOMER_CHARACTER")
+                  .ok()
+                  .map(|value| value.trim().to_string())
+                  .filter(|value| !value.is_empty())
+                  .unwrap_or_else(|| CUSTOMER.character.to_string());
+              let effective_account = if spec.label == CUSTOMER.label {
+                  customer_account.as_str()
+              } else {
+                  spec.account
+              };
+              let effective_character = if spec.label == CUSTOMER.label {
+                  customer_character.as_str()
+              } else {
+                  spec.character
+              };
+
+              let mut command = Command::new(&exe);
+              command
+                  .current_dir(root)
+                  .stdin(Stdio::null())
+                  .stdout(Stdio::from(stdout))
+                  .stderr(Stdio::from(stderr))
+                  .env("WOW112_PASSWORD", password)
+                  .env("WOW112_ACCOUNT", effective_account)
+                  .env("WOW112_CHARACTER", effective_character)
+          '''
+
+          old_summoner = '''        RoleKind::Summoner => {
+                      command
+                          .env("WOW112_TELE_RESET_GROUP", "1")
+                          .env("WOW112_TELE_INVITE_LIST", "Smokinpole,Winterone,Wintertwoo")
+                          .env("WOW112_RITUAL_TARGET_NAME", "Smokinpole");
+                  }
+          '''
+          new_summoner = '''        RoleKind::Summoner => {
+                      let invite_list = format!(
+                          "{},{},{}",
+                          customer_character, SLAVE1.character, SLAVE2.character
+                      );
+                      command
+                          .env("WOW112_TELE_RESET_GROUP", "1")
+                          .env("WOW112_TELE_INVITE_LIST", &invite_list)
+                          .env("WOW112_RITUAL_TARGET_NAME", &customer_character);
+                  }
+          '''
+
+          if text.count(old_command) != 1:
+              raise SystemExit(f'FAIL command anchor count={text.count(old_command)}')
+          if text.count(old_summoner) != 1:
+              raise SystemExit(f'FAIL summoner anchor count={text.count(old_summoner)}')
+
+          text = text.replace(old_command, new_command, 1)
+          text = text.replace(old_summoner, new_summoner, 1)
+          path.write_text(text, encoding='utf-8')
+          print('TELE09 dynamic customer transform PASS')
+          '@ | Set-Content -Encoding UTF8 $env:RUNNER_TEMP/patch_tele09_customer.py
+          python $env:RUNNER_TEMP/patch_tele09_customer.py
+
+      - name: Canonical rustfmt
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Dynamic-customer marker gate
+        shell: pwsh
+        run: |
+          $src = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs -Raw
+          foreach ($needle in @(
+            'WOW112_TELE09_CUSTOMER_ACCOUNT',
+            'WOW112_TELE09_CUSTOMER_CHARACTER',
+            '.env("WOW112_ACCOUNT", effective_account)',
+            '.env("WOW112_CHARACTER", effective_character)',
+            '.env("WOW112_RITUAL_TARGET_NAME", &customer_character)'
+          )) {
+            if ($src -notmatch [regex]::Escape($needle)) { throw "missing TELE09 supervisor marker: $needle" }
+          }
+          if ($src -match [regex]::Escape('.env("WOW112_RITUAL_TARGET_NAME", "Smokinpole")')) {
+            throw 'hard-coded Smokinpole ritual target survived TELE09 transform'
+          }
+          Write-Host 'TELE09 DYNAMIC CUSTOMER MARKER GATE PASS'
+
+      - name: Supervisor self-test and build
+        shell: pwsh
+        run: |
+          cargo run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Persist validated supervisor source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          if (git diff --cached --quiet) { throw 'no TELE09 supervisor source staged' }
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git commit -m 'feat(tele09): parameterize customer summon job in supervisor'
+          git push origin HEAD:feature/tele09-autonomous-summon-orchestrator-v1
