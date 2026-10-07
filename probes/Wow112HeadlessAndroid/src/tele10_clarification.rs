@@ -90,9 +90,11 @@ impl ClarificationGate {
 
         self.expire_sender(&sender_key, classification.timestamp_ms);
 
-        if classification.intent == WhisperIntent::CompetitionMessage
-            || is_obvious_seller_signal(&classification.normalized_text)
-        {
+        if classification.intent == WhisperIntent::CompetitionMessage {
+            self.pending.remove(&sender_key);
+            return ClarificationDecision::PassThrough;
+        }
+        if is_obvious_seller_signal(&classification.normalized_text) {
             self.pending.remove(&sender_key);
             return ClarificationDecision::Suppressed;
         }
