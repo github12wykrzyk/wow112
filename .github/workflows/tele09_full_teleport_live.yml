@@ -36,11 +36,11 @@ jobs:
           $path = 'probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs'
           $text = Get-Content $path -Raw
           if ($text -notmatch 'mod tele_party_observer;') {
-            $needle = "#[path = `"../wire_build.rs`"]`nmod wire_build;"
+            $pattern = '(?m)^#\[path = "\.\./wire_build\.rs"\]\r?\nmod wire_build;'
             $replacement = "#[path = `"../tele_party_observer.rs`"]`nmod tele_party_observer;`n#[path = `"../wire_build.rs`"]`nmod wire_build;"
-            if (-not $text.Contains($needle)) { throw 'tele09 source anchor not found' }
-            $text = $text.Replace($needle, $replacement)
-            Set-Content -Encoding UTF8 $path $text
+            $updated = [regex]::Replace($text, $pattern, $replacement, 1)
+            if ($updated -eq $text) { throw 'tele09 source anchor not found' }
+            Set-Content -Encoding UTF8 $path $updated
           }
           rustfmt --edition 2021 --config skip_children=true $path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
