@@ -9,3 +9,5 @@ pub mod tele_response_engine;
 mod tele08_bc_adapter_tests;
 #[cfg(test)]
 mod tele08_whisper_parser_tests;
+#[cfg(test)]
+mod tele10_message_audit_tests;
