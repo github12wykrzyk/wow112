@@ -41,6 +41,10 @@ s = replace_once(s,
     '                    tele_trace::trace_packet(role_label, opcode, &payload);\n                    if role == Tele06bRole::Customer {\n                        tele10_payer_observe_packet(opcode, &payload);\n                    }\n\n                    if role == Tele06bRole::Customer && opcode == SMSG_SUMMON_REQUEST_OPCODE {',
     'acceptor roster observer')
 s = replace_once(s,
+    '                            let summoner_guid =\n                                u64::from_le_bytes(payload[0..8].try_into().unwrap());\n                            let area =',
+    '                            let summoner_guid =\n                                u64::from_le_bytes(payload[0..8].try_into().unwrap());\n                            if let Some(pay_target) = tele10_pay_target() {\n                                tele10_cache_named_guid(&pay_target, summoner_guid, "summon_request");\n                            }\n                            let area =',
+    'summon request authoritative payer guid')
+s = replace_once(s,
     '                            println!("[TELE-10-TELEPORT] PASS path=same_map counter={counter} ack_bytes={}", ack.len());\n                        }\n                        continue;',
     '                            println!("[TELE-10-TELEPORT] PASS path=same_map counter={counter} ack_bytes={}", ack.len());\n                        }\n                        tele10_customer_pay_after_teleport(stream, crypto)?;\n                        continue;',
     'same-map payment hook')
