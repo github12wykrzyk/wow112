@@ -19,7 +19,7 @@ namespace WoW112.OperatorConsole
 
         public static int Main()
         {
-            var root = Path.Combine(Path.GetTempPath(), "wow112-operator-tests-" + Guid.NewGuid().ToString("N"));
+            var root = Path.Combine(Path.GetTempPath(), "wow112-summon-operator-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             try
             {
@@ -32,7 +32,7 @@ namespace WoW112.OperatorConsole
                 Load();
             }
             finally { try { Directory.Delete(root, true); } catch { } }
-            Console.WriteLine(failed == 0 ? "ALL OPERATOR CONSOLE TESTS PASS" : (failed + " TEST(S) FAILED"));
+            Console.WriteLine(failed == 0 ? "ALL SUMMON OPERATOR CONSOLE TESTS PASS" : (failed + " TEST(S) FAILED"));
             return failed == 0 ? 0 : 1;
         }
 
@@ -56,7 +56,7 @@ namespace WoW112.OperatorConsole
             using (var reopened = new JsonlOperatorStore(dir, 1024 * 1024, 3))
             {
                 var loaded = reopened.Load(100);
-                Check(loaded.Count == 2, "persistent history survives store reopen");
+                Check(loaded.Count == 2, "persistent summon history survives store reopen");
                 Check(loaded.Count == 2 && loaded[0].TimestampUtc <= loaded[1].TimestampUtc, "event ordering on reopen");
             }
         }
@@ -65,14 +65,17 @@ namespace WoW112.OperatorConsole
         {
             var state = new OperatorStateStore();
             state.Apply(new OperatorEvent { EventType = "SessionStarted", SessionId = "s1", Character = "A" });
-            state.Apply(new OperatorEvent { EventType = "LoginSucceeded", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "CharacterEnteredWorld", SessionId = "s1", Character = "A" });
             state.Apply(new OperatorEvent { EventType = "WhisperReceived", SessionId = "s1", Character = "A" });
             state.Apply(new OperatorEvent { EventType = "WhisperParsed", SessionId = "s1", Character = "A" });
-            state.Apply(new OperatorEvent { EventType = "MutationCoordinatorUncertain", SessionId = "s1", Character = "A" });
-            state.Apply(new OperatorEvent { EventType = "MutationCoordinatorReleased", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "SummonQueued", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "SummonStarted", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "SummonCompleted", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "PaymentExpected", SessionId = "s1", Character = "A" });
+            state.Apply(new OperatorEvent { EventType = "PaymentReceived", SessionId = "s1", Character = "A" });
             var s = state.Sessions().Single();
             var c = state.Counters();
-            Check(s.Connected && s.Coordinator == OperatorStatus.Uncertain, "state projector preserves UNCERTAIN hard-stop visibility");
+            Check(s.Connected && s.Summon == OperatorStatus.Ok && s.Payment == OperatorStatus.Ok && s.SummonQueue == 0, "summon/payment state projection");
             Check(c.Total == 1 && c.Understood == 1, "whisper counters projection");
         }
 
@@ -106,8 +109,9 @@ namespace WoW112.OperatorConsole
                 x.IndexOf("Buy", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 x.IndexOf("Mail", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 x.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                x.IndexOf("Post", StringComparison.OrdinalIgnoreCase) >= 0);
-            Check(!forbidden, "operator command surface contains no economic mutation bypass");
+                x.IndexOf("Post", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                x.IndexOf("Auction", StringComparison.OrdinalIgnoreCase) >= 0);
+            Check(!forbidden, "summon console exposes no AH/mail economic commands");
         }
 
         private static void Sanitization()
@@ -123,7 +127,7 @@ namespace WoW112.OperatorConsole
             var state = new OperatorStateStore();
             var sw = Stopwatch.StartNew();
             for (int i = 0; i < 50000; i++)
-                state.Apply(new OperatorEvent { TimestampUtc = DateTime.UtcNow.AddMilliseconds(i), EventType = i % 5 == 0 ? "AHScanStarted" : "Debug", SessionId = "load-" + (i % 8), Character = "Char" + (i % 8), Severity = OperatorSeverity.Info });
+                state.Apply(new OperatorEvent { TimestampUtc = DateTime.UtcNow.AddMilliseconds(i), EventType = "Debug", SessionId = "load-" + (i % 8), Character = "Char" + (i % 8), Severity = OperatorSeverity.Info });
             for (int i = 0; i < 10000; i++)
                 state.Apply(new OperatorEvent { EventType = "WhisperReceived", SessionId = "load-0", Character = "Char0" });
             sw.Stop();
