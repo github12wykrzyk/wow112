@@ -75,7 +75,7 @@ queue_log_pattern = re.compile(r'(?m)^(\s*)println!\("\[POC08-UNIFIED-MULTI\] QU
 qm = queue_log_pattern.search(s)
 if not qm:
     raise SystemExit('queue limits log: semantic anchor missing')
-new_queue_log = qm.group(1) + 'println!("[POC08-UNIFIED-V4] QUEUE action={:?} eligible={} vendor={} de={} limits_total={} limits_vendor={} limits_de={} max_spend={} order=RISK_ADJUSTED_PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),total_limit,vendor_limit,de_limit,spend_limit);'
+new_queue_log = qm.group(1) + 'println!("[POC08-UNIFIED-V4][POC08-UNIFIED-MULTI] QUEUE action={:?} eligible={} vendor={} de={} limits_total={} limits_vendor={} limits_de={} max_spend={} order=RISK_ADJUSTED_PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),total_limit,vendor_limit,de_limit,spend_limit);'
 s = s[:qm.start()] + new_queue_log + s[qm.end():]
 
 # Replace the complete mutable-buy loop as one semantic unit. Prior V3/V3.1 patches
@@ -108,6 +108,7 @@ s = s[:lm.start()] + new_loop + s[lm.end():]
 
 for marker in [
     'POC08-UNIFIED-V4',
+    'POC08-UNIFIED-MULTI',
     'WOW112_VENDOR_FULL_SCOPE',
     'FULL_AFFORDABLE',
     'WOW112_UNIFIED_VENDOR_MAX_PURCHASES',
