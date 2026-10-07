@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "history": {
+    "directory": "%LOCALAPPDATA%\\WoW112\\OperatorConsole\\history",
+    "format": "jsonl",
+    "rotate_bytes": 16777216,
+    "keep_files": 10
+  },
+  "bridge": {
+    "directory": "%LOCALAPPDATA%\\WoW112\\OperatorConsole\\bridge",
+    "events": "backend-events.jsonl",
+    "commands": "operator-commands.jsonl"
+  },
+  "view": {
+    "default_severity": "INFO",
+    "auto_scroll": true,
+    "max_in_memory_events": 50000,
+    "max_rendered_event_rows": 5000
+  },
+  "security": {
+    "persist_credentials": false,
+    "sanitize_debug_snapshot": true
+  }
+}

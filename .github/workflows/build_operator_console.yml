@@ -1,0 +1,130 @@
+name: Build WoW112 Operator Console V1
+
+on:
+  push:
+    branches:
+      - 'feature/operator-console-v1'
+    paths:
+      - 'tools/operator_console/**'
+      - '.github/workflows/build_operator_console.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-console-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout exact feature SHA
+        uses: actions/checkout@v5
+
+      - name: Verify canonical repository invariants
+        shell: pwsh
+        run: python tools/verify_current.py
+
+      - name: Compile Operator Console x64 and tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist/operator-console | Out-Null
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
+          $vs = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vs) { throw "Visual Studio/MSBuild installation not found" }
+          $csc = Join-Path $vs 'MSBuild\Current\Bin\Roslyn\csc.exe'
+          $ref = "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8"
+          if (-not (Test-Path $csc)) { throw "Roslyn csc.exe not found" }
+          if (-not (Test-Path $ref)) { throw ".NET Framework 4.8 reference assemblies not found" }
+
+          $common = @(
+            "/nologo", "/platform:x64", "/optimize+", "/langversion:latest",
+            "/reference:$ref\mscorlib.dll", "/reference:$ref\System.dll", "/reference:$ref\System.Core.dll",
+            "/reference:$ref\System.Drawing.dll", "/reference:$ref\System.Windows.Forms.dll", "/reference:$ref\System.Web.Extensions.dll"
+          )
+
+          & $csc @common /target:winexe /out:dist/operator-console/WoW112-Operator-Console-V1.exe `
+            tools/operator_console/OperatorCore.cs tools/operator_console/OperatorConsole.cs
+          if ($LASTEXITCODE -ne 0) { throw "Operator Console compile failed" }
+
+          & $csc @common /target:exe /out:dist/operator-console/OperatorConsoleTests.exe /main:WoW112.OperatorConsole.OperatorConsoleTests `
+            tools/operator_console/OperatorCore.cs tools/operator_console/OperatorConsoleTests.cs
+          if ($LASTEXITCODE -ne 0) { throw "Operator Console tests compile failed" }
+
+      - name: Run Operator Core and safety tests
+        shell: pwsh
+        run: |
+          & ./dist/operator-console/OperatorConsoleTests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Operator Console tests failed" }
+
+      - name: Render GUI smoke evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/operator-console/ui-evidence | Out-Null
+          $p = Start-Process -FilePath ./dist/operator-console/WoW112-Operator-Console-V1.exe -ArgumentList '--ui-smoke', 'dist/operator-console/ui-evidence' -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'Operator Console UI smoke timed out' }
+          if ($p.ExitCode -ne 0) {
+            Get-Content dist/operator-console/ui-evidence/failure.txt -ErrorAction SilentlyContinue
+            throw "Operator Console UI smoke failed: $($p.ExitCode)"
+          }
+          Get-Content dist/operator-console/ui-evidence/result.txt
+
+      - name: Verify x64 PE and create SHA manifest
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, json, struct
+          from pathlib import Path
+          exe = Path('dist/operator-console/WoW112-Operator-Console-V1.exe')
+          data = exe.read_bytes()
+          if data[:2] != b'MZ': raise SystemExit('not MZ')
+          pe = struct.unpack_from('<I', data, 0x3C)[0]
+          if data[pe:pe+4] != b'PE\0\0': raise SystemExit('missing PE signature')
+          machine = struct.unpack_from('<H', data, pe + 4)[0]
+          if machine != 0x8664: raise SystemExit(f'expected AMD64 0x8664, got 0x{machine:04X}')
+          meta = {
+              'artifact': 'WoW112-Operator-Console-V1-${{ github.sha }}',
+              'git_sha': '${{ github.sha }}',
+              'base_branch': 'dev/windows-ah-canonical',
+              'exe': exe.name,
+              'sha256': hashlib.sha256(data).hexdigest(),
+              'size': len(data),
+              'pe_machine': '0x8664',
+              'framework': '.NET Framework 4.8',
+              'architecture': 'x64'
+          }
+          Path('dist/operator-console/manifest.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
+          Path('dist/operator-console/SHA256SUMS.txt').write_text(meta['sha256'] + '  ' + exe.name + '\n', encoding='ascii')
+          print(json.dumps(meta, indent=2))
+          '@ | python -
+
+      - name: Copy runtime documentation and config example
+        shell: pwsh
+        run: |
+          Copy-Item tools/operator_console/README.md dist/operator-console/README.md
+          Copy-Item tools/operator_console/ARCHITECTURE.md dist/operator-console/ARCHITECTURE.md
+          Copy-Item tools/operator_console/config.example.json dist/operator-console/config.example.json
+
+      - name: Upload UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Operator-Console-UI-${{ github.sha }}
+          path: dist/operator-console/ui-evidence
+          if-no-files-found: warn
+
+      - name: Remove test executable from delivery package
+        shell: pwsh
+        run: Remove-Item dist/operator-console/OperatorConsoleTests.exe -ErrorAction SilentlyContinue
+
+      - name: Upload Operator Console V1
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Operator-Console-V1-${{ github.sha }}
+          path: dist/operator-console
+          if-no-files-found: error
+          compression-level: 0
