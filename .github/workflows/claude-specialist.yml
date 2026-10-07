@@ -1,0 +1,139 @@
+name: Claude Specialist
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Read-only task for Claude specialist'
+        required: true
+        type: string
+      max_turns:
+        description: 'Maximum Claude turns'
+        required: false
+        default: '6'
+        type: string
+  push:
+    branches:
+      - 'feature/claude-autonomous-v1'
+    paths:
+      - '.github/workflows/claude-specialist.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-specialist-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  specialist:
+    name: Claude read-only specialist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify Claude credential is available
+        shell: bash
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo 'CLAUDE_CODE_OAUTH_TOKEN is missing or unavailable to this workflow.' >&2
+            exit 1
+          fi
+          echo 'Claude OAuth credential is present (value intentionally hidden).'
+
+      - name: Run Claude specialist
+        id: claude
+        uses: anthropics/claude-code-base-action@4541c106b5f267e74536bf5dfaf887c09ae88edf
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: 'false'
+          prompt: |
+            You are a read-only specialist assisting the primary autonomous engineering agent for this repository.
+
+            Repository: ${{ github.repository }}
+            Revision: ${{ github.sha }}
+            Ref: ${{ github.ref }}
+
+            Hard rules:
+            - Read and analyze only. Do not edit, create, delete, commit, push, or mutate repository files.
+            - Follow AGENTS.md and repository-local authority/routing rules.
+            - Prefer exact file/path/line evidence over speculation.
+            - If evidence is insufficient, say what is missing instead of guessing.
+            - Return a compact engineering report with: diagnosis, evidence, recommendation, risks, and tests.
+
+            TASK:
+            ${{ github.event_name == 'workflow_dispatch' && inputs.task || 'AUTH SMOKE: verify you can read this repository and authenticate successfully. Read AGENTS.md and CURRENT.json, make no changes, and finish with the literal marker CLAUDE_AUTH_SMOKE_PASS.' }}
+          claude_args: |
+            --max-turns ${{ github.event_name == 'workflow_dispatch' && inputs.max_turns || '6' }}
+            --permission-mode plan
+            --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell"
+
+      - name: Extract Claude final report
+        if: always() && steps.claude.outputs.execution_file != ''
+        shell: bash
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          CLAUDE_CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+          CLAUDE_SESSION_ID: ${{ steps.claude.outputs.session_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['EXECUTION_FILE'])
+          events = json.loads(path.read_text(encoding='utf-8'))
+          report = ''
+
+          for event in reversed(events):
+              if isinstance(event, dict) and event.get('type') == 'result' and isinstance(event.get('result'), str):
+                  report = event['result']
+                  break
+
+          if not report:
+              for event in reversed(events):
+                  if not isinstance(event, dict) or event.get('type') != 'assistant':
+                      continue
+                  content = ((event.get('message') or {}).get('content') or [])
+                  chunks = [b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text']
+                  report = '\n'.join(x for x in chunks if x)
+                  if report:
+                      break
+
+          if not report:
+              report = 'No final Claude text result was found in the execution log.'
+
+          Path('claude-specialist-report.md').write_text(report + '\n', encoding='utf-8')
+          Path('claude-specialist-meta.json').write_text(json.dumps({
+              'conclusion': os.environ.get('CLAUDE_CONCLUSION', ''),
+              'session_id': os.environ.get('CLAUDE_SESSION_ID', ''),
+              'repository': os.environ.get('GITHUB_REPOSITORY', ''),
+              'sha': os.environ.get('GITHUB_SHA', ''),
+              'run_id': os.environ.get('GITHUB_RUN_ID', ''),
+          }, indent=2) + '\n', encoding='utf-8')
+
+          summary = Path(os.environ['GITHUB_STEP_SUMMARY'])
+          with summary.open('a', encoding='utf-8') as f:
+              f.write('## Claude Specialist Result\n\n')
+              f.write(report)
+              f.write('\n')
+          PY
+
+      - name: Upload Claude report
+        if: always() && hashFiles('claude-specialist-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-specialist-${{ github.run_id }}
+          path: |
+            claude-specialist-report.md
+            claude-specialist-meta.json
+          if-no-files-found: error
+          retention-days: 14
