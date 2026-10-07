@@ -78,28 +78,33 @@ if not qm:
 new_queue_log = qm.group(1) + 'println!("[POC08-UNIFIED-V4] QUEUE action={:?} eligible={} vendor={} de={} limits_total={} limits_vendor={} limits_de={} max_spend={} order=RISK_ADJUSTED_PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),total_limit,vendor_limit,de_limit,spend_limit);'
 s = s[:qm.start()] + new_queue_log + s[qm.end():]
 
-old_loop = '''    let(mut bought_total,mut bought_vendor,mut bought_de,mut stale_skipped,mut de_limit_skipped)=(0u32,0u32,0u32,0u32,0u32);
-    for(rank,(route,c,profit))in queue.iter().enumerate(){
-        if matches!(route,Poc08Exit::Disenchant)&&bought_de>=de_limit{de_limit_skipped+=1;continue;}
-        println!("[POC08-UNIFIED-MULTI] TRY rank={} route={} auction_id={} item_id={} count={} buyout={} profit={}",rank,route.as_str(),c.record.auction_id,c.record.item_id,c.record.count,c.record.buyout,profit);
-'''
-new_loop = '''    let(mut bought_total,mut bought_vendor,mut bought_de,mut bought_spend,mut stale_skipped,mut de_limit_skipped,mut vendor_limit_skipped,mut spend_limit_skipped)=(0u32,0u32,0u32,0u32,0u32,0u32,0u32,0u32);
+# Replace the complete mutable-buy loop as one semantic unit. Prior V3/V3.1 patches
+# are free to reformat the body; the stable structural anchors are the queue-empty
+# guard and the final unified LIVE PASS. Safety semantics are copied unchanged:
+# exact revalidation remains in poc07_buy_exact_one and unknown mutation errors return.
+loop_pattern = re.compile(
+    r'(?ms)^(\s*)let\(mut bought_total,.*?^\s*println!\("\[POC08-UNIFIED-MULTI\] LIVE PASS[^\n]*?Ok\(\(\)\)\s*$'
+)
+lm = loop_pattern.search(s)
+if not lm:
+    raise SystemExit('bounded unified loop: semantic block missing')
+indent = lm.group(1)
+new_loop = indent + '''let(mut bought_total,mut bought_vendor,mut bought_de,mut bought_spend,mut stale_skipped,mut de_limit_skipped,mut vendor_limit_skipped,mut spend_limit_skipped)=(0u32,0u32,0u32,0u32,0u32,0u32,0u32,0u32);
     for(rank,(route,c,profit))in queue.iter().enumerate(){
         if bought_total>=total_limit { break; }
         if matches!(route,Poc08Exit::Disenchant)&&bought_de>=de_limit{de_limit_skipped+=1;continue;}
         if matches!(route,Poc08Exit::Vendor)&&bought_vendor>=vendor_limit{vendor_limit_skipped+=1;continue;}
         if bought_spend.saturating_add(c.record.buyout)>spend_limit{spend_limit_skipped+=1;continue;}
         println!("[POC08-UNIFIED-V4] TRY rank={} route={} auction_id={} item_id={} count={} buyout={} profit={} spend_before={} spend_cap={}",rank,route.as_str(),c.record.auction_id,c.record.item_id,c.record.count,c.record.buyout,profit,bought_spend,spend_limit);
-'''
-rep('bounded unified loop', old_loop, new_loop)
-
-old_confirm = '''            Ok(())=>{bought_total+=1;if matches!(route,Poc08Exit::Vendor){bought_vendor+=1}else{bought_de+=1};*ah_mutation_committed=false;println!("[POC08-UNIFIED-MULTI] CONFIRMED auction_id={} purchases={} vendor={} de={} next_buy_armed=YES",c.record.auction_id,bought_total,bought_vendor,bought_de);},'''
-new_confirm = '''            Ok(())=>{bought_total+=1;bought_spend=bought_spend.saturating_add(c.record.buyout);if matches!(route,Poc08Exit::Vendor){bought_vendor+=1}else{bought_de+=1};*ah_mutation_committed=false;println!("[POC08-UNIFIED-V4] CONFIRMED auction_id={} purchases={} vendor={} de={} spend={} next_buy_armed=YES",c.record.auction_id,bought_total,bought_vendor,bought_de,bought_spend);},'''
-rep('spend accounting', old_confirm, new_confirm)
-
-old_pass = '''    println!("[POC08-UNIFIED-MULTI] LIVE PASS purchases={} vendor={} de={} stale_skipped={} de_limit_skipped={} vendor_limit=UNLIMITED de_limit={} snapshot_reused=YES",bought_total,bought_vendor,bought_de,stale_skipped,de_limit_skipped,de_limit); Ok(())'''
-new_pass = '''    println!("[POC08-UNIFIED-V4] LIVE PASS purchases={} vendor={} de={} spend={} stale_skipped={} de_limit_skipped={} vendor_limit_skipped={} spend_limit_skipped={} total_limit={} vendor_limit={} de_limit={} spend_limit={} snapshot_reused=YES one_mutation_boundary=YES",bought_total,bought_vendor,bought_de,bought_spend,stale_skipped,de_limit_skipped,vendor_limit_skipped,spend_limit_skipped,total_limit,vendor_limit,de_limit,spend_limit); Ok(())'''
-rep('bounded live pass', old_pass, new_pass)
+        let buy=poc08_f1_as_poc07(c,*route);
+        match poc07_buy_exact_one(stream,&mut crypto,auctioneer_guid,auction_house,mailbox_guid,buy,ah_mutation_committed){
+            Ok(())=>{bought_total+=1;bought_spend=bought_spend.saturating_add(c.record.buyout);if matches!(route,Poc08Exit::Vendor){bought_vendor+=1}else{bought_de+=1};*ah_mutation_committed=false;println!("[POC08-UNIFIED-V4] CONFIRMED auction_id={} purchases={} vendor={} de={} spend={} next_buy_armed=YES",c.record.auction_id,bought_total,bought_vendor,bought_de,bought_spend);},
+            Err(error) if error.starts_with("POC07_BUY_TARGET_STALE")=>{*ah_mutation_committed=false;stale_skipped+=1;println!("[POC08-UNIFIED-V4] STALE SKIP auction_id={} no_purchase_sent=YES stale_skipped={}",c.record.auction_id,stale_skipped);},
+            Err(error)=>return Err(error),
+        }
+    }
+    println!("[POC08-UNIFIED-V4] LIVE PASS purchases={} vendor={} de={} spend={} stale_skipped={} de_limit_skipped={} vendor_limit_skipped={} spend_limit_skipped={} total_limit={} vendor_limit={} de_limit={} spend_limit={} snapshot_reused=YES one_mutation_boundary=YES",bought_total,bought_vendor,bought_de,bought_spend,stale_skipped,de_limit_skipped,vendor_limit_skipped,spend_limit_skipped,total_limit,vendor_limit,de_limit,spend_limit); Ok(())'''
+s = s[:lm.start()] + new_loop + s[lm.end():]
 
 for marker in [
     'POC08-UNIFIED-V4',
@@ -110,6 +115,7 @@ for marker in [
     'WOW112_UNIFIED_MAX_SPEND',
     'one_mutation_boundary=YES',
     'NO_AUTO_RETRY_FROM_THIS_POINT=YES',
+    'POC07_BUY_TARGET_STALE',
 ]:
     if marker not in s:
         raise SystemExit('missing marker '+marker)
