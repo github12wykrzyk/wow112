@@ -29,17 +29,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tested='2de2638c6a0543ba69a067aaf5e98a9acd0c4cf7'
+          $tested='839888cc879d0255f2927a905f626e5c481fa60b'
           git merge-base --is-ancestor $tested HEAD
           if ($LASTEXITCODE -ne 0) { throw 'tested Lifecycle SHA is not an ancestor' }
           $changed=@(git diff --name-only "$tested..HEAD")
           $unexpected=@($changed | Where-Object { $_ -ne '.github/workflows/ah_auction_lifecycle_live_inspect_v1.yml' })
           if ($unexpected.Count -ne 0) { throw "unexpected changes after tested SHA: $($unexpected -join ', ')" }
-          gh run download 37655352980 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-2de2638c6a0543ba69a067aaf5e98a9acd0c4cf7' --dir live
+          gh run download 37659209403 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-839888cc879d0255f2927a905f626e5c481fa60b' --dir live
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $manifest=Get-Content 'live/LIFECYCLE_PACKAGE.json' -Raw | ConvertFrom-Json
           if ($manifest.commit -ne $tested) { throw 'artifact commit mismatch' }
-          if ($manifest.base_commit -ne 'cd17642d8fb54363a452cc5bf4a06282e1afc9cb') { throw 'canonical base mismatch' }
+          if ($manifest.base_commit -ne '99d0a45b1b62a98214f927f960156ba313de252b') { throw 'canonical base mismatch' }
           if ($manifest.final_package -ne 'PASS') { throw 'artifact package not PASS' }
           Write-Host 'LIVE_INSPECT_ARTIFACT PASS'
 
@@ -70,7 +70,7 @@ jobs:
           $rows | ForEach-Object { Write-Host "$_" }
           $partial | ForEach-Object { Write-Host "$_" }
           $summary | ForEach-Object { Write-Host "$_" }
-          @{tested_sha='2de2638c6a0543ba69a067aaf5e98a9acd0c4cf7';result='PASS';rows=$rows;partial=$partial;summary="$($summary[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
+          @{tested_sha='839888cc879d0255f2927a905f626e5c481fa60b';canonical_base='99d0a45b1b62a98214f927f960156ba313de252b';result='PASS';rows=$rows;partial=$partial;summary="$($summary[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
 
       - name: Upload sanitized summary
         uses: actions/upload-artifact@v4
