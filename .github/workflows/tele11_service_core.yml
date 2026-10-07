@@ -11,6 +11,7 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/tele11_executor_contract.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_executor_process.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_executor_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele11_process_containment.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele11_external_executor.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele11_service.rs'
       - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
