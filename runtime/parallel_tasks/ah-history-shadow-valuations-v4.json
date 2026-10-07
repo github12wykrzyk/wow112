@@ -1,23 +1,21 @@
 {
   "schema_version": 1,
   "id": "ah-history-shadow-valuations-v4",
-  "goal": "Add canonical V2 history-vs-current shadow valuation to the Windows Vendor/DE V4 engine without changing BUY authorization, ordering, retry, or mutation semantics.",
-  "owner": "chatgpt-ah-history-shadow-v4",
+  "goal": "Add canonical V2 history-vs-current shadow valuation to the Windows Vendor/DE V4 engine without changing BUY authorization, ordering, retry, mutation semantics, or current Vendor/DE valuation inputs.",
   "branch": "feature/ah-history-shadow-valuations-v4",
-  "base_branch": "dev/windows-ah-canonical",
-  "owned_paths": [
-    "src/AhHistoryTerminal/reconcile_archive_v2.py",
-    ".github/workflows/ah_history_v2_archive_replay.yml",
-    ".github/workflows/build_windows_ah_canonical.yml",
-    "probes/Wow112HeadlessAndroid/tools/poc08_history_v2_shadow_valuation_patch.py",
-    "packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1"
+  "base_parallel_sha": "9a593097308865b2e67f61671500bde42108af0d",
+  "modules": [
+    "AhHistoryTerminal",
+    "AhHistoryV2ShadowValuation"
   ],
-  "forbidden_semantic_changes": [
-    "BUY authorization",
-    "BUY ordering",
-    "exact tuple revalidation",
-    "mutation retry semantics",
-    "Vendor/DE current valuation inputs"
+  "dependencies": [],
+  "shared_resources": [
+    "ah-history-v2-contract",
+    "windows-ah-canonical-build"
   ],
-  "history_buy_decision_influence": "NO"
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Read-only shadow path only. Immutable archive replay materializes a V2 pricebook; missing history fails open for scan/BUY and disables only the shadow audit. Shadow values are exported separately and are forbidden from BUY authorization, queue ordering, exact-tuple revalidation, mutation retries, and current Vendor/DE valuation inputs. Full Windows V4+shadow build passed on ba7df3b38abff2be81df700389ebc13a466c8f79; task metadata corrected to the current full parallel base SHA."
 }
