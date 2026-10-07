@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "tele08-e-response-engine-v1",
+  "goal": "Add a deterministic TELE08 response-decision engine with explicit-time cooldown policy, configurable templates, and append-only JSONL reporting for unknown or low-confidence whispers without adding WoW packet transmission.",
+  "branch": "feature/tele08-e-response-engine-v1",
+  "base_parallel_sha": "04e8337fec7ba0d76c8267e03c1324f7039f2487",
+  "status": "test_ready",
+  "auto_integrate": false,
+  "modules": ["HeadlessTele"],
+  "dependencies": [],
+  "shared_resources": ["probes/Wow112HeadlessAndroid"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Track E is policy/reporting only. It must not transmit whispers or modify TELE06 ritual/portal/click/movement behavior or TELE07 supervisor runtime behavior. Integration into parser/queue/registry/executor is deferred."
+}
