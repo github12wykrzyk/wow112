@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix='wow112-unified-smoke-') as td:
     else:
         print('[SMOKE] multibuy_patch=SKIP_ALREADY_APPLIED')
 
+is_v4 = 'POC08-UNIFIED-V4' in u
 w = Path(sys.argv[2]).read_text(encoding='utf-8')
 checks = {
     'full_ah': 'FULL_AH_ALL_CLASSES_ALL_QUALITIES_ALL_STACKS' in u,
@@ -38,9 +39,18 @@ checks = {
     'profit_first': 'PROFIT_DESC_VENDOR_TIE' in u,
     'noop': 'NO_ELIGIBLE_LIVE_ROUTE' in u,
     'multibuy': 'POC08-UNIFIED-MULTI' in u,
-    'vendor_unlimited': 'vendor_limit=UNLIMITED' in u,
+    # V3 had unlimited Vendor count. V4 intentionally replaced that with a
+    # bounded shared mutation envelope (vendor / total / spend caps).
+    'vendor_limit_policy': (
+        'WOW112_UNIFIED_VENDOR_MAX_PURCHASES' in u
+        and 'WOW112_UNIFIED_MAX_PURCHASES' in u
+        and 'WOW112_UNIFIED_MAX_SPEND' in u
+        and 'bought_vendor>=vendor_limit' in u
+        and 'bought_total>=total_limit' in u
+        and 'bought_spend.saturating_add(c.record.buyout)>spend_limit' in u
+    ) if is_v4 else 'vendor_limit=UNLIMITED' in u,
     'de_limit': 'WOW112_UNIFIED_DE_MAX_PURCHASES' in u,
-    'capy_agreement0': 'Some("CapyDB")' in u and 'agreement_bps' in u,
+    'capy_agreement0': 'Some("CapyDB")' in u and 'agreement_bps' in u and '==0' in u,
     'one_mutation_guard': 'WOW112_AUTOBUY_MAX_PURCHASES' in u and '!= 1' in u,
     'neighborhood': 'POC07_REVALIDATE_RADIUS: u32 = 5' in w,
     'exact_tuple': 'exact_tuple=YES' in w and 'Poc06AhAction::GuardedBuy' in w,
@@ -68,10 +78,10 @@ dg = login[de_start:whitelist_start]
 checks['vendor_stacks'] = 'count==1' not in vg and 'count == 1' not in vg
 checks['de_count1'] = 'count==1' in dg or 'count == 1' in dg
 checks['de_risk'] = 'de_risk_pass' in dg and 'in_f0(c)' in dg
-checks['de_capy_exact'] = 'Some("CapyDB")' in dg and '==0' in dg
+checks['de_capy_exact'] = 'Some("CapyDB")' in dg and '==0' in dg and 'poc08_de_source_confidence(c.record.item_id)>=2' in dg
 
 for key, ok in checks.items():
     print(f'[SMOKE] {key}={"PASS" if ok else "FAIL"}')
 if not all(checks.values()):
     raise SystemExit('UNIFIED V3 STATIC SMOKE FAIL')
-print('[SMOKE] UNIFIED MULTIBUY V3 STATIC+POLICY PASS non_destructive=YES scoped_live_policy=YES')
+print('[SMOKE] UNIFIED MULTIBUY V3/V4 STATIC+POLICY PASS non_destructive=YES scoped_live_policy=YES')
