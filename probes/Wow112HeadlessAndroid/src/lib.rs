@@ -6,6 +6,7 @@ pub mod tele08_whisper_parser;
 pub mod tele11_executor_contract;
 pub mod tele11_executor_process;
 pub mod tele11_executor_runtime;
+pub mod tele11_process_containment;
 pub mod tele11_service_config;
 pub mod tele11_service_core;
 pub mod tele_response_engine;
