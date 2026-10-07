@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "ah-v4-provenance-smoke-hotfix",
+  "goal": "Restore final V4 DE provenance eligibility (confidence>=2 OR CapyDB+agreement0) after liquidation/V4 rewrites and make smoke validate the real bounded V4 purchase envelope without reapplying legacy V3 patches.",
+  "branch": "feature/ah-history-shadow-valuations-v4",
+  "modules": ["AhCanonicalV4Safety"],
+  "dependencies": ["ah-history-shadow-valuations-v4"],
+  "shared_resources": ["windows-ah-canonical-build"],
+  "status": "in_progress",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Hotfix discovered by non-destructive smoke after canonical shadow integration. No BUY ordering, mutation retry, exact revalidation, history valuation, Vendor scope, or purchase-cap semantics are changed."
+}
