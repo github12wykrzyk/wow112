@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::destination_registry::{
-    Availability, AvailabilityReason, DestinationRegistry,
-};
+use crate::destination_registry::{Availability, AvailabilityReason, DestinationRegistry};
 use crate::tele08_bc_adapter::{classification_to_request, AdmissionRejection};
 use crate::tele08_whisper_parser::{
     normalize_whisper_text, DestinationAlias, DestinationKey, ParserConfig, WhisperClassification,
