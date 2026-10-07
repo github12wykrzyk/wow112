@@ -4,7 +4,12 @@ use crate::tele08_whisper_parser::{
 };
 use tele08_request_queue::{QueueConfig, QueueEngine, ResourceKey};
 
-fn classify(sender: &str, text: &str, at: u64, context: Option<&str>) -> crate::tele08_whisper_parser::WhisperClassification {
+fn classify(
+    sender: &str,
+    text: &str,
+    at: u64,
+    context: Option<&str>,
+) -> crate::tele08_whisper_parser::WhisperClassification {
     classify_whisper(
         &WhisperObservation {
             sender: sender.into(),
@@ -25,7 +30,10 @@ fn queues_explicit_plus_with_destination() {
     assert_eq!(r.player, "Alice");
     assert_eq!(r.destination, "hyjal");
     assert_eq!(r.received_at, 1_000);
-    assert_eq!(r.metadata.get("parser_intent").map(String::as_str), Some("GenericPositive"));
+    assert_eq!(
+        r.metadata.get("parser_intent").map(String::as_str),
+        Some("GenericPositive")
+    );
 }
 
 #[test]
@@ -57,8 +65,16 @@ fn rejects_actionable_intent_without_destination_fail_closed() {
 #[test]
 fn does_not_queue_queries_competition_unknown_or_presence() {
     let cases = [
-        ("do you have feralas?", None, WhisperIntent::DestinationQuery),
-        ("selling summons hyjal", None, WhisperIntent::CompetitionMessage),
+        (
+            "do you have feralas?",
+            None,
+            WhisperIntent::DestinationQuery,
+        ),
+        (
+            "selling summons hyjal",
+            None,
+            WhisperIntent::CompetitionMessage,
+        ),
         ("summ maybe", Some("hyjal"), WhisperIntent::Unknown),
         ("here", Some("hyjal"), WhisperIntent::PresenceReady),
     ];
@@ -95,13 +111,8 @@ fn end_to_end_bc_dedups_same_player_destination_inside_window() {
     let mut queue = QueueEngine::new(config);
 
     let first = classification_to_request(&classify("Grace", "+ hyjal", 100_000, None)).unwrap();
-    let second = classification_to_request(&classify(
-        "Grace",
-        "summon me",
-        105_000,
-        Some("hyjal"),
-    ))
-    .unwrap();
+    let second =
+        classification_to_request(&classify("Grace", "summon me", 105_000, Some("hyjal"))).unwrap();
 
     let first_outcome = queue.enqueue(first);
     let second_outcome = queue.enqueue(second);
