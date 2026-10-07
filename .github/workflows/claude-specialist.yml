@@ -7,8 +7,13 @@ on:
         description: 'Read-only task for Claude specialist'
         required: true
         type: string
+      target_ref:
+        description: 'Git ref Claude should inspect'
+        required: false
+        default: 'dev/windows-ah-canonical'
+        type: string
       max_turns:
-        description: 'Maximum Claude turns'
+        description: 'Maximum Claude turns (1-20)'
         required: false
         default: '6'
         type: string
@@ -17,6 +22,7 @@ on:
       - 'feature/claude-autonomous-v1'
     paths:
       - '.github/workflows/claude-specialist.yml'
+      - '.ai/claude/request.json'
 
 permissions:
   contents: read
@@ -29,13 +35,69 @@ jobs:
   specialist:
     name: Claude read-only specialist
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout exact revision
+      - name: Checkout control revision
         uses: actions/checkout@v5
         with:
+          fetch-depth: 1
+
+      - name: Resolve Claude request
+        id: request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_TASK: ${{ inputs.task }}
+          DISPATCH_TARGET_REF: ${{ inputs.target_ref }}
+          DISPATCH_MAX_TURNS: ${{ inputs.max_turns }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            task="$DISPATCH_TASK"
+            target_ref="${DISPATCH_TARGET_REF:-dev/windows-ah-canonical}"
+            max_turns="${DISPATCH_MAX_TURNS:-6}"
+            request_id="dispatch-${GITHUB_RUN_ID}"
+          else
+            test -f .ai/claude/request.json
+            task="$(jq -er '.task' .ai/claude/request.json)"
+            target_ref="$(jq -er '.target_ref // "dev/windows-ah-canonical"' .ai/claude/request.json)"
+            max_turns="$(jq -er '(.max_turns // 6) | tostring' .ai/claude/request.json)"
+            request_id="$(jq -er '.request_id // "push"' .ai/claude/request.json)"
+          fi
+
+          if ! [[ "$max_turns" =~ ^[0-9]+$ ]] || [ "$max_turns" -lt 1 ] || [ "$max_turns" -gt 20 ]; then
+            echo 'max_turns must be an integer from 1 to 20' >&2
+            exit 1
+          fi
+          if [ -z "$task" ] || [ -z "$target_ref" ]; then
+            echo 'task and target_ref must be non-empty' >&2
+            exit 1
+          fi
+
+          safe_request_id="$(printf '%s' "$request_id" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//' | cut -c1-60)"
+          [ -n "$safe_request_id" ] || safe_request_id="request-${GITHUB_RUN_ID}"
+
+          delim="CLAUDE_TASK_${GITHUB_RUN_ID}_${RANDOM}"
+          {
+            echo "task<<$delim"
+            printf '%s\n' "$task"
+            echo "$delim"
+            echo "target_ref=$target_ref"
+            echo "max_turns=$max_turns"
+            echo "request_id=$safe_request_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout requested target
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.request.outputs.target_ref }}
           fetch-depth: 0
+
+      - name: Resolve exact target SHA
+        id: target
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Verify Claude credential is available
         shell: bash
@@ -58,8 +120,9 @@ jobs:
             You are a read-only specialist assisting the primary autonomous engineering agent for this repository.
 
             Repository: ${{ github.repository }}
-            Revision: ${{ github.sha }}
-            Ref: ${{ github.ref }}
+            Requested ref: ${{ steps.request.outputs.target_ref }}
+            Exact revision: ${{ steps.target.outputs.sha }}
+            Request id: ${{ steps.request.outputs.request_id }}
 
             Hard rules:
             - Read and analyze only. Do not edit, create, delete, commit, push, or mutate repository files.
@@ -69,12 +132,21 @@ jobs:
             - Return a compact engineering report with: diagnosis, evidence, recommendation, risks, and tests.
 
             TASK:
-            ${{ github.event_name == 'workflow_dispatch' && inputs.task || 'AUTH SMOKE: verify you can read this repository and authenticate successfully. Read AGENTS.md and CURRENT.json, make no changes, and finish with the literal marker CLAUDE_AUTH_SMOKE_PASS.' }}
+            ${{ steps.request.outputs.task }}
           claude_args: |
-            --max-turns ${{ github.event_name == 'workflow_dispatch' && inputs.max_turns || '6' }}
+            --max-turns ${{ steps.request.outputs.max_turns }}
             --permission-mode plan
             --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*)"
             --disallowedTools "Edit,Write,NotebookEditCell"
+
+      - name: Enforce read-only repository state
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo 'Claude specialist left repository changes; failing closed.' >&2
+            git status --short >&2
+            exit 1
+          fi
 
       - name: Extract Claude final report
         if: always() && steps.claude.outputs.execution_file != ''
@@ -83,6 +155,9 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           CLAUDE_CONCLUSION: ${{ steps.claude.outputs.conclusion }}
           CLAUDE_SESSION_ID: ${{ steps.claude.outputs.session_id }}
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          TARGET_REF: ${{ steps.request.outputs.target_ref }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           python3 - <<'PY'
           import json
@@ -115,8 +190,10 @@ jobs:
           Path('claude-specialist-meta.json').write_text(json.dumps({
               'conclusion': os.environ.get('CLAUDE_CONCLUSION', ''),
               'session_id': os.environ.get('CLAUDE_SESSION_ID', ''),
+              'request_id': os.environ.get('REQUEST_ID', ''),
+              'target_ref': os.environ.get('TARGET_REF', ''),
+              'target_sha': os.environ.get('TARGET_SHA', ''),
               'repository': os.environ.get('GITHUB_REPOSITORY', ''),
-              'sha': os.environ.get('GITHUB_SHA', ''),
               'run_id': os.environ.get('GITHUB_RUN_ID', ''),
           }, indent=2) + '\n', encoding='utf-8')
 
@@ -131,7 +208,7 @@ jobs:
         if: always() && hashFiles('claude-specialist-report.md') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: claude-specialist-${{ github.run_id }}
+          name: claude-specialist-${{ steps.request.outputs.request_id }}-${{ github.run_id }}
           path: |
             claude-specialist-report.md
             claude-specialist-meta.json

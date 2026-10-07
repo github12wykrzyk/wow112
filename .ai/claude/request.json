@@ -1,0 +1,6 @@
+{
+  "request_id": "bootstrap-request-bridge-v1",
+  "target_ref": "dev/windows-ah-canonical",
+  "max_turns": 4,
+  "task": "Validate the autonomous Claude request bridge. Read AGENTS.md and CURRENT.json from the requested target ref, make no changes, and finish with the literal marker CLAUDE_REQUEST_BRIDGE_PASS."
+}
