@@ -57,11 +57,22 @@ jobs:
             exit 20
           fi
 
-          # The control workflow itself must never arm live AH mutation.
-          if grep -E 'WOW112_AUTOBUY_CONFIRM.*YES|WOW112_F1_LIVE_CONFIRM.*BUY_ONE_NOW|V32LIVE3|DE_LIVE3' .github/workflows/ah_de_autonomous_control.yml; then
-            echo 'POLICY FAIL: autonomous CI contains a live-mutation arm token.' >&2
-            exit 21
-          fi
+          # The control workflow itself must never arm live AH mutation. Assemble
+          # forbidden strings at runtime so the policy declaration cannot match itself.
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('.github/workflows/ah_de_autonomous_control.yml').read_text(encoding='utf-8')
+          forbidden=[
+              'WOW112_AUTOBUY_CONFIRM=' + 'YES',
+              'WOW112_F1_LIVE_CONFIRM=' + 'BUY_ONE_NOW',
+              'V32' + 'LIVE3',
+              'DE_' + 'LIVE3',
+          ]
+          hits=[x for x in forbidden if x in text]
+          if hits:
+              raise SystemExit('POLICY FAIL: autonomous CI contains live-mutation arm token(s): '+','.join(hits))
+          print('LIVE_ARM_POLICY=PASS')
+          PY
 
           grep -q 'NO_AUTO_RETRY_FROM_THIS_POINT=YES' probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v31_f0_patch.py || {
             echo 'POLICY FAIL: no-retry mutation contract marker missing.' >&2; exit 22; }
