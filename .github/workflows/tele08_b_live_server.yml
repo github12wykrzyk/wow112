@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   live:
@@ -252,6 +252,20 @@ jobs:
           "@ | Set-Content -Encoding UTF8 $status
             throw "TELE08 B LIVE E2E failed rc=$rc"
           }
+
+      - name: Persist canonical live harness source
+        shell: pwsh
+        run: |
+          git config user.name "wow112-ai-integration"
+          git config user.email "github12wykrzyk@users.noreply.github.com"
+          git add probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'Canonical source already matches worktree.'
+            exit 0
+          }
+          git commit -m "test(tele08): canonicalize B live harness"
+          git push origin HEAD:live/tele08-b-e2e-v1
 
       - name: Upload live evidence
         if: always()
