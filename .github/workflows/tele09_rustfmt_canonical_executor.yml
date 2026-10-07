@@ -1,0 +1,91 @@
+name: TELE09 canonical rustfmt TELE06C executors
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele09-autonomous-summon-orchestrator-v1
+    paths:
+      - '.github/workflows/tele09_rustfmt_canonical_executor.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/tele09-autonomous-summon-orchestrator-v1
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Canonical rustfmt stored executors
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Preserve TELE06C semantic contract
+        shell: pwsh
+        run: |
+          $acceptor = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs -Raw
+          foreach ($needle in @(
+            'TELE06C_HEARTBEAT_OPCODE',
+            'TELE06C_TARGET_RANGE',
+            'TELE06C_MAX_RECOVERY_MOVE',
+            'PORTAL_USE_SENT',
+            'SMSG_SUMMON_REQUEST',
+            'PASS_RITUAL_COMPLETE',
+            'FAIL_AUTO_POSITION_LIMIT',
+            'FAIL_AUTO_POSITION_UNCERTAIN',
+            'TELE06C_MOVE_MUTATION_UNCERTAIN'
+          )) {
+            if ($acceptor -notmatch [regex]::Escape($needle)) { throw "semantic marker lost after rustfmt: $needle" }
+          }
+          $ritual = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs -Raw
+          foreach ($needle in @('WOW112_RITUAL_TARGET_NAME','WOW112_TELE_INVITE_LIST','PASS_RITUAL_STARTED')) {
+            if ($ritual -notmatch [regex]::Escape($needle)) { throw "ritual marker lost after rustfmt: $needle" }
+          }
+          Write-Host 'TELE09 RUSTFMT SEMANTIC CONTRACT PASS'
+
+      - name: Regression test and check
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build release executors
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Persist canonical formatting
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs
+          if (git diff --cached --quiet) { throw 'rustfmt produced no stored executor delta' }
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git commit -m 'style(tele09): canonical rustfmt stored TELE06C executors'
+          git push origin HEAD:feature/tele09-autonomous-summon-orchestrator-v1
