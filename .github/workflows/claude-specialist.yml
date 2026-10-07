@@ -12,16 +12,19 @@ on:
         required: false
         default: 'dev/windows-ah-canonical'
         type: string
-      max_turns:
-        description: 'Maximum Claude turns (1-20)'
+      tier:
+        description: 'Budget tier: cheap, normal, deep'
         required: false
-        default: '6'
-        type: string
+        default: 'cheap'
+        type: choice
+        options:
+          - cheap
+          - normal
+          - deep
   push:
     branches:
       - 'feature/claude-autonomous-v1'
     paths:
-      - '.github/workflows/claude-specialist.yml'
       - '.ai/claude/request.json'
 
 permissions:
@@ -35,7 +38,7 @@ jobs:
   specialist:
     name: Claude read-only specialist
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
 
     steps:
       - name: Checkout control revision
@@ -43,33 +46,54 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Resolve Claude request
+      - name: Resolve Claude request and budget tier
         id: request
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           DISPATCH_TASK: ${{ inputs.task }}
           DISPATCH_TARGET_REF: ${{ inputs.target_ref }}
-          DISPATCH_MAX_TURNS: ${{ inputs.max_turns }}
+          DISPATCH_TIER: ${{ inputs.tier }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
             task="$DISPATCH_TASK"
             target_ref="${DISPATCH_TARGET_REF:-dev/windows-ah-canonical}"
-            max_turns="${DISPATCH_MAX_TURNS:-6}"
+            tier="${DISPATCH_TIER:-cheap}"
             request_id="dispatch-${GITHUB_RUN_ID}"
           else
             test -f .ai/claude/request.json
             task="$(jq -er '.task' .ai/claude/request.json)"
             target_ref="$(jq -er '.target_ref // "dev/windows-ah-canonical"' .ai/claude/request.json)"
-            max_turns="$(jq -er '(.max_turns // 6) | tostring' .ai/claude/request.json)"
+            tier="$(jq -er '.tier // "cheap"' .ai/claude/request.json)"
             request_id="$(jq -er '.request_id // "push"' .ai/claude/request.json)"
           fi
 
-          if ! [[ "$max_turns" =~ ^[0-9]+$ ]] || [ "$max_turns" -lt 1 ] || [ "$max_turns" -gt 20 ]; then
-            echo 'max_turns must be an integer from 1 to 20' >&2
-            exit 1
-          fi
+          case "$tier" in
+            cheap)
+              model='haiku'
+              max_turns='2'
+              max_budget_usd='0.15'
+              report_words='650'
+              ;;
+            normal)
+              model='sonnet'
+              max_turns='3'
+              max_budget_usd='0.35'
+              report_words='1000'
+              ;;
+            deep)
+              model='sonnet'
+              max_turns='5'
+              max_budget_usd='0.75'
+              report_words='1600'
+              ;;
+            *)
+              echo "Unknown Claude tier: $tier (allowed: cheap, normal, deep)" >&2
+              exit 1
+              ;;
+          esac
+
           if [ -z "$task" ] || [ -z "$target_ref" ]; then
             echo 'task and target_ref must be non-empty' >&2
             exit 1
@@ -84,7 +108,11 @@ jobs:
             printf '%s\n' "$task"
             echo "$delim"
             echo "target_ref=$target_ref"
+            echo "tier=$tier"
+            echo "model=$model"
             echo "max_turns=$max_turns"
+            echo "max_budget_usd=$max_budget_usd"
+            echo "report_words=$report_words"
             echo "request_id=$safe_request_id"
           } >> "$GITHUB_OUTPUT"
 
@@ -146,21 +174,32 @@ jobs:
             Requested ref: ${{ steps.request.outputs.target_ref }}
             Exact revision: ${{ steps.target.outputs.sha }}
             Request id: ${{ steps.request.outputs.request_id }}
+            Budget tier: ${{ steps.request.outputs.tier }}
+
+            Cost discipline is mandatory:
+            - Solve only the requested task. Do not perform a broad repository audit.
+            - Start from exact files/symbols named in the task and expand only when evidence requires it.
+            - Prefer targeted Read/Grep over wide Glob scans.
+            - Stop as soon as the conclusion is adequately supported; do not keep exploring for completeness.
+            - Do not delegate to subagents.
+            - Keep the final report under approximately ${{ steps.request.outputs.report_words }} words.
 
             Hard rules:
             - Read and analyze only. Do not edit, create, delete, commit, push, or mutate repository files.
-            - Follow AGENTS.md and repository-local authority/routing rules.
+            - Follow AGENTS.md and repository-local authority/routing rules, but read only the minimum authority context needed for this task.
             - Prefer exact file/path/line evidence over speculation.
-            - If evidence is insufficient, say what is missing instead of guessing.
+            - If evidence is insufficient within the budget, say what is missing instead of guessing or expanding indefinitely.
             - Return a compact engineering report with: diagnosis, evidence, recommendation, risks, and tests.
 
             TASK:
             ${{ steps.request.outputs.task }}
           claude_args: |
+            --model ${{ steps.request.outputs.model }}
             --max-turns ${{ steps.request.outputs.max_turns }}
+            --max-budget-usd ${{ steps.request.outputs.max_budget_usd }}
             --permission-mode plan
             --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*)"
-            --disallowedTools "Edit,Write,NotebookEditCell"
+            --disallowedTools "Edit,Write,NotebookEditCell,Task"
 
       - name: Enforce read-only repository state
         shell: bash
@@ -202,6 +241,10 @@ jobs:
           REQUEST_ID: ${{ steps.request.outputs.request_id }}
           TARGET_REF: ${{ steps.request.outputs.target_ref }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
+          TIER: ${{ steps.request.outputs.tier }}
+          MODEL: ${{ steps.request.outputs.model }}
+          MAX_TURNS: ${{ steps.request.outputs.max_turns }}
+          MAX_BUDGET_USD: ${{ steps.request.outputs.max_budget_usd }}
         run: |
           python3 - <<'PY'
           import json
@@ -237,6 +280,10 @@ jobs:
               'request_id': os.environ.get('REQUEST_ID', ''),
               'target_ref': os.environ.get('TARGET_REF', ''),
               'target_sha': os.environ.get('TARGET_SHA', ''),
+              'tier': os.environ.get('TIER', ''),
+              'model': os.environ.get('MODEL', ''),
+              'max_turns': os.environ.get('MAX_TURNS', ''),
+              'max_budget_usd': os.environ.get('MAX_BUDGET_USD', ''),
               'repository': os.environ.get('GITHUB_REPOSITORY', ''),
               'run_id': os.environ.get('GITHUB_RUN_ID', ''),
           }, indent=2) + '\n', encoding='utf-8')
@@ -244,6 +291,7 @@ jobs:
           summary = Path(os.environ['GITHUB_STEP_SUMMARY'])
           with summary.open('a', encoding='utf-8') as f:
               f.write('## Claude Specialist Result\n\n')
+              f.write(f"Tier: {os.environ.get('TIER', '')} | Model: {os.environ.get('MODEL', '')} | Max turns: {os.environ.get('MAX_TURNS', '')} | Per-run cap: ${os.environ.get('MAX_BUDGET_USD', '')}\n\n")
               f.write(report)
               f.write('\n')
           PY
