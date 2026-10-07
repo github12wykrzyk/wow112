@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - feature/tele08-b-whisper-parser-v1
+      - feature/tele10-canonical-stored-source-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/src/lib.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs'
       - 'runtime/parallel_tasks/tele08-b-whisper-parser-v1.json'
       - 'HANDOFF_TELE08_B_WHISPER_PARSER.md'
       - '.github/workflows/tele08_b_whisper_parser.yml'
@@ -37,7 +39,8 @@ jobs:
           rustfmt --edition 2021 --check \
             probes/Wow112HeadlessAndroid/src/lib.rs \
             probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs \
-            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs \
+            probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs
       - name: Library check
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
       - name: Parser tests
