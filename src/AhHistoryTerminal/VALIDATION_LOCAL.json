@@ -1,0 +1,113 @@
+{
+  "status": "PASS",
+  "live_server_scan": "NOT_RUN_DNS_UNAVAILABLE_AND_NO_CREDENTIALS",
+  "source_sha": "f78d4305a4c12fde33767cad85d94f755c1e120a",
+  "fixture_data": true,
+  "checks": [
+    {
+      "name": "compiled_terminal_full_scan_60000",
+      "status": "PASS",
+      "seconds": 1.24,
+      "detail": {
+        "records": 60000,
+        "pages": 1201,
+        "capture_seconds": 0.41,
+        "raw_bytes": 21181074,
+        "buyout_zero_retained": true
+      }
+    },
+    {
+      "name": "duplicate_segment_noop",
+      "status": "PASS",
+      "seconds": 0.361,
+      "detail": {
+        "state": "duplicate_noop",
+        "scan_id": "1791369359370675458-68",
+        "inserted": 0
+      }
+    },
+    {
+      "name": "conflicting_segment_rejected",
+      "status": "PASS",
+      "seconds": 0.676,
+      "detail": null
+    },
+    {
+      "name": "bundle_restore_identical_view",
+      "status": "PASS",
+      "seconds": 2.788,
+      "detail": {
+        "gzip_bytes": 808993,
+        "view_id": "e59b7e9b994c3a1651bf60b46f006e11fea1ca7b69923f57f00c4f40e1b7241a",
+        "items": 20
+      }
+    },
+    {
+      "name": "corrupt_bundle_rejected_before_import",
+      "status": "PASS",
+      "seconds": 0.003,
+      "detail": null
+    },
+    {
+      "name": "page_limit_never_full",
+      "status": "PASS",
+      "seconds": 0.005,
+      "detail": null
+    },
+    {
+      "name": "zero_count_parser_rejected",
+      "status": "PASS",
+      "seconds": 0.003,
+      "detail": null
+    },
+    {
+      "name": "process_kill_partial_recovery",
+      "status": "PASS",
+      "seconds": 0.014,
+      "detail": {
+        "recovered_status": "aborted",
+        "records": 50
+      }
+    },
+    {
+      "name": "target_window_excluded_from_market",
+      "status": "PASS",
+      "seconds": 0.001,
+      "detail": null
+    },
+    {
+      "name": "cutoff_and_market_isolation",
+      "status": "PASS",
+      "seconds": 0.0,
+      "detail": null
+    },
+    {
+      "name": "killed_import_transaction_rollback_and_retry",
+      "status": "PASS",
+      "seconds": 1.279,
+      "detail": null
+    },
+    {
+      "name": "multi_producer_no_double_supply",
+      "status": "PASS",
+      "seconds": 1.515,
+      "detail": null
+    }
+  ],
+  "source_files_sha256": {
+    "src/AhHistoryTerminal/.gitignore": "8c0cd246c51e9fdb5320bad1d92a647a02a1d558fa7e2ac6aab7ea7904c7f366",
+    "src/AhHistoryTerminal/Cargo.lock": "0d8025dd841d6aae9a7bf96b7cb619c56d20278eec18d66822d15631d0ade6f7",
+    "src/AhHistoryTerminal/Cargo.toml": "83bc41285c1e01b31e9f4a4a7c0306359abcbb17d1514eca16835b457a980725",
+    "src/AhHistoryTerminal/README.md": "714449aeb5afaa90585cef1203b8ff1c2e42521d9d6b4e4c73dc6e315001e442",
+    "src/AhHistoryTerminal/capture.rs": "87463cc1189ced0cceff8884309503ca1ad21784f80f1e86193decb5cb40af80",
+    "src/AhHistoryTerminal/history_worker.py": "e958cdb589c4dfc08be7ce32484cadc534e893ed138e4de5a4075c5a9cf2e081",
+    "src/AhHistoryTerminal/main.rs": "b750da77f7af1213c7dd5c85d4213b2d7cd3f7657c326cffcb8c704b4f58d3af",
+    "src/AhHistoryTerminal/test_autonomous.py": "ec60c32e19410da45021a9fff88c2107fb6518ec23a0e94169ebcb8f065cf672",
+    "src/AhHistoryTerminal/world_history.rs": "8e12a495fcd52198aa0bc4d7ac142ee1f9bc7fbeb194bfc9907a8462bd78cd98"
+  },
+  "platform": "Linux x86_64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "python": "3.12.14",
+  "ci_windows": "NOT_RUN",
+  "github_data_publisher": "NOT_IMPLEMENTED"
+}

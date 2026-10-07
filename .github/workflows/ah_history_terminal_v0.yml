@@ -1,0 +1,51 @@
+name: AH history terminal V0 offline validation
+on:
+  push:
+    branches: [dev/windows-ah-canonical]
+    paths:
+      - 'src/AhHistoryTerminal/**'
+      - '.github/workflows/ah_history_terminal_v0.yml'
+      - 'probes/Wow112HeadlessAndroid/src/auth.rs'
+      - 'probes/Wow112HeadlessAndroid/src/wire_build.rs'
+      - 'probes/Wow112HeadlessAndroid/src/world.rs'
+      - 'probes/Wow112HeadlessAndroid/src/world_poc05.rs'
+      - 'probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: wow112-ah-history
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            binary: wow112-ah-history.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build read-only terminal
+        run: cargo build --locked --release --manifest-path src/AhHistoryTerminal/Cargo.toml --target ${{ matrix.target }}
+      - name: Exercise full capture and crash recovery
+        env:
+          WOW112_HISTORY_BINARY: src/AhHistoryTerminal/target/${{ matrix.target }}/release/${{ matrix.binary }}
+        run: python src/AhHistoryTerminal/test_autonomous.py src/AhHistoryTerminal/test-results
+      - name: Upload validation report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ah-history-v0-${{ matrix.target }}-report
+          path: src/AhHistoryTerminal/test-results/AUTONOMOUS_TEST_REPORT.json
+          if-no-files-found: error
+
