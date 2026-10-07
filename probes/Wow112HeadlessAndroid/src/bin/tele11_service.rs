@@ -1,10 +1,12 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tele08_request_queue::ResourceKey;
-use wow112_headless_android_probe::tele11_executor_contract::ExecutorVerdictClass;
-use wow112_headless_android_probe::tele11_executor_runtime::run_external_executor;
+use wow112_headless_android_probe::tele11_executor_process::ExternalExecutorConfig;
+use wow112_headless_android_probe::tele11_process_containment::KillOnCloseJob;
 use wow112_headless_android_probe::tele11_service_config::ServiceFileConfig;
 use wow112_headless_android_probe::tele11_service_core::{ExecutorOutcome, ServiceCore};
 
@@ -124,6 +126,126 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug)]
+enum ChildRun {
+    Exit(i32),
+    SafePreActive(String),
+    Uncertain(String),
+}
+
+fn run_executor_process(exec: &ExternalExecutorConfig) -> ChildRun {
+    if let Err(error) = fs::create_dir_all(&exec.run_dir) {
+        return ChildRun::SafePreActive(format!(
+            "create executor run dir {} failed before spawn: {error}",
+            exec.run_dir.display()
+        ));
+    }
+    let gate = exec.run_dir.join("START.GATE");
+    let _ = fs::remove_file(&gate);
+
+    let current = match env::current_exe() {
+        Ok(value) => value,
+        Err(error) => {
+            return ChildRun::SafePreActive(format!(
+                "resolve service executable failed before spawn: {error}"
+            ))
+        }
+    };
+    let executor = match current.parent() {
+        Some(parent) => parent.join("tele11_external_executor.exe"),
+        None => {
+            return ChildRun::SafePreActive(
+                "service executable has no parent directory".to_string(),
+            )
+        }
+    };
+    if !executor.exists() {
+        return ChildRun::SafePreActive(format!(
+            "executor binary missing before spawn: {}",
+            executor.display()
+        ));
+    }
+
+    let containment = match KillOnCloseJob::new() {
+        Ok(job) => job,
+        Err(error) => {
+            return ChildRun::SafePreActive(format!(
+                "kill-on-close containment initialization failed before spawn: {error}"
+            ))
+        }
+    };
+
+    let mut command = Command::new(&executor);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .env("WOW112_PASSWORD", &exec.password)
+        .env("WOW112_REALM_INDEX", exec.realm_index.to_string())
+        .env("WOW112_TELE11_RUN_DIR", &exec.run_dir)
+        .env("WOW112_TELE11_CUSTOMER_CHARACTER", &exec.customer)
+        .env("WOW112_TELE11_DESTINATION", &exec.destination)
+        .env("WOW112_TELE11_RESOURCE", &exec.resource)
+        .env("WOW112_TELE11_SUMMONER_ACCOUNT", &exec.summoner.account)
+        .env("WOW112_TELE11_SUMMONER_CHARACTER", &exec.summoner.character)
+        .env("WOW112_TELE11_CLICKER1_ACCOUNT", &exec.clicker1.account)
+        .env("WOW112_TELE11_CLICKER1_CHARACTER", &exec.clicker1.character)
+        .env("WOW112_TELE11_CLICKER2_ACCOUNT", &exec.clicker2.account)
+        .env("WOW112_TELE11_CLICKER2_CHARACTER", &exec.clicker2.character)
+        .env(
+            "WOW112_TELE11_READY_TIMEOUT_SECS",
+            exec.ready_timeout.as_secs().to_string(),
+        )
+        .env(
+            "WOW112_TELE11_ACTIVE_TIMEOUT_SECS",
+            exec.active_timeout.as_secs().to_string(),
+        )
+        .env(
+            "WOW112_TELE11_OFFER_SETTLE_MS",
+            exec.offer_settle.as_millis().to_string(),
+        )
+        .env("WOW112_TELE11_START_GATE", &gate)
+        .env("WOW112_TELE11_START_GATE_TIMEOUT_MS", "30000");
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return ChildRun::SafePreActive(format!(
+                "executor spawn failed before start gate: {error}"
+            ))
+        }
+    };
+    if let Err(error) = containment.assign_child(&child) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return ChildRun::SafePreActive(format!(
+            "executor containment assignment failed while start gate closed: {error}"
+        ));
+    }
+    if let Err(error) = fs::write(&gate, b"contained\n") {
+        let _ = child.kill();
+        let _ = child.wait();
+        return ChildRun::SafePreActive(format!(
+            "publish executor start gate failed; roles never authorized: {error}"
+        ));
+    }
+    println!(
+        "CONTAINMENT PASS executor_pid={} gate={} kill_on_job_close=true",
+        child.id(),
+        gate.display()
+    );
+
+    let result = match child.wait() {
+        Ok(status) => ChildRun::Exit(status.code().unwrap_or(3)),
+        Err(error) => ChildRun::Uncertain(format!(
+            "executor wait failed after start gate; containment will terminate tree: {error}"
+        )),
+    };
+    let _ = fs::remove_file(&gate);
+    drop(containment);
+    result
+}
+
 fn run_one(
     config: &ServiceFileConfig,
     core: &mut ServiceCore,
@@ -156,25 +278,25 @@ fn run_one(
         activation.job.resource.0
     );
 
-    let result = run_external_executor(exec);
-    let (outcome, detail) = match result {
-        Ok(0) => (ExecutorOutcome::Pass, "executor PASS_SUMMON_OFFERED".to_string()),
-        Ok(2) => (
+    let (outcome, detail) = match run_executor_process(&exec) {
+        ChildRun::Exit(0) => (
+            ExecutorOutcome::Pass,
+            "contained executor PASS_SUMMON_OFFERED".to_string(),
+        ),
+        ChildRun::Exit(2) => (
             ExecutorOutcome::SafePreActiveFailure,
-            "executor failed before summoner activation; safe requeue".to_string(),
+            "contained executor failed before summoner activation; safe requeue".to_string(),
         ),
-        Ok(3) => (
+        ChildRun::Exit(3) => (
             ExecutorOutcome::Uncertain,
-            "executor active outcome uncertain; automatic replay forbidden".to_string(),
+            "contained executor active outcome uncertain; automatic replay forbidden".to_string(),
         ),
-        Ok(code) => (
+        ChildRun::Exit(code) => (
             ExecutorOutcome::Uncertain,
-            format!("executor unexpected exit code={code}; conservative no-replay"),
+            format!("contained executor unexpected exit code={code}; conservative no-replay"),
         ),
-        Err(error) => (
-            ExecutorOutcome::Uncertain,
-            format!("executor returned error after durable activation: {error}; conservative no-replay"),
-        ),
+        ChildRun::SafePreActive(error) => (ExecutorOutcome::SafePreActiveFailure, error),
+        ChildRun::Uncertain(error) => (ExecutorOutcome::Uncertain, error),
     };
     let events = core.settle_job(&activation.job.job_id, outcome, now_ms(), detail.clone())?;
     println!(
@@ -214,14 +336,21 @@ fn print_ledger(core: &ServiceCore) {
 }
 
 fn self_test() -> Result<(), String> {
-    let _ = ExecutorVerdictClass::Pass;
+    let _job = KillOnCloseJob::new()?;
     let text = usage();
-    for required in ["status", "enqueue", "run-once", "ledger", "payment-observed", "payment-settled"] {
+    for required in [
+        "status",
+        "enqueue",
+        "run-once",
+        "ledger",
+        "payment-observed",
+        "payment-settled",
+    ] {
         if !text.contains(required) {
             return Err(format!("usage missing command {required}"));
         }
     }
-    println!("TELE11_SERVICE_SELFTEST_PASS");
+    println!("TELE11_SERVICE_SELFTEST_PASS containment=kill_on_job_close");
     Ok(())
 }
 
