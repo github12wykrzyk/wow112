@@ -18,18 +18,66 @@ struct ExpectedCase {
 }
 
 const CASES: [ExpectedCase; 12] = [
-    ExpectedCase { id: 1, text: "+", queue_outcome: "missing_destination" },
-    ExpectedCase { id: 2, text: "+ hyjal", queue_outcome: "queued" },
-    ExpectedCase { id: 3, text: "inv pls", queue_outcome: "missing_destination" },
-    ExpectedCase { id: 4, text: "invi", queue_outcome: "missing_destination" },
-    ExpectedCase { id: 5, text: "I need one", queue_outcome: "missing_destination" },
-    ExpectedCase { id: 6, text: "here", queue_outcome: "non_queueable" },
-    ExpectedCase { id: 7, text: "winterspring pls", queue_outcome: "queued" },
-    ExpectedCase { id: 8, text: "do you have feralas?", queue_outcome: "non_queueable" },
-    ExpectedCase { id: 9, text: "selling summons cheaper today", queue_outcome: "non_queueable" },
-    ExpectedCase { id: 10, text: "what level are you?", queue_outcome: "non_queueable" },
-    ExpectedCase { id: 11, text: "sumon plz???", queue_outcome: "non_queueable" },
-    ExpectedCase { id: 12, text: "azshara please", queue_outcome: "queued" },
+    ExpectedCase {
+        id: 1,
+        text: "+",
+        queue_outcome: "missing_destination",
+    },
+    ExpectedCase {
+        id: 2,
+        text: "+ hyjal",
+        queue_outcome: "queued",
+    },
+    ExpectedCase {
+        id: 3,
+        text: "inv pls",
+        queue_outcome: "missing_destination",
+    },
+    ExpectedCase {
+        id: 4,
+        text: "invi",
+        queue_outcome: "missing_destination",
+    },
+    ExpectedCase {
+        id: 5,
+        text: "I need one",
+        queue_outcome: "missing_destination",
+    },
+    ExpectedCase {
+        id: 6,
+        text: "here",
+        queue_outcome: "non_queueable",
+    },
+    ExpectedCase {
+        id: 7,
+        text: "winterspring pls",
+        queue_outcome: "queued",
+    },
+    ExpectedCase {
+        id: 8,
+        text: "do you have feralas?",
+        queue_outcome: "non_queueable",
+    },
+    ExpectedCase {
+        id: 9,
+        text: "selling summons cheaper today",
+        queue_outcome: "non_queueable",
+    },
+    ExpectedCase {
+        id: 10,
+        text: "what level are you?",
+        queue_outcome: "non_queueable",
+    },
+    ExpectedCase {
+        id: 11,
+        text: "sumon plz???",
+        queue_outcome: "non_queueable",
+    },
+    ExpectedCase {
+        id: 12,
+        text: "azshara please",
+        queue_outcome: "queued",
+    },
 ];
 
 fn main() {
