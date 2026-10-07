@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Windows-only synthetic IPC roundtrip for Operator Console V1.
+"""Windows-only synthetic IPC roundtrip for Summon Operator Console V1.
 
 This is intentionally NOT a gameplay test. It validates the exact named-mapping
 wire contract used between the x64 console and the x86 WoW transport: map-first
-PID discovery, incoming whisper projection, typed manual command dispatch,
-backend ACK, and final WhisperSent event confirmation.
+PID discovery, accepted and rejected incoming whisper diagnostics, typed manual
+command dispatch, backend ACK, and final WhisperSent event confirmation.
 """
 import argparse
 import json
@@ -129,8 +129,6 @@ def command_or_rejection(mm, backend, correlation):
     for row in reversed(rows):
         if row.get('EventType') != 'OperatorCommandRejected':
             continue
-        # Malformed JSON rejection can have no correlation. Any new rejection
-        # during this isolated smoke is relevant evidence.
         corr = row.get('CorrelationId') or ''
         if not corr or corr == correlation:
             return ('rejected', row)
@@ -174,24 +172,39 @@ def main():
         write_event(
             mm, 1, 1, 'SmokeChar', 'SmokePeer', 'need hyjal',
             result='accepted', destination='hyjal', intent='summon_request',
-            reason='synthetic-wire-smoke', flags=2, confidence=900,
+            reason='smart-match', flags=2, confidence=900,
         )
 
         proc = subprocess.Popen([str(exe)])
 
         incoming = wait_for(
             lambda: has_event(backend, 'WhisperReceived', message='need hyjal'),
-            label='WhisperReceived from named mapping',
+            label='accepted WhisperReceived from named mapping',
         )
         if incoming.get('SessionId') != f'wow-pid-{pid}':
             raise RuntimeError(f'wrong map-first session binding: {incoming}')
         parser = (incoming.get('Metadata') or {}).get('parser') or {}
-        if parser.get('result') != 'accepted' or parser.get('destination') != 'hyjal':
-            raise RuntimeError(f'parser diagnostic wire fields lost: {parser}')
+        if parser.get('result') != 'accepted' or parser.get('destination') != 'hyjal' or parser.get('reason') != 'smart-match':
+            raise RuntimeError(f'accepted parser diagnostic wire fields lost: {parser}')
+
+        # Deliberately unsupported/weak request. The console must preserve the
+        # canonical rejection reason rather than inventing a second decision.
+        write_event(
+            mm, 2, 1, 'SmokeChar', 'ConfusingPeer', 'umm maybe later idk',
+            result='rejected', destination='', intent='',
+            reason='weak-intent', flags=0, confidence=0,
+        )
+        rejected = wait_for(
+            lambda: has_event(backend, 'WhisperReceived', message='umm maybe later idk'),
+            label='rejected WhisperReceived diagnostic',
+        )
+        rejected_parser = (rejected.get('Metadata') or {}).get('parser') or {}
+        if rejected_parser.get('result') != 'rejected' or rejected_parser.get('reason') != 'weak-intent':
+            raise RuntimeError(f'rejected parser reason lost/reinterpreted: {rejected_parser}')
+        if rejected_parser.get('summon_request') is not False:
+            raise RuntimeError(f'rejected whisper incorrectly marked summon request: {rejected_parser}')
 
         correlation = 'smoke-correlation-v1'
-        # Match the production serializer contract but omit optional/default
-        # fields instead of fabricating a JavaScriptSerializer DateTime token.
         command = {
             'SchemaVersion': '1',
             'CommandId': 'smoke-command-v1',
@@ -236,7 +249,7 @@ def main():
             raise RuntimeError('console falsely marked dispatch ACK as WhisperSent')
 
         write_event(
-            mm, 2, 2, 'SmokeChar', 'SmokePeer', 'manual smoke reply',
+            mm, 3, 2, 'SmokeChar', 'SmokePeer', 'manual smoke reply',
             result='sent', intent='manual', correlation=correlation,
         )
         sent = wait_for(
@@ -246,10 +259,11 @@ def main():
         if sent.get('Direction') != 3:
             raise RuntimeError(f'final manual direction mismatch: {sent}')
 
-        print('OPERATOR BRIDGE IPC ROUNDTRIP PASS')
+        print('SUMMON OPERATOR BRIDGE IPC ROUNDTRIP PASS')
         print(f'fake_runtime_pid={pid}')
         print('map_first_discovery=PASS')
-        print('incoming_whisper=PASS')
+        print('accepted_whisper_diagnostic=PASS')
+        print('rejected_weak_intent_diagnostic=PASS')
         print('manual_command_wire=PASS')
         print('dispatch_ack_not_sent=PASS')
         print('final_whisper_confirmation=PASS')
@@ -257,7 +271,7 @@ def main():
     except Exception:
         rows = load_jsonl(backend)
         print('--- backend-events tail ---')
-        for row in rows[-12:]:
+        for row in rows[-16:]:
             print(json.dumps(row, ensure_ascii=False, sort_keys=True))
         print('--- command file ---')
         if commands.exists():
