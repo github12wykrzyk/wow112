@@ -3,6 +3,7 @@
 pub mod destination_registry;
 pub mod tele08_bc_adapter;
 pub mod tele08_whisper_parser;
+pub mod tele11_service_core;
 pub mod tele_response_engine;
 
 #[cfg(test)]
