@@ -27,9 +27,16 @@ impl Default for ClarificationConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClarificationStage {
+    ConfirmSummon,
+    ChooseDestination,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingClarification {
     pub sender: String,
     pub destination: Option<DestinationKey>,
+    pub stage: ClarificationStage,
     pub created_ms: u64,
     pub expires_ms: u64,
 }
@@ -44,8 +51,8 @@ pub enum ClarificationDecision {
         text: String,
         destination: Option<DestinationKey>,
     },
-    /// A reply confirmed a pending clarification. This synthetic classification
-    /// is safe to feed into the existing B->C admission path.
+    /// A reply completed clarification. This synthetic classification is safe
+    /// to feed into the existing B->C admission path because it has a destination.
     Confirmed(WhisperClassification),
     /// Explicit negative reply closed the pending clarification.
     Declined,
@@ -89,29 +96,19 @@ impl ClarificationGate {
                 return ClarificationDecision::PassThrough;
             }
 
-            if is_confirmation(&classification.normalized_text) {
-                self.pending.remove(&sender_key);
-                return ClarificationDecision::Confirmed(confirmed_classification(
-                    classification,
-                    pending.destination,
-                ));
-            }
-
             if is_decline(&classification.normalized_text) {
                 self.pending.remove(&sender_key);
                 return ClarificationDecision::Declined;
             }
 
-            if is_explicit_action(&classification.intent) {
-                self.pending.remove(&sender_key);
-                return ClarificationDecision::PassThrough;
-            }
-
-            if is_clarifiable_unknown(classification) {
-                return ClarificationDecision::Suppressed;
-            }
-
-            return ClarificationDecision::PassThrough;
+            return match pending.stage {
+                ClarificationStage::ConfirmSummon => {
+                    self.handle_confirm_summon(&sender_key, pending, classification)
+                }
+                ClarificationStage::ChooseDestination => {
+                    self.handle_choose_destination(&sender_key, pending, classification)
+                }
+            };
         }
 
         if !is_clarifiable_unknown(classification) {
@@ -125,6 +122,7 @@ impl ClarificationGate {
         let pending = PendingClarification {
             sender: classification.sender.clone(),
             destination: classification.destination.clone(),
+            stage: ClarificationStage::ConfirmSummon,
             created_ms: classification.timestamp_ms,
             expires_ms: classification
                 .timestamp_ms
@@ -148,6 +146,78 @@ impl ClarificationGate {
 
     pub fn pending_for(&self, sender: &str) -> Option<&PendingClarification> {
         self.pending.get(&sender_key(sender))
+    }
+
+    fn handle_confirm_summon(
+        &mut self,
+        sender_key: &str,
+        pending: PendingClarification,
+        classification: &WhisperClassification,
+    ) -> ClarificationDecision {
+        if is_confirmation(&classification.normalized_text) {
+            if let Some(destination) = pending.destination {
+                self.pending.remove(sender_key);
+                return ClarificationDecision::Confirmed(confirmed_classification(
+                    classification,
+                    destination,
+                    "clarification_confirmed",
+                ));
+            }
+
+            let next = PendingClarification {
+                sender: pending.sender,
+                destination: None,
+                stage: ClarificationStage::ChooseDestination,
+                created_ms: classification.timestamp_ms,
+                expires_ms: classification
+                    .timestamp_ms
+                    .saturating_add(self.config.timeout_ms),
+            };
+            self.last_prompt_ms
+                .insert(sender_key.to_string(), classification.timestamp_ms);
+            self.pending.insert(sender_key.to_string(), next);
+            return ClarificationDecision::Prompt {
+                recipient: classification.sender.clone(),
+                text: destination_prompt().into(),
+                destination: None,
+            };
+        }
+
+        if is_explicit_action(&classification.intent) {
+            self.pending.remove(sender_key);
+            return ClarificationDecision::PassThrough;
+        }
+
+        if is_clarifiable_unknown(classification) {
+            return ClarificationDecision::Suppressed;
+        }
+
+        ClarificationDecision::PassThrough
+    }
+
+    fn handle_choose_destination(
+        &mut self,
+        sender_key: &str,
+        _pending: PendingClarification,
+        classification: &WhisperClassification,
+    ) -> ClarificationDecision {
+        if let Some(destination) = classification.destination.clone() {
+            self.pending.remove(sender_key);
+            return ClarificationDecision::Confirmed(confirmed_classification(
+                classification,
+                destination,
+                "clarification_destination_selected",
+            ));
+        }
+
+        if is_confirmation(&classification.normalized_text)
+            || is_clarifiable_unknown(classification)
+            || is_explicit_action(&classification.intent)
+        {
+            return ClarificationDecision::Suppressed;
+        }
+
+        ClarificationDecision::PassThrough
     }
 
     fn expire_sender(&mut self, sender_key: &str, now_ms: u64) {
@@ -221,21 +291,26 @@ fn clarification_text(destination: Option<&DestinationKey>) -> String {
     }
 }
 
+fn destination_prompt() -> &'static str {
+    "Which location: Hyjal, Winterspring or Azshara?"
+}
+
 fn confirmed_classification(
     reply: &WhisperClassification,
-    destination: Option<DestinationKey>,
+    destination: DestinationKey,
+    reason: &str,
 ) -> WhisperClassification {
     let mut signals = reply.signals.clone();
-    signals.push("clarification_confirmed".into());
+    signals.push(reason.into());
     WhisperClassification {
         sender: reply.sender.clone(),
         raw_text: reply.raw_text.clone(),
         normalized_text: reply.normalized_text.clone(),
         timestamp_ms: reply.timestamp_ms,
         intent: WhisperIntent::SummonRequest,
-        destination: destination.or_else(|| reply.destination.clone()),
+        destination: Some(destination),
         confidence: 97,
         signals,
-        reason: "clarification_confirmed".into(),
+        reason: reason.into(),
     }
 }
