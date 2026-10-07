@@ -35,7 +35,7 @@ jobs:
       - name: Stored-source build
         shell: pwsh
         run: |
-          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          rustfmt --check --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
