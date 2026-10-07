@@ -36,9 +36,11 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Format gate
+      - name: Normalize roundtrip runner formatting
         shell: pwsh
-        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+        run: |
+          rustfmt --edition 2021 probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
 
       - name: Offline full-chain contract
         shell: pwsh
