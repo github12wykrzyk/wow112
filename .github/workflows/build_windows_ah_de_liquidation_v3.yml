@@ -81,6 +81,7 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_de_price_hardening_v1_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           python probes/Wow112HeadlessAndroid/tools/poc08_de_history_liquidity_v2_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v3_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v3_compilefix.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $main='probes/Wow112HeadlessAndroid/src/main.rs'
           $t=Get-Content $main -Raw
