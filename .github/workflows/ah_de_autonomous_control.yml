@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ah-de-autonomous-control-v1
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   control:
@@ -82,6 +82,43 @@ jobs:
 
           echo 'SAFETY_POLICY=PASS' | tee "$STATE_DIR/POLICY.txt"
 
+      - name: Dispatch exact DE build workflow
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          REMOTE_SHA=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/$GITHUB_REF_NAME" --jq '.object.sha')
+          if [[ "$REMOTE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "CONTROL STALE: branch moved remote=$REMOTE_SHA candidate=$GITHUB_SHA" >&2
+            exit 29
+          fi
+
+          DISPATCH_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          OUT=$(gh workflow run "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" 2>&1)
+          printf '%s\n' "$OUT"
+          RUN_ID=$(printf '%s\n' "$OUT" | sed -nE 's#.*actions/runs/([0-9]+).*#\1#p' | tail -1)
+
+          if [[ -z "$RUN_ID" ]]; then
+            for i in $(seq 1 20); do
+              DATA=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$BUILD_WORKFLOW" --branch "$GITHUB_REF_NAME" --event workflow_dispatch --limit 10 --json databaseId,headSha,createdAt)
+              RUN_ID=$(echo "$DATA" | jq -r --arg sha "$GITHUB_SHA" --arg at "$DISPATCH_AT" '[.[] | select(.headSha==$sha and .createdAt >= $at)] | sort_by(.createdAt) | reverse | .[0].databaseId // empty')
+              [[ -n "$RUN_ID" ]] && break
+              sleep 2
+            done
+          fi
+
+          if [[ -z "$RUN_ID" || ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo 'CONTROL FAIL: dispatched build run was not resolved.' >&2
+            exit 30
+          fi
+
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "BUILD_RUN_ID=$RUN_ID" | tee "$STATE_DIR/BUILD_RUN.txt"
+          echo "BUILD_DISPATCHED sha=$GITHUB_SHA branch=$GITHUB_REF_NAME run=$RUN_ID"
+
       - name: Corporate release-only updater contract
         shell: bash
         run: |
@@ -134,50 +171,30 @@ jobs:
 
           echo 'CORP_RELEASE_ONLY_CONTRACT=PASS' | tee "$STATE_DIR/CORP_RELEASE_CHANNEL.txt"
 
-      - name: Dispatch exact DE build workflow
-        id: dispatch
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh workflow run "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
-          echo "BUILD_DISPATCHED sha=$GITHUB_SHA branch=$GITHUB_REF_NAME"
-
       - name: Wait for exact candidate build
         id: wait
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
         run: |
           set -euo pipefail
-          RUN_ID=''
-          for i in $(seq 1 80); do
-            DATA=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$BUILD_WORKFLOW" --branch "$GITHUB_REF_NAME" --event workflow_dispatch --limit 20 --json databaseId,headSha,status,conclusion,createdAt)
-            RUN_ID=$(echo "$DATA" | jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.headSha==$sha)] | sort_by(.createdAt) | reverse | .[0].databaseId // empty')
-            if [[ -n "$RUN_ID" ]]; then break; fi
-            sleep 5
-          done
-          if [[ -z "$RUN_ID" ]]; then
-            echo 'CONTROL FAIL: dispatched build run was not found.' >&2
-            exit 30
-          fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "BUILD_RUN_ID=$RUN_ID" | tee "$STATE_DIR/BUILD_RUN.txt"
 
-          for i in $(seq 1 200); do
+          if ! gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 2; then
             STATUS=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')
-            if [[ "$STATUS" == 'completed' ]]; then break; fi
-            sleep 10
-          done
+            CONCLUSION=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion')
+            echo "BUILD_STATUS=$STATUS" | tee -a "$STATE_DIR/BUILD_RUN.txt"
+            echo "BUILD_CONCLUSION=$CONCLUSION" | tee -a "$STATE_DIR/BUILD_RUN.txt"
+            echo "CONTROL FAIL: exact candidate build status=$STATUS conclusion=$CONCLUSION" >&2
+            exit 31
+          fi
+
           STATUS=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')
           CONCLUSION=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion')
           echo "BUILD_STATUS=$STATUS" | tee -a "$STATE_DIR/BUILD_RUN.txt"
           echo "BUILD_CONCLUSION=$CONCLUSION" | tee -a "$STATE_DIR/BUILD_RUN.txt"
-          if [[ "$STATUS" != 'completed' || "$CONCLUSION" != 'success' ]]; then
-            echo "CONTROL FAIL: exact candidate build status=$STATUS conclusion=$CONCLUSION" >&2
-            exit 31
-          fi
+          [[ "$STATUS" == 'completed' && "$CONCLUSION" == 'success' ]] || exit 31
 
       - name: Download exact candidate artifact
         shell: bash
