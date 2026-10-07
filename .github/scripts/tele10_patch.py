@@ -34,25 +34,25 @@ inject = needle + '''                            if SUMMON_RESPONSE_SENT
                             {
                                 publish_runner_state(
                                     "SUMMON_ACCEPT_COMMITTED",
-                                    &format!("opcode=0x02AC summoner_guid=0x{summoner_guid:016X} retry_allowed=false"),
+                                    &format!("opcode=0x02AC vmangos_empty_payload=true retry_allowed=false"),
                                 );
                                 if let Err(error) = write_encrypted_raw(
                                     stream,
                                     crypto.encrypter(),
                                     CMSG_SUMMON_RESPONSE_OPCODE,
-                                    &summoner_guid.to_le_bytes(),
+                                    &[],
                                 ) {
                                     publish_runner_state(
                                         "FAIL_SUMMON_ACCEPT_UNCERTAIN",
-                                        &format!("opcode=0x02AC summoner_guid=0x{summoner_guid:016X} socket write uncertain; retry disabled"),
+                                        "opcode=0x02AC empty payload socket write uncertain; retry disabled",
                                     );
                                     return Err(format!("TELE10_SUMMON_ACCEPT_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
                                 }
                                 publish_runner_state(
                                     "WAIT_NEW_WORLD",
-                                    &format!("accepted summoner_guid=0x{summoner_guid:016X}; waiting SMSG_NEW_WORLD opcode=0x003E"),
+                                    &format!("accepted vmangos summon request summoner_guid=0x{summoner_guid:016X}; waiting SMSG_NEW_WORLD opcode=0x003E"),
                                 );
-                                println!("[TELE-10-ACCEPT-TX] PASS opcode=0x02AC summoner_guid=0x{summoner_guid:016X} retry_allowed=false");
+                                println!("[TELE-10-ACCEPT-TX] PASS opcode=0x02AC payload=empty vmangos=true retry_allowed=false");
                             }
 '''
 if needle not in s:
