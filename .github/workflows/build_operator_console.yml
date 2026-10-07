@@ -42,7 +42,7 @@ jobs:
           from pathlib import Path
 
           native = Path('src/AutoLoginBridge/WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc').read_text(encoding='utf-8')
-          console = Path('tools/operator_console/OperatorRuntimeBridge.cs').read_text(encoding='utf-8')
+          console = Path('tools/operator_console/RuntimeAdapters.cs').read_text(encoding='utf-8')
           lua = Path('src/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua').read_text(encoding='utf-8')
           toc = Path('src/AddOns/SummonScout/SummonScout.toc').read_text(encoding='utf-8')
 
@@ -57,8 +57,8 @@ jobs:
                   raise SystemExit(f'native protocol mismatch: {name}')
 
           required_console = [
-              'private const uint Magic = 0x4F323157u;',
-              'private const uint Version = 1u;',
+              'private const uint OperatorMagic = 0x4F323157u;',
+              'private const uint OperatorVersion = 1u;',
               'private const int HeaderSize = 556;',
               'private const int SlotSize = 896;',
               'private const int RingCount = 16;',
@@ -67,6 +67,11 @@ jobs:
           for token in required_console:
               if token not in console:
                   raise SystemExit('console protocol mismatch: ' + token)
+
+          if 'Process.GetProcessesByName("Wow")' in console:
+              raise SystemExit('runtime discovery must not depend on Wow.exe process name')
+          if 'Process.GetProcesses()' not in console or 'HasKnownMapping(pid)' not in console:
+              raise SystemExit('runtime discovery is not map-first')
 
           if 'SendChatMessage, text, "WHISPER"' not in lua:
               raise SystemExit('Lua bridge does not use existing SendChatMessage whisper primitive')
@@ -109,8 +114,7 @@ jobs:
 
           & $csc @common /target:winexe /out:dist/operator-console/WoW112-Operator-Console-V1.exe `
             tools/operator_console/OperatorCore.cs `
-            tools/operator_console/ExistingRuntimeTelemetry.cs `
-            tools/operator_console/OperatorRuntimeBridge.cs `
+            tools/operator_console/RuntimeAdapters.cs `
             tools/operator_console/OperatorConsole.cs
           if ($LASTEXITCODE -ne 0) { throw "Operator Console compile failed" }
 
