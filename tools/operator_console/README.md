@@ -1,80 +1,121 @@
-# WoW112 Operator Console V1
+# WoW112 Summon Operator Console V1
 
-Operator Console is a separate Windows x64 observability and operator UI for WoW112 automation. It does **not** implement login, world/AH protocol, BUY logic, Vendor/DE economics, mail/lifecycle mutations, summon logic, movement, or a second whisper parser.
+A standalone Windows x64 control and observability UI for the WoW112 **summon service only**. It reuses the existing SummonScout parser/summon engine, AutoSummonAssist, SummonWorker and AutoLoginBridge runtime. It does not implement a second parser, a second summon engine, login/world protocol, AH, BUY, mail, auction lifecycle or movement.
 
-## Run
+## What V1 does
 
-1. Extract the `WoW112-Operator-Console-V1-<SHA>` CI artifact.
-2. Start `WoW112-Operator-Console-V1.exe`.
-3. Persistent data is stored under `%LOCALAPPDATA%\WoW112\OperatorConsole`.
-4. `--demo` injects synthetic events for UI-only validation. Synthetic mode is never the production backend.
+- discovers active WoW112 summon sessions from existing named mappings;
+- shows world/session, whisper, summon and payment state per character;
+- displays incoming whispers and the decision returned by the canonical SummonScout parser;
+- lets the operator reply manually through the selected live summon session;
+- marks a manual reply as sent only after WoW raises `CHAT_MSG_WHISPER_INFORM`;
+- tracks summon lifecycle: queued, started, completed and failed;
+- mirrors the existing trusted `SummonScoutDB.paymentLog` instead of detecting trade/gold independently;
+- preserves summon/payment history locally across GUI restarts;
+- imports trusted payment entries already present in SummonScoutDB when the bridge first sees them;
+- exposes filtered events, logs and a sanitized debug snapshot.
 
-The console is x64 by design. Existing WoW 1.12.1/native modules remain x86. Process architecture is decoupled by the Operator Bridge contract.
+## Delivery artifact
 
-## Event source
+CI produces `WoW112-Operator-Console-V1-<SHA>`. The artifact contains:
 
-The neutral V1 bridge directory is `%LOCALAPPDATA%\WoW112\OperatorConsole\bridge`:
+- `WoW112-Operator-Console-V1.exe` — x64 .NET Framework 4.8 WinForms console;
+- `runtime-overlay/WoWAutoLoginBridge_5875_v1.dll` — the existing x86 AutoLoginBridge/HOTPROBE rebuilt with the transport-only Operator Bridge include;
+- `runtime-overlay/Interface/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua`;
+- `runtime-overlay/Interface/AddOns/SummonScout/SummonScout.toc`;
+- `manifest.json` and `SHA256SUMS.txt`;
+- this README, architecture notes and config example.
 
-- `backend-events.jsonl` — append-only structured events emitted by backend adapters.
-- `operator-commands.jsonl` — append-only typed operator commands consumed by backend adapters.
+## Installation / runtime overlay
 
-The GUI never creates raw WoW packets. Backend adapters must translate `ReplyToWhisper`/`SendWhisper` through the already-authoritative whisper-send primitive for that backend.
+The console EXE can live anywhere. The runtime overlay must be applied to the same WoW112 runtime that already loads the canonical modules:
 
-Every event supports timestamp, severity, category, account/profile, character, session ID, module, event type, message, structured metadata, correlation ID, optional operation ID and direction.
+1. Replace the runtime `WoWAutoLoginBridge_5875_v1.dll` with the artifact copy.
+2. Copy the two SummonScout files from `runtime-overlay/Interface/AddOns/SummonScout/` into the matching game addon directory.
+3. Start WoW clients normally through the existing loader.
+4. Start `WoW112-Operator-Console-V1.exe`.
 
-## History and logs
+The bridge creates one mapping per live client: `Local\WoW112_OperatorBridge_<pid>`. The x64 console never opens WoW process memory and never constructs game packets.
 
-`%LOCALAPPDATA%\WoW112\OperatorConsole\history\operator-events.jsonl` is the durable source of truth for console history. Files rotate at a bounded size and old rotations are capped. Clearing the Events view never deletes history.
+## Manual whisper safety
 
-The history is replayed on console startup into the read-only state projector, so conversations, session state, summon/payment events, errors and mutation outcomes survive a GUI restart.
+Manual reply path:
 
-## Manual whisper
+`GUI -> typed ReplyToWhisper -> shared map -> existing AutoLoginBridge FrameScript executor -> SummonScout OperatorBridge -> H.ManualChatLock -> existing SendChatMessage(..., "WHISPER", ...)`
 
-The Whispers tab groups events by player. Enter sends; Shift+Enter inserts a newline in the editor. A manual reply is serialized as a typed `ReplyToWhisper` command targeted at an explicit session/account/profile/character. The console records only `OperatorCommandQueued` until the backend emits the authoritative outgoing `WhisperSent` event; it does not pretend that queuing equals sending.
+There are two acknowledgements:
 
-Manual chat is communication, not an economic mutation. The OperatorCommand enum intentionally exposes no BUY/MAIL/CANCEL/POST operations.
+1. **dispatch accepted** — Lua accepted the typed command;
+2. **WhisperSent** — final confirmation only after matching `CHAT_MSG_WHISPER_INFORM`.
 
-## Backend disconnect diagnosis
+If execution/ACK is uncertain, or no final inform appears within 30 seconds, the console records an uncertain send and **does not auto-retry**. This avoids duplicate manual replies.
 
-Check, in order:
+The native command protocol exposes only whisper dispatch. It has no BUY/CANCEL/POST/MAIL or arbitrary-Lua command.
 
-1. Overview → session Connected/World status and Last activity.
-2. Events → `Disconnected`, `ReconnectStarted`, `ReconnectSucceeded`, Warning/Error.
-3. Debug → current state snapshot and recent warning/error chain.
-4. `%LOCALAPPDATA%\WoW112\OperatorConsole\bridge\backend-events.jsonl` for adapter output.
-5. The backend-specific logs. Operator Console does not retry an uncertain economic send.
+## Canonical parser diagnostics
 
-## Debug snapshot
+`SummonScout_OperatorBridgeHot.lua` calls the official `W112_SUMMONSCOUT_API_V1.whisperInviteDecision` exported by the canonical core. It does not rediscover parser closures and does not maintain a competing keyword/intent parser.
 
-Debug → **Copy debug snapshot** copies a bounded state/error report to the clipboard. Password/token/secret/Authorization/DPAPI-like values are redacted both when events enter the bus and when a snapshot is generated.
+The Whispers/Whisper Debug views preserve the result, destination, reason and summon-request flag returned by that canonical decision path.
 
-## Read-only vs commands
+## Summon lifecycle
 
-Read-only in V1 UI:
+The bridge observes the exported `W112_SUMMONSCOUT_STATE` rather than implementing summon behavior. It records state transitions into bounded SavedVariables telemetry:
 
-- login/world/reconnect status,
-- parser diagnostics,
-- summon/payment history,
-- AH scans/buy telemetry,
-- mail/cancel/post lifecycle telemetry,
-- mutation coordinator state.
+- `SummonScoutDB.operatorSummonLog` — persistent operator lifecycle mirror;
+- `SummonScoutDB.operatorSummonSeq` — monotonic telemetry identity.
 
-Command-capable surface:
+Events projected to the console are:
 
-- `SendWhisper`,
-- `ReplyToWhisper`,
-- `PauseAutomation`,
-- `ResumeAutomation`.
+- `SummonQueued`;
+- `SummonStarted`;
+- `SummonCompleted`;
+- `SummonFailed`.
 
-There are deliberately no economic mutation commands. UNCERTAIN coordinator state is projected as a hard-stop status and is never cleared by restarting the GUI.
+`PaymentExpected` is a console state derived after a completed summon. It is not a claim that a fixed fee is due; V1 does not invent payment policy.
 
-## Files in the delivery artifact
+## Trusted payment history
 
-- `WoW112-Operator-Console-V1.exe`
-- `config.example.json`
-- `README.md`
-- `ARCHITECTURE.md`
-- `manifest.json`
-- `SHA256SUMS.txt`
+The payment source of truth remains the existing trusted core ledger:
 
-.NET Framework 4.8 is used because the existing WoW112 Windows tooling already builds on the Windows 2022 image and uses WinForms. The console itself is compiled AMD64/x64; it has no reason to inherit the game's x86 address space.
+`SummonScoutDB.paymentLog[{ ts, player, copper }]`
+
+The Operator Bridge mirrors new trusted entries into `SummonScoutDB.operatorPaymentLog` with a stable local ID and, when available, associates the most recent completed summon destination for that player. It never reads current wallet balance as payment and never implements a second trade detector.
+
+The source Unix timestamp is preserved. Therefore a payment received an hour ago remains an event from an hour ago after console restart instead of being re-stamped as a new payment.
+
+On the Windows side, `%LOCALAPPDATA%\WoW112\OperatorConsole\history\operator-events.jsonl` is append-only history with rotation. `%LOCALAPPDATA%\WoW112\OperatorConsole\bridge\summon-telemetry-seen.txt` prevents replayed SavedVariables telemetry from duplicating durable local history.
+
+To check whether a player paid earlier, search the Events view for the player name or inspect `SUMMONS / PAYMENTS`. `PaymentReceived` shows the trusted amount and original event time.
+
+## Data locations
+
+- persistent normalized history: `%LOCALAPPDATA%\WoW112\OperatorConsole\history\operator-events.jsonl`;
+- backend event stream: `%LOCALAPPDATA%\WoW112\OperatorConsole\bridge\backend-events.jsonl`;
+- typed command outbox: `%LOCALAPPDATA%\WoW112\OperatorConsole\bridge\operator-commands.jsonl`;
+- summon/payment replay dedupe: `%LOCALAPPDATA%\WoW112\OperatorConsole\bridge\summon-telemetry-seen.txt`.
+
+History rotates at a bounded size. Clearing a grid in the UI does not delete durable history.
+
+## Tests and evidence
+
+The dedicated Windows CI gates:
+
+- canonical repository invariants;
+- summon bridge protocol/safety surface;
+- x64 console compile and core tests;
+- exact named-mapping whisper roundtrip;
+- summon lifecycle/payment telemetry roundtrip including a synthetic payment timestamped one hour in the past;
+- durable payment replay dedupe;
+- x86 AutoLoginBridge build;
+- runtime overlay staging;
+- GUI render smoke;
+- x64/x86 PE architecture and SHA256 manifest.
+
+The IPC and GUI smokes are synthetic integration tests, **not a claim of a real in-game summon/payment run**. Real gameplay verification must be reported separately when performed against a live WoW 1.12.1 client/server.
+
+## Security
+
+Passwords, tokens, authorization material and DPAPI-like values are sanitized at event ingress/debug output. Credentials are not part of the OperatorEvent or OperatorCommand schemas. Account/profile identity uses existing non-secret runtime identity/fingerprint information.
+
+The console is intentionally x64 while the game/runtime bridge remains x86; the named mapping is the architecture boundary.
