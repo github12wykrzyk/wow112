@@ -190,8 +190,7 @@ fn is_explicit_action(intent: &WhisperIntent) -> bool {
 fn is_confirmation(text: &str) -> bool {
     matches!(
         text,
-        "+"
-            | "y"
+        "+" | "y"
             | "yes"
             | "yea"
             | "yeah"
