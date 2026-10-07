@@ -61,14 +61,33 @@ if($null -eq $exeEntry){Fail 'manifest EXE entry missing'}
 $actualSha=(Get-FileHash $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
 $expectedSha=([string]$exeEntry.Value.sha256).ToLowerInvariant()
 if($actualSha -ne $expectedSha){Fail "EXE SHA256 mismatch expected=$expectedSha actual=$actualSha"}
+$selfEntry=$manifest.files.PSObject.Properties['RUN_LIFECYCLE_LOCAL_CANARY.ps1']
+if($null -eq $selfEntry){Fail 'manifest canary entry missing'}
+$selfSha=(Get-FileHash $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if($selfSha -ne ([string]$selfEntry.Value.sha256).ToLowerInvariant()){Fail 'canary script SHA256 mismatch'}
 
-$profile=Get-Content $ProfilePath -Raw | ConvertFrom-Json
-$secure=(Get-Content $PasswordPath -Raw).Trim() | ConvertTo-SecureString
-$plain=Secure-ToPlain $secure
 $mutating=$Mode -ne 'Inspect'
 if($mutating -and $Arm -cne 'LIFECYCLE_CANARY_ONCE'){
     Fail 'mutation not armed; pass -Arm LIFECYCLE_CANARY_ONCE'
 }
+
+# The coordinator is deliberately host-local. Until this feature becomes the only
+# local writer, refuse to run beside any older AH terminal executable that cannot
+# participate in MutationCoordinatorV1. This is conservative by design.
+$otherAh=@(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    $_.Id -ne $PID -and (
+        $_.ProcessName -like 'wow112-ah-*' -or
+        $_.ProcessName -like 'wow112-headless-android-probe*'
+    )
+})
+if($otherAh.Count -gt 0){
+    $names=($otherAh | ForEach-Object { "$($_.ProcessName)#$($_.Id)" }) -join ', '
+    Fail "another terminal AH runtime is active ($names). Stop it before Lifecycle canary; no legacy concurrent writer is allowed"
+}
+
+$profile=Get-Content $ProfilePath -Raw | ConvertFrom-Json
+$secure=(Get-Content $PasswordPath -Raw).Trim() | ConvertTo-SecureString
+$plain=Secure-ToPlain $secure
 
 Clear-MutationEnv
 try{
