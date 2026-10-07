@@ -20,7 +20,6 @@ env:
   DE_CACHE_DIR: probes/Wow112HeadlessAndroid/.ci-cache/de
   DE_CACHE_EPOCH: '1'
   CARGO_CACHE_EPOCH: '1'
-  DE_CACHE_INPUT_HASH: ${{ hashFiles('probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py', 'probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv', 'probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt', 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py') }}
 
 jobs:
   build:
@@ -41,7 +40,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.DE_CACHE_DIR }}
-          key: de-full-${{ env.DE_CACHE_EPOCH }}-${{ env.DE_CACHE_INPUT_HASH }}
+          key: de-full-${{ env.DE_CACHE_EPOCH }}-${{ hashFiles('probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py', 'probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv', 'probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt', 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py') }}
 
       - name: Restore Cargo warm build cache
         uses: actions/cache@v4
@@ -58,6 +57,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DE_CACHE_INPUT_HASH: ${{ hashFiles('probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py', 'probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv', 'probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt', 'probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py') }}
         run: |
           & 'probes/Wow112HeadlessAndroid/tools/ci_build_de_v31.ps1'
 
