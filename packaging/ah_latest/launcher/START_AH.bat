@@ -20,25 +20,30 @@ if errorlevel 1 (
 :MENU
 cls
 echo ============================================================
-echo WoW112 AH - HOTKEY LAUNCHER
+echo WoW112 AH - HOTKEY LAUNCHER V4
 echo ============================================================
 echo Konto/postac/haslo: zapamietane lokalnie ^(haslo DPAPI Windows^)
 echo.
-echo [V] VENDOR STABLE - REAL BUY / loop do nastepnej 08:00
-echo [D] DE LAB FAST - REAL BUY / max 3 / max 3g / max 2g each
+echo [V] VENDOR STABLE - REAL BUY / osobny sprawdzony modul
+echo [D] DE LAB FAST - REAL BUY / max 3 DE
+echo [U] UNIFIED VENDOR+DE V4 - REAL BUY / jeden scan, wspolna kolejka
 echo [A] DE LAB FAST - AUDIT ONLY / zero BUY
+echo [T] UNIFIED VENDOR+DE V4 - AUDIT ONLY / zero BUY
 echo [S] Zmien zapisany login/postac/haslo
-echo [R] Otworz folder raportow DE
+echo [R] Otworz folder raportow
 echo [Q] Wyjscie
 echo.
-echo UWAGA: V i D wykonuja realne zakupy. Sam hotkey jest uzbrojeniem trybu.
-echo Nie uruchamiaj V i D rownoczesnie na tej samej postaci.
+echo U = jeden klient i jeden pelny snapshot AH; NIE uruchamia V i D jako dwoch procesow.
+echo Live U: max 10 zakupow lacznie, max 3 DE, max 10g lacznie, max 3g DE.
+echo V, D i U wykonuja realne zakupy. Sam hotkey jest uzbrojeniem trybu.
 echo.
-choice /C VDASRQ /N /M "Hotkey [V/D/A/S/R/Q]: "
-if errorlevel 6 goto :EOF
-if errorlevel 5 goto REPORTS
-if errorlevel 4 goto SETUP
-if errorlevel 3 goto AUDIT
+choice /C VDUATSRQ /N /M "Hotkey [V/D/U/A/T/S/R/Q]: "
+if errorlevel 8 goto :EOF
+if errorlevel 7 goto REPORTS
+if errorlevel 6 goto SETUP
+if errorlevel 5 goto UNIFIED_AUDIT
+if errorlevel 4 goto AUDIT
+if errorlevel 3 goto UNIFIED_LIVE
 if errorlevel 2 goto DEBUY
 if errorlevel 1 goto VENDOR
 
@@ -54,9 +59,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0_launcher\START_AH
 pause
 goto MENU
 
+:UNIFIED_LIVE
+cls
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0_launcher\START_AH.ps1" -Mode UnifiedLive
+pause
+goto MENU
+
 :AUDIT
 cls
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0_launcher\START_AH.ps1" -Mode DeAudit
+pause
+goto MENU
+
+:UNIFIED_AUDIT
+cls
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0_launcher\START_AH.ps1" -Mode UnifiedAudit
 pause
 goto MENU
 
