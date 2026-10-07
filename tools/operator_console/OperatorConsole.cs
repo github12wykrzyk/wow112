@@ -4,7 +4,6 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace WoW112.OperatorConsole
@@ -51,7 +50,8 @@ namespace WoW112.OperatorConsole
 
         private static string GetArg(string[] args, string name)
         {
-            for (int i = 0; i + 1 < args.Length; i++) if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+            for (int i = 0; i + 1 < args.Length; i++)
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
             return "";
         }
     }
@@ -60,7 +60,6 @@ namespace WoW112.OperatorConsole
     {
         private readonly object gate = new object();
         private readonly List<OperatorEvent> events = new List<OperatorEvent>();
-        private readonly string root;
         public readonly OperatorEventBus Bus = new OperatorEventBus();
         public readonly OperatorStateStore State = new OperatorStateStore();
         public readonly JsonlOperatorStore Store;
@@ -69,11 +68,10 @@ namespace WoW112.OperatorConsole
 
         public OperatorApplication(string rootDirectory)
         {
-            root = rootDirectory;
-            Directory.CreateDirectory(root);
-            Store = new JsonlOperatorStore(Path.Combine(root, "history"));
+            Directory.CreateDirectory(rootDirectory);
+            Store = new JsonlOperatorStore(Path.Combine(rootDirectory, "history"));
             foreach (var e in Store.Load(50000)) { State.Apply(e); events.Add(e); }
-            Bridge = new FileOperatorBridge(Path.Combine(root, "bridge"), Bus);
+            Bridge = new FileOperatorBridge(Path.Combine(rootDirectory, "bridge"), Bus);
             Bus.Published += OnEvent;
         }
 
@@ -86,24 +84,24 @@ namespace WoW112.OperatorConsole
                 events.Add(e);
                 if (events.Count > 50000) events.RemoveRange(0, events.Count - 50000);
             }
-            var changed = Changed; if (changed != null) changed();
+            var changed = Changed;
+            if (changed != null) changed();
         }
 
-        public List<OperatorEvent> EventsSnapshot()
-        {
-            lock (gate) return events.ToList();
-        }
+        public List<OperatorEvent> EventsSnapshot() { lock (gate) return events.ToList(); }
 
         public void SendManualWhisper(string player, string text, SessionState target)
         {
-            if (target == null) throw new InvalidOperationException("Select an active session before sending a whisper.");
+            if (target == null) throw new InvalidOperationException("Select an explicit active session before sending a whisper.");
+            if (!target.Connected) throw new InvalidOperationException("Selected session is not connected.");
             if (string.IsNullOrWhiteSpace(player)) throw new InvalidOperationException("Select a player conversation.");
             if (string.IsNullOrWhiteSpace(text)) return;
             if (text.Length > 240) throw new InvalidOperationException("Whisper exceeds the 240 character operator safety limit.");
             var corr = Guid.NewGuid().ToString("N");
             Bridge.Submit(new OperatorCommand {
-                CommandType = OperatorCommandType.ReplyToWhisper, Account = target.Account, Profile = target.Profile, Character = target.Character,
-                SessionId = target.SessionId, Player = player.Trim(), Text = text, CorrelationId = corr
+                CommandType = OperatorCommandType.ReplyToWhisper,
+                Account = target.Account, Profile = target.Profile, Character = target.Character, SessionId = target.SessionId,
+                Player = player.Trim(), Text = text, CorrelationId = corr
             });
             Bus.Publish(new OperatorEvent {
                 Severity = OperatorSeverity.Info, Category = "Whisper", EventType = "OperatorCommandQueued", Module = "OperatorConsole",
@@ -130,61 +128,68 @@ namespace WoW112.OperatorConsole
         public void EmitDemoEvents()
         {
             var sid = "demo-smokinpole";
-            Bus.Publish(E("SessionStarted", "Core", "Demo session started", sid, "Smokinpole"));
-            Bus.Publish(E("LoginSucceeded", "World", "Connected to world", sid, "Smokinpole"));
-            var whisper = E("WhisperReceived", "Whisper", "need hyjal pls", sid, "Smokinpole");
+            Bus.Publish(Demo("SessionStarted", "Core", "Demo session started", sid, "Smokinpole"));
+            Bus.Publish(Demo("LoginSucceeded", "World", "Connected to world", sid, "Smokinpole"));
+            var whisper = Demo("WhisperReceived", "Whisper", "need hyjal pls", sid, "Smokinpole", "PlayerX");
             whisper.Direction = OperatorDirection.Incoming;
-            whisper.Metadata["player"] = "PlayerX";
-            whisper.Metadata["parser"] = new Dictionary<string, object> { { "sender", "PlayerX" }, { "raw", "need hyjal pls" }, { "normalized", "need hyjal pls" }, { "result", "summon" }, { "destination", "Hyjal" }, { "intent", "request" }, { "keywords", "need,hyjal" }, { "matched_rule", "destination+request" }, { "reason", "recognized summon request" }, { "confidence", 1.0 }, { "competition", false }, { "summon_request", true } };
+            whisper.Metadata["parser"] = new Dictionary<string, object> {
+                { "sender", "PlayerX" }, { "raw", "need hyjal pls" }, { "normalized", "need hyjal pls" },
+                { "result", "summon" }, { "destination", "Hyjal" }, { "intent", "request" }, { "keywords", "need,hyjal" },
+                { "matched_rule", "destination+request" }, { "reason", "recognized summon request" }, { "confidence", 1.0 },
+                { "competition", false }, { "summon_request", true }
+            };
             Bus.Publish(whisper);
-            Bus.Publish(E("WhisperParsed", "Whisper", "PlayerX classified as Hyjal summon request", sid, "Smokinpole", "PlayerX"));
-            Bus.Publish(E("SummonQueued", "Summon", "PlayerX queued for Hyjal", sid, "Smokinpole", "PlayerX"));
-            var payment = E("PaymentReceived", "Payment", "Received 4g from PlayerX", sid, "Smokinpole", "PlayerX"); payment.Metadata["copper"] = 40000; payment.Metadata["destination"] = "Hyjal"; Bus.Publish(payment);
-            var uncertain = E("MutationCoordinatorUncertain", "Mutation", "Example hard-stop visibility", sid, "Smokinpole"); uncertain.Severity = OperatorSeverity.Warn; uncertain.OperationId = "demo-op-uncertain"; Bus.Publish(uncertain);
+            Bus.Publish(Demo("WhisperParsed", "Whisper", "PlayerX classified as Hyjal summon request", sid, "Smokinpole", "PlayerX"));
+            Bus.Publish(Demo("SummonQueued", "Summon", "PlayerX queued for Hyjal", sid, "Smokinpole", "PlayerX"));
+            var payment = Demo("PaymentReceived", "Payment", "Received 4g from PlayerX", sid, "Smokinpole", "PlayerX");
+            payment.Metadata["copper"] = 40000; payment.Metadata["destination"] = "Hyjal"; Bus.Publish(payment);
+            var uncertain = Demo("MutationCoordinatorUncertain", "Mutation", "Example hard-stop visibility", sid, "Smokinpole");
+            uncertain.Severity = OperatorSeverity.Warn; uncertain.OperationId = "demo-op-uncertain"; Bus.Publish(uncertain);
         }
 
-        private static OperatorEvent E(string type, string module, string message, string sid, string character, string player = "")
+        private static OperatorEvent Demo(string type, string module, string message, string sid, string character, string player = "")
         {
             var e = new OperatorEvent { EventType = type, Category = module, Module = module, Message = message, SessionId = sid, Character = character, Account = "demo-account", Profile = "demo", CorrelationId = Guid.NewGuid().ToString("N") };
             if (!string.IsNullOrEmpty(player)) e.Metadata["player"] = player;
             return e;
         }
 
-        public void Dispose() { Bridge.Dispose(); Store.Dispose(); }
+        public void Dispose() { Bus.Published -= OnEvent; Bridge.Dispose(); Store.Dispose(); }
     }
 
     internal sealed class OperatorConsoleForm : Form
     {
         private readonly OperatorApplication app;
         private readonly TabControl tabs = new TabControl();
-        private readonly DataGridView overview = Grid();
-        private readonly DataGridView eventsGrid = Grid();
-        private readonly DataGridView summonGrid = Grid();
-        private readonly DataGridView mutationGrid = Grid();
+        private readonly DataGridView overview = MakeGrid();
+        private readonly DataGridView eventsGrid = MakeGrid();
+        private readonly DataGridView summonGrid = MakeGrid();
+        private readonly DataGridView mutationGrid = MakeGrid();
         private readonly ListBox conversations = new ListBox();
         private readonly ListBox transcript = new ListBox();
         private readonly TextBox reply = new TextBox();
         private readonly TextBox search = new TextBox();
         private readonly ComboBox severity = new ComboBox();
         private readonly ComboBox module = new ComboBox();
+        private readonly ComboBox session = new ComboBox();
         private readonly CheckBox autoScroll = new CheckBox();
         private readonly CheckBox pauseView = new CheckBox();
         private readonly Label whisperStats = new Label();
-        private readonly TextBox parserDebug = new TextBox();
-        private readonly TextBox debugText = new TextBox();
-        private readonly TextBox logsText = new TextBox();
+        private readonly TextBox parserDebug = MakeTextView();
+        private readonly TextBox debugText = MakeTextView();
+        private readonly TextBox logsText = MakeTextView();
+        private readonly Dictionary<string, SessionState> sessionByLabel = new Dictionary<string, SessionState>(StringComparer.OrdinalIgnoreCase);
         private string selectedPlayer = "";
+        private bool refreshingEvents;
+        private bool refreshingSessions;
 
         public OperatorConsoleForm(OperatorApplication application)
         {
             app = application;
             Text = "WoW112 Operator Console V1";
             Width = 1550; Height = 900; StartPosition = FormStartPosition.CenterScreen;
-            BackColor = Color.FromArgb(24, 26, 31); ForeColor = Color.Gainsboro;
-            Font = new Font("Segoe UI", 9F);
-            tabs.Dock = DockStyle.Fill;
-            tabs.Appearance = TabAppearance.Normal;
-            Controls.Add(tabs);
+            BackColor = Color.FromArgb(24, 26, 31); ForeColor = Color.Gainsboro; Font = new Font("Segoe UI", 9F);
+            tabs.Dock = DockStyle.Fill; Controls.Add(tabs);
             BuildOverview(); BuildWhispers(); BuildWhisperDebug(); BuildEvents(); BuildDebug(); BuildLogs(); BuildSummons(); BuildMutations();
             app.Changed += OnAppChanged;
             FormClosed += delegate { app.Changed -= OnAppChanged; };
@@ -193,49 +198,49 @@ namespace WoW112.OperatorConsole
 
         private void BuildOverview()
         {
-            var page = Page("OVERVIEW");
-            overview.Dock = DockStyle.Fill;
+            var page = NewPage("OVERVIEW"); overview.Dock = DockStyle.Fill;
             AddColumns(overview, "Character", "Account/Profile", "Connected", "World", "AH", "Summon", "Mail", "Coordinator", "Current task", "Last activity", "Last event", "Last error");
             page.Controls.Add(overview); tabs.TabPages.Add(page);
         }
 
         private void BuildWhispers()
         {
-            var page = Page("WHISPERS");
-            var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 340, BackColor = BackColor };
-            conversations.Dock = DockStyle.Fill; StyleList(conversations); conversations.SelectedIndexChanged += delegate { selectedPlayer = Convert.ToString(conversations.SelectedItem) ?? ""; RefreshConversation(); };
+            var page = NewPage("WHISPERS");
+            var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 330, BackColor = BackColor };
+            StyleList(conversations); conversations.Dock = DockStyle.Fill;
+            conversations.SelectedIndexChanged += delegate { selectedPlayer = Convert.ToString(conversations.SelectedItem) ?? ""; RefreshConversation(); };
             split.Panel1.Controls.Add(conversations);
-            var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, BackColor = BackColor };
-            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
-            whisperStats.Dock = DockStyle.Fill; whisperStats.ForeColor = Color.Gainsboro; right.Controls.Add(whisperStats, 0, 0);
-            transcript.Dock = DockStyle.Fill; StyleList(transcript); transcript.Font = new Font("Consolas", 9F); right.Controls.Add(transcript, 0, 1);
+
+            var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1, BackColor = BackColor };
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 28)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+            var route = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = BackColor, Padding = new Padding(4) };
+            route.Controls.Add(new Label { Text = "Send via session:", AutoSize = true, ForeColor = ForeColor, Padding = new Padding(0, 5, 0, 0) });
+            session.Width = 420; session.DropDownStyle = ComboBoxStyle.DropDownList; route.Controls.Add(session); right.Controls.Add(route, 0, 0);
+            whisperStats.Dock = DockStyle.Fill; whisperStats.ForeColor = ForeColor; right.Controls.Add(whisperStats, 0, 1);
+            StyleList(transcript); transcript.Dock = DockStyle.Fill; transcript.Font = new Font("Consolas", 9F); right.Controls.Add(transcript, 0, 2);
+
             var compose = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = BackColor };
             compose.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); compose.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
             reply.Dock = DockStyle.Fill; reply.Multiline = true; reply.AcceptsReturn = true; reply.BackColor = Color.FromArgb(35, 38, 45); reply.ForeColor = Color.White; reply.KeyDown += ReplyKeyDown;
-            var send = Button("SEND"); send.Dock = DockStyle.Fill; send.Click += delegate { SendReply(); };
-            compose.Controls.Add(reply, 0, 0); compose.Controls.Add(send, 1, 0); right.Controls.Add(compose, 0, 2);
+            var send = MakeButton("SEND"); send.Dock = DockStyle.Fill; send.Click += delegate { SendReply(); };
+            compose.Controls.Add(reply, 0, 0); compose.Controls.Add(send, 1, 0); right.Controls.Add(compose, 0, 3);
             split.Panel2.Controls.Add(right); page.Controls.Add(split); tabs.TabPages.Add(page);
         }
 
-        private void BuildWhisperDebug()
-        {
-            var page = Page("WHISPER DEBUG");
-            parserDebug.Dock = DockStyle.Fill; parserDebug.Multiline = true; parserDebug.ReadOnly = true; parserDebug.ScrollBars = ScrollBars.Both; parserDebug.Font = new Font("Consolas", 9F); parserDebug.BackColor = Color.FromArgb(19, 21, 25); parserDebug.ForeColor = Color.Gainsboro;
-            page.Controls.Add(parserDebug); tabs.TabPages.Add(page);
-        }
+        private void BuildWhisperDebug() { var page = NewPage("WHISPER DEBUG"); parserDebug.Dock = DockStyle.Fill; page.Controls.Add(parserDebug); tabs.TabPages.Add(page); }
 
         private void BuildEvents()
         {
-            var page = Page("EVENTS");
+            var page = NewPage("EVENTS");
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = BackColor };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var filters = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = BackColor, Padding = new Padding(6) };
             search.Width = 260; search.BackColor = Color.FromArgb(35, 38, 45); search.ForeColor = Color.White; search.TextChanged += delegate { RefreshEvents(); };
             severity.DropDownStyle = ComboBoxStyle.DropDownList; severity.Items.AddRange(new object[] { "INFO+", "WARN+", "ERROR", "DEBUG+", "TRACE" }); severity.SelectedIndex = 0; severity.SelectedIndexChanged += delegate { RefreshEvents(); };
-            module.DropDownStyle = ComboBoxStyle.DropDownList; module.Width = 160; module.SelectedIndexChanged += delegate { RefreshEvents(); };
+            module.DropDownStyle = ComboBoxStyle.DropDownList; module.Width = 170; module.SelectedIndexChanged += delegate { if (!refreshingEvents) RefreshEvents(); };
             autoScroll.Text = "Auto-scroll"; autoScroll.Checked = true; autoScroll.ForeColor = ForeColor;
             pauseView.Text = "Pause view"; pauseView.ForeColor = ForeColor;
-            var clear = Button("Clear VIEW"); clear.Click += delegate { eventsGrid.Rows.Clear(); };
+            var clear = MakeButton("Clear VIEW"); clear.Click += delegate { eventsGrid.Rows.Clear(); };
             filters.Controls.Add(new Label { Text = "Search", AutoSize = true, ForeColor = ForeColor, Padding = new Padding(0, 5, 0, 0) }); filters.Controls.Add(search); filters.Controls.Add(severity); filters.Controls.Add(module); filters.Controls.Add(autoScroll); filters.Controls.Add(pauseView); filters.Controls.Add(clear);
             eventsGrid.Dock = DockStyle.Fill; AddColumns(eventsGrid, "Time", "Severity", "Character", "Module", "Event", "Summary", "Operation ID");
             layout.Controls.Add(filters, 0, 0); layout.Controls.Add(eventsGrid, 0, 1); page.Controls.Add(layout); tabs.TabPages.Add(page);
@@ -243,28 +248,15 @@ namespace WoW112.OperatorConsole
 
         private void BuildDebug()
         {
-            var page = Page("DEBUG");
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = BackColor };
+            var page = NewPage("DEBUG"); var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = BackColor };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            var copy = Button("Copy debug snapshot"); copy.Dock = DockStyle.Left; copy.Width = 190; copy.Click += delegate { var text = app.DebugSnapshot(); Clipboard.SetText(text); debugText.Text = text; };
-            debugText.Dock = DockStyle.Fill; debugText.Multiline = true; debugText.ReadOnly = true; debugText.ScrollBars = ScrollBars.Both; debugText.Font = new Font("Consolas", 9F); debugText.BackColor = Color.FromArgb(19, 21, 25); debugText.ForeColor = Color.Gainsboro;
-            layout.Controls.Add(copy, 0, 0); layout.Controls.Add(debugText, 0, 1); page.Controls.Add(layout); tabs.TabPages.Add(page);
+            var copy = MakeButton("Copy debug snapshot"); copy.Dock = DockStyle.Left; copy.Width = 190; copy.Click += delegate { var text = app.DebugSnapshot(); Clipboard.SetText(text); debugText.Text = text; };
+            debugText.Dock = DockStyle.Fill; layout.Controls.Add(copy, 0, 0); layout.Controls.Add(debugText, 0, 1); page.Controls.Add(layout); tabs.TabPages.Add(page);
         }
 
-        private void BuildLogs()
-        {
-            var page = Page("LOGS"); logsText.Dock = DockStyle.Fill; logsText.Multiline = true; logsText.ReadOnly = true; logsText.ScrollBars = ScrollBars.Both; logsText.Font = new Font("Consolas", 9F); logsText.BackColor = Color.FromArgb(19, 21, 25); logsText.ForeColor = Color.Gainsboro; page.Controls.Add(logsText); tabs.TabPages.Add(page);
-        }
-
-        private void BuildSummons()
-        {
-            var page = Page("SUMMON / PAYMENTS"); summonGrid.Dock = DockStyle.Fill; AddColumns(summonGrid, "Time", "Client", "Destination", "Character", "Event", "Expected", "Actual", "Status", "Summary"); page.Controls.Add(summonGrid); tabs.TabPages.Add(page);
-        }
-
-        private void BuildMutations()
-        {
-            var page = Page("AH / MUTATIONS"); mutationGrid.Dock = DockStyle.Fill; AddColumns(mutationGrid, "Time", "Character", "Module", "Operation ID", "Event", "State", "Summary"); page.Controls.Add(mutationGrid); tabs.TabPages.Add(page);
-        }
+        private void BuildLogs() { var page = NewPage("LOGS"); logsText.Dock = DockStyle.Fill; page.Controls.Add(logsText); tabs.TabPages.Add(page); }
+        private void BuildSummons() { var page = NewPage("SUMMON / PAYMENTS"); summonGrid.Dock = DockStyle.Fill; AddColumns(summonGrid, "Time", "Client", "Destination", "Character", "Event", "Expected", "Actual", "Status", "Summary"); page.Controls.Add(summonGrid); tabs.TabPages.Add(page); }
+        private void BuildMutations() { var page = NewPage("AH / MUTATIONS"); mutationGrid.Dock = DockStyle.Fill; AddColumns(mutationGrid, "Time", "Character", "Module", "Operation ID", "Event", "State", "Summary"); page.Controls.Add(mutationGrid); tabs.TabPages.Add(page); }
 
         private void OnAppChanged()
         {
@@ -274,20 +266,42 @@ namespace WoW112.OperatorConsole
 
         private void RefreshAll()
         {
-            RefreshOverview(); RefreshConversations(); RefreshConversation(); RefreshEvents(); RefreshDebug(); RefreshLogs(); RefreshSummons(); RefreshMutations();
+            RefreshOverview(); RefreshSessions(); RefreshConversations(); RefreshConversation(); RefreshEvents(); RefreshDebug(); RefreshLogs(); RefreshSummons(); RefreshMutations();
         }
 
         private void RefreshOverview()
         {
             overview.Rows.Clear();
-            foreach (var s in app.State.Sessions()) overview.Rows.Add(s.Character, s.Account + "/" + s.Profile, s.Connected ? "ONLINE" : "OFFLINE", s.World, s.Ah, s.Summon, s.Mail, s.Coordinator, s.CurrentAction, LocalTime(s.LastActivityUtc), s.LastEvent, s.LastError);
-            foreach (DataGridViewRow row in overview.Rows) if (Convert.ToString(row.Cells[7].Value) == "Uncertain") row.DefaultCellStyle.BackColor = Color.DarkRed;
+            foreach (var s in app.State.Sessions())
+            {
+                var row = overview.Rows.Add(s.Character, s.Account + "/" + s.Profile, s.Connected ? "ONLINE" : "OFFLINE", s.World, s.Ah, s.Summon, s.Mail, s.Coordinator, s.CurrentAction, LocalTime(s.LastActivityUtc), s.LastEvent, s.LastError);
+                if (s.Coordinator == OperatorStatus.Uncertain || s.Mail == OperatorStatus.Uncertain) overview.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
+            }
+        }
+
+        private void RefreshSessions()
+        {
+            if (refreshingSessions) return;
+            refreshingSessions = true;
+            try
+            {
+                var keep = Convert.ToString(session.SelectedItem) ?? "";
+                sessionByLabel.Clear();
+                foreach (var s in app.State.Sessions().Where(x => x.Connected))
+                {
+                    var label = (string.IsNullOrWhiteSpace(s.Character) ? "PID/session" : s.Character) + "  [" + s.Account + "/" + s.Profile + "]  " + s.SessionId;
+                    sessionByLabel[label] = s;
+                }
+                session.BeginUpdate(); session.Items.Clear(); session.Items.AddRange(sessionByLabel.Keys.Cast<object>().ToArray()); session.EndUpdate();
+                var idx = session.FindStringExact(keep); if (idx >= 0) session.SelectedIndex = idx; else if (session.Items.Count == 1) session.SelectedIndex = 0;
+            }
+            finally { refreshingSessions = false; }
         }
 
         private void RefreshConversations()
         {
-            var players = app.EventsSnapshot().Where(IsWhisper).Select(x => x.ConversationPlayer).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToArray();
             var keep = selectedPlayer;
+            var players = app.EventsSnapshot().Where(IsWhisper).Select(x => x.ConversationPlayer).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToArray();
             conversations.BeginUpdate(); conversations.Items.Clear(); conversations.Items.AddRange(players.Cast<object>().ToArray()); conversations.EndUpdate();
             if (!string.IsNullOrEmpty(keep)) { var idx = conversations.FindStringExact(keep); if (idx >= 0) conversations.SelectedIndex = idx; }
             var c = app.State.Counters(); whisperStats.Text = "Total: " + c.Total + "    Understood: " + c.Understood + "    Ignored intentionally: " + c.IgnoredIntentionally + "    UNHANDLED: " + c.Unhandled;
@@ -295,16 +309,14 @@ namespace WoW112.OperatorConsole
 
         private void RefreshConversation()
         {
-            transcript.Items.Clear(); parserDebug.Clear();
-            if (string.IsNullOrWhiteSpace(selectedPlayer)) return;
-            var list = app.EventsSnapshot().Where(x => string.Equals(x.ConversationPlayer, selectedPlayer, StringComparison.OrdinalIgnoreCase) || (x.Metadata != null && Convert.ToString(x.Metadata.ContainsKey("player") ? x.Metadata["player"] : "") == selectedPlayer)).OrderBy(x => x.TimestampUtc).ToList();
+            transcript.Items.Clear(); parserDebug.Clear(); if (string.IsNullOrWhiteSpace(selectedPlayer)) return;
+            var list = app.EventsSnapshot().Where(x => string.Equals(x.ConversationPlayer, selectedPlayer, StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.TimestampUtc).ToList();
             foreach (var e in list)
             {
                 var prefix = e.Direction == OperatorDirection.Incoming ? "<<" : e.Direction == OperatorDirection.OutgoingManual ? ">> MANUAL" : e.Direction == OperatorDirection.OutgoingAutomation ? ">> AUTO" : "--";
                 transcript.Items.Add(LocalTime(e.TimestampUtc) + " " + prefix + " " + e.Message);
             }
-            var last = list.LastOrDefault(x => app.State.ParserFor(x.EventId) != null);
-            if (last != null) RenderParser(app.State.ParserFor(last.EventId));
+            var last = list.LastOrDefault(x => app.State.ParserFor(x.EventId) != null); if (last != null) RenderParser(app.State.ParserFor(last.EventId));
         }
 
         private void RenderParser(ParserDiagnostic p)
@@ -315,21 +327,33 @@ namespace WoW112.OperatorConsole
 
         private void RefreshEvents()
         {
-            if (pauseView.Checked) return;
-            var events = app.EventsSnapshot();
-            var modules = events.Select(x => x.Module ?? "").Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList(); modules.Insert(0, "ALL");
-            var selectedModule = module.SelectedItem == null ? "ALL" : Convert.ToString(module.SelectedItem);
-            module.BeginUpdate(); module.Items.Clear(); module.Items.AddRange(modules.Cast<object>().ToArray()); module.EndUpdate(); var mi = module.FindStringExact(selectedModule); module.SelectedIndex = mi >= 0 ? mi : 0;
-            var min = MinimumSeverity(); var q = events.Where(x => x.Severity >= min);
-            if (module.SelectedIndex > 0) q = q.Where(x => string.Equals(x.Module, Convert.ToString(module.SelectedItem), StringComparison.OrdinalIgnoreCase));
-            var term = search.Text.Trim(); if (term.Length > 0) q = q.Where(x => (x.Message + " " + x.EventType + " " + x.Character + " " + x.Module).IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0);
-            eventsGrid.Rows.Clear(); foreach (var e in q.TakeLastCompat(5000)) { var i = eventsGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Severity, e.Character, e.Module, e.EventType, e.Message, e.OperationId); if (e.EventType.IndexOf("Uncertain", StringComparison.OrdinalIgnoreCase) >= 0) eventsGrid.Rows[i].DefaultCellStyle.BackColor = Color.DarkRed; }
-            if (autoScroll.Checked && eventsGrid.Rows.Count > 0) eventsGrid.FirstDisplayedScrollingRowIndex = eventsGrid.Rows.Count - 1;
+            if (pauseView.Checked || refreshingEvents) return;
+            refreshingEvents = true;
+            try
+            {
+                var all = app.EventsSnapshot();
+                var selectedModule = module.SelectedItem == null ? "ALL" : Convert.ToString(module.SelectedItem);
+                var modules = all.Select(x => x.Module ?? "").Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList(); modules.Insert(0, "ALL");
+                module.BeginUpdate(); module.Items.Clear(); module.Items.AddRange(modules.Cast<object>().ToArray()); module.EndUpdate();
+                var mi = module.FindStringExact(selectedModule); module.SelectedIndex = mi >= 0 ? mi : 0;
+                IEnumerable<OperatorEvent> q = all.Where(x => x.Severity >= MinimumSeverity());
+                if (module.SelectedIndex > 0) q = q.Where(x => string.Equals(x.Module, Convert.ToString(module.SelectedItem), StringComparison.OrdinalIgnoreCase));
+                var term = search.Text.Trim(); if (term.Length > 0) q = q.Where(x => (x.Message + " " + x.EventType + " " + x.Character + " " + x.Module).IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0);
+                eventsGrid.Rows.Clear();
+                foreach (var e in q.TakeLastCompat(5000))
+                {
+                    var row = eventsGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Severity, e.Character, e.Module, e.EventType, e.Message, e.OperationId);
+                    if (e.EventType.IndexOf("Uncertain", StringComparison.OrdinalIgnoreCase) >= 0) eventsGrid.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
+                }
+                if (autoScroll.Checked && eventsGrid.Rows.Count > 0) eventsGrid.FirstDisplayedScrollingRowIndex = eventsGrid.Rows.Count - 1;
+            }
+            finally { refreshingEvents = false; }
         }
 
         private OperatorSeverity MinimumSeverity()
         {
-            var s = Convert.ToString(severity.SelectedItem) ?? "INFO+"; if (s == "TRACE") return OperatorSeverity.Trace; if (s == "DEBUG+") return OperatorSeverity.Debug; if (s == "WARN+") return OperatorSeverity.Warn; if (s == "ERROR") return OperatorSeverity.Error; return OperatorSeverity.Info;
+            var s = Convert.ToString(severity.SelectedItem) ?? "INFO+";
+            if (s == "TRACE") return OperatorSeverity.Trace; if (s == "DEBUG+") return OperatorSeverity.Debug; if (s == "WARN+") return OperatorSeverity.Warn; if (s == "ERROR") return OperatorSeverity.Error; return OperatorSeverity.Info;
         }
 
         private void RefreshDebug() { debugText.Text = app.DebugSnapshot(); }
@@ -352,33 +376,30 @@ namespace WoW112.OperatorConsole
             foreach (var e in app.EventsSnapshot().Where(x => x.Category == "Mutation" || x.EventType.IndexOf("Mutation", StringComparison.OrdinalIgnoreCase) >= 0 || x.EventType.StartsWith("Buy") || x.EventType.StartsWith("MailMutation") || x.EventType.StartsWith("Auction")).TakeLastCompat(5000))
             {
                 var state = e.EventType.IndexOf("Uncertain", StringComparison.OrdinalIgnoreCase) >= 0 ? "UNCERTAIN" : e.EventType.EndsWith("Confirmed") ? "CONFIRMED" : e.EventType.EndsWith("Started") ? "START" : e.EventType;
-                var i = mutationGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Character, e.Module, e.OperationId, e.EventType, state, e.Message); if (state == "UNCERTAIN") mutationGrid.Rows[i].DefaultCellStyle.BackColor = Color.DarkRed;
+                var row = mutationGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Character, e.Module, e.OperationId, e.EventType, state, e.Message); if (state == "UNCERTAIN") mutationGrid.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
             }
         }
 
-        private void ReplyKeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Enter && !e.Shift) { e.SuppressKeyPress = true; SendReply(); }
-        }
+        private void ReplyKeyDown(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Enter && !e.Shift) { e.SuppressKeyPress = true; SendReply(); } }
 
         private void SendReply()
         {
             try
             {
-                var target = app.State.Sessions().Where(x => x.Connected).OrderByDescending(x => x.LastActivityUtc).FirstOrDefault();
+                SessionState target = null; var label = Convert.ToString(session.SelectedItem) ?? ""; if (label.Length > 0) sessionByLabel.TryGetValue(label, out target);
                 app.SendManualWhisper(selectedPlayer, reply.Text.Trim(), target); reply.Clear();
             }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "Operator command rejected", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
 
         private static bool IsWhisper(OperatorEvent e) { return e.EventType.IndexOf("Whisper", StringComparison.OrdinalIgnoreCase) >= 0 || e.Category == "Whisper"; }
-        private static string LocalTime(DateTime utc) { return utc.ToLocalTime().ToString("HH:mm:ss"); }
-        private static string Money(object copperObj) { long c; if (!long.TryParse(Convert.ToString(copperObj), out c)) return Convert.ToString(copperObj); return (c / 10000) + "g " + ((c / 100) % 100) + "s " + (c % 100) + "c"; }
-
-        private TabPage Page(string title) { return new TabPage(title) { BackColor = BackColor, ForeColor = ForeColor, Padding = new Padding(4) }; }
-        private static Button Button(string text) { return new Button { Text = text, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(45, 49, 58), ForeColor = Color.White }; }
+        private static string LocalTime(DateTime utc) { return utc == DateTime.MinValue ? "-" : utc.ToLocalTime().ToString("HH:mm:ss"); }
+        private static string Money(object value) { long c; if (!long.TryParse(Convert.ToString(value), out c)) return Convert.ToString(value); return (c / 10000) + "g " + ((c / 100) % 100) + "s " + (c % 100) + "c"; }
+        private TabPage NewPage(string title) { return new TabPage(title) { BackColor = BackColor, ForeColor = ForeColor, Padding = new Padding(4) }; }
+        private static Button MakeButton(string text) { return new Button { Text = text, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(45, 49, 58), ForeColor = Color.White }; }
         private static void StyleList(ListBox box) { box.BackColor = Color.FromArgb(28, 31, 37); box.ForeColor = Color.Gainsboro; box.BorderStyle = BorderStyle.FixedSingle; }
-        private static DataGridView Grid()
+        private static TextBox MakeTextView() { return new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, Font = new Font("Consolas", 9F), BackColor = Color.FromArgb(19, 21, 25), ForeColor = Color.Gainsboro }; }
+        private static DataGridView MakeGrid()
         {
             var g = new DataGridView { AllowUserToAddRows = false, AllowUserToDeleteRows = false, AllowUserToResizeRows = false, ReadOnly = true, RowHeadersVisible = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, BackgroundColor = Color.FromArgb(24, 26, 31), ForeColor = Color.Gainsboro, BorderStyle = BorderStyle.None, EnableHeadersVisualStyles = false };
             g.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(40, 43, 51); g.ColumnHeadersDefaultCellStyle.ForeColor = Color.White; g.DefaultCellStyle.BackColor = Color.FromArgb(28, 31, 37); g.DefaultCellStyle.ForeColor = Color.Gainsboro; g.DefaultCellStyle.SelectionBackColor = Color.FromArgb(62, 68, 82); return g;
