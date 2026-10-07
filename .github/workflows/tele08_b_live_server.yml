@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Patch live runner for first-character and direct GUID identity
+      - name: Patch live runner for deterministic GUID and ACK pacing
         shell: pwsh
         run: |
           $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
@@ -57,13 +57,14 @@ jobs:
 
           $gapAnchor = 'const SEND_GAP_MS: u64 = 450;'
           if (-not $text.Contains($gapAnchor)) { throw 'send-gap anchor not found' }
-          $text = $text.Replace($gapAnchor, 'const SEND_GAP_MS: u64 = 1200;')
+          $text = $text.Replace($gapAnchor, 'const SEND_GAP_MS: u64 = 2500;')
 
           $pathAnchor = '    let result_file = run_dir.join("RESULTS.json");'
           $pathReplacement = @'
               let result_file = run_dir.join("RESULTS.json");
               let local_guid_file = run_dir.join(format!("GUID_{}.txt", spec.label));
               let expected_sender_guid_file = run_dir.join("GUID_CUSTOMER.txt");
+              let ack_file = run_dir.join("ACK_COUNT.txt");
           '@
           if (-not $text.Contains($pathAnchor)) { throw 'guid-path anchor not found' }
           $text = $text.Replace($pathAnchor, $pathReplacement.TrimEnd())
@@ -73,6 +74,7 @@ jobs:
                   .env("WOW112_TELE08_RESULT_FILE", &result_file)
                   .env("WOW112_TELE08_LOCAL_GUID_FILE", &local_guid_file)
                   .env("WOW112_TELE08_EXPECTED_SENDER_GUID_FILE", &expected_sender_guid_file)
+                  .env("WOW112_TELE08_ACK_FILE", &ack_file)
           '@
           if (-not $text.Contains($envAnchor)) { throw 'guid-env anchor not found' }
           $text = $text.Replace($envAnchor, $envReplacement.TrimEnd())
@@ -148,6 +150,10 @@ jobs:
                                       let text = chat.message;
                                       if guid == direct_expected_guid {
                                           classify_case(&direct_expected_name, &text, &mut results)?;
+                                          if let Ok(path) = std::env::var("WOW112_TELE08_ACK_FILE") {
+                                              std::fs::write(&path, format!("{}\n", results.len()))
+                                                  .map_err(|e| format!("write ACK file {path} failed: {e}"))?;
+                                          }
                                       } else if let Some(name) = name_cache.get(&guid).cloned() {
                                           if name.eq_ignore_ascii_case(expected_sender) {
                                               classify_case(&name, &text, &mut results)?;
@@ -162,6 +168,30 @@ jobs:
           '@
           if (-not $text.Contains($whisperAnchor)) { throw 'whisper-routing anchor not found' }
           $text = $text.Replace($whisperAnchor, $whisperReplacement.TrimEnd())
+
+          $senderSleepAnchor = '            thread::sleep(Duration::from_millis(crate::SEND_GAP_MS));'
+          $senderSleepReplacement = @'
+                      let ack_path = std::env::var("WOW112_TELE08_ACK_FILE")
+                          .map_err(|_| "missing WOW112_TELE08_ACK_FILE".to_string())?;
+                      let ack_deadline = Instant::now() + Duration::from_secs(20);
+                      loop {
+                          let ack = std::fs::read_to_string(&ack_path)
+                              .ok()
+                              .and_then(|value| value.trim().parse::<u32>().ok())
+                              .unwrap_or(0);
+                          if ack >= case.id {
+                              println!("[TELE08-B-LIVE:{role_label}] ACK case={} count={ack}", case.id);
+                              break;
+                          }
+                          if Instant::now() >= ack_deadline {
+                              return Err(format!("ACK timeout case={} observed={ack}", case.id));
+                          }
+                          thread::sleep(Duration::from_millis(100));
+                      }
+                      thread::sleep(Duration::from_millis(crate::SEND_GAP_MS));
+          '@
+          if (-not $text.Contains($senderSleepAnchor)) { throw 'sender-sleep anchor not found' }
+          $text = $text.Replace($senderSleepAnchor, $senderSleepReplacement.TrimEnd())
 
           Set-Content -Path $path -Value $text -Encoding UTF8
 
@@ -190,7 +220,8 @@ jobs:
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
           sender_identity=direct_guid_sidecar
-          send_gap_ms=1200
+          pacing=ack_per_case
+          send_gap_ms=2500
           "@ | Set-Content -Encoding UTF8 $status
 
           $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
@@ -204,7 +235,8 @@ jobs:
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
           sender_identity=direct_guid_sidecar
-          send_gap_ms=1200
+          pacing=ack_per_case
+          send_gap_ms=2500
           "@ | Set-Content -Encoding UTF8 $status
             Write-Host 'TELE08 B LIVE E2E PASS'
           } else {
@@ -215,7 +247,8 @@ jobs:
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
           sender_identity=direct_guid_sidecar
-          send_gap_ms=1200
+          pacing=ack_per_case
+          send_gap_ms=2500
           "@ | Set-Content -Encoding UTF8 $status
             throw "TELE08 B LIVE E2E failed rc=$rc"
           }
