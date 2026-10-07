@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::net::TcpStream;
+use std::fs;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -9,6 +10,8 @@ use std::time::{Duration, Instant};
 mod auth;
 #[path = "../tele_party_observer.rs"]
 mod tele_party_observer;
+#[path = "../tele_party_seq.rs"]
+mod tele_party_seq;
 #[path = "../wire_build.rs"]
 mod wire_build;
 
@@ -17,6 +20,47 @@ use wire_build::OCTOWOW_WIRE_BUILD;
 const DEFAULT_AUTH_ADDR: &str = "play.octowow.st:3724";
 const DEFAULT_REALM_INDEX: usize = 1;
 const DEFAULT_RECONNECT_LIMIT: u32 = 60;
+const LOGIN_WATCHDOG_MS: u64 = 3000;
+
+fn connect_with_login_watchdog(addr: &str, label: &str) -> Result<TcpStream, String> {
+    let addrs = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("{label} resolve {addr} failed: {e}"))?
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err(format!("{label} resolve {addr} returned no addresses"));
+    }
+    let mut last_error = None;
+    for socket in addrs {
+        match TcpStream::connect_timeout(&socket, Duration::from_millis(LOGIN_WATCHDOG_MS)) {
+            Ok(stream) => {
+                println!("[LOGIN-WATCHDOG] {label} connected addr={socket} timeout_ms={LOGIN_WATCHDOG_MS}");
+                return Ok(stream);
+            }
+            Err(error) => {
+                last_error = Some(format!("{error}"));
+            }
+        }
+    }
+    Err(format!("TimedOut login watchdog label={label} addr={addr} timeout_ms={LOGIN_WATCHDOG_MS} last={}", last_error.unwrap_or_else(|| "unknown".to_string())))
+}
+
+fn arm_login_watchdog(stream: &TcpStream, label: &str) -> Result<(), String> {
+    let timeout = Some(Duration::from_millis(LOGIN_WATCHDOG_MS));
+    stream.set_read_timeout(timeout).map_err(|e| format!("{label} set login read watchdog failed: {e}"))?;
+    stream.set_write_timeout(timeout).map_err(|e| format!("{label} set login write watchdog failed: {e}"))?;
+    println!("[LOGIN-WATCHDOG] {label} io_timeout_ms={LOGIN_WATCHDOG_MS}");
+    Ok(())
+}
+
+fn publish_runner_state(state: &str, detail: &str) {
+    let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else { return; };
+    if path.trim().is_empty() { return; }
+    let session = env::var("WOW112_RUNNER_SESSION_ATTEMPT").unwrap_or_else(|_| "0".to_string());
+    let safe_detail = detail.replace('\r', " ").replace('\n', " ");
+    let body = format!("state={state}\nsession={session}\ndetail={safe_detail}\n");
+    let _ = fs::write(path, body);
+}
 
 mod tele06a {
     include!("../world_tele.rs");
@@ -27,6 +71,7 @@ mod tele06a {
     const CMSG_GROUP_DISBAND_OPCODE: u32 = 0x007B;
     const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
     const CMSG_CAST_SPELL_OPCODE: u32 = 0x012E;
+    const CMSG_SET_SELECTION_OPCODE: u32 = 0x013D;
     const SMSG_CAST_RESULT_OPCODE: u16 = 0x0130;
     const SMSG_SPELL_START_OPCODE: u16 = 0x0131;
     const SMSG_SPELL_GO_OPCODE: u16 = 0x0132;
@@ -35,7 +80,6 @@ mod tele06a {
     const TARGET_FLAG_UNIT: u16 = 0x0002;
 
     static RESET_ATTEMPTED: AtomicBool = AtomicBool::new(false);
-    static INVITE_BATCH_ATTEMPTED: AtomicBool = AtomicBool::new(false);
     static CAST_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
     fn env_csv(name: &str) -> Vec<String> {
@@ -92,15 +136,11 @@ mod tele06a {
         payload
     }
 
-    fn encode_ritual_cast(target_guid: u64) -> Result<Vec<u8>, String> {
-        if target_guid == 0 {
-            return Err("ritual target guid must not be zero".to_string());
-        }
-        let mut payload = Vec::with_capacity(15);
+    fn encode_ritual_cast() -> Vec<u8> {
+        let mut payload = Vec::with_capacity(6);
         payload.extend_from_slice(&RITUAL_OF_SUMMONING_SPELL_ID.to_le_bytes());
-        payload.extend_from_slice(&TARGET_FLAG_UNIT.to_le_bytes());
-        payload.extend_from_slice(&encode_packed_guid(target_guid));
-        Ok(payload)
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload
     }
 
     fn maybe_reset_group(stream: &mut TcpStream, crypto: &mut HeaderCrypto) -> Result<(), String> {
@@ -125,43 +165,122 @@ mod tele06a {
         Ok(())
     }
 
-    fn send_invite_batch_once(
-        stream: &mut TcpStream,
-        crypto: &mut HeaderCrypto,
-        targets: &[String],
-    ) -> Result<(), String> {
+    static PARTY: std::sync::OnceLock<std::sync::Mutex<crate::tele_party_seq::PartySeq>> =
+        std::sync::OnceLock::new();
+    static PARTY_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+    fn party_clock_ms() -> u64 {
+        PARTY_EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
+    }
+
+    fn party_lock() -> Result<std::sync::MutexGuard<'static, crate::tele_party_seq::PartySeq>, String> {
+        PARTY
+            .get()
+            .ok_or_else(|| "party sequence not registered".to_string())?
+            .lock()
+            .map_err(|_| "party sequence lock poisoned".to_string())
+    }
+
+    /// Registers the sequential party engine ONCE per process. The engine lives in a
+    /// static so a reconnect can never replay an invite (all guards stay committed).
+    fn register_party_sequence(targets: &[String]) -> Result<(), String> {
         if targets.is_empty() {
             return Err("WOW112_TELE_INVITE_LIST is empty".to_string());
         }
-        if INVITE_BATCH_ATTEMPTED
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            println!("[TELE-06A-INVITE] batch=skip_already_attempted retry_allowed=false");
+        let timeout_seconds = std::env::var("WOW112_TELE_INVITE_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(45);
+        let engine = crate::tele_party_seq::PartySeq::new(targets, timeout_seconds * 1000);
+        if PARTY.set(std::sync::Mutex::new(engine)).is_err() {
+            println!("[TELE-06A-PARTY] sequence=skip_already_registered retry_allowed=false");
             return Ok(());
         }
-
-        for (index, target) in targets.iter().enumerate() {
-            let payload = encode_group_invite_target(target)?;
-            write_encrypted_raw(
-                stream,
-                crypto.encrypter(),
-                CMSG_GROUP_INVITE_OPCODE,
-                &payload,
-            )
-            .map_err(|error| {
-                format!(
-                    "TELE06A_INVITE_BATCH_MUTATION_UNCERTAIN index={index} target={target:?} retry_allowed=false cause={error}"
-                )
-            })?;
-            println!(
-                "[TELE-06A-INVITE-TX] index={} target={:?} opcode=0x006E result=attempted_once retry_allowed=false",
-                index + 1,
-                target
-            );
-            thread::sleep(Duration::from_millis(350));
-        }
+        PARTY_EPOCH.get_or_init(Instant::now);
+        println!(
+            "[TELE-06A-PARTY] mode=sequential members={:?} per_member_timeout={}s retry_allowed=false",
+            targets, timeout_seconds
+        );
         Ok(())
+    }
+
+    /// One engine step. Ok(true) = full roster confirmed sequentially.
+    /// The member is marked INVITE_SENT inside next_action BEFORE the socket write.
+    fn party_step(stream: &mut TcpStream, crypto: &mut HeaderCrypto) -> Result<bool, String> {
+        use crate::tele_party_seq::{Action, FailReason};
+        let mut party = party_lock()?;
+        let action = party.next_action(party_clock_ms());
+        match action {
+            Action::Wait => Ok(false),
+            Action::Done => {
+                for line in party.report() {
+                    println!("{line}");
+                }
+                Ok(true)
+            }
+            Action::SendInvite { index, name } => {
+                let payload = encode_group_invite_target(&name)?;
+                println!(
+                    "[TELE-06A-PARTY] member={:?} state=INVITE_SENT guard_committed_before_write=true",
+                    name
+                );
+                if let Err(error) = write_encrypted_raw(
+                    stream,
+                    crypto.encrypter(),
+                    CMSG_GROUP_INVITE_OPCODE,
+                    &payload,
+                ) {
+                    party.on_write_uncertain(index);
+                    return Err(format!(
+                        "TELE06A_INVITE_MUTATION_UNCERTAIN index={index} target={name:?} retry_allowed=false cause={error}"
+                    ));
+                }
+                println!(
+                    "[TELE-06A-INVITE-TX] index={} target={:?} opcode=0x006E mode=sequential result=attempted_once retry_allowed=false",
+                    index + 1,
+                    name
+                );
+                Ok(false)
+            }
+            Action::Fail(reason) => {
+                for line in party.report() {
+                    println!("{line}");
+                }
+                if matches!(reason, FailReason::WriteUncertain { .. }) {
+                    Err(format!("TELE06A_INVITE_MUTATION_UNCERTAIN {}", reason.describe()))
+                } else {
+                    Err(format!("TELE06A_ROSTER_TIMEOUT {}", reason.describe()))
+                }
+            }
+        }
+    }
+
+    fn party_on_group_list(names: &[String]) {
+        if let Ok(mut party) = party_lock() {
+            party.on_group_list(names);
+        }
+    }
+
+    fn party_on_packet(opcode: u16, payload: &[u8]) {
+        let Ok(mut party) = party_lock() else { return; };
+        if opcode == crate::tele_party_seq::SMSG_PARTY_COMMAND_RESULT_OPCODE {
+            match party.on_party_command_result(payload) {
+                Ok(parsed) => println!(
+                    "[TELE-06A-PARTY] command_result op={} member={:?} result=0x{:02X} {}",
+                    parsed.operation,
+                    parsed.member,
+                    parsed.result,
+                    crate::tele_party_seq::party_result_name(parsed.result)
+                ),
+                Err(error) => println!("[TELE-06A-PARTY-DIAG] command_result parse failed: {error}"),
+            }
+        } else if opcode == crate::tele_party_seq::SMSG_GROUP_DECLINE_OPCODE {
+            match party.on_group_decline(payload) {
+                Ok(name) => println!("[TELE-06A-PARTY] group_decline member={name:?}"),
+                Err(error) => println!("[TELE-06A-PARTY-DIAG] group_decline parse failed: {error}"),
+            }
+        }
     }
 
     fn send_ritual_cast_once(
@@ -170,7 +289,7 @@ mod tele06a {
         target_name: &str,
         target_guid: u64,
     ) -> Result<(), String> {
-        let payload = encode_ritual_cast(target_guid)?;
+        let payload = encode_ritual_cast();
         if CAST_ATTEMPTED
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
@@ -179,8 +298,30 @@ mod tele06a {
             return Ok(());
         }
 
+        if target_guid == 0 {
+            return Err("ritual selection guid must not be zero".to_string());
+        }
+        let selection_payload = target_guid.to_le_bytes();
+        write_encrypted_raw(
+            stream,
+            crypto.encrypter(),
+            CMSG_SET_SELECTION_OPCODE,
+            &selection_payload,
+        )
+        .map_err(|error| {
+            format!(
+                "TELE06A_SELECTION_MUTATION_UNCERTAIN target={target_name:?} guid=0x{target_guid:016X} retry_allowed=false cause={error}"
+            )
+        })?;
         println!(
-            "[TELE-06A-RITUAL] state=CAST_ATTEMPTED spell={} target={:?} target_guid=0x{:016X} shard_precheck=server_authoritative",
+            "[TELE-06A-SELECTION-TX] opcode=0x013D target={:?} target_guid=0x{:016X} bytes=8 result=attempted_once retry_allowed=false",
+            target_name,
+            target_guid
+        );
+        thread::sleep(Duration::from_millis(150));
+
+        println!(
+            "[TELE-06A-RITUAL] state=CAST_ATTEMPTED spell={} target={:?} target_guid=0x{:016X} target_mode=selection cast_target_mask=0x0000 shard_precheck=server_authoritative",
             RITUAL_OF_SUMMONING_SPELL_ID,
             target_name,
             target_guid
@@ -197,8 +338,9 @@ mod tele06a {
                 RITUAL_OF_SUMMONING_SPELL_ID
             )
         })?;
+        publish_runner_state("CAST_SENT", "spell=698 target_mode=selection target_mask=0x0000");
         println!(
-            "[TELE-06A-CAST-TX] opcode=0x012E spell={} target={:?} target_guid=0x{:016X} bytes={} result=attempted_once retry_allowed=false",
+            "[TELE-06A-CAST-TX] opcode=0x012E spell={} target={:?} target_guid=0x{:016X} target_mode=selection target_mask=0x0000 bytes={} result=attempted_once retry_allowed=false",
             RITUAL_OF_SUMMONING_SPELL_ID,
             target_name,
             target_guid,
@@ -229,12 +371,9 @@ mod tele06a {
             .set_read_timeout(Some(Duration::from_secs(1)))
             .map_err(|e| format!("set TELE-06A read timeout failed: {e}"))?;
 
-        let expected = expected_members
-            .iter()
-            .map(|name| name.to_ascii_lowercase())
-            .collect::<HashSet<_>>();
+        let mut last_roster: HashMap<String, u64> = HashMap::new();
         let target_lower = target_name.to_ascii_lowercase();
-        let roster_deadline = Instant::now() + Duration::from_secs(120);
+        let roster_deadline = Instant::now() + Duration::from_secs(300);
         let mut cast_deadline: Option<Instant> = None;
         let mut cast_started = false;
         let mut last_ping = Instant::now();
@@ -242,7 +381,7 @@ mod tele06a {
         let mut awaiting_pong: Option<(u32, Instant)> = None;
 
         println!(
-            "[TELE-06A-ROSTER] waiting expected={:?} ritual_target={:?} deadline=120s",
+            "[TELE-06A-ROSTER] waiting expected={:?} ritual_target={:?} mode=sequential overall_deadline=300s",
             expected_members, target_name
         );
 
@@ -257,6 +396,19 @@ mod tele06a {
                     let _ = stream.set_read_timeout(previous_timeout);
                     return Ok(());
                 }
+            }
+
+            if cast_deadline.is_none() && party_step(stream, crypto)? {
+                let target_guid = *last_roster.get(&target_lower).ok_or_else(|| {
+                    format!("target {target_name:?} missing despite roster gate")
+                })?;
+                println!(
+                    "[TELE-06A-ROSTER] PASS target={:?} target_guid=0x{:016X}",
+                    target_name, target_guid
+                );
+                publish_runner_state("ROSTER_PASS", "full roster confirmed sequentially");
+                send_ritual_cast_once(stream, crypto, target_name, target_guid)?;
+                cast_deadline = Some(Instant::now() + Duration::from_secs(25));
             }
 
             if let Some((sequence, sent_at)) = awaiting_pong {
@@ -295,38 +447,22 @@ mod tele06a {
                         if cast_deadline.is_none() {
                             match roster_from_group_list(&payload) {
                                 Ok(roster) => {
-                                    let present = roster.keys().cloned().collect::<HashSet<_>>();
-                                    let missing = expected
-                                        .difference(&present)
-                                        .cloned()
-                                        .collect::<Vec<_>>();
+                                    let names = roster.keys().cloned().collect::<Vec<_>>();
+                                    party_on_group_list(&names);
                                     println!(
-                                        "[TELE-06A-ROSTER] observed={} missing={:?}",
-                                        roster.len(), missing
+                                        "[TELE-06A-ROSTER] observed={} members={:?}",
+                                        roster.len(), names
                                     );
-                                    if missing.is_empty() {
-                                        let target_guid = *roster.get(&target_lower).ok_or_else(|| {
-                                            format!("target {target_name:?} missing despite roster gate")
-                                        })?;
-                                        println!(
-                                            "[TELE-06A-ROSTER] PASS target={:?} target_guid=0x{:016X}",
-                                            target_name, target_guid
-                                        );
-                                        send_ritual_cast_once(
-                                            stream,
-                                            crypto,
-                                            target_name,
-                                            target_guid,
-                                        )?;
-                                        cast_deadline = Some(Instant::now() + Duration::from_secs(25));
-                                    }
+                                    last_roster = roster;
                                 }
                                 Err(error) => println!("[TELE-06A-ROSTER-DIAG] {error}"),
                             }
-                        }
-                        continue;
+                        }                        continue;
                     }
 
+                    if cast_deadline.is_none() {
+                        party_on_packet(opcode, &payload);
+                    }
                     if crate::tele_party_observer::inspect_party_packet(opcode, &payload) {
                         continue;
                     }
@@ -345,6 +481,27 @@ mod tele06a {
                             "[TELE-06A-SPELL-RX] opcode=0x{opcode:04X} payload={} parsed={parsed}",
                             payload.len()
                         );
+                        if opcode == SMSG_CAST_RESULT_OPCODE && payload.len() >= 6 {
+                            let raw_spell = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+                            let status = payload[4];
+                            let reason = payload[5];
+                            let reason_name = match reason {
+                                0x09 => "BAD_IMPLICIT_TARGETS",
+                                0x0A => "BAD_TARGETS",
+                                0x13 => "CASTER_DEAD",
+                                0x3C => "NOT_READY",
+                                0x3E => "NOT_STANDING",
+                                0x4D => "NO_POWER",
+                                0x59 => "OUT_OF_RANGE",
+                                0x5C => "REAGENTS",
+                                0x61 => "SPELL_IN_PROGRESS",
+                                0x65 => "TARGETS_DEAD",
+                                0x66 => "TARGET_AFFECTING_COMBAT",
+                                _ => "OTHER",
+                            };
+                            let raw_hex = payload.iter().map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(" ");
+                            println!("[TELE-06A-CAST-RESULT-RAW] spell={} status={} reason=0x{:02X} reason_name={} raw={}", raw_spell, status, reason, reason_name, raw_hex);
+                        }
                         let is_ritual = parsed.contains("698") || parsed.contains("0x02BA");
                         if !is_ritual {
                             continue;
@@ -352,16 +509,19 @@ mod tele06a {
                         match opcode {
                             SMSG_SPELL_START_OPCODE => {
                                 cast_started = true;
+                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_START spell=698");
                                 println!("[TELE-06A-RITUAL] LIVE_CAST_START_PASS spell=698 retry_allowed=false");
                                 let _ = stream.set_read_timeout(previous_timeout);
                                 return Ok(());
                             }
                             SMSG_SPELL_GO_OPCODE => {
+                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_GO spell=698");
                                 println!("[TELE-06A-RITUAL] LIVE_CAST_GO_PASS spell=698 retry_allowed=false");
                                 let _ = stream.set_read_timeout(previous_timeout);
                                 return Ok(());
                             }
                             SMSG_CAST_RESULT_OPCODE | SMSG_SPELL_FAILURE_OPCODE => {
+                                publish_runner_state("FAIL_SERVER_REJECT", "spell=698 see raw cast-result log for reason");
                                 println!(
                                     "[TELE-06A-RITUAL] SERVER_REJECT spell=698 cast_started={} retry_allowed=false details={}",
                                     cast_started, parsed
@@ -391,7 +551,7 @@ mod tele06a {
         soak_seconds: u64,
     ) -> Result<(), String> {
         stream
-            .set_read_timeout(Some(Duration::from_secs(20)))
+            .set_read_timeout(Some(Duration::from_millis(LOGIN_WATCHDOG_MS)))
             .map_err(|e| format!("set world read timeout failed: {e}"))?;
 
         let challenge = expect_server_message::<SMSG_AUTH_CHALLENGE, _>(&mut *stream)
@@ -497,7 +657,7 @@ mod tele06a {
         maybe_reset_group(stream, &mut crypto)?;
         let invite_targets = env_csv("WOW112_TELE_INVITE_LIST");
         let target_name = configured_target_name()?;
-        send_invite_batch_once(stream, &mut crypto, &invite_targets)?;
+        register_party_sequence(&invite_targets)?;
         drive_roster_and_ritual(stream, &mut crypto, &invite_targets, &target_name)?;
 
         println!("[TELE-06A] cast checkpoint complete; observer loop remains active");
@@ -512,14 +672,15 @@ mod tele06a {
 
         #[test]
         fn ritual_wire_contract() {
+            assert_eq!(CMSG_SET_SELECTION_OPCODE, 0x013D);
             assert_eq!(CMSG_CAST_SPELL_OPCODE, 0x012E);
             assert_eq!(RITUAL_OF_SUMMONING_SPELL_ID, 698);
-            assert_eq!(TARGET_FLAG_UNIT, 0x0002);
-            let payload = encode_ritual_cast(0x0000_0000_3B9F_74DE).unwrap();
+            let guid = 0x0000_0000_3B9F_74DEu64;
+            assert_eq!(guid.to_le_bytes(), [0xDE, 0x74, 0x9F, 0x3B, 0x00, 0x00, 0x00, 0x00]);
+            let payload = encode_ritual_cast();
+            assert_eq!(payload.len(), 6);
             assert_eq!(&payload[0..4], &698u32.to_le_bytes());
-            assert_eq!(&payload[4..6], &0x0002u16.to_le_bytes());
-            assert_eq!(payload[6], 0x0F);
-            assert_eq!(&payload[7..11], &[0xDE, 0x74, 0x9F, 0x3B]);
+            assert_eq!(&payload[4..6], &0u16.to_le_bytes());
         }
 
         #[test]
@@ -560,7 +721,7 @@ fn is_transient_network_error(error: &str) -> bool {
         "ConnectionRefused",
         "connection refused",
         "world socket closed",
-        "world keepalive pong timeout",
+        "world keepalive pong timeout", "10060",
     ]
     .iter()
     .any(|needle| error.contains(needle))
@@ -608,6 +769,8 @@ fn run() -> Result<(), String> {
 
     for attempt in 1..=reconnect_limit {
         println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
+        env::set_var("WOW112_RUNNER_SESSION_ATTEMPT", attempt.to_string());
+        publish_runner_state("CONNECTING", "new session attempt");
         match run_session(
             &auth_addr,
             realm_index,
@@ -621,7 +784,7 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
-                println!("[RESILIENCE] transient network failure: {error}");
+                let display_error = if error.contains("10060") { "network timeout (WinSock 10060: remote host did not respond)".to_string() } else { error.clone() }; println!("[RESILIENCE] transient network failure: {display_error}");
                 println!("[RESILIENCE] reconnecting; reset/invite/cast one-shot guards remain committed");
                 if reconnect_delay_ms != 0 {
                     thread::sleep(Duration::from_millis(reconnect_delay_ms));
@@ -643,8 +806,8 @@ fn run_session(
     soak_seconds: u64,
 ) -> Result<(), String> {
     println!("[AUTH] connecting to {auth_addr}");
-    let mut auth_stream = TcpStream::connect(auth_addr)
-        .map_err(|e| format!("auth connect {auth_addr} failed: {e}"))?;
+    let mut auth_stream = connect_with_login_watchdog(auth_addr, "AUTH")?;
+    arm_login_watchdog(&auth_stream, "AUTH")?;
     let (session_key, realms) = auth::authenticate(&mut auth_stream, username, password)?;
     if realms.realms.is_empty() {
         return Err("auth succeeded but realm list is empty".to_string());
@@ -659,8 +822,8 @@ fn run_session(
         .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
     let world_addr = env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_| realm.address.clone());
     println!("[WORLD] connecting realm={} id={} address={}", realm.name, realm.realm_id, world_addr);
-    let mut world_stream = TcpStream::connect(&world_addr)
-        .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
+    let mut world_stream = connect_with_login_watchdog(&world_addr, "WORLD")?;
+    arm_login_watchdog(&world_stream, "WORLD")?;
 
     tele06a::login_tele06a(
         &mut world_stream,
@@ -671,3 +834,6 @@ fn run_session(
         soak_seconds,
     )
 }
+
+
+
