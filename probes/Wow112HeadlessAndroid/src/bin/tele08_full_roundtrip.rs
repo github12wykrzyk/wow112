@@ -485,6 +485,7 @@ fn read_state(path: &Path) -> Option<(String, String)> {
 mod live {
     include!("../world_tele.rs");
 
+    use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
