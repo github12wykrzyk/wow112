@@ -1,0 +1,76 @@
+name: TELE08 B autonomous live server
+
+on:
+  push:
+    branches:
+      - live/tele08-b-e2e-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+      WOW112_RECONNECT_LIMIT: '1'
+      WOW112_RECONNECT_DELAY_MS: '0'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build exact live runner
+        shell: pwsh
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+
+      - name: Autonomous real-server B E2E
+        id: live
+        shell: pwsh
+        run: |
+          $status = 'TELE08_B_LIVE_STATUS.txt'
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            @"
+          result=SKIPPED_NO_SECRET
+          detail=Repository Actions secret WOW112_PASSWORD is not configured for this workflow.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            Write-Host 'TELE08 B LIVE: SKIPPED_NO_SECRET'
+            exit 0
+          }
+
+          @"
+          result=RUNNING
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
+          & $exe
+          $rc = $LASTEXITCODE
+          if ($rc -eq 0) {
+            @"
+          result=PASS
+          detail=Four real headless sessions completed the 12-case whisper TX/RX/classification suite.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            Write-Host 'TELE08 B LIVE E2E PASS'
+          } else {
+            @"
+          result=FAIL
+          detail=tele08_b_live_runtime exited rc=$rc. Inspect uploaded tele08_b_live_runs evidence.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            throw "TELE08 B LIVE E2E failed rc=$rc"
+          }
+
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE08_B_LIVE_SERVER_EVIDENCE
+          path: |
+            TELE08_B_LIVE_STATUS.txt
+            tele08_b_live_runs/**
+          if-no-files-found: warn
