@@ -1,0 +1,102 @@
+name: TELE09 canonicalize TELE06C executor
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele09-autonomous-summon-orchestrator-v1
+    paths:
+      - '.github/workflows/tele09_canonicalize_tele06c_executor.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  canonicalize:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/tele09-autonomous-summon-orchestrator-v1
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Apply exact proven TELE06C runtime patch stack
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tools/patch_tele06a_v4.ps1
+          ./tools/patch_live_runner_v11.ps1
+          ./tools/patch_tele06a_party_seq_v12.ps1
+          ./tools/patch_tele06b_portal_v1.ps1
+          ./tools/patch_login_watchdog_3s.ps1
+          ./tools/patch_tele06b_range_safe_v15.ps1
+          ./tools/patch_tele06c_auto_position_v16.ps1
+          Write-Host '--- TELE06C generated diff ---'
+          git diff --name-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Guard canonicalization scope
+        shell: pwsh
+        run: |
+          $changed = @(git diff --name-only)
+          if ($changed.Count -eq 0) { throw 'TELE06C patch stack produced no source delta; canonicalization contract changed.' }
+          foreach ($path in $changed) {
+            if ($path -like '.github/*' -or $path -like 'tools/*') {
+              throw "patch stack unexpectedly modified control-plane file: $path"
+            }
+          }
+          Write-Host ('canonicalization files: ' + ($changed -join ', '))
+
+      - name: TELE06C contract test
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: TELE06C semantic marker gate
+        shell: pwsh
+        run: |
+          $acceptor = Get-Content probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs -Raw
+          foreach ($needle in @(
+            'TELE06C_HEARTBEAT_OPCODE',
+            'TELE06C_TARGET_RANGE',
+            'TELE06C_MAX_RECOVERY_MOVE',
+            'PORTAL_USE_SENT',
+            'SMSG_SUMMON_REQUEST',
+            'PASS_RITUAL_COMPLETE',
+            'FAIL_AUTO_POSITION_LIMIT',
+            'FAIL_AUTO_POSITION_UNCERTAIN',
+            'TELE06C_MOVE_MUTATION_UNCERTAIN'
+          )) {
+            if ($acceptor -notmatch [regex]::Escape($needle)) { throw "missing canonical TELE06C marker: $needle" }
+          }
+          Write-Host 'TELE06C STORED-SOURCE SEMANTIC GATE PASS'
+
+      - name: Build canonical release executors
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Persist validated TELE06C generated source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add probes/Wow112HeadlessAndroid/src probes/Wow112HeadlessAndroid/windows/LIVE_TEST_RUNNER.ps1
+          git diff --cached --name-only
+          if (git diff --cached --quiet) { throw 'no validated generated source staged' }
+          git commit -m 'refactor(tele09): persist canonical TELE06C executor source'
+          git push origin HEAD:feature/tele09-autonomous-summon-orchestrator-v1
