@@ -18,20 +18,29 @@ All new behavior is implemented and live-validated on native Windows before any 
 
 Current canonical Windows scope:
 
-- FULL-AH Vendor scan
-- all classes / qualities / stacks
-- vendor valuation from live item query
-- profit-first purchase ordering
-- exact auction tuple revalidation before SEND
-- bounded neighborhood revalidation
-- broad Disenchant coverage (2343 live item snapshot)
-- DE provenance preservation
-- CapyDB live eligibility only with independent model agreement = 0
-- legacy DE provenance blocked for live BUY
-- SAFE EV / ROI / P(loss) risk gates
-- exact audited DE BUY
+- one FULL-AH snapshot shared by Vendor and DE routes
+- all classes / qualities / stacks scanned; route-specific stack guards retained
+- Vendor FULL_AFFORDABLE scope when enabled
+- broad Disenchant coverage with provenance-aware model/cache
+- V4 unified Vendor+DE candidate ordering and multibuy guards
+- DE price hardening, time-bucketed history, liquidity haircuts and liquidation model
+- fast DE prefilter and F0/F1 guarded eligibility
+- exact auction tuple revalidation before SEND with bounded page +/-5 neighborhood
 - no automatic retry after uncertain mutation
-- Windows CI artifact containing Vendor and DE binaries
+- AH hello/discovery resilience V3
+- best-effort canonical AH history capture on the shared request path
+- history capture scopes kept distinct: full_market / targeted_item / revalidation_window
+- immutable history archive plus calibrated V2 churn admission and market reconciliation
+- history is audit-only: storage/history cannot authorize BUY, retry BUY, or change a BUY decision
+- Windows CI artifact containing the unified canonical V4 engine and its runtime provenance files
+
+## Canonical V4 integration contract
+
+`build_windows_ah_canonical.yml` is the release gate for the Windows canonical engine. It must apply the full V4 patch chain already present on canonical, not the earlier simplified one-purchase unified chain.
+
+Required V4 markers include `POC08-UNIFIED-V4`, `POC08-UNIFIED-MULTI`, `POC08-DE-FAST-PREFILTER`, `POC08-C-HISTORY-V2`, `POC08-C-LIQUIDATION-V3`, `POC08-F0-V31`, `SAME_FULL_AH_SNAPSHOT`, `one_mutation_boundary=YES`, and `NO_AUTO_RETRY_FROM_THIS_POINT=YES`.
+
+The canonical build must also apply the best-effort shared AH history capture patch and AH hello resilience patch before compiling. History remains outside mutation authorization and BUY retry semantics.
 
 ## Single-source CI rule
 

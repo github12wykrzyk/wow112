@@ -2,9 +2,13 @@ name: WoW112 AH Canonical Windows
 
 on:
   push:
-    branches: [dev/windows-ah-canonical]
+    branches:
+      - dev/windows-ah-canonical
+      - feature/ah-history-shadow-valuations-v3
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
+      - 'packaging/ah_latest/**'
+      - 'src/AhHistoryTerminal/**'
       - '.github/workflows/build_windows_ah_canonical.yml'
       - 'AH_CANONICAL.md'
   workflow_dispatch:
@@ -17,17 +21,21 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - name: Checkout canonical source
+      - name: Checkout canonical V4 source
         uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Harden shared BUY primitive
+      - name: Harden shared BUY primitive and attach best-effort history capture
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc07_buy_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_history_shadow_capture_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc05_ah_hello_resilience_patch.py probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Generate DE model base
@@ -79,11 +87,19 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_f2_pagination_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Merge FULL-AH Vendor and DE engine
+      - name: Merge unified engine and apply V1 V2 V3 V3.1 V3.2 V4
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/poc08_unified_scan_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs
           python probes/Wow112HeadlessAndroid/tools/poc08_unified_action_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_multibuy_v3_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_price_hardening_v1_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_history_liquidity_v2_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v3_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v3_compilefix.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_fast_prefilter_v32_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v31_f0_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_vendor_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $main='probes/Wow112HeadlessAndroid/src/main.rs'
           $t=Get-Content $main -Raw
@@ -91,13 +107,20 @@ jobs:
           $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_unified::login_poc08_economy_audit')
           Set-Content $main $t -Encoding utf8
 
-      - name: Static and policy smoke
+      - name: Static unified V4 plus shadow-history policy smoke
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/smoke_unified_ah.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs probes/Wow112HeadlessAndroid/src/world_poc07.rs | Tee-Object -FilePath "$env:RUNNER_TEMP/unified-smoke.txt"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
-          foreach($m in @('FULL_AH_ALL_CLASSES_ALL_QUALITIES_ALL_STACKS','Poc08F1Action::AutoBest','PROFIT_DESC_VENDOR_TIE','NO_ELIGIBLE_LIVE_ROUTE','LIVE BUY-ONE PASS purchases=1')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "Unified marker missing: $m"}}
+          foreach($m in @('POC08-UNIFIED-V4','POC08-UNIFIED-MULTI','POC08-DE-FAST-PREFILTER','WOW112_VENDOR_FULL_SCOPE','FULL_AFFORDABLE','WOW112_UNIFIED_VENDOR_MAX_PURCHASES','WOW112_UNIFIED_MAX_PURCHASES','WOW112_UNIFIED_MAX_SPEND','POC08_ESSENCE_PARITY_PAIRS','POC08-C-HISTORY-V2','POC08-C-LIQUIDATION-V3','SAME_FULL_AH_SNAPSHOT','POC08-F0-V31','CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH','WOW112_F1_DE_MIN_LIQUIDATION_PROFIT','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','one_mutation_boundary=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "V4 marker missing: $m"}}
+          $history='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
+          foreach($m in @('WOW112_AH_HISTORY_SHADOW_NDJSON','RawAhPageObserved','full_market','targeted_item','revalidation_window','best_effort_no_mutation_coupling','buy_retry_signal=NO')){if(-not(Select-String -Path $history -Pattern $m -SimpleMatch -Quiet)){throw "history shadow marker missing: $m"}}
+          $hello='probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
+          foreach($m in @('[AH-HELLO-V3]','WOW112_AH_HELLO_TIMEOUT_SECS','HELLO_TIMEOUT_DEFAULT_SECS','HELLO_PACKET_SAFETY_CAP','Freshly discovered NPC wins')){if(-not(Select-String -Path $hello -Pattern $m -SimpleMatch -Quiet)){throw "AH hello resilience marker missing: $m"}}
+          foreach($ps in @('packaging/ah_latest/launcher/_launcher/START_AH.ps1','packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/bootstrap_latest.ps1')){$null=[scriptblock]::Create((Get-Content $ps -Raw)); Write-Host "POWERSHELL_PARSE_PASS $ps"}
+          foreach($m in @('UnifiedLive','UnifiedAudit','VendorDe','WOW112_VENDOR_FULL_SCOPE','WOW112_AH_HELLO_TIMEOUT_SECS','VENDOR_DE_V4')){if(-not(Select-String -Path 'packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/launcher/_launcher/START_AH.ps1' -Pattern $m -SimpleMatch -Quiet)){throw "launcher V4 marker missing: $m"}}
+          'CANONICAL UNIFIED VENDOR+DE V4 + SHADOW HISTORY + AH HELLO V3 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
 
       - name: Rust check and tests
         shell: pwsh
@@ -107,23 +130,24 @@ jobs:
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build unified native Windows
+      - name: Build canonical unified V4 Windows EXE
         shell: pwsh
         run: |
           cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $exe='probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe'
           $b=[IO.File]::ReadAllBytes($exe)
-          if($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1] -ne 0x5a){throw 'PE smoke failed: MZ header missing'}
+          if($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1]-ne 0x5a){throw 'PE smoke failed: MZ header missing'}
           Write-Host "[PE-SMOKE] PASS bytes=$($b.Length) sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
 
-      - name: Stage canonical artifact
+      - name: Stage canonical V4 artifact
         shell: pwsh
         run: |
           $d='dist/windows-ah-canonical';New-Item -ItemType Directory -Force "$d/runtime"|Out-Null;New-Item -ItemType Directory -Force "$d/source"|Out-Null
           Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-ah-windows.exe"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs "$d/source/"
-          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive_with_history_shadow.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs "$d/source/world_poc05_retry.rs"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
           Copy-Item "$env:RUNNER_TEMP/unified-smoke.txt" "$d/SMOKE_TESTS.txt"
@@ -132,24 +156,26 @@ jobs:
           CANONICAL_BRANCH=dev/windows-ah-canonical
           EXACT_SHA=$env:GITHUB_SHA
           PLATFORM=WINDOWS_FIRST
-          PRODUCT=ONE_UNIFIED_AH_ENGINE
-          SCAN=FULL_AH_ALL_CLASSES_ALL_QUALITIES_ALL_STACKS
-          ROUTES=VENDOR_PLUS_DISENCHANT
-          ORDER=PROFIT_DESC_VENDOR_TIE
-          VENDOR_STACKS=SUPPORTED
-          DE_STACKS=BLOCKED_COUNT1_ONLY
-          DE_CAPY_RULE=CAPYDB_REQUIRES_MODEL_AGREEMENT_0
+          PRODUCT=UNIFIED_VENDOR_DE_V4_SHADOW_HISTORY
+          ONE_FULL_AH_SNAPSHOT=YES
+          HISTORY_CAPTURE=BEST_EFFORT_SHARED_REQUEST_PATH
+          HISTORY_CAPTURE_SCOPES=FULL_MARKET_TARGETED_ITEM_REVALIDATION_WINDOW
+          HISTORY_STORE=CANONICAL_AH_HISTORY_TERMINAL_SQLITE_V1_PLUS_V2_RECONCILIATION
+          HISTORY_BUY_DECISION_INFLUENCE=NO
+          HISTORY_STORAGE_FAILURE_BLOCKS_SCAN=NO
+          HISTORY_STORAGE_FAILURE_RETRIES_BUY=NO
+          VENDOR_SCOPE=FULL_AFFORDABLE_WHEN_ENABLED
+          DE_SCOPE=FAST_MODEL_SUPPORTED
           BUY_REVALIDATION=EXACT_TUPLE_PAGE_PLUS_MINUS_5
-          HARD_MAX_PURCHASES_PER_PROCESS=1
           NO_AUTO_RETRY_AFTER_UNCERTAIN_SEND=YES
           BINARY_SHA256=$h
           ANDROID_STATUS=PORT_ONLY_AFTER_WINDOWS_CORE_STABLE
           "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
 
-      - name: Upload canonical artifact
+      - name: Upload canonical V4 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112-AH-CANONICAL-UNIFIED-WINDOWS-${{ github.sha }}
+          name: WoW112-AH-CANONICAL-V4-WINDOWS-${{ github.sha }}
           path: dist/windows-ah-canonical
           if-no-files-found: error
           retention-days: 14

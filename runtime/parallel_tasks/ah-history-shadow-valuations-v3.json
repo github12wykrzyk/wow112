@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "ah-history-shadow-valuations-v3",
+  "goal": "Align the authoritative Windows AH canonical build with the already validated full Vendor/DE V4 patch chain and calibrated immutable AH history contract before adding history-vs-current shadow valuations.",
+  "branch": "feature/ah-history-shadow-valuations-v3",
+  "base_parallel_sha": "9a593097308865b2e67f61671500bde42108af0d",
+  "modules": [
+    "AhCanonicalV4",
+    "AhHistoryV2"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "ah-canonical-workflow",
+    "ah-history-v2-contract"
+  ],
+  "status": "done",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Canonical baseline was dev/windows-ah-canonical at ea95b25a80c78887883b029d78dd90e9eb2a0d71. Full canonical V4 build on feature SHA e1a6ff1f74528ac31be56636280cf94ceafb6d64 passed and produced artifact WoW112-AH-CANONICAL-V4-WINDOWS-e1a6ff1f74528ac31be56636280cf94ceafb6d64 with artifact digest sha256:aa54486fb33d975c3b655ff99427d3bc59540443a60415d5a600ca54be19f1e0. History remains audit-only and BUY authorization/retry semantics are unchanged. Lease released before canonical merge."
+}
