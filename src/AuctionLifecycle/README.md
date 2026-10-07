@@ -1,6 +1,6 @@
 # Auction Lifecycle + Mail Settlement V1
 
-Baseline: `dev/windows-ah-canonical` at `cd17642d8fb54363a452cc5bf4a06282e1afc9cb`.
+Baseline: `dev/windows-ah-canonical` at `99d0a45b1b62a98214f927f960156ba313de252b`.
 Feature only: `feature/ah-auction-lifecycle-v1`. No canonical integration/promotion implied.
 
 ## Audit (before implementation)

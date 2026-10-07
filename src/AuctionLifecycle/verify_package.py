@@ -22,6 +22,6 @@ for name in ('coordinator.rs','adapter.rs','world_poc08_unified.rs'):
     assert (root/'source'/name).is_file(),name
 assert (root/'LIFECYCLE_README.md').is_file()
 files={str(p.relative_to(root)).replace('\\','/'):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for p in sorted(root.rglob('*')) if p.is_file() and p.name!='LIFECYCLE_PACKAGE.json'}
-manifest={'branch':'feature/ah-auction-lifecycle-v1','commit':sha,'base_commit':'cd17642d8fb54363a452cc5bf4a06282e1afc9cb','platform':'windows-x86','files':files,'live_validation':'NOT_RUN','final_package':'PASS'}
+manifest={'branch':'feature/ah-auction-lifecycle-v1','commit':sha,'base_commit':'99d0a45b1b62a98214f927f960156ba313de252b','platform':'windows-x86','files':files,'live_validation':'NOT_RUN','final_package':'PASS'}
 (root/'LIFECYCLE_PACKAGE.json').write_text(json.dumps(manifest,indent=2)+'\n')
 print('FINAL_PACKAGE: PASS (headless Lifecycle V1 Windows x86)')
