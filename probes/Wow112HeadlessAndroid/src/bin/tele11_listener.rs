@@ -9,6 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[path = "../auth.rs"]
 mod auth;
+#[path = "../tele_party_observer.rs"]
+mod tele_party_observer;
 #[path = "../wire_build.rs"]
 mod wire_build;
 
