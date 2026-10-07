@@ -372,8 +372,8 @@ impl ResponseEngine {
             } => {
                 let alternatives = clean_alternatives(&alternatives);
                 let alternatives_text = alternatives.join(", ");
-                let use_alternatives = self.config.completion_mentions_alternatives
-                    && !alternatives.is_empty();
+                let use_alternatives =
+                    self.config.completion_mentions_alternatives && !alternatives.is_empty();
                 let template = if use_alternatives {
                     &self.config.templates.summon_completed_with_alternatives
                 } else {
@@ -544,7 +544,9 @@ impl ResponseEngine {
             .last_kind
             .insert((recipient_key.clone(), decision.response_kind), now);
         if decision.response_kind == ResponseKind::Competition {
-            self.state.last_competition.insert(recipient_key.clone(), now);
+            self.state
+                .last_competition
+                .insert(recipient_key.clone(), now);
         }
         self.state.last_text.insert((recipient_key, text_hash), now);
         decision
@@ -563,7 +565,11 @@ fn normalize_recipient(recipient: &str) -> String {
 }
 
 fn cooldown_key(recipient: &str, response_kind: ResponseKind) -> String {
-    format!("{}:{}", normalize_recipient(recipient), response_kind.as_str())
+    format!(
+        "{}:{}",
+        normalize_recipient(recipient),
+        response_kind.as_str()
+    )
 }
 
 fn stable_text_hash(text: &str) -> u64 {
@@ -609,7 +615,10 @@ fn render_template_values(template: &str, values: &[TemplateValue<'_>]) -> Strin
             }
         }
 
-        let ch = template[index..].chars().next().expect("valid UTF-8 boundary");
+        let ch = template[index..]
+            .chars()
+            .next()
+            .expect("valid UTF-8 boundary");
         out.push(ch);
         index += ch.len_utf8();
     }
@@ -1010,22 +1019,26 @@ mod tests {
         config.cooldowns.duplicate_text_secs = Some(60);
         let mut engine = ResponseEngine::new(config);
 
-        assert!(first(
-            &mut engine,
-            ResponseContext::InCombat {
-                recipient: "A".into(),
-            },
-            0,
-        )
-        .should_send);
-        assert!(first(
-            &mut engine,
-            ResponseContext::InCombat {
-                recipient: "B".into(),
-            },
-            1,
-        )
-        .should_send);
+        assert!(
+            first(
+                &mut engine,
+                ResponseContext::InCombat {
+                    recipient: "A".into(),
+                },
+                0,
+            )
+            .should_send
+        );
+        assert!(
+            first(
+                &mut engine,
+                ResponseContext::InCombat {
+                    recipient: "B".into(),
+                },
+                1,
+            )
+            .should_send
+        );
     }
 
     #[test]
@@ -1050,14 +1063,16 @@ mod tests {
         config.cooldowns.duplicate_text_secs = Some(20);
         let mut engine = ResponseEngine::new(config);
 
-        assert!(first(
-            &mut engine,
-            ResponseContext::InCombat {
-                recipient: "A".into(),
-            },
-            10,
-        )
-        .should_send);
+        assert!(
+            first(
+                &mut engine,
+                ResponseContext::InCombat {
+                    recipient: "A".into(),
+                },
+                10,
+            )
+            .should_send
+        );
         let duplicate = first(
             &mut engine,
             ResponseContext::InCombat {
@@ -1067,14 +1082,16 @@ mod tests {
         );
         assert!(!duplicate.should_send);
         assert_eq!(duplicate.reason, DecisionReason::DuplicateTextSuppressed);
-        assert!(first(
-            &mut engine,
-            ResponseContext::InCombat {
-                recipient: "B".into(),
-            },
-            15,
-        )
-        .should_send);
+        assert!(
+            first(
+                &mut engine,
+                ResponseContext::InCombat {
+                    recipient: "B".into(),
+                },
+                15,
+            )
+            .should_send
+        );
     }
 
     #[test]
