@@ -6,6 +6,8 @@ from build_active_module import build_one, sha256_file
 
 ROOT=Path(__file__).resolve().parents[1]
 SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c"
+OPERATOR_SOURCE=ROOT/"src/AutoLoginBridge/WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc"
+OPERATOR_LUA=ROOT/"src/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua"
 DLL_NAME="WoWAutoLoginBridge_5875_v1.dll"
 DLL_LIST="dlls.txt"
 PROFILE="clangcl_i686_win32imports"
@@ -41,6 +43,28 @@ def repack(package,dll):
         if temp.exists(): temp.unlink()
     return loader
 
+def operator_bridge_metadata():
+    for path in (OPERATOR_SOURCE,OPERATOR_LUA):
+        if not path.is_file():
+            raise SystemExit("Operator Bridge provenance source missing: %s" % path)
+    return {
+      "enabled": True,
+      "shared_map": "Local\\WoW112_OperatorBridge_<pid>",
+      "protocol_version": 1,
+      "native_source": str(OPERATOR_SOURCE.relative_to(ROOT)).replace("\\","/"),
+      "native_source_sha256": sha256_file(OPERATOR_SOURCE),
+      "lua_source": str(OPERATOR_LUA.relative_to(ROOT)).replace("\\","/"),
+      "lua_source_sha256": sha256_file(OPERATOR_LUA),
+      "economic_commands": False,
+      "command_surface": ["manual_whisper"],
+      "whisper_send_primitive": "SendChatMessage",
+      "manual_lock": "H.ManualChatLock",
+      "send_confirmation": "CHAT_MSG_WHISPER_INFORM",
+      "uncertain_retry": False,
+      "hot_watched": False,
+      "load_mode": "SummonScout TOC cold load"
+    }
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--compile-only",action="store_true")
@@ -68,6 +92,7 @@ def main():
       "hot_lua_payloads":list(HOT_PAYLOADS),
       "hot_lua_scope":"SummonScout hot modules: post-payment + whisper-confirm + core",
       "hot_lua_poll_ms":250,
+      "operator_bridge":operator_bridge_metadata(),
       "timings_ms":timing
     }
     if a.compile_only:
@@ -102,7 +127,8 @@ def main():
             "hot_lua_payload":HOT_PAYLOAD,
             "hot_lua_payloads":list(HOT_PAYLOADS),
             "hot_lua_scope":"SummonScout hot modules: post-payment + whisper-confirm + core",
-            "hot_lua_poll_ms":250
+            "hot_lua_poll_ms":250,
+            "operator_bridge":module["operator_bridge"]
         }
     summary["ready_for_test"]=bool(summary.get("ready_for_test") and DLL_NAME in actual)
     summary["result"]="PASS" if summary["ready_for_test"] else "FAIL"
