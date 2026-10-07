@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "tele08-c-request-queue-v1",
+  "goal": "Build the isolated deterministic TELE08 request lifecycle and queue scheduler with fail-closed retry/restore semantics, without modifying TELE06/TELE07 WoW execution core.",
+  "branch": "feature/tele08-c-request-queue-v1",
+  "base_parallel_sha": "ae3eb1b1b4b180f56082e162ac902ea166951915",
+  "status": "test_ready",
+  "auto_integrate": false,
+  "modules": [
+    "Tele08RequestQueue"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid/tele08_request_queue"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Authoritative implementation base for this task is feature/tele07-stationary-supervisor-v1 at 04e8337fec7ba0d76c8267e03c1324f7039f2487 per TELE08 Track C handoff. This record satisfies repository concurrency ownership metadata only; auto integration is intentionally disabled and no merge is requested."
+}
