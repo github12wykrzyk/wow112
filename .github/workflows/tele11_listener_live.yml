@@ -1,0 +1,104 @@
+name: TELE11 live whisper ingress
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/tele11-service-v1]
+    paths:
+      - '.github/workflows/tele11_listener_live.yml'
+permissions:
+  contents: read
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build listener and sender
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele11_listener','tele11_whisper_sender')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Real whisper to durable ingress spool
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) { throw 'WOW112_PASSWORD secret required' }
+          $root = Join-Path $PWD 'tele11_live_ingress'
+          if (Test-Path $root) { Remove-Item $root -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $config = @'
+          {
+            "schema_version": 1,
+            "journal_path": "tele11_live_ingress/journal.jsonl",
+            "run_root": "tele11_live_ingress/runs",
+            "listener": {
+              "account": "taxi3",
+              "character": "Teletanaris",
+              "inbox_dir": "tele11_live_ingress/inbox",
+              "unknown_log": "tele11_live_ingress/unknown.jsonl",
+              "default_destination": "winterspring"
+            },
+            "realm_index": 1,
+            "teams": [{
+              "destination": "winterspring",
+              "aliases": ["everlook"],
+              "resource": "summon/winterspring",
+              "summoner": {"account":"TEST_ONLY_SUM","character":"TestOnlySum"},
+              "clicker1": {"account":"TEST_ONLY_C1","character":"TestOnlyC1"},
+              "clicker2": {"account":"TEST_ONLY_C2","character":"TestOnlyC2"}
+            }]
+          }
+          '@
+          Set-Content -Path (Join-Path $root 'config.json') -Value $config -Encoding utf8
+          $listenerOut = Join-Path $root 'listener.stdout.log'
+          $listenerErr = Join-Path $root 'listener.stderr.log'
+          $listener = Start-Process -FilePath 'probes/Wow112HeadlessAndroid/target/release/tele11_listener.exe' -ArgumentList @('--config',(Join-Path $root 'config.json')) -PassThru -NoNewWindow -RedirectStandardOutput $listenerOut -RedirectStandardError $listenerErr
+          try {
+            $loginDeadline = (Get-Date).AddSeconds(90)
+            while ((Get-Date) -lt $loginDeadline) {
+              if ($listener.HasExited) { throw "listener exited rc=$($listener.ExitCode)" }
+              if ((Test-Path $listenerOut) -and ((Get-Content $listenerOut -Raw) -match 'LOGIN PASS')) { break }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not ((Test-Path $listenerOut) -and ((Get-Content $listenerOut -Raw) -match 'LOGIN PASS'))) { throw 'listener login timeout' }
+
+            $env:WOW112_TELE11_SENDER_ACCOUNT = 'taxi1'
+            $env:WOW112_TELE11_SENDER_CHARACTER = 'Feltaxi'
+            $env:WOW112_TELE11_SENDER_TARGET = 'Teletanaris'
+            $env:WOW112_TELE11_SENDER_TEXT = '+'
+            & 'probes/Wow112HeadlessAndroid/target/release/tele11_whisper_sender.exe'
+            if ($LASTEXITCODE -ne 0) { throw "sender failed rc=$LASTEXITCODE" }
+
+            $deadline = (Get-Date).AddSeconds(60)
+            $event = $null
+            while ((Get-Date) -lt $deadline) {
+              $event = Get-ChildItem (Join-Path $root 'inbox') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($null -ne $event) { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if ($null -eq $event) { throw 'no ingress spool event after real whisper' }
+            $json = Get-Content $event.FullName -Raw | ConvertFrom-Json
+            if ($json.sender -ne 'Feltaxi') { throw "wrong sender=$($json.sender)" }
+            if ($json.raw_text -ne '+') { throw "wrong raw_text=$($json.raw_text)" }
+            if ($json.destination -ne 'winterspring') { throw "wrong destination=$($json.destination)" }
+            if ([string]::IsNullOrWhiteSpace($json.request_id)) { throw 'missing request_id' }
+            "result=PASS`nrequest_id=$($json.request_id)`nsender=$($json.sender)`ndestination=$($json.destination)`n" | Set-Content (Join-Path $root 'STATUS.txt')
+            Write-Host "TELE11_LIVE_WHISPER_INGRESS_PASS request_id=$($json.request_id)"
+          }
+          finally {
+            if ($null -ne $listener -and -not $listener.HasExited) {
+              Stop-Process -Id $listener.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+      - name: Upload ingress evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE11_LIVE_WHISPER_INGRESS
+          path: tele11_live_ingress/**
+          if-no-files-found: warn
