@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "ah-history-shadow-valuations-v4",
+  "goal": "Add canonical V2 history-vs-current shadow valuation to the Windows Vendor/DE V4 engine without changing BUY authorization, ordering, retry, or mutation semantics.",
+  "owner": "chatgpt-ah-history-shadow-v4",
+  "branch": "feature/ah-history-shadow-valuations-v4",
+  "base_branch": "dev/windows-ah-canonical",
+  "owned_paths": [
+    "src/AhHistoryTerminal/reconcile_archive_v2.py",
+    ".github/workflows/ah_history_v2_archive_replay.yml",
+    ".github/workflows/build_windows_ah_canonical.yml",
+    "probes/Wow112HeadlessAndroid/tools/poc08_history_v2_shadow_valuation_patch.py",
+    "packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1"
+  ],
+  "forbidden_semantic_changes": [
+    "BUY authorization",
+    "BUY ordering",
+    "exact tuple revalidation",
+    "mutation retry semantics",
+    "Vendor/DE current valuation inputs"
+  ],
+  "history_buy_decision_influence": "NO"
+}
