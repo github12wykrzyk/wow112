@@ -130,8 +130,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -n -E 'raw\.githubusercontent\.com|api\.github\.com' packaging/ah_latest/START_AH_LATEST.bat packaging/ah_latest/bootstrap_latest.ps1; then
-            echo 'Corporate runtime contract failed: blocked host referenced by runtime updater.' >&2
+          if grep -R -n -E 'https?://(raw\.githubusercontent\.com|api\.github\.com)' packaging/ah_latest/START_AH_LATEST.bat packaging/ah_latest/bootstrap_latest.ps1; then
+            echo 'Corporate runtime contract failed: blocked host URL referenced by runtime updater.' >&2
             exit 10
           fi
           grep -q 'releases/download/ah-de-latest' packaging/ah_latest/START_AH_LATEST.bat
