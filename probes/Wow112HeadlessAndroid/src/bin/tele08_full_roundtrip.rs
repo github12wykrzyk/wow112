@@ -99,7 +99,10 @@ fn self_test() -> Result<(), String> {
         .status(&destination_id)
         .ok_or_else(|| "D status missing".to_string())?;
     if status.availability != Availability::Enabled {
-        return Err(format!("D destination not enabled: {:?}", status.availability));
+        return Err(format!(
+            "D destination not enabled: {:?}",
+            status.availability
+        ));
     }
 
     let outcome = queue.enqueue(request);
@@ -131,13 +134,16 @@ fn self_test() -> Result<(), String> {
     {
         return Err(format!("E response mismatch: {decision:?}"));
     }
-    println!("TELE08_FULL_ROUNDTRIP_SELFTEST_PASS response={:?}", decision.text);
+    println!(
+        "TELE08_FULL_ROUNDTRIP_SELFTEST_PASS response={:?}",
+        decision.text
+    );
     Ok(())
 }
 
 fn run_orchestrator() -> Result<(), String> {
-    let password = env::var("WOW112_PASSWORD")
-        .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let password =
+        env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
     if password.trim().is_empty() {
         return Err("WOW112_PASSWORD is empty".to_string());
     }
@@ -218,7 +224,10 @@ fn orchestrate(run_dir: &Path, roles: &mut [ManagedRole]) -> Result<(), String> 
             }
             if let Some(status) = role.child.try_wait().map_err(|e| e.to_string())? {
                 if read_state(&role.state_path).map(|s| s.0) != Some("PASS".into()) {
-                    return Err(format!("{} exited before READY status={status}", role.label));
+                    return Err(format!(
+                        "{} exited before READY status={status}",
+                        role.label
+                    ));
                 }
             }
         }
@@ -292,9 +301,18 @@ fn spawn_role(
             "WOW112_TELE08_LOCAL_GUID_FILE",
             run_dir.join(format!("GUID_{}.txt", spec.label)),
         )
-        .env("WOW112_TELE08_CUSTOMER_GUID_FILE", run_dir.join("GUID_CUSTOMER.txt"))
-        .env("WOW112_TELE08_SUMMONER_GUID_FILE", run_dir.join("GUID_SUMMONER.txt"))
-        .env("WOW112_TELE08_TRANSCRIPT_FILE", run_dir.join("TRANSCRIPT.txt"));
+        .env(
+            "WOW112_TELE08_CUSTOMER_GUID_FILE",
+            run_dir.join("GUID_CUSTOMER.txt"),
+        )
+        .env(
+            "WOW112_TELE08_SUMMONER_GUID_FILE",
+            run_dir.join("GUID_SUMMONER.txt"),
+        )
+        .env(
+            "WOW112_TELE08_TRANSCRIPT_FILE",
+            run_dir.join("TRANSCRIPT.txt"),
+        );
 
     let child = command
         .spawn()
@@ -317,8 +335,8 @@ fn run_role(label: &str) -> Result<(), String> {
         .map_err(|_| "missing WOW112_TELE08_ROLE_ACCOUNT".to_string())?;
     let character = env::var("WOW112_TELE08_ROLE_CHARACTER")
         .map_err(|_| "missing WOW112_TELE08_ROLE_CHARACTER".to_string())?;
-    let password = env::var("WOW112_PASSWORD")
-        .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let password =
+        env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
     let state_path = env_path("WOW112_TELE08_STATE_FILE")?;
     let go_file = env_path("WOW112_TELE08_GO_FILE")?;
     let done_file = env_path("WOW112_TELE08_DONE_FILE")?;
@@ -457,10 +475,7 @@ fn sanitize(value: &str) -> String {
 }
 
 fn write_state(path: &Path, state: &str, role: &str, detail: &str) -> Result<(), String> {
-    let body = format!(
-        "state={state}\nrole={role}\ndetail={}\n",
-        sanitize(detail)
-    );
+    let body = format!("state={state}\nrole={role}\ndetail={}\n", sanitize(detail));
     let temp = path.with_extension("tmp");
     fs::write(&temp, body).map_err(|e| format!("write state temp failed: {e}"))?;
     fs::rename(&temp, path).map_err(|e| format!("publish state failed: {e}"))
@@ -490,9 +505,10 @@ mod live {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::{
-        classify_whisper, classification_to_request, healthy_registry, parser_config_from_registry,
-        queue_from_registry, queued_position, ResponseContext, ResponseEngine, ResponseEngineConfig,
-        WhisperObservation, EXPECTED_DESTINATION, EXPECTED_REPLY, REQUEST_TEXT,
+        classification_to_request, classify_whisper, healthy_registry, parser_config_from_registry,
+        queue_from_registry, queued_position, ResponseContext, ResponseEngine,
+        ResponseEngineConfig, WhisperObservation, EXPECTED_DESTINATION, EXPECTED_REPLY,
+        REQUEST_TEXT,
     };
 
     pub fn login_and_roundtrip(
@@ -561,11 +577,9 @@ mod live {
         CMSG_CHAR_ENUM {}
             .write_encrypted_client(&mut *stream, crypto.encrypter())
             .map_err(|e| format!("write char enum failed: {e:?}"))?;
-        let characters = expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(
-            &mut *stream,
-            crypto.decrypter(),
-        )
-        .map_err(|e| format!("read char enum failed: {e:?}"))?;
+        let characters =
+            expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(&mut *stream, crypto.decrypter())
+                .map_err(|e| format!("read char enum failed: {e:?}"))?;
         let selected = if character_name.eq_ignore_ascii_case("__FIRST__") {
             characters
                 .characters
@@ -584,9 +598,11 @@ mod live {
             format!("guid={}\nname={}\n", selected.guid.guid(), selected.name),
         )
         .map_err(|e| format!("write guid sidecar failed: {e}"))?;
-        CMSG_PLAYER_LOGIN { guid: selected.guid }
-            .write_encrypted_client(&mut *stream, crypto.encrypter())
-            .map_err(|e| format!("write player login failed: {e:?}"))?;
+        CMSG_PLAYER_LOGIN {
+            guid: selected.guid,
+        }
+        .write_encrypted_client(&mut *stream, crypto.encrypter())
+        .map_err(|e| format!("write player login failed: {e:?}"))?;
 
         let mut verified = false;
         for _ in 0..256usize {
@@ -847,7 +863,11 @@ mod live {
                 awaiting_pong: None,
             }
         }
-        fn maybe_send(&mut self, stream: &mut TcpStream, crypto: &mut HeaderCrypto) -> Result<(), String> {
+        fn maybe_send(
+            &mut self,
+            stream: &mut TcpStream,
+            crypto: &mut HeaderCrypto,
+        ) -> Result<(), String> {
             if let Some((sequence, sent_at)) = self.awaiting_pong {
                 if sent_at.elapsed() >= Duration::from_secs(PONG_TIMEOUT_SECONDS) {
                     return Err(format!("pong timeout sequence={sequence}"));
@@ -877,7 +897,11 @@ mod live {
             }
             true
         }
-        fn poll(&mut self, stream: &mut TcpStream, crypto: &mut HeaderCrypto) -> Result<(), String> {
+        fn poll(
+            &mut self,
+            stream: &mut TcpStream,
+            crypto: &mut HeaderCrypto,
+        ) -> Result<(), String> {
             self.maybe_send(stream, crypto)?;
             match read_encrypted_raw(stream, crypto.decrypter()) {
                 Ok((opcode, payload)) => {
@@ -964,7 +988,8 @@ mod live {
             .map_err(|e| format!("open transcript failed: {e}"))?;
         file.write_all(line.as_bytes())
             .map_err(|e| format!("write transcript failed: {e}"))?;
-        file.flush().map_err(|e| format!("flush transcript failed: {e}"))
+        file.flush()
+            .map_err(|e| format!("flush transcript failed: {e}"))
     }
 
     fn unix_ms() -> u64 {
