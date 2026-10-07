@@ -7,6 +7,15 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
     $InstallRoot = (Get-Location).Path
 }
+
+# Windows cmd + powershell.exe can pass a quoted path ending in '\' as a value
+# with a stray trailing quote (for example C:\path\"). Normalize that legacy
+# invocation here so already-downloaded START_AH_LATEST.bat files self-heal.
+$InstallRoot = ([string]$InstallRoot).Trim()
+$InstallRoot = $InstallRoot.Trim([char[]]@([char]34, [char]39))
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    $InstallRoot = (Get-Location).Path
+}
 $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 
 $ReleaseBase = 'https://github.com/github12wykrzyk/wow112/releases/download/ah-de-latest'
