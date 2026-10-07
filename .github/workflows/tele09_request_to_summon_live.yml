@@ -1,0 +1,143 @@
+name: TELE09 real request to summon
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele09-autonomous-summon-orchestrator-v1
+    paths:
+      - '.github/workflows/tele09_request_to_summon_live.yml'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/destination_registry.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+      WOW112_TELE08_CUSTOMER_ACCOUNT: 'taxi1'
+      WOW112_TELE08_CUSTOMER_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SUMMONER_ACCOUNT: 'taxi3'
+      WOW112_TELE08_SUMMONER_CHARACTER: 'Teletanaris'
+      WOW112_TELE09_CUSTOMER_ACCOUNT: 'taxi1'
+      WOW112_TELE09_CUSTOMER_CHARACTER: 'Feltaxi'
+      WOW112_TELE07_CYCLES: '1'
+      WOW112_TELE07_READY_TIMEOUT_SECS: '180'
+      WOW112_TELE07_CYCLE_TIMEOUT_SECS: '120'
+      WOW112_TELE07_STALE_SECS: '75'
+      WOW112_TELE07_RESTART_BUDGET: '2'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Stored-source format gate
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 --config skip_children=true --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2021 --config skip_children=true --check probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2021 --config skip_children=true --check probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2021 --config skip_children=true --check probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Offline regression gate
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build stored-source release chain
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele08_full_roundtrip','tele07_supervisor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Autonomous real whisper to queued job
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            throw 'WOW112_PASSWORD secret is required for TELE09 live gate.'
+          }
+          if (Test-Path 'tele08_roundtrip_runs') { Remove-Item 'tele08_roundtrip_runs' -Recurse -Force }
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_full_roundtrip.exe'
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "TELE08 request phase failed rc=$LASTEXITCODE" }
+          $status = Get-ChildItem tele08_roundtrip_runs -Filter STATUS.txt -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $status) { throw 'TELE08 request phase produced no STATUS.txt' }
+          $text = Get-Content $status.FullName -Raw
+          if ($text -notmatch 'result=PASS' -or $text -notmatch 'real_whisper_in>B_parser>C_queue>D_registry>E_response>real_whisper_out>customer_rx') {
+            throw "TELE08 request phase is not canonical PASS: $text"
+          }
+          New-Item -ItemType Directory -Force -Path tele09_evidence | Out-Null
+          Copy-Item $status.FullName tele09_evidence/TELE08_REQUEST_STATUS.txt
+          Write-Host 'TELE09 PHASE 1 PASS: real request admitted and queued'
+
+      - name: Autonomous real summon job
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Start-Sleep -Milliseconds 1500
+          $runDir = Join-Path $PWD 'tele09_evidence/TELE07_SUMMON'
+          New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+          $env:WOW112_TELE07_RUN_DIR = $runDir
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele07_supervisor.exe'
+          & $exe --cycles 1
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) { throw "TELE07 summon phase failed rc=$rc" }
+          $verdictPath = Join-Path $runDir 'SUPERVISOR_VERDICT.txt'
+          $cyclePath = Join-Path $runDir 'CYCLE_RESULTS.txt'
+          if (!(Test-Path $verdictPath)) { throw 'missing TELE07 SUPERVISOR_VERDICT.txt' }
+          if (!(Test-Path $cyclePath)) { throw 'missing TELE07 CYCLE_RESULTS.txt' }
+          $verdict = Get-Content $verdictPath -Raw
+          $cycle = Get-Content $cyclePath -Raw
+          if ($verdict -notmatch 'result=PASS_TELE07' -or $verdict -notmatch 'passed_cycles=1') {
+            throw "TELE07 final verdict is not PASS: $verdict"
+          }
+          if ($cycle -notmatch 'result=PASS_RITUAL_COMPLETE') {
+            throw "TELE07 cycle has no server-confirmed ritual completion: $cycle"
+          }
+          @"
+          result=PASS
+          chain=real_whisper>B_parser>C_queue>D_registry>E_response>StartSummonJob>party>ritual>portal_use>SMSG_SUMMON_REQUEST>SummonConfirmed
+          customer_account=taxi1
+          customer_character=Feltaxi
+          destination=winterspring
+          request_phase=PASS
+          summon_phase=PASS_RITUAL_COMPLETE
+          "@ | Set-Content -Encoding UTF8 tele09_evidence/TELE09_STATUS.txt
+          Write-Host 'TELE09 REAL REQUEST -> REAL SUMMON PASS'
+
+      - name: Upload TELE09 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE09_REQUEST_TO_SUMMON_EVIDENCE
+          path: |
+            tele09_evidence/**
+            tele08_roundtrip_runs/**
+          if-no-files-found: warn
