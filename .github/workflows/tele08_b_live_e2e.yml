@@ -19,7 +19,7 @@ jobs:
 
       - name: Format gate
         shell: pwsh
-        run: cargo fmt --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime -- --check
+        run: rustfmt --check probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs
 
       - name: Contract tests
         shell: pwsh
