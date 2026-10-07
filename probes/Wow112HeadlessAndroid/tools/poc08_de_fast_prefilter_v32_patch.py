@@ -7,6 +7,12 @@ if len(sys.argv) != 2:
 p = Path(sys.argv[1])
 s = p.read_text(encoding='utf-8')
 
+# The V3 compile-fix can already chain this patch. A second explicit invocation in
+# CI must be a verified no-op rather than failing the exact-anchor contract.
+if '[POC08-DE-FAST-PREFILTER]' in s and 'WOW112_DE_FAST_PREFILTER' in s and 'full_snapshot_preserved=YES' in s:
+    print('[POC08-DE-FAST-PREFILTER-V32-PATCH] ALREADY_APPLIED PASS')
+    raise SystemExit(0)
+
 def rep(label: str, old: str, new: str) -> None:
     global s
     n = s.count(old)
