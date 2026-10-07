@@ -25,19 +25,20 @@ jobs:
       - name: Format affected Rust source
         shell: pwsh
         run: |
-          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/tele10_trade_payment.rs probes/Wow112HeadlessAndroid/src/tele10_trade_receiver_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_payer_roster_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_payer_driver_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/tele10_trade_payment.rs probes/Wow112HeadlessAndroid/src/tele10_trade_receiver_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_payer_roster_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_payer_driver_runtime.rs probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Headless ledger unit and edge tests
+      - name: Full library tests including parser audit
         shell: pwsh
         run: |
-          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib tele10_trade_payment -- --nocapture
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime -- --nocapture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --nocapture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Runtime tests
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele06a_acceptor_runtime','tele06a_ritual_runtime','tele07_supervisor')) {
+            cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin -- --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Build terminal runtime
         shell: pwsh
         run: |
@@ -60,7 +61,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add probes/Wow112HeadlessAndroid/src probes/Wow112HeadlessAndroid/src/bin
+          git add probes/Wow112HeadlessAndroid/src
           if (git diff --cached --quiet) {
             'stored source already canonical'
           } else {
