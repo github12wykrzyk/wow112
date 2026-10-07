@@ -1,0 +1,43 @@
+name: TELE08 C ephemeral smoke
+
+on:
+  push:
+    branches:
+      - smoke/tele08-c-request-queue-20261007
+    paths:
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - '.github/workflows/tele08_c_ephemeral_smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: probes/Wow112HeadlessAndroid/tele08_request_queue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build smoke binary
+        run: cargo build --release --bin smoke
+      - name: Run smoke binary on runner
+        run: ./target/release/smoke
+      - name: Stage portable smoke binary
+        shell: bash
+        run: |
+          mkdir -p smoke-artifact
+          cp target/release/smoke smoke-artifact/tele08-c-smoke
+          chmod +x smoke-artifact/tele08-c-smoke
+      - name: Upload smoke binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tele08-c-smoke-linux-x86_64
+          path: probes/Wow112HeadlessAndroid/tele08_request_queue/smoke-artifact/tele08-c-smoke
+          if-no-files-found: error
+          retention-days: 1
