@@ -9,10 +9,12 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/tele11_service_core.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_service_config.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_executor_contract.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele11_executor_launch.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_executor_process.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_executor_runtime.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_process_containment.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_ingress.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele11_daemon.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele11_listener.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele11_external_executor.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele11_service.rs'
@@ -22,7 +24,7 @@ permissions:
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -33,13 +35,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: TELE11 service executor listener build
+      - name: TELE11 daemon listener executor build
         shell: pwsh
         run: |
-          foreach ($bin in @('tele11_service','tele11_listener','tele11_external_executor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
+          foreach ($bin in @('tele11_daemon','tele11_service','tele11_listener','tele11_external_executor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
             cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          & 'probes/Wow112HeadlessAndroid/target/release/tele11_daemon.exe' --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & 'probes/Wow112HeadlessAndroid/target/release/tele11_service.exe' --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & 'probes/Wow112HeadlessAndroid/target/release/tele11_listener.exe' --self-test
