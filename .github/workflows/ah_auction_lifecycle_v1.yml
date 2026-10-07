@@ -1,0 +1,197 @@
+name: AH Auction Lifecycle V1 Windows x86
+
+on:
+  push:
+    branches: [feature/ah-auction-lifecycle-v1]
+    paths:
+      - 'src/AuctionLifecycle/**'
+      - '.github/workflows/ah_auction_lifecycle_v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout liquidation V4 source
+        uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+      - name: Verify canonical integration and current state
+        shell: pwsh
+        run: |
+          python -m pip install pyyaml
+          python src/AuctionLifecycle/test_integration.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/verify_current.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Coordinator crash and restart tests
+        shell: pwsh
+        run: |
+          rustc --edition=2021 --test src/AuctionLifecycle/coordinator.rs -o "$env:RUNNER_TEMP/coordinator-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/coordinator-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Harden shared BUY primitive and attach best-effort history capture
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc07_buy_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_history_shadow_capture_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc05_ah_hello_resilience_patch.py probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate DE model base
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v2.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v5_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v4.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v52_turbo_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v5.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs
+          python probes/Wow112HeadlessAndroid/tools/poc07_de_v53_class_ceiling_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v52.rs probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build full DE cache
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/build_de_cache_poc08_e0.py `
+            --seed-cache probes/Wow112HeadlessAndroid/tools/v52_seed_cache.csv `
+            --item-ids probes/Wow112HeadlessAndroid/tools/poc08_live_item_ids_20261005.txt `
+            --output-cache "$env:RUNNER_TEMP/poc08-full-cache.csv" `
+            --unresolved "$env:RUNNER_TEMP/poc08-full-unresolved.csv" `
+            --workers 24 --timeout 10 --retries 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows=@(Import-Csv "$env:RUNNER_TEMP/poc08-full-cache.csv")
+          foreach($r in $rows){ if($r.source -eq 'LEGACY_SEED'){ $r.source='SeedLegacy' } }
+          $rows | Export-Csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" -NoTypeInformation -Encoding utf8
+          if($rows.Count -lt 2200){throw "DE coverage too low: $($rows.Count)/2343"}
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate F2 risk engine
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_economy_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc07_delive_v53.rs probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_reference_de_model_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_economy_audit.rs probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_b_compile_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_material_pricebook_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_b_reference_compare.rs probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_risk_gate_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_c_pricebook.rs probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_provenance_audit_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_d_risk.rs probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f0_eligibility_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_e_provenance.rs probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f1_live_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f0_eligibility.rs probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_exact_de_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f1_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_critical_hardening_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_order_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_history_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_f2_pagination_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Merge unified engine and apply V1 V2 V3 V3.1 V3.2 V4
+        shell: pwsh
+        run: |
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_scan_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_action_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_multibuy_v3_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_price_hardening_v1_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_history_liquidity_v2_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v3_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v3_compilefix.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_fast_prefilter_v32_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v31_f0_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          python probes/Wow112HeadlessAndroid/tools/poc08_unified_vendor_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $main='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $main -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc08_unified;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_unified::login_poc08_economy_audit')
+          Set-Content $main $t -Encoding utf8
+
+      - name: Attach Lifecycle to canonical V4 primitives
+        shell: pwsh
+        run: |
+          python src/AuctionLifecycle/integrate.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Static unified V4 plus shadow-history policy smoke
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
+          foreach($m in @('POC08-UNIFIED-V4','POC08-UNIFIED-MULTI','POC08-DE-FAST-PREFILTER','WOW112_VENDOR_FULL_SCOPE','FULL_AFFORDABLE','WOW112_UNIFIED_VENDOR_MAX_PURCHASES','WOW112_UNIFIED_MAX_PURCHASES','WOW112_UNIFIED_MAX_SPEND','POC08_ESSENCE_PARITY_PAIRS','POC08-C-HISTORY-V2','POC08-C-LIQUIDATION-V3','SAME_FULL_AH_SNAPSHOT','POC08-F0-V31','CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH','WOW112_F1_DE_MIN_LIQUIDATION_PROFIT','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','one_mutation_boundary=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "V4 marker missing: $m"}}
+          $history='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
+          foreach($m in @('WOW112_AH_HISTORY_SHADOW_NDJSON','RawAhPageObserved','full_market','targeted_item','revalidation_window','best_effort_no_mutation_coupling','buy_retry_signal=NO')){if(-not(Select-String -Path $history -Pattern $m -SimpleMatch -Quiet)){throw "history shadow marker missing: $m"}}
+          $hello='probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
+          foreach($m in @('[AH-HELLO-V3]','WOW112_AH_HELLO_TIMEOUT_SECS','HELLO_TIMEOUT_DEFAULT_SECS','HELLO_PACKET_SAFETY_CAP','Freshly discovered NPC wins')){if(-not(Select-String -Path $hello -Pattern $m -SimpleMatch -Quiet)){throw "AH hello resilience marker missing: $m"}}
+          foreach($ps in @('packaging/ah_latest/launcher/_launcher/START_AH.ps1','packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/bootstrap_latest.ps1')){$null=[scriptblock]::Create((Get-Content $ps -Raw)); Write-Host "POWERSHELL_PARSE_PASS $ps"}
+          foreach($m in @('UnifiedLive','UnifiedAudit','VendorDe','WOW112_VENDOR_FULL_SCOPE','WOW112_AH_HELLO_TIMEOUT_SECS','VENDOR_DE_V4')){if(-not(Select-String -Path 'packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/launcher/_launcher/START_AH.ps1' -Pattern $m -SimpleMatch -Quiet)){throw "launcher V4 marker missing: $m"}}
+          'UNIFIED VENDOR+DE V4 + SHADOW HISTORY + AH HELLO V3 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
+
+      - name: Rust check and tests
+        shell: pwsh
+        run: |
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build unified V4 Windows EXE
+        shell: pwsh
+        run: |
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
+          $b=[IO.File]::ReadAllBytes($exe)
+          if($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1]-ne 0x5a){throw 'PE smoke failed: MZ header missing'}
+          Write-Host "[PE-SMOKE] PASS bytes=$($b.Length) sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Stage unified V4 artifact
+        shell: pwsh
+        run: |
+          $d='dist/ah-auction-lifecycle-v1';New-Item -ItemType Directory -Force "$d/runtime"|Out-Null;New-Item -ItemType Directory -Force "$d/source"|Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe "$d/wow112-ah-auction-lifecycle-v1.exe"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs "$d/source/"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive_with_history_shadow.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs "$d/source/world_poc05_retry.rs"
+          Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
+          Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
+          Copy-Item "$env:RUNNER_TEMP/unified-smoke.txt" "$d/SMOKE_TESTS.txt"
+          $h=(Get-FileHash "$d/wow112-ah-auction-lifecycle-v1.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          BRANCH=$env:GITHUB_REF_NAME
+          EXACT_SHA=$env:GITHUB_SHA
+          PRODUCT=AUCTION_LIFECYCLE_V1_ON_CANONICAL_V4
+          ONE_FULL_AH_SNAPSHOT=YES
+          HISTORY_CAPTURE=BEST_EFFORT_SHARED_REQUEST_PATH
+          HISTORY_CAPTURE_SCOPES=FULL_MARKET_TARGETED_ITEM_REVALIDATION_WINDOW
+          HISTORY_STORE=CANONICAL_AH_HISTORY_TERMINAL_SQLITE_V1
+          HISTORY_BUY_DECISION_INFLUENCE=NO
+          HISTORY_STORAGE_FAILURE_BLOCKS_SCAN=NO
+          HISTORY_STORAGE_FAILURE_RETRIES_BUY=NO
+          VENDOR_SCOPE=FULL_AFFORDABLE_WHEN_ENABLED
+          DE_SCOPE=FAST_MODEL_SUPPORTED
+          BUY_REVALIDATION=EXACT_TUPLE_PAGE_PLUS_MINUS_5
+          NO_AUTO_RETRY_AFTER_UNCERTAIN_SEND=YES
+          BINARY_SHA256=$h
+          "@ | Set-Content "$d/BUILD_INFO.txt" -Encoding utf8
+
+      - name: Verify Lifecycle final package
+        shell: pwsh
+        run: |
+          Copy-Item src/AuctionLifecycle/*.rs dist/ah-auction-lifecycle-v1/source/
+          Copy-Item src/AuctionLifecycle/README.md dist/ah-auction-lifecycle-v1/LIFECYCLE_README.md
+          python src/AuctionLifecycle/verify_package.py dist/ah-auction-lifecycle-v1 $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Lifecycle V1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-AH-AUCTION-LIFECYCLE-V1-${{ github.sha }}
+          path: dist/ah-auction-lifecycle-v1
+          if-no-files-found: error
+          retention-days: 14

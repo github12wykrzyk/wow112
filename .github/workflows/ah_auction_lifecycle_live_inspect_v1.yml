@@ -1,0 +1,80 @@
+name: AH Auction Lifecycle V1 live inspect
+
+on:
+  push:
+    branches: [feature/ah-auction-lifecycle-v1]
+    paths:
+      - '.github/workflows/ah_auction_lifecycle_live_inspect_v1.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ah-auction-lifecycle-live-octowar1-smokinpole
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout feature control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact tested artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tested='2de2638c6a0543ba69a067aaf5e98a9acd0c4cf7'
+          git merge-base --is-ancestor $tested HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'tested Lifecycle SHA is not an ancestor' }
+          $changed=@(git diff --name-only "$tested..HEAD")
+          $unexpected=@($changed | Where-Object { $_ -ne '.github/workflows/ah_auction_lifecycle_live_inspect_v1.yml' })
+          if ($unexpected.Count -ne 0) { throw "unexpected changes after tested SHA: $($unexpected -join ', ')" }
+          gh run download 37655352980 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-2de2638c6a0543ba69a067aaf5e98a9acd0c4cf7' --dir live
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $manifest=Get-Content 'live/LIFECYCLE_PACKAGE.json' -Raw | ConvertFrom-Json
+          if ($manifest.commit -ne $tested) { throw 'artifact commit mismatch' }
+          if ($manifest.base_commit -ne 'cd17642d8fb54363a452cc5bf4a06282e1afc9cb') { throw 'canonical base mismatch' }
+          if ($manifest.final_package -ne 'PASS') { throw 'artifact package not PASS' }
+          Write-Host 'LIVE_INSPECT_ARTIFACT PASS'
+
+      - name: Run read-only My Auctions inspection
+        shell: pwsh
+        env:
+          WOW112_ACCOUNT: octowar1
+          WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+          WOW112_CHARACTER: Smokinpole
+          WOW112_REALM_INDEX: '1'
+          WOW112_LIFECYCLE_ACTION: inspect
+          WOW112_LIFECYCLE_MAX_PAGES: '4096'
+          WOW112_AUTOBUY_ACTION: scan-only
+          WOW112_RECONNECT_LIMIT: '1'
+          WOW112_SOAK_SECONDS: '0'
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) { throw 'WOW112_PASSWORD secret missing' }
+          if (Test-Path Env:WOW112_LIFECYCLE_CONFIRM) { throw 'mutation confirmation must be absent' }
+          $raw=& (Resolve-Path 'live/wow112-ah-auction-lifecycle-v1.exe').Path 2>&1
+          $exit=$LASTEXITCODE
+          $rows=@($raw | Where-Object { "$_" -match '^\[MY-AUCTIONS\].*buybox=(LOST|NO_LOWER_OBSERVED|UNKNOWN)$' })
+          $summary=@($raw | Where-Object { "$_" -match '^\[LIFECYCLE\] MY_AUCTIONS count=\d+ shared_market_scan=YES complete=(YES|NO)$' })
+          $partial=@($raw | Where-Object { "$_" -match '^\[LIFECYCLE\] INSPECT_PARTIAL reason=' })
+          foreach ($needle in @('MAIL-ACTION] SENT','POC07-BUY] SENT','CANCEL_CONFIRMED','POST_CONFIRMED','MUTATION_UNCERTAIN')) {
+            if (@($raw | Where-Object { "$_" -like "*$needle*" }).Count -ne 0) { throw "mutation marker observed: $needle" }
+          }
+          if ($exit -ne 0 -or $summary.Count -ne 1) { throw "read-only inspect failed exit=$exit" }
+          $rows | ForEach-Object { Write-Host "$_" }
+          $partial | ForEach-Object { Write-Host "$_" }
+          $summary | ForEach-Object { Write-Host "$_" }
+          @{tested_sha='2de2638c6a0543ba69a067aaf5e98a9acd0c4cf7';result='PASS';rows=$rows;partial=$partial;summary="$($summary[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
+
+      - name: Upload sanitized summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ah-auction-lifecycle-v1-live-inspect-summary
+          path: LIVE_INSPECT_SUMMARY.json
+          retention-days: 7
