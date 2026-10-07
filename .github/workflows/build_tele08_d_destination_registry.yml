@@ -20,10 +20,13 @@ jobs:
           components: rustfmt
 
       - name: Format Track D sources
-        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/lib.rs probes/Wow112HeadlessAndroid/src/destination_registry.rs
+        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/lib.rs probes/Wow112HeadlessAndroid/src/destination_registry.rs probes/Wow112HeadlessAndroid/tests/tele08_d_smoke.rs
 
       - name: Library compile check
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
 
       - name: Registry unit and contract tests
         run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+
+      - name: Track D public API smoke
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele08_d_smoke -- --nocapture
