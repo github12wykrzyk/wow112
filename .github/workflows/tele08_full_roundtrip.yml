@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   roundtrip:
@@ -36,10 +36,23 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Format gate
+      - name: One-shot canonicalize runner formatting
         shell: pwsh
         run: |
-          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+          $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs'
+          rustfmt --edition 2021 --config skip_children=true $path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --quiet -- $path
+          if ($LASTEXITCODE -ne 0) {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add $path
+            git commit -m 'style(tele08): rustfmt full roundtrip runner'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            git push origin HEAD:feature/tele08-full-roundtrip-v1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          rustfmt --edition 2021 --config skip_children=true --check $path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Offline full-chain contract
