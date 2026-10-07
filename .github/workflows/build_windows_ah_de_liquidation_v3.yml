@@ -5,9 +5,11 @@ on:
     branches:
       - dev/windows-ah-de-liquidation-v3
       - feature/ah-vendor-de-unified-v4
+      - feature/ah-history-shadow-canonical
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - 'packaging/ah_latest/**'
+      - 'src/AhHistoryTerminal/**'
       - '.github/workflows/build_windows_ah_de_liquidation_v3.yml'
   workflow_dispatch:
 
@@ -23,12 +25,14 @@ jobs:
         uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Harden shared BUY primitive
+      - name: Harden shared BUY primitive and attach best-effort history capture
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/vendor_mailbox_fastfix_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc07_buy_neighborhood_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python probes/Wow112HeadlessAndroid/tools/poc08_history_shadow_capture_patch.py probes/Wow112HeadlessAndroid/src/world_poc07.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc05_ah_hello_resilience_patch.py probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -97,16 +101,18 @@ jobs:
           $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive','world_poc08_unified::login_poc08_economy_audit')
           Set-Content $main $t -Encoding utf8
 
-      - name: Static unified V4 policy smoke
+      - name: Static unified V4 plus shadow-history policy smoke
         shell: pwsh
         run: |
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
           foreach($m in @('POC08-UNIFIED-V4','POC08-UNIFIED-MULTI','POC08-DE-FAST-PREFILTER','WOW112_VENDOR_FULL_SCOPE','FULL_AFFORDABLE','WOW112_UNIFIED_VENDOR_MAX_PURCHASES','WOW112_UNIFIED_MAX_PURCHASES','WOW112_UNIFIED_MAX_SPEND','POC08_ESSENCE_PARITY_PAIRS','POC08-C-HISTORY-V2','POC08-C-LIQUIDATION-V3','SAME_FULL_AH_SNAPSHOT','POC08-F0-V31','CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH','WOW112_F1_DE_MIN_LIQUIDATION_PROFIT','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','one_mutation_boundary=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "V4 marker missing: $m"}}
+          $history='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
+          foreach($m in @('WOW112_AH_HISTORY_SHADOW_NDJSON','RawAhPageObserved','full_market','targeted_item','revalidation_window','best_effort_no_mutation_coupling','buy_retry_signal=NO')){if(-not(Select-String -Path $history -Pattern $m -SimpleMatch -Quiet)){throw "history shadow marker missing: $m"}}
           $hello='probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
           foreach($m in @('[AH-HELLO-V3]','WOW112_AH_HELLO_TIMEOUT_SECS','HELLO_TIMEOUT_DEFAULT_SECS','HELLO_PACKET_SAFETY_CAP','Freshly discovered NPC wins')){if(-not(Select-String -Path $hello -Pattern $m -SimpleMatch -Quiet)){throw "AH hello resilience marker missing: $m"}}
           foreach($ps in @('packaging/ah_latest/launcher/_launcher/START_AH.ps1','packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/bootstrap_latest.ps1')){$null=[scriptblock]::Create((Get-Content $ps -Raw)); Write-Host "POWERSHELL_PARSE_PASS $ps"}
           foreach($m in @('UnifiedLive','UnifiedAudit','VendorDe','WOW112_VENDOR_FULL_SCOPE','WOW112_AH_HELLO_TIMEOUT_SECS','VENDOR_DE_V4')){if(-not(Select-String -Path 'packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/launcher/_launcher/START_AH.ps1' -Pattern $m -SimpleMatch -Quiet)){throw "launcher V4 marker missing: $m"}}
-          'UNIFIED VENDOR+DE V4 + AH HELLO V3 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
+          'UNIFIED VENDOR+DE V4 + SHADOW HISTORY + AH HELLO V3 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
 
       - name: Rust check and tests
         shell: pwsh
@@ -132,7 +138,7 @@ jobs:
           $d='dist/windows-ah-de-liquidation-v31';New-Item -ItemType Directory -Force "$d/runtime"|Out-Null;New-Item -ItemType Directory -Force "$d/source"|Out-Null
           Copy-Item probes/Wow112HeadlessAndroid/target/release/wow112-headless-android-probe.exe "$d/wow112-ah-de-liquidation-v31.exe"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs "$d/source/"
-          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive.rs"
+          Copy-Item probes/Wow112HeadlessAndroid/src/world_poc07.rs "$d/source/world_poc07_buy_primitive_with_history_shadow.rs"
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs "$d/source/world_poc05_retry.rs"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
@@ -141,36 +147,16 @@ jobs:
           @"
           BRANCH=$env:GITHUB_REF_NAME
           EXACT_SHA=$env:GITHUB_SHA
-          PRODUCT=UNIFIED_VENDOR_DE_V4
+          PRODUCT=UNIFIED_VENDOR_DE_V4_SHADOW_HISTORY
           ONE_FULL_AH_SNAPSHOT=YES
+          HISTORY_CAPTURE=BEST_EFFORT_SHARED_REQUEST_PATH
+          HISTORY_CAPTURE_SCOPES=FULL_MARKET_TARGETED_ITEM_REVALIDATION_WINDOW
+          HISTORY_STORE=CANONICAL_AH_HISTORY_TERMINAL_SQLITE_V1
+          HISTORY_BUY_DECISION_INFLUENCE=NO
+          HISTORY_STORAGE_FAILURE_BLOCKS_SCAN=NO
+          HISTORY_STORAGE_FAILURE_RETRIES_BUY=NO
           VENDOR_SCOPE=FULL_AFFORDABLE_WHEN_ENABLED
           DE_SCOPE=FAST_MODEL_SUPPORTED
-          ROUTE_SELECTION=RISK_ADJUSTED_PROFIT_PER_AUCTION
-          UNIFIED_TOTAL_PURCHASE_CAP_DEFAULT=25
-          UNIFIED_VENDOR_PURCHASE_CAP_DEFAULT=25
-          UNIFIED_GLOBAL_SPEND_CAP_DEFAULT=100000
-          MATERIAL_BOOK_SOURCE=SAME_FULL_AH_SNAPSHOT
-          OWN_AUCTIONS=COUNTED_AND_EXPOSURE_WEIGHTED_NOT_USED_AS_EXTERNAL_PRICE
-          MARKET_DEPTH=UNITS_WITHIN_5_10_20_PERCENT_PLUS_WEIGHTED_P25_MEDIAN
-          OWN_EXPOSURE_FACTOR_FLOOR_BPS_DEFAULT=6500
-          OWN_SHARE_BLOCK_BPS_DEFAULT=7500
-          OWN_UNITS_BLOCK_MIN_DEFAULT=10
-          MARKET_SATURATION_FACTOR_FLOOR_BPS=8000
-          DE_PRICE_PARITY=ALL_5_ESSENCE_FAMILIES_3_TO_1
-          DE_HISTORY_BUCKET_SECS_DEFAULT=1800
-          DE_HISTORY_MAX_AGE_DEFAULT=172800
-          DE_HISTORY_ACCEPT_LEGACY_DEFAULT=NO
-          DE_MEDIUM_LIQUIDITY_HAIRCUT_BPS_DEFAULT=8500
-          DE_COLD_START_HAIRCUT=30_PERCENT
-          F0_DECISION=LIQUIDATION_SAFE_EV_PLUS_BOUNDED_MODEL_CONFIDENCE_HAIRCUT
-          F0_MIN_DECISION_PROFIT_DEFAULT=2500
-          F0_MIN_DECISION_ROI_BPS_DEFAULT=2500
-          F0_MAX_PLOSS_BPS_DEFAULT=2500
-          F0_MODEL_DISAGREEMENT=CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH
-          F0_MODEL_CONFIDENCE_FACTOR_FLOOR_BPS=8500
-          DE_MAX_PER_DEID_DEFAULT=3
-          DE_MAX_SPEND_PER_SNAPSHOT_DEFAULT=250000
-          AH_HELLO_RESILIENCE=CONFIGURABLE_8_TO_30_DEFAULT_20_BACKGROUND_EXEMPT_FRESH_NPC_FIRST
           BUY_REVALIDATION=EXACT_TUPLE_PAGE_PLUS_MINUS_5
           NO_AUTO_RETRY_AFTER_UNCERTAIN_SEND=YES
           BINARY_SHA256=$h
