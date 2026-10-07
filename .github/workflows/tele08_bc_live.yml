@@ -1,14 +1,17 @@
-name: TELE08 B-C canonical live gate
+name: TELE10 clarification-aware live router gate
 
 on:
   push:
     branches:
       - feature/tele08-bc-integration-v1
+      - feature/tele10-canonical-stored-source-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/Cargo.toml'
       - 'probes/Wow112HeadlessAndroid/src/lib.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele10_clarification.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele10_message_router.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele08_bc_live_gate.rs'
       - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
@@ -43,26 +46,35 @@ jobs:
       - name: Format gate
         shell: pwsh
         run: |
-          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs probes/Wow112HeadlessAndroid/src/bin/tele08_bc_live_gate.rs
+          rustfmt --edition 2021 --check `
+            probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs `
+            probes/Wow112HeadlessAndroid/src/tele10_clarification.rs `
+            probes/Wow112HeadlessAndroid/src/tele10_message_router.rs `
+            probes/Wow112HeadlessAndroid/src/bin/tele08_bc_live_gate.rs
 
-      - name: B-C offline contract
+      - name: Router offline contract
         shell: pwsh
         run: |
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_bc_live_gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build canonical live runners
         shell: pwsh
         run: |
           cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_bc_live_gate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Autonomous real-server B then C gate
+      - name: Autonomous real-server router gate
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $status = 'TELE08_BC_LIVE_STATUS.txt'
+          $status = 'TELE10_ROUTER_LIVE_STATUS.txt'
           if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
             @"
           result=SKIPPED_NO_SECRET
@@ -70,7 +82,7 @@ jobs:
           sha=$env:GITHUB_SHA
           source=canonical_branch
           "@ | Set-Content -Encoding UTF8 $status
-            Write-Host 'TELE08 B-C LIVE: SKIPPED_NO_SECRET'
+            Write-Host 'TELE10 ROUTER LIVE: SKIPPED_NO_SECRET'
             exit 0
           }
 
@@ -78,8 +90,8 @@ jobs:
           result=RUNNING
           sha=$env:GITHUB_SHA
           source=canonical_branch
-          phase=real_whisper_transport_then_queue_gate
-          b_source_patching=false
+          phase=real_whisper_transport_then_clarification_aware_router_gate
+          source_patching=false
           "@ | Set-Content -Encoding UTF8 $status
 
           $root = 'tele08_b_live_runs'
@@ -107,7 +119,7 @@ jobs:
             throw "B live result is not 12/12 PASS: $($resultFile.FullName)"
           }
 
-          $tsv = Join-Path $env:RUNNER_TEMP 'tele08_bc_live_evidence.tsv'
+          $tsv = Join-Path $env:RUNNER_TEMP 'tele10_router_live_evidence.tsv'
           Remove-Item $tsv -Force -ErrorAction SilentlyContinue
           foreach ($case in $result.cases) {
             if ($case.sender -match "`t|`r|`n" -or $case.raw_text -match "`t|`r|`n") {
@@ -120,34 +132,36 @@ jobs:
           & $cexe --evidence $tsv
           $crc = $LASTEXITCODE
           if ($crc -ne 0) {
-            Copy-Item $tsv 'TELE08_BC_LIVE_EVIDENCE.tsv' -Force
+            Copy-Item $tsv 'TELE10_ROUTER_LIVE_EVIDENCE.tsv' -Force
             @"
-          result=FAIL_C_GATE
+          result=FAIL_ROUTER_GATE
           detail=tele08_bc_live_gate exited rc=$crc after B real-server 12/12 PASS.
           sha=$env:GITHUB_SHA
           b_results=$($resultFile.FullName)
           "@ | Set-Content -Encoding UTF8 $status
-            throw "TELE08 B-C queue gate failed rc=$crc"
+            throw "TELE10 clarification-aware router gate failed rc=$crc"
           }
 
-          Copy-Item $tsv 'TELE08_BC_LIVE_EVIDENCE.tsv' -Force
+          Copy-Item $tsv 'TELE10_ROUTER_LIVE_EVIDENCE.tsv' -Force
           @"
           result=PASS
-          detail=Real server B whisper transport/classification 12/12 PASS; exact captured sender/raw_text evidence replayed through frozen B parser -> B-C adapter -> QueueEngine C; expected queue policy PASS; final queues hyjal=1 winterspring=1 azshara=1; invariants=OK.
+          detail=Real-server whisper transport/classification 12/12 PASS; exact captured sender/raw_text evidence replayed through Tele10MessageRouter; direct requests queued only for cases 2,7,12; case 11 produced guarded clarification; 8 cases ignored; queue invariants OK.
           sha=$env:GITHUB_SHA
           b_results=$($resultFile.FullName)
-          b_source_patching=false
+          source_patching=false
           queued_cases=2,7,12
+          clarification_cases=11
+          ignored_cases=1,3,4,5,6,8,9,10
           "@ | Set-Content -Encoding UTF8 $status
-          Write-Host 'TELE08 B-C CANONICAL LIVE GATE PASS'
+          Write-Host 'TELE10 CLARIFICATION-AWARE LIVE ROUTER GATE PASS'
 
-      - name: Upload B-C live evidence
+      - name: Upload router live evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112_TELE08_BC_CANONICAL_LIVE_EVIDENCE
+          name: WoW112_TELE10_ROUTER_LIVE_EVIDENCE
           path: |
-            TELE08_BC_LIVE_STATUS.txt
-            TELE08_BC_LIVE_EVIDENCE.tsv
+            TELE10_ROUTER_LIVE_STATUS.txt
+            TELE10_ROUTER_LIVE_EVIDENCE.tsv
             tele08_b_live_runs/**
           if-no-files-found: warn
