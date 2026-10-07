@@ -1,0 +1,325 @@
+name: Claude Specialist
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Read-only task for Claude specialist'
+        required: true
+        type: string
+      target_ref:
+        description: 'Git ref Claude should inspect'
+        required: false
+        default: 'main'
+        type: string
+      tier:
+        description: 'Budget tier: cheap, normal, deep'
+        required: false
+        default: 'cheap'
+        type: choice
+        options:
+          - cheap
+          - normal
+          - deep
+  push:
+    branches:
+      - 'claude-requests'
+    paths:
+      - '.ai/claude/request.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-specialist-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  specialist:
+    name: Claude read-only specialist
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout control revision
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Resolve Claude request and budget tier
+        id: request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_TASK: ${{ inputs.task }}
+          DISPATCH_TARGET_REF: ${{ inputs.target_ref }}
+          DISPATCH_TIER: ${{ inputs.tier }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            enabled='true'
+            task="$DISPATCH_TASK"
+            target_ref="${DISPATCH_TARGET_REF:-main}"
+            tier="${DISPATCH_TIER:-cheap}"
+            request_id="dispatch-${GITHUB_RUN_ID}"
+          else
+            test -f .ai/claude/request.json
+            enabled="$(jq -er '(.enabled // false) | tostring' .ai/claude/request.json)"
+            task="$(jq -er '.task // "disabled request template"' .ai/claude/request.json)"
+            target_ref="$(jq -er '.target_ref // "main"' .ai/claude/request.json)"
+            tier="$(jq -er '.tier // "cheap"' .ai/claude/request.json)"
+            request_id="$(jq -er '.request_id // "push"' .ai/claude/request.json)"
+          fi
+
+          case "$tier" in
+            cheap)
+              model='haiku'
+              max_turns='2'
+              max_budget_usd='0.15'
+              report_words='650'
+              ;;
+            normal)
+              model='sonnet'
+              max_turns='3'
+              max_budget_usd='0.35'
+              report_words='1000'
+              ;;
+            deep)
+              model='sonnet'
+              max_turns='5'
+              max_budget_usd='0.75'
+              report_words='1600'
+              ;;
+            *)
+              echo "Unknown Claude tier: $tier (allowed: cheap, normal, deep)" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ "$enabled" != 'true' ] && [ "$enabled" != 'false' ]; then
+            echo 'enabled must be true or false' >&2
+            exit 1
+          fi
+          if [ -z "$task" ] || [ -z "$target_ref" ]; then
+            echo 'task and target_ref must be non-empty' >&2
+            exit 1
+          fi
+
+          safe_request_id="$(printf '%s' "$request_id" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//' | cut -c1-60)"
+          [ -n "$safe_request_id" ] || safe_request_id="request-${GITHUB_RUN_ID}"
+
+          delim="CLAUDE_TASK_${GITHUB_RUN_ID}_${RANDOM}"
+          {
+            echo "task<<$delim"
+            printf '%s\n' "$task"
+            echo "$delim"
+            echo "enabled=$enabled"
+            echo "target_ref=$target_ref"
+            echo "tier=$tier"
+            echo "model=$model"
+            echo "max_turns=$max_turns"
+            echo "max_budget_usd=$max_budget_usd"
+            echo "report_words=$report_words"
+            echo "request_id=$safe_request_id"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$enabled" != 'true' ]; then
+            echo 'Claude request is disabled; no Claude usage will occur.'
+          fi
+
+      - name: Checkout requested target
+        if: steps.request.outputs.enabled == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.request.outputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Resolve exact target SHA
+        if: steps.request.outputs.enabled == 'true'
+        id: target
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Record pre-Claude repository state
+        if: steps.request.outputs.enabled == 'true'
+        id: baseline
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+          from pathlib import Path
+
+          h = hashlib.sha256()
+          h.update(subprocess.check_output(['git', 'diff', '--binary', '--no-ext-diff', 'HEAD']))
+          raw = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'])
+          for name_b in sorted(x for x in raw.split(b'\0') if x):
+              name = os.fsdecode(name_b)
+              h.update(b'UNTRACKED\0' + name_b + b'\0')
+              p = Path(name)
+              if p.is_file():
+                  h.update(hashlib.sha256(p.read_bytes()).digest())
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f'digest={h.hexdigest()}\n')
+          PY
+
+      - name: Verify Claude credential is available
+        if: steps.request.outputs.enabled == 'true'
+        shell: bash
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo 'CLAUDE_CODE_OAUTH_TOKEN is missing or unavailable to this workflow.' >&2
+            exit 1
+          fi
+          echo 'Claude OAuth credential is present (value intentionally hidden).'
+
+      - name: Run Claude specialist
+        if: steps.request.outputs.enabled == 'true'
+        id: claude
+        uses: anthropics/claude-code-base-action@4541c106b5f267e74536bf5dfaf887c09ae88edf
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: 'false'
+          prompt: |
+            You are a read-only specialist assisting the primary autonomous engineering agent for this repository.
+
+            Repository: ${{ github.repository }}
+            Requested ref: ${{ steps.request.outputs.target_ref }}
+            Exact revision: ${{ steps.target.outputs.sha }}
+            Request id: ${{ steps.request.outputs.request_id }}
+            Budget tier: ${{ steps.request.outputs.tier }}
+
+            Cost discipline is mandatory:
+            - Solve only the requested task. Do not perform a broad repository audit.
+            - Start from exact files/symbols named in the task and expand only when evidence requires it.
+            - Prefer targeted Read/Grep over wide Glob scans.
+            - Stop as soon as the conclusion is adequately supported; do not keep exploring for completeness.
+            - Do not delegate to subagents.
+            - Keep the final report under approximately ${{ steps.request.outputs.report_words }} words.
+
+            Hard rules:
+            - Read and analyze only. Do not edit, create, delete, commit, push, or mutate repository files.
+            - Follow AGENTS.md and repository-local authority/routing rules, but read only the minimum authority context needed for this task.
+            - Prefer exact file/path/line evidence over speculation.
+            - If evidence is insufficient within the budget, say what is missing instead of guessing or expanding indefinitely.
+            - Return a compact engineering report with: diagnosis, evidence, recommendation, risks, and tests.
+
+            TASK:
+            ${{ steps.request.outputs.task }}
+          claude_args: |
+            --model ${{ steps.request.outputs.model }}
+            --max-turns ${{ steps.request.outputs.max_turns }}
+            --max-budget-usd ${{ steps.request.outputs.max_budget_usd }}
+            --permission-mode plan
+            --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell,Task"
+
+      - name: Enforce read-only repository state
+        if: steps.request.outputs.enabled == 'true'
+        shell: bash
+        env:
+          BEFORE_DIGEST: ${{ steps.baseline.outputs.digest }}
+        run: |
+          AFTER_DIGEST="$(python3 - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+          from pathlib import Path
+
+          h = hashlib.sha256()
+          h.update(subprocess.check_output(['git', 'diff', '--binary', '--no-ext-diff', 'HEAD']))
+          raw = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'])
+          for name_b in sorted(x for x in raw.split(b'\0') if x):
+              name = os.fsdecode(name_b)
+              h.update(b'UNTRACKED\0' + name_b + b'\0')
+              p = Path(name)
+              if p.is_file():
+                  h.update(hashlib.sha256(p.read_bytes()).digest())
+          print(h.hexdigest())
+          PY
+          )"
+          if [ "$AFTER_DIGEST" != "$BEFORE_DIGEST" ]; then
+            echo 'Claude specialist changed repository state relative to its pre-run baseline; failing closed.' >&2
+            git status --short >&2
+            exit 1
+          fi
+          echo 'Read-only repository state preserved.'
+
+      - name: Extract Claude final report
+        if: always() && steps.request.outputs.enabled == 'true' && steps.claude.outputs.execution_file != ''
+        shell: bash
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          CLAUDE_CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+          CLAUDE_SESSION_ID: ${{ steps.claude.outputs.session_id }}
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          TARGET_REF: ${{ steps.request.outputs.target_ref }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          TIER: ${{ steps.request.outputs.tier }}
+          MODEL: ${{ steps.request.outputs.model }}
+          MAX_TURNS: ${{ steps.request.outputs.max_turns }}
+          MAX_BUDGET_USD: ${{ steps.request.outputs.max_budget_usd }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['EXECUTION_FILE'])
+          events = json.loads(path.read_text(encoding='utf-8'))
+          report = ''
+
+          for event in reversed(events):
+              if isinstance(event, dict) and event.get('type') == 'result' and isinstance(event.get('result'), str):
+                  report = event['result']
+                  break
+
+          if not report:
+              for event in reversed(events):
+                  if not isinstance(event, dict) or event.get('type') != 'assistant':
+                      continue
+                  content = ((event.get('message') or {}).get('content') or [])
+                  chunks = [b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text']
+                  report = '\n'.join(x for x in chunks if x)
+                  if report:
+                      break
+
+          if not report:
+              report = 'No final Claude text result was found in the execution log.'
+
+          Path('claude-specialist-report.md').write_text(report + '\n', encoding='utf-8')
+          Path('claude-specialist-meta.json').write_text(json.dumps({
+              'conclusion': os.environ.get('CLAUDE_CONCLUSION', ''),
+              'session_id': os.environ.get('CLAUDE_SESSION_ID', ''),
+              'request_id': os.environ.get('REQUEST_ID', ''),
+              'target_ref': os.environ.get('TARGET_REF', ''),
+              'target_sha': os.environ.get('TARGET_SHA', ''),
+              'tier': os.environ.get('TIER', ''),
+              'model': os.environ.get('MODEL', ''),
+              'max_turns': os.environ.get('MAX_TURNS', ''),
+              'max_budget_usd': os.environ.get('MAX_BUDGET_USD', ''),
+              'repository': os.environ.get('GITHUB_REPOSITORY', ''),
+              'run_id': os.environ.get('GITHUB_RUN_ID', ''),
+          }, indent=2) + '\n', encoding='utf-8')
+
+          summary = Path(os.environ['GITHUB_STEP_SUMMARY'])
+          with summary.open('a', encoding='utf-8') as f:
+              f.write('## Claude Specialist Result\n\n')
+              f.write(f"Tier: {os.environ.get('TIER', '')} | Model: {os.environ.get('MODEL', '')} | Max turns: {os.environ.get('MAX_TURNS', '')} | Per-run cap: ${os.environ.get('MAX_BUDGET_USD', '')}\n\n")
+              f.write(report)
+              f.write('\n')
+          PY
+
+      - name: Upload Claude report
+        if: always() && steps.request.outputs.enabled == 'true' && hashFiles('claude-specialist-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-specialist-${{ steps.request.outputs.request_id }}-${{ github.run_id }}
+          path: |
+            claude-specialist-report.md
+            claude-specialist-meta.json
+          if-no-files-found: error
+          retention-days: 14
