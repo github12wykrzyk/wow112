@@ -30,7 +30,10 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("read evidence {} failed: {e}", evidence.display()))?;
     let observations = parse_tsv(&raw)?;
     if observations.len() != 12 {
-        return Err(format!("expected 12 live observations, got {}", observations.len()));
+        return Err(format!(
+            "expected 12 live observations, got {}",
+            observations.len()
+        ));
     }
 
     let mut registry = DestinationRegistry::from_json(SEED)
@@ -88,10 +91,11 @@ fn run() -> Result<(), String> {
     if !unsupported.should_send
         || unsupported.response_kind != ResponseKind::UnsupportedDestination
         || unsupported.reason != DecisionReason::Allowed
-        || unsupported.text
-            != "I don't have feralas. Available: azshara, hyjal, winterspring."
+        || unsupported.text != "I don't have feralas. Available: azshara, hyjal, winterspring."
     {
-        return Err(format!("unsupported destination response mismatch: {unsupported:?}"));
+        return Err(format!(
+            "unsupported destination response mismatch: {unsupported:?}"
+        ));
     }
 
     let competition = &classifications[8];
@@ -109,7 +113,9 @@ fn run() -> Result<(), String> {
         || competition_response.response_kind != ResponseKind::Competition
         || competition_response.text != "Please keep whispers to summon requests."
     {
-        return Err(format!("competition response mismatch: {competition_response:?}"));
+        return Err(format!(
+            "competition response mismatch: {competition_response:?}"
+        ));
     }
 
     let unknown = &classifications[10];
@@ -127,7 +133,9 @@ fn run() -> Result<(), String> {
         || unknown_response.response_kind != ResponseKind::Unknown
         || unknown_response.reason != DecisionReason::UnknownNoReply
     {
-        return Err(format!("Unknown reply policy mismatch: {unknown_response:?}"));
+        return Err(format!(
+            "Unknown reply policy mismatch: {unknown_response:?}"
+        ));
     }
 
     let dump_path = PathBuf::from("TELE08_E_UNKNOWN_LIVE.jsonl");
@@ -185,7 +193,9 @@ fn run() -> Result<(), String> {
         || unavailable.response_kind != ResponseKind::DestinationUnavailable
         || unavailable.text != "hyjal is temporarily unavailable."
     {
-        return Err(format!("D->E unavailable response mismatch: {unavailable:?}"));
+        return Err(format!(
+            "D->E unavailable response mismatch: {unavailable:?}"
+        ));
     }
 
     println!(
@@ -238,7 +248,10 @@ fn one_decision(
 ) -> Result<wow112_headless_android_probe::tele_response_engine::ResponseDecision, String> {
     let mut decisions = engine.handle_context(context, now);
     if decisions.len() != 1 {
-        return Err(format!("expected one response decision, got {}", decisions.len()));
+        return Err(format!(
+            "expected one response decision, got {}",
+            decisions.len()
+        ));
     }
     Ok(decisions.remove(0))
 }
