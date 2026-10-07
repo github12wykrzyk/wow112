@@ -30,13 +30,22 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Development format stage
+      - name: Development source stage
         shell: pwsh
         run: |
-          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs
+          $path = 'probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs'
+          $text = Get-Content $path -Raw
+          if ($text -notmatch 'mod tele_party_observer;') {
+            $needle = "#[path = `"../wire_build.rs`"]`nmod wire_build;"
+            $replacement = "#[path = `"../tele_party_observer.rs`"]`nmod tele_party_observer;`n#[path = `"../wire_build.rs`"]`nmod wire_build;"
+            if (-not $text.Contains($needle)) { throw 'tele09 source anchor not found' }
+            $text = $text.Replace($needle, $replacement)
+            Set-Content -Encoding UTF8 $path $text
+          }
+          rustfmt --edition 2021 --config skip_children=true $path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Force -Path tele09_formatted_source | Out-Null
-          Copy-Item probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs tele09_formatted_source/tele09_full_teleport.rs
+          Copy-Item $path tele09_formatted_source/tele09_full_teleport.rs
 
       - name: Offline compile and self-test
         shell: pwsh
@@ -46,7 +55,7 @@ jobs:
           cargo run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele09_full_teleport -- --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build stored-source release chain
+      - name: Build release chain
         shell: pwsh
         run: |
           foreach ($bin in @('tele09_full_teleport','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
