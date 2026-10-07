@@ -10,8 +10,10 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/destination_registry.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_de_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_e_live_logic.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_e_live_runtime.rs'
       - '.github/workflows/tele08_e_integrated_ci.yml'
 
 permissions:
@@ -26,8 +28,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Format check carried Track E engine
-        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
+      - name: Format check Track E logic
+        run: |
+          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
+          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele08_e_live_logic.rs
       - name: Check full headless crate with diagnostics
         id: cargo_check
         shell: bash
