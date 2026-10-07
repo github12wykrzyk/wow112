@@ -41,8 +41,8 @@ jobs:
         run: |
           $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs'
           $raw = Get-Content $path -Raw
-          if ($raw -notmatch '(?m)^\s+use std::fs;$') {
-            $raw = $raw -replace '(?m)^    use std::path::Path;$', "    use std::fs;`n    use std::path::Path;"
+          if ($raw -notmatch 'mod live \{\s*use std::fs;') {
+            $raw = $raw -replace 'mod live \{', "mod live {`n    use std::fs;"
             Set-Content -Path $path -Value $raw -NoNewline
           }
           rustfmt --edition 2021 $path
