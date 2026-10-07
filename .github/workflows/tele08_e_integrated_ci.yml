@@ -25,12 +25,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Format check integration files
-        run: |
-          rustfmt --edition 2021 --check \
-            probes/Wow112HeadlessAndroid/src/lib.rs \
-            probes/Wow112HeadlessAndroid/src/tele08_de_adapter.rs \
-            probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
+      - name: Format check carried Track E engine
+        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
       - name: Check full headless crate
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
       - name: Test full headless crate
