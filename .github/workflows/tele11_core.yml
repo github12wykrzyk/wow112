@@ -12,7 +12,9 @@ on:
       - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele10_*.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele11_external_worker.rs'
       - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
 permissions:
   contents: read
@@ -30,10 +32,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test external-worker contract
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele11_external_worker -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele11_external_worker -- --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build exact stored runtime
         shell: pwsh
         run: |
-          foreach ($bin in @('tele10_ledger','tele06a_ritual_runtime')) {
+          foreach ($bin in @('tele10_ledger','tele06a_acceptor_runtime','tele06a_ritual_runtime','tele11_external_worker')) {
             cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
