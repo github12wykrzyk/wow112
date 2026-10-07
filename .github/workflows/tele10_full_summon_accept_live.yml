@@ -2,7 +2,7 @@ name: TELE10 full summon accept live
 on:
   workflow_dispatch:
   push:
-    branches: [feature/tele10-full-summon-accept-v1]
+    branches: [feature/tele10-full-summon-accept-v1, feature/tele10-full-summon-canonical-v1]
     paths:
       - '.github/workflows/tele10_full_summon_accept_live.yml'
       - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
