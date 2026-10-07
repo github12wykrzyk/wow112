@@ -90,12 +90,14 @@ impl ClarificationGate {
 
         self.expire_sender(&sender_key, classification.timestamp_ms);
 
-        if let Some(pending) = self.pending.get(&sender_key).cloned() {
-            if classification.intent == WhisperIntent::CompetitionMessage {
-                self.pending.remove(&sender_key);
-                return ClarificationDecision::PassThrough;
-            }
+        if classification.intent == WhisperIntent::CompetitionMessage
+            || is_obvious_seller_signal(&classification.normalized_text)
+        {
+            self.pending.remove(&sender_key);
+            return ClarificationDecision::Suppressed;
+        }
 
+        if let Some(pending) = self.pending.get(&sender_key).cloned() {
             if is_decline(&classification.normalized_text) {
                 self.pending.remove(&sender_key);
                 return ClarificationDecision::Declined;
@@ -279,6 +281,37 @@ fn is_confirmation(text: &str) -> bool {
 
 fn is_decline(text: &str) -> bool {
     matches!(text, "n" | "no" | "nope" | "nah" | "not now")
+}
+
+fn is_obvious_seller_signal(text: &str) -> bool {
+    let stripped = text.trim_start_matches('+').trim();
+    let seller_prefix = [
+        "wts ",
+        "selling ",
+        "i sell ",
+        "we sell ",
+        "cheap summon",
+        "cheap summons",
+        "cheap port",
+        "cheap ports",
+    ]
+    .iter()
+    .any(|prefix| stripped.starts_with(prefix));
+    if !seller_prefix {
+        return false;
+    }
+
+    [
+        "summon",
+        "summons",
+        "port",
+        "ports",
+        "hyjal",
+        "winterspring",
+        "azshara",
+    ]
+    .iter()
+    .any(|service| stripped.split_whitespace().any(|token| token == *service))
 }
 
 fn clarification_text(destination: Option<&DestinationKey>) -> String {
