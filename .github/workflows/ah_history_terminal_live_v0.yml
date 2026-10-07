@@ -1,0 +1,43 @@
+name: AH history terminal V0 live read-only
+on:
+  push:
+    branches: [dev/windows-ah-canonical]
+    paths:
+      - '.github/workflows/ah_history_terminal_live_v0.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ah-history-octowar1-live
+  cancel-in-progress: false
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build read-only terminal
+        run: cargo build --locked --release --manifest-path src/AhHistoryTerminal/Cargo.toml --target i686-pc-windows-msvc
+      - name: Verify offline suite before live connection
+        env:
+          WOW112_HISTORY_BINARY: src/AhHistoryTerminal/target/i686-pc-windows-msvc/release/wow112-ah-history.exe
+        run: python src/AhHistoryTerminal/test_autonomous.py src/AhHistoryTerminal/offline-live-gate
+      - name: Capture one full AH scan and verify SQLite round trip
+        env:
+          WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+          WOW112_HISTORY_BINARY: src/AhHistoryTerminal/target/i686-pc-windows-msvc/release/wow112-ah-history.exe
+        run: python src/AhHistoryTerminal/run_live_validation.py src/AhHistoryTerminal/live-results
+      - name: Upload sanitized validation summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ah-history-live-v0-summary
+          path: src/AhHistoryTerminal/live-results/LIVE_VALIDATION_SUMMARY.json
+          if-no-files-found: warn
+          retention-days: 7
