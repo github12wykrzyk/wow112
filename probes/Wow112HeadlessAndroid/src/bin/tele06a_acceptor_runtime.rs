@@ -74,6 +74,8 @@ mod agent {
     include!("../world_tele.rs");
 
     use super::*;
+    include!("../tele10_payer_roster_runtime.rs");
+    include!("../tele10_payer_driver_runtime.rs");
 
     const CMSG_GROUP_DISBAND_OPCODE: u32 = 0x007B;
     const SMSG_GROUP_INVITE_OPCODE: u16 = 0x006F;
@@ -623,6 +625,9 @@ mod agent {
                     }
 
                     tele_trace::trace_packet(role_label, opcode, &payload);
+                    if role == Tele06bRole::Customer {
+                        tele10_payer_observe_packet(opcode, &payload);
+                    }
 
                     if role == Tele06bRole::Customer && opcode == SMSG_SUMMON_REQUEST_OPCODE {
                         if payload.len() == 16 {
@@ -681,17 +686,25 @@ mod agent {
                         && SUMMON_RESPONSE_SENT.load(Ordering::SeqCst)
                     {
                         if payload.len() < 6 {
-                            println!("[TELE-10-SAME-MAP-DIAG] malformed 0x00C7 bytes={}", payload.len());
+                            println!(
+                                "[TELE-10-SAME-MAP-DIAG] malformed 0x00C7 bytes={}",
+                                payload.len()
+                            );
                             continue;
                         }
                         let mask = payload[0];
                         let guid_len = mask.count_ones() as usize;
                         let counter_off = 1 + guid_len;
                         if payload.len() < counter_off + 4 {
-                            println!("[TELE-10-SAME-MAP-DIAG] short 0x00C7 bytes={} mask=0x{mask:02X}", payload.len());
+                            println!(
+                                "[TELE-10-SAME-MAP-DIAG] short 0x00C7 bytes={} mask=0x{mask:02X}",
+                                payload.len()
+                            );
                             continue;
                         }
-                        let counter = u32::from_le_bytes(payload[counter_off..counter_off + 4].try_into().unwrap());
+                        let counter = u32::from_le_bytes(
+                            payload[counter_off..counter_off + 4].try_into().unwrap(),
+                        );
                         if TELEPORT_ACK_SENT
                             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                             .is_ok()
@@ -718,10 +731,14 @@ mod agent {
                             }
                             publish_runner_state(
                                 "PASS_TELEPORT_COMPLETE",
-                                &format!("same-map 0x00C7 server+client counter={counter} ack_bytes={}", ack.len()),
+                                &format!(
+                                    "same-map 0x00C7 server+client counter={counter} ack_bytes={}",
+                                    ack.len()
+                                ),
                             );
                             println!("[TELE-10-TELEPORT] PASS path=same_map counter={counter} ack_bytes={}", ack.len());
                         }
+                        tele10_customer_pay_after_teleport(stream, crypto)?;
                         continue;
                     }
 
@@ -754,8 +771,12 @@ mod agent {
                                 "PASS_TELEPORT_COMPLETE",
                                 &format!("SMSG_NEW_WORLD opcode=0x003E bytes={} + MSG_MOVE_WORLDPORT_ACK opcode=0x00DC write=success", payload.len()),
                             );
-                            println!("[TELE-10-TELEPORT] PASS new_world_bytes={} worldport_ack=sent", payload.len());
+                            println!(
+                                "[TELE-10-TELEPORT] PASS new_world_bytes={} worldport_ack=sent",
+                                payload.len()
+                            );
                         }
+                        tele10_customer_pay_after_teleport(stream, crypto)?;
                         continue;
                     }
 

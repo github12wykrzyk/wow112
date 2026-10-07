@@ -134,12 +134,9 @@ fn run() -> Result<(), String> {
             let name = args
                 .get(1)
                 .ok_or_else(|| "player requires <name>".to_string())?;
-            for record in ledger.filtered_summons(
-                Some(name),
-                None,
-                None,
-                parse_limit(&args[2..], 20),
-            ) {
+            for record in
+                ledger.filtered_summons(Some(name), None, None, parse_limit(&args[2..], 20))
+            {
                 print_summon(record);
             }
         }
@@ -173,24 +170,18 @@ fn run() -> Result<(), String> {
                 .max(0);
             let since = wow112_headless_android_probe::tele10_trade_payment::unix_now()
                 .saturating_sub(minutes.saturating_mul(60));
-            for record in ledger.filtered_summons(
-                None,
-                None,
-                Some(since),
-                parse_limit(&args[2..], 50),
-            ) {
+            for record in
+                ledger.filtered_summons(None, None, Some(since), parse_limit(&args[2..], 50))
+            {
                 print_summon(record);
             }
         }
         status_name => {
             let status = parse_status(status_name)
                 .ok_or_else(|| format!("unknown ledger query {status_name:?}"))?;
-            for record in ledger.filtered_summons(
-                None,
-                Some(status),
-                None,
-                parse_limit(&args[1..], 20),
-            ) {
+            for record in
+                ledger.filtered_summons(None, Some(status), None, parse_limit(&args[1..], 20))
+            {
                 print_summon(record);
             }
         }

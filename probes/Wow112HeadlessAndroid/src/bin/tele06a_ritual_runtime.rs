@@ -77,6 +77,7 @@ mod tele06a {
     include!("../world_tele.rs");
 
     use super::*;
+    include!("../tele10_trade_receiver_runtime.rs");
 
     const CMSG_GROUP_INVITE_OPCODE: u32 = 0x006E;
     const CMSG_GROUP_DISBAND_OPCODE: u32 = 0x007B;
@@ -536,6 +537,13 @@ mod tele06a {
                         }
                         match opcode {
                             SMSG_SPELL_START_OPCODE => {
+                                let target_guid =
+                                    *last_roster.get(&target_lower).ok_or_else(|| {
+                                        format!("target {target_name:?} missing at ritual start")
+                                    })?;
+                                let summon_id =
+                                    tele10_record_ritual_started(target_name, target_guid)?;
+                                println!("[TELE10-LEDGER] ritual_start summon_id={summon_id}");
                                 cast_started = true;
                                 publish_runner_state(
                                     "PASS_RITUAL_STARTED",
@@ -546,6 +554,13 @@ mod tele06a {
                                 return Ok(());
                             }
                             SMSG_SPELL_GO_OPCODE => {
+                                let target_guid =
+                                    *last_roster.get(&target_lower).ok_or_else(|| {
+                                        format!("target {target_name:?} missing at ritual go")
+                                    })?;
+                                let summon_id =
+                                    tele10_record_ritual_started(target_name, target_guid)?;
+                                println!("[TELE10-LEDGER] ritual_go summon_id={summon_id}");
                                 publish_runner_state(
                                     "PASS_RITUAL_STARTED",
                                     "SMSG_SPELL_GO spell=698",
@@ -700,8 +715,8 @@ mod tele06a {
         register_party_sequence(&invite_targets)?;
         drive_roster_and_ritual(stream, &mut crypto, &invite_targets, &target_name)?;
 
-        println!("[TELE-06A] cast checkpoint complete; observer loop remains active");
-        tele_sniffer_loop(stream, &mut crypto, soak_seconds)?;
+        println!("[TELE-06A] cast checkpoint complete; TELE10 trade receiver active");
+        tele10_trade_receiver_loop(stream, &mut crypto, soak_seconds, &target_name)?;
         println!("[TELE-06A] RUNTIME LOOP PASS");
         Ok(())
     }

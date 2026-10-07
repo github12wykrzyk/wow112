@@ -241,7 +241,8 @@ impl LedgerStore {
         }
         let client_key = norm(client_name);
         for record in &mut self.state.summons {
-            if norm(&record.client_name) == client_key && record.payment_session_active_until > now {
+            if norm(&record.client_name) == client_key && record.payment_session_active_until > now
+            {
                 record.payment_session_active_until = now;
                 record.last_update = now;
             }
@@ -285,7 +286,12 @@ impl LedgerStore {
         self.persist()
     }
 
-    pub fn correlate(&self, partner_name: Option<&str>, partner_guid: u64, now: i64) -> Correlation {
+    pub fn correlate(
+        &self,
+        partner_name: Option<&str>,
+        partner_guid: u64,
+        now: i64,
+    ) -> Correlation {
         let partner_key = partner_name.map(norm).filter(|value| !value.is_empty());
         let window_start = now.saturating_sub(self.state.correlation_window_seconds);
         let unresolved: Vec<&SummonRecord> = self
@@ -294,7 +300,10 @@ impl LedgerStore {
             .iter()
             .filter(|record| record.timestamp_created >= window_start)
             .filter(|record| {
-                matches!(record.payment_status, PaymentStatus::Unpaid | PaymentStatus::Partial)
+                matches!(
+                    record.payment_status,
+                    PaymentStatus::Unpaid | PaymentStatus::Partial
+                )
             })
             .filter(|record| {
                 let guid_match = partner_guid != 0 && record.client_guid == partner_guid;
@@ -317,9 +326,7 @@ impl LedgerStore {
             return Correlation::Unique(active[0].summon_id.clone());
         }
         if active.len() > 1 {
-            return Correlation::Ambiguous(
-                "multiple_active_summons_for_trade_partner".to_string(),
-            );
+            return Correlation::Ambiguous("multiple_active_summons_for_trade_partner".to_string());
         }
         if unresolved.len() == 1 {
             return Correlation::Unique(unresolved[0].summon_id.clone());
@@ -491,10 +498,8 @@ impl LedgerStore {
             .ok_or_else(|| format!("unknown summon_id={summon_id}"))?;
         record.summon_status = SummonStatus::Summoned;
         record.amount_paid_copper = record.amount_paid_copper.saturating_add(offered_copper);
-        record.payment_status = payment_status_for_amount(
-            record.amount_paid_copper,
-            record.expected_price_copper,
-        );
+        record.payment_status =
+            payment_status_for_amount(record.amount_paid_copper, record.expected_price_copper);
         record.payment_timestamp = Some(now);
         record.trade_partner = Some(partner_name.to_string());
         record.payment_event_id = Some(event_id.clone());
@@ -670,7 +675,10 @@ pub struct TradeExtendedPacket {
 
 pub fn parse_trade_extended(payload: &[u8]) -> Result<TradeExtendedPacket, String> {
     if payload.len() < 17 {
-        return Err(format!("extended trade payload too short: {}", payload.len()));
+        return Err(format!(
+            "extended trade payload too short: {}",
+            payload.len()
+        ));
     }
     let trader_state = payload[0] != 0;
     let offered_copper = u32::from_le_bytes(payload[9..13].try_into().unwrap()) as u64;
@@ -845,13 +853,7 @@ mod tests {
     ) -> SettlementOutcome {
         let trade_id = ledger.allocate_trade_id(trade_seq).unwrap();
         let mutation = ledger
-            .commit_accept_mutation(
-                &trade_id,
-                summon_id,
-                amount,
-                "Clienta",
-                trade_seq + 1,
-            )
+            .commit_accept_mutation(&trade_id, summon_id, amount, "Clienta", trade_seq + 1)
             .unwrap();
         ledger
             .settle_trade_complete(
@@ -879,13 +881,7 @@ mod tests {
         );
         let out = ledger
             .settle_trade_complete(
-                &trade,
-                &mutation,
-                &summon_id,
-                "Clienta",
-                0xAA,
-                40_000,
-                2_002,
+                &trade, &mutation, &summon_id, "Clienta", 0xAA, 40_000, 2_002,
             )
             .unwrap();
         assert!(matches!(
@@ -905,14 +901,20 @@ mod tests {
         session.summon_id = Some(summon_id);
         session.partner_accepted = true;
         session.offered_copper = 30_000;
-        assert!(session.can_auto_accept(&ledger).unwrap_err().contains("underpay_blocked"));
+        assert!(session
+            .can_auto_accept(&ledger)
+            .unwrap_err()
+            .contains("underpay_blocked"));
     }
 
     #[test]
     fn partial_3g_can_be_booked_when_policy_enabled() {
         let (mut ledger, summon_id, _) = seeded("under_accept", true);
         book(&mut ledger, &summon_id, 30_000, 2_100);
-        assert_eq!(ledger.state.summons[0].payment_status, PaymentStatus::Partial);
+        assert_eq!(
+            ledger.state.summons[0].payment_status,
+            PaymentStatus::Partial
+        );
         assert_eq!(ledger.state.summons[0].amount_paid_copper, 30_000);
     }
 
@@ -920,7 +922,10 @@ mod tests {
     fn overpay_5g_is_preserved() {
         let (mut ledger, summon_id, _) = seeded("over", false);
         book(&mut ledger, &summon_id, 50_000, 2_200);
-        assert_eq!(ledger.state.summons[0].payment_status, PaymentStatus::Overpaid);
+        assert_eq!(
+            ledger.state.summons[0].payment_status,
+            PaymentStatus::Overpaid
+        );
         assert_eq!(ledger.state.summons[0].amount_paid_copper, 50_000);
     }
 
@@ -928,7 +933,10 @@ mod tests {
     fn two_partial_2g_payments_reach_paid() {
         let (mut ledger, summon_id, _) = seeded("two_partial", true);
         book(&mut ledger, &summon_id, 20_000, 2_300);
-        assert_eq!(ledger.state.summons[0].payment_status, PaymentStatus::Partial);
+        assert_eq!(
+            ledger.state.summons[0].payment_status,
+            PaymentStatus::Partial
+        );
         book(&mut ledger, &summon_id, 20_000, 2_400);
         assert_eq!(ledger.state.summons[0].payment_status, PaymentStatus::Paid);
         assert_eq!(ledger.state.summons[0].amount_paid_copper, 40_000);
@@ -951,7 +959,10 @@ mod tests {
                 "server_trade_cancelled",
             )
             .unwrap();
-        assert_eq!(ledger.state.summons[0].payment_status, PaymentStatus::Unpaid);
+        assert_eq!(
+            ledger.state.summons[0].payment_status,
+            PaymentStatus::Unpaid
+        );
         assert_eq!(ledger.state.summons[0].amount_paid_copper, 0);
         assert!(ledger.state.mutations[0].resolved);
     }
@@ -965,24 +976,12 @@ mod tests {
             .unwrap();
         let first = ledger
             .settle_trade_complete(
-                &trade,
-                &mutation,
-                &summon_id,
-                "Clienta",
-                0xAA,
-                40_000,
-                2_602,
+                &trade, &mutation, &summon_id, "Clienta", 0xAA, 40_000, 2_602,
             )
             .unwrap();
         let second = ledger
             .settle_trade_complete(
-                &trade,
-                &mutation,
-                &summon_id,
-                "Clienta",
-                0xAA,
-                40_000,
-                2_603,
+                &trade, &mutation, &summon_id, "Clienta", 0xAA, 40_000, 2_603,
             )
             .unwrap();
         assert!(matches!(first, SettlementOutcome::Booked { .. }));
@@ -994,7 +993,10 @@ mod tests {
     #[test]
     fn wrong_client_does_not_correlate() {
         let (ledger, _, _) = seeded("wrong_client", false);
-        assert_eq!(ledger.correlate(Some("Other"), 0xBB, 1_020), Correlation::None);
+        assert_eq!(
+            ledger.correlate(Some("Other"), 0xBB, 1_020),
+            Correlation::None
+        );
     }
 
     #[test]
@@ -1086,7 +1088,10 @@ mod tests {
         session.partner_accepted = true;
         session.offered_copper = 40_000;
         session.has_items = true;
-        assert!(session.can_auto_accept(&ledger).unwrap_err().contains("gold_only"));
+        assert!(session
+            .can_auto_accept(&ledger)
+            .unwrap_err()
+            .contains("gold_only"));
     }
 
     #[test]

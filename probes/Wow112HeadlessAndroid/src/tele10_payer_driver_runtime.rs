@@ -25,7 +25,9 @@ fn tele10_customer_pay_after_teleport(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
 ) -> Result<(), String> {
-    let Some(target_name) = tele10_pay_target() else { return Ok(()); };
+    let Some(target_name) = tele10_pay_target() else {
+        return Ok(());
+    };
     if TELE10_PAYMENT_ATTEMPTED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -38,14 +40,19 @@ fn tele10_customer_pay_after_teleport(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(750)
         .min(5_000);
-    if settle_ms != 0 { thread::sleep(Duration::from_millis(settle_ms)); }
+    if settle_ms != 0 {
+        thread::sleep(Duration::from_millis(settle_ms));
+    }
     let target_guid = tele10_cached_guid(&target_name).ok_or_else(|| {
         format!("TELE10_PAYER_TARGET_GUID_UNKNOWN target={target_name:?} retry_allowed=false")
     })?;
 
     publish_runner_state(
         "PAYMENT_INITIATE_COMMITTED",
-        &format!("target={} guid=0x{:016X} amount={} retry_allowed=false", target_name, target_guid, amount),
+        &format!(
+            "target={} guid=0x{:016X} amount={} retry_allowed=false",
+            target_name, target_guid, amount
+        ),
     );
     write_encrypted_raw(
         stream,
@@ -54,7 +61,10 @@ fn tele10_customer_pay_after_teleport(
         &target_guid.to_le_bytes(),
     )
     .map_err(|e| format!("TELE10_PAYER_INITIATE_UNCERTAIN retry_allowed=false cause={e}"))?;
-    println!("[TELE10-PAYER-TX] opcode=0x0116 target={} guid=0x{:016X} amount={} sent_once", target_name, target_guid, amount);
+    println!(
+        "[TELE10-PAYER-TX] opcode=0x0116 target={} guid=0x{:016X} amount={} sent_once",
+        target_name, target_guid, amount
+    );
 
     let previous_timeout = stream.read_timeout().ok().flatten();
     stream
@@ -73,38 +83,65 @@ fn tele10_customer_pay_after_teleport(
             Ok((opcode, payload)) => {
                 tele10_payer_observe_packet(opcode, &payload);
                 tele_trace::trace_packet("Tele10Payer", opcode, &payload);
-                if opcode != SMSG_TRADE_STATUS_OPCODE { continue; }
+                if opcode != SMSG_TRADE_STATUS_OPCODE {
+                    continue;
+                }
                 let status = match parse_trade_status(&payload) {
                     Ok(v) => v.status,
-                    Err(e) => { println!("[TELE10-PAYER-DIAG] bad trade status: {e}"); continue; }
+                    Err(e) => {
+                        println!("[TELE10-PAYER-DIAG] bad trade status: {e}");
+                        continue;
+                    }
                 };
                 match status {
                     TRADE_STATUS_OPEN_WINDOW if !gold_sent => {
-                        publish_runner_state("PAYMENT_GOLD_COMMITTED", &format!("amount={} retry_allowed=false", amount));
+                        publish_runner_state(
+                            "PAYMENT_GOLD_COMMITTED",
+                            &format!("amount={} retry_allowed=false", amount),
+                        );
                         write_encrypted_raw(
                             stream,
                             crypto.encrypter(),
                             CMSG_SET_TRADE_GOLD_OPCODE,
                             &amount.to_le_bytes(),
                         )
-                        .map_err(|e| format!("TELE10_PAYER_SET_GOLD_UNCERTAIN retry_allowed=false cause={e}"))?;
+                        .map_err(|e| {
+                            format!("TELE10_PAYER_SET_GOLD_UNCERTAIN retry_allowed=false cause={e}")
+                        })?;
                         gold_sent = true;
-                        publish_runner_state("PAYMENT_ACCEPT_COMMITTED", &format!("amount={} retry_allowed=false", amount));
+                        publish_runner_state(
+                            "PAYMENT_ACCEPT_COMMITTED",
+                            &format!("amount={} retry_allowed=false", amount),
+                        );
                         write_encrypted_raw(
                             stream,
                             crypto.encrypter(),
                             CMSG_ACCEPT_TRADE_OPCODE,
                             &0u32.to_le_bytes(),
                         )
-                        .map_err(|e| format!("TELE10_PAYER_ACCEPT_UNCERTAIN retry_allowed=false cause={e}"))?;
+                        .map_err(|e| {
+                            format!("TELE10_PAYER_ACCEPT_UNCERTAIN retry_allowed=false cause={e}")
+                        })?;
                         accept_sent = true;
-                        publish_runner_state("WAIT_PAYMENT_COMPLETE", &format!("target={} amount={}", target_name, amount));
+                        publish_runner_state(
+                            "WAIT_PAYMENT_COMPLETE",
+                            &format!("target={} amount={}", target_name, amount),
+                        );
                         println!("[TELE10-PAYER-TX] gold={} accept=sent_once", amount);
                     }
                     TRADE_STATUS_TRADE_COMPLETE => {
                         let _ = stream.set_read_timeout(previous_timeout);
-                        publish_runner_state("PASS_PAYMENT_SENT", &format!("target={} amount={} server_trade_complete=true", target_name, amount));
-                        println!("[TELE10-PAYER] PASS target={} amount={} proof=TRADE_COMPLETE", target_name, amount);
+                        publish_runner_state(
+                            "PASS_PAYMENT_SENT",
+                            &format!(
+                                "target={} amount={} server_trade_complete=true",
+                                target_name, amount
+                            ),
+                        );
+                        println!(
+                            "[TELE10-PAYER] PASS target={} amount={} proof=TRADE_COMPLETE",
+                            target_name, amount
+                        );
                         return Ok(());
                     }
                     TRADE_STATUS_TRADE_CANCELED
@@ -114,12 +151,17 @@ fn tele10_customer_pay_after_teleport(
                     | TRADE_STATUS_NO_TARGET
                     | TRADE_STATUS_TARGET_TO_FAR => {
                         let _ = stream.set_read_timeout(previous_timeout);
-                        return Err(format!("TELE10_PAYER_SERVER_REJECT status={status} retry_allowed=false"));
+                        return Err(format!(
+                            "TELE10_PAYER_SERVER_REJECT status={status} retry_allowed=false"
+                        ));
                     }
                     _ => {}
                 }
             }
-            Err(e) if e.contains("TimedOut") || e.contains("timed out") || e.contains("WouldBlock") => {}
+            Err(e)
+                if e.contains("TimedOut")
+                    || e.contains("timed out")
+                    || e.contains("WouldBlock") => {}
             Err(e) => {
                 let _ = stream.set_read_timeout(previous_timeout);
                 return Err(format!("TELE10_PAYER_SOCKET_UNCERTAIN gold_sent={gold_sent} accept_sent={accept_sent} retry_allowed=false cause={e}"));

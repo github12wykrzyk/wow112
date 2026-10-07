@@ -26,7 +26,10 @@ fn tele10_understood_corpus_covers_case_punctuation_slang_and_plus() {
         ("please winterspring", WhisperIntent::SummonRequest),
         ("summon me to azshara", WhisperIntent::SummonRequest),
         ("do you have hyjal?", WhisperIntent::DestinationQuery),
-        ("selling summons cheaper today", WhisperIntent::CompetitionMessage),
+        (
+            "selling summons cheaper today",
+            WhisperIntent::CompetitionMessage,
+        ),
         ("WTS SUMMONS!!!", WhisperIntent::CompetitionMessage),
     ];
     for (text, expected) in cases {
@@ -52,7 +55,10 @@ fn tele10_false_positive_guard_corpus_stays_non_actionable() {
     ] {
         let result = classify(text);
         assert!(
-            matches!(result.intent, WhisperIntent::Irrelevant | WhisperIntent::Unknown),
+            matches!(
+                result.intent,
+                WhisperIntent::Irrelevant | WhisperIntent::Unknown
+            ),
             "false positive for {text:?}: {result:?}"
         );
     }
@@ -69,8 +75,17 @@ fn tele10_known_false_negatives_are_explicit_not_silently_actionable() {
 
 #[test]
 fn tele10_ambiguous_corpus_fails_closed() {
-    for text in ["summon?", "inv maybe later", "summon maybe", "port eventually"] {
-        assert_eq!(classify(text).intent, WhisperIntent::Unknown, "input={text:?}");
+    for text in [
+        "summon?",
+        "inv maybe later",
+        "summon maybe",
+        "port eventually",
+    ] {
+        assert_eq!(
+            classify(text).intent,
+            WhisperIntent::Unknown,
+            "input={text:?}"
+        );
     }
     assert!(matches!(
         classify("hyjal or azshara").intent,

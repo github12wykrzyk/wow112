@@ -1,11 +1,10 @@
 use wow112_headless_android_probe::tele10_trade_payment::{
-    parse_trade_extended, parse_trade_status, unix_now, Correlation, LedgerStore, SettlementOutcome,
-    TradeSession, CMSG_ACCEPT_TRADE_OPCODE, CMSG_BEGIN_TRADE_OPCODE,
+    parse_trade_extended, parse_trade_status, unix_now, Correlation, LedgerStore,
+    SettlementOutcome, TradeSession, CMSG_ACCEPT_TRADE_OPCODE, CMSG_BEGIN_TRADE_OPCODE,
     SMSG_TRADE_STATUS_EXTENDED_OPCODE, SMSG_TRADE_STATUS_OPCODE, TRADE_STATUS_BACK_TO_TRADE,
-    TRADE_STATUS_BEGIN_TRADE, TRADE_STATUS_BUSY, TRADE_STATUS_CLOSE_WINDOW,
-    TRADE_STATUS_NO_TARGET, TRADE_STATUS_OPEN_WINDOW, TRADE_STATUS_TARGET_TO_FAR,
-    TRADE_STATUS_TRADE_ACCEPT, TRADE_STATUS_TRADE_CANCELED, TRADE_STATUS_TRADE_COMPLETE,
-    TRADE_STATUS_TRADE_REJECTED,
+    TRADE_STATUS_BEGIN_TRADE, TRADE_STATUS_BUSY, TRADE_STATUS_CLOSE_WINDOW, TRADE_STATUS_NO_TARGET,
+    TRADE_STATUS_OPEN_WINDOW, TRADE_STATUS_TARGET_TO_FAR, TRADE_STATUS_TRADE_ACCEPT,
+    TRADE_STATUS_TRADE_CANCELED, TRADE_STATUS_TRADE_COMPLETE, TRADE_STATUS_TRADE_REJECTED,
 };
 
 fn tele10_ledger_path() -> std::path::PathBuf {
@@ -19,7 +18,9 @@ fn tele10_expected_price_copper() -> u64 {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(wow112_headless_android_probe::tele10_trade_payment::DEFAULT_EXPECTED_PRICE_COPPER)
+        .unwrap_or(
+            wow112_headless_android_probe::tele10_trade_payment::DEFAULT_EXPECTED_PRICE_COPPER,
+        )
 }
 
 fn tele10_partial_enabled() -> bool {
@@ -32,8 +33,10 @@ fn tele10_record_ritual_started(target_name: &str, target_guid: u64) -> Result<S
     let mut ledger = LedgerStore::open(tele10_ledger_path())?;
     ledger.set_policy(tele10_expected_price_copper(), tele10_partial_enabled());
     let summoner_name = std::env::var("WOW112_CHARACTER").unwrap_or_else(|_| "unknown".to_string());
-    let destination = std::env::var("WOW112_TELE_DESTINATION").unwrap_or_else(|_| "unknown".to_string());
-    let trigger_message = std::env::var("WOW112_TELE_TRIGGER_MESSAGE").unwrap_or_else(|_| "unknown".to_string());
+    let destination =
+        std::env::var("WOW112_TELE_DESTINATION").unwrap_or_else(|_| "unknown".to_string());
+    let trigger_message =
+        std::env::var("WOW112_TELE_TRIGGER_MESSAGE").unwrap_or_else(|_| "unknown".to_string());
     let summon_id = ledger.record_ritual_started(
         unix_now(),
         target_name,
@@ -55,10 +58,7 @@ fn tele10_record_ritual_started(target_name: &str, target_guid: u64) -> Result<S
     Ok(summon_id)
 }
 
-fn tele10_active_summon_for_target(
-    ledger: &LedgerStore,
-    target_name: &str,
-) -> Option<String> {
+fn tele10_active_summon_for_target(ledger: &LedgerStore, target_name: &str) -> Option<String> {
     ledger
         .state
         .summons
@@ -351,7 +351,9 @@ fn tele10_trade_receiver_loop(
                 return Err(format!("world keepalive pong timeout sequence={sequence}"));
             }
         }
-        if last_ping.elapsed() >= Duration::from_secs(PING_INTERVAL_SECONDS) && awaiting_pong.is_none() {
+        if last_ping.elapsed() >= Duration::from_secs(PING_INTERVAL_SECONDS)
+            && awaiting_pong.is_none()
+        {
             let mut payload = Vec::with_capacity(8);
             payload.extend_from_slice(&ping_sequence.to_le_bytes());
             payload.extend_from_slice(&0u32.to_le_bytes());
@@ -394,7 +396,13 @@ fn tele10_trade_receiver_loop(
                             if active.partner_guid == guid && !active.terminal {
                                 active.update_partner_name(&name);
                                 tele10_refresh_correlation(&mut ledger, active, target_name)?;
-                                tele10_try_accept(stream, crypto, &mut ledger, active, target_name)?;
+                                tele10_try_accept(
+                                    stream,
+                                    crypto,
+                                    &mut ledger,
+                                    active,
+                                    target_name,
+                                )?;
                             }
                         }
                     }
@@ -417,7 +425,13 @@ fn tele10_trade_receiver_loop(
                                         payload.len()
                                     );
                                     tele10_refresh_correlation(&mut ledger, active, target_name)?;
-                                    tele10_try_accept(stream, crypto, &mut ledger, active, target_name)?;
+                                    tele10_try_accept(
+                                        stream,
+                                        crypto,
+                                        &mut ledger,
+                                        active,
+                                        target_name,
+                                    )?;
                                 }
                             }
                         }
@@ -444,7 +458,9 @@ fn tele10_trade_receiver_loop(
                 };
                 println!(
                     "[TELE10-TRADE] STATUS status={} guid={:?} bytes={}",
-                    status.status, status.trader_guid, payload.len()
+                    status.status,
+                    status.trader_guid,
+                    payload.len()
                 );
                 match status.status {
                     TRADE_STATUS_BEGIN_TRADE => {
@@ -501,7 +517,13 @@ fn tele10_trade_receiver_loop(
                         if let Some(active) = session.as_mut() {
                             if !active.terminal {
                                 active.partner_accepted = true;
-                                tele10_try_accept(stream, crypto, &mut ledger, active, target_name)?;
+                                tele10_try_accept(
+                                    stream,
+                                    crypto,
+                                    &mut ledger,
+                                    active,
+                                    target_name,
+                                )?;
                             }
                         }
                     }
