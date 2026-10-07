@@ -13,20 +13,9 @@
     "ah-canonical-workflow",
     "ah-history-v2-contract"
   ],
-  "status": "preflight",
+  "status": "done",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": {
-    "owner": "chatgpt-ah-v4-align",
-    "acquired_at": "2026-10-07T15:22:00Z",
-    "heartbeat_at": "2026-10-07T15:22:00Z",
-    "ttl_seconds": 21600,
-    "scopes": [
-      "module:AhCanonicalV4",
-      "module:AhHistoryV2",
-      "resource:ah-canonical-workflow",
-      "resource:ah-history-v2-contract"
-    ]
-  },
-  "notes": "Canonical baseline is dev/windows-ah-canonical at ea95b25a80c78887883b029d78dd90e9eb2a0d71. The task changes only the canonical build contract/documentation first; history remains audit-only and BUY authorization/retry semantics are unchanged. Auto-integration is intentionally disabled because the target is the separate canonical branch, not parallel."
+  "lease": null,
+  "notes": "Canonical baseline was dev/windows-ah-canonical at ea95b25a80c78887883b029d78dd90e9eb2a0d71. Full canonical V4 build on feature SHA e1a6ff1f74528ac31be56636280cf94ceafb6d64 passed and produced artifact WoW112-AH-CANONICAL-V4-WINDOWS-e1a6ff1f74528ac31be56636280cf94ceafb6d64 with artifact digest sha256:aa54486fb33d975c3b655ff99427d3bc59540443a60415d5a600ca54be19f1e0. History remains audit-only and BUY authorization/retry semantics are unchanged. Lease released before canonical merge."
 }
