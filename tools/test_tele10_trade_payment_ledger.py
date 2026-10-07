@@ -12,6 +12,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 LUA = ROOT / "src/AddOns/SummonScout/SummonScout_TradePaymentLedger.lua"
+QUERY = ROOT / "src/AddOns/SummonScout/SummonScout_TradePaymentLedgerQuery.lua"
 TOC = ROOT / "src/AddOns/SummonScout/SummonScout.toc"
 AUTO = ROOT / "src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c"
 
@@ -185,6 +186,7 @@ class ProductionAnchorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.lua = LUA.read_text(encoding="utf-8")
+        cls.query = QUERY.read_text(encoding="utf-8")
         cls.toc = TOC.read_text(encoding="utf-8")
         cls.auto = AUTO.read_text(encoding="utf-8")
 
@@ -231,6 +233,19 @@ class ProductionAnchorTests(unittest.TestCase):
     def test_query_surface_exists(self):
         for token in ["/ssledger", "/sspay", "tlShowSummons", "tlShowPayments", 'cmd == "since"']:
             self.assertIn(token, self.lua)
+
+    def test_retrospective_player_check_surface_exists(self):
+        for token in [
+            'cmd == "check"',
+            "/ssledger check <player> [minutes]",
+            "paid=",
+            "payment=",
+            "amount=",
+            "timestamp_created",
+            "payment_timestamp",
+            "summon_id",
+        ]:
+            self.assertIn(token, self.query)
 
 
 if __name__ == "__main__":
