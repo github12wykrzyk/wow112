@@ -1,0 +1,1 @@
+trigger=tele10-headless-trade-payment
