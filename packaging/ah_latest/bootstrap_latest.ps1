@@ -12,10 +12,27 @@ $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 $ReleaseBase = 'https://github.com/github12wykrzyk/wow112/releases/download/ah-de-latest'
 $ZipUrl = "$ReleaseBase/WoW112_DE_LATEST.zip"
 $ManifestUrl = "$ReleaseBase/WoW112_DE_LATEST.txt"
-$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/2.0' }
+$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/2.1' }
 
 function Say([string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Text -ForegroundColor $Color
+}
+
+function Refresh-LiveWrapperHash([string]$Directory, [string]$ExeSha) {
+    $patched = 0
+    foreach ($file in @(Get-ChildItem -Path $Directory -File -Filter 'RUN_DE_*.ps1' -ErrorAction SilentlyContinue)) {
+        $text = Get-Content $file.FullName -Raw
+        $new = [regex]::Replace(
+            $text,
+            "(?m)^\$expectedExeSha='[0-9a-fA-F]{64}'\s*$",
+            "`$expectedExeSha='$ExeSha'"
+        )
+        if ($new -ne $text) {
+            Set-Content -Path $file.FullName -Value $new -Encoding UTF8
+            $patched++
+        }
+    }
+    return $patched
 }
 
 Say '============================================================' Cyan
@@ -44,7 +61,9 @@ if (-not $remote.ContainsKey('ZIP_SHA256') -or -not $remote.ContainsKey('HEAD_SH
 if ((Test-Path $localExe) -and (Test-Path $versionFile)) {
     $localVersion = Get-Content $versionFile -Raw -ErrorAction SilentlyContinue
     if ($localVersion -eq $remoteManifest) {
-        Say ("Already latest: sha={0}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length))) Green
+        $sha = (Get-FileHash $localExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        $patched = Refresh-LiveWrapperHash -Directory $deDir -ExeSha $sha
+        Say ("Already latest: sha={0}; wrapper_hash_updates={1}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length)),$patched) Green
         if (-not $NoLaunch) {
             $launcher = Join-Path $InstallRoot 'START_AH.bat'
             if (Test-Path $launcher) { & $launcher; exit $LASTEXITCODE }
@@ -99,12 +118,14 @@ try {
         Copy-Item $historyBackup $history -Force
     }
 
+    $patched = Refresh-LiveWrapperHash -Directory $deDir -ExeSha $exeSha
     Set-Content -Path $versionFile -Value $remoteManifest -Encoding ASCII
     Set-Content -Path (Join-Path $deDir 'LATEST_EXE_SHA256.txt') -Value $exeSha -Encoding ASCII
 
     Say ("UPDATED DE_LAB: sha={0}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length))) Green
     Say "Release ZIP SHA256: $zipSha" DarkGreen
     Say "EXE SHA256: $exeSha" DarkGreen
+    Say "Live wrapper hash lines refreshed: $patched" DarkGreen
 }
 finally {
     if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue }
