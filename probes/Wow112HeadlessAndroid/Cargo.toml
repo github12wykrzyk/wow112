@@ -10,3 +10,5 @@ tele08_request_queue = { package = "tele08-request-queue", path = "tele08_reques
 wow_login_messages = { version = "=0.5.0", features = ["sync"] }
 wow_world_messages = { version = "=0.3.0", features = ["sync", "vanilla"] }
 wow_srp = "=0.7.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

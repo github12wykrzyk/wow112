@@ -1,5 +1,6 @@
 //! Reusable pure-logic APIs for the headless summon service.
 
+pub mod destination_registry;
 pub mod tele08_bc_adapter;
 pub mod tele08_whisper_parser;
 
