@@ -7,6 +7,7 @@ on:
       - '.github/workflows/tele11_service_core.yml'
       - 'probes/Wow112HeadlessAndroid/src/lib.rs'
       - 'probes/Wow112HeadlessAndroid/src/tele11_service_core.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele11_executor_contract.rs'
       - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
 permissions:
   contents: read
@@ -20,7 +21,7 @@ jobs:
       - name: TELE11 core tests
         shell: pwsh
         run: |
-          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml tele11_service_core -- --nocapture
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml tele11_ -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
