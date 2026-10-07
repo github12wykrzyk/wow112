@@ -27,7 +27,24 @@ jobs:
           components: rustfmt
       - name: Format check carried Track E engine
         run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele_response_engine.rs
-      - name: Check full headless crate
-        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+      - name: Check full headless crate with diagnostics
+        id: cargo_check
+        shell: bash
+        run: |
+          set +e
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml 2>&1 | tee CHECK.txt
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload compiler diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TELE08_E_INTEGRATION_DIAGNOSTICS
+          path: CHECK.txt
+          if-no-files-found: error
+      - name: Fail if cargo check failed
+        if: steps.cargo_check.outputs.rc != '0'
+        run: exit 1
       - name: Test full headless crate
         run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
