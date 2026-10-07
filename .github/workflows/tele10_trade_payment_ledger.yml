@@ -1,60 +1,102 @@
-name: TELE10 trade payment ledger
+name: TELE10 headless trade payment ledger
 
 on:
   push:
     branches:
-      - feature/tele10-trade-payment-ledger-v1
+      - feature/tele10-headless-trade-ledger-v1
     paths:
-      - 'src/AddOns/SummonScout/**'
-      - 'src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c'
-      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
-      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
-      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs'
-      - 'probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs'
-      - 'tools/test_tele10_trade_payment_ledger.py'
+      - 'probes/Wow112HeadlessAndroid/**'
+      - 'src/AddOns/SummonScout/SummonScout.toc'
+      - 'src/AddOns/SummonScout/SummonScout_TradePaymentLedger*.lua'
+      - 'tools/tele10_apply_headless_trade_integration.py'
       - '.github/workflows/tele10_trade_payment_ledger.yml'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: tele10-trade-payment-ledger-${{ github.ref }}
-  cancel-in-progress: true
+  group: tele10-headless-trade-ledger-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  contract:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+  headless-contract:
+    runs-on: windows-2022
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
-      - name: Python ledger harness
-        run: python tools/test_tele10_trade_payment_ledger.py
-
-      - name: Existing SummonScout core contract checks
+      - name: Materialize terminal-only integration
+        shell: pwsh
         run: |
-          python tools/verify_summonscout_lua_upvalues.py
-          python tools/test_ai_summonscout_engine_v2_foundation.py
-          python tools/test_ai_summonscout_engine_v2_explicit_api.py
-          python tools/test_ai_summonscout_engine_v2_core_api_state.py
+          python tools/tele10_apply_headless_trade_integration.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
-      - name: Parser format check
+      - name: Format scoped Rust sources
+        shell: pwsh
         run: |
-          rustfmt --edition 2021 --check \
-            probes/Wow112HeadlessAndroid/src/lib.rs \
-            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs \
-            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs \
-            probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs
+          rustfmt --edition 2021 `
+            probes/Wow112HeadlessAndroid/src/lib.rs `
+            probes/Wow112HeadlessAndroid/src/tele10_trade_ledger.rs `
+            probes/Wow112HeadlessAndroid/src/tele10_trade_runtime.rs `
+            probes/Wow112HeadlessAndroid/src/tele10_trade_service.rs `
+            probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs `
+            probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs `
+            probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Parser build
-        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+      - name: Headless ledger and trade harness
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib tele10 -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Parser and audit tests
-        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
+      - name: Existing parser audit
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib tele10_message_audit -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compile integrated terminal runtimes
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele10_ledger -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_ritual_runtime --bin tele07_supervisor --bin tele10_ledger
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Assert addon payment path removed
+        shell: pwsh
+        run: |
+          if (Test-Path src/AddOns/SummonScout/SummonScout_TradePaymentLedger.lua) { throw 'addon payment ledger still present' }
+          if (Test-Path src/AddOns/SummonScout/SummonScout_TradePaymentLedgerQuery.lua) { throw 'addon payment query still present' }
+          $toc = Get-Content src/AddOns/SummonScout/SummonScout.toc -Raw
+          if ($toc -match 'TradePaymentLedger') { throw 'addon TOC still loads payment ledger' }
+
+      - name: Commit validated materialized source
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'Source already materialized; no commit needed.'
+            exit 0
+          }
+          git commit -m 'feat(tele10): integrate terminal-only trade settlement runtime'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:feature/tele10-headless-trade-ledger-v1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
