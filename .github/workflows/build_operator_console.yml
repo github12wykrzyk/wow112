@@ -128,6 +128,12 @@ jobs:
           & ./dist/operator-console/OperatorConsoleTests.exe
           if ($LASTEXITCODE -ne 0) { throw "Operator Console tests failed" }
 
+      - name: Run Operator Bridge IPC roundtrip smoke
+        shell: pwsh
+        run: |
+          python tools/operator_console/bridge_smoke.py --exe dist/operator-console/WoW112-Operator-Console-V1.exe
+          if ($LASTEXITCODE -ne 0) { throw "Operator Bridge IPC roundtrip failed" }
+
       - name: Build existing AutoLoginBridge x86 with Operator transport
         shell: pwsh
         run: |
