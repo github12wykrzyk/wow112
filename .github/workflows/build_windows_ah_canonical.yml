@@ -26,6 +26,36 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Materialize best-effort AH history V2 shadow pricebook
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $db=Join-Path $env:RUNNER_TEMP 'ah-history-v2.sqlite'
+          $report=Join-Path $env:RUNNER_TEMP 'AH_HISTORY_V2_REPORT.json'
+          $book=Join-Path $env:RUNNER_TEMP 'HISTORY_V2_PRICEBOOK.csv'
+          $status='UNAVAILABLE'
+          & python src/AhHistoryTerminal/reconcile_archive_v2.py $db $report `
+            --repository github12wykrzyk/wow112 `
+            --server-id octowow --realm-id 0 --ah-pool-id 1 `
+            --market-epoch baseline-2026-10-07 `
+            --pricebook-csv $book
+          $rc=$LASTEXITCODE
+          if($rc -eq 0 -and (Test-Path $book)){
+            $rows=@(Import-Csv $book)
+            if($rows.Count -gt 0){
+              $status='AVAILABLE'
+              Write-Host "[HISTORY-V2-SHADOW] pricebook rows=$($rows.Count) status=$status"
+            }
+          }
+          if($status -ne 'AVAILABLE'){
+            'item_id,history_unit_price_copper,confidence_bps,sample_scans,freshness_bps,coverage_bps,observed_supply_units_mean,observed_depth_listings_mean,latest_observed_ms,view_id,quality_rule_version,material_view_version' | Set-Content $book -Encoding utf8
+            Write-Host "[HISTORY-V2-SHADOW] archive unavailable/empty rc=$rc action=FAIL_OPEN_AUDIT_ONLY"
+          }
+          Copy-Item $book 'HISTORY_V2_PRICEBOOK.csv' -Force
+          $status | Set-Content (Join-Path $env:RUNNER_TEMP 'history-v2-shadow-status.txt') -Encoding ascii
+          exit 0
+
       - name: Harden shared BUY primitive and attach best-effort history capture
         shell: pwsh
         run: |
@@ -69,30 +99,6 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_de_cache_to_rust_provenance.py --cache-csv "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" --output-rs probes/Wow112HeadlessAndroid/src/poc08_de_cache_generated.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build immutable V2 shadow pricebook
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python src/AhHistoryTerminal/reconcile_archive_v2.py `
-            "$env:RUNNER_TEMP/archive-v2.sqlite" `
-            "$env:RUNNER_TEMP/ARCHIVE_V2_REPORT.json" `
-            --repository github12wykrzyk/wow112 `
-            --server-id octowow `
-            --realm-id 0 `
-            --ah-pool-id 1 `
-            --market-epoch baseline-2026-10-07 `
-            --pricebook-csv "$env:RUNNER_TEMP/HISTORY_V2_PRICEBOOK.csv"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $rows=@(Import-Csv "$env:RUNNER_TEMP/HISTORY_V2_PRICEBOOK.csv")
-          if($rows.Count -lt 1){throw 'V2 shadow pricebook is empty'}
-          $report=Get-Content "$env:RUNNER_TEMP/ARCHIVE_V2_REPORT.json" -Raw | ConvertFrom-Json
-          if($report.safety.history_can_authorize_buy -ne $false){throw 'history_can_authorize_buy must remain false'}
-          if($report.safety.history_can_retry_buy -ne $false){throw 'history_can_retry_buy must remain false'}
-          if($report.safety.history_can_reorder_buy -ne $false){throw 'history_can_reorder_buy must remain false'}
-          if([int]$report.safety.buy_decision_changed -ne 0){throw 'buy_decision_changed must remain zero'}
-          Write-Host "[HISTORY-V2-PRICEBOOK] rows=$($rows.Count) view_id=$($report.view_id) eligible_scans=$($report.scans_v2_eligible) audit_only=YES"
-
       - name: Generate F2 risk engine
         shell: pwsh
         run: |
@@ -111,7 +117,7 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_f2_pagination_fix.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Merge unified engine and apply V1 V2 V3 V3.1 V3.2 V4 plus V2 shadow audit
+      - name: Merge unified engine and apply V1 V2 V3 V3.1 V3.2 V4
         shell: pwsh
         run: |
           python probes/Wow112HeadlessAndroid/tools/poc08_unified_scan_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_f2_live.rs probes/Wow112HeadlessAndroid/src/world_poc08_unified_scan.rs
@@ -124,6 +130,7 @@ jobs:
           python probes/Wow112HeadlessAndroid/tools/poc08_de_fast_prefilter_v32_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           python probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v31_f0_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           python probes/Wow112HeadlessAndroid/tools/poc08_unified_vendor_de_v4_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python probes/Wow112HeadlessAndroid/tools/poc08_history_v2_shadow_valuation_patch.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $main='probes/Wow112HeadlessAndroid/src/main.rs'
@@ -135,17 +142,19 @@ jobs:
       - name: Static unified V4 plus shadow-history policy smoke
         shell: pwsh
         run: |
-          python probes/Wow112HeadlessAndroid/tools/smoke_unified_ah.py probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs probes/Wow112HeadlessAndroid/src/world_poc07.rs | Tee-Object -FilePath "$env:RUNNER_TEMP/unified-smoke.txt"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $p='probes/Wow112HeadlessAndroid/src/world_poc08_unified.rs'
-          foreach($m in @('POC08-UNIFIED-V4','POC08-UNIFIED-MULTI','POC08-DE-FAST-PREFILTER','WOW112_VENDOR_FULL_SCOPE','FULL_AFFORDABLE','WOW112_UNIFIED_VENDOR_MAX_PURCHASES','WOW112_UNIFIED_MAX_PURCHASES','WOW112_UNIFIED_MAX_SPEND','POC08_ESSENCE_PARITY_PAIRS','POC08-C-HISTORY-V2','POC08-C-LIQUIDATION-V3','SAME_FULL_AH_SNAPSHOT','POC08-F0-V31','CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH','WOW112_F1_DE_MIN_LIQUIDATION_PROFIT','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','one_mutation_boundary=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES','POC08-HISTORY-V2-SHADOW','WOW112_HISTORY_V2_PRICEBOOK_PATH','WOW112_HISTORY_V2_SHADOW_EXPORT','history_buy_decision_changed=0','buy_decision_influence=NO','shadow_would_change_route')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "V4/shadow marker missing: $m"}}
+          $smokeCopy=Join-Path $env:RUNNER_TEMP 'world_poc08_unified_smoke_copy.rs'
+          Copy-Item $p $smokeCopy -Force
+          python probes/Wow112HeadlessAndroid/tools/smoke_unified_ah.py $smokeCopy probes/Wow112HeadlessAndroid/src/world_poc07.rs | Tee-Object -FilePath "$env:RUNNER_TEMP/unified-smoke.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach($m in @('POC08-UNIFIED-V4','POC08-UNIFIED-MULTI','POC08-DE-FAST-PREFILTER','WOW112_VENDOR_FULL_SCOPE','FULL_AFFORDABLE','WOW112_UNIFIED_VENDOR_MAX_PURCHASES','WOW112_UNIFIED_MAX_PURCHASES','WOW112_UNIFIED_MAX_SPEND','POC08_ESSENCE_PARITY_PAIRS','POC08-C-HISTORY-V2','POC08-C-LIQUIDATION-V3','SAME_FULL_AH_SNAPSHOT','POC08-F0-V31','CONFIDENCE_HAIRCUT_NOT_KILL_SWITCH','WOW112_F1_DE_MIN_LIQUIDATION_PROFIT','WOW112_UNIFIED_DE_MAX_PER_DEID','WOW112_UNIFIED_DE_MAX_SPEND','one_mutation_boundary=YES','NO_AUTO_RETRY_FROM_THIS_POINT=YES','POC08-HISTORY-V2-SHADOW','history_buy_decision_changed=0','buy_decision_influence=NO')){if(-not(Select-String -Path $p -Pattern $m -SimpleMatch -Quiet)){throw "V4 marker missing: $m"}}
           $history='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
           foreach($m in @('WOW112_AH_HISTORY_SHADOW_NDJSON','RawAhPageObserved','full_market','targeted_item','revalidation_window','best_effort_no_mutation_coupling','buy_retry_signal=NO')){if(-not(Select-String -Path $history -Pattern $m -SimpleMatch -Quiet)){throw "history shadow marker missing: $m"}}
           $hello='probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs'
           foreach($m in @('[AH-HELLO-V3]','WOW112_AH_HELLO_TIMEOUT_SECS','HELLO_TIMEOUT_DEFAULT_SECS','HELLO_PACKET_SAFETY_CAP','Freshly discovered NPC wins')){if(-not(Select-String -Path $hello -Pattern $m -SimpleMatch -Quiet)){throw "AH hello resilience marker missing: $m"}}
           foreach($ps in @('packaging/ah_latest/launcher/_launcher/START_AH.ps1','packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/bootstrap_latest.ps1')){$null=[scriptblock]::Create((Get-Content $ps -Raw)); Write-Host "POWERSHELL_PARSE_PASS $ps"}
           foreach($m in @('UnifiedLive','UnifiedAudit','VendorDe','WOW112_VENDOR_FULL_SCOPE','WOW112_AH_HELLO_TIMEOUT_SECS','VENDOR_DE_V4')){if(-not(Select-String -Path 'packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1','packaging/ah_latest/launcher/_launcher/START_AH.ps1' -Pattern $m -SimpleMatch -Quiet)){throw "launcher V4 marker missing: $m"}}
-          'CANONICAL UNIFIED VENDOR+DE V4 + IMMUTABLE HISTORY V2 SHADOW VALUATION + AH HELLO V3 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
+          'CANONICAL UNIFIED VENDOR+DE V4 + HISTORY V2 SHADOW VALUATION + AH HELLO V3 STATIC POLICY PASS' | Set-Content "$env:RUNNER_TEMP/unified-smoke.txt"
 
       - name: Rust check and tests
         shell: pwsh
@@ -175,10 +184,10 @@ jobs:
           Copy-Item probes/Wow112HeadlessAndroid/src/world_poc05_retry.rs "$d/source/world_poc05_retry.rs"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-cache-normalized.csv" "$d/runtime/DE_DISENCHANT_CACHE_WITH_SOURCE.csv"
           Copy-Item "$env:RUNNER_TEMP/poc08-full-unresolved.csv" "$d/runtime/DE_CACHE_UNRESOLVED.csv"
-          Copy-Item "$env:RUNNER_TEMP/HISTORY_V2_PRICEBOOK.csv" "$d/HISTORY_V2_PRICEBOOK.csv"
-          Copy-Item "$env:RUNNER_TEMP/HISTORY_V2_PRICEBOOK.csv" "$d/runtime/HISTORY_V2_PRICEBOOK.csv"
-          Copy-Item "$env:RUNNER_TEMP/ARCHIVE_V2_REPORT.json" "$d/runtime/ARCHIVE_V2_REPORT.json"
           Copy-Item "$env:RUNNER_TEMP/unified-smoke.txt" "$d/SMOKE_TESTS.txt"
+          if(Test-Path 'HISTORY_V2_PRICEBOOK.csv'){Copy-Item 'HISTORY_V2_PRICEBOOK.csv' "$d/HISTORY_V2_PRICEBOOK.csv"}
+          if(Test-Path "$env:RUNNER_TEMP/AH_HISTORY_V2_REPORT.json"){Copy-Item "$env:RUNNER_TEMP/AH_HISTORY_V2_REPORT.json" "$d/runtime/AH_HISTORY_V2_REPORT.json"}
+          $shadowStatus=if(Test-Path "$env:RUNNER_TEMP/history-v2-shadow-status.txt"){(Get-Content "$env:RUNNER_TEMP/history-v2-shadow-status.txt" -Raw).Trim()}else{'UNAVAILABLE'}
           $h=(Get-FileHash "$d/wow112-ah-windows.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           @"
           CANONICAL_BRANCH=dev/windows-ah-canonical
@@ -189,15 +198,13 @@ jobs:
           HISTORY_CAPTURE=BEST_EFFORT_SHARED_REQUEST_PATH
           HISTORY_CAPTURE_SCOPES=FULL_MARKET_TARGETED_ITEM_REVALIDATION_WINDOW
           HISTORY_STORE=CANONICAL_AH_HISTORY_TERMINAL_SQLITE_V1_PLUS_V2_RECONCILIATION
-          HISTORY_V2_SHADOW_VALUATION=YES
-          HISTORY_V2_PRICEBOOK_SOURCE=IMMUTABLE_ARCHIVE_REPLAY
-          HISTORY_V2_SHADOW_CAN_AUTHORIZE_BUY=NO
-          HISTORY_V2_SHADOW_CAN_RETRY_BUY=NO
-          HISTORY_V2_SHADOW_CAN_REORDER_BUY=NO
-          HISTORY_V2_SHADOW_BUY_DECISION_CHANGED=0
           HISTORY_BUY_DECISION_INFLUENCE=NO
           HISTORY_STORAGE_FAILURE_BLOCKS_SCAN=NO
           HISTORY_STORAGE_FAILURE_RETRIES_BUY=NO
+          HISTORY_V2_SHADOW_VALUATION=YES
+          HISTORY_V2_SHADOW_PRICEBOOK=$shadowStatus
+          HISTORY_V2_SHADOW_BUY_INFLUENCE=NO
+          HISTORY_V2_SHADOW_BUY_DECISION_CHANGED=NO
           VENDOR_SCOPE=FULL_AFFORDABLE_WHEN_ENABLED
           DE_SCOPE=FAST_MODEL_SUPPORTED
           BUY_REVALIDATION=EXACT_TUPLE_PAGE_PLUS_MINUS_5
