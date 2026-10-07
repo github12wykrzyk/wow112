@@ -1,0 +1,85 @@
+name: TELE09 full summon teleport
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/tele09-full-teleport-v1
+    paths:
+      - '.github/workflows/tele09_full_teleport_live.yml'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs'
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+      WOW112_TELE09_FULL_ROOT: 'tele09_full_teleport_runs'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Stored-source format gate
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 --config skip_children=true --check probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Offline compile and self-test
+        shell: pwsh
+        run: |
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele09_full_teleport
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele09_full_teleport -- --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build stored-source release chain
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele09_full_teleport','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Autonomous real summon through teleport ACK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            throw 'WOW112_PASSWORD secret is required.'
+          }
+          if (Test-Path $env:WOW112_TELE09_FULL_ROOT) {
+            Remove-Item $env:WOW112_TELE09_FULL_ROOT -Recurse -Force
+          }
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele09_full_teleport.exe'
+          & $exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "TELE09 full teleport runner failed rc=$LASTEXITCODE"
+          }
+          $status = Get-ChildItem $env:WOW112_TELE09_FULL_ROOT -Filter STATUS.txt -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $status) { throw 'No STATUS.txt produced.' }
+          $text = Get-Content $status.FullName -Raw
+          Write-Host $text
+          if ($text -notmatch 'result=PASS' -or $text -notmatch 'SMSG_NEW_WORLD>MSG_MOVE_WORLDPORT_ACK') {
+            throw "Full teleport evidence is not canonical PASS: $text"
+          }
+
+      - name: Upload TELE09 full teleport evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE09_FULL_TELEPORT_EVIDENCE
+          path: |
+            tele09_full_teleport_runs/**
+          if-no-files-found: warn
