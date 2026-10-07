@@ -26,7 +26,7 @@ if errorlevel 1 (
   exit /b 2
 )
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%BOOT%" -InstallRoot "%~dp0"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%BOOT%" -InstallRoot "%CD%"
 set "RC=%ERRORLEVEL%"
 del /q "%BOOT%" "%BOOTSHA%" >nul 2>&1
 if not "%RC%"=="0" (
