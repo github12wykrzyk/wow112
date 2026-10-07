@@ -1,94 +1,208 @@
-# Operator Console V1 architecture
+# WoW112 Summon Operator Console V1 architecture
 
-## Boundary
+## Scope and ownership
 
-Operator Console is a presentation/observability process. The trust boundary is explicit:
+This application is the operator surface for the **summon service only**. Business/runtime ownership remains where it already exists:
 
-`existing WoW backend primitive -> backend adapter -> OperatorEvent -> OperatorEventBus -> state/history/UI`
+`canonical SummonScout / SummonWorker / AutoSummonAssist / AutoLoginBridge -> thin telemetry/transport adapters -> OperatorEvent -> durable history/state/UI`
 
-and, for operator commands:
+and for the only live operator command:
 
-`UI -> typed OperatorCommand -> transport adapter -> existing authoritative primitive`
+`UI -> typed whisper command -> existing native transport -> canonical WoW chat primitive`
 
-The GUI does not know login opcodes, world packet formats, AH packet formats, BUY selection rules, Vendor/DE economics, mailbox mutation semantics, auction mutation semantics, summon execution semantics or movement addresses.
+The console does not own or reproduce login/world protocol, the SummonScout parser, summon targeting/casting, trade/payment detection, movement, AH, BUY, mailbox or auction lifecycle logic.
 
-## Core telemetry
+## Process architecture
 
-`OperatorEvent` is the single normalized envelope. Identity is multi-client from day one: account, profile, character and session ID are independent fields. Correlation ID joins a player/operator flow. Operation ID joins an economic lifecycle that remains owned by its backend/coordinator.
+WoW 1.12.1 build 5875 and the native companions remain PE32/x86. The console is a separate PE32+/x64 .NET Framework 4.8 WinForms process.
 
-Severity: TRACE, DEBUG, INFO, WARN, ERROR.
+Cross-architecture communication uses named shared mappings already aligned with the WoW112 runtime model:
 
-Direction differentiates incoming, outgoing automation, outgoing manual and system events.
+- `Local\WoW112_AutoLoginProfile_<pid>` — non-secret profile/relogin state;
+- `Local\WoW112_SummonWorker_<pid>` — summon worker state;
+- `Local\WoW112_SummonAssist_<pid>` — native summon-assist state;
+- `Local\WoW112_OperatorBridge_<pid>` — summon-console transport/event ring.
 
-Structured parser diagnostics are data attached to an event. The state projector never re-runs or changes the parser decision.
+The console discovers clients map-first. It does not depend on the executable being named `Wow.exe`, does not open process memory and does not decode game packets.
 
-## State store
+## Normalized event model
 
-`OperatorStateStore` is a read-only projector. UI panels query snapshots rather than parsing arbitrary log strings. Coordinator `Uncertain` is sticky: ordinary release/error events do not silently downgrade it. A backend must emit an authoritative reconciled/new state if this policy evolves.
+`OperatorEvent` is the single durable envelope. It carries:
 
-## Persistence
+- timestamp UTC;
+- severity;
+- category/event type/module;
+- account/profile/character/session identity;
+- message;
+- correlation ID;
+- direction;
+- structured metadata.
 
-`JsonlOperatorStore` is the V1 durable event source. It is append-only, bounded by rotation, and replayed at startup. This keeps recovery transparent and avoids coupling unrelated operator history to the AH market/history database.
+The UI is a projection of events, not an alternate source of truth. `JsonlOperatorStore` persists normalized history and replays it at startup. Event history is rotated and bounded on disk; UI lists are separately bounded in memory/render size.
 
-The event stream is independently machine-readable and can be migrated to SQLite later without changing the event/state/command contracts.
+## Canonical whisper/parser path
 
-## Runtime observation
+Incoming whisper flow:
 
-The x64 process reuses existing x86 named mappings instead of opening WoW memory or decoding game packets:
+1. SummonScout receives `CHAT_MSG_WHISPER` through its normal event path.
+2. `SummonScout_OperatorBridgeHot.lua` observes the same event.
+3. The adapter calls the officially exported `W112_SUMMONSCOUT_API_V1.whisperInviteDecision`.
+4. The result is copied into an Operator Bridge event slot.
+5. The existing AutoLoginBridge/HOTPROBE drains Lua event globals through verified build-5875 `FrameScript_Execute` / `FrameScript_GetText` primitives.
+6. `RuntimeAdapters.cs` projects the ring slot to `WhisperReceived` plus parser diagnostics.
 
-- `Local\\WoW112_AutoLoginProfile_<pid>`
-- `Local\\WoW112_SummonWorker_<pid>`
-- `Local\\WoW112_SummonAssist_<pid>`
-- `Local\\WoW112_OperatorBridge_<pid>`
+There is no debug-upvalue parser discovery and no second keyword/intent parser in the console path.
 
-Session IDs are PID-bound (`wow-pid-<pid>`). Account/profile identity is represented by the existing non-secret AutoLogin profile fingerprint; credentials never cross into Operator Console.
+## Manual whisper command path
 
-## Live whisper path
+Manual reply flow is deliberately narrow:
 
-Incoming/outgoing whisper integration deliberately reuses the canonical owners:
+`WinForms -> ReplyToWhisper -> operator-commands.jsonl -> RuntimeAdapters -> shared-map command -> AutoLoginBridge/HOTPROBE -> W112_OPERATOR_BRIDGE_RECEIVE -> H.ManualChatLock -> SendChatMessage(..., "WHISPER", ...)`
 
-1. `SummonScout_OperatorBridgeHot.lua` is loaded by SummonScout after the existing whisper-confirm/manual-chat module.
-2. `CHAT_MSG_WHISPER` is observed, then the existing core `whisperInviteDecision` function is called through the same upvalue-discovery pattern already used by canonical unknown-whisper telemetry. The Operator Bridge records that result; it does not implement a second parser.
-3. Lua exposes a bounded event queue. The already loaded `WoWAutoLoginBridge_5875_v1_HOTPROBE.c` drains it through the verified build-5875 `FrameScript_Execute` / `FrameScript_GetText` primitives.
-4. Native code publishes the events to the per-PID `WoW112_OperatorBridge` shared mapping. A 16-slot commit-last ring prevents partial slots from being treated as complete events; explicit drop counters expose overflow.
-5. `OperatorRuntimeBridge.cs` converts ring entries into normal `OperatorEvent` JSONL records consumed by the GUI.
+The native V1 command protocol exposes one opcode only: whisper.
 
-There is no new login/world/chat packet implementation and no new injected DLL name. The existing AutoLoginBridge companion is rebuilt with a transport-only include.
+Dispatch confirmation and send confirmation are different states:
 
-## Manual whisper path and ACK semantics
+- Lua command ACK means the typed command was accepted for dispatch;
+- `WhisperSent` is emitted only after a matching `CHAT_MSG_WHISPER_INFORM` arrives from WoW.
 
-Manual reply is deliberately multi-stage:
+If native execution fails, Lua ACK is missing/mismatched, or no final inform is observed within 30 seconds, the event is uncertain and there is no automatic retry. This avoids duplicate manual chat.
 
-`GUI -> operator-commands.jsonl -> OperatorRuntimeBridge.cs -> shared map command -> existing AutoLoginBridge/HOTPROBE -> W112_OPERATOR_BRIDGE_RECEIVE -> H.ManualChatLock -> SendChatMessage(..., "WHISPER", ...)`
+## Operator Bridge V1 wire layout
 
-The native command surface has one opcode only: manual whisper.
+The existing AutoLoginBridge is rebuilt with `WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc`; there is no additional injected DLL name.
 
-A Lua return/ACK means only **dispatch accepted**. It does not produce `WhisperSent`. Final `WhisperSent` is emitted only after WoW raises `CHAT_MSG_WHISPER_INFORM` for the matching player/text/correlation flow.
+Shared mapping constants:
 
-If native execution fails, the Lua ACK is missing/mismatched, or the command times out, the result becomes **UNCERTAIN** and no automatic retry is attempted. An accepted dispatch without `CHAT_MSG_WHISPER_INFORM` becomes `WhisperSendUnconfirmed`, not a false success.
+- magic `0x4F323157`;
+- version `1`;
+- header `556` bytes;
+- event slot `896` bytes;
+- ring count `16`;
+- command opcode `1` = whisper.
 
-## Command safety
+Slots use commit-last sequence publication. Overflow is observable through drop counters. The same stable slot layout carries whisper and summon/payment telemetry kinds, so lifecycle expansion did not require an ABI change.
 
-The general Operator Core enum includes non-economic controls, but the native WoW bridge intentionally exposes only whisper dispatch. BUY/MAIL/CANCEL/POST are impossible to encode in `WoW112_OperatorBridge` V1.
+## Canonical summon lifecycle observation
 
-Any future economic operator action must use the shared mutation coordinator and receive a separate safety design review. Raw GUI/native mutation opcodes are forbidden.
+The canonical core exports `W112_SUMMONSCOUT_STATE`. The bridge observes, but never mutates, authoritative fields including:
 
-## Threading and performance
+- `summonPending`;
+- `summonActiveName`;
+- `summonActiveStarted`;
+- `summonActiveRequestSeq`;
+- `lastSummonError`.
 
-Bridge polling, backend JSONL ingestion and persistence stay outside the WinForms render path. `OperatorEventBus` accepts events from producer threads; UI updates are marshalled with `BeginInvoke`. Large history is capped in-memory at 50k events and event tables render a bounded tail.
+From state transitions it records a bounded durable operator mirror in SavedVariables:
 
-The whisper native bridge polls at 100 ms and drains up to eight queued Lua events per tick. It does not hook chat functions or run a second parser.
+- `SummonScoutDB.operatorSummonLog`;
+- `SummonScoutDB.operatorSummonSeq`.
+
+The event kinds are:
+
+- `4` -> `SummonQueued`;
+- `5` -> `SummonStarted`;
+- `6` -> `SummonCompleted`;
+- `7` -> `SummonFailed`.
+
+This is observability, not a second summon engine. The canonical core remains responsible for queueing, native request sequencing, Ritual start/stop/failure handling, watchdogs and completion.
+
+## Trusted payment observation
+
+The payment source of truth is the existing canonical trusted ledger:
+
+`SummonScoutDB.paymentLog[{ ts, player, copper }]`
+
+The operator adapter does not inspect wallet delta and does not implement trade acceptance or payment inference. It mirrors newly observed trusted rows into:
+
+- `SummonScoutDB.operatorPaymentLog`;
+- `SummonScoutDB.operatorPaymentSeq`.
+
+Each mirror row receives a stable telemetry ID. When possible, the adapter associates the most recent completed summon destination for the same player. Event kind `8` becomes `PaymentReceived` in the Windows console.
+
+The original payment Unix timestamp is carried over the ring and restored by `SummonLifecycleAdapter.cs`, so replaying an older trusted payment preserves the real historical time instead of creating a false new payment.
+
+After `SummonCompleted`, the Windows state projector emits `PaymentExpected` as an operational state. V1 deliberately does not invent a fee or unpaid timeout policy.
+
+## Durable replay and dedupe
+
+Summon/payment operator mirrors survive addon reload/logout through `SummonScoutDB`. This lets a newly started console import already-known trusted history.
+
+The Windows adapter stores emitted correlation keys in:
+
+`%LOCALAPPDATA%\WoW112\OperatorConsole\bridge\summon-telemetry-seen.txt`
+
+This prevents replayed SavedVariables entries from duplicating local normalized JSONL history across GUI/runtime restarts.
+
+The normalized history itself is:
+
+`%LOCALAPPDATA%\WoW112\OperatorConsole\history\operator-events.jsonl`
+
+## C# runtime split
+
+`RuntimeAdapters.cs` owns:
+
+- map-first session discovery;
+- existing AutoLogin/SummonWorker/SummonAssist telemetry;
+- whisper ring projection;
+- typed manual-whisper dispatch;
+- native/Lua ACK and final outgoing confirmation state.
+
+`SummonLifecycleAdapter.cs` is intentionally read-only and owns:
+
+- event kinds 4..9;
+- summon lifecycle projection;
+- trusted payment projection;
+- historical source timestamps;
+- persistent replay dedupe;
+- final manual-whisper timeout telemetry (`WhisperSendUncertain`).
+
+CI asserts the lifecycle adapter contains only `FILE_MAP_READ` access and no shared-map write primitives.
+
+## State/UI
+
+The summon-only session projector tracks:
+
+- World;
+- Whispers;
+- Summon;
+- Payment;
+- summon queue depth;
+- current task / last event / last error.
+
+Primary UI surfaces are:
+
+- Overview;
+- Whispers;
+- Whisper Debug;
+- Summons / Payments;
+- Events;
+- Debug;
+- Logs.
+
+There is intentionally no AH/mail/mutation tab or command surface.
 
 ## Security
 
-Sanitization is applied at event ingress and debug-snapshot generation. Keys/text resembling passwords, tokens, secrets, Authorization or DPAPI material are redacted. No credential field exists in the event or command schemas.
+The event bus and debug snapshot redact password/token/secret/Authorization/DPAPI-like material. Credentials are absent from OperatorEvent and OperatorCommand schemas.
 
-Manual whisper input is length-bounded and hex-encoded before native code constructs the Lua invocation. Literal `|` is rejected because WoW chat treats it as an escape introducer. The bridge never accepts arbitrary Lua from Operator Console.
+Manual player/text fields are bounded. Native code hex-encodes them before constructing the fixed Lua invocation. Arbitrary Lua cannot be supplied by the GUI. Literal WoW chat escape introducer `|` is rejected by the Lua bridge.
 
-## Build architecture
+## Verification model
 
-- WoW runtime and AutoLoginBridge remain PE32/x86.
-- Operator Console is a separate PE32+/x64 .NET Framework 4.8 WinForms process.
-- CI builds and hashes both artifacts on the same exact feature SHA.
-- The delivery artifact contains the x64 console plus `runtime-overlay/` with the rebuilt x86 AutoLoginBridge and exact SummonScout bridge/TOC files.
-- `operator_bridge_build.json` records native and Lua source hashes and safety properties.
+The dedicated Windows CI checks:
+
+- canonical repository invariants;
+- protocol constants and absence of economic opcodes;
+- official canonical parser/state use and absence of debug-upvalue discovery;
+- x64 compilation/core tests;
+- synthetic named-mapping whisper roundtrip;
+- synthetic summon lifecycle/payment roundtrip;
+- preservation of a historical payment timestamp;
+- payment replay dedupe;
+- x86 AutoLoginBridge build;
+- runtime overlay staging;
+- GUI render smoke;
+- PE architecture and SHA256 manifest.
+
+Synthetic IPC tests prove the cross-process contract and projection logic; they do not constitute a real in-game summon/payment test. Live-game evidence is tracked separately and must not be inferred from CI success.
