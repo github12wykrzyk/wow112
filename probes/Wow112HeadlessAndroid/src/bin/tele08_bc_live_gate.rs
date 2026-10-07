@@ -205,9 +205,12 @@ fn run() -> Result<(), String> {
             "ignored count mismatch expected=8 actual={ignored_count}"
         ));
     }
-    if router.pending_clarifications() != 1 {
+    // Case 11 opens a clarification for Bolthyjal. Case 12 is then an explicit,
+    // queueable request from the same sender, which deliberately supersedes and
+    // clears the stale pending clarification.
+    if router.pending_clarifications() != 0 {
         return Err(format!(
-            "pending clarification mismatch expected=1 actual={}",
+            "pending clarification mismatch expected=0 after explicit superseding request actual={}",
             router.pending_clarifications()
         ));
     }
