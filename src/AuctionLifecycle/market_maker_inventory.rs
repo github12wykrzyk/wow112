@@ -58,7 +58,7 @@ fn mm_take_mail_stack(stream:&mut TcpStream,crypto:&mut HeaderCrypto,mailbox:u64
     // Mangos uses item_slot=0xFFFFFFFF when an item was merged into an existing stack.
     // V1 refuses to guess that stack's physical slot.
     if push.slot==u32::MAX||push.slot>u32::from(u8::MAX){return Err("MARKET_MAKER mail merged into existing stack; exact slot unavailable, no split/post performed".into());}
-    Ok(MmOwnedStack{guid:**guid,item,count:entry.stack as u32,bag:push.bag,slot:push.slot as u8})
+    Ok(MmOwnedStack{guid:*guid,item,count:entry.stack as u32,bag:push.bag,slot:push.slot as u8})
 }
 
 fn mm_inventory_delta_unit(before:&std::collections::HashMap<u64,Poc05InventoryEntry>,after:&std::collections::HashMap<u64,Poc05InventoryEntry>,source:u64,item:u32,old_source_count:u32)->Result<Option<u64>,String>{
@@ -82,9 +82,19 @@ fn mm_split_one(stream:&mut TcpStream,crypto:&mut HeaderCrypto,source:&MmOwnedSt
     let before=lifecycle_inventory()?;
     let current=before.get(&source.guid).ok_or("MARKET_MAKER split source GUID missing")?;
     if current.entry<=0||current.entry as u32!=source.item||current.stack<=1||current.stack as u32!=source.count{return Err("MARKET_MAKER split source stale".into());}
+    let mut raw=Vec::new();
+    let msg=wow_world_messages::vanilla::CMSG_SPLIT_ITEM{source_bag:source.bag,source_slot:source.slot,destination_bag:0,destination_slot:255,amount:1};
+    msg.write_unencrypted_client(&mut raw).map_err(|e|format!("MARKET_MAKER split serialize: {e:?}"))?;
+    if raw.len()<6{return Err("MARKET_MAKER split serialization too short".into());}
+    let opcode=u32::from_le_bytes(raw[2..6].try_into().unwrap());let body=raw[6..].to_vec();
     let mut unit_guid=None;
-    mutations::transaction(MutationKind::Split,||{
-        lifecycle_send(stream,crypto,wow_world_messages::vanilla::CMSG_SPLIT_ITEM{source_bag:source.bag,source_slot:source.slot,destination_bag:0,destination_slot:255,amount:1})?;
+    // Coordinator V1 has no named Split kind. Use the POST permit as an inventory-mutation
+    // bridge: create the durable pending barrier BEFORE the actual 0x010E bytes. The real
+    // split opcode is ignored by the V1 opcode filter, but the active transaction remains
+    // exclusive and any error after the barrier leaves .pending unresolved (no retry).
+    mutations::transaction(MutationKind::Post,||{
+        mutations::before_send(0x256,b"MM_SPLIT_INTENT opcode=010e")?;
+        write_encrypted_raw(stream,crypto.encrypter(),opcode,&body)?;
         for _ in 0..256 {
             let(op,_)=read_encrypted_raw(stream,crypto.decrypter())?;
             if op==0x0112{return Err("MARKET_MAKER split server inventory failure".into());}
