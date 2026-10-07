@@ -106,6 +106,25 @@ new_loop = indent + '''let(mut bought_total,mut bought_vendor,mut bought_de,mut 
     println!("[POC08-UNIFIED-V4] LIVE PASS purchases={} vendor={} de={} spend={} stale_skipped={} de_limit_skipped={} vendor_limit_skipped={} spend_limit_skipped={} total_limit={} vendor_limit={} de_limit={} spend_limit={} snapshot_reused=YES one_mutation_boundary=YES",bought_total,bought_vendor,bought_de,bought_spend,stale_skipped,de_limit_skipped,vendor_limit_skipped,spend_limit_skipped,total_limit,vendor_limit,de_limit,spend_limit); Ok(())'''
 s = s[:lm.start()] + new_loop + s[lm.end():]
 
+# V3.1 liquidation rewrites historically reduced provenance to confidence>0.
+# V4 must restore the live eligibility contract after all liquidation patches:
+# independent confidence >=2 OR CapyDB with exact model agreement == 0.
+old_f0 = '''        if poc08_de_source_confidence(c.record.item_id) == 0 { return false; }
+'''
+new_f0 = '''        let source_confidence = poc08_de_source_confidence(c.record.item_id);
+        let source_is_live_eligible = source_confidence >= 2
+            || (poc08_de_source(c.record.item_id) == Some("CapyDB")
+                && poc08_f0_model_agreement_bps(c.heuristic_de_ev, c.reference_de_ev) == 0);
+        if !source_is_live_eligible { return false; }
+'''
+rep('F0 provenance eligibility', old_f0, new_f0)
+
+old_de = '''    let de_ok=|c:&Poc08EconomyCandidate|c.record.count==1&&c.record.buyout>0&&c.record.buyout<=max_buy&&c.disenchant_id>0&&c.de_risk_pass&&c.safe_de_ev>0&&in_f0(c)&&poc08_de_source_confidence(c.record.item_id)>0&&poc08_f0_liquidation_decision(c).1>=min_live_de_liquidation_profit;
+'''
+new_de = '''    let de_ok=|c:&Poc08EconomyCandidate|c.record.count==1&&c.record.buyout>0&&c.record.buyout<=max_buy&&c.disenchant_id>0&&c.de_risk_pass&&c.safe_de_ev>0&&in_f0(c)&&(poc08_de_source_confidence(c.record.item_id)>=2||(poc08_de_source(c.record.item_id)==Some("CapyDB")&&poc08_f0_model_agreement_bps(c.heuristic_de_ev,c.reference_de_ev)==0))&&poc08_f0_liquidation_decision(c).1>=min_live_de_liquidation_profit;
+'''
+rep('live DE provenance eligibility', old_de, new_de)
+
 for marker in [
     'POC08-UNIFIED-V4',
     'POC08-UNIFIED-MULTI',
@@ -114,6 +133,9 @@ for marker in [
     'WOW112_UNIFIED_VENDOR_MAX_PURCHASES',
     'WOW112_UNIFIED_MAX_PURCHASES',
     'WOW112_UNIFIED_MAX_SPEND',
+    'poc08_de_source_confidence(c.record.item_id)>=2',
+    'Some("CapyDB")',
+    'poc08_f0_model_agreement_bps(c.heuristic_de_ev,c.reference_de_ev)==0',
     'one_mutation_boundary=YES',
     'NO_AUTO_RETRY_FROM_THIS_POINT=YES',
     'POC07_BUY_TARGET_STALE',
@@ -122,4 +144,4 @@ for marker in [
         raise SystemExit('missing marker '+marker)
 
 p.write_text(s, encoding='utf-8')
-print('[POC08-UNIFIED-VENDOR-DE-V4-PATCH] PASS')
+print('[POC08-UNIFIED-VENDOR-DE-V4-PATCH] PASS provenance=OCTO_CONF_GE2_OR_CAPY_AGREEMENT0')
