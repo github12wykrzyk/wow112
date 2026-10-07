@@ -51,14 +51,11 @@ jobs:
           git fetch origin "$BASE_BRANCH":"refs/remotes/origin/$BASE_BRANCH"
           git diff --name-only "origin/$BASE_BRANCH...HEAD" | tee "$STATE_DIR/CHANGED_FILES.txt"
 
-          # This branch may evolve DE_LAB/control-plane only. Vendor Stable remains outside it.
           if grep -E '(^|/)(vendor_stable|VENDOR_STABLE|windows-ah-canonical)(/|$)' "$STATE_DIR/CHANGED_FILES.txt"; then
             echo 'POLICY FAIL: Vendor Stable path touched.' >&2
             exit 20
           fi
 
-          # The control workflow itself must never arm live AH mutation. Assemble
-          # forbidden strings at runtime so the policy declaration cannot match itself.
           python - <<'PY'
           from pathlib import Path
           text=Path('.github/workflows/ah_de_autonomous_control.yml').read_text(encoding='utf-8')
@@ -74,8 +71,8 @@ jobs:
           print('LIVE_ARM_POLICY=PASS')
           PY
 
-          grep -q 'NO_AUTO_RETRY_FROM_THIS_POINT=YES' probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v31_f0_patch.py || {
-            echo 'POLICY FAIL: no-retry mutation contract marker missing.' >&2; exit 22; }
+          grep -q 'NO_AUTO_RETRY_FROM_THIS_POINT=YES' probes/Wow112HeadlessAndroid/src/world_poc07.rs || {
+            echo 'POLICY FAIL: no-retry mutation contract marker missing in buy primitive.' >&2; exit 22; }
           grep -q 'MUTATION_BOUNDARY_NO_RETRY' packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1 || {
             echo 'POLICY FAIL: launcher mutation-boundary hard stop missing.' >&2; exit 23; }
           grep -q 'WOW112_UNIFIED_DE_MAX_SPEND' packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1 || {
@@ -92,8 +89,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
           gh workflow run "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
           echo "BUILD_DISPATCHED sha=$GITHUB_SHA branch=$GITHUB_REF_NAME"
 
@@ -158,17 +153,16 @@ jobs:
           from pathlib import Path
           import sys
           p=Path(sys.argv[1])
-          b=p.read_bytes()[:2]
-          if b != b'MZ':
+          if p.read_bytes()[:2] != b'MZ':
               raise SystemExit('PE/MZ validation failed')
           print('PE_MZ=PASS')
           PY
 
           grep -q 'poc08_f0_liquidation_decision(c)' "$UNIFIED" || { echo 'missing V3.1 liquidation decision' >&2; exit 41; }
-          grep -q 'Poc08Strategy::Disenchant\|Poc07Strategy::Disenchant' "$UNIFIED" || { echo 'missing DE route' >&2; exit 42; }
+          grep -q 'Poc07Strategy::Disenchant' "$UNIFIED" || { echo 'missing DE route' >&2; exit 42; }
           grep -q 'WOW112_UNIFIED_DE_MAX_SPEND' "$UNIFIED" || { echo 'missing DE spend cap in built source' >&2; exit 43; }
           grep -q 'NO_AUTO_RETRY_FROM_THIS_POINT=YES' "$UNIFIED" || { echo 'missing no-retry mutation marker' >&2; exit 44; }
-          grep -q 'HELLO_TIMEOUT_SECS' "$HELLO" || { echo 'missing AH hello time budget in built source' >&2; exit 45; }
+          grep -q 'HELLO_TIMEOUT_SECS' "$HELLO" || { echo 'missing AH hello time budget' >&2; exit 45; }
           grep -q 'SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE' "$HELLO" || { echo 'missing background packet exemption' >&2; exit 46; }
           grep -q 'AH_HELLO_RESILIENCE=TIME_BUDGET_BACKGROUND_EXEMPT_FRESH_NPC_FIRST' "$INFO" || { echo 'missing build provenance marker' >&2; exit 47; }
 
