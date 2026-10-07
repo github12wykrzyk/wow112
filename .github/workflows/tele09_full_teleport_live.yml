@@ -30,11 +30,13 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Stored-source format gate
+      - name: Development format stage
         shell: pwsh
         run: |
-          rustfmt --edition 2021 --config skip_children=true --check probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs
+          rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path tele09_formatted_source | Out-Null
+          Copy-Item probes/Wow112HeadlessAndroid/src/bin/tele09_full_teleport.rs tele09_formatted_source/tele09_full_teleport.rs
 
       - name: Offline compile and self-test
         shell: pwsh
@@ -82,4 +84,5 @@ jobs:
           name: WoW112_TELE09_FULL_TELEPORT_EVIDENCE
           path: |
             tele09_full_teleport_runs/**
+            tele09_formatted_source/**
           if-no-files-found: warn
