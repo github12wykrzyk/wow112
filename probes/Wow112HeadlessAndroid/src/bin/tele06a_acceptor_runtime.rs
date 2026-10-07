@@ -39,20 +39,31 @@ fn connect_with_login_watchdog(addr: &str, label: &str) -> Result<TcpStream, Str
             }
         }
     }
-    Err(format!("TimedOut login watchdog label={label} addr={addr} timeout_ms={LOGIN_WATCHDOG_MS} last={}", last_error.unwrap_or_else(|| "unknown".to_string())))
+    Err(format!(
+        "TimedOut login watchdog label={label} addr={addr} timeout_ms={LOGIN_WATCHDOG_MS} last={}",
+        last_error.unwrap_or_else(|| "unknown".to_string())
+    ))
 }
 
 fn arm_login_watchdog(stream: &TcpStream, label: &str) -> Result<(), String> {
     let timeout = Some(Duration::from_millis(LOGIN_WATCHDOG_MS));
-    stream.set_read_timeout(timeout).map_err(|e| format!("{label} set login read watchdog failed: {e}"))?;
-    stream.set_write_timeout(timeout).map_err(|e| format!("{label} set login write watchdog failed: {e}"))?;
+    stream
+        .set_read_timeout(timeout)
+        .map_err(|e| format!("{label} set login read watchdog failed: {e}"))?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(|e| format!("{label} set login write watchdog failed: {e}"))?;
     println!("[LOGIN-WATCHDOG] {label} io_timeout_ms={LOGIN_WATCHDOG_MS}");
     Ok(())
 }
 
 fn publish_runner_state(state: &str, detail: &str) {
-    let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else { return; };
-    if path.trim().is_empty() { return; }
+    let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else {
+        return;
+    };
+    if path.trim().is_empty() {
+        return;
+    }
     let session = env::var("WOW112_RUNNER_SESSION_ATTEMPT").unwrap_or_else(|_| "0".to_string());
     let safe_detail = detail.replace('\r', " ").replace('\n', " ");
     let body = format!("state={state}\nsession={session}\ndetail={safe_detail}\n");
@@ -84,7 +95,8 @@ mod agent {
     const TELE06B_DEFAULT_MAX_RANGE: f32 = 5.8;
     const TELE06B_DEFAULT_CLICK_SETTLE_MS: u64 = 150;
     static TELE06B_LOCAL_POSITION: std::sync::Mutex<Option<[f32; 3]>> = std::sync::Mutex::new(None);
-    static TELE06B_LAST_PORTAL_POSITION: std::sync::Mutex<Option<(u64, [f32; 3])>> = std::sync::Mutex::new(None);
+    static TELE06B_LAST_PORTAL_POSITION: std::sync::Mutex<Option<(u64, [f32; 3])>> =
+        std::sync::Mutex::new(None);
 
     fn tele06b_set_local_position(x: f32, y: f32, z: f32) {
         if let Ok(mut slot) = TELE06B_LOCAL_POSITION.lock() {
@@ -99,22 +111,28 @@ mod agent {
 
     fn tele06b_portal_position_from_object(object: &Object) -> Option<[f32; 3]> {
         let movement = match object {
-            Object::CreateObject { movement2, .. } | Object::CreateObject2 { movement2, .. } => movement2,
+            Object::CreateObject { movement2, .. } | Object::CreateObject2 { movement2, .. } => {
+                movement2
+            }
             _ => return None,
         };
         let living = movement.update_flag.get_living()?;
         match living {
-            wow_world_messages::vanilla::MovementBlock_UpdateFlag_Living::HasPosition { position, .. } => {
-                Some([position.x, position.y, position.z])
-            }
-            wow_world_messages::vanilla::MovementBlock_UpdateFlag_Living::Living { living_position, .. } => {
-                Some([living_position.x, living_position.y, living_position.z])
-            }
+            wow_world_messages::vanilla::MovementBlock_UpdateFlag_Living::HasPosition {
+                position,
+                ..
+            } => Some([position.x, position.y, position.z]),
+            wow_world_messages::vanilla::MovementBlock_UpdateFlag_Living::Living {
+                living_position,
+                ..
+            } => Some([living_position.x, living_position.y, living_position.z]),
         }
     }
 
     fn tele06b_record_portal_position(object: &Object, guid: u64) {
-        let Some(position) = tele06b_portal_position_from_object(object) else { return; };
+        let Some(position) = tele06b_portal_position_from_object(object) else {
+            return;
+        };
         if let Ok(mut slot) = TELE06B_LAST_PORTAL_POSITION.lock() {
             *slot = Some((guid, position));
         }
@@ -129,7 +147,13 @@ mod agent {
             .lock()
             .ok()
             .and_then(|slot| slot.as_ref().copied())
-            .and_then(|(seen_guid, position)| if seen_guid == guid { Some(position) } else { None })
+            .and_then(|(seen_guid, position)| {
+                if seen_guid == guid {
+                    Some(position)
+                } else {
+                    None
+                }
+            })
     }
 
     fn tele06b_distance3(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -142,10 +166,14 @@ mod agent {
     fn tele06b_max_range() -> Result<f32, String> {
         match std::env::var("WOW112_TELE06B_MAX_RANGE") {
             Ok(value) => {
-                let parsed = value.trim().parse::<f32>()
+                let parsed = value
+                    .trim()
+                    .parse::<f32>()
                     .map_err(|e| format!("invalid WOW112_TELE06B_MAX_RANGE={value:?}: {e}"))?;
                 if !parsed.is_finite() || parsed <= 0.0 || parsed > 20.0 {
-                    return Err(format!("invalid WOW112_TELE06B_MAX_RANGE={value:?}; expected 0..20"));
+                    return Err(format!(
+                        "invalid WOW112_TELE06B_MAX_RANGE={value:?}; expected 0..20"
+                    ));
                 }
                 Ok(parsed)
             }
@@ -156,10 +184,13 @@ mod agent {
     fn tele06b_click_settle_ms() -> Result<u64, String> {
         match std::env::var("WOW112_TELE06B_CLICK_SETTLE_MS") {
             Ok(value) => {
-                let parsed = value.trim().parse::<u64>()
-                    .map_err(|e| format!("invalid WOW112_TELE06B_CLICK_SETTLE_MS={value:?}: {e}"))?;
+                let parsed = value.trim().parse::<u64>().map_err(|e| {
+                    format!("invalid WOW112_TELE06B_CLICK_SETTLE_MS={value:?}: {e}")
+                })?;
                 if parsed > 5000 {
-                    return Err(format!("invalid WOW112_TELE06B_CLICK_SETTLE_MS={value:?}; expected <=5000"));
+                    return Err(format!(
+                        "invalid WOW112_TELE06B_CLICK_SETTLE_MS={value:?}; expected <=5000"
+                    ));
                 }
                 Ok(parsed)
             }
@@ -231,7 +262,10 @@ mod agent {
         let steps = match tele06c_plan_steps(local, portal) {
             Ok(value) => value,
             Err(error) => {
-                publish_runner_state("FAIL_AUTO_POSITION_LIMIT", &format!("guid=0x{guid:016X} {error}; no movement sent"));
+                publish_runner_state(
+                    "FAIL_AUTO_POSITION_LIMIT",
+                    &format!("guid=0x{guid:016X} {error}; no movement sent"),
+                );
                 println!("[TELE-06C-MOVE] FAIL guid=0x{guid:016X} reason={error} action=NO_SEND");
                 return Err(format!("TELE06C_AUTO_POSITION_LIMIT {error}"));
             }
@@ -243,7 +277,10 @@ mod agent {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            publish_runner_state("FAIL_AUTO_POSITION_ALREADY_ATTEMPTED", "movement guard already committed; retry disabled");
+            publish_runner_state(
+                "FAIL_AUTO_POSITION_ALREADY_ATTEMPTED",
+                "movement guard already committed; retry disabled",
+            );
             return Err("TELE06C_AUTO_POSITION_ALREADY_ATTEMPTED retry_allowed=false".to_string());
         }
 
@@ -259,11 +296,21 @@ mod agent {
 
         let mut last = local;
         for (index, position) in steps.iter().copied().enumerate() {
-            let payload = tele06c_movement_payload(position, orientation, tele06c_movement_timestamp());
-            if let Err(error) = write_encrypted_raw(stream, crypto.encrypter(), TELE06C_HEARTBEAT_OPCODE, &payload) {
+            let payload =
+                tele06c_movement_payload(position, orientation, tele06c_movement_timestamp());
+            if let Err(error) = write_encrypted_raw(
+                stream,
+                crypto.encrypter(),
+                TELE06C_HEARTBEAT_OPCODE,
+                &payload,
+            ) {
                 publish_runner_state(
                     "FAIL_AUTO_POSITION_UNCERTAIN",
-                    &format!("guid=0x{guid:016X} step={}/{} movement write uncertain; retry disabled", index + 1, steps.len()),
+                    &format!(
+                        "guid=0x{guid:016X} step={}/{} movement write uncertain; retry disabled",
+                        index + 1,
+                        steps.len()
+                    ),
                 );
                 return Err(format!(
                     "TELE06C_MOVE_MUTATION_UNCERTAIN guid=0x{guid:016X} step={}/{} retry_allowed=false cause={error}",
@@ -310,7 +357,10 @@ mod agent {
                 assert!(tele06b_distance3(previous, *step) <= TELE06C_MAX_STEP + 0.001);
                 previous = *step;
             }
-            assert!((tele06b_distance3(*steps.last().unwrap(), portal) - TELE06C_TARGET_RANGE).abs() < 0.01);
+            assert!(
+                (tele06b_distance3(*steps.last().unwrap(), portal) - TELE06C_TARGET_RANGE).abs()
+                    < 0.01
+            );
         }
 
         #[test]
@@ -334,7 +384,9 @@ mod agent {
             assert_eq!(u32::from_le_bytes(p[4..8].try_into().unwrap()), 0x11223344);
             assert!((f32::from_le_bytes(p[8..12].try_into().unwrap()) - 1.25).abs() < f32::EPSILON);
             assert!((f32::from_le_bytes(p[12..16].try_into().unwrap()) + 2.5).abs() < f32::EPSILON);
-            assert!((f32::from_le_bytes(p[16..20].try_into().unwrap()) - 3.75).abs() < f32::EPSILON);
+            assert!(
+                (f32::from_le_bytes(p[16..20].try_into().unwrap()) - 3.75).abs() < f32::EPSILON
+            );
             assert!((f32::from_le_bytes(p[20..24].try_into().unwrap()) - 1.5).abs() < f32::EPSILON);
             assert_eq!(f32::from_le_bytes(p[24..28].try_into().unwrap()), 0.0);
         }
@@ -377,7 +429,9 @@ mod agent {
             "" | "observer" => Ok(Tele06bRole::Observer),
             "customer" => Ok(Tele06bRole::Customer),
             "clicker" => Ok(Tele06bRole::Clicker),
-            other => Err(format!("invalid WOW112_TELE06B_ROLE={other:?}; expected observer/customer/clicker")),
+            other => Err(format!(
+                "invalid WOW112_TELE06B_ROLE={other:?}; expected observer/customer/clicker"
+            )),
         }
     }
 
@@ -415,7 +469,9 @@ mod agent {
             if let Some(guid) = guid {
                 tele06b_record_portal_position(object, guid);
                 if portals.insert(guid) {
-                    println!("[TELE-06B-PORTAL] observed valid summoning portal guid=0x{guid:016X}");
+                    println!(
+                        "[TELE-06B-PORTAL] observed valid summoning portal guid=0x{guid:016X}"
+                    );
                     println!(
                         "[TELE-06B-PORTAL-OBJECT] {}",
                         tele_trace::truncate_chars(&format!("{object:?}"), 2400)
@@ -426,11 +482,7 @@ mod agent {
         }
     }
 
-    fn tele06b_inspect_portal_update(
-        opcode: u16,
-        payload: &[u8],
-        portals: &mut HashSet<u64>,
-    ) {
+    fn tele06b_inspect_portal_update(opcode: u16, payload: &[u8], portals: &mut HashSet<u64>) {
         if opcode != SMSG_UPDATE_OBJECT_OPCODE && opcode != SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE {
             return;
         }
@@ -496,7 +548,9 @@ mod agent {
                             "FAIL_PORTAL_MUTATION_UNCERTAIN",
                             "portal use was committed but socket result was uncertain; retry disabled",
                         );
-                        return Err("TELE06B_PORTAL_MUTATION_UNCERTAIN retry_allowed=false".to_string());
+                        return Err(
+                            "TELE06B_PORTAL_MUTATION_UNCERTAIN retry_allowed=false".to_string()
+                        );
                     }
                 } else {
                     publish_runner_state(
@@ -601,7 +655,8 @@ mod agent {
                                             "local position unavailable; CMSG_GAMEOBJ_USE not sent and guard not consumed",
                                         );
                                         println!("[TELE-06B-RANGE] FAIL local_position=unknown action=NO_SEND");
-                                        return Err("TELE06B_PORTAL_RANGE_UNKNOWN local_position".to_string());
+                                        return Err("TELE06B_PORTAL_RANGE_UNKNOWN local_position"
+                                            .to_string());
                                     }
                                 };
                                 let portal_position = match tele06b_portal_position(guid) {
@@ -612,12 +667,14 @@ mod agent {
                                             &format!("guid=0x{guid:016X} portal position unavailable; CMSG_GAMEOBJ_USE not sent and guard not consumed"),
                                         );
                                         println!("[TELE-06B-RANGE] FAIL guid=0x{guid:016X} portal_position=unknown action=NO_SEND");
-                                        return Err("TELE06B_PORTAL_RANGE_UNKNOWN portal_position".to_string());
+                                        return Err("TELE06B_PORTAL_RANGE_UNKNOWN portal_position"
+                                            .to_string());
                                     }
                                 };
                                 let max_range = tele06b_max_range()?;
                                 let mut effective_local_position = local_position;
-                                let mut distance = tele06b_distance3(effective_local_position, portal_position);
+                                let mut distance =
+                                    tele06b_distance3(effective_local_position, portal_position);
                                 if distance > max_range {
                                     println!(
                                         "[TELE-06C-MOVE] REQUIRED guid=0x{guid:016X} distance={distance:.3} max_range={max_range:.3}"
@@ -629,7 +686,10 @@ mod agent {
                                         effective_local_position,
                                         portal_position,
                                     )?;
-                                    distance = tele06b_distance3(effective_local_position, portal_position);
+                                    distance = tele06b_distance3(
+                                        effective_local_position,
+                                        portal_position,
+                                    );
                                     if distance > max_range {
                                         publish_runner_state(
                                             "FAIL_PORTAL_OUT_OF_RANGE",
@@ -733,7 +793,9 @@ mod agent {
             return Ok(());
         }
         write_encrypted_raw(stream, crypto.encrypter(), CMSG_GROUP_DISBAND_OPCODE, &[])?;
-        println!("[TELE-06A-ACCEPTOR-RESET-TX] opcode=0x007B result=attempted_once retry_allowed=false");
+        println!(
+            "[TELE-06A-ACCEPTOR-RESET-TX] opcode=0x007B result=attempted_once retry_allowed=false"
+        );
         thread::sleep(Duration::from_millis(1200));
         Ok(())
     }
@@ -798,7 +860,10 @@ mod agent {
                             println!("[TELE-06A-ACCEPTOR] keepalive pong sequence={sequence}");
                             if awaiting_pong.map(|value| value.0) == Some(sequence) {
                                 awaiting_pong = None;
-                                publish_runner_state("READY", &format!("fresh pong sequence={sequence}"));
+                                publish_runner_state(
+                                    "READY",
+                                    &format!("fresh pong sequence={sequence}"),
+                                );
                             }
                         }
                         continue;
@@ -806,7 +871,10 @@ mod agent {
                     if opcode == SMSG_GROUP_INVITE_OPCODE {
                         match parse_raw_server_message(opcode, &payload) {
                             Ok(ServerOpcodeMessage::SMSG_GROUP_INVITE(invite)) => {
-                                println!("[TELE-06A-ACCEPT-RX] inviter={:?} expected={:?}", invite.name, expected_inviter);
+                                println!(
+                                    "[TELE-06A-ACCEPT-RX] inviter={:?} expected={:?}",
+                                    invite.name, expected_inviter
+                                );
                                 if !invite.name.eq_ignore_ascii_case(expected_inviter) {
                                     println!("[TELE-06A-ACCEPTOR] inviter={:?} result=ignored_not_whitelisted", invite.name);
                                     continue;
@@ -815,8 +883,12 @@ mod agent {
                                 let _ = stream.set_read_timeout(previous_timeout);
                                 return Ok(());
                             }
-                            Ok(other) => println!("[TELE-06A-ACCEPTOR-DIAG] unexpected invite parse={other:?}"),
-                            Err(error) => println!("[TELE-06A-ACCEPTOR-DIAG] invite parse failed: {error}"),
+                            Ok(other) => println!(
+                                "[TELE-06A-ACCEPTOR-DIAG] unexpected invite parse={other:?}"
+                            ),
+                            Err(error) => {
+                                println!("[TELE-06A-ACCEPTOR-DIAG] invite parse failed: {error}")
+                            }
                         }
                         continue;
                     }
@@ -897,11 +969,9 @@ mod agent {
         CMSG_CHAR_ENUM {}
             .write_encrypted_client(&mut *stream, crypto.encrypter())
             .map_err(|e| format!("write character enum request failed: {e:?}"))?;
-        let characters = expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(
-            &mut *stream,
-            crypto.decrypter(),
-        )
-        .map_err(|e| format!("read character enum failed: {e:?}"))?;
+        let characters =
+            expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(&mut *stream, crypto.decrypter())
+                .map_err(|e| format!("read character enum failed: {e:?}"))?;
         if characters.characters.is_empty() {
             return Err("account has no characters".to_string());
         }
@@ -919,9 +989,11 @@ mod agent {
         };
         println!("[WORLD] logging character={}", selected.name);
         tele_trace::set_local_guid(selected.guid.guid());
-        CMSG_PLAYER_LOGIN { guid: selected.guid }
-            .write_encrypted_client(&mut *stream, crypto.encrypter())
-            .map_err(|e| format!("write player login failed: {e:?}"))?;
+        CMSG_PLAYER_LOGIN {
+            guid: selected.guid,
+        }
+        .write_encrypted_client(&mut *stream, crypto.encrypter())
+        .map_err(|e| format!("write player login failed: {e:?}"))?;
 
         let mut login_verified = false;
         for index in 0..256usize {
@@ -938,7 +1010,10 @@ mod agent {
             }
         }
         if !login_verified {
-            return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());
+            return Err(
+                "world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets"
+                    .to_string(),
+            );
         }
 
         reset_group_once(stream, &mut crypto)?;
@@ -953,14 +1028,18 @@ mod agent {
 
 fn parse_env_u64(name: &str, default_value: u64) -> Result<u64, String> {
     match env::var(name) {
-        Ok(value) => value.parse::<u64>().map_err(|e| format!("invalid {name}={value:?}: {e}")),
+        Ok(value) => value
+            .parse::<u64>()
+            .map_err(|e| format!("invalid {name}={value:?}: {e}")),
         Err(_) => Ok(default_value),
     }
 }
 
 fn parse_env_u32(name: &str, default_value: u32) -> Result<u32, String> {
     match env::var(name) {
-        Ok(value) => value.parse::<u32>().map_err(|e| format!("invalid {name}={value:?}: {e}")),
+        Ok(value) => value
+            .parse::<u32>()
+            .map_err(|e| format!("invalid {name}={value:?}: {e}")),
         Err(_) => Ok(default_value),
     }
 }
@@ -969,9 +1048,22 @@ fn is_transient_network_error(error: &str) -> bool {
     if error.contains("TELE06C_MOVE_MUTATION_UNCERTAIN") {
         return false;
     }
-    ["ConnectionReset", "Connection reset by peer", "BrokenPipe", "UnexpectedEof", "TimedOut", "timed out", "WouldBlock", "ConnectionRefused", "connection refused", "world socket closed", "world keepalive pong timeout", "10060"]
-        .iter()
-        .any(|needle| error.contains(needle))
+    [
+        "ConnectionReset",
+        "Connection reset by peer",
+        "BrokenPipe",
+        "UnexpectedEof",
+        "TimedOut",
+        "timed out",
+        "WouldBlock",
+        "ConnectionRefused",
+        "connection refused",
+        "world socket closed",
+        "world keepalive pong timeout",
+        "10060",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
 }
 
 fn main() {
@@ -985,11 +1077,14 @@ fn run() -> Result<(), String> {
     let username = env::var("WOW112_ACCOUNT")
         .map_err(|_| "missing WOW112_ACCOUNT".to_string())?
         .to_ascii_uppercase();
-    let password = env::var("WOW112_PASSWORD")
-        .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let password =
+        env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
     let auth_addr = env::var("WOW112_AUTH_ADDR").unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
     let character_name = env::var("WOW112_CHARACTER").ok();
-    let realm_index = env::var("WOW112_REALM_INDEX").ok().and_then(|value| value.parse::<usize>().ok()).unwrap_or(DEFAULT_REALM_INDEX);
+    let realm_index = env::var("WOW112_REALM_INDEX")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_REALM_INDEX);
     let soak_seconds = parse_env_u64("WOW112_SOAK_SECONDS", 0)?;
     let reconnect_limit = parse_env_u32("WOW112_RECONNECT_LIMIT", DEFAULT_RECONNECT_LIMIT)?.max(1);
     let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
@@ -1002,10 +1097,22 @@ fn run() -> Result<(), String> {
         println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
         env::set_var("WOW112_RUNNER_SESSION_ATTEMPT", attempt.to_string());
         publish_runner_state("CONNECTING", "new session attempt");
-        match run_session(&auth_addr, realm_index, &username, &password, character_name.as_deref(), soak_seconds) {
+        match run_session(
+            &auth_addr,
+            realm_index,
+            &username,
+            &password,
+            character_name.as_deref(),
+            soak_seconds,
+        ) {
             Ok(()) => return Ok(()),
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
-                let display_error = if error.contains("10060") { "network timeout (WinSock 10060: remote host did not respond)".to_string() } else { error.clone() }; println!("[RESILIENCE] transient network failure: {display_error}");
+                let display_error = if error.contains("10060") {
+                    "network timeout (WinSock 10060: remote host did not respond)".to_string()
+                } else {
+                    error.clone()
+                };
+                println!("[RESILIENCE] transient network failure: {display_error}");
                 println!("[RESILIENCE] reconnecting; reset/accept guards remain committed");
                 if reconnect_delay_ms != 0 {
                     thread::sleep(Duration::from_millis(reconnect_delay_ms));
@@ -1014,7 +1121,9 @@ fn run() -> Result<(), String> {
             Err(error) => return Err(error),
         }
     }
-    Err(format!("acceptor reconnect limit exhausted after {reconnect_limit} attempts"))
+    Err(format!(
+        "acceptor reconnect limit exhausted after {reconnect_limit} attempts"
+    ))
 }
 
 fn run_session(
@@ -1034,18 +1143,28 @@ fn run_session(
     }
     println!("[AUTH] realms={}", realms.realms.len());
     for (index, realm) in realms.realms.iter().enumerate() {
-        println!("[AUTH] realm[{index}] name={} address={} id={}", realm.name, realm.address, realm.realm_id);
+        println!(
+            "[AUTH] realm[{index}] name={} address={} id={}",
+            realm.name, realm.address, realm.realm_id
+        );
     }
-    let realm = realms.realms.get(realm_index).ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
+    let realm = realms
+        .realms
+        .get(realm_index)
+        .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
     let world_addr = env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_| realm.address.clone());
-    println!("[WORLD] connecting realm={} id={} address={}", realm.name, realm.realm_id, world_addr);
+    println!(
+        "[WORLD] connecting realm={} id={} address={}",
+        realm.name, realm.realm_id, world_addr
+    );
     let mut world_stream = connect_with_login_watchdog(&world_addr, "WORLD")?;
     arm_login_watchdog(&world_stream, "WORLD")?;
-    agent::login_agent(&mut world_stream, session_key, realm.realm_id, username, character_name, soak_seconds)
+    agent::login_agent(
+        &mut world_stream,
+        session_key,
+        realm.realm_id,
+        username,
+        character_name,
+        soak_seconds,
+    )
 }
-
-
-
-
-
-

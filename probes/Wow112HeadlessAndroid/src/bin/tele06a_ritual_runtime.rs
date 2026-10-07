@@ -42,20 +42,31 @@ fn connect_with_login_watchdog(addr: &str, label: &str) -> Result<TcpStream, Str
             }
         }
     }
-    Err(format!("TimedOut login watchdog label={label} addr={addr} timeout_ms={LOGIN_WATCHDOG_MS} last={}", last_error.unwrap_or_else(|| "unknown".to_string())))
+    Err(format!(
+        "TimedOut login watchdog label={label} addr={addr} timeout_ms={LOGIN_WATCHDOG_MS} last={}",
+        last_error.unwrap_or_else(|| "unknown".to_string())
+    ))
 }
 
 fn arm_login_watchdog(stream: &TcpStream, label: &str) -> Result<(), String> {
     let timeout = Some(Duration::from_millis(LOGIN_WATCHDOG_MS));
-    stream.set_read_timeout(timeout).map_err(|e| format!("{label} set login read watchdog failed: {e}"))?;
-    stream.set_write_timeout(timeout).map_err(|e| format!("{label} set login write watchdog failed: {e}"))?;
+    stream
+        .set_read_timeout(timeout)
+        .map_err(|e| format!("{label} set login read watchdog failed: {e}"))?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(|e| format!("{label} set login write watchdog failed: {e}"))?;
     println!("[LOGIN-WATCHDOG] {label} io_timeout_ms={LOGIN_WATCHDOG_MS}");
     Ok(())
 }
 
 fn publish_runner_state(state: &str, detail: &str) {
-    let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else { return; };
-    if path.trim().is_empty() { return; }
+    let Ok(path) = env::var("WOW112_RUNNER_STATE_FILE") else {
+        return;
+    };
+    if path.trim().is_empty() {
+        return;
+    }
     let session = env::var("WOW112_RUNNER_SESSION_ATTEMPT").unwrap_or_else(|_| "0".to_string());
     let safe_detail = detail.replace('\r', " ").replace('\n', " ");
     let body = format!("state={state}\nsession={session}\ndetail={safe_detail}\n");
@@ -173,7 +184,8 @@ mod tele06a {
         PARTY_EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
     }
 
-    fn party_lock() -> Result<std::sync::MutexGuard<'static, crate::tele_party_seq::PartySeq>, String> {
+    fn party_lock(
+    ) -> Result<std::sync::MutexGuard<'static, crate::tele_party_seq::PartySeq>, String> {
         PARTY
             .get()
             .ok_or_else(|| "party sequence not registered".to_string())?
@@ -248,7 +260,10 @@ mod tele06a {
                     println!("{line}");
                 }
                 if matches!(reason, FailReason::WriteUncertain { .. }) {
-                    Err(format!("TELE06A_INVITE_MUTATION_UNCERTAIN {}", reason.describe()))
+                    Err(format!(
+                        "TELE06A_INVITE_MUTATION_UNCERTAIN {}",
+                        reason.describe()
+                    ))
                 } else {
                     Err(format!("TELE06A_ROSTER_TIMEOUT {}", reason.describe()))
                 }
@@ -263,7 +278,9 @@ mod tele06a {
     }
 
     fn party_on_packet(opcode: u16, payload: &[u8]) {
-        let Ok(mut party) = party_lock() else { return; };
+        let Ok(mut party) = party_lock() else {
+            return;
+        };
         if opcode == crate::tele_party_seq::SMSG_PARTY_COMMAND_RESULT_OPCODE {
             match party.on_party_command_result(payload) {
                 Ok(parsed) => println!(
@@ -273,7 +290,9 @@ mod tele06a {
                     parsed.result,
                     crate::tele_party_seq::party_result_name(parsed.result)
                 ),
-                Err(error) => println!("[TELE-06A-PARTY-DIAG] command_result parse failed: {error}"),
+                Err(error) => {
+                    println!("[TELE-06A-PARTY-DIAG] command_result parse failed: {error}")
+                }
             }
         } else if opcode == crate::tele_party_seq::SMSG_GROUP_DECLINE_OPCODE {
             match party.on_group_decline(payload) {
@@ -338,7 +357,10 @@ mod tele06a {
                 RITUAL_OF_SUMMONING_SPELL_ID
             )
         })?;
-        publish_runner_state("CAST_SENT", "spell=698 target_mode=selection target_mask=0x0000");
+        publish_runner_state(
+            "CAST_SENT",
+            "spell=698 target_mode=selection target_mask=0x0000",
+        );
         println!(
             "[TELE-06A-CAST-TX] opcode=0x012E spell={} target={:?} target_guid=0x{:016X} target_mode=selection target_mask=0x0000 bytes={} result=attempted_once retry_allowed=false",
             RITUAL_OF_SUMMONING_SPELL_ID,
@@ -399,9 +421,9 @@ mod tele06a {
             }
 
             if cast_deadline.is_none() && party_step(stream, crypto)? {
-                let target_guid = *last_roster.get(&target_lower).ok_or_else(|| {
-                    format!("target {target_name:?} missing despite roster gate")
-                })?;
+                let target_guid = *last_roster
+                    .get(&target_lower)
+                    .ok_or_else(|| format!("target {target_name:?} missing despite roster gate"))?;
                 println!(
                     "[TELE-06A-ROSTER] PASS target={:?} target_guid=0x{:016X}",
                     target_name, target_guid
@@ -451,13 +473,15 @@ mod tele06a {
                                     party_on_group_list(&names);
                                     println!(
                                         "[TELE-06A-ROSTER] observed={} members={:?}",
-                                        roster.len(), names
+                                        roster.len(),
+                                        names
                                     );
                                     last_roster = roster;
                                 }
                                 Err(error) => println!("[TELE-06A-ROSTER-DIAG] {error}"),
                             }
-                        }                        continue;
+                        }
+                        continue;
                     }
 
                     if cast_deadline.is_none() {
@@ -499,7 +523,11 @@ mod tele06a {
                                 0x66 => "TARGET_AFFECTING_COMBAT",
                                 _ => "OTHER",
                             };
-                            let raw_hex = payload.iter().map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(" ");
+                            let raw_hex = payload
+                                .iter()
+                                .map(|byte| format!("{byte:02X}"))
+                                .collect::<Vec<_>>()
+                                .join(" ");
                             println!("[TELE-06A-CAST-RESULT-RAW] spell={} status={} reason=0x{:02X} reason_name={} raw={}", raw_spell, status, reason, reason_name, raw_hex);
                         }
                         let is_ritual = parsed.contains("698") || parsed.contains("0x02BA");
@@ -509,19 +537,28 @@ mod tele06a {
                         match opcode {
                             SMSG_SPELL_START_OPCODE => {
                                 cast_started = true;
-                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_START spell=698");
+                                publish_runner_state(
+                                    "PASS_RITUAL_STARTED",
+                                    "SMSG_SPELL_START spell=698",
+                                );
                                 println!("[TELE-06A-RITUAL] LIVE_CAST_START_PASS spell=698 retry_allowed=false");
                                 let _ = stream.set_read_timeout(previous_timeout);
                                 return Ok(());
                             }
                             SMSG_SPELL_GO_OPCODE => {
-                                publish_runner_state("PASS_RITUAL_STARTED", "SMSG_SPELL_GO spell=698");
+                                publish_runner_state(
+                                    "PASS_RITUAL_STARTED",
+                                    "SMSG_SPELL_GO spell=698",
+                                );
                                 println!("[TELE-06A-RITUAL] LIVE_CAST_GO_PASS spell=698 retry_allowed=false");
                                 let _ = stream.set_read_timeout(previous_timeout);
                                 return Ok(());
                             }
                             SMSG_CAST_RESULT_OPCODE | SMSG_SPELL_FAILURE_OPCODE => {
-                                publish_runner_state("FAIL_SERVER_REJECT", "spell=698 see raw cast-result log for reason");
+                                publish_runner_state(
+                                    "FAIL_SERVER_REJECT",
+                                    "spell=698 see raw cast-result log for reason",
+                                );
                                 println!(
                                     "[TELE-06A-RITUAL] SERVER_REJECT spell=698 cast_started={} retry_allowed=false details={}",
                                     cast_started, parsed
@@ -611,11 +648,9 @@ mod tele06a {
         CMSG_CHAR_ENUM {}
             .write_encrypted_client(&mut *stream, crypto.encrypter())
             .map_err(|e| format!("write character enum request failed: {e:?}"))?;
-        let characters = expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(
-            &mut *stream,
-            crypto.decrypter(),
-        )
-        .map_err(|e| format!("read character enum failed: {e:?}"))?;
+        let characters =
+            expect_server_message_encryption::<SMSG_CHAR_ENUM, _>(&mut *stream, crypto.decrypter())
+                .map_err(|e| format!("read character enum failed: {e:?}"))?;
         if characters.characters.is_empty() {
             return Err("account has no characters".to_string());
         }
@@ -633,9 +668,11 @@ mod tele06a {
         };
         println!("[WORLD] logging character={}", selected.name);
         tele_trace::set_local_guid(selected.guid.guid());
-        CMSG_PLAYER_LOGIN { guid: selected.guid }
-            .write_encrypted_client(&mut *stream, crypto.encrypter())
-            .map_err(|e| format!("write player login failed: {e:?}"))?;
+        CMSG_PLAYER_LOGIN {
+            guid: selected.guid,
+        }
+        .write_encrypted_client(&mut *stream, crypto.encrypter())
+        .map_err(|e| format!("write player login failed: {e:?}"))?;
 
         let mut login_verified = false;
         for index in 0..256usize {
@@ -651,7 +688,10 @@ mod tele06a {
             }
         }
         if !login_verified {
-            return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());
+            return Err(
+                "world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets"
+                    .to_string(),
+            );
         }
 
         maybe_reset_group(stream, &mut crypto)?;
@@ -676,7 +716,10 @@ mod tele06a {
             assert_eq!(CMSG_CAST_SPELL_OPCODE, 0x012E);
             assert_eq!(RITUAL_OF_SUMMONING_SPELL_ID, 698);
             let guid = 0x0000_0000_3B9F_74DEu64;
-            assert_eq!(guid.to_le_bytes(), [0xDE, 0x74, 0x9F, 0x3B, 0x00, 0x00, 0x00, 0x00]);
+            assert_eq!(
+                guid.to_le_bytes(),
+                [0xDE, 0x74, 0x9F, 0x3B, 0x00, 0x00, 0x00, 0x00]
+            );
             let payload = encode_ritual_cast();
             assert_eq!(payload.len(), 6);
             assert_eq!(&payload[0..4], &698u32.to_le_bytes());
@@ -686,7 +729,10 @@ mod tele06a {
         #[test]
         fn packed_guid_skips_zero_bytes() {
             assert_eq!(encode_packed_guid(0x0000_0000_0000_00FF), vec![0x01, 0xFF]);
-            assert_eq!(encode_packed_guid(0x0000_0000_0100_0001), vec![0x09, 0x01, 0x01]);
+            assert_eq!(
+                encode_packed_guid(0x0000_0000_0100_0001),
+                vec![0x09, 0x01, 0x01]
+            );
         }
     }
 }
@@ -721,7 +767,8 @@ fn is_transient_network_error(error: &str) -> bool {
         "ConnectionRefused",
         "connection refused",
         "world socket closed",
-        "world keepalive pong timeout", "10060",
+        "world keepalive pong timeout",
+        "10060",
     ]
     .iter()
     .any(|needle| error.contains(needle))
@@ -738,10 +785,9 @@ fn run() -> Result<(), String> {
     let username = env::var("WOW112_ACCOUNT")
         .map_err(|_| "missing WOW112_ACCOUNT".to_string())?
         .to_ascii_uppercase();
-    let password = env::var("WOW112_PASSWORD")
-        .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
-    let auth_addr = env::var("WOW112_AUTH_ADDR")
-        .unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
+    let password =
+        env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let auth_addr = env::var("WOW112_AUTH_ADDR").unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
     let character_name = env::var("WOW112_CHARACTER").ok();
     let realm_index = env::var("WOW112_REALM_INDEX")
         .ok()
@@ -784,8 +830,15 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
             Err(error) if is_transient_network_error(&error) && attempt < reconnect_limit => {
-                let display_error = if error.contains("10060") { "network timeout (WinSock 10060: remote host did not respond)".to_string() } else { error.clone() }; println!("[RESILIENCE] transient network failure: {display_error}");
-                println!("[RESILIENCE] reconnecting; reset/invite/cast one-shot guards remain committed");
+                let display_error = if error.contains("10060") {
+                    "network timeout (WinSock 10060: remote host did not respond)".to_string()
+                } else {
+                    error.clone()
+                };
+                println!("[RESILIENCE] transient network failure: {display_error}");
+                println!(
+                    "[RESILIENCE] reconnecting; reset/invite/cast one-shot guards remain committed"
+                );
                 if reconnect_delay_ms != 0 {
                     thread::sleep(Duration::from_millis(reconnect_delay_ms));
                 }
@@ -794,7 +847,9 @@ fn run() -> Result<(), String> {
         }
     }
 
-    Err(format!("TELE-06A reconnect limit exhausted after {reconnect_limit} attempts"))
+    Err(format!(
+        "TELE-06A reconnect limit exhausted after {reconnect_limit} attempts"
+    ))
 }
 
 fn run_session(
@@ -814,14 +869,20 @@ fn run_session(
     }
     println!("[AUTH] realms={}", realms.realms.len());
     for (index, realm) in realms.realms.iter().enumerate() {
-        println!("[AUTH] realm[{index}] name={} address={} id={}", realm.name, realm.address, realm.realm_id);
+        println!(
+            "[AUTH] realm[{index}] name={} address={} id={}",
+            realm.name, realm.address, realm.realm_id
+        );
     }
     let realm = realms
         .realms
         .get(realm_index)
         .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
     let world_addr = env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_| realm.address.clone());
-    println!("[WORLD] connecting realm={} id={} address={}", realm.name, realm.realm_id, world_addr);
+    println!(
+        "[WORLD] connecting realm={} id={} address={}",
+        realm.name, realm.realm_id, world_addr
+    );
     let mut world_stream = connect_with_login_watchdog(&world_addr, "WORLD")?;
     arm_login_watchdog(&world_stream, "WORLD")?;
 
@@ -834,6 +895,3 @@ fn run_session(
         soak_seconds,
     )
 }
-
-
-
