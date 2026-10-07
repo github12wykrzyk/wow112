@@ -25,6 +25,9 @@ jobs:
       }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release packaging source
+        uses: actions/checkout@v5
+
       - name: Resolve latest successful DE build
         id: resolve
         shell: bash
@@ -58,7 +61,7 @@ jobs:
           gh run download "$RUN_ID" --repo "$REPO" --name "$ART_NAME" --dir payload
           test -n "$(find payload -type f -name '*.exe' -print -quit)"
 
-      - name: Build stable rolling release asset
+      - name: Build release-only DE plus launcher bundle
         shell: bash
         env:
           RUN_ID: ${{ steps.resolve.outputs.run_id }}
@@ -66,26 +69,78 @@ jobs:
           ART_NAME: ${{ steps.resolve.outputs.artifact_name }}
         run: |
           set -euo pipefail
+          for p in \
+            packaging/ah_latest/launcher/START_AH.bat \
+            packaging/ah_latest/launcher/_launcher/START_AH.ps1 \
+            packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1 \
+            packaging/ah_latest/START_AH_LATEST.bat \
+            packaging/ah_latest/bootstrap_latest.ps1; do
+            test -s "$p" || { echo "missing release packaging file: $p" >&2; exit 3; }
+          done
+
           python - <<'PY'
           from pathlib import Path
           import zipfile
-          root=Path('payload')
+          payload=Path('payload')
           out=Path('WoW112_DE_LATEST.zip')
+          extras={
+              Path('packaging/ah_latest/launcher/START_AH.bat'): 'launcher/START_AH.bat',
+              Path('packaging/ah_latest/launcher/_launcher/START_AH.ps1'): 'launcher/_launcher/START_AH.ps1',
+              Path('packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1'): 'launcher/_launcher/RUN_DE_LAB.ps1',
+              Path('packaging/ah_latest/START_AH_LATEST.bat'): 'bootstrap/START_AH_LATEST.bat',
+              Path('packaging/ah_latest/bootstrap_latest.ps1'): 'bootstrap/bootstrap_latest.ps1',
+          }
           with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
-              for p in sorted(root.rglob('*')):
-                  if p.is_file(): z.write(p,p.relative_to(root))
+              for p in sorted(payload.rglob('*')):
+                  if p.is_file():
+                      z.write(p,p.relative_to(payload).as_posix())
+              for src,arc in extras.items():
+                  z.write(src,arc)
+          with zipfile.ZipFile(out,'r') as z:
+              names=set(z.namelist())
+              required=set(extras.values())
+              missing=sorted(required-names)
+              if missing:
+                  raise SystemExit('release launcher bundle missing: '+','.join(missing))
+          print('RELEASE_LAUNCHER_BUNDLE=PASS')
           PY
-          SHA=$(sha256sum WoW112_DE_LATEST.zip | awk '{print $1}')
+
+          cp packaging/ah_latest/bootstrap_latest.ps1 WoW112_AH_BOOTSTRAP_LATEST.ps1
+          cp packaging/ah_latest/START_AH_LATEST.bat WoW112_AH_START_LATEST.bat
+          BOOT_SHA=$(sha256sum WoW112_AH_BOOTSTRAP_LATEST.ps1 | awk '{print $1}')
+          START_SHA=$(sha256sum WoW112_AH_START_LATEST.bat | awk '{print $1}')
+          printf '%s  %s\n' "$BOOT_SHA" 'WoW112_AH_BOOTSTRAP_LATEST.ps1' > WoW112_AH_BOOTSTRAP_LATEST.sha256
+          printf '%s  %s\n' "$START_SHA" 'WoW112_AH_START_LATEST.bat' > WoW112_AH_START_LATEST.sha256
+
+          ZIP_SHA=$(sha256sum WoW112_DE_LATEST.zip | awk '{print $1}')
           {
             echo "CHANNEL=ah-de-latest"
+            echo "RUNTIME_CHANNEL=GITHUB_RELEASE_ONLY"
+            echo "LAUNCHER_BUNDLE=YES"
             echo "RUN_ID=$RUN_ID"
             echo "HEAD_SHA=$HEAD_SHA"
             echo "ARTIFACT_NAME=$ART_NAME"
-            echo "ZIP_SHA256=$SHA"
+            echo "ZIP_SHA256=$ZIP_SHA"
+            echo "BOOTSTRAP_SHA256=$BOOT_SHA"
+            echo "STARTER_SHA256=$START_SHA"
           } > WoW112_DE_LATEST.txt
           cat WoW112_DE_LATEST.txt
 
-      - name: Publish or replace rolling GitHub Release asset
+      - name: Static corporate-channel contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'raw\.githubusercontent\.com|api\.github\.com' packaging/ah_latest/START_AH_LATEST.bat packaging/ah_latest/bootstrap_latest.ps1; then
+            echo 'Corporate runtime contract failed: blocked host referenced by runtime updater.' >&2
+            exit 10
+          fi
+          grep -q 'releases/download/ah-de-latest' packaging/ah_latest/START_AH_LATEST.bat
+          grep -q 'releases/download/ah-de-latest' packaging/ah_latest/bootstrap_latest.ps1
+          grep -q 'RUNTIME_CHANNEL=GITHUB_RELEASE_ONLY' WoW112_DE_LATEST.txt
+          grep -q 'LAUNCHER_BUNDLE=YES' WoW112_DE_LATEST.txt
+          echo 'CORP_RELEASE_ONLY_CONTRACT=PASS'
+
+      - name: Publish or replace rolling GitHub Release assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -93,8 +148,16 @@ jobs:
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
         run: |
           set -euo pipefail
+          ASSETS=(
+            WoW112_DE_LATEST.zip
+            WoW112_DE_LATEST.txt
+            WoW112_AH_BOOTSTRAP_LATEST.ps1
+            WoW112_AH_BOOTSTRAP_LATEST.sha256
+            WoW112_AH_START_LATEST.bat
+            WoW112_AH_START_LATEST.sha256
+          )
           if gh release view ah-de-latest --repo "$REPO" >/dev/null 2>&1; then
-            gh release upload ah-de-latest WoW112_DE_LATEST.zip WoW112_DE_LATEST.txt --repo "$REPO" --clobber
+            gh release upload ah-de-latest "${ASSETS[@]}" --repo "$REPO" --clobber
           else
-            gh release create ah-de-latest WoW112_DE_LATEST.zip WoW112_DE_LATEST.txt --repo "$REPO" --target "$HEAD_SHA" --title 'WoW112 AH DE Latest' --notes 'Rolling public DE Lab build. Asset is replaced after every successful DE build.' --prerelease
+            gh release create ah-de-latest "${ASSETS[@]}" --repo "$REPO" --target "$HEAD_SHA" --title 'WoW112 AH DE Latest' --notes 'Rolling DE Lab build with release-only corporate-friendly bootstrap and launcher bundle.' --prerelease
           fi

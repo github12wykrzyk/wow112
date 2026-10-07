@@ -82,6 +82,58 @@ jobs:
 
           echo 'SAFETY_POLICY=PASS' | tee "$STATE_DIR/POLICY.txt"
 
+      - name: Corporate release-only updater contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          START=packaging/ah_latest/START_AH_LATEST.bat
+          BOOT=packaging/ah_latest/bootstrap_latest.ps1
+          PUB=.github/workflows/publish_ah_de_latest_release.yml
+
+          for p in "$START" "$BOOT" "$PUB" \
+            packaging/ah_latest/launcher/START_AH.bat \
+            packaging/ah_latest/launcher/_launcher/START_AH.ps1 \
+            packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1; do
+            test -s "$p" || { echo "CORP CONTRACT FAIL: missing $p" >&2; exit 26; }
+          done
+
+          if grep -n -E 'raw\.githubusercontent\.com|api\.github\.com' "$START" "$BOOT"; then
+            echo 'CORP CONTRACT FAIL: runtime updater references a blocked GitHub host.' >&2
+            exit 27
+          fi
+          grep -q 'releases/download/ah-de-latest' "$START" || { echo 'starter is not release-only' >&2; exit 28; }
+          grep -q 'releases/download/ah-de-latest' "$BOOT" || { echo 'bootstrap is not release-only' >&2; exit 29; }
+          grep -q 'WoW112_AH_BOOTSTRAP_LATEST.sha256' "$START" || { echo 'starter bootstrap hash verification missing' >&2; exit 32; }
+          grep -q 'RUNTIME_CHANNEL=GITHUB_RELEASE_ONLY' "$PUB" || { echo 'release channel marker missing' >&2; exit 33; }
+          grep -q 'LAUNCHER_BUNDLE=YES' "$PUB" || { echo 'launcher bundle marker missing' >&2; exit 34; }
+          grep -q 'launcher/START_AH.bat' "$PUB" || { echo 'START_AH launcher not bundled' >&2; exit 35; }
+          grep -q 'launcher/_launcher/START_AH.ps1' "$PUB" || { echo 'menu launcher not bundled' >&2; exit 36; }
+          grep -q 'launcher/_launcher/RUN_DE_LAB.ps1' "$PUB" || { echo 'DE launcher not bundled' >&2; exit 37; }
+
+          pwsh -NoLogo -NoProfile -Command '$null=[scriptblock]::Create((Get-Content "packaging/ah_latest/bootstrap_latest.ps1" -Raw)); Write-Host "BOOTSTRAP_PARSE=PASS"'
+
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile, tempfile
+          extras={
+              Path('packaging/ah_latest/launcher/START_AH.bat'): 'launcher/START_AH.bat',
+              Path('packaging/ah_latest/launcher/_launcher/START_AH.ps1'): 'launcher/_launcher/START_AH.ps1',
+              Path('packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1'): 'launcher/_launcher/RUN_DE_LAB.ps1',
+              Path('packaging/ah_latest/START_AH_LATEST.bat'): 'bootstrap/START_AH_LATEST.bat',
+              Path('packaging/ah_latest/bootstrap_latest.ps1'): 'bootstrap/bootstrap_latest.ps1',
+          }
+          with tempfile.NamedTemporaryFile(suffix='.zip') as f:
+              with zipfile.ZipFile(f.name,'w',zipfile.ZIP_DEFLATED) as z:
+                  for src,arc in extras.items(): z.write(src,arc)
+              with zipfile.ZipFile(f.name,'r') as z:
+                  names=set(z.namelist())
+                  missing=set(extras.values())-names
+                  if missing: raise SystemExit('mock release missing '+','.join(sorted(missing)))
+          print('CORP_RELEASE_BUNDLE_MOCK=PASS')
+          PY
+
+          echo 'CORP_RELEASE_ONLY_CONTRACT=PASS' | tee "$STATE_DIR/CORP_RELEASE_CHANNEL.txt"
+
       - name: Dispatch exact DE build workflow
         id: dispatch
         shell: bash
@@ -186,6 +238,7 @@ jobs:
             "build_run_id": "$RUN_ID",
             "exe_sha256": "$EXE_SHA",
             "policy": "PASS",
+            "corp_release_channel": "PASS",
             "build": "PASS",
             "artifact_validation": "PASS",
             "human_live_gate": true,
@@ -199,6 +252,7 @@ jobs:
           build_run=$RUN_ID
           state=READY_FOR_HUMAN_LIVE
           policy=PASS
+          corp_release_channel=PASS
           exact_build=PASS
           artifact_validation=PASS
           live_mutation_from_ci=NO

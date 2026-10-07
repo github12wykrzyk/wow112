@@ -12,46 +12,34 @@ $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 $ReleaseBase = 'https://github.com/github12wykrzyk/wow112/releases/download/ah-de-latest'
 $ZipUrl = "$ReleaseBase/WoW112_DE_LATEST.zip"
 $ManifestUrl = "$ReleaseBase/WoW112_DE_LATEST.txt"
-$RawLauncherBase = 'https://raw.githubusercontent.com/github12wykrzyk/wow112/refs/heads/dev/windows-ah-de-liquidation-v3/packaging/ah_latest/launcher'
-$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/2.3' }
+$Headers = @{ 'User-Agent' = 'WoW112-AH-Latest-Bootstrap/4.0' }
 
 function Say([string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Text -ForegroundColor $Color
 }
 
-function Sync-LatestLauncher([string]$Directory) {
-    $launcherDir = Join-Path $Directory '_launcher'
-    New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
-    $targets = @(
-        @{ Url = "$RawLauncherBase/START_AH.bat"; Target = (Join-Path $Directory 'START_AH.bat') },
-        @{ Url = "$RawLauncherBase/_launcher/START_AH.ps1"; Target = (Join-Path $launcherDir 'START_AH.ps1') },
-        @{ Url = "$RawLauncherBase/_launcher/RUN_DE_LAB.ps1"; Target = (Join-Path $launcherDir 'RUN_DE_LAB.ps1') }
-    )
-    $updated = 0
-    foreach ($entry in $targets) {
-        $tmp = $entry.Target + '.latest.tmp'
-        try {
-            Invoke-WebRequest -UseBasicParsing -Uri $entry.Url -Headers $Headers -OutFile $tmp
-            if (-not (Test-Path $tmp) -or (Get-Item $tmp).Length -lt 100) {
-                throw "launcher download missing or unexpectedly small: $($entry.Url)"
-            }
-            $replace = $true
-            if (Test-Path $entry.Target) {
-                $oldSha = (Get-FileHash $entry.Target -Algorithm SHA256).Hash
-                $newSha = (Get-FileHash $tmp -Algorithm SHA256).Hash
-                $replace = $oldSha -ne $newSha
-            }
-            if ($replace) {
-                Move-Item $tmp $entry.Target -Force
-                $updated++
-            } else {
-                Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-            }
-        } finally {
-            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-        }
+function Install-FileIfChanged([string]$Source, [string]$Target) {
+    if (-not (Test-Path $Source)) { throw "Required release file missing: $Source" }
+    $parent = Split-Path -Parent $Target
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    return $updated
+    $replace = $true
+    if (Test-Path $Target) {
+        $oldSha = (Get-FileHash $Target -Algorithm SHA256).Hash
+        $newSha = (Get-FileHash $Source -Algorithm SHA256).Hash
+        $replace = $oldSha -ne $newSha
+    }
+    if (-not $replace) { return $false }
+    $tmp = $Target + '.release.tmp'
+    try {
+        Copy-Item $Source $tmp -Force
+        Move-Item $tmp $Target -Force
+    }
+    finally {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+    return $true
 }
 
 function Refresh-LiveWrapperHash([string]$Directory, [string]$ExeSha) {
@@ -70,21 +58,18 @@ function Refresh-LiveWrapperHash([string]$Directory, [string]$ExeSha) {
 }
 
 Say '============================================================' Cyan
-Say 'WoW112 AH - UNIVERSAL LATEST BOOTSTRAP' Cyan
-Say 'Vendor Stable is preserved. DE_LAB + launchers are updated from GitHub.' DarkCyan
+Say 'WoW112 AH - LATEST / CORP-FRIENDLY V4' Cyan
+Say 'Release-only runtime channel. No raw.githubusercontent.com. No GitHub API.' DarkCyan
+Say 'Vendor Stable EXE pozostaje nietkniety.' DarkCyan
 Say '============================================================' Cyan
 
 $deDir = Join-Path $InstallRoot 'DE_LAB'
-New-Item -ItemType Directory -Force -Path $deDir | Out-Null
+$launcherDir = Join-Path $InstallRoot '_launcher'
+New-Item -ItemType Directory -Force -Path $deDir,$launcherDir | Out-Null
 $localExe = Join-Path $deDir 'wow112-ah-de-liquidation-v31.exe'
 $versionFile = Join-Path $deDir 'LATEST_GITHUB_BUILD.txt'
-$history = Join-Path $deDir 'POC08_MATERIAL_HISTORY_V3.csv'
 
-Say 'Syncing latest launcher wrappers...'
-$launcherUpdates = Sync-LatestLauncher -Directory $InstallRoot
-Say ("Launcher wrapper updates: {0}" -f $launcherUpdates) DarkGreen
-
-Say 'Checking rolling DE release manifest...'
+Say 'Reading rolling DE release metadata...'
 $remoteManifest = (Invoke-WebRequest -UseBasicParsing -Uri $ManifestUrl -Headers $Headers).Content
 if ([string]::IsNullOrWhiteSpace($remoteManifest)) { throw 'Rolling release manifest is empty.' }
 
@@ -95,35 +80,20 @@ foreach ($line in ($remoteManifest -split "`r?`n")) {
 if (-not $remote.ContainsKey('ZIP_SHA256') -or -not $remote.ContainsKey('HEAD_SHA')) {
     throw 'Rolling release manifest is missing ZIP_SHA256 or HEAD_SHA.'
 }
-
-if ((Test-Path $localExe) -and (Test-Path $versionFile)) {
-    $localVersion = Get-Content $versionFile -Raw -ErrorAction SilentlyContinue
-    if ($localVersion -eq $remoteManifest) {
-        $sha = (Get-FileHash $localExe -Algorithm SHA256).Hash.ToLowerInvariant()
-        $patched = Refresh-LiveWrapperHash -Directory $deDir -ExeSha $sha
-        Say ("Already latest: sha={0}; launcher_updates={1}; wrapper_hash_updates={2}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length)),$launcherUpdates,$patched) Green
-        if (-not $NoLaunch) {
-            $launcher = Join-Path $InstallRoot 'START_AH.bat'
-            if (Test-Path $launcher) { & $launcher; exit $LASTEXITCODE }
-            Say 'START_AH.bat not found. Update completed; launch a DE_LAB .bat manually.' Yellow
-        }
-        exit 0
-    }
+if (-not $remote.ContainsKey('RUNTIME_CHANNEL') -or $remote['RUNTIME_CHANNEL'] -ne 'GITHUB_RELEASE_ONLY') {
+    throw 'Rolling release is not marked RUNTIME_CHANNEL=GITHUB_RELEASE_ONLY.'
+}
+if (-not $remote.ContainsKey('LAUNCHER_BUNDLE') -or $remote['LAUNCHER_BUNDLE'] -ne 'YES') {
+    throw 'Rolling release does not contain the required launcher bundle contract.'
 }
 
-$tmpRoot = Join-Path $env:TEMP ('wow112_ah_latest_' + [guid]::NewGuid().ToString('N'))
+$tmpRoot = Join-Path $env:TEMP ('wow112_ah_release_' + [guid]::NewGuid().ToString('N'))
 $tmpZip = Join-Path $tmpRoot 'WoW112_DE_LATEST.zip'
 $tmpOut = Join-Path $tmpRoot 'out'
 New-Item -ItemType Directory -Force -Path $tmpRoot,$tmpOut | Out-Null
 
-$historyBackup = $null
-if (Test-Path $history) {
-    $historyBackup = Join-Path $tmpRoot 'POC08_MATERIAL_HISTORY_V3.csv'
-    Copy-Item $history $historyBackup -Force
-}
-
 try {
-    Say 'Downloading public WoW112_DE_LATEST.zip...'
+    Say 'Downloading latest DE + launcher release ZIP...'
     Invoke-WebRequest -UseBasicParsing -Uri $ZipUrl -Headers $Headers -OutFile $tmpZip
     if (-not (Test-Path $tmpZip) -or (Get-Item $tmpZip).Length -lt 10000) {
         throw 'Downloaded release ZIP is missing or unexpectedly small.'
@@ -136,10 +106,22 @@ try {
     }
 
     Expand-Archive -LiteralPath $tmpZip -DestinationPath $tmpOut -Force
+
     $exe = Get-ChildItem -Path $tmpOut -Recurse -File -Filter '*.exe' |
         Where-Object { $_.Name -like 'wow112-ah-de-liquidation-*.exe' -or $_.Name -eq 'wow112-headless-android-probe.exe' } |
         Sort-Object Length -Descending | Select-Object -First 1
     if (-not $exe) { throw 'DE executable not found inside release ZIP.' }
+
+    $bundleStart = Join-Path $tmpOut 'launcher\START_AH.bat'
+    $bundleMenu = Join-Path $tmpOut 'launcher\_launcher\START_AH.ps1'
+    $bundleDe = Join-Path $tmpOut 'launcher\_launcher\RUN_DE_LAB.ps1'
+    $bundleStarter = Join-Path $tmpOut 'bootstrap\START_AH_LATEST.bat'
+    $bundleBootstrap = Join-Path $tmpOut 'bootstrap\bootstrap_latest.ps1'
+    foreach ($required in @($bundleStart,$bundleMenu,$bundleDe,$bundleStarter,$bundleBootstrap)) {
+        if (-not (Test-Path $required) -or (Get-Item $required).Length -lt 100) {
+            throw "Release launcher bundle incomplete: $required"
+        }
+    }
 
     $bytes = [IO.File]::ReadAllBytes($exe.FullName)
     if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
@@ -147,24 +129,33 @@ try {
     }
     $exeSha = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 
-    $staged = Join-Path $deDir 'wow112-ah-de-liquidation-v31.exe.new'
-    Copy-Item $exe.FullName $staged -Force
-    if (Test-Path $localExe) { Copy-Item $localExe ($localExe + '.previous') -Force }
-    Move-Item $staged $localExe -Force
-
-    if ($historyBackup -and (Test-Path $historyBackup)) {
-        Copy-Item $historyBackup $history -Force
+    $exeUpdated = $false
+    if (-not (Test-Path $localExe) -or (Get-FileHash $localExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $exeSha) {
+        $staged = Join-Path $deDir 'wow112-ah-de-liquidation-v31.exe.new'
+        Copy-Item $exe.FullName $staged -Force
+        if (Test-Path $localExe) { Copy-Item $localExe ($localExe + '.previous') -Force }
+        Move-Item $staged $localExe -Force
+        $exeUpdated = $true
     }
+
+    $launcherUpdates = 0
+    if (Install-FileIfChanged $bundleStart (Join-Path $InstallRoot 'START_AH.bat')) { $launcherUpdates++ }
+    if (Install-FileIfChanged $bundleMenu (Join-Path $launcherDir 'START_AH.ps1')) { $launcherUpdates++ }
+    if (Install-FileIfChanged $bundleDe (Join-Path $launcherDir 'RUN_DE_LAB.ps1')) { $launcherUpdates++ }
+    if (Install-FileIfChanged $bundleStarter (Join-Path $InstallRoot 'START_AH_LATEST.bat')) { $launcherUpdates++ }
+    [void](Install-FileIfChanged $bundleBootstrap (Join-Path $launcherDir 'bootstrap_latest.ps1'))
 
     $patched = Refresh-LiveWrapperHash -Directory $deDir -ExeSha $exeSha
     Set-Content -Path $versionFile -Value $remoteManifest -Encoding ASCII
     Set-Content -Path (Join-Path $deDir 'LATEST_EXE_SHA256.txt') -Value $exeSha -Encoding ASCII
 
-    Say ("UPDATED DE_LAB: sha={0}" -f $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length))) Green
+    $shortSha = $remote['HEAD_SHA'].Substring(0,[Math]::Min(12,$remote['HEAD_SHA'].Length))
+    if ($exeUpdated) { Say ("DE UPDATED: {0}" -f $shortSha) Green } else { Say ("DE already latest: {0}" -f $shortSha) Green }
     Say "Release ZIP SHA256: $zipSha" DarkGreen
     Say "EXE SHA256: $exeSha" DarkGreen
-    Say "Launcher wrapper updates: $launcherUpdates" DarkGreen
+    Say "Launcher files updated from same verified release ZIP: $launcherUpdates" DarkGreen
     Say "Live wrapper hash lines refreshed: $patched" DarkGreen
+    Say 'RUNTIME CHANNEL PASS: github.com release assets only.' Green
 }
 finally {
     if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -177,5 +168,5 @@ if (-not $NoLaunch) {
         & $launcher
         exit $LASTEXITCODE
     }
-    Say 'START_AH.bat not found. Update completed; launch a DE_LAB .bat manually.' Yellow
+    Say 'START_AH.bat not found. Update completed.' Yellow
 }
