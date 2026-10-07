@@ -37,7 +37,10 @@ fn tele08_d_public_api_smoke() {
 
     for id in [&azshara, &hyjal, &winterspring] {
         assert_eq!(
-            registry.status(id).expect("seed status exists").availability,
+            registry
+                .status(id)
+                .expect("seed status exists")
+                .availability,
             Availability::Unknown,
             "default observations must fail closed"
         );
@@ -45,7 +48,10 @@ fn tele08_d_public_api_smoke() {
             .set_observation(id, healthy(None))
             .expect("healthy observation must apply");
         assert_eq!(
-            registry.status(id).expect("healthy status exists").availability,
+            registry
+                .status(id)
+                .expect("healthy status exists")
+                .availability,
             Availability::Enabled
         );
     }
