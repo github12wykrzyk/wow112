@@ -1,7 +1,7 @@
 name: AH history terminal V0 offline validation
 on:
   push:
-    branches: [dev/windows-ah-canonical]
+    branches: [dev/windows-ah-canonical, feature/ah-history-shadow-canonical]
     paths:
       - 'src/AhHistoryTerminal/**'
       - '.github/workflows/ah_history_terminal_v0.yml'
@@ -43,6 +43,8 @@ jobs:
         run: python src/AhHistoryTerminal/test_autonomous.py src/AhHistoryTerminal/test-results
       - name: Verify immutable archive lifecycle
         run: python src/AhHistoryTerminal/test_github_archive.py
+      - name: Verify shared shadow history, PIT material view and storage isolation
+        run: python src/AhHistoryTerminal/test_shadow_history.py
       - name: Upload validation report
         if: success()
         uses: actions/upload-artifact@v4
