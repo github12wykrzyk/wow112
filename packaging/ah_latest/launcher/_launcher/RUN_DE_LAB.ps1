@@ -26,6 +26,26 @@ $log=Join-Path $deDir ($prefix+'_'+$stamp+'.log')
 $reports=Join-Path $deDir 'REPORTS'
 New-Item -ItemType Directory -Force $reports | Out-Null
 
+function Count-Marker([string]$Path,[string]$Marker){
+    if(-not(Test-Path $Path)){return 0}
+    return @(Select-String -Path $Path -SimpleMatch $Marker -ErrorAction SilentlyContinue).Count
+}
+
+function Test-TransientPreSend([string]$Path){
+    if(-not(Test-Path $Path)){return $false}
+    foreach($pattern in @(
+        'UnexpectedEof',
+        'read encrypted server header failed',
+        'read encrypted server payload failed',
+        'server did not return MSG_AUCTION_HELLO',
+        'Connection reset',
+        'forcibly closed'
+    )){
+        if(Select-String -Path $Path -SimpleMatch $pattern -Quiet -ErrorAction SilentlyContinue){return $true}
+    }
+    return $false
+}
+
 foreach($name in @(
   'WOW112_DE_MAT_VALUES','WOW112_F1_DE_MAX_MODEL_DISAGREEMENT_BPS','WOW112_F0_MAX_MODEL_DISAGREEMENT_BPS',
   'WOW112_F1_DE_WHITELIST','WOW112_F2_EXPECT_AUCTION_ID','WOW112_F2_EXPECT_ITEM_ID','WOW112_F2_EXPECT_BUYOUT','WOW112_F2_EXPECT_COUNT'
@@ -101,29 +121,83 @@ if($RunMode -eq 'Live3'){
 
 $started=Get-Date
 $code=99
+$attempt=0
+$maxAttempts=3
+$retryCount=0
+$stopReason=''
+$attemptLogs=@()
 try{
-    & $exe 2>&1 | Tee-Object -FilePath $log
-    $code=$LASTEXITCODE
+    while($attempt -lt $maxAttempts){
+        $attempt++
+        $attemptLog=Join-Path $deDir ($prefix+'_'+$stamp+('_TRY{0}.log' -f $attempt))
+        $attemptLogs += $attemptLog
+        Write-Host ("[DE-SUPERVISOR] attempt {0}/{1} fresh login + fresh scan" -f $attempt,$maxAttempts) -ForegroundColor Cyan
+
+        $oldEap=$ErrorActionPreference
+        $ErrorActionPreference='Continue'
+        try{
+            & $exe 2>&1 | Tee-Object -FilePath $attemptLog
+            if($null -eq $LASTEXITCODE){$code=1}else{$code=[int]$LASTEXITCODE}
+        }catch{
+            if($null -eq $LASTEXITCODE){$code=1}else{$code=[int]$LASTEXITCODE}
+            ("[DE-SUPERVISOR] native invocation caught: " + $_.Exception.Message) | Tee-Object -FilePath $attemptLog -Append | Write-Host
+        }finally{
+            $ErrorActionPreference=$oldEap
+        }
+
+        $attemptSent=Count-Marker $attemptLog '[POC07-BUY] SENT'
+        $attemptUncertain=Count-Marker $attemptLog 'AH_MUTATION_UNCERTAIN'
+
+        if($code -eq 0){$stopReason='PASS';break}
+        if($attemptSent -gt 0 -or $attemptUncertain -gt 0){
+            $stopReason='MUTATION_BOUNDARY_NO_RETRY'
+            Write-Host '[DE-SUPERVISOR] HARD STOP: SEND/UNCERTAIN observed. No automatic retry.' -ForegroundColor Red
+            break
+        }
+
+        $transient=Test-TransientPreSend $attemptLog
+        if($transient -and $attempt -lt $maxAttempts){
+            $retryCount++
+            $delay=2*$attempt
+            Write-Host ("[DE-SUPERVISOR] safe transient pre-SEND failure; retry {0}/{1} in {2}s" -f $retryCount,($maxAttempts-1),$delay) -ForegroundColor Yellow
+            Start-Sleep -Seconds $delay
+            continue
+        }
+
+        $stopReason=if($transient){'TRANSIENT_RETRY_EXHAUSTED'}else{'NON_RETRYABLE_PRE_SEND_FAILURE'}
+        break
+    }
 }finally{
     Remove-Item Env:WOW112_F1_LIVE_CONFIRM,Env:WOW112_AUTOBUY_CONFIRM -ErrorAction SilentlyContinue
 }
 $elapsed=[int]((Get-Date)-$started).TotalSeconds
 
-$sent=0;$server=0;$confirmed=0;$uncertain=0;$livepass=0;$prefilter=''
-if(Test-Path $log){
-    $sent=@(Select-String -Path $log -SimpleMatch '[POC07-BUY] SENT').Count
-    $server=@(Select-String -Path $log -SimpleMatch '[POC07-BUY] SERVER PASS').Count
-    $confirmed=@(Select-String -Path $log -SimpleMatch '[POC08-UNIFIED-MULTI] CONFIRMED').Count
-    $uncertain=@(Select-String -Path $log -SimpleMatch 'AH_MUTATION_UNCERTAIN').Count
-    $livepass=@(Select-String -Path $log -SimpleMatch '[POC08-UNIFIED-MULTI] LIVE PASS').Count
-    $prefilter=(Select-String -Path $log -SimpleMatch '[POC08-DE-FAST-PREFILTER] stage=LOCAL_DEID' | Select-Object -Last 1).Line
+# Build one aggregate log regardless of PASS/failure, while preserving per-attempt logs.
+if(Test-Path $log){Remove-Item $log -Force}
+foreach($attemptLog in $attemptLogs){
+    if(Test-Path $attemptLog){
+        Add-Content -Path $log -Value ('===== ATTEMPT LOG: '+(Split-Path $attemptLog -Leaf)+' =====')
+        Get-Content $attemptLog | Add-Content -Path $log
+    }
 }
+
+$sent=Count-Marker $log '[POC07-BUY] SENT'
+$server=Count-Marker $log '[POC07-BUY] SERVER PASS'
+$confirmed=Count-Marker $log '[POC08-UNIFIED-MULTI] CONFIRMED'
+$uncertain=Count-Marker $log 'AH_MUTATION_UNCERTAIN'
+$livepass=Count-Marker $log '[POC08-UNIFIED-MULTI] LIVE PASS'
+$prefilter=''
+if(Test-Path $log){$prefilter=(Select-String -Path $log -SimpleMatch '[POC08-DE-FAST-PREFILTER] stage=LOCAL_DEID' -ErrorAction SilentlyContinue | Select-Object -Last 1).Line}
+
 $summary=Join-Path $deDir ($prefix+'_RUN_SUMMARY.txt')
 @(
   "mode=$RunMode",
   "stamp=$stamp",
   "exit_code=$code",
   "elapsed_seconds=$elapsed",
+  "attempts=$attempt",
+  "safe_retries=$retryCount",
+  "stop_reason=$stopReason",
   "sent=$sent",
   "server_pass=$server",
   "confirmed=$confirmed",
@@ -134,14 +208,23 @@ $summary=Join-Path $deDir ($prefix+'_RUN_SUMMARY.txt')
 ) | Set-Content $summary -Encoding UTF8
 
 $report=Join-Path $reports ($prefix+'_'+$stamp+'.zip')
-$files=@($log,$summary,$candidates,$f0,$rejected,$prov,$material,(Join-Path $deDir 'POC08_MATERIAL_HISTORY_V3.csv'),(Join-Path $deDir 'LATEST_EXE_SHA256.txt')) | Where-Object {Test-Path $_}
-Compress-Archive -Path $files -DestinationPath $report -CompressionLevel Optimal -Force
-Copy-Item $report (Join-Path $reports 'LATEST_DE_REPORT.zip') -Force
+$files=@($log,$summary,$candidates,$f0,$rejected,$prov,$material,(Join-Path $deDir 'POC08_MATERIAL_HISTORY_V3.csv'),(Join-Path $deDir 'LATEST_EXE_SHA256.txt'))
+$files += $attemptLogs
+$files=@($files | Where-Object {Test-Path $_} | Select-Object -Unique)
+try{
+    Compress-Archive -Path $files -DestinationPath $report -CompressionLevel Optimal -Force
+    Copy-Item $report (Join-Path $reports 'LATEST_DE_REPORT.zip') -Force
+}catch{
+    Write-Host ("REPORT ZIP ERROR: "+$_.Exception.Message) -ForegroundColor Red
+}
 
 Write-Host ''
-Write-Host ("RUN summary: exit={0} elapsed={1}s sent/server/confirmed={2}/{3}/{4} uncertain={5}" -f $code,$elapsed,$sent,$server,$confirmed,$uncertain)
-Write-Host ("AUTO REPORT ZIP: {0}" -f $report) -ForegroundColor Green
-Write-Host 'Do wyslania tutaj wystarczy DE_LAB\REPORTS\LATEST_DE_REPORT.zip' -ForegroundColor Green
+Write-Host ("RUN summary: exit={0} elapsed={1}s attempts={2} retries={3} stop={4} sent/server/confirmed={5}/{6}/{7} uncertain={8}" -f $code,$elapsed,$attempt,$retryCount,$stopReason,$sent,$server,$confirmed,$uncertain)
+if(Test-Path $report){
+    Write-Host ("AUTO REPORT ZIP: {0}" -f $report) -ForegroundColor Green
+    Write-Host 'Do wyslania tutaj wystarczy DE_LAB\REPORTS\LATEST_DE_REPORT.zip' -ForegroundColor Green
+}
+
 if($RunMode -eq 'Live3' -and ($uncertain -gt 0 -or $sent -gt 3 -or $sent -ne $server -or $server -ne $confirmed)){
     Write-Host 'SAFETY ALERT: mutation reconciliation mismatch. DO NOT RERUN before review.' -ForegroundColor Red
     if($code -eq 0){$code=3}
