@@ -633,6 +633,13 @@ mod agent {
                         if payload.len() == 16 {
                             let summoner_guid =
                                 u64::from_le_bytes(payload[0..8].try_into().unwrap());
+                            if let Some(pay_target) = tele10_pay_target() {
+                                tele10_cache_named_guid(
+                                    &pay_target,
+                                    summoner_guid,
+                                    "summon_request",
+                                );
+                            }
                             let area = u32::from_le_bytes(payload[8..12].try_into().unwrap());
                             let auto_decline_ms =
                                 u32::from_le_bytes(payload[12..16].try_into().unwrap());
