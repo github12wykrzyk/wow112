@@ -1,4 +1,4 @@
-name: Build WoW112 Operator Console V1
+name: Build WoW112 Summon Operator Console V1
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
         shell: pwsh
         run: python tools/verify_current.py
 
-      - name: Verify Operator Bridge protocol and safety surface
+      - name: Verify summon bridge protocol and safety surface
         shell: pwsh
         run: |
           @'
@@ -43,6 +43,7 @@ jobs:
 
           native = Path('src/AutoLoginBridge/WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc').read_text(encoding='utf-8')
           console = Path('tools/operator_console/RuntimeAdapters.cs').read_text(encoding='utf-8')
+          telemetry = Path('tools/operator_console/SummonLifecycleAdapter.cs').read_text(encoding='utf-8')
           lua = Path('src/AddOns/SummonScout/SummonScout_OperatorBridgeHot.lua').read_text(encoding='utf-8')
           toc = Path('src/AddOns/SummonScout/SummonScout.toc').read_text(encoding='utf-8')
 
@@ -73,14 +74,28 @@ jobs:
           if 'Process.GetProcesses()' not in console or 'HasKnownMapping(pid)' not in console:
               raise SystemExit('runtime discovery is not map-first')
 
-          if 'SendChatMessage, text, "WHISPER"' not in lua:
-              raise SystemExit('Lua bridge does not use existing SendChatMessage whisper primitive')
-          if 'H.ManualChatLock' not in lua:
-              raise SystemExit('Lua bridge does not reuse existing manual-chat lock')
-          if 'CHAT_MSG_WHISPER_INFORM' not in lua:
-              raise SystemExit('Lua bridge lacks final send confirmation event')
+          required_lua = [
+              'W112_SUMMONSCOUT_API_V1', 'W112_SUMMONSCOUT_STATE',
+              'SummonScoutDB.paymentLog', 'SummonScoutDB.operatorSummonLog',
+              'SendChatMessage, text, "WHISPER"', 'H.ManualChatLock',
+              'CHAT_MSG_WHISPER_INFORM', 'obAppendSummon("completed"',
+          ]
+          for token in required_lua:
+              if token not in lua:
+                  raise SystemExit('SummonScout bridge missing canonical telemetry primitive: ' + token)
+          if 'debug.getupvalue' in lua:
+              raise SystemExit('Operator Bridge regressed to debug-upvalue parser discovery')
           if 'SummonScout_OperatorBridgeHot.lua' not in toc:
               raise SystemExit('Operator Bridge Lua missing from TOC')
+
+          if 'private const uint FileMapRead = 0x0004u;' not in telemetry:
+              raise SystemExit('summon telemetry adapter is not read-only')
+          for forbidden_write in ['FILE_MAP_WRITE', 'FILE_MAP_ALL_ACCESS', 'Write32(', 'WriteUtf8(']:
+              if forbidden_write in telemetry:
+                  raise SystemExit('summon telemetry adapter gained mapping write capability: ' + forbidden_write)
+          for required_event in ['SummonQueued', 'SummonStarted', 'SummonCompleted', 'SummonFailed', 'PaymentExpected', 'PaymentReceived', 'WhisperSendUncertain']:
+              if required_event not in telemetry:
+                  raise SystemExit('summon telemetry event missing: ' + required_event)
 
           forbidden = ['BUY', 'CANCEL', 'POST', 'MAIL', 'PlaceAuctionBid', 'StartAuction', 'CancelAuction']
           command_region = native[native.find('#define OPERATOR_COMMAND_NONE'):native.find('typedef const char*')]
@@ -89,10 +104,10 @@ jobs:
                   raise SystemExit('economic command leaked into native operator command surface: ' + token)
           if 'CommandWhisper = 1u' not in console:
               raise SystemExit('manual whisper command is not the single native command opcode')
-          print('OPERATOR BRIDGE PROTOCOL/SAFETY PASS')
+          print('SUMMON OPERATOR BRIDGE PROTOCOL/SAFETY PASS')
           '@ | python -
 
-      - name: Compile Operator Console x64 and tests
+      - name: Compile Summon Operator Console x64 and tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -115,8 +130,9 @@ jobs:
           & $csc @common /target:winexe /out:dist/operator-console/WoW112-Operator-Console-V1.exe `
             tools/operator_console/OperatorCore.cs `
             tools/operator_console/RuntimeAdapters.cs `
+            tools/operator_console/SummonLifecycleAdapter.cs `
             tools/operator_console/OperatorConsole.cs
-          if ($LASTEXITCODE -ne 0) { throw "Operator Console compile failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Summon Operator Console compile failed" }
 
           & $csc @common /target:exe /out:dist/operator-console/OperatorConsoleTests.exe /main:WoW112.OperatorConsole.OperatorConsoleTests `
             tools/operator_console/OperatorCore.cs tools/operator_console/OperatorConsoleTests.cs
@@ -133,6 +149,12 @@ jobs:
         run: |
           python tools/operator_console/bridge_smoke.py --exe dist/operator-console/WoW112-Operator-Console-V1.exe
           if ($LASTEXITCODE -ne 0) { throw "Operator Bridge IPC roundtrip failed" }
+
+      - name: Run summon lifecycle and payment telemetry smoke
+        shell: pwsh
+        run: |
+          python tools/operator_console/summon_telemetry_smoke.py --exe dist/operator-console/WoW112-Operator-Console-V1.exe
+          if ($LASTEXITCODE -ne 0) { throw "Summon lifecycle/payment telemetry smoke failed" }
 
       - name: Build existing AutoLoginBridge x86 with Operator transport
         shell: pwsh
@@ -189,6 +211,7 @@ jobs:
               'artifact': 'WoW112-Operator-Console-V1-${{ github.sha }}',
               'git_sha': '${{ github.sha }}',
               'canonical_base_branch': 'dev/windows-ah-canonical',
+              'scope': 'summon-only',
               'console': {
                   'name': exe.name,
                   'sha256': hashlib.sha256(exe_data).hexdigest(),
@@ -205,8 +228,15 @@ jobs:
                   'architecture': 'x86',
                   'shared_map': 'Local\\WoW112_OperatorBridge_<pid>',
                   'protocol_version': 1,
+                  'command_surface': ['whisper'],
                   'economic_commands': False,
                   'uncertain_auto_retry': False
+              },
+              'summon_telemetry': {
+                  'lifecycle': ['queued', 'started', 'completed', 'failed'],
+                  'payments': 'trusted SummonScoutDB.paymentLog mirror',
+                  'persistent_history': True,
+                  'manual_whisper_final_ack': 'CHAT_MSG_WHISPER_INFORM'
               }
           }
           Path('dist/operator-console/manifest.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
