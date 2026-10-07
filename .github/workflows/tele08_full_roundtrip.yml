@@ -36,22 +36,35 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Normalize roundtrip runner formatting
+      - name: Normalize roundtrip runner source
         shell: pwsh
         run: |
-          rustfmt --edition 2021 probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
-          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+          $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs'
+          $raw = Get-Content $path -Raw
+          if ($raw -notmatch '(?m)^\s+use std::fs;$') {
+            $raw = $raw -replace '(?m)^    use std::path::Path;$', "    use std::fs;`n    use std::path::Path;"
+            Set-Content -Path $path -Value $raw -NoNewline
+          }
+          rustfmt --edition 2021 $path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2021 --check $path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Offline full-chain contract
         shell: pwsh
         run: |
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build release roundtrip runner
         shell: pwsh
-        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Autonomous real-server full roundtrip
         shell: pwsh
