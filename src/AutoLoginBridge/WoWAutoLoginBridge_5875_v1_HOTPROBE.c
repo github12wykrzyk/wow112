@@ -216,6 +216,8 @@ static VOID CALLBACK retry_timer_tick(HWND hwnd,UINT msg,UINT_PTR timerId,DWORD 
     }
 }
 
+#include "WoWAutoLoginBridge_5875_OPERATORBRIDGE.inc"
+
 static int hot_read_payload(DWORD index,DWORD *size_out,DWORD *hash_out)
 {
     HANDLE h;
@@ -412,6 +414,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
 
         baseResult=AutoLoginBridge_BaseDllMain(module,reason,reserved);
         if(!baseResult) return FALSE;
+        operator_bridge_attach();
         if(!hot_build_paths()) {
             g_hot_status=HOT_STATUS_PATH_FAILED;
         } else {
@@ -423,6 +426,7 @@ BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID reserved)
     }
 
     if(reason==DLL_PROCESS_DETACH) {
+        operator_bridge_detach();
         if(g_retry_timer) KillTimer(NULL,g_retry_timer);
         g_retry_timer=0u;
         if(g_hot_timer) KillTimer(NULL,g_hot_timer);
