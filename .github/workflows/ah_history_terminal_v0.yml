@@ -47,6 +47,8 @@ jobs:
         run: python src/AhHistoryTerminal/test_github_archive.py
       - name: Verify shared shadow history, PIT material view and storage isolation
         run: python src/AhHistoryTerminal/test_shadow_history.py
+      - name: Verify calibrated V2 churn admission and reconciled PIT view
+        run: python src/AhHistoryTerminal/test_shadow_quality_v2.py
       - name: Verify Vendor-DE terminal spool bridge
         run: python src/AhHistoryTerminal/test_terminal_spool.py
       - name: Verify Rust capture hook against shared AH request source
