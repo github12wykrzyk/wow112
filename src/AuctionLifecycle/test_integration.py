@@ -38,14 +38,17 @@ class Integration(unittest.TestCase):
         self.assertIn('AH_MUTATION_COORDINATOR_HARD_STOP',core)
         self.assertIn('create_new(true)',core)
         self.assertIn('p.sync_all()',core)
+        self.assertIn('Split',core)
+        self.assertIn('0x10e',core)
         mm=Path(__file__).with_name('market_maker.rs').read_text()
         self.assertIn('poc07_buy_exact_one(',mm)
         self.assertIn('lifecycle_cancel(',mm)
         self.assertIn('mm_split_all_to_units(',mm)
         self.assertIn('lifecycle_post(',mm)
         inv=Path(__file__).with_name('market_maker_inventory.rs').read_text()
-        self.assertIn('MM_SPLIT_INTENT',inv)
-        self.assertIn('mutations::transaction(MutationKind::Post',inv)
+        self.assertIn('CMSG_SPLIT_ITEM',inv)
+        self.assertIn('mutations::transaction(MutationKind::Split',inv)
+        self.assertNotIn('MM_SPLIT_INTENT',inv)
     def test_all_v4_generation_then_integration(self):
         import yaml
         with tempfile.TemporaryDirectory() as td:
