@@ -1,0 +1,213 @@
+name: AH DE autonomous control plane v1
+
+on:
+  push:
+    branches:
+      - feature/ah-de-autonomous-control-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ah-de-autonomous-control-v1
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      BASE_BRANCH: dev/windows-ah-de-liquidation-v3
+      BUILD_WORKFLOW: build_windows_ah_de_liquidation_v3.yml
+      STATE_DIR: autonomous_state/ah_de
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Initialize control-plane state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$STATE_DIR"
+          cat > "$STATE_DIR/AUTONOMOUS_STATE.json" <<JSON
+          {
+            "state": "VALIDATING",
+            "candidate_sha": "$GITHUB_SHA",
+            "candidate_branch": "$GITHUB_REF_NAME",
+            "base_branch": "$BASE_BRANCH",
+            "human_live_gate": true,
+            "live_mutation_from_ci": false
+          }
+          JSON
+
+      - name: Safety policy gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_BRANCH":"refs/remotes/origin/$BASE_BRANCH"
+          git diff --name-only "origin/$BASE_BRANCH...HEAD" | tee "$STATE_DIR/CHANGED_FILES.txt"
+
+          # This branch may evolve DE_LAB/control-plane only. Vendor Stable remains outside it.
+          if grep -E '(^|/)(vendor_stable|VENDOR_STABLE|windows-ah-canonical)(/|$)' "$STATE_DIR/CHANGED_FILES.txt"; then
+            echo 'POLICY FAIL: Vendor Stable path touched.' >&2
+            exit 20
+          fi
+
+          # The control workflow itself must never arm live AH mutation.
+          if grep -E 'WOW112_AUTOBUY_CONFIRM.*YES|WOW112_F1_LIVE_CONFIRM.*BUY_ONE_NOW|V32LIVE3|DE_LIVE3' .github/workflows/ah_de_autonomous_control.yml; then
+            echo 'POLICY FAIL: autonomous CI contains a live-mutation arm token.' >&2
+            exit 21
+          fi
+
+          grep -q 'NO_AUTO_RETRY_FROM_THIS_POINT=YES' probes/Wow112HeadlessAndroid/tools/poc08_de_liquidation_v31_f0_patch.py || {
+            echo 'POLICY FAIL: no-retry mutation contract marker missing.' >&2; exit 22; }
+          grep -q 'MUTATION_BOUNDARY_NO_RETRY' packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1 || {
+            echo 'POLICY FAIL: launcher mutation-boundary hard stop missing.' >&2; exit 23; }
+          grep -q 'WOW112_UNIFIED_DE_MAX_SPEND' packaging/ah_latest/launcher/_launcher/RUN_DE_LAB.ps1 || {
+            echo 'POLICY FAIL: DE spend cap missing.' >&2; exit 24; }
+          grep -q 'HELLO_TIMEOUT_SECS' probes/Wow112HeadlessAndroid/tools/poc05_ah_hello_resilience_patch.py || {
+            echo 'POLICY FAIL: AH hello time-budget patch missing.' >&2; exit 25; }
+
+          echo 'SAFETY_POLICY=PASS' | tee "$STATE_DIR/POLICY.txt"
+
+      - name: Dispatch exact DE build workflow
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+          gh workflow run "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+          echo "BUILD_DISPATCHED sha=$GITHUB_SHA branch=$GITHUB_REF_NAME"
+
+      - name: Wait for exact candidate build
+        id: wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          RUN_ID=''
+          for i in $(seq 1 80); do
+            DATA=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$BUILD_WORKFLOW" --branch "$GITHUB_REF_NAME" --event workflow_dispatch --limit 20 --json databaseId,headSha,status,conclusion,createdAt)
+            RUN_ID=$(echo "$DATA" | jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.headSha==$sha)] | sort_by(.createdAt) | reverse | .[0].databaseId // empty')
+            if [[ -n "$RUN_ID" ]]; then break; fi
+            sleep 5
+          done
+          if [[ -z "$RUN_ID" ]]; then
+            echo 'CONTROL FAIL: dispatched build run was not found.' >&2
+            exit 30
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "BUILD_RUN_ID=$RUN_ID" | tee "$STATE_DIR/BUILD_RUN.txt"
+
+          for i in $(seq 1 200); do
+            STATUS=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')
+            if [[ "$STATUS" == 'completed' ]]; then break; fi
+            sleep 10
+          done
+          STATUS=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')
+          CONCLUSION=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion')
+          echo "BUILD_STATUS=$STATUS" | tee -a "$STATE_DIR/BUILD_RUN.txt"
+          echo "BUILD_CONCLUSION=$CONCLUSION" | tee -a "$STATE_DIR/BUILD_RUN.txt"
+          if [[ "$STATUS" != 'completed' || "$CONCLUSION" != 'success' ]]; then
+            echo "CONTROL FAIL: exact candidate build status=$STATUS conclusion=$CONCLUSION" >&2
+            exit 31
+          fi
+
+      - name: Download exact candidate artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ steps.wait.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate_artifact
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir candidate_artifact
+          find candidate_artifact -maxdepth 4 -type f -print | tee "$STATE_DIR/ARTIFACT_FILES.txt"
+
+      - name: Artifact and mutation-contract validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE=$(find candidate_artifact -type f -name '*.exe' -print -quit)
+          UNIFIED=$(find candidate_artifact -type f -name 'world_poc08_unified.rs' -print -quit)
+          HELLO=$(find candidate_artifact -type f -name 'world_poc05_retry.rs' -print -quit)
+          INFO=$(find candidate_artifact -type f -name 'BUILD_INFO.txt' -print -quit)
+          [[ -n "$EXE" && -n "$UNIFIED" && -n "$HELLO" && -n "$INFO" ]] || {
+            echo 'CONTROL FAIL: required build evidence missing.' >&2; exit 40; }
+
+          python - "$EXE" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1])
+          b=p.read_bytes()[:2]
+          if b != b'MZ':
+              raise SystemExit('PE/MZ validation failed')
+          print('PE_MZ=PASS')
+          PY
+
+          grep -q 'poc08_f0_liquidation_decision(c)' "$UNIFIED" || { echo 'missing V3.1 liquidation decision' >&2; exit 41; }
+          grep -q 'Poc08Strategy::Disenchant\|Poc07Strategy::Disenchant' "$UNIFIED" || { echo 'missing DE route' >&2; exit 42; }
+          grep -q 'WOW112_UNIFIED_DE_MAX_SPEND' "$UNIFIED" || { echo 'missing DE spend cap in built source' >&2; exit 43; }
+          grep -q 'NO_AUTO_RETRY_FROM_THIS_POINT=YES' "$UNIFIED" || { echo 'missing no-retry mutation marker' >&2; exit 44; }
+          grep -q 'HELLO_TIMEOUT_SECS' "$HELLO" || { echo 'missing AH hello time budget in built source' >&2; exit 45; }
+          grep -q 'SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE' "$HELLO" || { echo 'missing background packet exemption' >&2; exit 46; }
+          grep -q 'AH_HELLO_RESILIENCE=TIME_BUDGET_BACKGROUND_EXEMPT_FRESH_NPC_FIRST' "$INFO" || { echo 'missing build provenance marker' >&2; exit 47; }
+
+          SHA=$(sha256sum "$EXE" | awk '{print $1}')
+          echo "EXE_SHA256=$SHA" | tee "$STATE_DIR/ARTIFACT_VALIDATION.txt"
+          echo 'ARTIFACT_POLICY=PASS' | tee -a "$STATE_DIR/ARTIFACT_VALIDATION.txt"
+
+      - name: Mark READY FOR HUMAN LIVE
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.wait.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          EXE=$(find candidate_artifact -type f -name '*.exe' -print -quit)
+          EXE_SHA=$(sha256sum "$EXE" | awk '{print $1}')
+          cat > "$STATE_DIR/AUTONOMOUS_STATE.json" <<JSON
+          {
+            "state": "READY_FOR_HUMAN_LIVE",
+            "candidate_sha": "$GITHUB_SHA",
+            "candidate_branch": "$GITHUB_REF_NAME",
+            "build_run_id": "$RUN_ID",
+            "exe_sha256": "$EXE_SHA",
+            "policy": "PASS",
+            "build": "PASS",
+            "artifact_validation": "PASS",
+            "human_live_gate": true,
+            "live_mutation_from_ci": false,
+            "auto_retry_after_send": false
+          }
+          JSON
+          cat > "$STATE_DIR/SUMMARY.txt" <<EOF
+          AH-DE AUTONOMOUS CONTROL PLANE V1
+          candidate=$GITHUB_SHA
+          build_run=$RUN_ID
+          state=READY_FOR_HUMAN_LIVE
+          policy=PASS
+          exact_build=PASS
+          artifact_validation=PASS
+          live_mutation_from_ci=NO
+          human_live_gate=REQUIRED
+          retry_after_send=FORBIDDEN
+          EOF
+          cat "$STATE_DIR/SUMMARY.txt"
+
+      - name: Upload autonomous evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AH-DE-AUTONOMOUS-CONTROL-${{ github.sha }}
+          path: |
+            autonomous_state/ah_de/**
+          if-no-files-found: error
+          retention-days: 14
