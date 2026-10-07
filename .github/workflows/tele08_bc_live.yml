@@ -1,0 +1,153 @@
+name: TELE08 B-C canonical live gate
+
+on:
+  push:
+    branches:
+      - feature/tele08-bc-integration-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/Cargo.toml'
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_bc_live_gate.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - '.github/workflows/tele08_bc_live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+      WOW112_RECONNECT_LIMIT: '1'
+      WOW112_RECONNECT_DELAY_MS: '0'
+      WOW112_TELE08_CUSTOMER_ACCOUNT: 'taxi1'
+      WOW112_TELE08_CUSTOMER_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SLAVE1_ACCOUNT: 'taxi2'
+      WOW112_TELE08_SLAVE1_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SUMMONER_ACCOUNT: 'taxi3'
+      WOW112_TELE08_SUMMONER_CHARACTER: 'Teletanaris'
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format gate
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs probes/Wow112HeadlessAndroid/src/bin/tele08_bc_live_gate.rs
+
+      - name: B-C offline contract
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_bc_live_gate
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+
+      - name: Build canonical live runners
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_bc_live_gate
+
+      - name: Autonomous real-server B then C gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $status = 'TELE08_BC_LIVE_STATUS.txt'
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            @"
+          result=SKIPPED_NO_SECRET
+          detail=Repository Actions secret WOW112_PASSWORD is not configured for this workflow.
+          sha=$env:GITHUB_SHA
+          source=canonical_branch
+          "@ | Set-Content -Encoding UTF8 $status
+            Write-Host 'TELE08 B-C LIVE: SKIPPED_NO_SECRET'
+            exit 0
+          }
+
+          @"
+          result=RUNNING
+          sha=$env:GITHUB_SHA
+          source=canonical_branch
+          phase=real_whisper_transport_then_queue_gate
+          b_source_patching=false
+          "@ | Set-Content -Encoding UTF8 $status
+
+          $root = 'tele08_b_live_runs'
+          if (Test-Path $root) { Remove-Item $root -Recurse -Force }
+
+          $bexe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
+          & $bexe
+          $brc = $LASTEXITCODE
+          if ($brc -ne 0) {
+            @"
+          result=FAIL_B_LIVE
+          detail=tele08_b_live_runtime exited rc=$brc. Inspect uploaded evidence.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            throw "TELE08 B live phase failed rc=$brc"
+          }
+
+          $resultFile = Get-ChildItem -Path $root -Filter RESULTS.json -Recurse |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($null -eq $resultFile) { throw 'B live PASS produced no RESULTS.json' }
+
+          $result = Get-Content $resultFile.FullName -Raw | ConvertFrom-Json
+          if ($result.overall -ne 'PASS' -or $result.received_cases -ne 12 -or $result.passed_cases -ne 12) {
+            throw "B live result is not 12/12 PASS: $($resultFile.FullName)"
+          }
+
+          $tsv = Join-Path $env:RUNNER_TEMP 'tele08_bc_live_evidence.tsv'
+          Remove-Item $tsv -Force -ErrorAction SilentlyContinue
+          foreach ($case in $result.cases) {
+            if ($case.sender -match "`t|`r|`n" -or $case.raw_text -match "`t|`r|`n") {
+              throw "unsafe TSV evidence in case $($case.id)"
+            }
+            Add-Content -Path $tsv -Encoding UTF8 -Value ("{0}`t{1}" -f $case.sender, $case.raw_text)
+          }
+
+          $cexe = 'probes/Wow112HeadlessAndroid/target/release/tele08_bc_live_gate.exe'
+          & $cexe --evidence $tsv
+          $crc = $LASTEXITCODE
+          if ($crc -ne 0) {
+            Copy-Item $tsv 'TELE08_BC_LIVE_EVIDENCE.tsv' -Force
+            @"
+          result=FAIL_C_GATE
+          detail=tele08_bc_live_gate exited rc=$crc after B real-server 12/12 PASS.
+          sha=$env:GITHUB_SHA
+          b_results=$($resultFile.FullName)
+          "@ | Set-Content -Encoding UTF8 $status
+            throw "TELE08 B-C queue gate failed rc=$crc"
+          }
+
+          Copy-Item $tsv 'TELE08_BC_LIVE_EVIDENCE.tsv' -Force
+          @"
+          result=PASS
+          detail=Real server B whisper transport/classification 12/12 PASS; exact captured sender/raw_text evidence replayed through frozen B parser -> B-C adapter -> QueueEngine C; expected queue policy PASS; final queues hyjal=1 winterspring=1 azshara=1; invariants=OK.
+          sha=$env:GITHUB_SHA
+          b_results=$($resultFile.FullName)
+          b_source_patching=false
+          queued_cases=2,7,12
+          "@ | Set-Content -Encoding UTF8 $status
+          Write-Host 'TELE08 B-C CANONICAL LIVE GATE PASS'
+
+      - name: Upload B-C live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE08_BC_CANONICAL_LIVE_EVIDENCE
+          path: |
+            TELE08_BC_LIVE_STATUS.txt
+            TELE08_BC_LIVE_EVIDENCE.tsv
+            tele08_b_live_runs/**
+          if-no-files-found: warn
