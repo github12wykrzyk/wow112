@@ -14,7 +14,6 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
-import tempfile
 import time
 
 MAGIC = 0x4F323157
@@ -135,10 +134,14 @@ def main():
     if not exe.is_file():
         raise SystemExit(f'console exe missing: {exe}')
 
-    temp = Path(tempfile.mkdtemp(prefix='wow112-operator-bridge-smoke-'))
-    local_appdata = temp / 'localappdata'
-    bridge_dir = local_appdata / 'WoW112' / 'OperatorConsole' / 'bridge'
-    bridge_dir.mkdir(parents=True)
+    # Environment.GetFolderPath(LocalApplicationData) is a Windows known-folder
+    # lookup, not an arbitrary LOCALAPPDATA override. Use the runner's real known
+    # folder so the smoke observes the same files as the .NET console.
+    local_appdata = Path(os.environ['LOCALAPPDATA']).resolve()
+    operator_root = local_appdata / 'WoW112' / 'OperatorConsole'
+    shutil.rmtree(operator_root, ignore_errors=True)
+    bridge_dir = operator_root / 'bridge'
+    bridge_dir.mkdir(parents=True, exist_ok=True)
     backend = bridge_dir / 'backend-events.jsonl'
     commands = bridge_dir / 'operator-commands.jsonl'
 
@@ -162,9 +165,7 @@ def main():
             reason='synthetic-wire-smoke', flags=2, confidence=900,
         )
 
-        env = os.environ.copy()
-        env['LOCALAPPDATA'] = str(local_appdata)
-        proc = subprocess.Popen([str(exe)], env=env)
+        proc = subprocess.Popen([str(exe)])
 
         incoming = wait_for(
             lambda: has_event(backend, 'WhisperReceived', message='need hyjal'),
@@ -248,9 +249,9 @@ def main():
                     pass
         mm.close()
         if args.keep_temp:
-            print(f'temp={temp}')
+            print(f'operator_root={operator_root}')
         else:
-            shutil.rmtree(temp, ignore_errors=True)
+            shutil.rmtree(operator_root, ignore_errors=True)
 
 
 if __name__ == '__main__':
