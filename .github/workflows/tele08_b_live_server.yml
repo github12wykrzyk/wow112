@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Enable first-character customer selection
+      - name: Patch live runner for first-character and direct GUID identity
         shell: pwsh
         run: |
           $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
@@ -52,32 +52,116 @@ jobs:
                   };
                   println!("[TELE08-B-LIVE:{role_label}] selected_character={}", selected.name);
           '@
-
-          if (-not $text.Contains($old)) {
-            throw 'character-selection anchor not found'
-          }
+          if (-not $text.Contains($old)) { throw 'character-selection anchor not found' }
           $text = $text.Replace($old, $new)
 
-          $oldFilter = 'if name.eq_ignore_ascii_case(expected_sender) {'
-          $newFilter = @'
-          if (expected_sender.eq_ignore_ascii_case("__FIRST__") || name.eq_ignore_ascii_case(expected_sender))
-              && crate::CASES
-                  .get(results.len())
-                  .map(|case| case.text == text.as_str())
-                  .unwrap_or(false)
-          {
-          '@
-          $count = ([regex]::Matches($text, [regex]::Escape($oldFilter))).Count
-          if ($count -ne 2) {
-            throw "expected 2 sender-filter anchors, got $count"
-          }
-          $text = $text.Replace($oldFilter, $newFilter.TrimEnd())
-
           $gapAnchor = 'const SEND_GAP_MS: u64 = 450;'
-          if (-not $text.Contains($gapAnchor)) {
-            throw 'send-gap anchor not found'
-          }
+          if (-not $text.Contains($gapAnchor)) { throw 'send-gap anchor not found' }
           $text = $text.Replace($gapAnchor, 'const SEND_GAP_MS: u64 = 1200;')
+
+          $pathAnchor = '    let result_file = run_dir.join("RESULTS.json");'
+          $pathReplacement = @'
+              let result_file = run_dir.join("RESULTS.json");
+              let local_guid_file = run_dir.join(format!("GUID_{}.txt", spec.label));
+              let expected_sender_guid_file = run_dir.join("GUID_CUSTOMER.txt");
+          '@
+          if (-not $text.Contains($pathAnchor)) { throw 'guid-path anchor not found' }
+          $text = $text.Replace($pathAnchor, $pathReplacement.TrimEnd())
+
+          $envAnchor = '        .env("WOW112_TELE08_RESULT_FILE", &result_file)'
+          $envReplacement = @'
+                  .env("WOW112_TELE08_RESULT_FILE", &result_file)
+                  .env("WOW112_TELE08_LOCAL_GUID_FILE", &local_guid_file)
+                  .env("WOW112_TELE08_EXPECTED_SENDER_GUID_FILE", &expected_sender_guid_file)
+          '@
+          if (-not $text.Contains($envAnchor)) { throw 'guid-env anchor not found' }
+          $text = $text.Replace($envAnchor, $envReplacement.TrimEnd())
+
+          $localGuidAnchor = '        tele_trace::set_local_guid(selected.guid.guid());'
+          $localGuidReplacement = @'
+                  tele_trace::set_local_guid(selected.guid.guid());
+                  if let Ok(path) = std::env::var("WOW112_TELE08_LOCAL_GUID_FILE") {
+                      let body = format!("guid={}\nname={}\n", selected.guid.guid(), selected.name);
+                      std::fs::write(&path, body)
+                          .map_err(|e| format!("write local guid file {path} failed: {e}"))?;
+                  }
+          '@
+          if (-not $text.Contains($localGuidAnchor)) { throw 'local-guid anchor not found' }
+          $text = $text.Replace($localGuidAnchor, $localGuidReplacement.TrimEnd())
+
+          $listenerAnchor = @'
+                  let mut keepalive = Keepalive::new();
+                  let mut name_cache: HashMap<u64, String> = HashMap::new();
+                  let mut pending: HashMap<u64, Vec<String>> = HashMap::new();
+                  let mut results: Vec<crate::CaseResult> = Vec::new();
+          '@
+          $listenerReplacement = @'
+                  let expected_guid_file = std::env::var("WOW112_TELE08_EXPECTED_SENDER_GUID_FILE")
+                      .map_err(|_| "missing WOW112_TELE08_EXPECTED_SENDER_GUID_FILE".to_string())?;
+                  let expected_meta = std::fs::read_to_string(&expected_guid_file)
+                      .map_err(|e| format!("read expected sender guid file {expected_guid_file} failed: {e}"))?;
+                  let mut direct_expected_guid = None;
+                  let mut direct_expected_name = None;
+                  for line in expected_meta.lines() {
+                      if let Some((key, value)) = line.split_once('=') {
+                          match key.trim() {
+                              "guid" => direct_expected_guid = value.trim().parse::<u64>().ok(),
+                              "name" => direct_expected_name = Some(value.trim().to_string()),
+                              _ => {}
+                          }
+                      }
+                  }
+                  let direct_expected_guid = direct_expected_guid
+                      .ok_or_else(|| format!("expected sender guid missing in {expected_guid_file}"))?;
+                  let direct_expected_name = direct_expected_name
+                      .filter(|value| !value.is_empty())
+                      .unwrap_or_else(|| expected_sender.to_string());
+                  println!(
+                      "[TELE08-B-LIVE:{role_label}] direct_sender guid=0x{direct_expected_guid:016X} name={direct_expected_name}"
+                  );
+
+                  let mut keepalive = Keepalive::new();
+                  let mut name_cache: HashMap<u64, String> = HashMap::new();
+                  let mut pending: HashMap<u64, Vec<String>> = HashMap::new();
+                  let mut results: Vec<crate::CaseResult> = Vec::new();
+          '@
+          if (-not $text.Contains($listenerAnchor)) { throw 'listener-state anchor not found' }
+          $text = $text.Replace($listenerAnchor, $listenerReplacement.TrimEnd())
+
+          $whisperAnchor = @'
+                                      let guid = sender2.guid();
+                                      let text = chat.message;
+                                      if let Some(name) = name_cache.get(&guid).cloned() {
+                                          if name.eq_ignore_ascii_case(expected_sender) {
+                                              classify_case(&name, &text, &mut results)?;
+                                          }
+                                      } else {
+                                          let first = !pending.contains_key(&guid);
+                                          pending.entry(guid).or_default().push(text);
+                                          if first {
+                                              tele_send_name_query(stream, crypto, guid)?;
+                                          }
+                                      }
+          '@
+          $whisperReplacement = @'
+                                      let guid = sender2.guid();
+                                      let text = chat.message;
+                                      if guid == direct_expected_guid {
+                                          classify_case(&direct_expected_name, &text, &mut results)?;
+                                      } else if let Some(name) = name_cache.get(&guid).cloned() {
+                                          if name.eq_ignore_ascii_case(expected_sender) {
+                                              classify_case(&name, &text, &mut results)?;
+                                          }
+                                      } else {
+                                          let first = !pending.contains_key(&guid);
+                                          pending.entry(guid).or_default().push(text);
+                                          if first {
+                                              tele_send_name_query(stream, crypto, guid)?;
+                                          }
+                                      }
+          '@
+          if (-not $text.Contains($whisperAnchor)) { throw 'whisper-routing anchor not found' }
+          $text = $text.Replace($whisperAnchor, $whisperReplacement.TrimEnd())
 
           Set-Content -Path $path -Value $text -Encoding UTF8
 
@@ -105,6 +189,7 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          sender_identity=direct_guid_sidecar
           send_gap_ms=1200
           "@ | Set-Content -Encoding UTF8 $status
 
@@ -118,6 +203,7 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          sender_identity=direct_guid_sidecar
           send_gap_ms=1200
           "@ | Set-Content -Encoding UTF8 $status
             Write-Host 'TELE08 B LIVE E2E PASS'
@@ -128,6 +214,7 @@ jobs:
           sha=$env:GITHUB_SHA
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
+          sender_identity=direct_guid_sidecar
           send_gap_ms=1200
           "@ | Set-Content -Encoding UTF8 $status
             throw "TELE08 B LIVE E2E failed rc=$rc"
