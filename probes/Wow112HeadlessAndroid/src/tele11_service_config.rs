@@ -1,7 +1,8 @@
+use crate::tele08_whisper_parser::ParserConfig;
 use crate::tele11_executor_process::{ExternalExecutorConfig, Identity};
 use crate::tele11_service_core::{RouteConfig, ServiceCoreConfig};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -28,8 +29,41 @@ impl IdentityConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListenerConfig {
+    pub account: String,
+    pub character: String,
+    pub inbox_dir: String,
+    #[serde(default)]
+    pub unknown_log: Option<String>,
+    #[serde(default)]
+    pub default_destination: Option<String>,
+}
+
+impl ListenerConfig {
+    fn validate(&self, enabled_destinations: &BTreeSet<String>) -> Result<(), String> {
+        if self.account.trim().is_empty()
+            || self.character.trim().is_empty()
+            || self.inbox_dir.trim().is_empty()
+        {
+            return Err("listener account/character/inbox_dir cannot be empty".to_string());
+        }
+        if let Some(destination) = self.default_destination.as_deref() {
+            let normalized = destination.trim().to_ascii_lowercase();
+            if !enabled_destinations.contains(&normalized) {
+                return Err(format!(
+                    "listener default_destination {destination:?} is not an enabled TELE11 destination"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamConfig {
     pub destination: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
     pub resource: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -47,6 +81,8 @@ pub struct ServiceFileConfig {
     pub schema_version: u32,
     pub journal_path: String,
     pub run_root: String,
+    #[serde(default)]
+    pub listener: Option<ListenerConfig>,
     #[serde(default = "default_dedup_ms")]
     pub dedup_window_ms: u64,
     #[serde(default = "default_expiry_ms")]
@@ -109,9 +145,11 @@ impl ServiceFileConfig {
         if enabled == 0 {
             return Err("TELE11 requires at least one enabled execution team".to_string());
         }
+
         let mut destinations = BTreeSet::new();
         let mut resources = BTreeSet::new();
         let mut characters = BTreeSet::new();
+        let mut aliases = BTreeMap::<String, String>::new();
         for team in self.teams.iter().filter(|team| team.enabled) {
             let destination = team.destination.trim().to_ascii_lowercase();
             let resource = team.resource.trim().to_string();
@@ -124,6 +162,11 @@ impl ServiceFileConfig {
             if !resources.insert(resource.clone()) {
                 return Err(format!("duplicate enabled resource: {resource}"));
             }
+            register_alias(&mut aliases, &destination, &destination)?;
+            for alias in &team.aliases {
+                register_alias(&mut aliases, alias, &destination)?;
+            }
+
             team.summoner.validate(&format!("{destination}/summoner"))?;
             team.clicker1.validate(&format!("{destination}/clicker1"))?;
             team.clicker2.validate(&format!("{destination}/clicker2"))?;
@@ -134,6 +177,16 @@ impl ServiceFileConfig {
                         "character {key} assigned to more than one enabled TELE11 role"
                     ));
                 }
+            }
+        }
+
+        if let Some(listener) = self.listener.as_ref() {
+            listener.validate(&destinations)?;
+            let listener_character = listener.character.trim().to_ascii_lowercase();
+            if characters.contains(&listener_character) {
+                return Err(format!(
+                    "listener character {listener_character} is also assigned to an execution role; dedicated listener session required"
+                ));
             }
         }
         Ok(())
@@ -157,8 +210,27 @@ impl ServiceFileConfig {
         })
     }
 
+    pub fn parser_config(&self) -> Result<ParserConfig, String> {
+        self.validate()?;
+        let mut parser = ParserConfig::default();
+        for team in self.teams.iter().filter(|team| team.enabled) {
+            let destination = team.destination.trim().to_ascii_lowercase();
+            parser = parser.with_destination_alias(destination.clone(), destination.clone());
+            for alias in &team.aliases {
+                parser = parser.with_destination_alias(alias.clone(), destination.clone());
+            }
+        }
+        Ok(parser)
+    }
+
     pub fn journal_path(&self) -> PathBuf {
         PathBuf::from(&self.journal_path)
+    }
+
+    pub fn listener(&self) -> Result<&ListenerConfig, String> {
+        self.listener
+            .as_ref()
+            .ok_or_else(|| "TELE11 listener configuration is missing".to_string())
     }
 
     pub fn team_for_resource(&self, resource: &str) -> Option<&TeamConfig> {
@@ -195,6 +267,27 @@ impl ServiceFileConfig {
     }
 }
 
+fn register_alias(
+    aliases: &mut BTreeMap<String, String>,
+    alias: &str,
+    destination: &str,
+) -> Result<(), String> {
+    let key = alias.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return Err(format!("destination {destination} contains an empty alias"));
+    }
+    if let Some(existing) = aliases.get(&key) {
+        if existing != destination {
+            return Err(format!(
+                "ambiguous TELE11 alias {alias:?}: {existing} vs {destination}"
+            ));
+        }
+    } else {
+        aliases.insert(key, destination.to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,8 +297,15 @@ mod tests {
           "schema_version": 1,
           "journal_path": "state/tele11.jsonl",
           "run_root": "runs/tele11",
+          "listener": {
+            "account": "listener-account",
+            "character": "Listener",
+            "inbox_dir": "state/inbox",
+            "default_destination": "winterspring"
+          },
           "teams": [{
             "destination": "winterspring",
+            "aliases": ["everlook"],
             "resource": "summon/winterspring",
             "summoner": {"account":"sum","character":"Summoner"},
             "clicker1": {"account":"c1","character":"Clickone"},
@@ -219,11 +319,30 @@ mod tests {
         let config = ServiceFileConfig::from_json(valid_json()).unwrap();
         assert_eq!(config.core_config().unwrap().routes.len(), 1);
         assert_eq!(config.realm_index, 1);
+        assert_eq!(config.listener().unwrap().character, "Listener");
+        let parser = config.parser_config().unwrap();
+        assert!(parser.destination_aliases.iter().any(|alias| {
+            alias.alias == "everlook" && alias.key.0 == "winterspring"
+        }));
     }
 
     #[test]
     fn rejects_shared_character_across_enabled_roles() {
-        let broken = valid_json().replace("Clicktwo", "Summoner");
+        let broken = valid_json().replace("\"Listener\"", "\"Summoner\"");
+        assert!(ServiceFileConfig::from_json(&broken).is_err());
+    }
+
+    #[test]
+    fn rejects_ambiguous_aliases() {
+        let extra = r#",{
+          "destination":"hyjal",
+          "aliases":["everlook"],
+          "resource":"summon/hyjal",
+          "summoner":{"account":"s2","character":"Sumtwo"},
+          "clicker1":{"account":"d1","character":"Done"},
+          "clicker2":{"account":"d2","character":"Dtwo"}
+        }"#;
+        let broken = valid_json().replace("}]\n        }", &format!("{extra}}}]\n        }}"));
         assert!(ServiceFileConfig::from_json(&broken).is_err());
     }
 }
