@@ -61,16 +61,15 @@ namespace WoW112.OperatorConsole
         public SessionState Copy()
         {
             return new SessionState {
-                SessionId = SessionId, Account = Account, Profile = Profile, Character = Character, Module = Module, CurrentAction = CurrentAction,
-                LastEvent = LastEvent, LastError = LastError, LastActivityUtc = LastActivityUtc, StartedUtc = StartedUtc,
-                World = World, Ah = Ah, Summon = Summon, Mail = Mail, Coordinator = Coordinator, Whispers = Whispers,
-                WhisperQueue = WhisperQueue, SummonQueue = SummonQueue, Connected = Connected
+                SessionId = SessionId, Account = Account, Profile = Profile, Character = Character, Module = Module,
+                CurrentAction = CurrentAction, LastEvent = LastEvent, LastError = LastError, LastActivityUtc = LastActivityUtc,
+                StartedUtc = StartedUtc, World = World, Ah = Ah, Summon = Summon, Mail = Mail, Coordinator = Coordinator,
+                Whispers = Whispers, WhisperQueue = WhisperQueue, SummonQueue = SummonQueue, Connected = Connected
             };
         }
     }
 
     internal sealed class WhisperCounters { public long Total, Understood, IgnoredIntentionally, Unhandled; }
-
     internal enum OperatorCommandType { SendWhisper, ReplyToWhisper, PauseAutomation, ResumeAutomation }
 
     internal sealed class OperatorCommand
@@ -88,13 +87,15 @@ namespace WoW112.OperatorConsole
         public event Action<OperatorEvent> Published;
         public int Pending { get { return queue.Count; } }
         public OperatorEvent Take(CancellationToken token) { return queue.Take(token); }
+
         public void Publish(OperatorEvent item)
         {
             if (item == null) return;
             item.Message = SecretSanitizer.Sanitize(item.Message);
             item.Metadata = SecretSanitizer.SanitizeMetadata(item.Metadata);
             queue.Add(item);
-            var h = Published; if (h != null) h(item);
+            var handler = Published;
+            if (handler != null) handler(item);
         }
     }
 
@@ -117,21 +118,28 @@ namespace WoW112.OperatorConsole
                     s = new SessionState { SessionId = e.SessionId, Account = e.Account, Profile = e.Profile, Character = e.Character, StartedUtc = e.TimestampUtc };
                     sessions[key] = s;
                 }
-                s.Account = e.Account ?? s.Account; s.Profile = e.Profile ?? s.Profile; s.Character = e.Character ?? s.Character; s.Module = e.Module ?? s.Module;
-                s.LastActivityUtc = e.TimestampUtc; s.LastEvent = e.EventType + ": " + e.Message;
+                s.Account = e.Account ?? s.Account;
+                s.Profile = e.Profile ?? s.Profile;
+                s.Character = e.Character ?? s.Character;
+                s.Module = e.Module ?? s.Module;
+                s.LastActivityUtc = e.TimestampUtc;
+                s.LastEvent = e.EventType + ": " + e.Message;
                 if (e.Severity == OperatorSeverity.Error) s.LastError = e.Message;
-                Project(e, s); ProjectWhisper(e);
+                ProjectState(e, s);
+                ProjectWhisper(e);
             }
         }
 
-        private static void Project(OperatorEvent e, SessionState s)
+        private static void ProjectState(OperatorEvent e, SessionState s)
         {
             switch (e.EventType)
             {
                 case "SessionStarted": s.StartedUtc = e.TimestampUtc; break;
                 case "LoginStarted": s.World = OperatorStatus.Active; s.CurrentAction = "Login"; break;
-                case "LoginSucceeded": case "CharacterEnteredWorld": s.World = OperatorStatus.Ok; s.Connected = true; s.CurrentAction = ""; break;
-                case "LoginFailed": case "Disconnected": if (s.Coordinator != OperatorStatus.Uncertain) s.World = OperatorStatus.Error; s.Connected = false; break;
+                case "LoginSucceeded":
+                case "CharacterEnteredWorld": s.World = OperatorStatus.Ok; s.Connected = true; s.CurrentAction = ""; break;
+                case "LoginFailed":
+                case "Disconnected": if (s.Coordinator != OperatorStatus.Uncertain) s.World = OperatorStatus.Error; s.Connected = false; break;
                 case "ReconnectStarted": s.World = OperatorStatus.Active; s.CurrentAction = "Reconnect"; break;
                 case "ReconnectSucceeded": s.World = OperatorStatus.Ok; s.Connected = true; s.CurrentAction = ""; break;
                 case "WhisperReceived": s.Whispers = OperatorStatus.Active; break;
@@ -146,7 +154,8 @@ namespace WoW112.OperatorConsole
                 case "MailMutationUncertain": s.Mail = OperatorStatus.Uncertain; s.Coordinator = OperatorStatus.Uncertain; break;
                 case "MutationCoordinatorLocked": if (s.Coordinator != OperatorStatus.Uncertain) s.Coordinator = OperatorStatus.Active; break;
                 case "MutationCoordinatorReleased": if (s.Coordinator != OperatorStatus.Uncertain) s.Coordinator = OperatorStatus.Ok; break;
-                case "MutationCoordinatorUncertain": case "BuyUncertain": s.Coordinator = OperatorStatus.Uncertain; break;
+                case "MutationCoordinatorUncertain":
+                case "BuyUncertain": s.Coordinator = OperatorStatus.Uncertain; break;
             }
         }
 
@@ -167,13 +176,21 @@ namespace WoW112.OperatorConsole
             }
             if (dict == null) return;
             parser[e.EventId] = new ParserDiagnostic {
-                EventId = e.EventId, Sender = S(dict, "sender"), RawText = S(dict, "raw"), NormalizedText = S(dict, "normalized"), Result = S(dict, "result"), Destination = S(dict, "destination"), Intent = S(dict, "intent"), Keywords = S(dict, "keywords"), MatchedRule = S(dict, "matched_rule"), IgnoreReason = S(dict, "ignore_reason"), Reason = S(dict, "reason"), Competition = B(dict, "competition"), SummonRequest = B(dict, "summon_request"), Confidence = D(dict, "confidence")
+                EventId = e.EventId,
+                Sender = StringValue(dict, "sender"), RawText = StringValue(dict, "raw"), NormalizedText = StringValue(dict, "normalized"),
+                Result = StringValue(dict, "result"), Destination = StringValue(dict, "destination"), Intent = StringValue(dict, "intent"),
+                Keywords = StringValue(dict, "keywords"), MatchedRule = StringValue(dict, "matched_rule"), IgnoreReason = StringValue(dict, "ignore_reason"),
+                Reason = StringValue(dict, "reason"), Competition = BoolValue(dict, "competition"), SummonRequest = BoolValue(dict, "summon_request"), Confidence = DoubleValue(dict, "confidence")
             };
         }
 
-        private static string S(IDictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) ? Convert.ToString(v) ?? "" : ""; }
-        private static bool B(IDictionary<string, object> d, string k) { object v; bool x; return d.TryGetValue(k, out v) && bool.TryParse(Convert.ToString(v), out x) && x; }
-        private static double D(IDictionary<string, object> d, string k) { object v; double x; return d.TryGetValue(k, out v) && double.TryParse(Convert.ToString(v), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out x) ? x : 0.0; }
+        private static string StringValue(IDictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) ? Convert.ToString(v) ?? "" : ""; }
+        private static bool BoolValue(IDictionary<string, object> d, string k) { object v; bool x; return d.TryGetValue(k, out v) && bool.TryParse(Convert.ToString(v), out x) && x; }
+        private static double DoubleValue(IDictionary<string, object> d, string k)
+        {
+            object v; double x;
+            return d.TryGetValue(k, out v) && double.TryParse(Convert.ToString(v), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out x) ? x : 0.0;
+        }
 
         public List<SessionState> Sessions() { lock (gate) return sessions.Values.Select(x => x.Copy()).OrderBy(x => x.Character).ToList(); }
         public WhisperCounters Counters() { lock (gate) return new WhisperCounters { Total = counters.Total, Understood = counters.Understood, IgnoredIntentionally = counters.IgnoredIntentionally, Unhandled = counters.Unhandled }; }
@@ -191,36 +208,88 @@ namespace WoW112.OperatorConsole
 
         public JsonlOperatorStore(string directoryPath, long rotateBytes = 16L * 1024L * 1024L, int keepFiles = 10)
         {
-            directory = directoryPath; this.rotateBytes = rotateBytes; this.keepFiles = Math.Max(2, keepFiles);
-            Directory.CreateDirectory(directory); path = Path.Combine(directory, "operator-events.jsonl"); Open();
+            directory = directoryPath;
+            this.rotateBytes = rotateBytes;
+            this.keepFiles = Math.Max(2, keepFiles);
+            Directory.CreateDirectory(directory);
+            path = Path.Combine(directory, "operator-events.jsonl");
+            OpenWriter();
         }
-        private void Open() { writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false)) { AutoFlush = true }; }
-        public void Append(OperatorEvent e) { lock (gate) { Rotate(); writer.WriteLine(json.Serialize(e)); } }
+
+        private void OpenWriter()
+        {
+            writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete), new UTF8Encoding(false)) { AutoFlush = true };
+        }
+
+        public void Append(OperatorEvent e)
+        {
+            lock (gate)
+            {
+                RotateIfNeeded();
+                writer.WriteLine(json.Serialize(e));
+            }
+        }
+
         public List<OperatorEvent> Load(int maxCount)
         {
             var all = new List<OperatorEvent>();
-            foreach (var f in Directory.GetFiles(directory, "operator-events*.jsonl").OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            foreach (var file in Directory.GetFiles(directory, "operator-events*.jsonl").OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             {
-                try { foreach (var line in File.ReadLines(f)) if (!string.IsNullOrWhiteSpace(line)) try { var e = json.Deserialize<OperatorEvent>(line); if (e != null) all.Add(e); } catch { } } catch { }
+                try
+                {
+                    using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    using (var reader = new StreamReader(stream, Encoding.UTF8, true))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) continue;
+                            try
+                            {
+                                var e = json.Deserialize<OperatorEvent>(line);
+                                if (e != null) all.Add(e);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
             return all.OrderBy(x => x.TimestampUtc).TakeLastCompat(maxCount).ToList();
         }
-        private void Rotate()
+
+        private void RotateIfNeeded()
         {
-            writer.Flush(); var fi = new FileInfo(path); if (!fi.Exists || fi.Length < rotateBytes) return;
-            writer.Dispose(); var rotated = Path.Combine(directory, "operator-events-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + ".jsonl"); File.Move(path, rotated);
-            foreach (var f in Directory.GetFiles(directory, "operator-events-*.jsonl").OrderByDescending(File.GetLastWriteTimeUtc).Skip(keepFiles - 1)) try { File.Delete(f); } catch { }
-            Open();
+            writer.Flush();
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length < rotateBytes) return;
+            writer.Dispose();
+            var rotated = Path.Combine(directory, "operator-events-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + ".jsonl");
+            File.Move(path, rotated);
+            foreach (var old in Directory.GetFiles(directory, "operator-events-*.jsonl").OrderByDescending(File.GetLastWriteTimeUtc).Skip(keepFiles - 1))
+                try { File.Delete(old); } catch { }
+            OpenWriter();
         }
-        public void Dispose() { lock (gate) { if (writer != null) writer.Dispose(); writer = null; } }
+
+        public void Dispose()
+        {
+            lock (gate)
+            {
+                if (writer != null) writer.Dispose();
+                writer = null;
+            }
+        }
     }
 
     internal static class EnumerableCompat
     {
         public static IEnumerable<T> TakeLastCompat<T>(this IEnumerable<T> source, int count)
         {
-            if (count <= 0) return Enumerable.Empty<T>(); var q = new Queue<T>(count);
-            foreach (var item in source) { if (q.Count == count) q.Dequeue(); q.Enqueue(item); } return q;
+            if (count <= 0) return Enumerable.Empty<T>();
+            var q = new Queue<T>(count);
+            foreach (var item in source) { if (q.Count == count) q.Dequeue(); q.Enqueue(item); }
+            return q;
         }
     }
 
@@ -230,15 +299,22 @@ namespace WoW112.OperatorConsole
         private static readonly Regex Assignment = new Regex("(?i)(password|passwd|pwd|token|secret|authorization|dpapi)\\s*[:=]\\s*([^\\s,;]+)", RegexOptions.Compiled);
         private static readonly Regex Bearer = new Regex("(?i)bearer\\s+[A-Za-z0-9._~+\\-/]+=*", RegexOptions.Compiled);
         private static readonly Regex Github = new Regex("(?i)gh[pousr]_[A-Za-z0-9_]{20,}", RegexOptions.Compiled);
+
         public static string Sanitize(string text)
         {
             var x = text ?? "";
-            x = Assignment.Replace(x, "$1=[REDACTED]"); x = Bearer.Replace(x, "bearer [REDACTED]"); x = Github.Replace(x, "[REDACTED]"); return x;
+            x = Assignment.Replace(x, "$1=[REDACTED]");
+            x = Bearer.Replace(x, "bearer [REDACTED]");
+            x = Github.Replace(x, "[REDACTED]");
+            return x;
         }
+
         public static Dictionary<string, object> SanitizeMetadata(Dictionary<string, object> metadata)
         {
-            var safe = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase); if (metadata == null) return safe;
-            foreach (var kv in metadata) safe[kv.Key] = KeyPattern.IsMatch(kv.Key ?? "") ? (object)"[REDACTED]" : (kv.Value is string ? (object)Sanitize((string)kv.Value) : kv.Value);
+            var safe = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            if (metadata == null) return safe;
+            foreach (var kv in metadata)
+                safe[kv.Key] = KeyPattern.IsMatch(kv.Key ?? "") ? (object)"[REDACTED]" : (kv.Value is string ? (object)Sanitize((string)kv.Value) : kv.Value);
             return safe;
         }
     }
@@ -254,10 +330,16 @@ namespace WoW112.OperatorConsole
 
         public FileOperatorBridge(string bridgeDirectory, OperatorEventBus eventBus)
         {
-            Directory.CreateDirectory(bridgeDirectory); eventsInbox = Path.Combine(bridgeDirectory, "backend-events.jsonl"); commandsOutbox = Path.Combine(bridgeDirectory, "operator-commands.jsonl"); bus = eventBus;
+            Directory.CreateDirectory(bridgeDirectory);
+            eventsInbox = Path.Combine(bridgeDirectory, "backend-events.jsonl");
+            commandsOutbox = Path.Combine(bridgeDirectory, "operator-commands.jsonl");
+            bus = eventBus;
             if (!File.Exists(eventsInbox)) File.WriteAllText(eventsInbox, "", new UTF8Encoding(false));
-            offset = 0; watcher = new FileSystemWatcher(bridgeDirectory, Path.GetFileName(eventsInbox)); watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size;
-            watcher.Changed += delegate { Drain(); }; watcher.EnableRaisingEvents = true; Drain();
+            watcher = new FileSystemWatcher(bridgeDirectory, Path.GetFileName(eventsInbox));
+            watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size;
+            watcher.Changed += delegate { Drain(); };
+            watcher.EnableRaisingEvents = true;
+            Drain();
         }
 
         public void Submit(OperatorCommand command)
@@ -265,34 +347,52 @@ namespace WoW112.OperatorConsole
             if (command == null) return;
             switch (command.CommandType)
             {
-                case OperatorCommandType.SendWhisper: case OperatorCommandType.ReplyToWhisper: case OperatorCommandType.PauseAutomation: case OperatorCommandType.ResumeAutomation: break;
+                case OperatorCommandType.SendWhisper:
+                case OperatorCommandType.ReplyToWhisper:
+                case OperatorCommandType.PauseAutomation:
+                case OperatorCommandType.ResumeAutomation: break;
                 default: throw new InvalidOperationException("Operator Console refuses unsupported command type.");
             }
             command.Text = SecretSanitizer.Sanitize(command.Text);
-            lock (commandGate) File.AppendAllText(commandsOutbox, json.Serialize(command) + Environment.NewLine, new UTF8Encoding(false));
+            lock (commandGate)
+                File.AppendAllText(commandsOutbox, json.Serialize(command) + Environment.NewLine, new UTF8Encoding(false));
         }
 
         public void Drain()
         {
             try
             {
-                using (var fs = new FileStream(eventsInbox, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var stream = new FileStream(eventsInbox, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                 {
-                    if (offset > fs.Length) offset = 0; fs.Position = offset;
-                    using (var reader = new StreamReader(fs, Encoding.UTF8, true, 4096, true))
+                    if (offset > stream.Length) offset = 0;
+                    stream.Position = offset;
+                    using (var reader = new StreamReader(stream, Encoding.UTF8, true, 4096, true))
                     {
-                        string line; while ((line = reader.ReadLine()) != null)
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
                         {
                             if (string.IsNullOrWhiteSpace(line)) continue;
-                            try { var e = json.Deserialize<OperatorEvent>(line); if (e != null) bus.Publish(e); }
-                            catch (Exception ex) { bus.Publish(new OperatorEvent { Severity = OperatorSeverity.Warn, Category = "Bridge", Module = "OperatorBridge", EventType = "Warning", Message = "Rejected malformed backend event: " + ex.Message }); }
+                            try
+                            {
+                                var e = json.Deserialize<OperatorEvent>(line);
+                                if (e != null) bus.Publish(e);
+                            }
+                            catch (Exception ex)
+                            {
+                                bus.Publish(new OperatorEvent { Severity = OperatorSeverity.Warn, Category = "Bridge", Module = "OperatorBridge", EventType = "Warning", Message = "Rejected malformed backend event: " + ex.Message });
+                            }
                         }
                     }
-                    offset = fs.Length;
+                    offset = stream.Length;
                 }
             }
             catch (IOException) { }
         }
-        public void Dispose() { if (watcher != null) watcher.Dispose(); watcher = null; }
+
+        public void Dispose()
+        {
+            if (watcher != null) watcher.Dispose();
+            watcher = null;
+        }
     }
 }
