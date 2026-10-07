@@ -1,7 +1,7 @@
 {
-  "enabled": false,
-  "request_id": "disabled-smoke-20261007-main-v1",
-  "target_ref": "main",
-  "tier": "cheap",
-  "task": "Disabled bridge smoke. This must not invoke Claude."
+  "enabled": true,
+  "request_id": "tele11-service-boundary-review-20261008-001",
+  "target_ref": "feature/tele11-service-v1",
+  "tier": "normal",
+  "task": "Review only the architecture boundary between persistent TELE11 service state/queue and the one-shot tele07_supervisor executor. Focus on crash/restart ownership, exactly-once/at-most-once summon mutation semantics, job activation/completion/failure mapping, and the safest minimal interface for TELE11 to spawn TELE07 for a selected customer/team. Use existing tele08_request_queue, tele07_supervisor, tele06a_acceptor_runtime, tele06a_ritual_runtime, destination_registry and TELE10 workflow. Return exact file/symbol evidence, minimal recommended contract, risks and tests. Do not redesign unrelated code."
 }
