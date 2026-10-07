@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/tele10_full_summon_accept_live.yml'
       - '.github/scripts/tele10_patch.py'
+      - '.github/scripts/tele10_same_map_hotfix.py'
 permissions:
   contents: read
 jobs:
@@ -35,6 +36,8 @@ jobs:
         shell: pwsh
         run: |
           python .github/scripts/tele10_patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python .github/scripts/tele10_same_map_hotfix.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -70,7 +73,7 @@ jobs:
           if ($verdict -notmatch 'result=PASS_TELE07') { throw "supervisor not PASS: $verdict" }
           if ($cycle -notmatch 'result=PASS_TELEPORT_COMPLETE') { throw "teleport not confirmed: $cycle" }
           'result=PASS' | Set-Content tele10_evidence/TELE10_STATUS.txt
-          'chain=real_whisper>B>C>D>E>party>ritual>portal>summon_request>summon_response>new_world>worldport_ack>teleport_complete' | Add-Content tele10_evidence/TELE10_STATUS.txt
+          'chain=real_whisper>B>C>D>E>party>ritual>portal>summon_request>summon_response>teleport_ack_or_new_world>teleport_complete' | Add-Content tele10_evidence/TELE10_STATUS.txt
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
