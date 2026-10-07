@@ -1,0 +1,60 @@
+name: TELE10 trade payment ledger
+
+on:
+  push:
+    branches:
+      - feature/tele10-trade-payment-ledger-v1
+    paths:
+      - 'src/AddOns/SummonScout/**'
+      - 'src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c'
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs'
+      - 'tools/test_tele10_trade_payment_ledger.py'
+      - '.github/workflows/tele10_trade_payment_ledger.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tele10-trade-payment-ledger-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python ledger harness
+        run: python tools/test_tele10_trade_payment_ledger.py
+
+      - name: Existing SummonScout core contract checks
+        run: |
+          python tools/verify_summonscout_lua_upvalues.py
+          python tools/test_ai_summonscout_engine_v2_foundation.py
+          python tools/test_ai_summonscout_engine_v2_explicit_api.py
+          python tools/test_ai_summonscout_engine_v2_core_api_state.py
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Parser format check
+        run: |
+          rustfmt --edition 2021 --check \
+            probes/Wow112HeadlessAndroid/src/lib.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs \
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs \
+            probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs
+
+      - name: Parser build
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+
+      - name: Parser and audit tests
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
