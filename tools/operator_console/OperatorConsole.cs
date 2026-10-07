@@ -34,7 +34,7 @@ namespace WoW112.OperatorConsole
                                 form.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
                                 bitmap.Save(Path.Combine(smokeDir, "operator-console.png"));
                             }
-                            File.WriteAllText(Path.Combine(smokeDir, "result.txt"), "PASS Operator Console UI rendered.\r\n", Encoding.UTF8);
+                            File.WriteAllText(Path.Combine(smokeDir, "result.txt"), "PASS Summon Operator Console UI rendered.\r\n", Encoding.UTF8);
                         }
                         catch (Exception ex)
                         {
@@ -92,8 +92,8 @@ namespace WoW112.OperatorConsole
 
         public void SendManualWhisper(string player, string text, SessionState target)
         {
-            if (target == null) throw new InvalidOperationException("Select an explicit active session before sending a whisper.");
-            if (!target.Connected) throw new InvalidOperationException("Selected session is not connected.");
+            if (target == null) throw new InvalidOperationException("Select an explicit active summon session before sending a whisper.");
+            if (!target.Connected) throw new InvalidOperationException("Selected summon session is not connected.");
             if (string.IsNullOrWhiteSpace(player)) throw new InvalidOperationException("Select a player conversation.");
             if (string.IsNullOrWhiteSpace(text)) return;
             if (text.Length > 240) throw new InvalidOperationException("Whisper exceeds the 240 character operator safety limit.");
@@ -104,9 +104,9 @@ namespace WoW112.OperatorConsole
                 Player = player.Trim(), Text = text, CorrelationId = corr
             });
             Bus.Publish(new OperatorEvent {
-                Severity = OperatorSeverity.Info, Category = "Whisper", EventType = "OperatorCommandQueued", Module = "OperatorConsole",
+                Severity = OperatorSeverity.Info, Category = "Whisper", EventType = "OperatorCommandQueued", Module = "SummonOperatorConsole",
                 Account = target.Account, Profile = target.Profile, Character = target.Character, SessionId = target.SessionId, CorrelationId = corr,
-                Message = "Manual whisper queued for backend acknowledgement.", Direction = OperatorDirection.System,
+                Message = "Manual summon whisper queued for backend acknowledgement.", Direction = OperatorDirection.System,
                 Metadata = new Dictionary<string, object> { { "player", player.Trim() }, { "command", "ReplyToWhisper" } }
             });
         }
@@ -114,12 +114,12 @@ namespace WoW112.OperatorConsole
         public string DebugSnapshot()
         {
             var sb = new StringBuilder();
-            sb.AppendLine("WoW112 Operator Console debug snapshot");
+            sb.AppendLine("WoW112 Summon Operator Console debug snapshot");
             sb.AppendLine("generated_utc=" + DateTime.UtcNow.ToString("O"));
             var counters = State.Counters();
             sb.AppendLine("whispers total=" + counters.Total + " understood=" + counters.Understood + " ignored=" + counters.IgnoredIntentionally + " unhandled=" + counters.Unhandled);
             foreach (var s in State.Sessions())
-                sb.AppendLine("session=" + s.SessionId + " char=" + s.Character + " connected=" + s.Connected + " world=" + s.World + " ah=" + s.Ah + " summon=" + s.Summon + " mail=" + s.Mail + " coordinator=" + s.Coordinator + " last=" + s.LastEvent + " error=" + s.LastError);
+                sb.AppendLine("session=" + s.SessionId + " char=" + s.Character + " connected=" + s.Connected + " world=" + s.World + " whispers=" + s.Whispers + " summon=" + s.Summon + " payment=" + s.Payment + " queue=" + s.SummonQueue + " last=" + s.LastEvent + " error=" + s.LastError);
             foreach (var e in EventsSnapshot().Where(x => x.Severity >= OperatorSeverity.Warn).TakeLastCompat(50))
                 sb.AppendLine(e.TimestampUtc.ToString("O") + " " + e.Severity + " " + e.Character + " " + e.Module + " " + e.EventType + " " + e.Message);
             return SecretSanitizer.Sanitize(sb.ToString());
@@ -128,8 +128,8 @@ namespace WoW112.OperatorConsole
         public void EmitDemoEvents()
         {
             var sid = "demo-smokinpole";
-            Bus.Publish(Demo("SessionStarted", "Core", "Demo session started", sid, "Smokinpole"));
-            Bus.Publish(Demo("LoginSucceeded", "World", "Connected to world", sid, "Smokinpole"));
+            Bus.Publish(Demo("SessionStarted", "Core", "Demo summon session started", sid, "Smokinpole"));
+            Bus.Publish(Demo("CharacterEnteredWorld", "World", "Summoner connected to world", sid, "Smokinpole"));
             var whisper = Demo("WhisperReceived", "Whisper", "need hyjal pls", sid, "Smokinpole", "PlayerX");
             whisper.Direction = OperatorDirection.Incoming;
             whisper.Metadata["parser"] = new Dictionary<string, object> {
@@ -140,11 +140,11 @@ namespace WoW112.OperatorConsole
             };
             Bus.Publish(whisper);
             Bus.Publish(Demo("WhisperParsed", "Whisper", "PlayerX classified as Hyjal summon request", sid, "Smokinpole", "PlayerX"));
-            Bus.Publish(Demo("SummonQueued", "Summon", "PlayerX queued for Hyjal", sid, "Smokinpole", "PlayerX"));
-            var payment = Demo("PaymentReceived", "Payment", "Received 4g from PlayerX", sid, "Smokinpole", "PlayerX");
-            payment.Metadata["copper"] = 40000; payment.Metadata["destination"] = "Hyjal"; Bus.Publish(payment);
-            var uncertain = Demo("MutationCoordinatorUncertain", "Mutation", "Example hard-stop visibility", sid, "Smokinpole");
-            uncertain.Severity = OperatorSeverity.Warn; uncertain.OperationId = "demo-op-uncertain"; Bus.Publish(uncertain);
+            var queued = Demo("SummonQueued", "Summon", "PlayerX queued for Hyjal", sid, "Smokinpole", "PlayerX"); queued.Metadata["destination"] = "Hyjal"; Bus.Publish(queued);
+            var started = Demo("SummonStarted", "Summon", "Summoning PlayerX to Hyjal", sid, "Smokinpole", "PlayerX"); started.Metadata["destination"] = "Hyjal"; Bus.Publish(started);
+            var done = Demo("SummonCompleted", "Summon", "PlayerX summoned to Hyjal", sid, "Smokinpole", "PlayerX"); done.Metadata["destination"] = "Hyjal"; Bus.Publish(done);
+            var expected = Demo("PaymentExpected", "Payment", "Waiting for 4g from PlayerX", sid, "Smokinpole", "PlayerX"); expected.Metadata["expected_copper"] = 40000; expected.Metadata["destination"] = "Hyjal"; Bus.Publish(expected);
+            var payment = Demo("PaymentReceived", "Payment", "Received 4g from PlayerX", sid, "Smokinpole", "PlayerX"); payment.Metadata["copper"] = 40000; payment.Metadata["expected_copper"] = 40000; payment.Metadata["destination"] = "Hyjal"; Bus.Publish(payment);
         }
 
         private static OperatorEvent Demo(string type, string module, string message, string sid, string character, string player = "")
@@ -164,7 +164,6 @@ namespace WoW112.OperatorConsole
         private readonly DataGridView overview = MakeGrid();
         private readonly DataGridView eventsGrid = MakeGrid();
         private readonly DataGridView summonGrid = MakeGrid();
-        private readonly DataGridView mutationGrid = MakeGrid();
         private readonly ListBox conversations = new ListBox();
         private readonly ListBox transcript = new ListBox();
         private readonly TextBox reply = new TextBox();
@@ -186,11 +185,11 @@ namespace WoW112.OperatorConsole
         public OperatorConsoleForm(OperatorApplication application)
         {
             app = application;
-            Text = "WoW112 Operator Console V1";
+            Text = "WoW112 Summon Operator Console V1";
             Width = 1550; Height = 900; StartPosition = FormStartPosition.CenterScreen;
             BackColor = Color.FromArgb(24, 26, 31); ForeColor = Color.Gainsboro; Font = new Font("Segoe UI", 9F);
             tabs.Dock = DockStyle.Fill; Controls.Add(tabs);
-            BuildOverview(); BuildWhispers(); BuildWhisperDebug(); BuildEvents(); BuildDebug(); BuildLogs(); BuildSummons(); BuildMutations();
+            BuildOverview(); BuildWhispers(); BuildWhisperDebug(); BuildSummons(); BuildEvents(); BuildDebug(); BuildLogs();
             app.Changed += OnAppChanged;
             FormClosed += delegate { app.Changed -= OnAppChanged; };
             RefreshAll();
@@ -199,7 +198,7 @@ namespace WoW112.OperatorConsole
         private void BuildOverview()
         {
             var page = NewPage("OVERVIEW"); overview.Dock = DockStyle.Fill;
-            AddColumns(overview, "Character", "Account/Profile", "Connected", "World", "AH", "Summon", "Mail", "Coordinator", "Current task", "Last activity", "Last event", "Last error");
+            AddColumns(overview, "Character", "Account/Profile", "Connected", "World", "Whispers", "Summon", "Payment", "Queue", "Current task", "Last activity", "Last event", "Last error");
             page.Controls.Add(overview); tabs.TabPages.Add(page);
         }
 
@@ -214,7 +213,7 @@ namespace WoW112.OperatorConsole
             var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1, BackColor = BackColor };
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 28)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
             var route = new FlowLayoutPanel { Dock = DockStyle.Fill, BackColor = BackColor, Padding = new Padding(4) };
-            route.Controls.Add(new Label { Text = "Send via session:", AutoSize = true, ForeColor = ForeColor, Padding = new Padding(0, 5, 0, 0) });
+            route.Controls.Add(new Label { Text = "Send via summon session:", AutoSize = true, ForeColor = ForeColor, Padding = new Padding(0, 5, 0, 0) });
             session.Width = 420; session.DropDownStyle = ComboBoxStyle.DropDownList; route.Controls.Add(session); right.Controls.Add(route, 0, 0);
             whisperStats.Dock = DockStyle.Fill; whisperStats.ForeColor = ForeColor; right.Controls.Add(whisperStats, 0, 1);
             StyleList(transcript); transcript.Dock = DockStyle.Fill; transcript.Font = new Font("Consolas", 9F); right.Controls.Add(transcript, 0, 2);
@@ -229,6 +228,13 @@ namespace WoW112.OperatorConsole
 
         private void BuildWhisperDebug() { var page = NewPage("WHISPER DEBUG"); parserDebug.Dock = DockStyle.Fill; page.Controls.Add(parserDebug); tabs.TabPages.Add(page); }
 
+        private void BuildSummons()
+        {
+            var page = NewPage("SUMMONS / PAYMENTS"); summonGrid.Dock = DockStyle.Fill;
+            AddColumns(summonGrid, "Time", "Client", "Destination", "Character", "Event", "Expected", "Actual", "Status", "Summary");
+            page.Controls.Add(summonGrid); tabs.TabPages.Add(page);
+        }
+
         private void BuildEvents()
         {
             var page = NewPage("EVENTS");
@@ -242,7 +248,7 @@ namespace WoW112.OperatorConsole
             pauseView.Text = "Pause view"; pauseView.ForeColor = ForeColor;
             var clear = MakeButton("Clear VIEW"); clear.Click += delegate { eventsGrid.Rows.Clear(); };
             filters.Controls.Add(new Label { Text = "Search", AutoSize = true, ForeColor = ForeColor, Padding = new Padding(0, 5, 0, 0) }); filters.Controls.Add(search); filters.Controls.Add(severity); filters.Controls.Add(module); filters.Controls.Add(autoScroll); filters.Controls.Add(pauseView); filters.Controls.Add(clear);
-            eventsGrid.Dock = DockStyle.Fill; AddColumns(eventsGrid, "Time", "Severity", "Character", "Module", "Event", "Summary", "Operation ID");
+            eventsGrid.Dock = DockStyle.Fill; AddColumns(eventsGrid, "Time", "Severity", "Character", "Module", "Event", "Summary", "Correlation/Operation ID");
             layout.Controls.Add(filters, 0, 0); layout.Controls.Add(eventsGrid, 0, 1); page.Controls.Add(layout); tabs.TabPages.Add(page);
         }
 
@@ -255,8 +261,6 @@ namespace WoW112.OperatorConsole
         }
 
         private void BuildLogs() { var page = NewPage("LOGS"); logsText.Dock = DockStyle.Fill; page.Controls.Add(logsText); tabs.TabPages.Add(page); }
-        private void BuildSummons() { var page = NewPage("SUMMON / PAYMENTS"); summonGrid.Dock = DockStyle.Fill; AddColumns(summonGrid, "Time", "Client", "Destination", "Character", "Event", "Expected", "Actual", "Status", "Summary"); page.Controls.Add(summonGrid); tabs.TabPages.Add(page); }
-        private void BuildMutations() { var page = NewPage("AH / MUTATIONS"); mutationGrid.Dock = DockStyle.Fill; AddColumns(mutationGrid, "Time", "Character", "Module", "Operation ID", "Event", "State", "Summary"); page.Controls.Add(mutationGrid); tabs.TabPages.Add(page); }
 
         private void OnAppChanged()
         {
@@ -266,7 +270,7 @@ namespace WoW112.OperatorConsole
 
         private void RefreshAll()
         {
-            RefreshOverview(); RefreshSessions(); RefreshConversations(); RefreshConversation(); RefreshEvents(); RefreshDebug(); RefreshLogs(); RefreshSummons(); RefreshMutations();
+            RefreshOverview(); RefreshSessions(); RefreshConversations(); RefreshConversation(); RefreshSummons(); RefreshEvents(); RefreshDebug(); RefreshLogs();
         }
 
         private void RefreshOverview()
@@ -274,8 +278,9 @@ namespace WoW112.OperatorConsole
             overview.Rows.Clear();
             foreach (var s in app.State.Sessions())
             {
-                var row = overview.Rows.Add(s.Character, s.Account + "/" + s.Profile, s.Connected ? "ONLINE" : "OFFLINE", s.World, s.Ah, s.Summon, s.Mail, s.Coordinator, s.CurrentAction, LocalTime(s.LastActivityUtc), s.LastEvent, s.LastError);
-                if (s.Coordinator == OperatorStatus.Uncertain || s.Mail == OperatorStatus.Uncertain) overview.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
+                var row = overview.Rows.Add(s.Character, s.Account + "/" + s.Profile, s.Connected ? "ONLINE" : "OFFLINE", s.World, s.Whispers, s.Summon, s.Payment, s.SummonQueue, s.CurrentAction, LocalTime(s.LastActivityUtc), s.LastEvent, s.LastError);
+                if (s.Summon == OperatorStatus.Error || s.World == OperatorStatus.Error) overview.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
+                else if (s.Payment == OperatorStatus.Warning || s.Whispers == OperatorStatus.Warning) overview.Rows[row].DefaultCellStyle.BackColor = Color.FromArgb(85, 65, 25);
             }
         }
 
@@ -325,6 +330,18 @@ namespace WoW112.OperatorConsole
             parserDebug.Text = "sender: " + p.Sender + "\r\nraw: " + p.RawText + "\r\nnormalized: " + p.NormalizedText + "\r\nresult: " + p.Result + "\r\ndestination: " + p.Destination + "\r\nintent: " + p.Intent + "\r\nkeywords: " + p.Keywords + "\r\ncompetition: " + p.Competition + "\r\nsummon_request: " + p.SummonRequest + "\r\nconfidence: " + p.Confidence.ToString("0.###") + "\r\nmatched_rule: " + p.MatchedRule + "\r\nreason: " + p.Reason + "\r\nignore_reason: " + p.IgnoreReason;
         }
 
+        private void RefreshSummons()
+        {
+            summonGrid.Rows.Clear();
+            foreach (var e in app.EventsSnapshot().Where(x => x.Category == "Summon" || x.Category == "Payment" || x.EventType.StartsWith("Summon") || x.EventType.StartsWith("Payment")).TakeLastCompat(5000))
+            {
+                object d, exp, actual; var destination = e.Metadata.TryGetValue("destination", out d) ? Convert.ToString(d) : ""; var expected = e.Metadata.TryGetValue("expected_copper", out exp) ? Money(exp) : ""; var got = e.Metadata.TryGetValue("copper", out actual) ? Money(actual) : "";
+                var status = e.EventType == "PaymentReceived" ? "PAID" : e.EventType == "PaymentMissing" ? "UNPAID" : e.EventType == "PaymentExpected" ? "AWAITING PAYMENT" : e.EventType == "SummonCompleted" ? "SUMMONED" : e.EventType == "SummonFailed" ? "FAILED" : e.EventType == "SummonStarted" ? "SUMMONING" : "WAITING";
+                var row = summonGrid.Rows.Add(LocalTime(e.TimestampUtc), e.ConversationPlayer, destination, e.Character, e.EventType, expected, got, status, e.Message);
+                if (status == "FAILED" || status == "UNPAID") summonGrid.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
+            }
+        }
+
         private void RefreshEvents()
         {
             if (pauseView.Checked || refreshingEvents) return;
@@ -342,8 +359,9 @@ namespace WoW112.OperatorConsole
                 eventsGrid.Rows.Clear();
                 foreach (var e in q.TakeLastCompat(5000))
                 {
-                    var row = eventsGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Severity, e.Character, e.Module, e.EventType, e.Message, e.OperationId);
-                    if (e.EventType.IndexOf("Uncertain", StringComparison.OrdinalIgnoreCase) >= 0) eventsGrid.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
+                    var id = !string.IsNullOrWhiteSpace(e.CorrelationId) ? e.CorrelationId : e.OperationId;
+                    var row = eventsGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Severity, e.Character, e.Module, e.EventType, e.Message, id);
+                    if (e.Severity == OperatorSeverity.Error) eventsGrid.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
                 }
                 if (autoScroll.Checked && eventsGrid.Rows.Count > 0) eventsGrid.FirstDisplayedScrollingRowIndex = eventsGrid.Rows.Count - 1;
             }
@@ -359,27 +377,6 @@ namespace WoW112.OperatorConsole
         private void RefreshDebug() { debugText.Text = app.DebugSnapshot(); }
         private void RefreshLogs() { logsText.Text = string.Join("\r\n", app.EventsSnapshot().TakeLastCompat(2000).Select(e => LocalTime(e.TimestampUtc) + " " + e.Severity + " " + e.Character + " " + e.Module + " " + e.EventType + " " + e.Message)); }
 
-        private void RefreshSummons()
-        {
-            summonGrid.Rows.Clear();
-            foreach (var e in app.EventsSnapshot().Where(x => x.Category == "Summon" || x.Category == "Payment" || x.EventType.StartsWith("Summon") || x.EventType.StartsWith("Payment")).TakeLastCompat(5000))
-            {
-                object d, exp, actual; var destination = e.Metadata.TryGetValue("destination", out d) ? Convert.ToString(d) : ""; var expected = e.Metadata.TryGetValue("expected_copper", out exp) ? Money(exp) : ""; var got = e.Metadata.TryGetValue("copper", out actual) ? Money(actual) : "";
-                var status = e.EventType == "PaymentReceived" ? "PAID" : e.EventType == "PaymentMissing" ? "UNPAID" : e.EventType == "SummonCompleted" ? "SUMMONED" : e.EventType == "SummonFailed" ? "FAILED" : e.EventType == "SummonStarted" ? "SUMMONING" : "WAITING";
-                summonGrid.Rows.Add(LocalTime(e.TimestampUtc), e.ConversationPlayer, destination, e.Character, e.EventType, expected, got, status, e.Message);
-            }
-        }
-
-        private void RefreshMutations()
-        {
-            mutationGrid.Rows.Clear();
-            foreach (var e in app.EventsSnapshot().Where(x => x.Category == "Mutation" || x.EventType.IndexOf("Mutation", StringComparison.OrdinalIgnoreCase) >= 0 || x.EventType.StartsWith("Buy") || x.EventType.StartsWith("MailMutation") || x.EventType.StartsWith("Auction")).TakeLastCompat(5000))
-            {
-                var state = e.EventType.IndexOf("Uncertain", StringComparison.OrdinalIgnoreCase) >= 0 ? "UNCERTAIN" : e.EventType.EndsWith("Confirmed") ? "CONFIRMED" : e.EventType.EndsWith("Started") ? "START" : e.EventType;
-                var row = mutationGrid.Rows.Add(LocalTime(e.TimestampUtc), e.Character, e.Module, e.OperationId, e.EventType, state, e.Message); if (state == "UNCERTAIN") mutationGrid.Rows[row].DefaultCellStyle.BackColor = Color.DarkRed;
-            }
-        }
-
         private void ReplyKeyDown(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Enter && !e.Shift) { e.SuppressKeyPress = true; SendReply(); } }
 
         private void SendReply()
@@ -389,7 +386,7 @@ namespace WoW112.OperatorConsole
                 SessionState target = null; var label = Convert.ToString(session.SelectedItem) ?? ""; if (label.Length > 0) sessionByLabel.TryGetValue(label, out target);
                 app.SendManualWhisper(selectedPlayer, reply.Text.Trim(), target); reply.Clear();
             }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, "Operator command rejected", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "Summon operator command rejected", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
 
         private static bool IsWhisper(OperatorEvent e) { return e.EventType.IndexOf("Whisper", StringComparison.OrdinalIgnoreCase) >= 0 || e.Category == "Whisper"; }
