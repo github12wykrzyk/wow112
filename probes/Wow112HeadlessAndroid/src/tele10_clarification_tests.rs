@@ -1,9 +1,7 @@
 use crate::tele08_whisper_parser::{
     classify_whisper, ParserConfig, WhisperClassification, WhisperIntent, WhisperObservation,
 };
-use crate::tele10_clarification::{
-    ClarificationConfig, ClarificationDecision, ClarificationGate,
-};
+use crate::tele10_clarification::{ClarificationConfig, ClarificationDecision, ClarificationGate};
 
 fn classify_at(sender: &str, text: &str, timestamp_ms: u64) -> WhisperClassification {
     classify_whisper(
@@ -175,7 +173,12 @@ fn cooldown_blocks_immediate_reprompt_after_decline_or_expiry() {
 #[test]
 fn irrelevant_and_competition_messages_never_open_fallback() {
     let mut gate = default_gate();
-    for text in ["hello", "thanks", "need gold", "selling summons cheaper today"] {
+    for text in [
+        "hello",
+        "thanks",
+        "need gold",
+        "selling summons cheaper today",
+    ] {
         assert_eq!(
             gate.process(&classify_at("Customer", text, 1_000)),
             ClarificationDecision::PassThrough,
@@ -194,7 +197,10 @@ fn competitor_message_cancels_existing_pending_fallback() {
     ));
     let competitor = classify_at("Customer", "selling summons cheaper today", 2_000);
     assert_eq!(competitor.intent, WhisperIntent::CompetitionMessage);
-    assert_eq!(gate.process(&competitor), ClarificationDecision::PassThrough);
+    assert_eq!(
+        gate.process(&competitor),
+        ClarificationDecision::PassThrough
+    );
     assert_eq!(gate.pending_count(), 0);
     assert_eq!(
         gate.process(&classify_at("Customer", "yes", 3_000)),
