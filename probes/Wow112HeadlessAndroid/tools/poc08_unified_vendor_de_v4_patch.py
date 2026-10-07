@@ -71,9 +71,12 @@ indent = re.match(r'\s*', m.group(1)).group(0)
 insert = m.group(1) + '\n' + indent + 'let vendor_limit=poc07_env_u32_default("WOW112_UNIFIED_VENDOR_MAX_PURCHASES",25)?;' + '\n' + indent + 'let total_limit=poc07_env_u32_default("WOW112_UNIFIED_MAX_PURCHASES",25)?;' + '\n' + indent + 'let spend_limit=poc07_env_u32_default("WOW112_UNIFIED_MAX_SPEND",100_000)?;'
 s = s[:m.start()] + insert + s[m.end():]
 
-old_queue_log = '''    println!("[POC08-UNIFIED-MULTI] QUEUE action={:?} eligible={} vendor={} de={} de_limit={} vendor_limit=UNLIMITED order=PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),de_limit);'''
-new_queue_log = '''    println!("[POC08-UNIFIED-V4] QUEUE action={:?} eligible={} vendor={} de={} limits_total={} limits_vendor={} limits_de={} max_spend={} order=RISK_ADJUSTED_PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),total_limit,vendor_limit,de_limit,spend_limit);'''
-rep('queue limits log', old_queue_log, new_queue_log)
+queue_log_pattern = re.compile(r'(?m)^(\s*)println!\("\[POC08-UNIFIED-MULTI\] QUEUE[^\n]*\);\s*$')
+qm = queue_log_pattern.search(s)
+if not qm:
+    raise SystemExit('queue limits log: semantic anchor missing')
+new_queue_log = qm.group(1) + 'println!("[POC08-UNIFIED-V4] QUEUE action={:?} eligible={} vendor={} de={} limits_total={} limits_vendor={} limits_de={} max_spend={} order=RISK_ADJUSTED_PROFIT_DESC_VENDOR_TIE",f1_action,queue.len(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Vendor)).count(),queue.iter().filter(|x|matches!(x.0,Poc08Exit::Disenchant)).count(),total_limit,vendor_limit,de_limit,spend_limit);'
+s = s[:qm.start()] + new_queue_log + s[qm.end():]
 
 old_loop = '''    let(mut bought_total,mut bought_vendor,mut bought_de,mut stale_skipped,mut de_limit_skipped)=(0u32,0u32,0u32,0u32,0u32);
     for(rank,(route,c,profit))in queue.iter().enumerate(){
