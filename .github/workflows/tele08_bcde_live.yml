@@ -1,0 +1,158 @@
+name: TELE08 B-C-D-E canonical live policy gate
+
+on:
+  push:
+    branches:
+      - feature/tele08-bcde-integration-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/Cargo.toml'
+      - 'probes/Wow112HeadlessAndroid/src/lib.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/destination_registry.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
+      - 'probes/Wow112HeadlessAndroid/config/tele08_destinations.example.json'
+      - 'probes/Wow112HeadlessAndroid/tests/tele08_d_smoke.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_bcd_live_gate.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_e_live_policy_gate.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - '.github/workflows/tele08_bcde_live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+      WOW112_RECONNECT_LIMIT: '1'
+      WOW112_RECONNECT_DELAY_MS: '0'
+      WOW112_TELE08_CUSTOMER_ACCOUNT: 'taxi1'
+      WOW112_TELE08_CUSTOMER_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SLAVE1_ACCOUNT: 'taxi2'
+      WOW112_TELE08_SLAVE1_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SUMMONER_ACCOUNT: 'taxi3'
+      WOW112_TELE08_SUMMONER_CHARACTER: 'Teletanaris'
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format gate
+        shell: pwsh
+        run: |
+          rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/tele_response_engine.rs probes/Wow112HeadlessAndroid/src/bin/tele08_e_live_policy_gate.rs
+
+      - name: B-C-D-E offline contract
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --test tele08_d_smoke -- --nocapture
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_bcd_live_gate
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_e_live_policy_gate
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+
+      - name: Build canonical live runners
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_bcd_live_gate
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_e_live_policy_gate
+
+      - name: Autonomous real-server B then C-D-E policy gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $status = 'TELE08_BCDE_LIVE_STATUS.txt'
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            @"
+          result=SKIPPED_NO_SECRET
+          detail=Repository Actions secret WOW112_PASSWORD is not configured for this workflow.
+          sha=$env:GITHUB_SHA
+          source=canonical_branch
+          "@ | Set-Content -Encoding UTF8 $status
+            Write-Host 'TELE08 B-C-D-E LIVE: SKIPPED_NO_SECRET'
+            exit 0
+          }
+
+          $root = 'tele08_b_live_runs'
+          if (Test-Path $root) { Remove-Item $root -Recurse -Force }
+          Remove-Item 'TELE08_E_UNKNOWN_LIVE.jsonl' -Force -ErrorAction SilentlyContinue
+
+          $bexe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
+          & $bexe
+          $brc = $LASTEXITCODE
+          if ($brc -ne 0) {
+            @"
+          result=FAIL_B_LIVE
+          detail=tele08_b_live_runtime exited rc=$brc.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            throw "TELE08 B live phase failed rc=$brc"
+          }
+
+          $resultFile = Get-ChildItem -Path $root -Filter RESULTS.json -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $resultFile) { throw 'B live PASS produced no RESULTS.json' }
+          $result = Get-Content $resultFile.FullName -Raw | ConvertFrom-Json
+          if ($result.overall -ne 'PASS' -or $result.received_cases -ne 12 -or $result.passed_cases -ne 12) {
+            throw "B live result is not 12/12 PASS: $($resultFile.FullName)"
+          }
+
+          $tsv = Join-Path $env:RUNNER_TEMP 'tele08_bcde_live_evidence.tsv'
+          Remove-Item $tsv -Force -ErrorAction SilentlyContinue
+          foreach ($case in $result.cases) {
+            if ($case.sender -match "`t|`r|`n" -or $case.raw_text -match "`t|`r|`n") { throw "unsafe TSV evidence in case $($case.id)" }
+            Add-Content -Path $tsv -Encoding UTF8 -Value ("{0}`t{1}" -f $case.sender, $case.raw_text)
+          }
+          Copy-Item $tsv 'TELE08_BCDE_LIVE_EVIDENCE.tsv' -Force
+
+          $bcd = 'probes/Wow112HeadlessAndroid/target/release/tele08_bcd_live_gate.exe'
+          & $bcd --evidence $tsv
+          if ($LASTEXITCODE -ne 0) {
+            @"
+          result=FAIL_BCD_GATE
+          detail=B live 12/12 PASS but canonical B-C-D gate failed.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            throw 'TELE08 B-C-D gate failed'
+          }
+
+          $e = 'probes/Wow112HeadlessAndroid/target/release/tele08_e_live_policy_gate.exe'
+          & $e --evidence $tsv
+          if ($LASTEXITCODE -ne 0) {
+            @"
+          result=FAIL_E_POLICY_GATE
+          detail=B-C-D PASS but E policy gate failed on exact real whisper evidence.
+          sha=$env:GITHUB_SHA
+          "@ | Set-Content -Encoding UTF8 $status
+            throw 'TELE08 E policy gate failed'
+          }
+
+          if (-not (Test-Path 'TELE08_E_UNKNOWN_LIVE.jsonl')) { throw 'E policy PASS produced no Unknown JSONL evidence' }
+          @"
+          result=PASS
+          detail=Real server B whisper transport/classification 12/12 PASS; B-C-D canonical gate PASS; E queued/unsupported/competition/UnknownNoReply/Unknown JSONL/D-unavailable response policy PASS. E remains policy-only; outbound WoW whisper transmission is intentionally outside tele_response_engine.rs.
+          sha=$env:GITHUB_SHA
+          b_results=$($resultFile.FullName)
+          source_patching=false
+          "@ | Set-Content -Encoding UTF8 $status
+          Write-Host 'TELE08 B-C-D-E CANONICAL LIVE POLICY GATE PASS'
+
+      - name: Upload B-C-D-E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE08_BCDE_CANONICAL_LIVE_EVIDENCE
+          path: |
+            TELE08_BCDE_LIVE_STATUS.txt
+            TELE08_BCDE_LIVE_EVIDENCE.tsv
+            TELE08_E_UNKNOWN_LIVE.jsonl
+            tele08_b_live_runs/**
+          if-no-files-found: warn
