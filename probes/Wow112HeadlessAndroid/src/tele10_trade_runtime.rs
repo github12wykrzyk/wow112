@@ -139,7 +139,8 @@ impl TradeEngine {
                     now_wall,
                 )?;
                 self.sequence = self.sequence.saturating_add(1);
-                let guid = partner_guid.ok_or_else(|| "BEGIN_TRADE without partner guid".to_string())?;
+                let guid =
+                    partner_guid.ok_or_else(|| "BEGIN_TRADE without partner guid".to_string())?;
                 self.active = Some(ActiveTrade {
                     trade_session_id: format!("T{now_wall}-{:016X}-{}", guid, self.sequence),
                     partner_guid: guid,
@@ -301,11 +302,7 @@ impl TradeEngine {
         Ok(event)
     }
 
-    pub fn poll(
-        &mut self,
-        now_wall: u64,
-        now_ms: u64,
-    ) -> Result<Option<PaymentEvent>, String> {
+    pub fn poll(&mut self, now_wall: u64, now_ms: u64) -> Result<Option<PaymentEvent>, String> {
         let timed_out = self
             .active
             .as_ref()
@@ -453,14 +450,18 @@ mod tests {
     fn arm_happy(engine: &mut TradeEngine) -> String {
         engine.on_coinage(100_000, 1006, 0).unwrap();
         assert_eq!(
-            engine.on_trade_status(&begin_payload(0x1234), 1010, 10).unwrap(),
+            engine
+                .on_trade_status(&begin_payload(0x1234), 1010, 10)
+                .unwrap(),
             vec![TradeAction::QueryPartnerName(0x1234)]
         );
         assert_eq!(
             engine.on_partner_name(0x1234, "PlayerA", 1010).unwrap(),
             vec![TradeAction::BeginTrade]
         );
-        let actions = engine.on_trade_extended(&extended(true, 40_000), 1011).unwrap();
+        let actions = engine
+            .on_trade_extended(&extended(true, 40_000), 1011)
+            .unwrap();
         let TradeAction::AcceptTrade { intent_id } = actions[0].clone() else {
             panic!("expected accept action")
         };
@@ -469,7 +470,8 @@ mod tests {
 
     #[test]
     fn wire_parsers_match_vanilla_layout() {
-        let (status, guid) = TradeEngine::parse_trade_status(&begin_payload(0x1122334455667788)).unwrap();
+        let (status, guid) =
+            TradeEngine::parse_trade_status(&begin_payload(0x1122334455667788)).unwrap();
         assert_eq!(status, TRADE_STATUS_BEGIN_TRADE);
         assert_eq!(guid, Some(0x1122334455667788));
         let snapshot = TradeEngine::parse_extended(&extended(true, 40_000)).unwrap();
@@ -522,7 +524,10 @@ mod tests {
             .unwrap();
         let event = engine.last_terminal().unwrap();
         assert_eq!(event.status, "cancelled");
-        assert_eq!(engine.store().load().unwrap().summons[0].amount_paid_copper, 0);
+        assert_eq!(
+            engine.store().load().unwrap().summons[0].amount_paid_copper,
+            0
+        );
     }
 
     #[test]

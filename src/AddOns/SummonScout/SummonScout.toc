@@ -24,5 +24,3 @@ SummonScout_DestinationInfoGuardHot.lua
 SummonScout_CompetitionSmartHot.lua
 SummonScout_EngineApiAnchorHot.lua
 SummonScout_CoreErrorGuardHot.lua
-SummonScout_TradePaymentLedgerQuery.lua
-SummonScout_TradePaymentLedger.lua

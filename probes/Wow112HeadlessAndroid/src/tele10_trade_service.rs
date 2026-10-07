@@ -7,7 +7,12 @@ use wow112_headless_android_probe::tele10_trade_runtime::{
 fn tele10_enabled() -> bool {
     std::env::var("WOW112_TELE10_TRADE_ENABLED")
         .ok()
-        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -17,8 +22,8 @@ fn tele10_ledger_path(summoner_name: &str) -> std::path::PathBuf {
             return std::path::PathBuf::from(path);
         }
     }
-    let dir = std::env::var("WOW112_TELE10_LEDGER_DIR")
-        .unwrap_or_else(|_| "tele10_ledger".to_string());
+    let dir =
+        std::env::var("WOW112_TELE10_LEDGER_DIR").unwrap_or_else(|_| "tele10_ledger".to_string());
     LedgerStore::stable_file_for(dir, summoner_name)
 }
 
@@ -33,7 +38,12 @@ fn tele10_store(summoner_name: &str) -> LedgerStore {
     }
     store.partial_enabled = std::env::var("WOW112_TELE10_PARTIAL_ENABLED")
         .ok()
-        .map(|value| !matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(true);
     store
 }
@@ -64,11 +74,7 @@ fn tele10_note_ritual_started(
     Ok(record.summon_id)
 }
 
-fn tele10_coinage_from_mask(
-    object_guid: u64,
-    mask: &UpdateMask,
-    player_guid: u64,
-) -> Option<u32> {
+fn tele10_coinage_from_mask(object_guid: u64, mask: &UpdateMask, player_guid: u64) -> Option<u32> {
     match mask {
         UpdateMask::Player(player) if object_guid == player_guid => {
             player.player_field_coinage().map(|value| value as u32)
@@ -122,16 +128,11 @@ fn tele10_execute_actions(
                 tele_send_name_query(stream, crypto, guid)?;
             }
             TradeAction::BeginTrade => {
-                if write_encrypted_raw(
-                    stream,
-                    crypto.encrypter(),
-                    CMSG_BEGIN_TRADE_OPCODE,
-                    &[],
-                )
-                .is_err()
+                if write_encrypted_raw(stream, crypto.encrypter(), CMSG_BEGIN_TRADE_OPCODE, &[])
+                    .is_err()
                 {
                     return Err(
-                        "TELE10_BEGIN_TRADE_MUTATION_UNCERTAIN retry_allowed=false".to_string(),
+                        "TELE10_BEGIN_TRADE_MUTATION_UNCERTAIN retry_allowed=false".to_string()
                     );
                 }
                 println!(
@@ -158,7 +159,7 @@ fn tele10_execute_actions(
                         event.status, intent_id, event.reason
                     );
                     return Err(
-                        "TELE10_TRADE_ACCEPT_MUTATION_UNCERTAIN retry_allowed=false".to_string(),
+                        "TELE10_TRADE_ACCEPT_MUTATION_UNCERTAIN retry_allowed=false".to_string()
                     );
                 }
                 engine.on_accept_write_success(&intent_id);

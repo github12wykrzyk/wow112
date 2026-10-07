@@ -363,6 +363,37 @@ fn role_has_uncertain_marker(role: &ManagedRole) -> bool {
     .any(|needle| text.contains(needle))
 }
 
+fn tele10_customer_character() -> String {
+    env::var("WOW112_TELE09_CUSTOMER_CHARACTER")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| CUSTOMER.character.to_string())
+}
+
+fn tele10_ledger_path(root: &Path) -> PathBuf {
+    if let Ok(path) = env::var("WOW112_TELE10_LEDGER_PATH") {
+        if !path.trim().is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    let dir = env::var("WOW112_TELE10_LEDGER_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| root.join("tele10_ledger"));
+    wow112_headless_android_probe::tele10_trade_ledger::LedgerStore::stable_file_for(
+        dir,
+        SUMMONER.character,
+    )
+}
+
+fn tele10_destination() -> String {
+    env::var("WOW112_TELE10_DESTINATION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn spawn_role(
     root: &Path,
     run_dir: &Path,
@@ -426,7 +457,8 @@ fn spawn_role(
         .env("WOW112_RECONNECT_LIMIT", "60")
         .env("WOW112_RECONNECT_DELAY_MS", "0")
         .env("WOW112_SOAK_SECONDS", "0")
-        .env("WOW112_RUNNER_STATE_FILE", &state_path);
+        .env("WOW112_RUNNER_STATE_FILE", &state_path)
+        .env("WOW112_TELE10_LEDGER_PATH", tele10_ledger_path(root));
 
     match spec.kind {
         RoleKind::Acceptor => {
@@ -448,7 +480,9 @@ fn spawn_role(
             command
                 .env("WOW112_TELE_RESET_GROUP", "1")
                 .env("WOW112_TELE_INVITE_LIST", &invite_list)
-                .env("WOW112_RITUAL_TARGET_NAME", &customer_character);
+                .env("WOW112_RITUAL_TARGET_NAME", &customer_character)
+                .env("WOW112_TELE10_TRADE_ENABLED", "1")
+                .env("WOW112_TELE10_DESTINATION", tele10_destination());
         }
     }
 
@@ -786,7 +820,10 @@ fn monitor_active_cycle(
         {
             return CycleVerdict {
                 code: "PASS_TELEPORT_COMPLETE".to_string(),
-                detail: format!("summon accepted and far teleport completed; {}", customer.detail),
+                detail: format!(
+                    "summon accepted and far teleport completed; {}",
+                    customer.detail
+                ),
             };
         }
 
@@ -972,6 +1009,20 @@ fn run_service(config: Config) -> Result<i32, String> {
         ));
 
         if verdict.code == "PASS_TELEPORT_COMPLETE" {
+            let ledger_path = tele10_ledger_path(&root);
+            let store =
+                wow112_headless_android_probe::tele10_trade_ledger::LedgerStore::new(&ledger_path);
+            let customer = tele10_customer_character();
+            let settled_summon = store.mark_summoned_for_client(
+                &customer,
+                wow112_headless_android_probe::tele10_trade_ledger::unix_now(),
+            )?;
+            log.log(&format!(
+                "TELE10_LEDGER SUMMONED id={} client={} ledger={}",
+                settled_summon.summon_id,
+                settled_summon.client_name,
+                ledger_path.display()
+            ));
             total_pass += 1;
             stop_all(&mut managed, &mut log);
             write_supervisor_state(

@@ -27,7 +27,9 @@ fn parse_limit(value: Option<&String>, default_value: usize) -> usize {
         .unwrap_or(default_value)
 }
 
-fn print_summons(records: impl IntoIterator<Item = wow112_headless_android_probe::tele10_trade_ledger::SummonRecord>) {
+fn print_summons(
+    records: impl IntoIterator<Item = wow112_headless_android_probe::tele10_trade_ledger::SummonRecord>,
+) {
     for record in records {
         println!("{}", format_summon_line(&record));
     }

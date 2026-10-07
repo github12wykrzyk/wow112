@@ -77,7 +77,10 @@ impl FailReason {
 pub enum Action {
     /// The member was ALREADY marked `InviteSent`; the caller must now write
     /// exactly one CMSG_GROUP_INVITE for `name`.
-    SendInvite { index: usize, name: String },
+    SendInvite {
+        index: usize,
+        name: String,
+    },
     Wait,
     Done,
     Fail(FailReason),
@@ -133,7 +136,11 @@ pub fn parse_party_command_result(payload: &[u8]) -> Result<PartyCommandResult, 
         return Err("party command result missing result code".to_string());
     }
     let result = u32::from_le_bytes(tail[0..4].try_into().unwrap());
-    Ok(PartyCommandResult { operation, member, result })
+    Ok(PartyCommandResult {
+        operation,
+        member,
+        result,
+    })
 }
 
 /// SMSG_GROUP_DECLINE payload = cstring name.
@@ -167,7 +174,12 @@ impl PartySeq {
                 detail: String::new(),
             })
             .collect();
-        PartySeq { members, roster: Vec::new(), member_timeout_ms, failed: None }
+        PartySeq {
+            members,
+            roster: Vec::new(),
+            member_timeout_ms,
+            failed: None,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -186,7 +198,10 @@ impl PartySeq {
     pub fn is_complete(&self) -> bool {
         self.failed.is_none()
             && !self.members.is_empty()
-            && self.members.iter().all(|m| m.state == MemberState::RosterConfirmed)
+            && self
+                .members
+                .iter()
+                .all(|m| m.state == MemberState::RosterConfirmed)
     }
 
     fn fail(&mut self, reason: FailReason) -> Action {
@@ -221,7 +236,10 @@ impl PartySeq {
     }
 
     /// Feed SMSG_PARTY_COMMAND_RESULT.  Returns the parsed packet for logging.
-    pub fn on_party_command_result(&mut self, payload: &[u8]) -> Result<PartyCommandResult, String> {
+    pub fn on_party_command_result(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<PartyCommandResult, String> {
         let parsed = parse_party_command_result(payload)?;
         if parsed.operation != PARTY_OP_INVITE {
             return Ok(parsed);
@@ -322,7 +340,10 @@ impl PartySeq {
                     if waited >= self.member_timeout_ms {
                         self.members[index].state = MemberState::Timeout;
                         let member = self.members[index].name.clone();
-                        return self.fail(FailReason::Timeout { member, waited_ms: waited });
+                        return self.fail(FailReason::Timeout {
+                            member,
+                            waited_ms: waited,
+                        });
                     }
                     return Action::Wait;
                 }
@@ -363,7 +384,10 @@ mod tests {
     use super::*;
 
     fn names() -> Vec<String> {
-        ["Smokinpole", "Winterone", "Wintertwoo"].iter().map(|s| s.to_string()).collect()
+        ["Smokinpole", "Winterone", "Wintertwoo"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     fn list(members: &[&str]) -> Vec<String> {
@@ -384,7 +408,10 @@ mod tests {
         let mut seq = PartySeq::new(&names(), 30_000);
         assert_eq!(
             seq.next_action(0),
-            Action::SendInvite { index: 0, name: "Smokinpole".into() }
+            Action::SendInvite {
+                index: 0,
+                name: "Smokinpole".into()
+            }
         );
         // No second invite while the first is unconfirmed.
         assert_eq!(seq.next_action(350), Action::Wait);
@@ -396,13 +423,28 @@ mod tests {
     #[test]
     fn full_sequence_reaches_done() {
         let mut seq = PartySeq::new(&names(), 30_000);
-        assert!(matches!(seq.next_action(0), Action::SendInvite { index: 0, .. }));
+        assert!(matches!(
+            seq.next_action(0),
+            Action::SendInvite { index: 0, .. }
+        ));
         seq.on_group_list(&list(&["Smokinpole"]));
-        assert_eq!(seq.state_of("Smokinpole"), Some(MemberState::AcceptObserved));
-        assert!(matches!(seq.next_action(1_000), Action::SendInvite { index: 1, .. }));
-        assert_eq!(seq.state_of("Smokinpole"), Some(MemberState::RosterConfirmed));
+        assert_eq!(
+            seq.state_of("Smokinpole"),
+            Some(MemberState::AcceptObserved)
+        );
+        assert!(matches!(
+            seq.next_action(1_000),
+            Action::SendInvite { index: 1, .. }
+        ));
+        assert_eq!(
+            seq.state_of("Smokinpole"),
+            Some(MemberState::RosterConfirmed)
+        );
         seq.on_group_list(&list(&["Smokinpole", "Winterone"]));
-        assert!(matches!(seq.next_action(2_000), Action::SendInvite { index: 2, .. }));
+        assert!(matches!(
+            seq.next_action(2_000),
+            Action::SendInvite { index: 2, .. }
+        ));
         seq.on_group_list(&list(&["Smokinpole", "Winterone", "Wintertwoo"]));
         assert_eq!(seq.next_action(3_000), Action::Done);
         assert!(seq.is_complete());
@@ -419,9 +461,15 @@ mod tests {
     #[test]
     fn timeout_fails_closed_without_reinvite() {
         let mut seq = PartySeq::new(&names(), 10_000);
-        assert!(matches!(seq.next_action(0), Action::SendInvite { index: 0, .. }));
+        assert!(matches!(
+            seq.next_action(0),
+            Action::SendInvite { index: 0, .. }
+        ));
         seq.on_group_list(&list(&["Smokinpole"]));
-        assert!(matches!(seq.next_action(500), Action::SendInvite { index: 1, .. }));
+        assert!(matches!(
+            seq.next_action(500),
+            Action::SendInvite { index: 1, .. }
+        ));
         // Winterone never shows up (the observed live failure).
         assert_eq!(seq.next_action(9_000), Action::Wait);
         match seq.next_action(10_500) {
@@ -453,7 +501,10 @@ mod tests {
         let mut seq = PartySeq::new(&names(), 30_000);
         assert!(matches!(seq.next_action(0), Action::SendInvite { .. }));
         seq.on_group_list(&list(&["Smokinpole"]));
-        assert!(matches!(seq.next_action(100), Action::SendInvite { index: 1, .. }));
+        assert!(matches!(
+            seq.next_action(100),
+            Action::SendInvite { index: 1, .. }
+        ));
         let parsed = seq
             .on_party_command_result(&result_payload(0, "Winterone", 4))
             .unwrap();
@@ -472,7 +523,8 @@ mod tests {
     fn ok_result_only_acks_and_keeps_waiting() {
         let mut seq = PartySeq::new(&names(), 30_000);
         assert!(matches!(seq.next_action(0), Action::SendInvite { .. }));
-        seq.on_party_command_result(&result_payload(0, "Smokinpole", 0)).unwrap();
+        seq.on_party_command_result(&result_payload(0, "Smokinpole", 0))
+            .unwrap();
         assert_eq!(seq.state_of("Smokinpole"), Some(MemberState::InviteSent));
         assert_eq!(seq.next_action(10), Action::Wait);
         assert!(seq.report()[0].contains("invite_acked=true"));
@@ -482,8 +534,10 @@ mod tests {
     fn non_invite_operations_and_unknown_names_are_ignored() {
         let mut seq = PartySeq::new(&names(), 30_000);
         assert!(matches!(seq.next_action(0), Action::SendInvite { .. }));
-        seq.on_party_command_result(&result_payload(2, "Smokinpole", 6)).unwrap();
-        seq.on_party_command_result(&result_payload(0, "Nobody", 1)).unwrap();
+        seq.on_party_command_result(&result_payload(2, "Smokinpole", 6))
+            .unwrap();
+        seq.on_party_command_result(&result_payload(0, "Nobody", 1))
+            .unwrap();
         assert_eq!(seq.next_action(10), Action::Wait);
         assert!(seq.failure().is_none());
     }
@@ -505,7 +559,10 @@ mod tests {
     fn member_already_in_roster_is_not_reinvited() {
         let mut seq = PartySeq::new(&list(&["A", "B"]), 30_000);
         seq.on_group_list(&list(&["A"]));
-        assert!(matches!(seq.next_action(0), Action::SendInvite { index: 1, .. }));
+        assert!(matches!(
+            seq.next_action(0),
+            Action::SendInvite { index: 1, .. }
+        ));
         assert_eq!(seq.state_of("A"), Some(MemberState::RosterConfirmed));
     }
 
@@ -514,7 +571,10 @@ mod tests {
         let mut seq = PartySeq::new(&names(), 30_000);
         assert!(matches!(seq.next_action(0), Action::SendInvite { .. }));
         seq.on_group_list(&list(&["Smokinpole"]));
-        assert!(matches!(seq.next_action(10), Action::SendInvite { index: 1, .. }));
+        assert!(matches!(
+            seq.next_action(10),
+            Action::SendInvite { index: 1, .. }
+        ));
         seq.on_group_list(&list(&[]));
         assert!(matches!(
             seq.next_action(20),
@@ -525,7 +585,10 @@ mod tests {
     #[test]
     fn uncertain_write_fails_closed() {
         let mut seq = PartySeq::new(&names(), 30_000);
-        assert!(matches!(seq.next_action(0), Action::SendInvite { index: 0, .. }));
+        assert!(matches!(
+            seq.next_action(0),
+            Action::SendInvite { index: 0, .. }
+        ));
         assert!(matches!(
             seq.on_write_uncertain(0),
             Action::Fail(FailReason::WriteUncertain { .. })

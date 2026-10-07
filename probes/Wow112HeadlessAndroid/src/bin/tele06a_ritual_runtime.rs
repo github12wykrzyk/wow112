@@ -92,6 +92,7 @@ mod tele06a {
 
     static RESET_ATTEMPTED: AtomicBool = AtomicBool::new(false);
     static CAST_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+    static RITUAL_CONFIRMED: AtomicBool = AtomicBool::new(false);
 
     fn env_csv(name: &str) -> Vec<String> {
         std::env::var(name)
@@ -537,6 +538,7 @@ mod tele06a {
                         match opcode {
                             SMSG_SPELL_START_OPCODE => {
                                 cast_started = true;
+                                RITUAL_CONFIRMED.store(true, Ordering::SeqCst);
                                 publish_runner_state(
                                     "PASS_RITUAL_STARTED",
                                     "SMSG_SPELL_START spell=698",
@@ -546,6 +548,7 @@ mod tele06a {
                                 return Ok(());
                             }
                             SMSG_SPELL_GO_OPCODE => {
+                                RITUAL_CONFIRMED.store(true, Ordering::SeqCst);
                                 publish_runner_state(
                                     "PASS_RITUAL_STARTED",
                                     "SMSG_SPELL_GO spell=698",
@@ -694,6 +697,18 @@ mod tele06a {
             );
         }
 
+        if RITUAL_CONFIRMED.load(Ordering::SeqCst) && tele10_enabled() {
+            println!("[TELE10-TRADE] reconnect_after_confirmed_ritual -> payment_service_only");
+            tele10_trade_service_loop(
+                stream,
+                &mut crypto,
+                soak_seconds,
+                selected.guid.guid(),
+                &selected.name,
+            )?;
+            return Ok(());
+        }
+
         maybe_reset_group(stream, &mut crypto)?;
         let invite_targets = env_csv("WOW112_TELE_INVITE_LIST");
         let target_name = configured_target_name()?;
@@ -701,7 +716,20 @@ mod tele06a {
         drive_roster_and_ritual(stream, &mut crypto, &invite_targets, &target_name)?;
 
         println!("[TELE-06A] cast checkpoint complete; observer loop remains active");
-        tele_sniffer_loop(stream, &mut crypto, soak_seconds)?;
+        if RITUAL_CONFIRMED.load(Ordering::SeqCst) && tele10_enabled() {
+            let destination = std::env::var("WOW112_TELE10_DESTINATION")
+                .unwrap_or_else(|_| "unknown".to_string());
+            tele10_note_ritual_started(&target_name, &selected.name, &destination)?;
+            tele10_trade_service_loop(
+                stream,
+                &mut crypto,
+                soak_seconds,
+                selected.guid.guid(),
+                &selected.name,
+            )?;
+        } else {
+            tele_sniffer_loop(stream, &mut crypto, soak_seconds)?;
+        }
         println!("[TELE-06A] RUNTIME LOOP PASS");
         Ok(())
     }

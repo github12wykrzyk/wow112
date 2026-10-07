@@ -61,15 +61,21 @@ pub struct PaymentEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum JournalEvent {
-    SummonCreated { record: SummonRecord },
+    SummonCreated {
+        record: SummonRecord,
+    },
     SummonStatus {
         summon_id: String,
         status: String,
         timestamp: u64,
         failure_reason: Option<String>,
     },
-    TradeIntent { intent: TradeIntent },
-    Payment { event: PaymentEvent },
+    TradeIntent {
+        intent: TradeIntent,
+    },
+    Payment {
+        event: PaymentEvent,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -110,7 +116,8 @@ impl LedgerState {
             }
             JournalEvent::TradeIntent { intent } => {
                 if !self.terminal_intents.contains(&intent.intent_id) {
-                    self.pending_intents.insert(intent.intent_id.clone(), intent);
+                    self.pending_intents
+                        .insert(intent.intent_id.clone(), intent);
                 }
             }
             JournalEvent::Payment { event } => {
@@ -214,7 +221,8 @@ impl LedgerStore {
         if safe.is_empty() {
             safe = "unknown_summoner".to_string();
         }
-        dir.as_ref().join(format!("tele10_trade_ledger_{safe}.jsonl"))
+        dir.as_ref()
+            .join(format!("tele10_trade_ledger_{safe}.jsonl"))
     }
 
     fn append(&self, event: &JournalEvent) -> Result<(), String> {
@@ -244,14 +252,21 @@ impl LedgerStore {
                 return Ok(LedgerState::default())
             }
             Err(error) => {
-                return Err(format!("open ledger {} failed: {error}", self.path.display()))
+                return Err(format!(
+                    "open ledger {} failed: {error}",
+                    self.path.display()
+                ))
             }
         };
         let reader = BufReader::new(file);
         let mut state = LedgerState::default();
         for (index, line) in reader.lines().enumerate() {
             let line = line.map_err(|error| {
-                format!("read ledger {} line {} failed: {error}", self.path.display(), index + 1)
+                format!(
+                    "read ledger {} line {} failed: {error}",
+                    self.path.display(),
+                    index + 1
+                )
             })?;
             if line.trim().is_empty() {
                 continue;
@@ -324,12 +339,17 @@ impl LedgerStore {
             .iter()
             .filter(|record| {
                 record.client_name.eq_ignore_ascii_case(client_name)
-                    && matches!(record.summon_status.as_str(), "ritual_started" | "portal_ready")
+                    && matches!(
+                        record.summon_status.as_str(),
+                        "ritual_started" | "portal_ready"
+                    )
             })
             .collect::<Vec<_>>();
         candidates.sort_by_key(|record| record.timestamp_created);
         let Some(record) = candidates.last() else {
-            return Err(format!("no pending ritual ledger record for client {client_name:?}"));
+            return Err(format!(
+                "no pending ritual ledger record for client {client_name:?}"
+            ));
         };
         if candidates.len() > 1 {
             let newest = record.timestamp_created;
@@ -338,7 +358,9 @@ impl LedgerStore {
                 .filter(|candidate| candidate.timestamp_created == newest)
                 .count();
             if same_newest > 1 {
-                return Err(format!("ambiguous pending ritual ledger records for {client_name:?}"));
+                return Err(format!(
+                    "ambiguous pending ritual ledger records for {client_name:?}"
+                ));
             }
         }
         self.append(&JournalEvent::SummonStatus {
@@ -354,12 +376,7 @@ impl LedgerStore {
             .ok_or_else(|| "summon record disappeared after status append".to_string())
     }
 
-    pub fn mark_failed(
-        &self,
-        summon_id: &str,
-        reason: &str,
-        now: u64,
-    ) -> Result<(), String> {
+    pub fn mark_failed(&self, summon_id: &str, reason: &str, now: u64) -> Result<(), String> {
         self.append(&JournalEvent::SummonStatus {
             summon_id: summon_id.to_string(),
             status: "failed".to_string(),
@@ -383,12 +400,18 @@ impl LedgerStore {
             {
                 continue;
             }
-            let base = record.timestamp_summoned.unwrap_or(record.timestamp_created);
+            let base = record
+                .timestamp_summoned
+                .unwrap_or(record.timestamp_created);
             if now < base || now.saturating_sub(base) > self.correlation_window_seconds {
                 continue;
             }
             fallback.push(record);
-            if now <= record.payment_session_active_until.max(base.saturating_add(self.active_session_seconds)) {
+            if now
+                <= record
+                    .payment_session_active_until
+                    .max(base.saturating_add(self.active_session_seconds))
+            {
                 active.push(record);
             }
         }
@@ -422,7 +445,8 @@ impl LedgerStore {
         if offered_copper == 0 {
             return Err("no_gold_offer".to_string());
         }
-        let coinage_before = coinage_before.ok_or_else(|| "coinage_baseline_unknown".to_string())?;
+        let coinage_before =
+            coinage_before.ok_or_else(|| "coinage_baseline_unknown".to_string())?;
         let correlation = self.correlate(partner, now)?;
         if !self.partial_enabled && offered_copper < correlation.remaining_copper {
             return Err("underpay_policy_block".to_string());
@@ -454,7 +478,10 @@ impl LedgerStore {
         self.append(&JournalEvent::TradeIntent {
             intent: intent.clone(),
         })?;
-        Ok(ArmedAccept { intent, correlation })
+        Ok(ArmedAccept {
+            intent,
+            correlation,
+        })
     }
 
     fn next_payment_id(&self, now: u64) -> Result<String, String> {

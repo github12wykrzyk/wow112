@@ -20,8 +20,8 @@ use wow_srp::normalized_string::NormalizedString;
 use wow_srp::{PublicKey, SESSION_KEY_LENGTH};
 
 const VANILLA_5875_WIN_X86_INTEGRITY_HASH: [u8; 20] = [
-    0x95, 0xED, 0xB2, 0x7C, 0x78, 0x23, 0xB3, 0x63, 0xCB, 0xDD, 0xAB, 0x56, 0xA3, 0x92,
-    0xE7, 0xCB, 0x73, 0xFC, 0xCA, 0x20,
+    0x95, 0xED, 0xB2, 0x7C, 0x78, 0x23, 0xB3, 0x63, 0xCB, 0xDD, 0xAB, 0x56, 0xA3, 0x92, 0xE7, 0xCB,
+    0x73, 0xFC, 0xCA, 0x20,
 ];
 
 fn hex_prefix(bytes: &[u8]) -> String {
@@ -46,7 +46,10 @@ fn diag_peek(stream: &TcpStream, label: &str, timeout: Duration) {
             hex_prefix(&buf[..count])
         ),
         Err(error)
-            if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) =>
         {
             println!("[AUTH-DIAG] {label} pending=0");
         }
@@ -121,10 +124,8 @@ pub fn authenticate(
             .map_err(|e| format!("invalid SRP server public key: {e:?}"))?;
 
         SrpClientChallenge::new(
-            NormalizedString::new(username)
-                .map_err(|e| format!("invalid account name: {e:?}"))?,
-            NormalizedString::new(password)
-                .map_err(|e| format!("invalid password: {e:?}"))?,
+            NormalizedString::new(username).map_err(|e| format!("invalid account name: {e:?}"))?,
+            NormalizedString::new(password).map_err(|e| format!("invalid password: {e:?}"))?,
             generator,
             large_safe_prime,
             server_public_key,
