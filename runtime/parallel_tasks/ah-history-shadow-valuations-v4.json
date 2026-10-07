@@ -13,10 +13,17 @@
     "ah-history-v2-contract",
     "windows-ah-canonical-build"
   ],
-  "status": "integrated",
+  "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": null,
-  "integrated_feature_sha": "ec49fd10a5c2cbe744befd9976b075e5196e410b",
-  "notes": "Integrated into dev/windows-ah-canonical by PR #657 at canonical merge c849cc3b623ba23f201692b6a5ea226e9c7e1edc. Post-merge Windows V4 build, cumulative V2 replay, offline Windows history and offline Ubuntu history all passed. Final canonical artifact 11495464188 is WoW112-AH-CANONICAL-V4-WINDOWS-c849cc3b623ba23f201692b6a5ea226e9c7e1edc with digest sha256:d84ae087b316449861baeb0295c1570046f0db6fbda3eccf5930858229ebea13. Shadow history remains read-only/audit-only and cannot authorize, reorder or retry BUY. Lease released after integration."
+  "lease": {
+    "owner": "chatgpt-ah-history-shadow-v4",
+    "acquired_at": "2026-10-07T16:04:00Z",
+    "heartbeat_at": "2026-10-07T16:04:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "module:AhHistoryV2ShadowValuation"
+    ]
+  },
+  "notes": "Read-only shadow path only. Immutable archive replay materializes a V2 pricebook; missing history fails open for scan/BUY and disables only the shadow audit. Shadow values are exported separately and are forbidden from BUY authorization, queue ordering, exact-tuple revalidation, mutation retries, and current Vendor/DE valuation inputs. Full Windows V4+shadow build passed on ba7df3b38abff2be81df700389ebc13a466c8f79. Narrow lease intentionally covers only the shadow valuation module to avoid blocking independent Auction Lifecycle/canonical work."
 }
