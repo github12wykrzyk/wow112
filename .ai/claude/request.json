@@ -1,7 +1,7 @@
 {
   "enabled": true,
-  "request_id": "tele11-service-boundary-review-20261008-001",
-  "target_ref": "feature/tele11-service-v1",
+  "request_id": "ah-market-maker-v1-review-20261008-001",
+  "target_ref": "feature/ah-market-maker-v1",
   "tier": "normal",
-  "task": "Review only the architecture boundary between persistent TELE11 service state/queue and the one-shot tele07_supervisor executor. Focus on crash/restart ownership, exactly-once/at-most-once summon mutation semantics, job activation/completion/failure mapping, and the safest minimal interface for TELE11 to spawn TELE07 for a selected customer/team. Use existing tele08_request_queue, tele07_supervisor, tele06a_acceptor_runtime, tele06a_ritual_runtime, destination_registry and TELE10 workflow. Return exact file/symbol evidence, minimal recommended contract, risks and tests. Do not redesign unrelated code."
+  "task": "Review only AH Market Maker V1 on feature/ah-market-maker-v1. Focus on src/AuctionLifecycle/market_maker_policy.rs, market_maker_inventory.rs, market_maker.rs, integrate.py and their interaction with adapter.rs/coordinator.rs/canonical poc07 BUY. Check: exact unit-price/depth math, shallow-market clearing safety, canonical BUY semantics, fresh revalidation after each clear BUY, CANCEL->MAIL->split-to-1->POST correctness, uncertain-send/no-retry behavior, the temporary MM_SPLIT_INTENT bridge through the existing coordinator, and likely Rust compile/type errors. Return exact file/symbol evidence, prioritized fixes, risks and tests. Do not redesign unrelated economy/login/history code and do not edit files."
 }
