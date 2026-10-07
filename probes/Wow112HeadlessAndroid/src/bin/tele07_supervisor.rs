@@ -358,6 +358,12 @@ fn role_has_uncertain_marker(role: &ManagedRole) -> bool {
         "TELE06A_ACCEPT_MUTATION_UNCERTAIN",
         "TELE06B_PORTAL_MUTATION_UNCERTAIN",
         "TELE06C_MOVE_MUTATION_UNCERTAIN",
+        "TELE10_TRADE_BEGIN_MUTATION_UNCERTAIN",
+        "TELE10_TRADE_ACCEPT_MUTATION_UNCERTAIN",
+        "TELE10_PAYER_INITIATE_UNCERTAIN",
+        "TELE10_PAYER_SET_GOLD_UNCERTAIN",
+        "TELE10_PAYER_ACCEPT_UNCERTAIN",
+        "TELE10_PAYER_SOCKET_UNCERTAIN",
     ]
     .iter()
     .any(|needle| text.contains(needle))
@@ -780,13 +786,29 @@ fn monitor_active_cycle(
             }
         }
 
-        if customer.state == "PASS_TELEPORT_COMPLETE"
+        let require_payment = env::var("WOW112_TELE10_REQUIRE_PAYMENT")
+            .ok()
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        if require_payment {
+            if summoner_state.state == "PASS_PAYMENT_COMPLETE"
+                && slave1.state == "PORTAL_USE_SENT"
+                && slave2.state == "PORTAL_USE_SENT"
+            {
+                return CycleVerdict {
+                    code: "PASS_TELEPORT_PAYMENT_COMPLETE".to_string(),
+                    detail: summoner_state.detail,
+                };
+            }
+        } else if customer.state == "PASS_TELEPORT_COMPLETE"
             && slave1.state == "PORTAL_USE_SENT"
             && slave2.state == "PORTAL_USE_SENT"
         {
             return CycleVerdict {
                 code: "PASS_TELEPORT_COMPLETE".to_string(),
-                detail: format!("summon accepted and far teleport completed; {}", customer.detail),
+                detail: format!(
+                    "summon accepted and far teleport completed; {}",
+                    customer.detail
+                ),
             };
         }
 
@@ -971,7 +993,10 @@ fn run_service(config: Config) -> Result<i32, String> {
             verdict.code, verdict.detail
         ));
 
-        if verdict.code == "PASS_TELEPORT_COMPLETE" {
+        if matches!(
+            verdict.code.as_str(),
+            "PASS_TELEPORT_COMPLETE" | "PASS_TELEPORT_PAYMENT_COMPLETE"
+        ) {
             total_pass += 1;
             stop_all(&mut managed, &mut log);
             write_supervisor_state(
