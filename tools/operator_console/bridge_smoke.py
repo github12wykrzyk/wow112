@@ -121,6 +121,22 @@ def has_event(path, event_type, message=None, correlation=None):
     return None
 
 
+def command_or_rejection(mm, backend, correlation):
+    seq = u32(mm, OFF_COMMAND_SEQ)
+    if seq:
+        return ('seq', seq)
+    rows = load_jsonl(backend)
+    for row in reversed(rows):
+        if row.get('EventType') != 'OperatorCommandRejected':
+            continue
+        # Malformed JSON rejection can have no correlation. Any new rejection
+        # during this isolated smoke is relevant evidence.
+        corr = row.get('CorrelationId') or ''
+        if not corr or corr == correlation:
+            return ('rejected', row)
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--exe', required=True)
@@ -134,9 +150,6 @@ def main():
     if not exe.is_file():
         raise SystemExit(f'console exe missing: {exe}')
 
-    # Environment.GetFolderPath(LocalApplicationData) is a Windows known-folder
-    # lookup, not an arbitrary LOCALAPPDATA override. Use the runner's real known
-    # folder so the smoke observes the same files as the .NET console.
     local_appdata = Path(os.environ['LOCALAPPDATA']).resolve()
     operator_root = local_appdata / 'WoW112' / 'OperatorConsole'
     shutil.rmtree(operator_root, ignore_errors=True)
@@ -158,7 +171,6 @@ def main():
         put_u32(mm, OFF_WORLD_READY, 1)
         put_u32(mm, OFF_EVENT_DROPPED, 0)
 
-        # Seed a real wire-level incoming event before console discovery.
         write_event(
             mm, 1, 1, 'SmokeChar', 'SmokePeer', 'need hyjal',
             result='accepted', destination='hyjal', intent='summon_request',
@@ -178,6 +190,8 @@ def main():
             raise RuntimeError(f'parser diagnostic wire fields lost: {parser}')
 
         correlation = 'smoke-correlation-v1'
+        # Match the production serializer contract but omit optional/default
+        # fields instead of fabricating a JavaScriptSerializer DateTime token.
         command = {
             'SchemaVersion': '1',
             'CommandId': 'smoke-command-v1',
@@ -188,14 +202,19 @@ def main():
             'Player': 'SmokePeer',
             'Text': 'manual smoke reply',
             'CorrelationId': correlation,
-            'TimestampUtc': '/Date(0)/',
             'CommandType': 1,
         }
         with commands.open('a', encoding='utf-8', newline='') as fh:
             fh.write(json.dumps(command, separators=(',', ':')) + '\n')
             fh.flush()
 
-        seq = wait_for(lambda: u32(mm, OFF_COMMAND_SEQ) or 0, label='native command_seq')
+        outcome = wait_for(
+            lambda: command_or_rejection(mm, backend, correlation),
+            label='native command_seq or explicit rejection',
+        )
+        if outcome[0] == 'rejected':
+            raise RuntimeError('typed command rejected before native map: ' + json.dumps(outcome[1], ensure_ascii=False))
+        seq = outcome[1]
         if u32(mm, OFF_COMMAND_KIND) != 1:
             raise RuntimeError('console emitted non-whisper native opcode')
         if get_text(mm, OFF_COMMAND_PLAYER, 64) != 'SmokePeer':
@@ -205,7 +224,6 @@ def main():
         if get_text(mm, OFF_COMMAND_CORR, 64) != correlation:
             raise RuntimeError('native correlation mismatch')
 
-        # Simulate the x86/Lua dispatch ACK. This is accepted, not yet sent.
         put_text(mm, OFF_COMMAND_ERROR, 128, '')
         put_u32(mm, OFF_COMMAND_STATUS, CMD_ACCEPTED)
         put_u32(mm, OFF_COMMAND_ACK, seq)
@@ -217,7 +235,6 @@ def main():
         if has_event(backend, 'WhisperSent', correlation=correlation):
             raise RuntimeError('console falsely marked dispatch ACK as WhisperSent')
 
-        # Only the CHAT_MSG_WHISPER_INFORM-equivalent event is allowed to mark sent.
         write_event(
             mm, 2, 2, 'SmokeChar', 'SmokePeer', 'manual smoke reply',
             result='sent', intent='manual', correlation=correlation,
@@ -226,7 +243,7 @@ def main():
             lambda: has_event(backend, 'WhisperSent', message='manual smoke reply', correlation=correlation),
             label='WhisperSent final confirmation',
         )
-        if sent.get('Direction') != 3:  # OperatorDirection.OutgoingManual
+        if sent.get('Direction') != 3:
             raise RuntimeError(f'final manual direction mismatch: {sent}')
 
         print('OPERATOR BRIDGE IPC ROUNDTRIP PASS')
@@ -237,6 +254,15 @@ def main():
         print('dispatch_ack_not_sent=PASS')
         print('final_whisper_confirmation=PASS')
         return 0
+    except Exception:
+        rows = load_jsonl(backend)
+        print('--- backend-events tail ---')
+        for row in rows[-12:]:
+            print(json.dumps(row, ensure_ascii=False, sort_keys=True))
+        print('--- command file ---')
+        if commands.exists():
+            print(commands.read_text(encoding='utf-8', errors='replace'))
+        raise
     finally:
         if proc is not None:
             try:
