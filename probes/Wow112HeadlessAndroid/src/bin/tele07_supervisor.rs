@@ -780,13 +780,13 @@ fn monitor_active_cycle(
             }
         }
 
-        if customer.state == "PASS_RITUAL_COMPLETE"
+        if customer.state == "PASS_TELEPORT_COMPLETE"
             && slave1.state == "PORTAL_USE_SENT"
             && slave2.state == "PORTAL_USE_SENT"
         {
             return CycleVerdict {
-                code: "PASS_RITUAL_COMPLETE".to_string(),
-                detail: format!("server 0x02AB confirmed; {}", customer.detail),
+                code: "PASS_TELEPORT_COMPLETE".to_string(),
+                detail: format!("summon accepted and far teleport completed; {}", customer.detail),
             };
         }
 
@@ -971,7 +971,7 @@ fn run_service(config: Config) -> Result<i32, String> {
             verdict.code, verdict.detail
         ));
 
-        if verdict.code == "PASS_RITUAL_COMPLETE" {
+        if verdict.code == "PASS_TELEPORT_COMPLETE" {
             total_pass += 1;
             stop_all(&mut managed, &mut log);
             write_supervisor_state(

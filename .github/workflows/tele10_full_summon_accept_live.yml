@@ -5,8 +5,8 @@ on:
     branches: [feature/tele10-full-summon-accept-v1]
     paths:
       - '.github/workflows/tele10_full_summon_accept_live.yml'
-      - '.github/scripts/tele10_patch.py'
-      - '.github/scripts/tele10_same_map_hotfix.py'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs'
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs'
 permissions:
   contents: read
 jobs:
@@ -32,13 +32,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Patch and build
+      - name: Stored-source build
         shell: pwsh
         run: |
-          python .github/scripts/tele10_patch.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python .github/scripts/tele10_same_map_hotfix.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustfmt --edition 2021 --config skip_children=true probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele06a_acceptor_runtime -- --nocapture

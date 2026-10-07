@@ -84,12 +84,19 @@ mod agent {
 
     const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
     const SMSG_SUMMON_REQUEST_OPCODE: u16 = 0x02AB;
+    const CMSG_SUMMON_RESPONSE_OPCODE: u32 = 0x02AC;
+    const MSG_MOVE_TELEPORT_ACK_OPCODE: u32 = 0x00C7;
+    const SMSG_NEW_WORLD_OPCODE: u16 = 0x003E;
+    const MSG_MOVE_WORLDPORT_ACK_OPCODE: u32 = 0x00DC;
     const SUMMONING_PORTAL_ENTRY_TELE06B: i32 = 36727;
     const GAMEOBJECT_TYPE_RITUAL_TELE06B: i32 = 18;
 
     static PORTAL_USE_ATTEMPTED: AtomicBool = AtomicBool::new(false);
     static PORTAL_USE_SUCCEEDED: AtomicBool = AtomicBool::new(false);
     static SUMMON_REQUEST_SEEN: AtomicBool = AtomicBool::new(false);
+    static SUMMON_RESPONSE_SENT: AtomicBool = AtomicBool::new(false);
+    static TELEPORT_ACK_SENT: AtomicBool = AtomicBool::new(false);
+    static WORLDPORT_ACK_SENT: AtomicBool = AtomicBool::new(false);
     static TELE06C_MOVE_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
     const TELE06B_DEFAULT_MAX_RANGE: f32 = 5.8;
@@ -526,7 +533,7 @@ mod agent {
             Tele06bRole::Customer => {
                 if SUMMON_REQUEST_SEEN.load(Ordering::SeqCst) {
                     publish_runner_state(
-                        "PASS_RITUAL_COMPLETE",
+                        "SUMMON_REQUEST_SEEN",
                         "SMSG_SUMMON_REQUEST observed in prior live session; completion latched",
                     );
                 } else {
@@ -626,7 +633,7 @@ mod agent {
                                 u32::from_le_bytes(payload[12..16].try_into().unwrap());
                             SUMMON_REQUEST_SEEN.store(true, Ordering::SeqCst);
                             publish_runner_state(
-                                "PASS_RITUAL_COMPLETE",
+                                "SUMMON_REQUEST_SEEN",
                                 &format!(
                                     "SMSG_SUMMON_REQUEST opcode=0x02AB summoner_guid=0x{summoner_guid:016X} area={area} auto_decline_ms={auto_decline_ms}"
                                 ),
@@ -634,11 +641,120 @@ mod agent {
                             println!(
                                 "[TELE-06B-COMPLETE] PASS opcode=0x02AB summoner_guid=0x{summoner_guid:016X} area={area} auto_decline_ms={auto_decline_ms}"
                             );
+                            if SUMMON_RESPONSE_SENT
+                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                publish_runner_state(
+                                    "SUMMON_ACCEPT_COMMITTED",
+                                    &format!("opcode=0x02AC payload=guid8 retry_allowed=false"),
+                                );
+                                if let Err(error) = write_encrypted_raw(
+                                    stream,
+                                    crypto.encrypter(),
+                                    CMSG_SUMMON_RESPONSE_OPCODE,
+                                    &summoner_guid.to_le_bytes(),
+                                ) {
+                                    publish_runner_state(
+                                        "FAIL_SUMMON_ACCEPT_UNCERTAIN",
+                                        "opcode=0x02AC guid8 payload socket write uncertain; retry disabled",
+                                    );
+                                    return Err(format!("TELE10_SUMMON_ACCEPT_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
+                                }
+                                publish_runner_state(
+                                    "WAIT_NEW_WORLD",
+                                    &format!("accepted summon request summoner_guid=0x{summoner_guid:016X}; waiting SMSG_NEW_WORLD opcode=0x003E"),
+                                );
+                                println!("[TELE-10-ACCEPT-TX] PASS opcode=0x02AC payload=guid8 retry_allowed=false");
+                            }
                         } else {
                             println!(
                                 "[TELE-06B-COMPLETE-DIAG] ignored malformed SMSG_SUMMON_REQUEST bytes={} expected=16",
                                 payload.len()
                             );
+                        }
+                        continue;
+                    }
+
+                    if role == Tele06bRole::Customer
+                        && opcode as u32 == MSG_MOVE_TELEPORT_ACK_OPCODE
+                        && SUMMON_RESPONSE_SENT.load(Ordering::SeqCst)
+                    {
+                        if payload.len() < 6 {
+                            println!("[TELE-10-SAME-MAP-DIAG] malformed 0x00C7 bytes={}", payload.len());
+                            continue;
+                        }
+                        let mask = payload[0];
+                        let guid_len = mask.count_ones() as usize;
+                        let counter_off = 1 + guid_len;
+                        if payload.len() < counter_off + 4 {
+                            println!("[TELE-10-SAME-MAP-DIAG] short 0x00C7 bytes={} mask=0x{mask:02X}", payload.len());
+                            continue;
+                        }
+                        let counter = u32::from_le_bytes(payload[counter_off..counter_off + 4].try_into().unwrap());
+                        if TELEPORT_ACK_SENT
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            let mut ack = Vec::with_capacity(counter_off + 8);
+                            ack.extend_from_slice(&payload[..counter_off]);
+                            ack.extend_from_slice(&counter.to_le_bytes());
+                            ack.extend_from_slice(&tele06c_movement_timestamp().to_le_bytes());
+                            publish_runner_state(
+                                "TELEPORT_ACK_COMMITTED",
+                                &format!("same-map 0x00C7 received counter={counter}; ack retry_allowed=false"),
+                            );
+                            if let Err(error) = write_encrypted_raw(
+                                stream,
+                                crypto.encrypter(),
+                                MSG_MOVE_TELEPORT_ACK_OPCODE,
+                                &ack,
+                            ) {
+                                publish_runner_state(
+                                    "FAIL_TELEPORT_ACK_UNCERTAIN",
+                                    "same-map 0x00C7 ack socket write uncertain; retry disabled",
+                                );
+                                return Err(format!("TELE10_TELEPORT_ACK_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
+                            }
+                            publish_runner_state(
+                                "PASS_TELEPORT_COMPLETE",
+                                &format!("same-map 0x00C7 server+client counter={counter} ack_bytes={}", ack.len()),
+                            );
+                            println!("[TELE-10-TELEPORT] PASS path=same_map counter={counter} ack_bytes={}", ack.len());
+                        }
+                        continue;
+                    }
+
+                    if role == Tele06bRole::Customer && opcode == SMSG_NEW_WORLD_OPCODE {
+                        if !SUMMON_RESPONSE_SENT.load(Ordering::SeqCst) {
+                            println!("[TELE-10-NEW-WORLD-DIAG] ignored 0x003E before summon accept bytes={}", payload.len());
+                            continue;
+                        }
+                        if WORLDPORT_ACK_SENT
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            publish_runner_state(
+                                "WORLDPORT_ACK_COMMITTED",
+                                &format!("SMSG_NEW_WORLD bytes={} observed; sending opcode=0x00DC retry_allowed=false", payload.len()),
+                            );
+                            if let Err(error) = write_encrypted_raw(
+                                stream,
+                                crypto.encrypter(),
+                                MSG_MOVE_WORLDPORT_ACK_OPCODE,
+                                &[],
+                            ) {
+                                publish_runner_state(
+                                    "FAIL_WORLDPORT_ACK_UNCERTAIN",
+                                    "opcode=0x00DC socket write uncertain after NEW_WORLD; retry disabled",
+                                );
+                                return Err(format!("TELE10_WORLDPORT_ACK_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
+                            }
+                            publish_runner_state(
+                                "PASS_TELEPORT_COMPLETE",
+                                &format!("SMSG_NEW_WORLD opcode=0x003E bytes={} + MSG_MOVE_WORLDPORT_ACK opcode=0x00DC write=success", payload.len()),
+                            );
+                            println!("[TELE-10-TELEPORT] PASS new_world_bytes={} worldport_ack=sent", payload.len());
                         }
                         continue;
                     }
