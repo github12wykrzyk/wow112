@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "claude-specialist-main-v1",
+  "goal": "Promote the budgeted read-only Claude specialist onto canonical main and provide a durable request bridge usable by future ChatGPT conversations without consuming Claude tokens on control-plane edits.",
+  "branch": "feature/claude-specialist-main-v1",
+  "base_parallel_sha": "9a593097308865b2e67f61671500bde42108af0d",
+  "modules": [
+    "workflow-control"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "github-actions-control-plane",
+    "claude-specialist"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Adds only Claude specialist control-plane files: .github/workflows/claude-specialist.yml, .ai/claude/request.json and .ai/claude/README.md. Default tier is cheap (Haiku, 2 turns, $0.15 per-run cap); normal/deep require explicit selection. No Opus, subagents, automatic escalation or retry. Push invocation is isolated to persistent branch claude-requests; edits to the workflow itself do not call Claude. Request template is disabled by default so branch creation/recreation consumes zero Claude budget. Claude remains read-only with repository-state fail-closed guard."
+}

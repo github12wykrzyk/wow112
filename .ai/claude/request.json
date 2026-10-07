@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "request_id": "disabled-template",
+  "target_ref": "main",
+  "tier": "cheap",
+  "task": "Disabled template. Future ChatGPT conversations should replace this request on branch claude-requests and set enabled=true with a unique request_id."
+}
