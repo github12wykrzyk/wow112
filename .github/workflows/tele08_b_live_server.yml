@@ -1,4 +1,4 @@
-name: TELE08 B autonomous live server
+name: TELE08 B canonical live gate
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   live:
@@ -20,269 +20,24 @@ jobs:
       WOW112_RECONNECT_DELAY_MS: '0'
       WOW112_TELE08_CUSTOMER_ACCOUNT: 'taxi1'
       WOW112_TELE08_CUSTOMER_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SLAVE1_ACCOUNT: 'taxi2'
+      WOW112_TELE08_SLAVE1_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SUMMONER_ACCOUNT: 'taxi3'
+      WOW112_TELE08_SUMMONER_CHARACTER: 'Teletanaris'
+
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Patch live runner for two-sender deterministic GUID and ACK pacing
+      - name: Verify canonical stored source
         shell: pwsh
-        run: |
-          $path = 'probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs'
-          $text = Get-Content -Raw $path
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
 
-          $old = @'
-                  let selected = characters
-                      .characters
-                      .iter()
-                      .find(|character| character.name.eq_ignore_ascii_case(character_name))
-                      .ok_or_else(|| format!("character not found: {character_name}"))?;
-          '@
-          $new = @'
-                  let selected = if character_name.eq_ignore_ascii_case("__FIRST__") {
-                      characters
-                          .characters
-                          .first()
-                          .ok_or_else(|| "character list empty".to_string())?
-                  } else {
-                      characters
-                          .characters
-                          .iter()
-                          .find(|character| character.name.eq_ignore_ascii_case(character_name))
-                          .ok_or_else(|| format!("character not found: {character_name}"))?
-                  };
-                  println!("[TELE08-B-LIVE:{role_label}] selected_character={}", selected.name);
-          '@
-          if (-not $text.Contains($old)) { throw 'character-selection anchor not found' }
-          $text = $text.Replace($old, $new)
-
-          $gapAnchor = 'const SEND_GAP_MS: u64 = 450;'
-          if (-not $text.Contains($gapAnchor)) { throw 'send-gap anchor not found' }
-          $text = $text.Replace($gapAnchor, 'const SEND_GAP_MS: u64 = 2500;')
-
-          $slave1Anchor = @'
-              RoleSpec {
-                  label: "SLAVE1",
-                  account: "octowinter1",
-                  character: "Winterone",
-                  mode: "passive",
-              },
-          '@
-          $slave1Replacement = @'
-              RoleSpec {
-                  label: "SLAVE1",
-                  account: "taxi2",
-                  character: "__FIRST__",
-                  mode: "sender_tail",
-              },
-          '@
-          if (-not $text.Contains($slave1Anchor)) { throw 'SLAVE1 role anchor not found' }
-          $text = $text.Replace($slave1Anchor, $slave1Replacement)
-
-          $pathAnchor = '    let result_file = run_dir.join("RESULTS.json");'
-          $pathReplacement = @'
-              let result_file = run_dir.join("RESULTS.json");
-              let local_guid_file = run_dir.join(format!("GUID_{}.txt", spec.label));
-              let expected_sender_guid_file = run_dir.join("GUID_CUSTOMER.txt");
-              let expected_sender2_guid_file = run_dir.join("GUID_SLAVE1.txt");
-              let ack_file = run_dir.join("ACK_COUNT.txt");
-          '@
-          if (-not $text.Contains($pathAnchor)) { throw 'guid-path anchor not found' }
-          $text = $text.Replace($pathAnchor, $pathReplacement.TrimEnd())
-
-          $envAnchor = '        .env("WOW112_TELE08_RESULT_FILE", &result_file)'
-          $envReplacement = @'
-                  .env("WOW112_TELE08_RESULT_FILE", &result_file)
-                  .env("WOW112_TELE08_LOCAL_GUID_FILE", &local_guid_file)
-                  .env("WOW112_TELE08_EXPECTED_SENDER_GUID_FILE", &expected_sender_guid_file)
-                  .env("WOW112_TELE08_EXPECTED_SENDER2_GUID_FILE", &expected_sender2_guid_file)
-                  .env("WOW112_TELE08_ACK_FILE", &ack_file)
-          '@
-          if (-not $text.Contains($envAnchor)) { throw 'guid-env anchor not found' }
-          $text = $text.Replace($envAnchor, $envReplacement.TrimEnd())
-
-          $localGuidAnchor = '        tele_trace::set_local_guid(selected.guid.guid());'
-          $localGuidReplacement = @'
-                  tele_trace::set_local_guid(selected.guid.guid());
-                  if let Ok(path) = std::env::var("WOW112_TELE08_LOCAL_GUID_FILE") {
-                      let body = format!("guid={}\nname={}\n", selected.guid.guid(), selected.name);
-                      std::fs::write(&path, body)
-                          .map_err(|e| format!("write local guid file {path} failed: {e}"))?;
-                  }
-          '@
-          if (-not $text.Contains($localGuidAnchor)) { throw 'local-guid anchor not found' }
-          $text = $text.Replace($localGuidAnchor, $localGuidReplacement.TrimEnd())
-
-          $modeAnchor = @'
-                      "sender" => sender_loop(stream, &mut crypto, role_label, state_path, go_file, done_file, target),
-                      "listener" => listener_loop(
-          '@
-          $modeReplacement = @'
-                      "sender" | "sender_tail" => sender_loop(stream, &mut crypto, role_label, state_path, go_file, done_file, target),
-                      "listener" => listener_loop(
-          '@
-          if (-not $text.Contains($modeAnchor)) { throw 'sender mode anchor not found' }
-          $text = $text.Replace($modeAnchor, $modeReplacement.TrimEnd())
-
-          $senderLoopAnchor = @'
-                  wait_for_go_with_keepalive(stream, crypto, role_label, go_file, done_file)?;
-                  for case in crate::CASES {
-          '@
-          $senderLoopReplacement = @'
-                  wait_for_go_with_keepalive(stream, crypto, role_label, go_file, done_file)?;
-                  let (start_index, end_index) = if role_label.eq_ignore_ascii_case("CUSTOMER") {
-                      (0usize, 6usize)
-                  } else {
-                      (6usize, crate::CASES.len())
-                  };
-                  let ack_path = std::env::var("WOW112_TELE08_ACK_FILE")
-                      .map_err(|_| "missing WOW112_TELE08_ACK_FILE".to_string())?;
-                  if start_index > 0 {
-                      let phase_deadline = Instant::now() + Duration::from_secs(60);
-                      loop {
-                          let ack = std::fs::read_to_string(&ack_path)
-                              .ok()
-                              .and_then(|value| value.trim().parse::<usize>().ok())
-                              .unwrap_or(0);
-                          if ack >= start_index {
-                              println!("[TELE08-B-LIVE:{role_label}] phase-start ack={ack}");
-                              break;
-                          }
-                          if Instant::now() >= phase_deadline {
-                              return Err(format!("phase-start ACK timeout expected={} observed={ack}", start_index));
-                          }
-                          thread::sleep(Duration::from_millis(100));
-                      }
-                  }
-                  for case in crate::CASES[start_index..end_index].iter().copied() {
-          '@
-          if (-not $text.Contains($senderLoopAnchor)) { throw 'sender loop anchor not found' }
-          $text = $text.Replace($senderLoopAnchor, $senderLoopReplacement.TrimEnd())
-
-          $sentStateAnchor = '&format!("sent {} cases", crate::CASES.len()),'
-          if (-not $text.Contains($sentStateAnchor)) { throw 'sender SENT-state anchor not found' }
-          $text = $text.Replace($sentStateAnchor, '&format!("sent cases {}..{}", start_index + 1, end_index),')
-
-          $listenerAnchor = @'
-                  let mut keepalive = Keepalive::new();
-                  let mut name_cache: HashMap<u64, String> = HashMap::new();
-                  let mut pending: HashMap<u64, Vec<String>> = HashMap::new();
-                  let mut results: Vec<crate::CaseResult> = Vec::new();
-          '@
-          $listenerReplacement = @'
-                  fn read_sender_meta(path_var: &str) -> Result<(u64, String), String> {
-                      let path = std::env::var(path_var)
-                          .map_err(|_| format!("missing {path_var}"))?;
-                      let meta = std::fs::read_to_string(&path)
-                          .map_err(|e| format!("read sender guid file {path} failed: {e}"))?;
-                      let mut guid = None;
-                      let mut name = None;
-                      for line in meta.lines() {
-                          if let Some((key, value)) = line.split_once('=') {
-                              match key.trim() {
-                                  "guid" => guid = value.trim().parse::<u64>().ok(),
-                                  "name" => name = Some(value.trim().to_string()),
-                                  _ => {}
-                              }
-                          }
-                      }
-                      Ok((
-                          guid.ok_or_else(|| format!("sender guid missing in {path}"))?,
-                          name.filter(|value| !value.is_empty()).unwrap_or_else(|| "UNKNOWN".to_string()),
-                      ))
-                  }
-
-                  let (direct_expected_guid, direct_expected_name) =
-                      read_sender_meta("WOW112_TELE08_EXPECTED_SENDER_GUID_FILE")?;
-                  let (direct_expected_guid2, direct_expected_name2) =
-                      read_sender_meta("WOW112_TELE08_EXPECTED_SENDER2_GUID_FILE")?;
-                  println!(
-                      "[TELE08-B-LIVE:{role_label}] direct_senders first=0x{direct_expected_guid:016X}/{direct_expected_name} second=0x{direct_expected_guid2:016X}/{direct_expected_name2}"
-                  );
-
-                  let mut keepalive = Keepalive::new();
-                  let mut name_cache: HashMap<u64, String> = HashMap::new();
-                  let mut pending: HashMap<u64, Vec<String>> = HashMap::new();
-                  let mut results: Vec<crate::CaseResult> = Vec::new();
-          '@
-          if (-not $text.Contains($listenerAnchor)) { throw 'listener-state anchor not found' }
-          $text = $text.Replace($listenerAnchor, $listenerReplacement.TrimEnd())
-
-          $whisperAnchor = @'
-                                      let guid = sender2.guid();
-                                      let text = chat.message;
-                                      if let Some(name) = name_cache.get(&guid).cloned() {
-                                          if name.eq_ignore_ascii_case(expected_sender) {
-                                              classify_case(&name, &text, &mut results)?;
-                                          }
-                                      } else {
-                                          let first = !pending.contains_key(&guid);
-                                          pending.entry(guid).or_default().push(text);
-                                          if first {
-                                              tele_send_name_query(stream, crypto, guid)?;
-                                          }
-                                      }
-          '@
-          $whisperReplacement = @'
-                                      let guid = sender2.guid();
-                                      let text = chat.message;
-                                      let direct_name = if guid == direct_expected_guid {
-                                          Some(direct_expected_name.as_str())
-                                      } else if guid == direct_expected_guid2 {
-                                          Some(direct_expected_name2.as_str())
-                                      } else {
-                                          None
-                                      };
-                                      if let Some(name) = direct_name {
-                                          classify_case(name, &text, &mut results)?;
-                                          if let Ok(path) = std::env::var("WOW112_TELE08_ACK_FILE") {
-                                              std::fs::write(&path, format!("{}\n", results.len()))
-                                                  .map_err(|e| format!("write ACK file {path} failed: {e}"))?;
-                                          }
-                                      } else if let Some(name) = name_cache.get(&guid).cloned() {
-                                          if name.eq_ignore_ascii_case(expected_sender) {
-                                              classify_case(&name, &text, &mut results)?;
-                                          }
-                                      } else {
-                                          let first = !pending.contains_key(&guid);
-                                          pending.entry(guid).or_default().push(text);
-                                          if first {
-                                              tele_send_name_query(stream, crypto, guid)?;
-                                          }
-                                      }
-          '@
-          if (-not $text.Contains($whisperAnchor)) { throw 'whisper-routing anchor not found' }
-          $text = $text.Replace($whisperAnchor, $whisperReplacement.TrimEnd())
-
-          $senderSleepAnchor = '            thread::sleep(Duration::from_millis(crate::SEND_GAP_MS));'
-          $senderSleepReplacement = @'
-                      let ack_deadline = Instant::now() + Duration::from_secs(20);
-                      loop {
-                          let ack = std::fs::read_to_string(&ack_path)
-                              .ok()
-                              .and_then(|value| value.trim().parse::<u32>().ok())
-                              .unwrap_or(0);
-                          if ack >= case.id {
-                              println!("[TELE08-B-LIVE:{role_label}] ACK case={} count={ack}", case.id);
-                              break;
-                          }
-                          if Instant::now() >= ack_deadline {
-                              return Err(format!("ACK timeout case={} observed={ack}", case.id));
-                          }
-                          thread::sleep(Duration::from_millis(100));
-                      }
-                      thread::sleep(Duration::from_millis(crate::SEND_GAP_MS));
-          '@
-          if (-not $text.Contains($senderSleepAnchor)) { throw 'sender-sleep anchor not found' }
-          $text = $text.Replace($senderSleepAnchor, $senderSleepReplacement.TrimEnd())
-
-          Set-Content -Path $path -Value $text -Encoding UTF8
-
-      - name: Build exact live runner
+      - name: Build exact canonical live runner
         shell: pwsh
         run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_b_live_runtime
 
       - name: Autonomous real-server B E2E
-        id: live
         shell: pwsh
         run: |
           $status = 'TELE08_B_LIVE_STATUS.txt'
@@ -291,6 +46,7 @@ jobs:
           result=SKIPPED_NO_SECRET
           detail=Repository Actions secret WOW112_PASSWORD is not configured for this workflow.
           sha=$env:GITHUB_SHA
+          canonical_source=true
           "@ | Set-Content -Encoding UTF8 $status
             Write-Host 'TELE08 B LIVE: SKIPPED_NO_SECRET'
             exit 0
@@ -299,10 +55,14 @@ jobs:
           @"
           result=RUNNING
           sha=$env:GITHUB_SHA
+          canonical_source=true
+          ci_source_patching=false
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
           customer_character_mode=FIRST
-          second_sender_account=taxi2
+          second_sender_account=$env:WOW112_TELE08_SLAVE1_ACCOUNT
           second_sender_character_mode=FIRST
+          summoner_account=$env:WOW112_TELE08_SUMMONER_ACCOUNT
+          summoner_character=$env:WOW112_TELE08_SUMMONER_CHARACTER
           sender_identity=direct_guid_two_sender
           pacing=ack_per_case
           send_gap_ms=2500
@@ -312,57 +72,36 @@ jobs:
           $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_b_live_runtime.exe'
           & $exe
           $rc = $LASTEXITCODE
-          if ($rc -eq 0) {
-            @"
-          result=PASS
-          detail=Four real headless sessions completed the 12-case whisper TX/RX/classification suite using taxi1 and taxi2 as sequential senders.
-          sha=$env:GITHUB_SHA
-          customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
-          customer_character_mode=FIRST
-          second_sender_account=taxi2
-          second_sender_character_mode=FIRST
-          sender_identity=direct_guid_two_sender
-          pacing=ack_per_case
-          send_gap_ms=2500
-          split=6+6
-          "@ | Set-Content -Encoding UTF8 $status
-            Write-Host 'TELE08 B LIVE E2E PASS'
-          } else {
+          if ($rc -ne 0) {
             @"
           result=FAIL
-          detail=tele08_b_live_runtime exited rc=$rc. Inspect uploaded tele08_b_live_runs evidence.
+          detail=tele08_b_live_runtime exited rc=$rc. Inspect uploaded evidence.
           sha=$env:GITHUB_SHA
+          canonical_source=true
+          ci_source_patching=false
+          "@ | Set-Content -Encoding UTF8 $status
+            throw "TELE08 B canonical LIVE E2E failed rc=$rc"
+          }
+
+          @"
+          result=PASS
+          detail=Canonical stored source completed the real 12-case whisper TX/RX/classification suite with taxi1+taxi2 split 6+6.
+          sha=$env:GITHUB_SHA
+          canonical_source=true
+          ci_source_patching=false
           customer_account=$env:WOW112_TELE08_CUSTOMER_ACCOUNT
-          customer_character_mode=FIRST
-          second_sender_account=taxi2
-          second_sender_character_mode=FIRST
+          second_sender_account=$env:WOW112_TELE08_SLAVE1_ACCOUNT
           sender_identity=direct_guid_two_sender
           pacing=ack_per_case
-          send_gap_ms=2500
           split=6+6
           "@ | Set-Content -Encoding UTF8 $status
-            throw "TELE08 B LIVE E2E failed rc=$rc"
-          }
+          Write-Host 'TELE08 B CANONICAL LIVE E2E PASS'
 
-      - name: Persist canonical live harness source
-        shell: pwsh
-        run: |
-          git config user.name "wow112-ai-integration"
-          git config user.email "github12wykrzyk@users.noreply.github.com"
-          git add probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host 'Canonical source already matches worktree.'
-            exit 0
-          }
-          git commit -m "test(tele08): canonicalize B live harness"
-          git push origin HEAD:live/tele08-b-e2e-v1
-
-      - name: Upload live evidence
+      - name: Upload canonical live evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: WoW112_TELE08_B_LIVE_SERVER_EVIDENCE
+          name: WoW112_TELE08_B_CANONICAL_LIVE_EVIDENCE
           path: |
             TELE08_B_LIVE_STATUS.txt
             tele08_b_live_runs/**
