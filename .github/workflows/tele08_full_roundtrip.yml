@@ -1,0 +1,79 @@
+name: TELE08 full B-C-D-E whisper roundtrip
+
+on:
+  push:
+    branches:
+      - feature/tele08-full-roundtrip-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs'
+      - 'probes/Wow112HeadlessAndroid/src/destination_registry.rs'
+      - 'probes/Wow112HeadlessAndroid/src/tele_response_engine.rs'
+      - 'probes/Wow112HeadlessAndroid/tele08_request_queue/**'
+      - 'probes/Wow112HeadlessAndroid/src/world_tele.rs'
+      - '.github/workflows/tele08_full_roundtrip.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  roundtrip:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+      WOW112_REALM_INDEX: '1'
+      WOW112_TELE08_CUSTOMER_ACCOUNT: 'taxi1'
+      WOW112_TELE08_CUSTOMER_CHARACTER: '__FIRST__'
+      WOW112_TELE08_SUMMONER_ACCOUNT: 'taxi3'
+      WOW112_TELE08_SUMMONER_CHARACTER: 'Teletanaris'
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format gate
+        shell: pwsh
+        run: rustfmt --edition 2021 --check probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+
+      - name: Offline full-chain contract
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip -- --nocapture
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml --all-targets
+
+      - name: Build release roundtrip runner
+        shell: pwsh
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip
+
+      - name: Autonomous real-server full roundtrip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            throw 'WOW112_PASSWORD secret is required for the final live roundtrip gate.'
+          }
+          if (Test-Path 'tele08_roundtrip_runs') { Remove-Item 'tele08_roundtrip_runs' -Recurse -Force }
+          $exe = 'probes/Wow112HeadlessAndroid/target/release/tele08_full_roundtrip.exe'
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "roundtrip runner failed rc=$LASTEXITCODE" }
+          $status = Get-ChildItem tele08_roundtrip_runs -Filter STATUS.txt -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $status) { throw 'roundtrip PASS produced no STATUS.txt' }
+          $text = Get-Content $status.FullName -Raw
+          if ($text -notmatch 'result=PASS' -or $text -notmatch 'real_whisper_in>B_parser>C_queue>D_registry>E_response>real_whisper_out>customer_rx') {
+            throw "roundtrip status is not canonical PASS: $($status.FullName)"
+          }
+          Write-Host 'TELE08 FULL B-C-D-E REAL WHISPER ROUNDTRIP PASS'
+
+      - name: Upload roundtrip evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112_TELE08_FULL_ROUNDTRIP_EVIDENCE
+          path: tele08_roundtrip_runs/**
+          if-no-files-found: warn
