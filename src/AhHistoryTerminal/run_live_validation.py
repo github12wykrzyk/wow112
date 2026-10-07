@@ -61,7 +61,7 @@ def main():
                     report["terminal_error_after_login"]=re.sub(r"[^a-zA-Z0-9 _:=.()/,-]","",detail)
             reasons=[("world auth rejected","WORLD_AUTH_REJECTED"),("auth connect failed","AUTH_CONNECT_FAILED"),("account has no characters","NO_CHARACTERS"),("character not found","CHARACTER_NOT_FOUND"),("invalid password","PASSWORD_FORMAT_INVALID"),("invalid auction tuple","INVALID_AUCTION_TUPLE"),("auction payload length mismatch","AUCTION_PAYLOAD_LENGTH_MISMATCH"),("not return MSG_AUCTION_HELLO","AUCTION_HOUSE_NOT_OPENED"),("truncated at page limit","SCAN_PAGE_LIMIT"),("world connect failed","WORLD_CONNECT_FAILED")]
             report["failure_reason"]=next((reason for marker,reason in reasons if marker in output),"TERMINAL_FAILED_SEE_REACHED_STAGES")
-            report["live_scan"]="FAIL";return
+            report["live_scan"]="FAIL"
         captures=list((root/"capture").glob("*.ndjson"))
         if len(captures)!=1:
             report.update(live_scan="FAIL",failure_reason="CAPTURE_COUNT_MISMATCH");return
@@ -72,7 +72,7 @@ def main():
         report["market_evidence"]=events[1].get("market_evidence") if len(events)>2 else None
         db=w.connect(root/"history.sqlite")
         result=w.ingest_events(db,events)
-        report.update(live_scan="PASS",records=result["inserted"],quality=result["quality"],quality_reasons=result["reasons"],pages=events[-1]["pages"],status=events[-1]["status"])
+        report.update(live_scan="PASS" if process.returncode==0 else "FAIL",records=result["inserted"],quality=result["quality"],quality_reasons=result["reasons"],pages=events[-1]["pages"],status=events[-1]["status"])
         # Actual market namespace remains provisional until realm/pool metadata is reconciled.
         report["market_namespace"]="provisional_live_test"
         report["checks"]["sqlite_import"]="PASS"
@@ -92,11 +92,30 @@ def main():
         report["view_samples"]=len(first["samples"])
         report["raw_bytes"]=captures[0].stat().st_size
         report["gzip_bytes"]=(bundle/"events.ndjson.gz").stat().st_size
-        restored.close();db.close();code=0
+        restored.close();db.close();code=0 if process.returncode==0 else 1
     except Exception as e:
         # Only error class is emitted. Exception text may originate in auth diagnostics.
         report.update(live_scan="FAIL",failure_reason="HARNESS_ERROR",error_class=type(e).__name__)
     finally:
+        # Timeout/hard kill leaves a .partial; retain valid prefix as aborted data.
+        # Ordinary terminal failures already finish an aborted segment via Drop.
+        if "bundle_id" not in report:
+            try:
+                partials=list((root/"capture").glob("*.partial"))
+                for partial in partials:w.recover(partial)
+                paths=list((root/"capture").glob("*.ndjson"))
+                if paths:
+                    db=w.connect(root/"recovered.sqlite")
+                    for path in paths:
+                        events=w.read_segment(path)
+                        result=w.ingest_events(db,events)
+                        report.update(records=result.get("inserted",0),quality=result.get("quality","diagnostic_only"),quality_reasons=result.get("reasons",[]),pagination=w.pagination_metrics(events),status=events[-1]["status"],pages=events[-1]["pages"])
+                    bundle=w.export_bundle(db,root/"bundles");db.close()
+                    report["bundle_id"]=bundle.name
+                    report["capture_recovery"]="PASS"
+                    report["owner_token_scope"]="scan_local"
+            except Exception as e:
+                report["capture_recovery"]="FAIL";report["recovery_error_class"]=type(e).__name__
         (root/"LIVE_VALIDATION_SUMMARY.json").write_text(json.dumps(report,indent=2)+"\n")
         print(json.dumps(report,indent=2))
         sys.exit(code)

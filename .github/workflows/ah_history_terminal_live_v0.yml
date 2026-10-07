@@ -34,8 +34,10 @@ jobs:
           WOW112_HISTORY_BINARY: src/AhHistoryTerminal/target/i686-pc-windows-msvc/release/wow112-ah-history.exe
         run: python src/AhHistoryTerminal/run_live_validation.py src/AhHistoryTerminal/live-results
       - name: Verify archive publisher offline
+        if: ${{ !cancelled() }}
         run: python src/AhHistoryTerminal/test_github_archive.py
       - name: Publish and remotely verify immutable observation bundle
+        if: ${{ !cancelled() && hashFiles('src/AhHistoryTerminal/live-results/bundles/**/manifest.json') != '' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python src/AhHistoryTerminal/github_archive.py publish-run src/AhHistoryTerminal/live-results
@@ -46,6 +48,7 @@ jobs:
           name: ah-history-archive-recovery-${{ github.run_id }}
           path: |
             src/AhHistoryTerminal/live-results/bundles/
+            src/AhHistoryTerminal/live-results/capture/
             src/AhHistoryTerminal/live-results/archive-outbox.json
           if-no-files-found: warn
           retention-days: 90

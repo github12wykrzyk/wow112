@@ -86,6 +86,9 @@ Publication creates a local pending outbox, uploads missing files, downloads
 the remote data, verifies all hashes with the worker, then marks it verified.
 A retry reuses the same tag and rejects conflicting immutable bytes.
 Failed uploads retain the bundle and outbox in a 90-day recovery artifact;
+terminal failures also export received pages as aborted diagnostic bundles.
+Timeouts recover the valid prefix of a partial capture. Raw decoded captures
+are retained in the recovery artifact even if worker validation/export fails.
 incomplete releases are skipped during restore. Releases are retained until
 explicitly removed; there is no automatic deletion. Uploading again from the
 recovery artifact uses the same publisher and verifies existing assets.

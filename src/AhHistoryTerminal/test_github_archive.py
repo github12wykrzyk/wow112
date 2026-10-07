@@ -6,8 +6,15 @@ from pathlib import Path
 import tempfile
 import unittest
 import urllib.request
+import contextlib
+import io
+import os
+import subprocess
+import types
+from unittest import mock
 import github_archive as a
 import history_worker as w
+import run_live_validation as live
 
 class MemoryGitHub(a.GitHubArchive):
     def __init__(self):
@@ -107,5 +114,33 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn("unverified_market_identity",result["reasons"])
         self.assertFalse(w.view(db,es[0]["market_id"],99999)["samples"])
         db.close()
+
+    def run_failed_harness(self,timeout=False):
+        root=self.root/"failed-live"; binary=self.root/"fake-terminal";binary.write_bytes(b"synthetic binary")
+        def failed_process(*args,**kwargs):
+            path=root/"capture";path.mkdir()
+            es=events("failed");es[-1]["status"]="aborted"
+            name="scan.ndjson.partial" if timeout else "scan.ndjson"
+            retained=es[:-1] if timeout else es
+            (path/name).write_text("\n".join(json.dumps(e) for e in retained)+"\n")
+            if timeout:raise subprocess.TimeoutExpired("synthetic",600)
+            return types.SimpleNamespace(returncode=1,stdout="[AUTH] SRP6 PASS\n[WORLD] auth PASS\nSMSG_LOGIN_VERIFY_WORLD PASS\nMSG_AUCTION_HELLO PASS",stderr="[AH-HISTORY] ERROR: simulated EOF\n")
+        with mock.patch.dict(os.environ,{"WOW112_PASSWORD":"synthetic-password-never-publish","WOW112_HISTORY_BINARY":str(binary)}),mock.patch.object(live.sys,"argv",["live",str(root)]),mock.patch.object(live.socket,"getaddrinfo",return_value=[]),mock.patch.object(live.socket,"create_connection",return_value=contextlib.nullcontext()),mock.patch.object(live.subprocess,"run",side_effect=failed_process),contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as exited:live.main()
+        self.assertEqual(exited.exception.code,1)
+        receipt=json.loads((root/"LIVE_VALIDATION_SUMMARY.json").read_text())
+        self.assertEqual(receipt["live_scan"],"FAIL")
+        self.assertEqual(receipt["quality"],"diagnostic_only")
+        self.assertNotIn("synthetic-password-never-publish",json.dumps(receipt))
+        bundle=root/"bundles"/receipt["bundle_id"]
+        self.assertEqual(w.verify_bundle(bundle)[-1]["status"],"aborted")
+        self.assertEqual(self.api.publish(bundle,receipt,self.outbox)["state"],"verified")
+        self.assertEqual(self.api.restore(self.root/"failed-restored.sqlite")["restored"],1)
+
+    def test_terminal_failure_still_archives_received_pages(self):
+        self.run_failed_harness()
+
+    def test_process_timeout_recovers_and_archives_partial(self):
+        self.run_failed_harness(timeout=True)
 
 if __name__=="__main__":unittest.main(verbosity=2)
