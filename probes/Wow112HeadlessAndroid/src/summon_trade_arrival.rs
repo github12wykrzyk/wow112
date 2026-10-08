@@ -1,3 +1,5 @@
+//! Fail-closed decision gate for using an expected customer's trade as post-portal arrival evidence.
+
 use crate::summon_service_core::RequestPhase;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
