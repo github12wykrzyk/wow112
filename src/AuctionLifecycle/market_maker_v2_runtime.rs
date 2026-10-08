@@ -126,6 +126,34 @@ fn mm2_preflight_journals(player:u64)->Result<(),String>{
     if !recovery.is_idle(){return Err(format!("MM2_RECOVERY_REQUIRED state={:?} path={}",recovery.state(),recovery.path().display()));}
     if !saga.can_start_new(){return Err(format!("MM2_SAGA_RECONCILIATION_REQUIRED state={:?} path={}",saga.state(),saga.path().display()));}Ok(())
 }
+fn mm2_read_only_mode(mode:&str)->bool{matches!(mode,"capability"|"read-only"|"readonly"|"inventory"|"inventory-tracker"|"mailbox"|"mailbox-resolver"|"auction-capability"|"ah-capability"|"depth"|"targeted-depth"|"reconcile"|"mm2-reconcile")}
+fn mm2_reconcile_report(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{
+    let(server,realm)=mm2_bound_identity(player)?;
+    let recovery=Mm2RecoveryJournal::open(&server,realm,player)?;
+    let saga=Mm2SagaJournal::open(&server,realm,player)?;
+    let pending=mutations::inspect_pending(&server,realm,player)?;
+    println!("[MM2-RECONCILE] recovery={:?} path={}",recovery.state(),recovery.path().display());
+    println!("[MM2-RECONCILE] saga={:?} path={}",saga.state(),saga.path().display());
+    match pending.as_deref(){Some(p)=>println!("[MM2-RECONCILE] coordinator_pending=YES {}",p.trim()),None=>println!("[MM2-RECONCILE] coordinator_pending=NO")};
+
+    let targets=mm2_resolve_targets(stream,crypto,player)?;
+    mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"reconcile/pre-owner")?;
+    let mine=mm2_owner_list(stream,crypto,targets.auctioneer,player)?;
+    let mail=mm2_mail_baseline(stream,crypto,targets.mailbox)?;
+    println!("[MM2-RECONCILE] fresh_owner_count={} fresh_mail_count={} mailbox=0x{:016X}",mine.len(),mail.records.len(),targets.mailbox);
+
+    match recovery.state(){
+        Mm2Recovery::CancelledAwaitingMail{auction_id,item_id,count}=>{
+            let still_owned=mine.iter().any(|r|r.row.auction_id==*auction_id);
+            let return_mail=mail.records.iter().any(|m|m.item==*item_id&&u32::from(m.stack)==*count&&m.cod==0);
+            let verdict=if still_owned{"CANCEL_NOT_APPLIED_OR_STILL_LISTED"}else if return_mail{"CANCELLED_RETURN_MAIL_PRESENT"}else{"AUCTION_ABSENT_RETURN_MAIL_NOT_YET_PROVEN"};
+            println!("[MM2-RECONCILE] verdict={verdict} auction_id={auction_id} item_id={item_id} count={count} still_owned={still_owned} return_mail={return_mail}");
+        },
+        other=>println!("[MM2-RECONCILE] verdict=STATE_REQUIRES_MANUAL_REVIEW state={other:?}"),
+    }
+    println!("[MM2-RECONCILE] READ_ONLY=YES automatic_clear=NO automatic_retry=NO");
+    Ok(())
+}
 
 // lifecycle_dispatch is entered as soon as SMSG_LOGIN_VERIFY_WORLD is seen. Do not call the
 // tracker ready merely because nearby world objects arrived: V2 needs the authoritative object for
@@ -147,8 +175,12 @@ fn mm2_resolve_auction_only(stream:&mut TcpStream,crypto:&mut HeaderCrypto,playe
 
 fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{
     let mode=env::var("WOW112_MM2_MODE").unwrap_or_else(|_|"capability".into()).trim().to_ascii_lowercase();
-    // Durable unresolved state blocks all new work before even a read-only world warm-up.
-    mm2_preflight_journals(player)?;
+    if !mm2_read_only_mode(&mode)&&!matches!(mode.as_str(),"undercut-canary"|"clear-one-buy-canary"){
+        return Err("WOW112_MM2_MODE must be capability, auction-capability, mailbox-resolver, inventory-tracker, targeted-depth, reconcile, undercut-canary, or clear-one-buy-canary".into());
+    }
+    // Read-only diagnostics must remain available to inspect durable debt. Mutation modes alone
+    // require a clean recovery+saga preflight before any new economic action is even considered.
+    if !mm2_read_only_mode(&mode){mm2_preflight_journals(player)?;}
     mm2_warm_tracker(stream,crypto)?;
     let(generation,objects,slots,player_seen)=mm2_tracker_snapshot()?;println!("[MM2] TRACKER generation={generation} objects={objects} physical_slots={slots}");
     if generation==0||objects==0||!player_seen{return Err("MM2 inventory/world tracker lacks authoritative player evidence".into());}
@@ -158,12 +190,14 @@ fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64
         "auction-capability"|"ah-capability"=>{let(auctioneer,house)=mm2_resolve_auction_only(stream,crypto,player)?;let mine=mm2_owner_list(stream,crypto,auctioneer,player)?;println!("[MM2] AUCTION_CAPABILITY_PASS auctioneer=0x{auctioneer:016X} house={house} own={} read_only=YES",mine.len());Ok(())},
         "capability"|"read-only"|"readonly"=>{let targets=mm2_resolve_targets(stream,crypto,player)?;let mine=mm2_owner_list(stream,crypto,targets.auctioneer,player)?;println!("[MM2] CAPABILITY_PASS auctioneer=0x{:016X} house={} mailbox=0x{:016X} own={} read_only=YES",targets.auctioneer,targets.auction_house,targets.mailbox,mine.len());Ok(())},
         "depth"|"targeted-depth"=>{let item=env::var("WOW112_MM2_ITEM_ID").map_err(|_|"MM2 targeted-depth requires WOW112_MM2_ITEM_ID")?.parse::<u32>().map_err(|_|"MM2 invalid WOW112_MM2_ITEM_ID")?;let(auctioneer,_house)=mm2_resolve_auction_only(stream,crypto,player)?;let snap=mm2_targeted_depth(stream,crypto,auctioneer,item,[0,0,0],16)?;if !snap.complete||!snap.coherent{return Err("MM2 targeted depth incomplete/incoherent".into());}println!("[MM2] TARGETED_DEPTH_PASS item={} rows={} raw_total={} read_only=YES",item,snap.rows.len(),snap.raw_total);Ok(())},
+        "reconcile"|"mm2-reconcile"=>mm2_reconcile_report(stream,crypto,player),
         "undercut-canary"|"clear-one-buy-canary"=>Err("MM2 mutation canary BLOCKED: execution primitives not yet safety-approved".into()),
-        _=>Err("WOW112_MM2_MODE must be capability, auction-capability, mailbox-resolver, inventory-tracker, targeted-depth, undercut-canary, or clear-one-buy-canary".into()),
+        _=>unreachable!(),
     }
 }
 #[cfg(test)]mod mm2_runtime_tests{
     use super::*;
     #[test]fn mutation_modes_are_not_implicitly_passed(){assert_eq!(["undercut-canary","clear-one-buy-canary"].len(),2);}
+    #[test]fn read_only_modes_include_reconcile(){assert!(mm2_read_only_mode("reconcile"));assert!(!mm2_read_only_mode("undercut-canary"));}
     #[test]fn cancel_ack_is_exact(){let mut p=Vec::new();p.extend_from_slice(&7u32.to_le_bytes());p.extend_from_slice(&1u32.to_le_bytes());p.extend_from_slice(&0u32.to_le_bytes());assert!(mm2_cancel_ack_payload(&p,7).is_ok());assert!(mm2_cancel_ack_payload(&p,8).is_err());p[4..8].copy_from_slice(&0u32.to_le_bytes());assert!(mm2_cancel_ack_payload(&p,7).is_err());}
 }
