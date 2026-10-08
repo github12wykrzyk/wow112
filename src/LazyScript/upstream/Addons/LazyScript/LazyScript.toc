@@ -25,6 +25,7 @@ MinimapMenu.lua
 Minion.lua
 Parse.lua
 ParseGeneral.lua
+NativeMeleeRange.lua
 ParseBuffs.lua
 Tooltip.lua
 LazyScript.xml

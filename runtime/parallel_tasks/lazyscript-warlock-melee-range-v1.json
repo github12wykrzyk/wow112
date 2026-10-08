@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "lazyscript-warlock-melee-range-v1",
+  "goal": "Add a reliable fail-closed Warlock meleeRange criterion backed by native selected-target distance/combat-reach observation for WoW 1.12.1 build 5875.",
+  "branch": "feature/lazyscript-warlock-melee-range-v1",
+  "base_parallel_sha": "96f441534826837768d16155cffa5588558b6636",
+  "modules": [
+    "LazyScript",
+    "CastObserver"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "lazyscript-general-criteria",
+    "castobserver-native-sampler"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Native/shared runtime change intentionally routes fail-closed to STANDARD. Supports short LazyScript bits meleeRange/notMeleeRange plus Warlock ifTargetInMeleeRange/ifNotTargetInMeleeRange. Missing or stale native samples fail closed for both positive and negative criteria. No gameplay action is dispatched by the observer.",
+  "integrated_feature_sha": "7f331741b83244653b0190266f96ae6946f1bbfa"
+}
