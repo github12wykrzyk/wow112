@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-whisper-relay-chatguard-v3",
+  "goal": "Keep Whisper Relay transport on real WHISPER while eliminating visible [SSWR1] transport spam and the live SpamGuardHot nil crash by removing the ChatFrame_OnEvent wrapper and using WIM's native Block filter for the reserved protocol prefix.",
+  "branch": "feature/summonscout-whisper-relay-chatguard-v3",
+  "base_parallel_sha": "9ffc0fdb1efb5b28a9fa1c093abf442a587e75d3",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-whisper-relay-v1",
+    "summonscout-whisper-relay-spamfix-v2",
+    "summonscout-whisper-relay-bootstrap-v2"
+  ],
+  "shared_resources": [
+    "SummonScout WhisperRelay control transport",
+    "WIM whisper filter table"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live evidence at 23:28-23:29 showed valid [SSWR1] E lifecycle packets in WIM windows plus SummonScout_WhisperRelaySpamGuardHot.lua:206 attempt to call a nil value. Root cause: repeated hot/reload could chain ChatFrame_OnEvent wrappers; an old Shutdown nilled its captured base while a newer wrapper still referenced it. V3 removes ChatFrame_OnEvent ownership entirely. Relay still uses SendChatMessage(..., WHISPER, ...). When WIM is present, SummonScout installs escaped pattern %[SSWR1%] = Block into WIM_Filters; OptionalDeps loads WIM first. Zero-idle handshake remains unchanged. After updating from a runtime already affected by the dangling wrapper, perform one /reload to rebuild FrameXML cleanly.",
+  "integrated_feature_sha": "3f4ceef20712a14734f6bcf5d4439293b3a96c27"
+}
