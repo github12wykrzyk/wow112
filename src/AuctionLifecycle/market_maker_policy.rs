@@ -72,15 +72,17 @@ fn jump_bps(low: u32, high: u32) -> u32 {
 }
 
 fn valid_config(c: PolicyConfig) -> bool {
-    c.floor_unit > 0 && c.min_price_bps_of_own > 0 && c.min_price_bps_of_own <= 10_000 &&
+    c.floor_unit > 0 && c.min_price_bps_of_own <= 10_000 &&
         c.ah_cut_bps < 10_000 && c.max_clear_units > 0
 }
 
-pub fn decide(own: Quote, competitors: &[Quote], mut c: PolicyConfig, depth_complete_and_stable: bool) -> Decision {
+pub fn decide(own: Quote, competitors: &[Quote], mut c: PolicyConfig, depth_verified: bool) -> Decision {
     if own.buyout == 0 || own.count == 0 || !valid_config(c) { return Decision::Keep; }
     let own_unit = own_unit_ceil(&own);
-    let own_guard = ceil_div(u128::from(own.buyout) * u128::from(c.min_price_bps_of_own), u128::from(own.count) * 10_000);
-    c.floor_unit = c.floor_unit.max(own_guard);
+    if c.min_price_bps_of_own > 0 {
+        let own_guard = ceil_div(u128::from(own.buyout) * u128::from(c.min_price_bps_of_own), u128::from(own.count) * 10_000);
+        c.floor_unit = c.floor_unit.max(own_guard);
+    }
 
     let mut rows: Vec<Quote> = competitors.iter().copied().filter(|q| q.buyout > 0 && q.count > 0).collect();
     rows.sort_by(cmp_unit);
@@ -93,7 +95,7 @@ pub fn decide(own: Quote, competitors: &[Quote], mut c: PolicyConfig, depth_comp
     // the acquired stock alone must be profitable after AH cut, and the recovered
     // price level must jump materially. We do NOT count hypothetical profit on the
     // user's existing stock, so a clear cannot be justified only by wishful repricing.
-    if depth_complete_and_stable {
+    if depth_verified {
         let mut spend: u64 = 0;
         let mut units: u64 = 0;
         let mut ids = Vec::new();
@@ -144,7 +146,7 @@ pub fn decide(own: Quote, competitors: &[Quote], mut c: PolicyConfig, depth_comp
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn cfg() -> PolicyConfig { PolicyConfig { floor_unit: 300, min_price_bps_of_own: 5000, ah_cut_bps: 500, max_clear_spend: 1000, max_clear_units: 3, clear_min_profit: 50, clear_min_roi_bps: 1000, clear_min_jump_bps: 1000 } }
+    fn cfg() -> PolicyConfig { PolicyConfig { floor_unit: 300, min_price_bps_of_own: 0, ah_cut_bps: 500, max_clear_spend: 1000, max_clear_units: 3, clear_min_profit: 50, clear_min_roi_bps: 1000, clear_min_jump_bps: 1000 } }
     #[test] fn keep_when_already_lowest() {
         assert_eq!(decide(Quote{auction_id:1,buyout:400,count:1}, &[Quote{auction_id:2,buyout:450,count:1}], cfg(), true), Decision::Keep);
     }
@@ -158,7 +160,7 @@ mod tests {
         assert!(matches!(d,Decision::BlockedFloor{..}));
     }
     #[test] fn clears_small_profitable_fake_floor() {
-        let mut c=cfg(); c.floor_unit=200; c.min_price_bps_of_own=4000; c.max_clear_spend=700;
+        let mut c=cfg(); c.floor_unit=200; c.max_clear_spend=700;
         let d=decide(Quote{auction_id:1,buyout:1000,count:2}, &[
             Quote{auction_id:10,buyout:300,count:1},
             Quote{auction_id:11,buyout:310,count:1},
@@ -167,17 +169,27 @@ mod tests {
         match d { Decision::ClearThenRelist{auction_ids,target_unit,..}=>{assert_eq!(auction_ids,vec![10,11]);assert_eq!(target_unit,499);}, _=>panic!("expected clear") }
     }
     #[test] fn never_clears_from_incomplete_depth() {
-        let mut c=cfg(); c.floor_unit=200; c.min_price_bps_of_own=4000; c.max_clear_spend=700;
+        let mut c=cfg(); c.floor_unit=200; c.max_clear_spend=700;
         let d=decide(Quote{auction_id:1,buyout:1000,count:2}, &[
             Quote{auction_id:10,buyout:300,count:1}, Quote{auction_id:11,buyout:1000,count:2}
         ], c, false);
         assert!(matches!(d,Decision::Undercut{..}));
     }
     #[test] fn clear_requires_acquired_stock_profit_after_cut() {
-        let mut c=cfg(); c.floor_unit=1; c.min_price_bps_of_own=1; c.clear_min_profit=1; c.max_clear_spend=1000;
+        let mut c=cfg(); c.floor_unit=1; c.clear_min_profit=1; c.max_clear_spend=1000;
         let d=decide(Quote{auction_id:1,buyout:400,count:1}, &[
             Quote{auction_id:10,buyout:390,count:1}, Quote{auction_id:11,buyout:400,count:1}
         ], c, true);
         assert!(!matches!(d,Decision::ClearThenRelist{..}));
+    }
+    #[test] fn zero_own_price_guard_uses_explicit_floor_only() {
+        let mut c=cfg(); c.floor_unit=100; c.min_price_bps_of_own=0;
+        let d=decide(Quote{auction_id:1,buyout:1000,count:1}, &[Quote{auction_id:2,buyout:500,count:1}], c, false);
+        assert_eq!(d,Decision::Undercut{target_unit:499,witness_auction_id:2,floor_unit:100});
+    }
+    #[test] fn optional_own_price_guard_still_blocks_when_explicitly_enabled() {
+        let mut c=cfg(); c.floor_unit=1; c.min_price_bps_of_own=9000;
+        let d=decide(Quote{auction_id:1,buyout:1000,count:1}, &[Quote{auction_id:2,buyout:500,count:1}], c, false);
+        assert!(matches!(d,Decision::BlockedFloor{floor_unit:900,..}));
     }
 }

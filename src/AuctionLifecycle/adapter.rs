@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 #[derive(Default)]
 struct LifecycleObserved {
-    player: u64, inventory: Poc05Snapshot, inventory_bad: bool,
+    player: u64, inventory: Poc05Snapshot,
     last_market: Option<Vec<u8>>, verified_items: HashSet<u64>,
 }
 thread_local! { static LIFE_OBSERVED: RefCell<LifecycleObserved> = RefCell::new(LifecycleObserved::default()); }
@@ -63,7 +63,7 @@ fn lifecycle_observe_raw(op:u16,payload:&[u8]) {
     if matches!(op,SMSG_UPDATE_OBJECT_OPCODE|SMSG_COMPRESSED_UPDATE_OBJECT_OPCODE) {
         match parse_raw_server_message(op,payload) {
             Ok(m)=>lifecycle_observe_message(&m),
-            Err(_)=>LIFE_OBSERVED.with(|s|s.borrow_mut().inventory_bad=true),
+            Err(e)=>println!("[LIFECYCLE-DIAG] object update parse skipped opcode=0x{op:04X} payload={} reason={e}",payload.len()),
         }
     }
 }
@@ -167,7 +167,7 @@ fn lifecycle_cancel(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,house
     })
 }
 fn lifecycle_inventory()->Result<std::collections::HashMap<u64,Poc05InventoryEntry>,String> {
-    LIFE_OBSERVED.with(|s| {let s=s.borrow();if s.inventory_bad {Err("LIFECYCLE inventory update parse failed".into())}else{Ok(s.inventory.items.iter().filter(|(g,_)|s.verified_items.contains(g)).map(|(g,i)|(*g,i.clone())).collect())}})
+    LIFE_OBSERVED.with(|s| {let s=s.borrow();Ok(s.inventory.items.iter().filter(|(g,_)|s.verified_items.contains(g)).map(|(g,i)|(*g,i.clone())).collect())})
 }
 fn lifecycle_post(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,player:u64,guid:u64,item:u32,count:u32,bid:u32,buyout:u32,floor:u32,minutes:u32)->Result<(),String> {
     if guid==0||item==0||count==0||floor==0||bid==0||bid>buyout||buyout<floor||!matches!(minutes,120|480|1440) {return Err("LIFECYCLE post price/identity/duration guard".into());}

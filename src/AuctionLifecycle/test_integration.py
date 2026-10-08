@@ -47,11 +47,18 @@ class Integration(unittest.TestCase):
         self.assertIn('lifecycle_post(',mm)
         self.assertIn('c.max_clear_units>c.max_post_units',mm)
         self.assertIn('MARKET_MAKER final pricing snapshot incomplete; stock held, not posted',mm)
-        self.assertIn('s.complete&&s.stable',mm)
+        self.assertIn('WOW112_MM_MIN_PRICE_BPS_OF_OWN",0',mm)
+        self.assertIn('clear-local-a',mm)
+        self.assertIn('clear-local-b',mm)
+        self.assertIn('item-local depth changed between confirmation scans',mm)
+        self.assertNotIn('s.complete&&s.stable',mm)
         inv=Path(__file__).with_name('market_maker_inventory.rs').read_text()
         self.assertIn('CMSG_SPLIT_ITEM',inv)
         self.assertIn('mutations::transaction(MutationKind::Split',inv)
         self.assertNotIn('MM_SPLIT_INTENT',inv)
+        adapter=Path(__file__).with_name('adapter.rs').read_text()
+        self.assertNotIn('inventory_bad',adapter)
+        self.assertIn('object update parse skipped',adapter)
     def test_all_v4_generation_then_integration(self):
         import yaml
         with tempfile.TemporaryDirectory() as td:

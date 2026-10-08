@@ -34,12 +34,12 @@ fn mm_config()->Result<MmConfig,String>{
         live,max_pages:poc07_env_u32_default("WOW112_MM_MAX_PAGES",4096)?,max_actions:poc07_env_u32_default("WOW112_MM_MAX_ACTIONS",10)?,
         max_clear_buys:poc07_env_u32_default("WOW112_MM_MAX_CLEAR_BUYS",5)?,max_post_units:poc07_env_u32_default("WOW112_MM_MAX_POST_UNITS",20)?,
         minutes:poc07_env_u32_default("WOW112_MM_MINUTES",120)?,default_floor_unit:poc07_env_u32_default("WOW112_MM_DEFAULT_FLOOR_UNIT",1)?,
-        floors:mm_map("WOW112_MM_FLOORS")?,min_price_bps_of_own:poc07_env_u32_default("WOW112_MM_MIN_PRICE_BPS_OF_OWN",8000)?,
+        floors:mm_map("WOW112_MM_FLOORS")?,min_price_bps_of_own:poc07_env_u32_default("WOW112_MM_MIN_PRICE_BPS_OF_OWN",0)?,
         ah_cut_bps:poc07_env_u32_default("WOW112_MM_AH_CUT_BPS",500)?,max_clear_spend:poc07_env_u32_default("WOW112_MM_MAX_CLEAR_SPEND",10000)?,
         max_clear_units:poc07_env_u32_default("WOW112_MM_MAX_CLEAR_UNITS",5)?,clear_min_profit:poc07_env_u32_default("WOW112_MM_CLEAR_MIN_PROFIT",100)?,
         clear_min_roi_bps:poc07_env_u32_default("WOW112_MM_CLEAR_MIN_ROI_BPS",1000)?,clear_min_jump_bps:poc07_env_u32_default("WOW112_MM_CLEAR_MIN_JUMP_BPS",1000)?,
     };
-    if c.max_pages==0||c.max_pages>4096||c.max_actions==0||c.max_actions>100||c.max_clear_buys==0||c.max_clear_buys>50||c.max_post_units==0||c.max_post_units>200||c.default_floor_unit==0||c.min_price_bps_of_own==0||c.min_price_bps_of_own>10000||c.ah_cut_bps>=10000||c.max_clear_units==0||c.max_clear_units>c.max_post_units||!matches!(c.minutes,120|480|1440){return Err("MARKET_MAKER invalid hard limits".into());}
+    if c.max_pages==0||c.max_pages>4096||c.max_actions==0||c.max_actions>100||c.max_clear_buys==0||c.max_clear_buys>50||c.max_post_units==0||c.max_post_units>200||c.default_floor_unit==0||c.min_price_bps_of_own>10000||c.ah_cut_bps>=10000||c.max_clear_units==0||c.max_clear_units>c.max_post_units||!matches!(c.minutes,120|480|1440){return Err("MARKET_MAKER invalid hard limits".into());}
     Ok(c)
 }
 
@@ -66,13 +66,15 @@ fn mm_strict_below(a:&LifecycleAuction)->u32{if a.row.buyout==0||a.row.count==0{
 fn mm_floor(own:&LifecycleAuction,c:&MmConfig)->u32{c.default_floor_unit.max(*c.floors.get(&own.row.item_id).unwrap_or(&0))}
 fn mm_effective_floor(own:&LifecycleAuction,c:&MmConfig)->u32{
     if own.row.count==0{return u32::MAX;}
+    let explicit=mm_floor(own,c);
+    if c.min_price_bps_of_own==0{return explicit;}
     let den=u128::from(own.row.count)*10000;
     let pct=((u128::from(own.row.buyout)*u128::from(c.min_price_bps_of_own)+den-1)/den).min(u128::from(u32::MAX)) as u32;
-    mm_floor(own,c).max(pct)
+    explicit.max(pct)
 }
-fn mm_policy_for(own:&LifecycleAuction,player:u64,s:&MmSnapshot,c:&MmConfig)->mm_policy::Decision{
+fn mm_policy_for(own:&LifecycleAuction,player:u64,s:&MmSnapshot,c:&MmConfig,depth_verified:bool)->mm_policy::Decision{
     let competitors:Vec<_>=s.rows.iter().filter(|r|r.auction.row.owner_guid!=player&&r.auction.row.buyout>0&&r.auction.row.count>0&&mm_same_item(own,&r.auction)).map(|r|mm_policy::Quote{auction_id:r.auction.row.auction_id,buyout:r.auction.row.buyout,count:r.auction.row.count}).collect();
-    mm_policy::decide(mm_policy::Quote{auction_id:own.row.auction_id,buyout:own.row.buyout,count:own.row.count},&competitors,mm_policy::PolicyConfig{floor_unit:mm_floor(own,c),min_price_bps_of_own:c.min_price_bps_of_own,ah_cut_bps:c.ah_cut_bps,max_clear_spend:c.max_clear_spend,max_clear_units:c.max_clear_units,clear_min_profit:c.clear_min_profit,clear_min_roi_bps:c.clear_min_roi_bps,clear_min_jump_bps:c.clear_min_jump_bps},s.complete&&s.stable)
+    mm_policy::decide(mm_policy::Quote{auction_id:own.row.auction_id,buyout:own.row.buyout,count:own.row.count},&competitors,mm_policy::PolicyConfig{floor_unit:mm_floor(own,c),min_price_bps_of_own:c.min_price_bps_of_own,ah_cut_bps:c.ah_cut_bps,max_clear_spend:c.max_clear_spend,max_clear_units:c.max_clear_units,clear_min_profit:c.clear_min_profit,clear_min_roi_bps:c.clear_min_roi_bps,clear_min_jump_bps:c.clear_min_jump_bps},depth_verified)
 }
 fn mm_print(own:&LifecycleAuction,d:&mm_policy::Decision){println!("[MARKET-MAKER] DECISION own={} item={} count={} buyout={} bid={} => {:?}",own.row.auction_id,own.row.item_id,own.row.count,own.row.buyout,own.row.highest_bid,d);}
 
@@ -121,10 +123,19 @@ fn mm_clear_prefix(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,house:
         scoped.max_clear_spend=c.max_clear_spend.saturating_sub(spent.min(u64::from(u32::MAX)) as u32);
         scoped.max_clear_units=c.max_clear_units.saturating_sub(units_bought.min(u64::from(u32::MAX)) as u32);
         if scoped.max_clear_spend==0||scoped.max_clear_units==0{break;}
-        let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-revalidate")?;let d=mm_policy_for(&own,player,&snap,&scoped);mm_print(&own,&d);
-        let ids=match d{mm_policy::Decision::ClearThenRelist{auction_ids,..}=>auction_ids,_=>break};
+        // Global AH totals drift constantly. CLEAR is authorized only when two complete
+        // consecutive scans produce the exact same decision for this specific item/depth.
+        let snap_a=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-local-a")?;
+        if !snap_a.complete{return Err("MARKET_MAKER clear blocked: first local-depth scan incomplete".into());}
+        let d_a=mm_policy_for(&own,player,&snap_a,&scoped,true);mm_print(&own,&d_a);
+        if !matches!(d_a,mm_policy::Decision::ClearThenRelist{..}){break;}
+        let snap_b=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-local-b")?;
+        if !snap_b.complete{return Err("MARKET_MAKER clear blocked: second local-depth scan incomplete".into());}
+        let d_b=mm_policy_for(&own,player,&snap_b,&scoped,true);mm_print(&own,&d_b);
+        if d_a!=d_b{return Err("MARKET_MAKER clear blocked: item-local depth changed between confirmation scans".into());}
+        let ids=match d_b{mm_policy::Decision::ClearThenRelist{auction_ids,..}=>auction_ids,_=>break};
         let id=*ids.first().ok_or("MARKET_MAKER empty clear plan")?;
-        let row=snap.rows.iter().find(|r|r.auction.row.auction_id==id&&r.auction.row.owner_guid!=player&&mm_same_item(&own,&r.auction)).ok_or("MARKET_MAKER clear target vanished before BUY")?.clone();
+        let row=snap_b.rows.iter().find(|r|r.auction.row.auction_id==id&&r.auction.row.owner_guid!=player&&mm_same_item(&own,&r.auction)).ok_or("MARKET_MAKER clear target vanished before BUY")?.clone();
         let new_spend=spent.saturating_add(u64::from(row.auction.row.buyout));let new_units=units_bought.saturating_add(u64::from(row.auction.row.count));
         if new_spend>u64::from(c.max_clear_spend)||new_units>u64::from(c.max_clear_units){return Err("MARKET_MAKER cumulative clear budget guard".into());}
         println!("[MARKET-MAKER] CLEAR step={} auction={} item={} count={} buyout={} cumulative_spend={} cumulative_units={}",n+1,id,row.auction.row.item_id,row.auction.row.count,row.auction.row.buyout,new_spend,new_units);
@@ -158,12 +169,12 @@ fn market_maker_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->
     let c=mm_config()?;let(npcs,mailbox)=discover_poc05_context_retry(stream,crypto,player)?;let(npc,house)=poc05_send_auction_hello_candidates(stream,crypto,npcs)?;
     if !c.live {
         let mine=lifecycle_owner_list(stream,crypto,npc,player)?;let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"audit")?;
-        for own in &mine {let d=if own.row.highest_bid!=0{mm_policy::Decision::Keep}else{mm_policy_for(own,player,&snap,&c)};mm_print(own,&d);}println!("[MARKET-MAKER] AUDIT PASS own={} mutation=DISABLED",mine.len());return Ok(());
+        for own in &mine {let d=if own.row.highest_bid!=0{mm_policy::Decision::Keep}else{mm_policy_for(own,player,&snap,&c,snap.complete)};mm_print(own,&d);}println!("[MARKET-MAKER] AUDIT PASS own={} mutation=DISABLED",mine.len());return Ok(());
     }
     for action in 0..c.max_actions {
         let mine=lifecycle_owner_list(stream,crypto,npc,player)?;if mine.is_empty(){println!("[MARKET-MAKER] LIVE PASS no-owned-auctions");return Ok(());}let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"live-select")?;
         let mut chosen:Option<(LifecycleAuction,mm_policy::Decision)>=None;
-        for own in &mine {if own.row.highest_bid!=0{continue;}let d=mm_policy_for(own,player,&snap,&c);mm_print(own,&d);if matches!(d,mm_policy::Decision::ClearThenRelist{..}){chosen=Some((own.clone(),d));break;}if chosen.is_none()&&matches!(d,mm_policy::Decision::Undercut{..}){chosen=Some((own.clone(),d));}}
+        for own in &mine {if own.row.highest_bid!=0{continue;}let d=mm_policy_for(own,player,&snap,&c,snap.complete);mm_print(own,&d);if matches!(d,mm_policy::Decision::ClearThenRelist{..}){chosen=Some((own.clone(),d));break;}if chosen.is_none()&&matches!(d,mm_policy::Decision::Undercut{..}){chosen=Some((own.clone(),d));}}
         let Some((own,d))=chosen else{println!("[MARKET-MAKER] LIVE PASS no-actionable-auctions actions={action}");return Ok(());};
         match d {
             mm_policy::Decision::ClearThenRelist{..}=>mm_clear_prefix(stream,crypto,npc,house,mailbox,player,own.row.auction_id,&c)?,
