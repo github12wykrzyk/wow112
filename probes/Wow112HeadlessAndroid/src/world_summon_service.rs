@@ -15,6 +15,9 @@ use wow112_headless_android_probe::summon_service_core::{RequestPhase, ServiceSt
 use wow112_headless_android_probe::summon_service_runtime::{
     ServiceRuntimeConfig, SummonServiceRuntime,
 };
+use wow112_headless_android_probe::summon_trade_arrival::{
+    decide_trade_arrival, TradeArrivalDecision,
+};
 use wow112_headless_android_probe::tele_party_seq::{Action as PartyAction, PartySeq};
 
 include!("tele10_trade_receiver_runtime.rs");
@@ -848,23 +851,106 @@ pub fn login_summon_service(
                     };
                     match status.status {
                         TRADE_STATUS_BEGIN_TRADE => {
-                            let busy_mutation = driver.as_ref().is_some_and(|value| !matches!(value.phase, DriverPhase::AwaitingPayment { .. }));
-                            if busy_mutation {
-                                println!("[SUMMON-SERVICE][TRADE] deferred begin during summon mutation window");
-                                continue;
-                            }
-                            let partner_guid = status.trader_guid.unwrap_or(0);
-                            if partner_guid == 0 || trade_session.as_ref().is_some_and(|value| !value.terminal) { continue; }
-                            let trade_id = ledger.allocate_trade_id(unix_now())?;
-                            trade_session = Some(TradeSession::new(trade_id.clone(), partner_guid));
-                            let _ = send_name_query(stream, &mut crypto, partner_guid);
-                            if let Err(error) = write_encrypted_raw(stream, crypto.encrypter(), CMSG_BEGIN_TRADE_OPCODE, &[]) {
-                                if let Some(request_id) = runtime.active_request_id().map(ToString::to_string) {
-                                    runtime.mark_uncertain(&request_id, &format!("trade_begin_socket_uncertain:{error}"), now_ms())?;
-                                }
-                                return Err(format!("TELE10_TRADE_BEGIN_MUTATION_UNCERTAIN trade_id={trade_id} retry_allowed=false cause={error}"));
-                            }
-                        }
+                  let partner_guid = status.trader_guid.unwrap_or(0);
+                  if partner_guid == 0 || trade_session.as_ref().is_some_and(|value| !value.terminal) {
+                      continue;
+                  }
+                  let partner_name = name_cache.get(&partner_guid).cloned();
+
+                  if let Some(active_job) = driver.as_mut() {
+                      let phase = runtime
+                          .request(&active_job.request_id)
+                          .map(|record| record.phase)
+                          .ok_or_else(|| format!("active request missing id={}", active_job.request_id))?;
+                      match decide_trade_arrival(
+                          &active_job.customer,
+                          phase,
+                          partner_name.as_deref(),
+                      ) {
+                          TradeArrivalDecision::CompleteSummon => {
+                              let summon_id = match &active_job.phase {
+                                  DriverPhase::AwaitingPortal { summon_id, .. } => summon_id.clone(),
+                                  other => {
+                                      return Err(format!(
+                                          "trade arrival/core phase mismatch request={} driver={other:?} core={phase:?}",
+                                          active_job.request_id
+                                      ));
+                                  }
+                              };
+                              ledger.mark_summoned(&summon_id, unix_now())?;
+                              runtime.mark_summon_completed(&active_job.request_id, now_ms())?;
+                              active_job.phase = DriverPhase::AwaitingPayment {
+                                  since_ms: now_ms(),
+                                  summon_id: Some(summon_id),
+                              };
+                              println!(
+                                  "[SUMMON-SERVICE] request={} summon=completed evidence=expected_customer_trade payment_window=open",
+                                  active_job.request_id
+                              );
+                          }
+                          TradeArrivalDecision::PaymentAlreadyOpen => {}
+                          TradeArrivalDecision::NeedPartnerName => {
+                              let _ = send_name_query(stream, &mut crypto, partner_guid);
+                              println!(
+                                  "[SUMMON-SERVICE][TRADE] begin deferred partner_guid=0x{partner_guid:016X} reason=name_unresolved action=no_mutation"
+                              );
+                              continue;
+                          }
+                          TradeArrivalDecision::WrongPartner => {
+                              println!(
+                                  "[SUMMON-SERVICE][TRADE] begin rejected partner={:?} expected={:?} reason=wrong_partner action=no_mutation",
+                                  partner_name,
+                                  active_job.customer
+                              );
+                              continue;
+                          }
+                          TradeArrivalDecision::NotReady => {
+                              println!(
+                                  "[SUMMON-SERVICE][TRADE] begin deferred request={} core_phase={phase:?} reason=summon_not_ready action=no_mutation",
+                                  active_job.request_id
+                              );
+                              continue;
+                          }
+                      }
+                  }
+
+                  let trade_id = ledger.allocate_trade_id(unix_now())?;
+                  let mut session = TradeSession::new(trade_id.clone(), partner_guid);
+                  if let Some(name) = partner_name.as_deref() {
+                      session.update_partner_name(name);
+                      tele10_refresh_correlation(&mut ledger, &mut session)?;
+                  } else {
+                      let _ = send_name_query(stream, &mut crypto, partner_guid);
+                  }
+                  trade_session = Some(session);
+
+                  let journal_request_id = runtime
+                      .active_request_id()
+                      .map(ToString::to_string)
+                      .unwrap_or_else(|| format!("late-payment:{trade_id}"));
+                  let operation_id = format!("{journal_request_id}:trade-begin:{trade_id}");
+                  mutations.commit_before_send(
+                      &journal_request_id,
+                      MutationKind::TradeBegin,
+                      &operation_id,
+                      false,
+                      now_ms(),
+                      &format!("partner_guid=0x{partner_guid:016X}"),
+                  )?;
+                  match write_encrypted_raw(stream, crypto.encrypter(), CMSG_BEGIN_TRADE_OPCODE, &[]) {
+                      Ok(()) => mutations.mark_send_ok(&operation_id, now_ms())?,
+                      Err(error) => {
+                          let reason = format!("trade_begin_socket_uncertain:{error}");
+                          mutations.mark_uncertain(&operation_id, now_ms(), &reason)?;
+                          if let Some(request_id) = runtime.active_request_id().map(ToString::to_string) {
+                              runtime.mark_uncertain(&request_id, &reason, now_ms())?;
+                          }
+                          return Err(format!(
+                              "TELE10_TRADE_BEGIN_MUTATION_UNCERTAIN trade_id={trade_id} operation_id={operation_id} retry_allowed=false cause={error}"
+                          ));
+                      }
+                  }
+              }
                         TRADE_STATUS_TRADE_ACCEPT => {
                             if let Some(active) = trade_session.as_mut() {
                                 if !active.terminal {
