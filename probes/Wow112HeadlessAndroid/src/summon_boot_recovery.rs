@@ -1,3 +1,5 @@
+//! Fail-closed boot reconciliation for the portal-handoff crash window.
+
 use crate::summon_mutation_coordinator::{MutationCoordinator, MutationKind, MutationState};
 use crate::summon_service_core::{RequestPhase, ServiceSnapshot};
 use serde_json::Value;
