@@ -6,7 +6,7 @@ on:
       cycles:
         description: Synthetic soak cycles (minimum 20)
         required: true
-        default: "20"
+        default: "50"
         type: choice
         options: ["20", "50"]
   push:
@@ -41,7 +41,7 @@ jobs:
         env:
           REQUESTED_CYCLES: ${{ github.event.inputs.cycles }}
         run: |
-          CYCLES="${REQUESTED_CYCLES:-20}"
+          CYCLES="${REQUESTED_CYCLES:-50}"
           python tools/summon_service_soak_v1.py \
             --cycles "$CYCLES" \
             --exact-sha "${GITHUB_SHA}" \
