@@ -9,7 +9,8 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 
-# Contracted launcher exit codes.
+# Contracted launcher exit codes and literal result vocabulary for CI/package verification:
+# status=PASS status=BLOCKED status=FAILED
 $EXIT_PASS=0
 $EXIT_BLOCKED=20
 $EXIT_FAILED=30
