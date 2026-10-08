@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-routing-parser-hardening-v1",
+  "goal": "Harden SummonScout World request parsing and direct-whisper routing so destination-qualified shorthand is recognized, multi-destination buyer requests fail closed, and post-payment typo-tolerant invite shortcuts cannot bypass canonical destination ownership.",
+  "branch": "feature/summonscout-routing-parser-hardening-v1",
+  "base_parallel_sha": "51fcceda208a03cefc3f7502e83aec939d1fce02",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summonscout-routing",
+    "summonscout-world-parser"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "notes": "Exact-SHA feature preflight passed against canonical 51fcceda208a03cefc3f7502e83aec939d1fce02. Generic SummonScout paths route to STANDARD through the canonical delivery classifier; no profile-specific gate is declared. Postpay guard suppresses only the unsafe local shortcut so FallbackRouter still receives cross-location whispers."
+}
