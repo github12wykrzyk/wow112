@@ -15,11 +15,13 @@ class NativeWhisperRelayV1Contract(unittest.TestCase):
     def test_reuses_existing_wim_hot_slot_without_extra_fanout_module(self):
         self.assertIn("SummonScout_WhisperRelayWimNativeHot.lua", self.toc)
         self.assertNotIn("SummonScout_WhisperRelayNativeWhisperHot.lua", self.toc)
-        self.assertIn('local V="2-native-whisper-wim"', self.lua)
+        self.assertIn('"2-native-whisper-wim"', self.lua)
+        self.assertIn('H.GetState("whisperrelaywim")', self.lua)
 
     def test_transport_is_consumed_from_real_whisper_event(self):
         self.assertIn('ev~="CHAT_MSG_WHISPER"', self.lua)
-        self.assertIn('P="[SSWR1]"', self.lua)
+        self.assertIn('"[SSWR1]"', self.lua)
+        self.assertIn('starts(raw,P)', self.lua)
         self.assertIn('WIM_ChatFrame_OnEvent=W112_SUMMONSCOUT_RELAY_WIM_WRAPPER', self.lua)
 
     def test_inbound_packet_renders_in_summoner_wim(self):
