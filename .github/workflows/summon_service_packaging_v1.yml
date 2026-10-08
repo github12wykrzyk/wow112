@@ -68,24 +68,7 @@ jobs:
           "DEMO_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Operator launcher lifecycle smoke
         shell: powershell
-        run: |
-          $env:WOW112_PASSWORD='PACKAGING_WRAPPER_CANARY_SECRET'
-          function Run-Cmd([string]$Name,[int]$Expected=0){
-            & cmd.exe /d /c "`"$env:DEMO_ROOT\$Name`""
-            $code=$LASTEXITCODE
-            if($code -ne $Expected){throw "$Name exit=$code expected=$Expected"}
-          }
-          Run-Cmd 'START_SUMMON_SERVICE.cmd'
-          Run-Cmd 'STATUS_SUMMON_SERVICE.cmd'
-          Run-Cmd 'BACKUP_DATA.cmd'
-          Run-Cmd 'STATUS_SUMMON_SERVICE.cmd'
-          Run-Cmd 'OPEN_CONSOLE.cmd'
-          Run-Cmd 'STOP_SUMMON_SERVICE.cmd'
-          Run-Cmd 'OPEN_CONSOLE.cmd' 3
-          $backups=@(Get-ChildItem -LiteralPath (Join-Path $env:DEMO_ROOT 'backups/data') -Filter '*.zip' -File)
-          if($backups.Count -lt 1){throw 'safe backup launcher produced no backup'}
-          $hits=Get-ChildItem -LiteralPath (Join-Path $env:DEMO_ROOT 'logs') -File -Recurse -ErrorAction SilentlyContinue | Select-String -SimpleMatch 'PACKAGING_WRAPPER_CANARY_SECRET' -ErrorAction SilentlyContinue
-          if($hits){throw 'credential canary leaked to logs'}
+        run: .\packaging\summon_service_v1\tests\Invoke-OperatorLifecycleSmoke.ps1 -Root "$env:DEMO_ROOT"
       - uses: actions/upload-artifact@v4
         with:
           name: WoW112SummonServiceV1_DEMO_ONLY-${{ github.sha }}
