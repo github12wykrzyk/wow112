@@ -1,5 +1,7 @@
 include!("world.rs");
 
+use wow_world_messages::vanilla::CMSG_GROUP_INVITE;
+
 const CMSG_GROUP_SET_LEADER_OPCODE: u32 = 0x0078;
 const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
 const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
@@ -7,6 +9,7 @@ const SUMMONING_PORTAL_ENTRY: i32 = 36727;
 const GAMEOBJECT_TYPE_RITUAL: i32 = 18;
 const PORTAL_RETRY_GAP_MS: u64 = 180;
 const PORTAL_DEFAULT_ATTEMPTS: u32 = 3;
+const PARTY_INVITE_RETRY_GAP_MS: u64 = 5000;
 const PARTY_LEADER_RETRY_GAP_MS: u64 = 5000;
 const DEFAULT_SUMMONER_NAMES: &str = "teletanaris,bolthyjal,feltaxi";
 
@@ -91,6 +94,7 @@ fn service_party_leader_handoff(
     crypto: &mut HeaderCrypto,
     payload: &[u8],
     summoner_names: &[String],
+    last_invite: &mut Option<(String, Instant)>,
     last_transfer: &mut Option<(u64, Instant)>,
 ) -> Result<(), String> {
     let mut offset = 0usize;
@@ -132,9 +136,30 @@ fn service_party_leader_handoff(
         }
     }
 
-    let Some(target) = target else {
+    if target.is_none() {
+        let Some(wanted) = summoner_names.first() else {
+            return Ok(());
+        };
+        if let Some((name, sent_at)) = last_invite.as_ref() {
+            if name.eq_ignore_ascii_case(wanted)
+                && sent_at.elapsed() < Duration::from_millis(PARTY_INVITE_RETRY_GAP_MS)
+            {
+                return Ok(());
+            }
+        }
+
+        println!("[PARTY] I am leader -> invite summoner by name: {wanted}");
+        CMSG_GROUP_INVITE {
+            name: wanted.to_string(),
+        }
+        .write_encrypted_client(&mut *stream, crypto.encrypter())
+        .map_err(|e| format!("write summoner group invite failed target={wanted}: {e:?}"))?;
+        *last_invite = Some((wanted.to_string(), Instant::now()));
         return Ok(());
-    };
+    }
+
+    let target = target.unwrap();
+    *last_invite = None;
 
     if let Some((guid, sent_at)) = *last_transfer {
         if guid == target.guid && sent_at.elapsed() < Duration::from_millis(PARTY_LEADER_RETRY_GAP_MS) {
@@ -300,6 +325,7 @@ fn portal_click_loop(
         Some(Instant::now() + Duration::from_secs(soak_seconds))
     };
     let mut portals = std::collections::HashMap::<u64, PortalAttemptState>::new();
+    let mut last_summoner_invite: Option<(String, Instant)> = None;
     let mut last_leader_transfer: Option<(u64, Instant)> = None;
     let mut last_ping = Instant::now();
     let mut ping_sequence = 1u32;
@@ -314,7 +340,7 @@ fn portal_click_loop(
         if soak_seconds == 0 { "infinite".to_string() } else { format!("{soak_seconds}s") }
     );
     println!(
-        "[PARTY] auto leader handoff enabled summoners={}",
+        "[PARTY] auto summoner invite + leader handoff enabled summoners={}",
         summoner_names.join(",")
     );
 
@@ -362,9 +388,10 @@ fn portal_click_loop(
                         crypto,
                         &payload,
                         &summoner_names,
+                        &mut last_summoner_invite,
                         &mut last_leader_transfer,
                     ) {
-                        println!("[PARTY-DIAG] roster parse/handoff skipped: {error}");
+                        println!("[PARTY-DIAG] roster invite/handoff skipped: {error}");
                     }
                 }
                 inspect_portal_update_packet(opcode, &payload, &mut portals);
