@@ -1,0 +1,25 @@
+name: AH Lifecycle V2 Fasttrack Dispatch Full
+
+on:
+  push:
+    branches: [feature/ah-auction-lifecycle-v2-baseline-fasttrack]
+    paths:
+      - '.github/workflows/fasttrack_dispatch_full_after_packaging.yml'
+      - 'src/AuctionLifecycle/verify_package.py'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch canonical full Windows x86 lifecycle CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ah_auction_lifecycle_v1.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
+          echo FASTTRACK_FULL_DISPATCH_PASS
