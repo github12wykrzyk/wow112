@@ -21,7 +21,7 @@ jobs:
         with:
           targets: i686-pc-windows-msvc
 
-      - name: Pure V2 durable-state and policy tests
+      - name: Pure V2 durable-state, coordinator and policy tests
         shell: pwsh
         run: |
           rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_policy.rs -o "$env:RUNNER_TEMP/mm2-policy.exe"
@@ -35,6 +35,10 @@ jobs:
           rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_saga.rs -o "$env:RUNNER_TEMP/mm2-saga.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:RUNNER_TEMP/mm2-saga.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition=2021 --test src/AuctionLifecycle/coordinator.rs -o "$env:RUNNER_TEMP/mm2-coordinator.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/mm2-coordinator.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Replay authoritative canonical V4 plus Lifecycle source generation
@@ -69,25 +73,43 @@ jobs:
           $before=(Get-FileHash $buy -Algorithm SHA256).Hash
           python src/AuctionLifecycle/integrate_v2.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # V2 integrator may append include declarations only; canonical BUY body must remain present exactly once.
           $txt=Get-Content $buy -Raw
           if(([regex]::Matches($txt,'fn poc07_buy_exact_one_canonical\(')).Count -ne 1){throw 'canonical BUY symbol drift'}
           foreach($m in @('market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs','market_maker_v2_depth.rs')){if(-not($txt.Contains($m))){throw "V2 include missing: $m"}}
           Write-Host "V2_SOURCE_INTEGRATION_PASS pre_include_sha=$before"
 
-      - name: V2 static safety contracts
+      - name: V2 freeze safety contracts
         shell: pwsh
         run: |
           $files=Get-ChildItem src/AuctionLifecycle/market_maker_v2_*.rs
           $all=($files | Get-Content -Raw) -join "`n"
           foreach($m in @('BLOCKED_UNCERTAIN','MailboxVerified','DepthSource::Targeted','MM2_PRE_SEND_DEADLINE','market_maker_v2_inventory_bind')){if(-not($all.Contains($m))){throw "V2 safety marker missing: $m"}}
           if($all -match 'HashSet[^\n]*\.iter\(\)\.next\(\)'){throw 'V2 arbitrary HashSet authority forbidden'}
-          if((Get-Content src/AuctionLifecycle/market_maker_v2_inventory.rs -Raw) -match 'for _ in 0\.\.256'){throw 'V2 packet-count deadline forbidden'}
+          $inv=Get-Content src/AuctionLifecycle/market_maker_v2_inventory.rs -Raw
+          if($inv -match 'for _ in 0\.\.256'){throw 'V2 packet-count deadline forbidden'}
+          if($inv.Contains('4|5=>')){throw 'OUT_OF_RANGE and NEAR_OBJECTS must not share removal semantics'}
+          foreach($m in @('near_objects_does_not_delete_authoritative_state','out_of_range_deletes_authoritative_state')){if(-not $inv.Contains($m)){throw "inventory regression test missing: $m"}}
           if((Get-Content src/AuctionLifecycle/market_maker_v2_io.rs -Raw) -notmatch 'Instant'){throw 'V2 wall-clock deadline implementation missing'}
+          $targets=Get-Content src/AuctionLifecycle/market_maker_v2_targets.rs -Raw
+          foreach($m in @('targets/ah-preprobe-fence','targets/mailbox-preprobe-fence','targets/mailbox-between-probes-fence')){if(-not $targets.Contains($m)){throw "deterministic target fence missing: $m"}}
           $saga=Get-Content src/AuctionLifecycle/market_maker_v2_saga.rs -Raw
           if($saga -match 'Planned,Mm2SagaPhase::ClearBuyIntent'){throw 'CLEAR may not mutate before mailbox verification'}
           if($saga -match 'ClearBuyConfirmed\{\.\.\},Mm2SagaPhase::ClearBuyIntent'){throw 'CLEAR may not buy twice without mail/inventory reconciliation'}
+          $coord=Get-Content src/AuctionLifecycle/coordinator.rs -Raw
+          foreach($m in @('create_new(true)','sync_all()','unresolved send from earlier process','before_send(opcode','Kind { Buy, Mail, Cancel, Post, Split }')){if(-not $coord.Contains($m)){throw "coordinator safety marker missing: $m"}}
           Write-Host 'MM2_STATIC_SAFETY_PASS'
+
+      - name: Final launcher static contract
+        shell: pwsh
+        run: |
+          $p='src/AuctionLifecycle/RUN_MM2_FINAL.ps1'
+          $txt=Get-Content $p -Raw
+          $null=[scriptblock]::Create($txt)
+          foreach($m in @('capability','mailbox','inventory','undercut-canary','clear-one-buy-canary','reconcile')){if(-not $txt.Contains("'$m'")){throw "launcher mode missing: $m"}}
+          foreach($m in @('MM2_EXACT_SHA=','status=PASS','status=BLOCKED','status=FAILED','WOW112_MM2_EFFECT_CAP','effects=1','no_confirmed_single_effect_proof','*.pending','durable_debt_reconcile_only')){if(-not $txt.Contains($m)){throw "launcher contract marker missing: $m"}}
+          if(([regex]::Matches($txt,'& \$Exe')).Count -ne 1){throw 'launcher must invoke executable exactly once'}
+          if($txt -match '(?i)retry\s*\{'){throw 'launcher retry loop forbidden'}
+          Write-Host 'MM2_FINAL_LAUNCHER_STATIC_PASS'
 
       - name: Windows i686 compile and deterministic tests
         shell: pwsh
@@ -100,21 +122,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
           $b=[IO.File]::ReadAllBytes($exe);if($b.Length -lt 2 -or $b[0]-ne 0x4d -or $b[1]-ne 0x5a){throw 'PE MZ smoke failed'}
+          $pendingRoot=Join-Path $env:LOCALAPPDATA 'WoW112\MutationCoordinatorV1'
+          if(Test-Path $pendingRoot){$pending=@(Get-ChildItem $pendingRoot -Filter '*.pending' -File -ErrorAction Stop);if($pending.Count -ne 0){throw "test left unresolved pending files: $($pending.Name -join ',')"}}
           Write-Host "MM2_WINDOWS_X86_PASS bytes=$($b.Length) sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
 
-      - name: Stage V2 foundation artifact
+      - name: Stage V2 frozen artifact
         shell: pwsh
         run: |
           $d='dist/ah-market-maker-v2';New-Item -ItemType Directory -Force $d|Out-Null
           $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
-          Copy-Item $exe "$d/wow112-ah-market-maker-v2-foundation.exe"
+          Copy-Item $exe "$d/wow112-ah-market-maker-v2.exe"
+          Copy-Item src/AuctionLifecycle/RUN_MM2_FINAL.ps1 $d
           Copy-Item src/AuctionLifecycle/market_maker_v2_*.rs $d
+          Copy-Item src/AuctionLifecycle/coordinator.rs $d
           Copy-Item src/AuctionLifecycle/MARKET_MAKER_V2_DESIGN.md $d
-          @("SHA=$env:GITHUB_SHA","STATUS=FOUNDATION_NOT_LIVE_CANARY_APPROVED","EXE_SHA256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())") | Set-Content "$d/MANIFEST.txt"
+          $exeSha=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "SHA=$env:GITHUB_SHA",
+            'STATUS=CODE_FREEZE_CI_PASS',
+            'FINAL_LAUNCHER=RUN_MM2_FINAL.ps1',
+            'LAUNCHER_MODES=capability,mailbox,inventory,undercut-canary,clear-one-buy-canary,reconcile',
+            'READ_ONLY_MUTATION_PERMIT=NO',
+            'CANARY_EFFECT_CAP=1',
+            'CANARY_AUTO_RETRY=NO',
+            "EXE_SHA256=$exeSha"
+          ) | Set-Content "$d/MANIFEST.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WoW112-AH-MARKET-MAKER-V2-FOUNDATION-${{ github.sha }}
+          name: WoW112-AH-MARKET-MAKER-V2-FROZEN-${{ github.sha }}
           path: dist/ah-market-maker-v2
           if-no-files-found: error
           retention-days: 14
