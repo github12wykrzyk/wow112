@@ -20,12 +20,12 @@ jobs:
           ref: feature/summon-service-core-v1
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
-      - name: Apply boot recovery integration
+      - name: Apply structural boot recovery integration
         shell: python
         run: |
           from pathlib import Path
 
-          # Runtime::open: reconcile a persisted snapshot before core restore.
+          # Runtime::open: reconcile persisted state before core restore.
           p = Path('probes/Wow112HeadlessAndroid/src/summon_service_runtime.rs')
           s = p.read_text()
           import_anchor = '''use crate::summon_service_core::{
@@ -41,16 +41,14 @@ jobs:
               raise SystemExit(f'runtime import anchor count={s.count(import_anchor)}')
           s = s.replace(import_anchor, import_new, 1)
 
-          old = '''            SummonServiceCore::restore_json(
-                  &text,
-                  parser,
-                  queue_config,
-                  config.resource.clone(),
-                  now_ms,
-              )
-              .map_err(core_error)?
-          '''
-          new = '''            let snapshot: ServiceSnapshot = serde_json::from_str(&text)
+          start_marker = '            SummonServiceCore::restore_json('
+          end_marker = '\n            .map_err(core_error)?'
+          if s.count(start_marker) != 1:
+              raise SystemExit(f'runtime restore start count={s.count(start_marker)}')
+          start = s.index(start_marker)
+          end0 = s.index(end_marker, start)
+          end = end0 + len(end_marker)
+          replacement = '''            let snapshot: ServiceSnapshot = serde_json::from_str(&text)
                   .map_err(|error| format!("parse summon service state {} failed: {error}", config.state_path.display()))?;
               let root = config
                   .state_path
@@ -67,39 +65,31 @@ jobs:
                   config.resource.clone(),
                   now_ms,
               )
-              .map_err(core_error)?
-          '''
-          if s.count(old) != 1:
-              raise SystemExit(f'runtime restore anchor count={s.count(old)}')
-          s = s.replace(old, new, 1)
+              .map_err(core_error)?'''
+          s = s[:start] + replacement + s[end:]
           p.write_text(s)
 
-          # Portal worker: one confirmed PortalUse per request, regardless of GUID.
+          # Portal worker: any confirmed PortalUse blocks a second portal GUID for same request.
           p = Path('probes/Wow112HeadlessAndroid/src/summon_portal_worker.rs')
           s = p.read_text()
-          anchor = '''        let operation_id = format!("{request_id}:portal-use:{portal_guid:016X}");
-          if mutations
-              .records()
-              .iter()
-              .any(|record| record.operation_id == operation_id && record.state == MutationState::Confirmed)
-          {
-              return Ok(None);
-          }
-          '''
-          replacement = '''        if mutations.records_for_request(&request_id).any(|record| {
+          operation_line = '        let operation_id = format!("{request_id}:portal-use:{portal_guid:016X}");'
+          if s.count(operation_line) != 1:
+              raise SystemExit(f'portal operation marker count={s.count(operation_line)}')
+          preguard = '''        if mutations.records_for_request(&request_id).any(|record| {
               record.kind == MutationKind::PortalUse && record.state == MutationState::Confirmed
           }) {
               return Ok(None);
           }
-          let operation_id = format!("{request_id}:portal-use:{portal_guid:016X}");
           '''
-          if s.count(anchor) != 1:
-              raise SystemExit(f'portal guard anchor count={s.count(anchor)}')
-          s = s.replace(anchor, replacement, 1)
+          s = s.replace(operation_line, preguard + operation_line, 1)
 
-          marker = '''    #[test]
-              fn execute_once_transport_error_is_durable_uncertain_and_never_replayed() {
-          '''
+          fn_marker = '    fn execute_once_transport_error_is_durable_uncertain_and_never_replayed() {'
+          if s.count(fn_marker) != 1:
+              raise SystemExit(f'portal test fn marker count={s.count(fn_marker)}')
+          fn_pos = s.index(fn_marker)
+          attr_pos = s.rfind('    #[test]', 0, fn_pos)
+          if attr_pos < 0:
+              raise SystemExit('portal test attribute not found')
           test = '''    #[test]
           fn confirmed_portal_for_request_blocks_different_guid_before_control_consumption() {
               let root = root("different_guid_idempotent");
@@ -119,9 +109,7 @@ jobs:
           }
 
           '''
-          if s.count(marker) != 1:
-              raise SystemExit(f'portal test marker count={s.count(marker)}')
-          s = s.replace(marker, test + marker, 1)
+          s = s[:attr_pos] + test + s[attr_pos:]
           p.write_text(s)
 
       - name: Test library
