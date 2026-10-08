@@ -8,6 +8,7 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
 SRC=Path('probes/Wow112HeadlessAndroid/src')
+LIFECYCLE=Path('src/AuctionLifecycle')
 spec=importlib.util.spec_from_file_location('integration',Path(__file__).with_name('integrate.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
@@ -16,13 +17,18 @@ class Integration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             shutil.copytree(ROOT/SRC,root/SRC)
+            shutil.copytree(ROOT/LIFECYCLE,root/LIFECYCLE)
             before=(root/SRC/'world_poc07.rs').read_text()
             m.integrate(root)
             after=(root/SRC/'world_poc07.rs').read_text()
             self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix('\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'),before)
+            adapter=(root/LIFECYCLE/'adapter.rs').read_text()
+            self.assertIn('s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;',adapter)
             files={p:p.read_bytes() for p in (root/SRC).glob('*.rs')}
+            adapter_before=(root/LIFECYCLE/'adapter.rs').read_bytes()
             with self.assertRaises(ValueError):m.integrate(root)
             self.assertEqual(files,{p:p.read_bytes() for p in (root/SRC).glob('*.rs')})
+            self.assertEqual(adapter_before,(root/LIFECYCLE/'adapter.rs').read_bytes())
     def test_buy_safety_and_reconnect_contract_unchanged(self):
         main=(ROOT/SRC/'main.rs').read_text()
         self.assertIn('error.contains("MAIL_MUTATION_") || error.contains("AH_MUTATION_")',main)
@@ -35,6 +41,7 @@ class Integration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             shutil.copytree(ROOT/'probes',root/'probes')
+            shutil.copytree(ROOT/LIFECYCLE,root/LIFECYCLE)
             wf=yaml.safe_load((ROOT/'.github/workflows/build_windows_ah_de_liquidation_v3.yml').read_text())
             for step in wf['jobs']['build']['steps']:
                 for line in step.get('run','').splitlines():
@@ -49,4 +56,5 @@ class Integration(unittest.TestCase):
             self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix('\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'),buy)
             self.assertIn('POC08-UNIFIED-V4',unified)
             self.assertIn('return lifecycle_run', (root/SRC/'world_poc08_unified.rs').read_text())
+            self.assertIn('s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;', (root/LIFECYCLE/'adapter.rs').read_text())
 if __name__=='__main__':unittest.main()
