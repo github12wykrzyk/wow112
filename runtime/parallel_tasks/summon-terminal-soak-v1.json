@@ -12,5 +12,5 @@
   "delivery_profiles": [],
   "status": "done",
   "auto_integrate": false,
-  "notes": "DONE for current milestone. Authoritative real-wire 20-cycle LIVE soak PASS plus prior full-chain evidence. 50-cycle soak is explicitly waived/deferred as WAIVED_EXTERNAL_PRECONDITION_NO_SOUL_SHARDS because Teletanaris lacked Soul Shards; this is not counted as 50/50 PASS and not treated as a demonstrated product regression. Strict terminal/headless scope. No src/AddOns, Lua, WoW GUI, operator_console or packaging. Future long-soak runs require sufficient shards before start."
+  "notes": "DONE for current milestone. Authoritative real-wire 20-cycle LIVE soak PASS plus prior full-chain evidence. 50-cycle soak is explicitly waived/deferred as WAIVED_EXTERNAL_PRECONDITION_NO_SOUL_SHARDS because Teletanaris lacked Soul Shards; this is not counted as 50/50 PASS and not treated as a demonstrated product regression. Strict terminal/headless scope. No src/AddOns, Lua, WoW GUI, operator_console or packaging. Future long-soak runs require sufficient shards before start. Push-triggered LIVE soak workflows are disabled for this completed milestone and remain available via manual workflow_dispatch."
 }
