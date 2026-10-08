@@ -70,7 +70,7 @@ jobs:
           python "$env:RUNNER_TEMP/replay.py"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Attach V2 without changing canonical BUY or login
+      - name: Attach Prompt1 V2 without changing canonical BUY or login
         shell: pwsh
         run: |
           $buy='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
@@ -79,16 +79,29 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $txt=Get-Content $buy -Raw
           if(([regex]::Matches($txt,'fn poc07_buy_exact_one_canonical\(')).Count -ne 1){throw 'canonical BUY symbol drift'}
-          foreach($m in @('market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs','market_maker_v2_depth.rs')){if(-not($txt.Contains($m))){throw "V2 include missing: $m"}}
-          Write-Host "V2_SOURCE_INTEGRATION_PASS pre_include_sha=$before"
+          foreach($m in @('market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs','market_maker_v2_depth.rs','market_maker_v2_runtime.rs')){if(-not($txt.Contains($m))){throw "Prompt1 V2 include missing: $m"}}
+          foreach($m in @('market_maker_v2_canary.rs','market_maker_v2_canary_cancel.rs','market_maker_v2_prompt2_guard.rs','market_maker_v2_prompt2_undercut_canary')){if($txt.Contains($m)){throw "Prompt2 source leaked into Prompt1 binary: $m"}}
+          Write-Host "V2_PROMPT1_SOURCE_INTEGRATION_PASS pre_include_sha=$before"
 
       - name: V2 freeze safety contracts
         shell: pwsh
         run: |
-          $files=Get-ChildItem src/AuctionLifecycle/market_maker_v2_*.rs
-          $all=($files | Get-Content -Raw) -join "`n"
+          $prompt1=@(
+            'src/AuctionLifecycle/market_maker_v2_policy.rs',
+            'src/AuctionLifecycle/market_maker_v2_recovery.rs',
+            'src/AuctionLifecycle/market_maker_v2_saga.rs',
+            'src/AuctionLifecycle/market_maker_v2_inventory.rs',
+            'src/AuctionLifecycle/market_maker_v2_io.rs',
+            'src/AuctionLifecycle/market_maker_v2_targets.rs',
+            'src/AuctionLifecycle/market_maker_v2_depth.rs',
+            'src/AuctionLifecycle/market_maker_v2_runtime.rs',
+            'src/AuctionLifecycle/market_maker_v2_freeze_tests.rs'
+          )
+          $all=($prompt1 | ForEach-Object {Get-Content $_ -Raw}) -join "`n"
           foreach($m in @('BLOCKED_UNCERTAIN','MailboxVerified','DepthSource::Targeted','MM2_PRE_SEND_DEADLINE','market_maker_v2_inventory_bind')){if(-not($all.Contains($m))){throw "V2 safety marker missing: $m"}}
           if($all -match 'HashSet[^\n]*\.iter\(\)\.next\(\)'){throw 'V2 arbitrary HashSet authority forbidden'}
+          $integration=Get-Content src/AuctionLifecycle/integrate_v2.py -Raw
+          foreach($m in @("'market_maker_v2_canary.rs'","'market_maker_v2_canary_cancel.rs'","'market_maker_v2_prompt2_guard.rs'",'market_maker_v2_prompt2_undercut_canary')){if($integration.Contains($m)){throw "Prompt2 integration marker forbidden in Prompt1 freeze: $m"}}
           $inv=Get-Content src/AuctionLifecycle/market_maker_v2_inventory.rs -Raw
           if($inv -match 'for _ in 0\.\.256'){throw 'V2 packet-count deadline forbidden'}
           if($inv.Contains('4|5=>')){throw 'OUT_OF_RANGE and NEAR_OBJECTS must not share removal semantics'}
@@ -103,8 +116,8 @@ jobs:
           if(([regex]::Matches($runtime,'highest_bid!=0')).Count -lt 2){throw 'active-bid cancel guard missing from both fresh/final checks'}
           foreach($m in @('fresh owner identity changed','targeted own identity/owner mismatch','final owner identity changed','final depth freshness expired')){if(-not $runtime.Contains($m)){throw "stale identity/freshness guard missing: $m"}}
           $coord=Get-Content src/AuctionLifecycle/coordinator.rs -Raw
-          foreach($m in @('create_new(true)','sync_all()','unresolved send from earlier process','before_send(opcode','Kind { Buy, Mail, Cancel, Post, Split }')){if(-not $coord.Contains($m)){throw "coordinator safety marker missing: $m"}}
-          Write-Host 'MM2_STATIC_SAFETY_PASS'
+          foreach($m in @('create_new(true)','sync_all()','unresolved send from earlier process','before_send(opcode','Kind { Buy, Mail, Cancel, Post, Split }')){if(-not($coord.Contains($m))){throw "coordinator safety marker missing: $m"}}
+          Write-Host 'MM2_PROMPT1_STATIC_SAFETY_PASS'
 
       - name: Final launcher static contract
         shell: pwsh
@@ -140,7 +153,11 @@ jobs:
           $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
           Copy-Item $exe "$d/wow112-ah-market-maker-v2.exe"
           Copy-Item src/AuctionLifecycle/RUN_MM2_FINAL.ps1 $d
-          Copy-Item src/AuctionLifecycle/market_maker_v2_*.rs $d
+          foreach($p in @(
+            'market_maker_v2_policy.rs','market_maker_v2_recovery.rs','market_maker_v2_saga.rs',
+            'market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs',
+            'market_maker_v2_depth.rs','market_maker_v2_runtime.rs','market_maker_v2_freeze_tests.rs'
+          )){Copy-Item (Join-Path 'src/AuctionLifecycle' $p) $d}
           Copy-Item src/AuctionLifecycle/coordinator.rs $d
           Copy-Item src/AuctionLifecycle/MARKET_MAKER_V2_DESIGN.md $d
           $exeSha=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -152,6 +169,7 @@ jobs:
             'READ_ONLY_MUTATION_PERMIT=NO',
             'CANARY_EFFECT_CAP=1',
             'CANARY_AUTO_RETRY=NO',
+            'PROMPT2_LIVE_CANARY_SOURCES=EXCLUDED_FROM_BINARY_AND_ARTIFACT',
             "EXE_SHA256=$exeSha"
           ) | Set-Content "$d/MANIFEST.txt"
 
