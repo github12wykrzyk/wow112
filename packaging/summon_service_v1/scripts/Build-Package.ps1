@@ -24,10 +24,19 @@ try {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'config/service.example.json') -Destination (Join-Path $stage 'config/service.example.json')
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'config/service.example.json') -Destination (Join-Path $stage 'config/service.json')
     Set-Content -LiteralPath (Join-Path $stage 'VERSION') -Value $Version -Encoding ASCII
+    $stageName = Split-Path -Leaf $stage
     $mutablePrefixes = @('config/service.json','data/','logs/','state/','backups/')
     $entries = @()
     Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
-        $rel = $_.FullName.Substring($stage.Length+1).Replace('\','/')
+        $parts = New-Object Collections.Generic.List[string]
+        $parts.Insert(0, $_.Name)
+        $dir = $_.Directory
+        while($null -ne $dir -and $dir.Name -ne $stageName) {
+            $parts.Insert(0, $dir.Name)
+            $dir = $dir.Parent
+        }
+        if($null -eq $dir) { throw "Cannot derive package-relative path for $($_.FullName)" }
+        $rel = ($parts -join '/')
         if($mutablePrefixes -contains $rel -or $rel.StartsWith('data/') -or $rel.StartsWith('logs/') -or $rel.StartsWith('state/') -or $rel.StartsWith('backups/')) { return }
         $entries += [ordered]@{path=$rel;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
     }

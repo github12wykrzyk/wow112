@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "summon-service-packaging-v1",
+  "goal": "Build operator-friendly Windows 11 packaging, deployment, backup, upgrade and rollback mechanics for Summon Service V1 without implementing summon logic or Auction House behavior.",
+  "branch": "feature/summon-service-packaging-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "SummonServicePackaging"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summon-service-packaging"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Packaging-only track. No summon implementation, no AH, no edits to probes/Wow112HeadlessAndroid, tools/operator_console, or ledger core. Dedicated Windows packaging CI is authoritative for this feature and the task is intentionally not auto-integrated."
+}
