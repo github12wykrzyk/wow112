@@ -44,20 +44,26 @@ function Tune-TestConfig([string]$Root){
   $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding UTF8
 }
 function Q([string]$v){ return '"' + $v.Replace('"','\"') + '"' }
-function Run([string]$Root,[string]$Action,[int[]]$Ok=@(0),[string]$Package=$null,[string]$Expected=$null,[int]$TimeoutSeconds=45){
+function Run([string]$Root,[string]$Action,[string]$Package=$null,[string]$Expected=$null,[int]$TimeoutSeconds=45,[switch]$ExpectFailure,[string]$ErrorPattern=$null){
   $script=Join-Path $Root 'scripts/SummonService.ps1'
   $parts=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Q $script),'-Action',$Action,'-Root',(Q $Root),'-NoPrompt')
   if($Package){$parts+=@('-Package',(Q $Package))};if($Expected){$parts+=@('-ExpectedSourceSha',$Expected)}
-  $psi=New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName='powershell.exe'; $psi.Arguments=($parts -join ' '); $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true
-  $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
-  $p=New-Object System.Diagnostics.Process; $p.StartInfo=$psi
-  if(-not $p.Start()){throw "failed to start $Action"}
-  $stdoutTask=$p.StandardOutput.ReadToEndAsync(); $stderrTask=$p.StandardError.ReadToEndAsync()
-  if(-not $p.WaitForExit($TimeoutSeconds*1000)){ try{$p.Kill()}catch{}; try{$p.WaitForExit(5000)|Out-Null}catch{}; throw "$Action timed out after ${TimeoutSeconds}s" }
-  $p.WaitForExit(); $stdout=$stdoutTask.Result; $stderr=$stderrTask.Result
+  $out=Join-Path $work ('run-'+[Guid]::NewGuid().ToString('N')+'.out.log'); $err=Join-Path $work ('run-'+[Guid]::NewGuid().ToString('N')+'.err.log')
+  $p=Start-Process -FilePath 'powershell.exe' -ArgumentList ($parts -join ' ') -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+  if(-not $p.WaitForExit($TimeoutSeconds*1000)){ try{$p.Kill()}catch{}; throw "$Action timed out after ${TimeoutSeconds}s" }
+  $p.WaitForExit(); $p.Refresh()
+  $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}; $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
   if($stdout){Write-Host $stdout.TrimEnd()}; if($stderr){Write-Host $stderr.TrimEnd()}
-  $c=[int]$p.ExitCode; $p.Dispose(); if($Ok -notcontains $c){throw "$Action exit=$c expected=$($Ok -join ',')"};return $c
+  $c=$p.ExitCode
+  if($ExpectFailure){
+    $failed = (-not [string]::IsNullOrWhiteSpace($stderr)) -or ($null -ne $c -and [int]$c -ne 0)
+    if(-not $failed){throw "$Action unexpectedly succeeded without stderr"}
+    if($ErrorPattern -and (($stderr + $stdout) -notmatch [regex]::Escape($ErrorPattern))){throw "$Action failure did not contain expected marker: $ErrorPattern"}
+  } else {
+    if($null -ne $c -and [int]$c -ne 0){throw "$Action exit=$c expected=0"}
+    if(-not [string]::IsNullOrWhiteSpace($stderr)){throw "$Action emitted unexpected stderr: $stderr"}
+  }
+  return [pscustomobject]@{ExitCode=$c;StdOut=$stdout;StdErr=$stderr}
 }
 try {
   $zip1=New-Package '1.0.0'; $root=Expand-Package $zip1 'live'; Tune-TestConfig $root; $env:WOW112_PASSWORD='PACKAGING_CANARY_SECRET'
@@ -68,19 +74,19 @@ try {
   Record 'data backup' { Run $root Backup | Out-Null; if(-not(Get-ChildItem (Join-Path $root 'backups/data') -Filter '*.zip')){throw 'backup missing'} }
   $zip2=New-Package '1.1.0'
   Record 'upgrade + health' { Run $root Upgrade -Package $zip2 -Expected $SourceSha -TimeoutSeconds 60 | Out-Null; if((Get-Content (Join-Path $root VERSION)-Raw).Trim()-ne'1.1.0'){throw 'version not upgraded'}; Run $root Status | Out-Null }
-  Record 'failed upgrade rolls back' { $bad=New-Package '1.2.0-badhealth' -BadHealth; $c=Run $root Upgrade -Ok @(1) -Package $bad -Expected $SourceSha -TimeoutSeconds 60; Start-Sleep 1; if((Get-Content (Join-Path $root VERSION)-Raw).Trim()-ne'1.1.0'){throw 'failed upgrade did not roll back'}; Run $root Status | Out-Null }
+  Record 'failed upgrade rolls back' { $bad=New-Package '1.2.0-badhealth' -BadHealth; Run $root Upgrade -Package $bad -Expected $SourceSha -TimeoutSeconds 60 -ExpectFailure -ErrorPattern 'Post-upgrade health check failed.' | Out-Null; Start-Sleep 1; if((Get-Content (Join-Path $root VERSION)-Raw).Trim()-ne'1.1.0'){throw 'failed upgrade did not roll back'}; Run $root Status | Out-Null }
   Record 'manual rollback' { Run $root Rollback -TimeoutSeconds 60 | Out-Null; Run $root Status | Out-Null }
-  Record 'missing binary fails closed' { Run $root Stop | Out-Null; $exe=Join-Path $root 'bin/WoW112SummonService.exe'; $hold="$exe.hold"; Move-Item $exe $hold; try { Run $root Start -Ok @(1)|Out-Null } finally { Move-Item $hold $exe }; }
-  Record 'bad SHA256 fails closed' { $exe=Join-Path $root 'bin/WoW112SummonOperatorConsole.exe'; $hold=Join-Path $work 'console-before-tamper.exe'; Copy-Item $exe $hold -Force; try { [IO.File]::AppendAllText($exe,'tamper'); Run $root Verify -Ok @(1)|Out-Null } finally { Copy-Item $hold $exe -Force } }
-  Record 'config missing fails closed' { $cfg=Join-Path $root 'config/service.json'; $hold="$cfg.hold"; Move-Item $cfg $hold; try { Run $root Start -Ok @(1)|Out-Null } finally { Move-Item $hold $cfg } }
+  Record 'missing binary fails closed' { Run $root Stop | Out-Null; $exe=Join-Path $root 'bin/WoW112SummonService.exe'; $hold="$exe.hold"; Move-Item $exe $hold; try { Run $root Start -ExpectFailure -ErrorPattern 'Manifest file missing' | Out-Null } finally { Move-Item $hold $exe }; }
+  Record 'bad SHA256 fails closed' { $exe=Join-Path $root 'bin/WoW112SummonOperatorConsole.exe'; $hold=Join-Path $work 'console-before-tamper.exe'; Copy-Item $exe $hold -Force; try { [IO.File]::AppendAllText($exe,'tamper'); Run $root Verify -ExpectFailure -ErrorPattern 'SHA256 mismatch' | Out-Null } finally { Copy-Item $hold $exe -Force } }
+  Record 'config missing fails closed' { $cfg=Join-Path $root 'config/service.json'; $hold="$cfg.hold"; Move-Item $cfg $hold; try { Run $root Start -ExpectFailure -ErrorPattern 'Missing required file' | Out-Null } finally { Move-Item $hold $cfg } }
   Record 'password prompt branch uses SecureString and DPAPI' { . (Join-Path $pkgSource 'scripts/SummonService.ps1'); $old=$env:WOW112_PASSWORD; Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue; try { Ensure-Layout $root; $cfg=Get-Config $root; $f=Save-CredentialDpapi $root $cfg { ConvertTo-SecureString 'prompt-secret' -AsPlainText -Force }; if(-not(Test-Path $f)){throw 'DPAPI file missing'}; if((Get-Content $f -Raw)-match'prompt-secret'){throw 'plaintext leaked to DPAPI file'} } finally { $env:WOW112_PASSWORD=$old } }
   Record 'service run logs are rotated' { Run $root Stop | Out-Null; $cfgPath=Join-Path $root 'config/service.json'; $cfg=Get-Content $cfgPath -Raw | ConvertFrom-Json; $oldLimit=$cfg.logging.max_files; $cfg.logging.max_files=4; $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding UTF8; try { 1..9 | ForEach-Object { Set-Content (Join-Path $root ("logs/service-old-$_.out.log")) x; Start-Sleep -Milliseconds 10 }; Run $root Start | Out-Null; Start-Sleep 1; $count=@(Get-ChildItem (Join-Path $root logs) -File | Where-Object { $_.Name -match '^service-.*\.(out|err)\.log$' }).Count; if($count -gt 4){throw "service log rotation kept $count files"}; Run $root Stop | Out-Null } finally { $cfg=Get-Content $cfgPath -Raw | ConvertFrom-Json; $cfg.logging.max_files=$oldLimit; $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding UTF8 } }
   Record 'logs contain no credential canary' { Run $root Start | Out-Null; Start-Sleep 1; Run $root Stop | Out-Null; $hits=Get-ChildItem (Join-Path $root logs) -File -Recurse | Select-String -SimpleMatch 'PACKAGING_CANARY_SECRET' -ErrorAction SilentlyContinue; if($hits){throw 'credential found in logs'} }
-  Record 'read-only root rejected' { $ro=Expand-Package $zip1 'readonly'; Tune-TestConfig $ro; $acl=Get-Acl $ro; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'Write,Modify','ContainerInherit,ObjectInherit','None','Deny'); $acl.AddAccessRule($rule)|Out-Null; Set-Acl $ro $acl; try { Run $ro Start -Ok @(1)|Out-Null } finally { $acl=Get-Acl $ro; $acl.RemoveAccessRuleSpecific($rule); Set-Acl $ro $acl } }
+  Record 'read-only root rejected' { $ro=Expand-Package $zip1 'readonly'; Tune-TestConfig $ro; $acl=Get-Acl $ro; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'Write,Modify','ContainerInherit,ObjectInherit','None','Deny'); $acl.AddAccessRule($rule)|Out-Null; Set-Acl $ro $acl; try { Run $ro Start -ExpectFailure -ErrorPattern 'not writable' | Out-Null } finally { $acl=Get-Acl $ro; $acl.RemoveAccessRuleSpecific($rule); Set-Acl $ro $acl } }
   $results | Format-Table -AutoSize | Out-Host
   Write-Host 'PACKAGING TEST SUITE PASS'
 } finally {
-  try { if($root -and (Test-Path (Join-Path $root 'scripts/SummonService.ps1'))){ Run $root Stop -Ok @(0,1) -TimeoutSeconds 12 | Out-Null } } catch { Write-Host "cleanup stop bounded failure: $($_.Exception.Message)" }
+  try { if($root -and (Test-Path (Join-Path $root 'scripts/SummonService.ps1'))){ Run $root Stop -TimeoutSeconds 12 | Out-Null } } catch { Write-Host "cleanup stop bounded failure: $($_.Exception.Message)" }
   Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
