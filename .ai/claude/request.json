@@ -1,7 +1,7 @@
 {
   "enabled": true,
-  "request_id": "ah-lifecycle-mailbox-review-20261008-01",
+  "request_id": "ah-auto-v2-return-guid-review-20261008-01",
   "target_ref": "feature/ah-auction-lifecycle-v1",
-  "tier": "cheap",
-  "task": "Review only the mailbox selection/list path causing the live post-BUY warning 'SMSG_MAIL_LIST_RESULT not received within 256 packets'. Focus on probes/Wow112HeadlessAndroid/src/world_poc05.rs, world_poc05_retry.rs, src/AuctionLifecycle/adapter.rs, and the live evidence that four mailbox GUIDs were discovered but discover_poc05_context_retry selects HashSet.iter().next(). Determine whether arbitrary mailbox selection is the most likely blocker, whether using the previously proven mailbox override 0xF11002A4A5002A0C for a one-shot SettleOne canary is safe, and what the minimal robust candidate-probing design should be. Do not edit. Preserve BUY semantics and uncertain-send no-retry. Return verdict first, exact evidence, and minimal recommendation. Max 700 words."
+  "tier": "normal",
+  "task": "Review the live AUTO Lifecycle V2 failure after CANCEL: 'AH_MUTATION_LIFECYCLE_AUTO_STOP_AFTER_CANCEL auction_id=10143: AUTO returned full-stack GUID not uniquely observed; reconciliation required'. Focus only on src/AuctionLifecycle/auto_v2.rs and the inventory/mail observation primitives it calls in src/AuctionLifecycle/adapter.rs plus relevant world object-update parsing. Determine the most likely cause(s): delayed inventory update vs returned stack merging into an existing GUID vs stale/cleared evidence. Propose the minimal safe fix that preserves fail-closed semantics, mutation coordinator serialization, and zero automatic retry after uncertain SEND. Specifically assess whether AUTO should (a) wait/read additional server packets for fresh inventory evidence after take-item, (b) accept exactly one existing GUID whose stack increased by target.count, and/or (c) allow POST of target.count from a verified stack >= target.count instead of requiring equality. Do not edit. Do not weaken safeguards. Return verdict first, exact code evidence, then a minimal patch design and test cases. Max 900 words."
 }
