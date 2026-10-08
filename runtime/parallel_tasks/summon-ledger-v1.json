@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "summon-ledger-v1",
+  "goal": "Implement an independent crash-safe persistent Summon Service V1 ledger with structured-event ingestion, durable payment/summon history, operator queries, migrations, tests, benchmark evidence, the shared Pause/Resume/ManualWhisper command contract, and cloud-portable export.",
+  "branch": "feature/summon-ledger-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "SummonLedger"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summon-ledger-db-schema",
+    "summon-ledger-event-contract",
+    "summon-ledger-operator-command-contract",
+    "summon-ledger-cloud-export-contract"
+  ],
+  "status": "test_ready",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "User-directed isolated feature from current parallel. No integration to parallel/main. Runtime/gameplay, operator console and packaging remain untouched. Original ledger requirements plus the shared Pause/Resume/ManualWhisper command contract and cloud-portable checksummed JSONL export are implemented inside services/summon_ledger. Completion CI run 37752682628 passed 21/21 tests plus CLI smoke on Ubuntu 24.04 and Windows 2022 at implementation SHA dc3e3645314e966ad18709b2d3c085beef8b3571, including the existing 50k durability/query-performance test. Temporary CI workflow was removed from the final diff; auto-integration remains disabled."
+}
