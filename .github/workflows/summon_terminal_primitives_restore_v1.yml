@@ -25,8 +25,11 @@ jobs:
       - name: Cargo test all headless targets
         shell: pwsh
         working-directory: probes/Wow112HeadlessAndroid
-        run: cargo test --all-targets --verbose
+        run: |
+          cargo test --all-targets --verbose 2>&1 | Tee-Object -FilePath cargo-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Scope guard
+        if: always()
         shell: pwsh
         run: |
           $base = "a5ee048c620c55542460d54d7750e81f0f8f8da4"
@@ -35,3 +38,10 @@ jobs:
           $forbidden = $changed | Where-Object { $_ -like 'src/AddOns/*' -or $_ -like 'tools/operator_console/*' -or $_ -like 'packaging/*' }
           if ($forbidden) { $forbidden | Write-Error; exit 1 }
           $changed | ForEach-Object { "changed=$_" } | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Upload compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: summon-terminal-primitives-restore-${{ github.sha }}
+          path: probes/Wow112HeadlessAndroid/cargo-test.log
+          if-no-files-found: warn
