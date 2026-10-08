@@ -1,6 +1,9 @@
 //! Market Maker V2 runtime foundation.
 //! All socket reads in this layer go through mm2_wait_for/mm2_read_encrypted_raw_until.
-use crate::{market_maker_v2_recovery::Mm2RecoveryJournal,market_maker_v2_saga::Mm2SagaJournal};
+use crate::{
+    market_maker_v2_recovery::{Mm2Recovery, Mm2RecoveryJournal},
+    market_maker_v2_saga::{Mm2SagaJournal, Mm2SagaPhase},
+};
 use std::cell::RefCell as Mm2RuntimeRefCell;
 
 thread_local!{static MM2_BOUND:Mm2RuntimeRefCell<Option<(u64,u32)>>=const{Mm2RuntimeRefCell::new(None)};}
@@ -26,6 +29,80 @@ fn mm2_owner_list(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:u64,
     }
     all.sort_by_key(|r|r.row.auction_id);println!("[MM2] MY_AUCTIONS count={} ms={}",all.len(),started.elapsed().as_millis());Ok(all)
 }
+
+fn mm2_cancel_ack_payload(payload:&[u8],expected_auction_id:u32)->Result<(),String>{
+    if payload.len()<12{return Err("MM2 CANCEL malformed auction ACK".into());}
+    let auction_id=read_u32_at(payload,0)?;
+    let action=read_u32_at(payload,4)?;
+    let result=read_u32_at(payload,8)?;
+    if action!=1||auction_id!=expected_auction_id{return Err(format!("MM2 CANCEL mismatched ACK action={action} auction_id={auction_id} expected={expected_auction_id}"));}
+    if result!=0{return Err(format!("MM2 CANCEL server rejected auction_id={auction_id} result={result}"));}
+    Ok(())
+}
+
+// Dormant until the undercut canary is explicitly enabled after review. This executor deliberately
+// keeps every post-SEND proof and durable state update inside MutationCoordinator::transaction so
+// `.pending` cannot be cleared before ACK + fresh My Auctions + recovery + saga durability finish.
+#[allow(dead_code)]
+fn mm2_guarded_cancel(
+    stream:&mut TcpStream,
+    crypto:&mut HeaderCrypto,
+    auctioneer:u64,
+    player:u64,
+    target:&LifecycleAuction,
+    saga:&mut Mm2SagaJournal,
+    recovery:&mut Mm2RecoveryJournal,
+)->Result<(),String>{
+    if !recovery.is_idle(){return Err("MM2 CANCEL recovery not idle".into());}
+    let state=saga.state().ok_or("MM2 CANCEL saga missing")?;
+    if !matches!(state.phase,Mm2SagaPhase::MailboxVerified{..}){return Err("MM2 CANCEL saga not mailbox-verified".into());}
+    if state.own_auction_id!=Some(target.row.auction_id)||state.item_id!=target.row.item_id||state.signature!=target.signature{return Err("MM2 CANCEL saga/target identity mismatch".into());}
+
+    // Owner proof first, exact targeted depth last: the targeted snapshot is the freshest market
+    // authority immediately preceding durable intent + mutation SEND.
+    let owners=mm2_owner_list(stream,crypto,auctioneer,player)?;
+    let own=owners.iter().find(|r|r.row.auction_id==target.row.auction_id).ok_or("MM2 CANCEL target absent from fresh My Auctions")?;
+    if !lifecycle_same(own,target){return Err("MM2 CANCEL fresh owner identity changed".into());}
+    if own.row.highest_bid!=0{return Err("MM2 CANCEL blocked: active bid".into());}
+
+    let depth=mm2_targeted_depth(stream,crypto,auctioneer,target.row.item_id,target.signature,16)?;
+    if !depth.complete||!depth.coherent{return Err("MM2 CANCEL targeted depth incomplete/incoherent".into());}
+    if depth.observed_at.elapsed()>Mm2Duration::from_secs(10){return Err("MM2 CANCEL targeted depth stale".into());}
+    let depth_own=mm2_exact_auction(&depth,target.row.auction_id).ok_or("MM2 CANCEL own auction absent from targeted depth")?;
+    if !lifecycle_same(depth_own,target)||depth_own.row.owner_guid!=player{return Err("MM2 CANCEL targeted own identity/owner mismatch".into());}
+    if depth_own.row.highest_bid!=0{return Err("MM2 CANCEL blocked: targeted active bid".into());}
+
+    // fsync happens inside saga.advance before any mutation byte can be emitted.
+    saga.advance(Mm2SagaPhase::CancelIntent{auction_id:target.row.auction_id})?;
+    let auction_id=target.row.auction_id;
+    let item_id=target.row.item_id;
+    let count=target.row.count;
+    let tx=mutations::transaction(MutationKind::Cancel,||{
+        lifecycle_send(stream,crypto,wow_world_messages::vanilla::CMSG_AUCTION_REMOVE_ITEM{auctioneer:auctioneer.into(),auction_id})?;
+        let deadline=Mm2Instant::now()+Mm2Duration::from_secs(4);
+        mm2_wait_for(stream,crypto,deadline,"cancel/ack",|op,p|{
+            if op!=POC06_SMSG_AUCTION_COMMAND_RESULT_OPCODE{return Ok(None);}
+            mm2_cancel_ack_payload(p,auction_id)?;Ok(Some(()))
+        })?;
+        let after=mm2_owner_list(stream,crypto,auctioneer,player)?;
+        if after.iter().any(|r|r.row.auction_id==auction_id){return Err("MM2 CANCEL ACK not reconciled: auction still owned".into());}
+        recovery.set(Mm2Recovery::CancelledAwaitingMail{auction_id,item_id,count})?;
+        saga.advance(Mm2SagaPhase::CancelConfirmed{auction_id})?;
+        println!("[MM2] CANCEL_CONFIRMED auction_id={auction_id} item_id={item_id} count={count}");
+        Ok(())
+    });
+    if let Err(e)=tx{
+        // Once CancelIntent is durable, fail closed on every executor failure. If SEND happened,
+        // coordinator `.pending` remains durable; if it did not, manual reconcile is conservative
+        // but prevents accidental replay from an ambiguous caller state.
+        let pending=mutations::pending_send_exists().unwrap_or(true);
+        let detail=format!("pending_send={pending}; {e}");
+        let _=saga.block_uncertain("CANCEL",&detail);
+        return Err(format!("MM2 CANCEL HARD STOP {detail}"));
+    }
+    Ok(())
+}
+
 fn mm2_tracker_snapshot()->Result<(u64,usize,usize,bool),String>{mm2_inventory_healthy()?;MM2_INV.with(|c|{let s=c.borrow();Ok((s.generation,s.objects.len(),s.slots.len(),s.player!=0&&s.objects.contains_key(&s.player)))})}
 fn mm2_tracker_stats()->Result<(u64,usize,usize),String>{let(g,o,s,_)=mm2_tracker_snapshot()?;Ok((g,o,s))}
 fn mm2_preflight_journals(player:u64)->Result<(),String>{
@@ -39,7 +116,7 @@ fn mm2_preflight_journals(player:u64)->Result<(),String>{
 // its own player first. Requiring player_seen also drains the initial inventory burst before AH/mail
 // request fences, while keeping this phase strictly read-only and wall-clock bounded.
 fn mm2_warm_tracker(stream:&mut TcpStream,crypto:&mut HeaderCrypto)->Result<(),String>{
-    if let Ok((generation,_,_,player_seen))=mm2_tracker_snapshot(){if generation>0&&player_seen{return Ok(());}}
+    if let Ok((generation,_,_,player_seen))=mm2_tracker_snapshot(){if generation>0&&player_seen{return Ok(()));}}
     let started=Mm2Instant::now();let deadline=started+Mm2Duration::from_secs(10);
     mm2_wait_for(stream,crypto,deadline,"tracker-warmup",|_,_|{
         let(generation,objects,slots,player_seen)=mm2_tracker_snapshot()?;
@@ -69,4 +146,8 @@ fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64
         _=>Err("WOW112_MM2_MODE must be capability, auction-capability, mailbox-resolver, inventory-tracker, targeted-depth, undercut-canary, or clear-one-buy-canary".into()),
     }
 }
-#[cfg(test)]mod mm2_runtime_tests{#[test]fn mutation_modes_are_not_implicitly_passed(){assert_eq!(["undercut-canary","clear-one-buy-canary"].len(),2);}}
+#[cfg(test)]mod mm2_runtime_tests{
+    use super::*;
+    #[test]fn mutation_modes_are_not_implicitly_passed(){assert_eq!(["undercut-canary","clear-one-buy-canary"].len(),2);}
+    #[test]fn cancel_ack_is_exact(){let mut p=Vec::new();p.extend_from_slice(&7u32.to_le_bytes());p.extend_from_slice(&1u32.to_le_bytes());p.extend_from_slice(&0u32.to_le_bytes());assert!(mm2_cancel_ack_payload(&p,7).is_ok());assert!(mm2_cancel_ack_payload(&p,8).is_err());p[4..8].copy_from_slice(&0u32.to_le_bytes());assert!(mm2_cancel_ack_payload(&p,7).is_err());}
+}
