@@ -19,8 +19,10 @@ jobs:
           fetch-depth: 0
           ref: feature/summon-terminal-primitives-restore-v1
 
-      - name: Fetch proven anchor
-        run: git fetch origin d753829314db39e5cd9aad57ce1d46daaf4d55da
+      - name: Fetch canonical and proven anchors
+        run: |
+          git fetch origin a5ee048c620c55542460d54d7750e81f0f8f8da4
+          git fetch origin d753829314db39e5cd9aad57ce1d46daaf4d55da
 
       - name: Restore exact proven headless summon closure
         shell: bash
@@ -63,26 +65,35 @@ jobs:
             mkdir -p "$(dirname "$f")"
             git show "$PROVEN:$f" > "$f"
           done
-          if git diff --name-only | grep -E '^(src/AddOns/|tools/operator_console/|packaging/)'; then
-            echo 'Forbidden path touched' >&2
-            exit 2
-          fi
 
       - name: Verify restored crate
         run: |
           cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --all-targets
           cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bins
 
-      - name: Commit exact proven closure
+      - name: Remove generated and unrelated deltas
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=a5ee048c620c55542460d54d7750e81f0f8f8da4
+          rm -rf probes/Wow112HeadlessAndroid/target
+          rm -f probes/Wow112HeadlessAndroid/Cargo.lock
+          git checkout "$BASE" -- probes/Wow112HeadlessAndroid/RUN_TELE_SNIFFER.cmd
+          if git diff --name-only | grep -E '^(src/AddOns/|tools/operator_console/|packaging/)'; then
+            echo 'Forbidden path touched' >&2
+            exit 2
+          fi
+
+      - name: Commit clean proven closure
         shell: bash
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add probes/Wow112HeadlessAndroid
+          git add -A probes/Wow112HeadlessAndroid
           if git diff --cached --quiet; then
             echo 'No restore delta to commit.'
             exit 0
           fi
-          git commit -m 'restore(summon): proven TELE07-10 headless primitives from d753829'
+          git commit -m 'fix(summon): remove generated artifacts from proven headless restore'
           git push origin HEAD:feature/summon-terminal-primitives-restore-v1
