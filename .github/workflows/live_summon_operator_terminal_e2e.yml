@@ -13,6 +13,9 @@ concurrency:
   group: wow112-live-summon-headless
   cancel-in-progress: false
 
+env:
+  LIVE_TEST_PAY_COPPER: '1'
+
 jobs:
   live-e2e:
     runs-on: windows-2022
@@ -76,7 +79,8 @@ jobs:
         shell: pwsh
         run: |
           $env:WOW112_TELE10_PAY_SETTLE_MS = '4000'
-          & ./tools/summon_operator_livetest/Run-LiveTest.ps1 -NoBuild -Cycles 1 -CustomerAccount 'taxi1' -CustomerCharacter '${{ steps.taxi1.outputs.character }}' -PayCopper 40000 -Destination 'winterspring'
+          Write-Host "Using minimal live sentinel payment=$env:LIVE_TEST_PAY_COPPER copper; production default remains 40000c."
+          & ./tools/summon_operator_livetest/Run-LiveTest.ps1 -NoBuild -Cycles 1 -CustomerAccount 'taxi1' -CustomerCharacter '${{ steps.taxi1.outputs.character }}' -PayCopper ([int]$env:LIVE_TEST_PAY_COPPER) -Destination 'winterspring'
           exit $LASTEXITCODE
 
       - name: Verify effective client identity from runtime evidence
@@ -119,14 +123,15 @@ jobs:
           python -m services.summon_ledger --db $db find-player '${{ steps.taxi1.outputs.character }}' --since 1h | Set-Content -Encoding UTF8 $query
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $q = Get-Content $query -Raw | ConvertFrom-Json
+          $expected = [int64]$env:LIVE_TEST_PAY_COPPER
           if ([int]$q.payment_count -lt 1) { throw 'SQLite ledger query has no PaymentReceived for taxi1 character' }
-          if ([int64]$q.paid_total_copper -lt 40000) { throw "SQLite ledger paid total is $($q.paid_total_copper), expected >=40000" }
+          if ([int64]$q.paid_total_copper -lt $expected) { throw "SQLite ledger paid total is $($q.paid_total_copper), expected >=$expected" }
           $match = @($q.requests | Where-Object {
             $_.customer -eq '${{ steps.taxi1.outputs.character }}' -and
             $_.destination -eq 'winterspring' -and
             $_.summon_state -eq 'completed' -and
             $_.payment_state -eq 'paid' -and
-            [int64]$_.paid_copper -ge 40000
+            [int64]$_.paid_copper -ge $expected
           })
           if ($match.Count -lt 1) { throw 'SQLite request projection is not completed+paid for Winterspring' }
           Write-Host "SQLITE_LEDGER_PASS customer=${{ steps.taxi1.outputs.character }} paid=$($q.paid_total_copper)c payments=$($q.payment_count)"
@@ -146,8 +151,8 @@ jobs:
           $runDir = Split-Path $report.FullName -Parent
           $queryPath = Join-Path $runDir 'find_player_1h.json'
           $sqlite = if (Test-Path $queryPath) { Get-Content $queryPath -Raw | ConvertFrom-Json } else { $null }
-          Write-Host ("FINAL result={0} customer={1}/{2} whisper={3} supervisor_exit={4} trade_complete={5} paid={6}/{7} uncertain={8}" -f `
-            $data.result, $data.customer_account, $data.customer, $data.whisper.passed, $data.summon_payment.supervisor_exit_code, `
+          Write-Host ("FINAL result={0} customer={1}/{2} payment={3}c whisper={4} supervisor_exit={5} trade_complete={6} paid={7}/{8} uncertain={9}" -f `
+            $data.result, $data.customer_account, $data.customer, $data.payment_copper, $data.whisper.passed, $data.summon_payment.supervisor_exit_code, `
             $data.summon_payment.server_trade_complete, $data.summon_payment.paid_summon_count, `
             $data.cycles_requested, $data.summon_payment.hard_uncertain)
           if ($null -ne $sqlite) {
