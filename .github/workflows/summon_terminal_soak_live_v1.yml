@@ -1,6 +1,9 @@
 name: LIVE Summon Terminal Soak V1
 
 on:
+  push:
+    branches:
+      - 'feature/summon-terminal-soak-v1'
   workflow_dispatch:
     inputs:
       cycles:
@@ -49,7 +52,9 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          python tools/summon_terminal_soak/harness.py --live --cycles '${{ inputs.cycles }}'
+          $cycles = '${{ inputs.cycles }}'
+          if ([string]::IsNullOrWhiteSpace($cycles)) { $cycles = '20' }
+          python tools/summon_terminal_soak/harness.py --live --cycles $cycles
           exit $LASTEXITCODE
 
       - name: Upload LIVE evidence
