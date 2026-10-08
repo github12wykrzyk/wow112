@@ -99,7 +99,8 @@ impl PortalWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::summon_mutation_coordinator::{MutationState, MutationKind};
+    use crate::summon_mutation_coordinator::{MutationKind, MutationState};
+    use crate::summon_service_control::apply_control;
     use crate::summon_service_runtime::{ServiceRuntimeConfig, SummonServiceRuntime};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -124,6 +125,13 @@ mod tests {
         runtime.start_next(20).unwrap();
         runtime.mark_ritual_committed(&id, "ritual-1").unwrap();
         (runtime, id)
+    }
+
+    fn apply_next_control(root: &Path, runtime: &mut SummonServiceRuntime) {
+        let inbox = ControlInbox::open(root).unwrap();
+        let pending = inbox.next().unwrap().unwrap();
+        apply_control(runtime, &pending.command).unwrap();
+        inbox.ack(pending).unwrap();
     }
 
     #[test]
@@ -196,6 +204,47 @@ mod tests {
         let claim_b = worker.claim_portal_use(0xBBB, 50).unwrap().unwrap();
         assert_eq!(claim_b.request_id, b);
         assert_ne!(claim_a.operation_id, claim_b.operation_id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn full_portal_evidence_then_summon_then_payment_releases_queue() {
+        let root = root("full_flow");
+        let config = ServiceRuntimeConfig::new(&root, "portal-worker-test");
+        let mut runtime = SummonServiceRuntime::open(config, 1).unwrap();
+        let a = runtime
+            .on_whisper("Clienta", "hyjal pls", None, Some("test"), 10)
+            .unwrap()
+            .unwrap();
+        let b = runtime
+            .on_whisper("Clientb", "hyjal pls", None, Some("test"), 11)
+            .unwrap()
+            .unwrap();
+        runtime.start_next(20).unwrap();
+        runtime.mark_ritual_committed(&a, "ritual-a").unwrap();
+
+        let worker = PortalWorker::open(&root).unwrap();
+        let claim = worker.claim_portal_use(0xCAFE, 30).unwrap().unwrap();
+        worker.mark_send_ok(&claim, 31).unwrap();
+        apply_next_control(&root, &mut runtime);
+        assert_eq!(runtime.request(&a).unwrap().phase, RequestPhase::PortalCommitted);
+
+        ControlInbox::submit(
+            &root,
+            &ServiceControlCommand::SummonCompleted {
+                request_id: a.clone(),
+                now_ms: 32,
+            },
+        )
+        .unwrap();
+        apply_next_control(&root, &mut runtime);
+        assert_eq!(runtime.request(&a).unwrap().phase, RequestPhase::AwaitingPayment);
+
+        runtime
+            .mark_payment_received(&a, 40_000, "trade-a", 33)
+            .unwrap();
+        assert_eq!(runtime.request(&a).unwrap().phase, RequestPhase::Completed);
+        assert_eq!(runtime.start_next(40).unwrap(), Some(b));
         let _ = fs::remove_dir_all(root);
     }
 }
