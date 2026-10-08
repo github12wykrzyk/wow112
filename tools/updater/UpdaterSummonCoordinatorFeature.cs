@@ -317,14 +317,15 @@ namespace WoW112Updater
             return new List<SummonCoordinatorRouteConfig> {
                 new SummonCoordinatorRouteConfig { Id = "hydraxian", Slot = 1 },
                 new SummonCoordinatorRouteConfig { Id = "hyjal", Slot = 2 },
-                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 3 }
+                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 3 },
+                new SummonCoordinatorRouteConfig { Id = "silithus", Slot = 4 }
             };
         }
 
         private static SummonCoordinatorConfig DefaultSummonCoordinatorConfig()
         {
             return new SummonCoordinatorConfig {
-                Version = 4, WorkerAId = "", WorkerBId = "",
+                Version = 5, WorkerAId = "", WorkerBId = "",
                 Routes = DefaultSummonRoutes(), AutoEnabled = true
             };
         }
@@ -428,7 +429,7 @@ namespace WoW112Updater
                 if (!File.Exists(path)) return fallback;
                 if (new FileInfo(path).Length > 65536) return fallback;
                 var cfg = new JavaScriptSerializer().Deserialize<SummonCoordinatorConfig>(File.ReadAllText(path, Encoding.UTF8));
-                if (cfg == null || cfg.Version < 1 || cfg.Version > 4) return fallback;
+                if (cfg == null || cfg.Version < 1 || cfg.Version > 5) return fallback;
 
                 if (cfg.Version < 3)
                 {
@@ -459,6 +460,16 @@ namespace WoW112Updater
                     cfg.Version = 4;
                 }
 
+                if (cfg.Version == 4)
+                {
+                    if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
+                    var hasSilithus = cfg.Routes.Any(r => r != null && string.Equals(r.Id, "silithus", StringComparison.OrdinalIgnoreCase));
+                    var slot4Used = cfg.Routes.Any(r => r != null && r.Slot == 4);
+                    if (!hasSilithus && !slot4Used)
+                        cfg.Routes.Add(new SummonCoordinatorRouteConfig { Id = "silithus", Slot = 4 });
+                    cfg.Version = 5;
+                }
+
                 if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
                 ValidateSummonRoutes(cfg.Routes);
                 cfg.WorkerAId = cfg.WorkerAId ?? "";
@@ -473,7 +484,7 @@ namespace WoW112Updater
             if (cfg == null) return;
             if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
             ValidateSummonRoutes(cfg.Routes);
-            cfg.Version = 4;
+            cfg.Version = 5;
             var hyjal = cfg.Routes.FirstOrDefault(r => r != null && r.Id == "hyjal");
             var hydraxian = cfg.Routes.FirstOrDefault(r => r != null && r.Id == "hydraxian");
             cfg.HyjalSlot = hyjal == null ? 0 : hyjal.Slot;
@@ -1158,7 +1169,7 @@ namespace WoW112Updater
                     routes,
                     new Label { Text = "Ręczny test trasy:", Left = 20, Top = 225, Width = 180 },
                     routePicker, prepare, refresh, auto, close, output,
-                    new Label { Text = "V4: jedna wspólna para slave obsługuje summonerów FIFO. Default: hydraxian=1, hyjal=2, winterspring=3.", Left = 20, Top = 478, Width = 720 }
+                    new Label { Text = "V5: jedna wspólna para slave obsługuje summonerów FIFO. Default: hydraxian=1, hyjal=2, winterspring=3, silithus=4.", Left = 20, Top = 478, Width = 720 }
                 });
 
                 Action save = delegate {

@@ -564,8 +564,8 @@ static void enforceLevelProfile(u32 player)
     u32 level=playerLevel(player);
     g_playerLevel=level;
 
-    /* SLAVE is a hard role only for the level-1 helper alt. It always keeps
-     * portal assist and Anti-AFK enabled; GUI/profile writes cannot turn them off. */
+    /* Level 1 remains the forced helper SLAVE. Levels 2-5 may opt into
+     * SLAVE manually. Any active SLAVE keeps portal assist and Anti-AFK ON. */
     if(level==1u) {
         g_summonRole=1u;
         g_roleUserSelected=0u;
@@ -574,9 +574,14 @@ static void enforceLevelProfile(u32 player)
         return;
     }
 
-    /* Above level 1 there is no SLAVE role. Level 20 keeps the historical
-     * MASTER default for a fresh world session, but the user may toggle it to
-     * NONE. Other levels default to NONE and may opt into MASTER. */
+    if(level>=2u && level<=5u && g_summonRole==1u && g_roleUserSelected) {
+        if(!g_enabled) g_enabled=1u;
+        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+        return;
+    }
+
+    /* Outside an explicitly selected level-2..5 SLAVE profile, preserve the
+     * historical defaults: level 20 starts MASTER, all other levels NONE. */
     if(g_summonRole==1u) g_summonRole=0u;
     if(!g_roleUserSelected) g_summonRole=(level==20u)?2u:0u;
     if(g_enabled) {
@@ -1080,8 +1085,8 @@ static void STDCALL timerTick(HWND32 h,UINT32 m,UINT_PTR32 id,u32 now)
         return;
     }
 
-    /* Level 1 is a forced SLAVE with Anti-AFK ON. Above level 1, SLAVE is
-     * unavailable; level 20 starts as MASTER but may be toggled to NONE. */
+    /* Level 1 is forced SLAVE. Levels 2-5 may manually use SLAVE; while
+     * selected it keeps portal assist and Anti-AFK ON. Above level 5 SLAVE is unavailable. */
     enforceLevelProfile(player);
 
     /* Re-register periodically so /reload cannot permanently lose the slash
@@ -1220,7 +1225,14 @@ static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
             if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
             return 1;
         }
-        if(v->u32==1u) return 0;
+        if(v->u32==1u) {
+            if(g_playerLevel<2u || g_playerLevel>5u) return 0;
+            g_summonRole=1u;
+            g_roleUserSelected=1u;
+            if(!g_enabled) g_enabled=1u;
+            if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+            return 1;
+        }
         g_summonRole=v->u32;
         g_roleUserSelected=1u;
         if(g_enabled) {
@@ -1231,7 +1243,7 @@ static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
     }
     if(v->u32>1u) return 0;
     if(id==1u){
-        u32 wanted=(g_playerLevel==1u)?1u:0u;
+        u32 wanted=(g_summonRole==1u)?1u:0u;
         g_enabled=wanted;
         if(!g_enabled) resetPortal();
         return 1;

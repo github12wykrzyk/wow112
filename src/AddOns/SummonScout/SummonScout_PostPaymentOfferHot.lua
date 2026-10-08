@@ -57,7 +57,7 @@ local POSTPAY_THANK_MESSAGES = {
 local POSTPAY_DISPLAY_LABELS = {
     hyjal = "Hyjal",
     hydraxian = "Hydraxis",
-    winterspring = "Winterspring"
+    winterspring = "Winterspring", silithus = "Silithus"
 }
 
 local function ppNow()

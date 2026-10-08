@@ -725,7 +725,7 @@ static BOOL ui_summon_toggle_role(DWORD wanted) {
     W112_ControlValueV1 role,level,value;
     if(!m||!m->get_value(32u,&role)||!m->get_value(33u,&level))return FALSE;
     if(wanted==1u) {
-        if(level.u32!=1u)return FALSE;
+        if(level.u32<1u||level.u32>5u)return FALSE;
         value.u32=1u;
         return m->set_value(32u,&value)?TRUE:FALSE;
     }
@@ -1891,7 +1891,7 @@ static BOOL ui_create(HWND game) {
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
         "SUMMON / AUTOMATION",36,137,665,40,TRUE));
     ui_add_to_page(UI_TAB_SUMMON,ui_label(g_parallel_ui_hwnd,
-        "Lvl 1 = forced SLAVE + Anti-AFK ON. Lvl >1: SLAVE unavailable; MASTER optional, both unchecked = NONE. background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
+        "Lvl 1 forced SLAVE; lvl 2-5 manual SLAVE + Anti-AFK ON. Lvl >1: SLAVE unavailable; MASTER optional, both unchecked = NONE. background-safe, no mouse/focus. TYPE 18 = ritual fallback.",
         42,181,665,32,FALSE));
     g_ui_summon_master_profile=ui_button(g_parallel_ui_hwnd,
         "MASTER / CASTER",46,221,321,36,233u,TRUE);

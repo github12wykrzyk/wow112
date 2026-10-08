@@ -19,7 +19,7 @@ local F = H.GetState("fallbackrouter")
 local DISPLAY_LABELS = {
     hyjal = "Hyjal",
     hydraxian = "Hydraxis",
-    winterspring = "Winterspring"
+    winterspring = "Winterspring", silithus = "Silithus"
 }
 
 local PROVIDER_TTL = 38.0

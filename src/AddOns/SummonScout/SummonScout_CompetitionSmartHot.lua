@@ -103,7 +103,7 @@ end
 local function csFallbackLocationCount(s)
     local cues = {
         "hyjal", "hydraxian", "waterlords", "waterlord", "azshara", "azsh",
-        "winterspring", "everlook", "tanaris", "telabim", "tel abim",
+        "winterspring", "silithus", "everlook", "tanaris", "telabim", "tel abim",
     }
     local count = 0
     local seen = {}
