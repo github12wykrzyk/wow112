@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Fail-closed post-integration delivery routing. Profile-contained changes avoid unrelated STANDARD work; unknown or mixed runtime changes fall back to STANDARD.",
+  "purpose": "Fail-closed post-integration delivery routing. Profile-contained changes still dispatch their declared profile workflows and, until updater inherited-artifact routing is proven, also require an exact-HEAD STANDARD delivery. Validation-only changes may omit binary delivery.",
   "validation_only_paths": [
     "docs/",
     "runtime/parallel_tasks/"
@@ -42,7 +42,7 @@
     "The task's own runtime/parallel_tasks/<id>.json record is validation-only.",
     "docs/ changes are validation-only and do not require a binary delivery build.",
     "A runtime path is profile-contained only when at least one declared delivery profile covers it.",
-    "If every non-validation path is covered by declared delivery profiles, STANDARD is omitted and only those exact-SHA profile workflows run.",
+    "Profile-contained runtime changes dispatch their exact declared profile workflows and currently also require exact-HEAD STANDARD for desktop-updater compatibility.",
     "Any uncovered, unknown, native-core, shared-build, packaging-control or mixed path requires STANDARD.",
     "parallel_delivery_route.py is the sole post-integration STANDARD decision authority; classifier errors fail closed to STANDARD."
   ]
