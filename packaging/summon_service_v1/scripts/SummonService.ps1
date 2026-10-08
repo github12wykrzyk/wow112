@@ -95,6 +95,17 @@ function Write-Log([string]$PackageRoot, [string]$Message) {
     Add-Content -LiteralPath $path -Value $line -Encoding UTF8
 }
 
+function Prune-ServiceRunLogs([string]$PackageRoot, $Config) {
+    $limit = [Math]::Max(2, [int]$Config.logging.max_files)
+    $keepExisting = [Math]::Max(0, $limit - 2)
+    $files = @(Get-ChildItem -LiteralPath (Join-Path $PackageRoot 'logs') -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^service-.*\.(out|err)\.log$' } |
+        Sort-Object LastWriteTimeUtc -Descending)
+    if ($files.Count -gt $keepExisting) {
+        $files | Select-Object -Skip $keepExisting | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-TrackedProcess([string]$PidFile, [string]$ExpectedExecutable) {
     if (-not (Test-Path -LiteralPath $PidFile -PathType Leaf)) { return $null }
     try { $pidValue = [int](Get-Content -LiteralPath $PidFile -Raw).Trim(); $p = Get-Process -Id $pidValue -ErrorAction Stop }
@@ -143,12 +154,19 @@ function Start-ServiceSupervisor([string]$PackageRoot) {
     $ps = Join-Path $PSHOME 'powershell.exe'
     if (-not (Test-Path -LiteralPath $ps)) { $ps = (Get-Command powershell.exe -ErrorAction Stop).Source }
     $args = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File ' + (Quote-ProcessArg $PSCommandPath) + ' -Action Supervisor -Root ' + (Quote-ProcessArg $PackageRoot) + ' -CredentialFile ' + (Quote-ProcessArg $cred)
-    $proc = Start-Process -FilePath $ps -ArgumentList $args -WindowStyle Hidden -PassThru
+    $hostOut = Join-Path $PackageRoot 'logs/supervisor-host.out.log'
+    $hostErr = Join-Path $PackageRoot 'logs/supervisor-host.err.log'
+    $proc = Start-Process -FilePath $ps -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostOut -RedirectStandardError $hostErr
     Set-Content -LiteralPath $supervisorPid -Value $proc.Id -Encoding ASCII
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(5,[int]$cfg.supervisor.health_timeout_seconds))
     do {
         Start-Sleep -Milliseconds 250
-        if ($proc.HasExited) { throw "Supervisor exited during startup with code $($proc.ExitCode)." }
+        if ($proc.HasExited) {
+            $detail = ''
+            if (Test-Path -LiteralPath $hostErr) { $detail = (Get-Content -LiteralPath $hostErr -Raw -ErrorAction SilentlyContinue).Trim() }
+            if ($detail.Length -gt 1000) { $detail = $detail.Substring(0,1000) }
+            throw "Supervisor exited during startup with code $($proc.ExitCode). $detail"
+        }
         $servicePidFile = Join-Path $PackageRoot 'state/service.pid'
         if (Test-Path -LiteralPath $servicePidFile) { Write-Host "Summon Service started (supervisor PID $($proc.Id))."; return }
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -314,7 +332,7 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
     $cfg = Get-Config $PackageRoot
     $serviceExe = Get-SafeChildPath $PackageRoot ($cfg.service_executable -as [string])
     $mutexName = 'Local\WoW112SummonService_' + ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([Text.Encoding]::UTF8.GetBytes($PackageRoot))).Replace('-','').Substring(0,24))
-    $created = $false; $mutex = New-Object Threading.Mutex($true, $mutexName, [ref]$created)
+    $created = $false; $mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref]$created)
     if (-not $created) { throw 'A supervisor instance already owns this package root.' }
     try {
         Set-Content -LiteralPath (Join-Path $PackageRoot 'state/supervisor.pid') -Value $PID -Encoding ASCII
@@ -328,6 +346,7 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
             try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
             $envName = $cfg.credential.environment_variable -as [string]
             [Environment]::SetEnvironmentVariable($envName, $plain, 'Process')
+            Prune-ServiceRunLogs $PackageRoot $cfg
             $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
             $stdout = Join-Path $PackageRoot "logs/service-$stamp.out.log"; $stderr = Join-Path $PackageRoot "logs/service-$stamp.err.log"
             Remove-Item -LiteralPath (Join-Path $PackageRoot 'state/health.json') -Force -ErrorAction SilentlyContinue
