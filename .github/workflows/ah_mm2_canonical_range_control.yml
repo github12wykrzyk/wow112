@@ -1,0 +1,57 @@
+name: AH MM2 canonical range control
+
+on:
+  push:
+    branches: [feature/ah-market-maker-v2]
+    paths:
+      - '.github/workflows/ah_mm2_canonical_range_control.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ah-mm2-canonical-range-control-octowar1-smokinpole
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 48f1519408876382c7fd8f0945513f4f7006a4f1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+      - name: Build canonical POC05 retry control
+        shell: pwsh
+        run: |
+          $p='probes/Wow112HeadlessAndroid/src/main.rs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace('mod world_poc07_vendorlive;','mod world_poc05_retry;')
+          $t=$t.Replace('world_poc07_vendorlive::login_poc07_vendorlive(','world_poc05_retry::login_poc05_retry(')
+          if($t.Contains('world_poc07_vendorlive::login_poc07_vendorlive(')){throw 'entrypoint patch failed'}
+          Set-Content $p $t -Encoding utf8
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Run canonical read-only AH and mailbox control
+        shell: pwsh
+        env:
+          WOW112_ACCOUNT: octowar1
+          WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+          WOW112_CHARACTER: Smokinpole
+          WOW112_REALM_INDEX: '1'
+          WOW112_SOAK_SECONDS: '0'
+          WOW112_MAIL_ACTION: read-only
+        run: |
+          if([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)){throw 'WOW112_PASSWORD secret missing'}
+          $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
+          $raw=@(& $exe 2>&1);$exit=$LASTEXITCODE
+          foreach($line in $raw){Write-Host "$line"}
+          if(@($raw|Where-Object{"$($_)".Contains('[MAIL-ACTION] SENT')}).Count-ne 0){throw 'unexpected mail mutation'}
+          $ah=@($raw|Where-Object{"$($_)".Contains('[AH] POC-05 READ-ONLY PASS')})
+          $mail=@($raw|Where-Object{"$($_)".Contains('[POC05] MAILBOX CONTROL PASS mode=read-only')})
+          Write-Host "CANONICAL_RANGE_CONTROL exit=$exit ah_pass=$($ah.Count) mail_pass=$($mail.Count)"
+          if($exit-ne 0-or $ah.Count-ne 1){throw 'canonical AH control did not pass'}
