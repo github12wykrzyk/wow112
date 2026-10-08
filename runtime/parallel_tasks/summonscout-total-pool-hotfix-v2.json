@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-total-pool-hotfix-v2",
+  "goal": "Shrink the integrated total summon pool hotfix so STANDARD hot-fanout packaging remains under the native watcher payload cap, while preserving the fixed Silithus/Winterspring/Azshara-Hydraxis/Hyjal routing pool and existing ACK/timeout fail-safe behavior.",
+  "branch": "feature/summonscout-total-pool-hotfix-v2",
+  "base_parallel_sha": "42381bc6a6f579962887a190a531a6645def894e",
+  "modules": ["SummonScout"],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout fallbackrouter directory",
+    "SummonScout SSFR1 provider ownership",
+    "SummonScout hot fanout delivery"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Follow-up to v1 after exact integrated STANDARD delivery failed at repo-managed addon packaging. Keep implementation inside the existing TOC-declared HubAck hot module and reduce payload growth aggressively."
+}
