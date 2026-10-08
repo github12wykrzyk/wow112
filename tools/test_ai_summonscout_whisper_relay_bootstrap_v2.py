@@ -17,12 +17,16 @@ class SummonScoutWhisperRelayBootstrapV2Contract(unittest.TestCase):
         cls.toc = (ADDON / "SummonScout.toc").read_text(encoding="utf-8").splitlines()
         cls.task = json.loads(TASK.read_text(encoding="utf-8"))
 
-    def test_task_targets_exact_current_canonical_and_auto_integrates(self):
+    def test_task_targets_exact_original_base_and_tracks_integrated_lifecycle(self):
         self.assertEqual(self.task["id"], "summonscout-whisper-relay-bootstrap-v2")
         self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-bootstrap-v2")
         self.assertEqual(self.task["base_parallel_sha"], "4511245836cedb06f2161047fd194507bca85ccf")
-        self.assertEqual(self.task["status"], "ready_for_integration")
-        self.assertTrue(self.task["auto_integrate"])
+        self.assertIn(self.task["status"], ("ready_for_integration", "integrated", "done"))
+        if self.task["status"] == "ready_for_integration":
+            self.assertTrue(self.task["auto_integrate"])
+        else:
+            self.assertFalse(self.task["auto_integrate"])
+            self.assertEqual(len(self.task.get("integrated_feature_sha", "")), 40)
         self.assertEqual(self.task["delivery_profiles"], [])
 
     def test_bridge_loads_after_spam_guard(self):
