@@ -20,102 +20,27 @@ jobs:
           ref: feature/summon-service-core-v1
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
-      - name: Apply exact restart-resume patch
+      - name: Apply structural restart-resume patch
         shell: python
         run: |
           from pathlib import Path
 
-          # 1) Core: PortalCommitted is an observation wait, not a mutation window.
+          # Core reconnect + restore range.
           p = Path('probes/Wow112HeadlessAndroid/src/summon_service_core.rs')
           s = p.read_text()
-          old = '''        if let Some(phase) = phase {
-              if phase != RequestPhase::AwaitingPayment {
-                  self.mark_uncertain(
-                      &request_id,
-                      "reconnect_during_active_mutation_window_do_not_replay",
-                      now_ms,
-                  )?;
-              }
-          }
-          '''
-          new = '''        if let Some(phase) = phase {
-              if !matches!(phase, RequestPhase::PortalCommitted | RequestPhase::AwaitingPayment) {
-                  self.mark_uncertain(
-                      &request_id,
-                      "reconnect_during_active_mutation_window_do_not_replay",
-                      now_ms,
-                  )?;
-              }
-          }
-          '''
-          if s.count(old) != 1:
-              raise SystemExit(f'core reconnect anchor count={s.count(old)}')
-          s = s.replace(old, new, 1)
+          reconnect_old = 'if phase != RequestPhase::AwaitingPayment {'
+          reconnect_new = 'if !matches!(phase, RequestPhase::PortalCommitted | RequestPhase::AwaitingPayment) {'
+          if s.count(reconnect_old) != 1:
+              raise SystemExit(f'core reconnect condition count={s.count(reconnect_old)}')
+          s = s.replace(reconnect_old, reconnect_new, 1)
 
-          old = '''        let mut resume_payment = None::<String>;
-          let mut queued_ids = Vec::<String>::new();
-          let ids: Vec<String> = service.requests.keys().cloned().collect();
-          for request_id in &ids {
-              let phase = service.requests[request_id].phase;
-              match phase {
-                  RequestPhase::Queued => {
-                      queued_ids.push(request_id.clone());
-                  }
-                  RequestPhase::AwaitingPayment => {
-                      if resume_payment.is_some() {
-                          if let Some(record) = service.requests.get_mut(request_id) {
-                              record.phase = RequestPhase::BlockedUncertain;
-                              record.last_error =
-                                  Some("multiple_active_requests_in_snapshot".to_string());
-                          }
-                          service.state = ServiceState::BlockedUncertain;
-                      } else {
-                          resume_payment = Some(request_id.clone());
-                      }
-                  }
-                  RequestPhase::Inviting
-                  | RequestPhase::RitualCommitted
-                  | RequestPhase::PortalCommitted => {
-                      if let Some(record) = service.requests.get_mut(request_id) {
-                          record.phase = RequestPhase::BlockedUncertain;
-                          record.last_error =
-                              Some("restart_during_active_request_do_not_replay".to_string());
-                      }
-                      service.state = ServiceState::BlockedUncertain;
-                  }
-                  RequestPhase::Completed
-                  | RequestPhase::Failed
-                  | RequestPhase::BlockedUncertain => {}
-              }
-          }
-
-          if let Some(request_id) = resume_payment {
-              service.enqueue_durable(&request_id, Some(0))?;
-              let outcome = service
-                  .queue
-                  .activate_next(&service.resource, now_ms)
-                  .map_err(|error| CoreError::Queue(format!("{error:?}")))?;
-              let job = outcome
-                  .events
-                  .iter()
-                  .find_map(|event| match event {
-                      QueueEvent::JobActivated { job } if job.request_id == request_id => {
-                          Some(job.clone())
-                      }
-                      _ => None,
-                  })
-                  .ok_or_else(|| {
-                      CoreError::Snapshot(
-                          "could_not_restore_awaiting_payment_as_active".to_string(),
-                      )
-                  })?;
-              service.active = Some(ActiveRuntime {
-                  request_id,
-                  job_id: job.job_id,
-              });
-          }
-          '''
-          new = '''        let mut resume_wait = None::<String>;
+          start_marker = '        let mut resume_payment = None::<String>;'
+          end_marker = '\n        for request_id in queued_ids {'
+          if s.count(start_marker) != 1 or s.count(end_marker) != 1:
+              raise SystemExit(f'core restore markers start={s.count(start_marker)} end={s.count(end_marker)}')
+          start = s.index(start_marker)
+          end = s.index(end_marker, start)
+          restore = '''        let mut resume_wait = None::<String>;
           let mut queued_ids = Vec::<String>::new();
           let ids: Vec<String> = service.requests.keys().cloned().collect();
           for request_id in &ids {
@@ -176,45 +101,45 @@ jobs:
               });
           }
           '''
-          if s.count(old) != 1:
-              raise SystemExit(f'core restore anchor count={s.count(old)}')
-          s = s.replace(old, new, 1)
+          s = s[:start] + restore + s[end:]
           p.write_text(s)
 
-          # 2) Runtime regression test for safe PortalCommitted restart.
+          # Runtime regression test.
           p = Path('probes/Wow112HeadlessAndroid/src/summon_service_runtime.rs')
           s = p.read_text()
-          marker = '''    #[test]
-              fn summon_completion_without_portal_proof_is_rejected() {
-          '''
+          fn_marker = '    fn summon_completion_without_portal_proof_is_rejected() {'
+          if s.count(fn_marker) != 1:
+              raise SystemExit(f'runtime fn marker count={s.count(fn_marker)}')
+          fn_pos = s.index(fn_marker)
+          attr_pos = s.rfind('    #[test]', 0, fn_pos)
+          if attr_pos < 0:
+              raise SystemExit('runtime test attribute not found')
           test = '''    #[test]
-              fn restart_after_portal_commit_resumes_wait_without_replay() {
-                  let root = root("portal_resume");
-                  let config = ServiceRuntimeConfig::new(&root, "session-portal-resume");
-                  let mut runtime = SummonServiceRuntime::open(config.clone(), 1).unwrap();
-                  let id = runtime
-                      .on_whisper("Clienta", "hyjal pls", None, Some("live"), 10)
-                      .unwrap()
-                      .unwrap();
-                  runtime.start_next(20).unwrap();
-                  runtime.mark_ritual_committed(&id, "ritual-1").unwrap();
-                  runtime.mark_portal_committed(&id).unwrap();
-                  drop(runtime);
+          fn restart_after_portal_commit_resumes_wait_without_replay() {
+              let root = root("portal_resume");
+              let config = ServiceRuntimeConfig::new(&root, "session-portal-resume");
+              let mut runtime = SummonServiceRuntime::open(config.clone(), 1).unwrap();
+              let id = runtime
+                  .on_whisper("Clienta", "hyjal pls", None, Some("live"), 10)
+                  .unwrap()
+                  .unwrap();
+              runtime.start_next(20).unwrap();
+              runtime.mark_ritual_committed(&id, "ritual-1").unwrap();
+              runtime.mark_portal_committed(&id).unwrap();
+              drop(runtime);
 
-                  let restored = SummonServiceRuntime::open(config, 100).unwrap();
-                  assert_eq!(restored.active_request_id(), Some(id.as_str()));
-                  assert_eq!(restored.request(&id).unwrap().phase, RequestPhase::PortalCommitted);
-                  assert_ne!(restored.core().state(), crate::summon_service_core::ServiceState::BlockedUncertain);
-                  let _ = fs::remove_dir_all(root);
-              }
+              let restored = SummonServiceRuntime::open(config, 100).unwrap();
+              assert_eq!(restored.active_request_id(), Some(id.as_str()));
+              assert_eq!(restored.request(&id).unwrap().phase, RequestPhase::PortalCommitted);
+              assert_ne!(restored.core().state(), crate::summon_service_core::ServiceState::BlockedUncertain);
+              let _ = fs::remove_dir_all(root);
+          }
 
           '''
-          if s.count(marker) != 1:
-              raise SystemExit(f'runtime test marker count={s.count(marker)}')
-          s = s.replace(marker, test + marker, 1)
+          s = s[:attr_pos] + test + s[attr_pos:]
           p.write_text(s)
 
-          # 3) World driver reconstructs durable summon correlation from TELE10 ledger.
+          # World driver durable correlation reconstruction.
           p = Path('probes/Wow112HeadlessAndroid/src/world_summon_service.rs')
           s = p.read_text()
           import_anchor = '''use wow112_headless_android_probe::summon_service_runtime::{
@@ -234,7 +159,7 @@ jobs:
               raise SystemExit(f'request_driver markers start={s.count(start_marker)} end={s.count(end_marker)}')
           start = s.index(start_marker)
           end = s.index(end_marker, start)
-          new = '''fn request_driver(runtime: &SummonServiceRuntime, request_id: &str) -> Result<ActiveDriver, String> {
+          request_driver = '''fn request_driver(runtime: &SummonServiceRuntime, request_id: &str) -> Result<ActiveDriver, String> {
               let record = runtime
                   .request(request_id)
                   .ok_or_else(|| format!("request missing id={request_id}"))?;
@@ -294,7 +219,7 @@ jobs:
               })
           }
           '''
-          s = s[:start] + new + s[end:]
+          s = s[:start] + request_driver + s[end:]
           p.write_text(s)
 
       - name: Test library
