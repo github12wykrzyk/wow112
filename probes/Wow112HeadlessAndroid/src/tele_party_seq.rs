@@ -137,6 +137,7 @@ pub fn parse_group_decline(payload: &[u8]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&payload[..nul]).to_string())
 }
 
+#[derive(Debug)]
 pub struct PartySeq {
     members: Vec<Member>,
     roster: Vec<String>,
