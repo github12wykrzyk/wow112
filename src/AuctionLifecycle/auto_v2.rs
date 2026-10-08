@@ -69,18 +69,13 @@ fn lifecycle_auto_classify_returned(
     }
 }
 
-fn lifecycle_auto_inventory_risk()->Vec<(u64,i32,i32)> {
-    LIFE_OBSERVED.with(|s| {
-        let s=s.borrow();
-        s.inventory.items.iter().map(|(guid,e)|(*guid,e.entry,e.stack)).collect()
-    })
-}
-
+// PRE-CANCEL / PRE-TAKE guard. Only a fully established, certain baseline with the target item
+// definitely absent returns None. Unknown, uncertain, empty or present all return Some(reason).
 fn lifecycle_auto_merge_risk(item:u32)->Option<String> {
-    let all=lifecycle_auto_inventory_risk();
-    if all.is_empty() { return Some("inventory baseline not established".into()); }
-    let hit:Vec<_>=all.iter().filter(|(_,entry,_)|*entry<=0 || *entry as u32==item).collect();
-    if hit.is_empty() { None } else { Some(format!("same/unknown item cached: {hit:?}")) }
+    match lifecycle_baseline_verdict_now(item) {
+        LifecycleBaselineVerdict::Absent=>None,
+        other=>Some(other.describe()),
+    }
 }
 
 fn lifecycle_auto_inventory_diag(
@@ -103,30 +98,28 @@ fn lifecycle_auto_wait_returned_full_stack(
     count:u32,
 )->Result<u64,String> {
     const SETTLE_ROUNDS:u32=8;
-    for round in 0..SETTLE_ROUNDS {
-        // Read-only mailbox barrier. Its receive loop drains intervening world packets,
-        // and read_encrypted_raw feeds lifecycle_observe_raw, allowing delayed inventory
-        // updates to enter the verified cache without any mutation retry.
-        let _=poc05_request_mail_list(stream,crypto,mailbox)?;
-        let fresh=lifecycle_inventory()?;
-        lifecycle_auto_inventory_diag(old,&fresh,item,round);
-        match lifecycle_auto_classify_returned(old,&fresh,item,count) {
-            LifecycleAutoReturnedItemState::ExactNew(guid)=>{
-                println!("[LIFECYCLE-AUTO] RETURN_GUID_CONFIRMED item={} count={} guid=0x{:016X} settle_round={}",item,count,guid,round);
-                return Ok(guid);
-            }
-            LifecycleAutoReturnedItemState::Pending=>{
-                if round+1<SETTLE_ROUNDS { std::thread::sleep(Duration::from_millis(250)); }
-            }
-            LifecycleAutoReturnedItemState::Merged=>{
-                return Err(format!("AUTO returned item MERGED into existing stack at settle_round={round}; manual reconciliation required"));
-            }
-            LifecycleAutoReturnedItemState::Ambiguous(why)=>{
-                return Err(format!("AUTO returned item ambiguous at settle_round={round}: {why}; reconciliation required"));
-            }
-        }
-    }
-    Err("AUTO exact returned full-stack GUID not observed within bounded read-only settle window; reconciliation required".into())
+    // Read-only mailbox barrier each round. Its receive loop drains intervening world packets and
+    // read_encrypted_raw feeds lifecycle_observe_raw, so delayed inventory updates can enter the
+    // verified cache without any mutation retry.
+    let r=lifecycle_settle_loop(
+        SETTLE_ROUNDS,
+        |round|{
+            let _=poc05_request_mail_list(stream,crypto,mailbox)?;
+            let fresh=lifecycle_inventory()?;
+            lifecycle_auto_inventory_diag(old,&fresh,item,round);
+            Ok(fresh)
+        },
+        |fresh|match lifecycle_auto_classify_returned(old,fresh,item,count) {
+            LifecycleAutoReturnedItemState::ExactNew(g)=>LifecycleSettleStep::Exact(g),
+            LifecycleAutoReturnedItemState::Pending=>LifecycleSettleStep::Pending,
+            LifecycleAutoReturnedItemState::Merged=>LifecycleSettleStep::Merged,
+            LifecycleAutoReturnedItemState::Ambiguous(w)=>LifecycleSettleStep::Ambiguous(w.to_string()),
+        },
+        ||std::thread::sleep(Duration::from_millis(250)),
+    );
+    let guid=r.map_err(|e|format!("AUTO {e}"))?;
+    println!("[LIFECYCLE-AUTO] RETURN_GUID_CONFIRMED item={} count={} guid=0x{:016X}",item,count,guid);
+    Ok(guid)
 }
 
 fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String> {
@@ -182,6 +175,7 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
     let mut order:Vec<usize>=witnesses.keys().copied().collect();
     order.sort_by_key(|idx|mine[*idx].row.auction_id);
     let mut reposted=0u32;
+    lifecycle_baseline_log();
 
     for idx in order.into_iter().take(limit as usize) {
         let target=&mine[idx];
@@ -189,9 +183,17 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
         let floor=*floors.get(&target.row.item_id).ok_or("AUTO floor disappeared internally")?;
         let buyout=lifecycle_auto_price(target,&witness.1,floor).ok_or("AUTO price invalid before cancel")?;
 
-        // Read-only barrier first, then conservative risk cache. False positives only skip.
-        let _=poc05_request_mail_list(stream,crypto,mailbox)?;
-        if let Some(why)=lifecycle_auto_merge_risk(target.row.item_id) {
+        // Read-only, bounded wait for the slot-reconciled baseline (player + container slot fields vs
+        // observed objects). Unknown/incomplete never becomes "absent"; nothing is mutated here.
+        let verdict=lifecycle_baseline_wait_loop(
+            8,
+            |_|{let _=poc05_request_mail_list(stream,crypto,mailbox)?;Ok(())},
+            ||lifecycle_baseline_verdict_now(target.row.item_id),
+            ||std::thread::sleep(Duration::from_millis(250)),
+        )?;
+        let guard=if verdict==LifecycleBaselineVerdict::Absent { lifecycle_auto_merge_risk(target.row.item_id) } else { Some(verdict.describe()) };
+        if let Some(why)=guard {
+            lifecycle_baseline_log();
             println!("[LIFECYCLE-AUTO] SKIP_MERGE_RISK id={} item={} reason={}",target.row.auction_id,target.row.item_id,why);
             continue;
         }
@@ -209,6 +211,10 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
             ).collect();
             if returned.len()!=1 { return Err("AUTO return mail not uniquely identified; reconciliation required".into()); }
 
+            // Second guard BEFORE the take: the returned item is still safely in the mailbox here.
+            if let Some(why)=lifecycle_auto_merge_risk(target.row.item_id) {
+                return Err(format!("AUTO merge risk before take; returned item left in mailbox; reconciliation required: {why}"));
+            }
             let old_inventory=lifecycle_inventory()?;
             if old_inventory.values().any(|e|lifecycle_auto_is_item(e,target.row.item_id)) {
                 return Err("AUTO same item appeared in bags before take; returned item left in mailbox; reconciliation required".into());

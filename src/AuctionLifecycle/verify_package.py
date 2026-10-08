@@ -19,7 +19,7 @@ info=(root/'BUILD_INFO.txt').read_text(encoding='utf-8-sig')
 assert f'EXACT_SHA={sha}' in info
 assert 'BRANCH=feature/ah-auction-lifecycle-v1' in info
 assert hashlib.sha256(data).hexdigest() in info
-for name in ('coordinator.rs','adapter.rs','world_poc08_unified.rs'):
+for name in ('coordinator.rs','adapter.rs','auto_v2.rs','inventory_baseline.rs','world_poc08_unified.rs'):
     assert (root/'source'/name).is_file(),name
 assert (root/'LIFECYCLE_README.md').is_file()
 
@@ -47,6 +47,17 @@ assert '0xF11002A4A5002A0C' in settle,'expected proven mailbox default missing'
 assert 'SettleOne' in settle and 'LIFECYCLE_CANARY_ONCE' in settle
 assert 'Start-Sleep' not in settle,'settle wrapper must not retry'
 shutil.copy2(settle_src,root/'RUN_SETTLE_ONE_PROVEN_MAILBOX.ps1')
+
+# AUTO V2 baseline-fix launcher: one EXE invocation, explicit AUTO2 arm, no retry loop.
+for name in ('START_AUTO_V2_BASELINE_FIX.ps1','START_AUTO_V2_BASELINE_FIX.bat'):
+    src=Path('src/AuctionLifecycle')/name
+    assert src.is_file(),name
+    txt=src.read_text(encoding='utf-8')
+    if name.endswith('.ps1'):
+        assert txt.count('& $Exe')==1 and 'Start-Sleep' not in txt and "-cne 'AUTO2'" in txt
+        assert "WOW112_LIFECYCLE_AUTO_FLOORS='10998:4000'" in txt and "WOW112_LIFECYCLE_AUTO_LIMIT='2'" in txt
+        assert "WOW112_AH_HELLO_TIMEOUT_SECS='120'" in txt
+    shutil.copy2(src,root/name)
 
 files={str(p.relative_to(root)).replace('\\','/'):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for p in sorted(root.rglob('*')) if p.is_file() and p.name!='LIFECYCLE_PACKAGE.json'}
 manifest={'branch':'feature/ah-auction-lifecycle-v1','commit':sha,'base_commit':'99d0a45b1b62a98214f927f960156ba313de252b','platform':'windows-x86','files':files,'live_validation':'NOT_RUN','local_mutation_runner':'SAME_HOST_SINGLE_INVOCATION_NO_RETRY','final_package':'PASS'}

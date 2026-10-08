@@ -19,7 +19,7 @@ def integrate(root):
     changes[p] = replace(p.read_text(encoding='utf-8-sig'), 'mod auth;',
                         'mod auth;\n#[path = "../../../src/AuctionLifecycle/coordinator.rs"]\nmod auction_mutations;')
     p = src / 'world_poc07.rs'
-    changes[p] = replace(p.read_text(), 'fn poc07_buy_exact_one(', 'fn poc07_buy_exact_one_canonical(') + '\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\ninclude!("../../../src/AuctionLifecycle/auto_v2.rs");\n'
+    changes[p] = replace(p.read_text(), 'fn poc07_buy_exact_one(', 'fn poc07_buy_exact_one_canonical(') + '\ninclude!("../../../src/AuctionLifecycle/inventory_baseline.rs");\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\ninclude!("../../../src/AuctionLifecycle/auto_v2.rs");\n'
     p = src / 'world.rs'
     s = replace(p.read_text(), '    Ok((header.opcode, payload))',
                 '    lifecycle_observe_raw(header.opcode, &payload);\n    Ok((header.opcode, payload))')
@@ -38,19 +38,13 @@ def integrate(root):
         s = replace(s, marker, marker+'\n    if lifecycle_enabled() { if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="auto" { return lifecycle_auto_run(stream, &mut crypto, player_guid); } return lifecycle_run(stream, &mut crypto, player_guid); }')
         changes[p] = s
 
-    # Repost inventory evidence must fail closed without becoming permanently poisoned.
-    # Real Octo sessions occasionally contain partial/malformed object updates. On such
-    # a packet, discard all previously verified inventory evidence. A later POST is
-    # permitted only after a subsequent successfully parsed update explicitly proves
-    # owner + entry + stack again. This preserves safety while allowing MAIL -> POST
-    # recovery in the same session.
+    # Inventory evidence: the observer (adapter.rs) classifies every update the typed parser
+    # rejects with an independent byte-level scanner (inventory_baseline.rs). Proven-irrelevant
+    # packets keep the baseline; anything else clears POST evidence and records sticky uncertainty.
     adapter = root / 'src/AuctionLifecycle/adapter.rs'
     adapter_text = adapter.read_text(encoding='utf-8')
-    adapter_text = replace(
-        adapter_text,
-        'Err(_)=>LIFE_OBSERVED.with(|s|s.borrow_mut().inventory_bad=true),',
-        'Err(_)=>LIFE_OBSERVED.with(|s|{let mut s=s.borrow_mut();s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;}),'
-    )
+    if 'lifecycle_note_unparsed_update(op,payload)' not in adapter_text or 'inventory_bad=true' in adapter_text:
+        raise ValueError('adapter inventory observer drift: unparsed-update classification missing')
 
     # Targeted read-only inspect: resolve one owned auction to its first positive cheaper
     # competitor witness and stop immediately. This avoids traversing the entire AH when
@@ -65,7 +59,7 @@ def integrate(root):
     # Validate every anchor before any write; a second run is an explicit error.
     for p, text in changes.items():
         p.write_text(text, encoding='utf-8')
-    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory evidence resets fail-closed; targeted witness inspect + isolated AUTO V2 enabled')
+    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory baseline classification fail-closed; targeted witness inspect + isolated AUTO V2 enabled')
 
 if __name__=='__main__':
     integrate(Path(sys.argv[1] if len(sys.argv)>1 else '.').resolve())
