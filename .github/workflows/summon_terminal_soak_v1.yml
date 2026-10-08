@@ -1,0 +1,55 @@
+name: Summon Terminal Soak V1 Quality
+
+on:
+  push:
+    branches:
+      - 'feature/summon-terminal-soak-v1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Materialize canonical parallel ref for scope audit
+        run: git fetch origin parallel:refs/heads/parallel
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile current canonical headless probe
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Harness unit and invariant tests
+        run: python -m unittest tools/summon_terminal_soak/test_harness.py -v
+
+      - name: Parser fixtures and structured evidence quality run
+        run: python tools/summon_terminal_soak/harness.py --quality-only
+
+      - name: Prove forbidden production scopes are untouched
+        shell: bash
+        run: |
+          changed="$(git diff --name-only parallel...HEAD)"
+          echo "$changed"
+          if echo "$changed" | grep -E '^(src/AddOns/|tools/operator_console/|packaging/)'; then
+            echo 'Forbidden scope changed.' >&2
+            exit 1
+          fi
+
+      - name: Upload quality evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: summon-terminal-soak-quality-${{ github.sha }}
+          path: tools/summon_terminal_soak/runs/**
+          if-no-files-found: error
