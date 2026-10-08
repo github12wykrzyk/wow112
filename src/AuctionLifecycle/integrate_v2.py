@@ -63,15 +63,17 @@ def integrate(root: Path) -> None:
     (gen/'mm2_adapter.rs').write_text(a,encoding='utf-8')
 
     # Generated V2 dispatch copy: V1 implementation remains byte-for-byte untouched in repo.
+    # The Prompt-2 UNDERCUT canary is intercepted here so the runtime's historical hard-block
+    # remains a second safety barrier for any accidental direct dispatch.
     mm=(life/'market_maker.rs').read_text(encoding='utf-8-sig')
     old='fn lifecycle_dispatch(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{\n    if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="marketmaker"{market_maker_run(stream,crypto,player)}else{lifecycle_run(stream,crypto,player)}\n}'
-    new='fn lifecycle_dispatch(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{\n    match env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default().as_str(){\n        "marketmaker"=>market_maker_run(stream,crypto,player),\n        "marketmaker2"=>market_maker_v2_run(stream,crypto,player),\n        _=>lifecycle_run(stream,crypto,player),\n    }\n}'
+    new='fn lifecycle_dispatch(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{\n    match env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default().as_str(){\n        "marketmaker"=>market_maker_run(stream,crypto,player),\n        "marketmaker2"=>{\n            let mode=env::var("WOW112_MM2_MODE").unwrap_or_else(|_|"capability".into()).trim().to_ascii_lowercase();\n            if mode=="undercut-canary"{market_maker_v2_undercut_canary(stream,crypto,player)}else{market_maker_v2_run(stream,crypto,player)}\n        },\n        _=>lifecycle_run(stream,crypto,player),\n    }\n}'
     mm=once(mm,old,new)
     (gen/'mm2_market_maker_v1.rs').write_text(mm,encoding='utf-8')
 
     runtime_names=[
       'market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs',
-      'market_maker_v2_depth.rs','market_maker_v2_runtime.rs']
+      'market_maker_v2_depth.rs','market_maker_v2_runtime.rs','market_maker_v2_canary.rs']
     for name in runtime_names:
         src=(life/name).read_text(encoding='utf-8-sig')
         (gen/name).write_text(include_safe(src,name),encoding='utf-8')
