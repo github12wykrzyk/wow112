@@ -381,27 +381,64 @@ fn login_and_run(
     }
 }
 
-fn run() -> Result<(), String> {
-    let username = env::var("WOW112_ACCOUNT")
-        .map_err(|_| "missing WOW112_ACCOUNT".to_string())?
-        .to_ascii_uppercase();
-    let password = env::var("WOW112_PASSWORD").map_err(|_| "missing WOW112_PASSWORD".to_string())?;
-    let auth_addr = env::var("WOW112_AUTH_ADDR").unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
-    let realm_index = env::var("WOW112_REALM_INDEX")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_REALM_INDEX);
-    let character_name = env::var("WOW112_CHARACTER").ok();
-    let root = service_root();
-    fs::create_dir_all(&root)
-        .map_err(|e| format!("create service root {} failed: {e}", root.display()))?;
-    let inviter = configured_inviter()?;
+fn env_u32(name: &str, default_value: u32) -> Result<u32, String> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<u32>()
+            .map_err(|e| format!("invalid {name}={value:?}: {e}")),
+        Err(_) => Ok(default_value),
+    }
+}
 
-    let mut auth_stream = connect_watchdog(&auth_addr, "AUTH")?;
+fn env_u64(name: &str, default_value: u64) -> Result<u64, String> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<u64>()
+            .map_err(|e| format!("invalid {name}={value:?}: {e}")),
+        Err(_) => Ok(default_value),
+    }
+}
+
+fn helper_retry_allowed(error: &str) -> bool {
+    if error.contains("retry_allowed=false")
+        || error.contains("blocked by unresolved mutation")
+        || error.contains("MUTATION_UNCERTAIN")
+        || error.contains("uncertain mutation")
+    {
+        return false;
+    }
+    [
+        "ConnectionReset",
+        "Connection reset by peer",
+        "BrokenPipe",
+        "UnexpectedEof",
+        "TimedOut",
+        "timed out",
+        "WouldBlock",
+        "ConnectionRefused",
+        "connection refused",
+        "connect failed",
+        "world socket closed",
+        "world keepalive pong timeout",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
+}
+
+fn run_once(
+    auth_addr: &str,
+    realm_index: usize,
+    username: &str,
+    password: &str,
+    character_name: Option<&str>,
+    root: &PathBuf,
+    inviter: &str,
+) -> Result<(), String> {
+    let mut auth_stream = connect_watchdog(auth_addr, "AUTH")?;
     let timeout = Some(Duration::from_millis(LOGIN_WATCHDOG_MS));
     auth_stream.set_read_timeout(timeout).map_err(|e| e.to_string())?;
     auth_stream.set_write_timeout(timeout).map_err(|e| e.to_string())?;
-    let (session_key, realms) = auth::authenticate(&mut auth_stream, &username, &password)?;
+    let (session_key, realms) = auth::authenticate(&mut auth_stream, username, password)?;
     let realm = realms
         .realms
         .get(realm_index)
@@ -414,16 +451,80 @@ fn run() -> Result<(), String> {
         &mut world_stream,
         session_key,
         realm.realm_id,
-        &username,
-        character_name.as_deref(),
-        root,
-        inviter,
+        username,
+        character_name,
+        root.clone(),
+        inviter.to_string(),
     )
+}
+
+fn run() -> Result<(), String> {
+    let username = env::var("WOW112_ACCOUNT")
+        .map_err(|_| "missing WOW112_ACCOUNT".to_string())?
+        .to_ascii_uppercase();
+    let password = env::var("WOW112_PASSWORD")
+        .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
+    let auth_addr = env::var("WOW112_AUTH_ADDR")
+        .unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
+    let realm_index = env::var("WOW112_REALM_INDEX")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_REALM_INDEX);
+    let character_name = env::var("WOW112_CHARACTER").ok();
+    let root = service_root();
+    fs::create_dir_all(&root)
+        .map_err(|e| format!("create service root {} failed: {e}", root.display()))?;
+    let inviter = configured_inviter()?;
+    let reconnect_limit = env_u32("WOW112_RECONNECT_LIMIT", 60)?.max(1);
+    let reconnect_delay_ms = env_u64("WOW112_RECONNECT_DELAY_MS", 1000)?;
+
+    for attempt in 1..=reconnect_limit {
+        println!("[SUMMON-HELPER][RESILIENCE] session attempt={attempt}/{reconnect_limit}");
+        match run_once(
+            &auth_addr,
+            realm_index,
+            &username,
+            &password,
+            character_name.as_deref(),
+            &root,
+            &inviter,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(error) if helper_retry_allowed(&error) && attempt < reconnect_limit => {
+                println!("[SUMMON-HELPER][RESILIENCE] transient failure={error}; reconnecting=true");
+                if reconnect_delay_ms != 0 {
+                    std::thread::sleep(Duration::from_millis(reconnect_delay_ms));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(format!("summon helper reconnect limit exhausted after {reconnect_limit} attempts"))
 }
 
 fn main() {
     if let Err(error) = run() {
         eprintln!("SUMMON_SERVICE_HELPER_FAIL {error}");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::helper_retry_allowed;
+
+    #[test]
+    fn transient_network_errors_retry() {
+        assert!(helper_retry_allowed("ConnectionReset while reading world"));
+        assert!(helper_retry_allowed("WORLD connect failed addr=x"));
+        assert!(helper_retry_allowed("world keepalive pong timeout sequence=3"));
+    }
+
+    #[test]
+    fn uncertain_mutations_never_retry() {
+        assert!(!helper_retry_allowed("portal use transport uncertain; retry_allowed=false"));
+        assert!(!helper_retry_allowed("portal worker blocked by unresolved mutation"));
+        assert!(!helper_retry_allowed("SUMMON_MUTATION_UNCERTAIN"));
     }
 }
