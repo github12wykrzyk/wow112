@@ -1,0 +1,100 @@
+name: AH Market Maker V2 live read-only
+
+on:
+  push:
+    branches: [feature/ah-market-maker-v2]
+    paths:
+      - '.github/workflows/ah_market_maker_v2_live_readonly.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ah-market-maker-v2-live-readonly-octowar1-smokinpole
+  cancel-in-progress: false
+
+jobs:
+  readonly:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout feature control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify and download exact green V2 artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tested='1b85467643462b3814f30d239452cf666a988fc7'
+          $run='37764138082'
+          $artifact="WoW112-AH-MARKET-MAKER-V2-FOUNDATION-$tested"
+          git merge-base --is-ancestor $tested HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'tested MM2 SHA is not an ancestor' }
+          $changed=@(git diff --name-only "$tested..HEAD")
+          $unexpected=@($changed | Where-Object { $_ -ne '.github/workflows/ah_market_maker_v2_live_readonly.yml' })
+          if ($unexpected.Count -ne 0) { throw "unexpected source changes after tested SHA: $($unexpected -join ', ')" }
+          gh run download $run --name $artifact --dir live
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $manifest=Get-Content 'live/MANIFEST.txt'
+          if ($manifest -notcontains "SHA=$tested") { throw 'artifact SHA mismatch' }
+          if ($manifest -notcontains 'STATUS=FOUNDATION_NOT_LIVE_CANARY_APPROVED') { throw 'unexpected artifact status' }
+          $exe='live/wow112-ah-market-maker-v2-foundation.exe'
+          if (-not (Test-Path $exe)) { throw 'MM2 executable missing from artifact' }
+          $b=[IO.File]::ReadAllBytes($exe)
+          if ($b.Length -lt 2 -or $b[0] -ne 0x4d -or $b[1] -ne 0x5a) { throw 'artifact PE smoke failed' }
+          Write-Host "MM2_LIVE_ARTIFACT_PASS tested=$tested bytes=$($b.Length)"
+
+      - name: Run MM2 read-only capability matrix
+        shell: pwsh
+        env:
+          WOW112_ACCOUNT: octowar1
+          WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+          WOW112_CHARACTER: Smokinpole
+          WOW112_REALM_INDEX: '1'
+          WOW112_LIFECYCLE_ACTION: marketmaker2
+          WOW112_AUTOBUY_ACTION: scan-only
+          WOW112_RECONNECT_LIMIT: '1'
+          WOW112_SOAK_SECONDS: '0'
+          WOW112_SERVER_ID: octowow
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) { throw 'WOW112_PASSWORD secret missing' }
+          foreach($forbidden in @('WOW112_LIFECYCLE_CONFIRM','WOW112_AUTOBUY_CONFIRM','WOW112_MAIL_MUTATION_CONFIRM')) {
+            if (Test-Path "Env:$forbidden") { throw "mutation confirmation must be absent: $forbidden" }
+          }
+          $exe=(Resolve-Path 'live/wow112-ah-market-maker-v2-foundation.exe').Path
+          $results=@()
+          foreach($case in @(
+            @{mode='inventory-tracker'; marker='[MM2] INVENTORY_TRACKER_PASS'},
+            @{mode='mailbox-resolver'; marker='[MM2] MAILBOX_RESOLVER_PASS'},
+            @{mode='capability'; marker='[MM2] CAPABILITY_PASS'},
+            @{mode='targeted-depth'; marker='[MM2] TARGETED_DEPTH_PASS'}
+          )) {
+            $env:WOW112_MM2_MODE=$case.mode
+            if ($case.mode -eq 'targeted-depth') { $env:WOW112_MM2_ITEM_ID='13468' } else { Remove-Item Env:WOW112_MM2_ITEM_ID -ErrorAction SilentlyContinue }
+            Write-Host "===== MM2 LIVE READONLY $($case.mode) ====="
+            $raw=@(& $exe 2>&1)
+            $exit=$LASTEXITCODE
+            foreach($line in $raw) { Write-Host "$line" }
+            foreach($needle in @('[MAIL-ACTION] SENT','[POC07-BUY] SENT','CANCEL_CONFIRMED','POST_CONFIRMED','MUTATION_UNCERTAIN','BLOCKED_UNCERTAIN')) {
+              if (@($raw | Where-Object { "$_" -like "*$needle*" }).Count -ne 0) { throw "mutation/uncertainty marker observed mode=$($case.mode): $needle" }
+            }
+            $pass=@($raw | Where-Object { "$_" -like "*$($case.marker)*" })
+            if ($exit -ne 0 -or $pass.Count -ne 1) { throw "MM2 read-only mode failed mode=$($case.mode) exit=$exit marker_count=$($pass.Count)" }
+            $tracker=@($raw | Where-Object { "$_" -match '^\[MM2\] TRACKER generation=\d+ objects=\d+ physical_slots=\d+$' })
+            if ($tracker.Count -ne 1) { throw "MM2 tracker evidence missing/ambiguous mode=$($case.mode)" }
+            $results += [pscustomobject]@{mode=$case.mode;result='PASS';tracker="$($tracker[0])";marker="$($pass[0])"}
+          }
+          $results | ConvertTo-Json -Depth 4 | Set-Content 'MM2_LIVE_READONLY_SUMMARY.json' -Encoding utf8
+
+      - name: Upload sanitized summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ah-market-maker-v2-live-readonly-summary
+          path: MM2_LIVE_READONLY_SUMMARY.json
+          if-no-files-found: error
+          retention-days: 7
