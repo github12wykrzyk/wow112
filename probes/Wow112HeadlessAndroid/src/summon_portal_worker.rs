@@ -61,6 +61,11 @@ impl PortalWorker {
         if let Some(reason) = mutations.hard_block_reason() {
             return Err(format!("portal worker blocked by unresolved mutation: {reason}"));
         }
+        if mutations.records_for_request(&request_id).any(|record| {
+    record.kind == MutationKind::PortalUse && record.state == MutationState::Confirmed
+}) {
+    return Ok(None);
+}
         let operation_id = format!("{request_id}:portal-use:{portal_guid:016X}");
         if mutations
             .records()
@@ -243,6 +248,24 @@ mod tests {
         assert_eq!(sends.get(), 1);
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+fn confirmed_portal_for_request_blocks_different_guid_before_control_consumption() {
+    let root = root("different_guid_idempotent");
+    let (_runtime, _id) = ritual_ready(&root);
+    let worker = PortalWorker::open(&root).unwrap();
+    worker
+        .execute_portal_use_once(0xD00D, 30, |_| Ok(()))
+        .unwrap()
+        .unwrap();
+    let second = worker
+        .execute_portal_use_once(0xBEEF, 31, |_| {
+            panic!("a request with confirmed portal use must never click a second portal guid")
+        })
+        .unwrap();
+    assert!(second.is_none());
+    let _ = fs::remove_dir_all(root);
+}
 
     #[test]
     fn execute_once_transport_error_is_durable_uncertain_and_never_replayed() {

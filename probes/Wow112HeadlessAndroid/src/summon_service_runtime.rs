@@ -1,5 +1,6 @@
+use crate::summon_boot_recovery::reconcile_boot_snapshot;
 use crate::summon_service_core::{
-    CoreError, DurableRequest, OperatorCommand, RequestPhase, SummonServiceCore,
+    CoreError, DurableRequest, OperatorCommand, RequestPhase, ServiceSnapshot, SummonServiceCore,
 };
 use crate::tele08_whisper_parser::ParserConfig;
 use std::fs::{self, File, OpenOptions};
@@ -79,14 +80,24 @@ impl SummonServiceRuntime {
                     config.state_path.display()
                 )
             })?;
-            SummonServiceCore::restore_json(
-                &text,
-                parser,
-                queue_config,
-                config.resource.clone(),
-                now_ms,
-            )
-            .map_err(core_error)?
+            let snapshot: ServiceSnapshot = serde_json::from_str(&text)
+        .map_err(|error| format!("parse summon service state {} failed: {error}", config.state_path.display()))?;
+    let root = config
+        .state_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let recovery = reconcile_boot_snapshot(root, snapshot)?;
+    if let Some(request_id) = recovery.promoted_request_id.as_deref() {
+        eprintln!("[SUMMON-SERVICE] boot_recovery=portal_committed request={request_id} evidence=dual_durable");
+    }
+    SummonServiceCore::restore(
+        recovery.snapshot,
+        parser,
+        queue_config,
+        config.resource.clone(),
+        now_ms,
+    )
+    .map_err(core_error)?
         } else {
             SummonServiceCore::new(
                 config.session_id.clone(),
