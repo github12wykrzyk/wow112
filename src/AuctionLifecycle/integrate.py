@@ -19,7 +19,7 @@ def integrate(root):
     changes[p] = replace(p.read_text(encoding='utf-8-sig'), 'mod auth;',
                         'mod auth;\n#[path = "../../../src/AuctionLifecycle/coordinator.rs"]\nmod auction_mutations;')
     p = src / 'world_poc07.rs'
-    changes[p] = replace(p.read_text(), 'fn poc07_buy_exact_one(', 'fn poc07_buy_exact_one_canonical(') + '\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'
+    changes[p] = replace(p.read_text(), 'fn poc07_buy_exact_one(', 'fn poc07_buy_exact_one_canonical(') + '\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\ninclude!("../../../src/AuctionLifecycle/auto_v2.rs");\n'
     p = src / 'world.rs'
     s = replace(p.read_text(), '    Ok((header.opcode, payload))',
                 '    lifecycle_observe_raw(header.opcode, &payload);\n    Ok((header.opcode, payload))')
@@ -35,7 +35,7 @@ def integrate(root):
         s = replace(s, '.map_err(|e| format!("read world opcode failed before login verify: {e:?}"))?;',
                     '.map_err(|e| format!("read world opcode failed before login verify: {e:?}"))?;\n        lifecycle_observe_message(&opcode);')
         marker = ('if !login_verified { return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string()); }' if p.name == 'world_poc08_unified.rs' else 'return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());\n    }')
-        s = replace(s, marker, marker+'\n    if lifecycle_enabled() { return lifecycle_run(stream, &mut crypto, player_guid); }')
+        s = replace(s, marker, marker+'\n    if lifecycle_enabled() { if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="auto" { return lifecycle_auto_run(stream, &mut crypto, player_guid); } return lifecycle_run(stream, &mut crypto, player_guid); }')
         changes[p] = s
 
     # Repost inventory evidence must fail closed without becoming permanently poisoned.
@@ -65,7 +65,7 @@ def integrate(root):
     # Validate every anchor before any write; a second run is an explicit error.
     for p, text in changes.items():
         p.write_text(text, encoding='utf-8')
-    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory evidence resets fail-closed; targeted witness inspect enabled')
+    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory evidence resets fail-closed; targeted witness inspect + isolated AUTO V2 enabled')
 
 if __name__=='__main__':
     integrate(Path(sys.argv[1] if len(sys.argv)>1 else '.').resolve())
