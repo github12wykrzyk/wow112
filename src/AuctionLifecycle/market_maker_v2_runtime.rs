@@ -58,13 +58,14 @@ fn mm2_guarded_cancel(
     if !matches!(state.phase,Mm2SagaPhase::MailboxVerified{..}){return Err("MM2 CANCEL saga not mailbox-verified".into());}
     if state.own_auction_id!=Some(target.row.auction_id)||state.item_id!=target.row.item_id||state.signature!=target.signature{return Err("MM2 CANCEL saga/target identity mismatch".into());}
 
-    // Owner proof first, exact targeted depth last: the targeted snapshot is the freshest market
-    // authority immediately preceding durable intent + mutation SEND.
+    // Fence out stale unmatched AH replies before each freshness proof.
+    mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"cancel/pre-owner")?;
     let owners=mm2_owner_list(stream,crypto,auctioneer,player)?;
     let own=owners.iter().find(|r|r.row.auction_id==target.row.auction_id).ok_or("MM2 CANCEL target absent from fresh My Auctions")?;
     if !lifecycle_same(own,target){return Err("MM2 CANCEL fresh owner identity changed".into());}
     if own.row.highest_bid!=0{return Err("MM2 CANCEL blocked: active bid".into());}
 
+    mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"cancel/pre-depth")?;
     let depth=mm2_targeted_depth(stream,crypto,auctioneer,target.row.item_id,target.signature,16)?;
     if !depth.complete||!depth.coherent{return Err("MM2 CANCEL targeted depth incomplete/incoherent".into());}
     if depth.observed_at.elapsed()>Mm2Duration::from_secs(10){return Err("MM2 CANCEL targeted depth stale".into());}
@@ -78,12 +79,15 @@ fn mm2_guarded_cancel(
     let item_id=target.row.item_id;
     let count=target.row.count;
     let tx=mutations::transaction(MutationKind::Cancel,||{
+        stream.set_write_timeout(Some(Mm2Duration::from_secs(4))).map_err(|e|format!("MM2 CANCEL set write timeout: {e}"))?;
         lifecycle_send(stream,crypto,wow_world_messages::vanilla::CMSG_AUCTION_REMOVE_ITEM{auctioneer:auctioneer.into(),auction_id})?;
+        stream.set_write_timeout(Some(Mm2Duration::from_secs(20))).map_err(|e|format!("MM2 CANCEL restore write timeout: {e}"))?;
         let deadline=Mm2Instant::now()+Mm2Duration::from_secs(4);
         mm2_wait_for(stream,crypto,deadline,"cancel/ack",|op,p|{
             if op!=POC06_SMSG_AUCTION_COMMAND_RESULT_OPCODE{return Ok(None);}
             mm2_cancel_ack_payload(p,auction_id)?;Ok(Some(()))
         })?;
+        mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"cancel/post-ack")?;
         let after=mm2_owner_list(stream,crypto,auctioneer,player)?;
         if after.iter().any(|r|r.row.auction_id==auction_id){return Err("MM2 CANCEL ACK not reconciled: auction still owned".into());}
         recovery.set(Mm2Recovery::CancelledAwaitingMail{auction_id,item_id,count})?;
@@ -92,13 +96,15 @@ fn mm2_guarded_cancel(
         Ok(())
     });
     if let Err(e)=tx{
-        // Once CancelIntent is durable, fail closed on every executor failure. If SEND happened,
-        // coordinator `.pending` remains durable; if it did not, manual reconcile is conservative
-        // but prevents accidental replay from an ambiguous caller state.
-        let pending=mutations::pending_send_exists().unwrap_or(true);
-        let detail=format!("pending_send={pending}; {e}");
-        let _=saga.block_uncertain("CANCEL",&detail);
-        return Err(format!("MM2 CANCEL HARD STOP {detail}"));
+        let sent=mutations::sent_in_current_tx();
+        let pending=mutations::pending_send_exists();
+        let detail=format!("sent={sent} pending_send={pending}; {e}");
+        if sent||pending{
+            let _=saga.block_uncertain("CANCEL",&detail);
+            return Err(format!("MM2 CANCEL BLOCKED_UNCERTAIN {detail}"));
+        }
+        let _=saga.advance(Mm2SagaPhase::Hold{reason:format!("CANCEL_NOT_SENT {detail}")});
+        return Err(format!("MM2 CANCEL NOT_SENT {detail}"));
     }
     Ok(())
 }
@@ -108,7 +114,7 @@ fn mm2_tracker_stats()->Result<(u64,usize,usize),String>{let(g,o,s,_)=mm2_tracke
 fn mm2_preflight_journals(player:u64)->Result<(),String>{
     let(server,realm)=mm2_bound_identity(player)?;let recovery=Mm2RecoveryJournal::open(&server,realm,player)?;let saga=Mm2SagaJournal::open(&server,realm,player)?;
     if !recovery.is_idle(){return Err(format!("MM2_RECOVERY_REQUIRED state={:?} path={}",recovery.state(),recovery.path().display()));}
-    if saga.has_unfinished(){return Err(format!("MM2_SAGA_RECONCILIATION_REQUIRED state={:?} path={}",saga.state(),saga.path().display()));}Ok(())
+    if !saga.can_start_new(){return Err(format!("MM2_SAGA_RECONCILIATION_REQUIRED state={:?} path={}",saga.state(),saga.path().display()));}Ok(())
 }
 
 // lifecycle_dispatch is entered as soon as SMSG_LOGIN_VERIFY_WORLD is seen. Do not call the
