@@ -1,320 +1,143 @@
--- SummonScout Whisper Relay native WIM bridge for WoW 1.12.1 / Lua 5.0.
---
--- Purpose:
---   * the transport between summoner and Master remains the canonical [SSWR1]
---     WHISPER protocol;
---   * technical [SSWR1] packets stay hidden by the spam guard/WIM filter;
---   * mirrored customer conversation is rendered in a normal WIM conversation
---     named after the customer;
---   * text typed into that relay-managed WIM window is routed through the exact
---     owning summoner via canonical /ssr logic, never whispered directly by the
---     Master to the customer;
---   * no ChatFrame/WIM global event handler replacement and no SendChatMessage
---     path is introduced here.
+-- SummonScout SSWR1 -> native WIM presentation (WoW 1.12.1 / Lua 5.0).
+-- Transport stays the canonical WHISPER protocol. This module only renders it.
+local H=W112_SUMMONSCOUT_HOT
+if not H or type(H.Register)~="function" or type(H.GetState)~="function" then return end
+local V="2-native-whisper-wim", P="[SSWR1]", W=H.GetState("whisperrelaywim")
+W.chunks=W.chunks or {}; W.shown=W.shown or {}; W.nextClean=tonumber(W.nextClean) or 0
 
-local H = W112_SUMMONSCOUT_HOT
-if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
-    return
+local function trim(s) s=tostring(s or ""); s=string.gsub(s,"^%s+",""); return string.gsub(s,"%s+$","") end
+local function low(s) return string.lower(trim(s)) end
+local function same(a,b) a=low(a); b=low(b); return a~="" and a==b end
+local function now() if GetTime then return GetTime() end return 0 end
+local function wall() if time then return time() end return 0 end
+local function player() return trim(UnitName and UnitName("player") or "") end
+local function master() return trim(SummonScoutDB and SummonScoutDB.masterName or "") end
+local function isMaster() local a,b=player(),master(); return a~="" and b~="" and same(a,b) end
+local function starts(s,p) s=tostring(s or ""); return string.sub(s,1,string.len(p))==p end
+local function valid(n) n=trim(n); return n~="" and string.len(n)<=32 and not string.find(n,"[%c%s:;,=|]") end
+local function unesc(s)
+ s=tostring(s or ""); s=string.gsub(s,"%%0A","\n"); s=string.gsub(s,"%%0D","\r")
+ s=string.gsub(s,"%%7[Cc]","|"); s=string.gsub(s,"%%3[Aa]",":"); return string.gsub(s,"%%25","%%")
 end
-
-local VERSION = "1-native-wim-conversation"
-local W = H.GetState("whisperrelaywim")
-W.lastSeqBySession = W.lastSeqBySession or {}
-W.nextScanAt = tonumber(W.nextScanAt) or 0
-
-local function wnNow()
-    if GetTime then return GetTime() end
-    return 0
+local function split(s)
+ local t,p={},1; s=tostring(s or "")
+ while true do local a=string.find(s,":",p,true); if not a then t[table.getn(t)+1]=string.sub(s,p); break end
+  t[table.getn(t)+1]=string.sub(s,p,a-1); p=a+1 end
+ return t
 end
-
-local function wnWall()
-    if time then return time() end
-    return 0
+local function packet(raw)
+ if not starts(raw,P) then return nil end
+ local r=trim(string.sub(raw,string.len(P)+1)); if r=="" then return nil end
+ local a=split(r); local c=a[1]; if not c or c=="" then return nil end
+ local f={}; for i=2,table.getn(a) do f[table.getn(f)+1]=unesc(a[i]) end; return c,f
 end
-
-local function wnTrim(s)
-    s = tostring(s or "")
-    s = string.gsub(s, "^%s+", "")
-    s = string.gsub(s, "%s+$", "")
-    return s
+local function chat(s) if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffRelay whisper:|r "..tostring(s or "")) end end
+local function session(sid,summoner,customer)
+ local D=SummonScoutDB and SummonScoutDB.whisperRelayV1; D=D and D.sessions
+ local x=D and D[trim(sid)] or nil; if type(x)~="table" or x.status~="ACTIVE" then return nil end
+ if not same(x.summoner_name,summoner) or not same(x.customer_name,customer) then return nil end
+ local age=wall()-(tonumber(x.last_activity_at) or 0); if age<0 or age>1800 then return nil end; return x
 end
-
-local function wnLower(s)
-    return string.lower(wnTrim(s or ""))
+local function boxFor(summoner)
+ local q=type(WIM_Windows)=="table" and WIM_Windows[summoner] or nil
+ if type(q)~="table" or type(q.frame)~="string" or not getglobal then return nil end
+ return getglobal(q.frame.."MsgBox")
 end
-
-local function wnSame(a, b)
-    a = wnLower(a)
-    b = wnLower(b)
-    return a ~= "" and a == b
+local function route(box)
+ if not box then return false end
+ local sid=trim(box.W112RelaySid or ""), s=trim(box.W112RelaySummoner or ""), c=trim(box.W112RelayCustomer or "")
+ if sid=="" or s=="" or c=="" then return false end
+ local text=trim(box.GetText and box:GetText() or ""); if text=="" then if box.SetText then box:SetText("") end; return true end
+ if string.sub(text,1,1)=="/" then return false end
+ if not isMaster() or not session(sid,s,c) then chat("reply blocked: stale/wrong relay session"); return true end
+ local fn=SlashCmdList and SlashCmdList["SUMMONSCOUTRELAY"] or nil
+ if type(fn)~="function" then chat("reply blocked: /ssr router unavailable"); return true end
+ local cmd=s.." "..c.." "..text
+ if pcall then local ok,e=pcall(fn,cmd); if not ok then chat("reply blocked: "..tostring(e or "router error")); return true end else fn(cmd) end
+ if box.AddHistoryLine then box:AddHistoryLine(text) end; if box.SetText then box:SetText("") end; return true
 end
-
-local function wnPlayer()
-    return wnTrim(UnitName and UnitName("player") or "")
+local function enter()
+ local b=this; local fn=W112_SUMMONSCOUT_RELAY_WIM_DISPATCH
+ if type(fn)=="function" then local handled=false
+  if pcall then local ok,v=pcall(fn,b); handled=ok and v and true or false; if not ok and b and trim(b.W112RelaySid or "")~="" then handled=true; chat("reply dispatch error; send suppressed") end
+  else handled=fn(b) and true or false end
+  if handled then return end
+ end
+ local base=b and b.W112RelayBaseEnter; if type(base)=="function" then return base() end
 end
-
-local function wnMaster()
-    return wnTrim(SummonScoutDB and SummonScoutDB.masterName or "")
+local function attach(summoner,sid,customer)
+ local b=boxFor(summoner); if not b then return false end
+ b.W112RelaySid=tostring(sid or ""); b.W112RelaySummoner=summoner; b.W112RelayCustomer=customer
+ if not b.W112RelayBaseEnter and b.GetScript then b.W112RelayBaseEnter=b:GetScript("OnEnterPressed") end
+ if not b.W112RelayEnterInstalled and b.SetScript then b:SetScript("OnEnterPressed",enter); b.W112RelayEnterInstalled=true end
+ return true
 end
-
-local function wnIsMasterLocal()
-    local me = wnPlayer()
-    local master = wnMaster()
-    return me ~= "" and master ~= "" and wnSame(me, master)
+local function show(sender,sid,customer,seq,raw,outgoing)
+ sender=trim(sender); customer=trim(customer); raw=tostring(raw or "")
+ if not valid(sender) or not valid(customer) or raw=="" or type(WIM_PostMessage)~="function" then return false end
+ local k=low(sender).."|"..sid.."|"..tostring(seq).."|"..(outgoing and "O" or "I"); if W.shown[k] then return true end
+ local msg=(outgoing and "|cffaaaaaa[to " or "|cff66ccff[")..customer.."]|r "..raw
+ local typ=outgoing and 2 or 1; local from=outgoing and player() or sender; local ok=true
+ if pcall then ok=pcall(WIM_PostMessage,sender,msg,typ,from,raw) else WIM_PostMessage(sender,msg,typ,from,raw) end
+ if not ok then return false end; W.shown[k]=now(); attach(sender,sid,customer); return true
 end
-
-local function wnDb()
-    local root = SummonScoutDB and SummonScoutDB.whisperRelayV1
-    if type(root) ~= "table" or type(root.sessions) ~= "table" then return nil end
-    return root
+local function begin(sender,f)
+ local sid,c,count=f[1] or "",f[2] or "",tonumber(f[9]) or 0; if sid=="" or not valid(c) or count<1 or count>20 then return true end
+ W.chunks[low(sender).."|"..sid]={sender=sender,sid=sid,customer=c,seq=f[7] or "0",count=count,p={},at=now()}; return true
 end
-
-local function wnSessionActive(session)
-    if type(session) ~= "table" or session.status ~= "ACTIVE" then return false end
-    local age = wnWall() - (tonumber(session.last_activity_at) or 0)
-    return age >= 0 and age <= 1800
+local function part(sender,f)
+ local sid=f[1] or "", idx=tonumber(f[2]) or 0, k=low(sender).."|"..sid; local x=W.chunks[k]
+ if type(x)~="table" or not same(x.sender,sender) or idx<1 or idx>x.count then return true end; x.p[idx]=f[3] or ""
+ for i=1,x.count do if x.p[i]==nil then return true end end
+ local raw=""; for i=1,x.count do raw=raw..x.p[i] end; W.chunks[k]=nil; return show(sender,x.sid,x.customer,x.seq,raw,false)
 end
-
-local function wnChat(text)
-    if DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffSummonRelay WIM:|r " .. tostring(text or ""))
-    end
+local function consume(ev,raw,sender)
+ if ev~="CHAT_MSG_WHISPER" or not isMaster() or not starts(raw,P) then return false end
+ local c,f=packet(raw); if not c then return true end
+ if c=="I" then return show(sender,f[1] or "",f[2] or "",f[7] or "0",f[9] or "",false) end
+ if c=="IB" then return begin(sender,f) end; if c=="IC" then return part(sender,f) end
+ if c=="E" then local kind=f[5] or ""; if kind=="WHISPER_OUT_AUTO" or kind=="WHISPER_OUT_MASTER" then return show(sender,f[1] or "",f[2] or "",f[4] or "0",f[7] or "",true) end end
+ return true
 end
-
-local function wnFrameAndBox(customer)
-    if type(WIM_Windows) ~= "table" then return nil, nil end
-    local info = WIM_Windows[customer]
-    if type(info) ~= "table" then return nil, nil end
-    local frameName = info.frame
-    if type(frameName) ~= "string" or frameName == "" or not getglobal then return nil, nil end
-    local frame = getglobal(frameName)
-    local box = getglobal(frameName .. "MsgBox")
-    return frame, box
+local function installWim()
+ if type(WIM_ChatFrame_OnEvent)~="function" then return false end
+ if type(W112_SUMMONSCOUT_RELAY_WIM_BASE)~="function" then W112_SUMMONSCOUT_RELAY_WIM_BASE=WIM_ChatFrame_OnEvent end
+ if type(W112_SUMMONSCOUT_RELAY_WIM_WRAPPER)~="function" then
+  W112_SUMMONSCOUT_RELAY_WIM_WRAPPER=function(ev)
+   local fn=W112_SUMMONSCOUT_RELAY_WIM_EVENT; if type(fn)=="function" then local h=false
+    if pcall then local ok,v=pcall(fn,ev,arg1,arg2); h=ok and v and true or false else h=fn(ev,arg1,arg2) and true or false end
+    if h then return end end
+   local b=W112_SUMMONSCOUT_RELAY_WIM_BASE; if type(b)=="function" then return b(ev) end
+  end
+ end
+ W112_SUMMONSCOUT_RELAY_WIM_EVENT=consume; WIM_ChatFrame_OnEvent=W112_SUMMONSCOUT_RELAY_WIM_WRAPPER; return true
 end
-
-local function wnFailClosedDispatch(box, message)
-    if message and message ~= "" then wnChat(message) end
-    return true
+local function filterText(text)
+ if not isMaster() or type(WIM_PostMessage)~="function" then return false end
+ text=tostring(text or ""); return string.find(text,"SummonRelay:|r [",1,true)~=nil or string.find(text,"SummonRelay: [",1,true)~=nil
 end
-
-local function wnDispatch(box)
-    if not box then return false end
-    local sid = wnTrim(box.W112RelaySessionId or "")
-    if sid == "" then return false end
-
-    local text = wnTrim(box.GetText and box:GetText() or "")
-    if text == "" then
-        if box.SetText then box:SetText("") end
-        return true
-    end
-    if string.sub(text, 1, 1) == "/" then
-        -- Slash commands keep native WIM behavior.
-        return false
-    end
-    if not wnIsMasterLocal() then
-        return wnFailClosedDispatch(box, "reply blocked: this relay window is not on configured Master")
-    end
-
-    local D = wnDb()
-    local session = D and D.sessions and D.sessions[sid] or nil
-    if not wnSessionActive(session) then
-        return wnFailClosedDispatch(box, "reply blocked: relay session is no longer ACTIVE")
-    end
-    local customer = wnTrim(session.customer_name or "")
-    local summoner = wnTrim(session.summoner_name or "")
-    if customer == "" or summoner == "" or wnSame(summoner, wnPlayer()) then
-        return wnFailClosedDispatch(box, "reply blocked: invalid relay ownership")
-    end
-    if box.W112RelayCustomer and not wnSame(box.W112RelayCustomer, customer) then
-        return wnFailClosedDispatch(box, "reply blocked: WIM customer/session mismatch")
-    end
-
-    local slash = SlashCmdList and SlashCmdList["SUMMONSCOUTRELAY"] or nil
-    if type(slash) ~= "function" then
-        return wnFailClosedDispatch(box, "reply blocked: canonical /ssr router unavailable")
-    end
-
-    -- Reuse canonical exact-owner validation and no-retry send semantics.
-    local command = summoner .. " " .. customer .. " " .. text
-    if pcall then
-        local ok, err = pcall(slash, command)
-        if not ok then
-            wnChat("reply router error; nothing sent directly: " .. tostring(err or "unknown"))
-            return true
-        end
-    else
-        slash(command)
-    end
-
-    if box.AddHistoryLine then box:AddHistoryLine(text) end
-    if box.SetText then box:SetText("") end
-    return true
+local function installChat()
+ if not DEFAULT_CHAT_FRAME or type(DEFAULT_CHAT_FRAME.AddMessage)~="function" then return false end
+ if type(W112_SUMMONSCOUT_RELAY_CHAT_BASE)~="function" then W112_SUMMONSCOUT_RELAY_CHAT_BASE=DEFAULT_CHAT_FRAME.AddMessage end
+ if type(W112_SUMMONSCOUT_RELAY_CHAT_WRAPPER)~="function" then
+  W112_SUMMONSCOUT_RELAY_CHAT_WRAPPER=function(self,text,r,g,b,id,hold)
+   local fn=W112_SUMMONSCOUT_RELAY_CHAT_FILTER; if type(fn)=="function" then local h=false
+    if pcall then local ok,v=pcall(fn,text); h=ok and v and true or false else h=fn(text) and true or false end; if h then return end end
+   local base=W112_SUMMONSCOUT_RELAY_CHAT_BASE; if type(base)=="function" then return base(self,text,r,g,b,id,hold) end
+  end
+ end
+ W112_SUMMONSCOUT_RELAY_CHAT_FILTER=filterText; DEFAULT_CHAT_FRAME.AddMessage=W112_SUMMONSCOUT_RELAY_CHAT_WRAPPER; return true
 end
-
-local function wnStableEnterPressed()
-    local box = this
-    local dispatch = W112_SUMMONSCOUT_RELAY_WIM_DISPATCH
-    if type(dispatch) == "function" then
-        local handled = false
-        if pcall then
-            local ok, value = pcall(dispatch, box)
-            if ok then
-                handled = value and true or false
-            else
-                handled = box and wnTrim(box.W112RelaySessionId or "") ~= ""
-                wnChat("WIM dispatch error; direct send suppressed")
-            end
-        else
-            handled = dispatch(box) and true or false
-        end
-        if handled then return end
-    end
-
-    local base = box and box.W112RelayBaseOnEnter or nil
-    if type(base) == "function" then
-        return base()
-    end
+local function clean()
+ local t=now(); for k,x in pairs(W.chunks) do if type(x)~="table" or t-(tonumber(x.at) or 0)>20 then W.chunks[k]=nil end end
+ for k,a in pairs(W.shown) do if t-(tonumber(a) or 0)>120 then W.shown[k]=nil end end
 end
-
-local function wnAttachRouter(customer, session)
-    local frame, box = wnFrameAndBox(customer)
-    if not frame or not box or type(session) ~= "table" then return false end
-
-    box.W112RelaySessionId = tostring(session.session_id or "")
-    box.W112RelayCustomer = tostring(session.customer_name or customer or "")
-    box.W112RelaySummoner = tostring(session.summoner_name or "")
-
-    if not box.W112RelayBaseOnEnter and box.GetScript then
-        box.W112RelayBaseOnEnter = box:GetScript("OnEnterPressed")
-    end
-    if not box.W112RelayRouterInstalled and box.SetScript then
-        box:SetScript("OnEnterPressed", wnStableEnterPressed)
-        box.W112RelayRouterInstalled = true
-    end
-    return true
-end
-
-local function wnPostWim(session, eventRow, incoming)
-    if type(WIM_PostMessage) ~= "function" or type(WIM_Windows) ~= "table" then
-        return false
-    end
-    local customer = wnTrim(session and session.customer_name or "")
-    local summoner = wnTrim(session and session.summoner_name or "")
-    local raw = tostring(eventRow and (eventRow.raw or eventRow.value) or "")
-    if customer == "" or summoner == "" or raw == "" then return true end
-
-    local label = "|cff66ccff[via " .. summoner .. "]|r "
-    local ttype = incoming and 1 or 2
-    local from = incoming and customer or wnPlayer()
-    local ok = true
-    if pcall then
-        ok = pcall(WIM_PostMessage, customer, label .. raw, ttype, from, raw)
-    else
-        WIM_PostMessage(customer, label .. raw, ttype, from, raw)
-    end
-    if not ok then return false end
-    wnAttachRouter(customer, session)
-    return true
-end
-
-local function wnRenderableRemoteEvent(eventRow)
-    if type(eventRow) ~= "table" or eventRow.remote_seq == nil then return false end
-    local kind = tostring(eventRow.kind or "")
-    return kind == "WHISPER_IN" or kind == "WHISPER_OUT_AUTO" or kind == "WHISPER_OUT_MASTER"
-end
-
-local function wnRenderEvent(session, eventRow)
-    local kind = tostring(eventRow.kind or "")
-    if kind == "WHISPER_IN" then
-        return wnPostWim(session, eventRow, true)
-    end
-    if kind == "WHISPER_OUT_AUTO" or kind == "WHISPER_OUT_MASTER" then
-        return wnPostWim(session, eventRow, false)
-    end
-    return true
-end
-
-local function wnScanSession(session)
-    if type(session) ~= "table" then return end
-    local sid = tostring(session.session_id or "")
-    if sid == "" then return end
-    if wnSame(session.summoner_name, wnPlayer()) then
-        -- Local summoner/customer whispers are already native WIM traffic.
-        W.lastSeqBySession[sid] = tonumber(session.event_seq) or 0
-        return
-    end
-
-    local last = tonumber(W.lastSeqBySession[sid]) or 0
-    local events = type(session.events) == "table" and session.events or {}
-    local i
-    for i = 1, table.getn(events) do
-        local eventRow = events[i]
-        local seq = type(eventRow) == "table" and (tonumber(eventRow.seq) or 0) or 0
-        if seq > last then
-            if wnRenderableRemoteEvent(eventRow) then
-                if not wnRenderEvent(session, eventRow) then
-                    -- WIM may not be loaded yet. Preserve cursor and retry later.
-                    return
-                end
-            end
-            last = seq
-            W.lastSeqBySession[sid] = last
-        end
-    end
-end
-
-local function wnBaselineExisting()
-    local D = wnDb()
-    if not D then return end
-    local order = type(D.sessionOrder) == "table" and D.sessionOrder or {}
-    local i
-    for i = 1, table.getn(order) do
-        local sid = order[i]
-        local session = D.sessions[sid]
-        if type(session) == "table" and W.lastSeqBySession[sid] == nil then
-            W.lastSeqBySession[sid] = tonumber(session.event_seq) or 0
-        end
-    end
-end
-
-local M = {}
-
-function M.Init()
-    wnBaselineExisting()
-    W.nextScanAt = 0
-    W112_SUMMONSCOUT_RELAY_WIM_DISPATCH = wnDispatch
-    W112_SUMMONSCOUT_WHISPER_RELAY_WIM_VERSION = VERSION
-end
-
-function M.OnUpdate()
-    if not wnIsMasterLocal() then return end
-    local t = wnNow()
-    if t < (tonumber(W.nextScanAt) or 0) then return end
-    W.nextScanAt = t + 0.10
-
-    local D = wnDb()
-    if not D then return end
-    local order = type(D.sessionOrder) == "table" and D.sessionOrder or {}
-    local i
-    for i = 1, table.getn(order) do
-        local session = D.sessions[order[i]]
-        wnScanSession(session)
-    end
-end
-
+local M={}
+function M.Init() W112_SUMMONSCOUT_RELAY_WIM_DISPATCH=route; installWim(); installChat(); W.nextClean=now()+2; W112_SUMMONSCOUT_WHISPER_RELAY_WIM_VERSION=V end
+function M.OnUpdate() installWim(); installChat(); local t=now(); if t>=(tonumber(W.nextClean) or 0) then W.nextClean=t+2; clean() end end
 function M.Shutdown()
-    -- Existing relay-managed WIM boxes keep a stable wrapper that resolves the
-    -- current global dispatcher at keypress time. During fanout replacement,
-    -- fail closed rather than falling back to WIM's direct customer whisper.
-    if W112_SUMMONSCOUT_RELAY_WIM_DISPATCH == wnDispatch then
-        W112_SUMMONSCOUT_RELAY_WIM_DISPATCH = function(box)
-            if box and wnTrim(box.W112RelaySessionId or "") ~= "" then
-                wnChat("relay UI is reloading; reply not sent")
-                return true
-            end
-            return false
-        end
-    end
+ if W112_SUMMONSCOUT_RELAY_WIM_DISPATCH==route then W112_SUMMONSCOUT_RELAY_WIM_DISPATCH=nil end
+ if W112_SUMMONSCOUT_RELAY_WIM_EVENT==consume then W112_SUMMONSCOUT_RELAY_WIM_EVENT=nil end
+ if W112_SUMMONSCOUT_RELAY_CHAT_FILTER==filterText then W112_SUMMONSCOUT_RELAY_CHAT_FILTER=nil end
 end
-
-H.Register("whisperrelaywim", M, VERSION)
+H.Register("whisperrelaywim",M,V)
