@@ -15,6 +15,8 @@ use wow112_headless_android_probe::summon_service_core::{RequestPhase, ServiceSt
 use wow112_headless_android_probe::summon_service_runtime::{
     ServiceRuntimeConfig, SummonServiceRuntime,
 };
+use wow112_headless_android_probe::summon_service_recovery::resolve_resume_summon;
+use wow112_headless_android_probe::tele10_trade_payment::SummonStatus;
 use wow112_headless_android_probe::summon_trade_arrival::{
     decide_trade_arrival, TradeArrivalDecision,
 };
@@ -214,10 +216,45 @@ fn request_driver(runtime: &SummonServiceRuntime, request_id: &str) -> Result<Ac
         .ok_or_else(|| format!("request missing id={request_id}"))?;
     let phase = match record.phase {
         RequestPhase::Inviting => DriverPhase::ResetGroup { sent_at_ms: None },
-        RequestPhase::AwaitingPayment => DriverPhase::AwaitingPayment {
-            since_ms: now_ms(),
-            summon_id: None,
-        },
+        RequestPhase::PortalCommitted | RequestPhase::AwaitingPayment => {
+            let ledger = LedgerStore::open(tele10_ledger_path())?;
+            let resumed = resolve_resume_summon(
+                &ledger.state,
+                &record.customer,
+                &record.destination,
+            )?
+            .ok_or_else(|| format!(
+                "durable summon correlation missing request_id={} customer={:?} destination={:?}",
+                request_id, record.customer, record.destination
+            ))?;
+            match record.phase {
+                RequestPhase::PortalCommitted => {
+                    if resumed.summon_status != SummonStatus::RitualStarted {
+                        return Err(format!(
+                            "portal resume ledger status mismatch request_id={} summon_id={} status={:?}",
+                            request_id, resumed.summon_id, resumed.summon_status
+                        ));
+                    }
+                    DriverPhase::AwaitingPortal {
+                        target_guid: resumed.client_guid,
+                        summon_id: resumed.summon_id,
+                    }
+                }
+                RequestPhase::AwaitingPayment => {
+                    if resumed.summon_status != SummonStatus::Summoned {
+                        return Err(format!(
+                            "payment resume ledger status mismatch request_id={} summon_id={} status={:?}",
+                            request_id, resumed.summon_id, resumed.summon_status
+                        ));
+                    }
+                    DriverPhase::AwaitingPayment {
+                        since_ms: now_ms(),
+                        summon_id: Some(resumed.summon_id),
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
         other => {
             return Err(format!(
                 "cannot create active driver request_id={request_id} phase={other:?}"

@@ -374,6 +374,27 @@ mod tests {
     }
 
     #[test]
+fn restart_after_portal_commit_resumes_wait_without_replay() {
+    let root = root("portal_resume");
+    let config = ServiceRuntimeConfig::new(&root, "session-portal-resume");
+    let mut runtime = SummonServiceRuntime::open(config.clone(), 1).unwrap();
+    let id = runtime
+        .on_whisper("Clienta", "hyjal pls", None, Some("live"), 10)
+        .unwrap()
+        .unwrap();
+    runtime.start_next(20).unwrap();
+    runtime.mark_ritual_committed(&id, "ritual-1").unwrap();
+    runtime.mark_portal_committed(&id).unwrap();
+    drop(runtime);
+
+    let restored = SummonServiceRuntime::open(config, 100).unwrap();
+    assert_eq!(restored.active_request_id(), Some(id.as_str()));
+    assert_eq!(restored.request(&id).unwrap().phase, RequestPhase::PortalCommitted);
+    assert_ne!(restored.core().state(), crate::summon_service_core::ServiceState::BlockedUncertain);
+    let _ = fs::remove_dir_all(root);
+}
+
+    #[test]
     fn summon_completion_without_portal_proof_is_rejected() {
         let root = root("portal_gate");
         let config = ServiceRuntimeConfig::new(&root, "session-portal-gate");

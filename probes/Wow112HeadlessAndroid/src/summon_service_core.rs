@@ -698,7 +698,7 @@ impl SummonServiceCore {
         );
 
         if let Some(phase) = phase {
-            if phase != RequestPhase::AwaitingPayment {
+            if !matches!(phase, RequestPhase::PortalCommitted | RequestPhase::AwaitingPayment) {
                 self.mark_uncertain(
                     &request_id,
                     "reconnect_during_active_mutation_window_do_not_replay",
@@ -775,68 +775,66 @@ impl SummonServiceCore {
             max_requests: DEFAULT_MAX_REQUESTS,
         };
 
-        let mut resume_payment = None::<String>;
-        let mut queued_ids = Vec::<String>::new();
-        let ids: Vec<String> = service.requests.keys().cloned().collect();
-        for request_id in &ids {
-            let phase = service.requests[request_id].phase;
-            match phase {
-                RequestPhase::Queued => {
-                    queued_ids.push(request_id.clone());
+        let mut resume_wait = None::<String>;
+let mut queued_ids = Vec::<String>::new();
+let ids: Vec<String> = service.requests.keys().cloned().collect();
+for request_id in &ids {
+    let phase = service.requests[request_id].phase;
+    match phase {
+        RequestPhase::Queued => {
+            queued_ids.push(request_id.clone());
+        }
+        RequestPhase::PortalCommitted | RequestPhase::AwaitingPayment => {
+            if resume_wait.is_some() {
+                if let Some(record) = service.requests.get_mut(request_id) {
+                    record.phase = RequestPhase::BlockedUncertain;
+                    record.last_error =
+                        Some("multiple_active_requests_in_snapshot".to_string());
                 }
-                RequestPhase::AwaitingPayment => {
-                    if resume_payment.is_some() {
-                        if let Some(record) = service.requests.get_mut(request_id) {
-                            record.phase = RequestPhase::BlockedUncertain;
-                            record.last_error =
-                                Some("multiple_active_requests_in_snapshot".to_string());
-                        }
-                        service.state = ServiceState::BlockedUncertain;
-                    } else {
-                        resume_payment = Some(request_id.clone());
-                    }
-                }
-                RequestPhase::Inviting
-                | RequestPhase::RitualCommitted
-                | RequestPhase::PortalCommitted => {
-                    if let Some(record) = service.requests.get_mut(request_id) {
-                        record.phase = RequestPhase::BlockedUncertain;
-                        record.last_error =
-                            Some("restart_during_active_request_do_not_replay".to_string());
-                    }
-                    service.state = ServiceState::BlockedUncertain;
-                }
-                RequestPhase::Completed
-                | RequestPhase::Failed
-                | RequestPhase::BlockedUncertain => {}
+                service.state = ServiceState::BlockedUncertain;
+            } else {
+                resume_wait = Some(request_id.clone());
             }
         }
-
-        if let Some(request_id) = resume_payment {
-            service.enqueue_durable(&request_id, Some(0))?;
-            let outcome = service
-                .queue
-                .activate_next(&service.resource, now_ms)
-                .map_err(|error| CoreError::Queue(format!("{error:?}")))?;
-            let job = outcome
-                .events
-                .iter()
-                .find_map(|event| match event {
-                    QueueEvent::JobActivated { job } if job.request_id == request_id => {
-                        Some(job.clone())
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    CoreError::Snapshot(
-                        "could_not_restore_awaiting_payment_as_active".to_string(),
-                    )
-                })?;
-            service.active = Some(ActiveRuntime {
-                request_id,
-                job_id: job.job_id,
-            });
+        RequestPhase::Inviting | RequestPhase::RitualCommitted => {
+            if let Some(record) = service.requests.get_mut(request_id) {
+                record.phase = RequestPhase::BlockedUncertain;
+                record.last_error =
+                    Some("restart_during_active_request_do_not_replay".to_string());
+            }
+            service.state = ServiceState::BlockedUncertain;
         }
+        RequestPhase::Completed
+        | RequestPhase::Failed
+        | RequestPhase::BlockedUncertain => {}
+    }
+}
+
+if let Some(request_id) = resume_wait {
+    service.enqueue_durable(&request_id, Some(0))?;
+    let outcome = service
+        .queue
+        .activate_next(&service.resource, now_ms)
+        .map_err(|error| CoreError::Queue(format!("{error:?}")))?;
+    let job = outcome
+        .events
+        .iter()
+        .find_map(|event| match event {
+            QueueEvent::JobActivated { job } if job.request_id == request_id => {
+                Some(job.clone())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            CoreError::Snapshot(
+                "could_not_restore_waiting_request_as_active".to_string(),
+            )
+        })?;
+    service.active = Some(ActiveRuntime {
+        request_id,
+        job_id: job.job_id,
+    });
+}
 
         for request_id in queued_ids {
             service.enqueue_durable(&request_id, None)?;
