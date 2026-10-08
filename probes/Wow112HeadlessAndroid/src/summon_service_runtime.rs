@@ -162,6 +162,15 @@ impl SummonServiceRuntime {
         request_id: &str,
         now_ms: u64,
     ) -> Result<(), String> {
+        let phase = self
+            .request(request_id)
+            .ok_or_else(|| format!("summon completion request not found: {request_id}"))?
+            .phase;
+        if phase != RequestPhase::PortalCommitted {
+            return Err(format!(
+                "summon completion requires portal proof request_id={request_id} phase={phase:?}"
+            ));
+        }
         self.core
             .mark_summon_completed(request_id, now_ms)
             .map_err(core_error)?;
@@ -351,6 +360,7 @@ mod tests {
             .unwrap();
         runtime.start_next(20).unwrap();
         runtime.mark_ritual_committed(&id, "ritual-1").unwrap();
+        runtime.mark_portal_committed(&id).unwrap();
         runtime.mark_summon_completed(&id, 22).unwrap();
         drop(runtime);
 
@@ -359,6 +369,26 @@ mod tests {
         assert_eq!(
             restored.request(&id).unwrap().phase,
             RequestPhase::AwaitingPayment
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn summon_completion_without_portal_proof_is_rejected() {
+        let root = root("portal_gate");
+        let config = ServiceRuntimeConfig::new(&root, "session-portal-gate");
+        let mut runtime = SummonServiceRuntime::open(config, 1).unwrap();
+        let id = runtime
+            .on_whisper("Clienta", "hyjal pls", None, Some("live"), 10)
+            .unwrap()
+            .unwrap();
+        runtime.start_next(20).unwrap();
+        runtime.mark_ritual_committed(&id, "ritual-1").unwrap();
+        let error = runtime.mark_summon_completed(&id, 22).unwrap_err();
+        assert!(error.contains("requires portal proof"));
+        assert_eq!(
+            runtime.request(&id).unwrap().phase,
+            RequestPhase::RitualCommitted
         );
         let _ = fs::remove_dir_all(root);
     }
