@@ -22,6 +22,14 @@ fn tele10_pay_amount() -> u32 {
         .unwrap_or(40_000)
 }
 
+fn tele10_scam_guard_ms() -> u64 {
+    std::env::var("WOW112_TELE10_SCAM_GUARD_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(1_250)
+        .clamp(1_000, 5_000)
+}
+
 fn tele10_publish_teleport_checkpoint(detail: &str) {
     if let Some(target) = tele10_pay_target() {
         publish_runner_state(
@@ -47,6 +55,7 @@ fn tele10_customer_pay_after_teleport(
         return Ok(());
     }
     let amount = tele10_pay_amount();
+    let scam_guard_ms = tele10_scam_guard_ms();
     publish_runner_state(
         "WAIT_PAYMENT_CLIENT",
         &format!("target={} amount={} teleport_complete=true", target_name, amount),
@@ -88,6 +97,7 @@ fn tele10_customer_pay_after_teleport(
         .map_err(|e| format!("set TELE10 payer timeout failed: {e}"))?;
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut gold_sent = false;
+    let mut gold_sent_at: Option<Instant> = None;
     let mut accept_sent = false;
 
     loop {
@@ -109,6 +119,10 @@ fn tele10_customer_pay_after_teleport(
                         continue;
                     }
                 };
+                println!(
+                    "[TELE10-PAYER-RX] trade_status={} gold_sent={} accept_sent={}",
+                    status, gold_sent, accept_sent
+                );
                 match status {
                     TRADE_STATUS_OPEN_WINDOW if !gold_sent => {
                         publish_runner_state(
@@ -125,19 +139,38 @@ fn tele10_customer_pay_after_teleport(
                             format!("TELE10_PAYER_SET_GOLD_UNCERTAIN retry_allowed=false cause={e}")
                         })?;
                         gold_sent = true;
+                        gold_sent_at = Some(Instant::now());
                         publish_runner_state(
                             "WAIT_PAYMENT_GOLD_APPLY",
-                            &format!("target={} amount={} wait=server_BACK_TO_TRADE", target_name, amount),
+                            &format!(
+                                "target={} amount={} wait=server_BACK_TO_TRADE+scam_guard_{}ms",
+                                target_name, amount, scam_guard_ms
+                            ),
                         );
                         println!(
-                            "[TELE10-PAYER-TX] gold={} sent_once wait=server_BACK_TO_TRADE",
-                            amount
+                            "[TELE10-PAYER-TX] gold={} sent_once wait=server_BACK_TO_TRADE+{}ms_guard",
+                            amount, scam_guard_ms
                         );
                     }
                     TRADE_STATUS_BACK_TO_TRADE if gold_sent && !accept_sent => {
+                        let guard = Duration::from_millis(scam_guard_ms);
+                        if let Some(sent_at) = gold_sent_at {
+                            let elapsed = sent_at.elapsed();
+                            if elapsed < guard {
+                                let remaining = guard - elapsed;
+                                println!(
+                                    "[TELE10-PAYER] server_BACK_TO_TRADE received; scam_guard_wait_ms={}",
+                                    remaining.as_millis()
+                                );
+                                thread::sleep(remaining);
+                            }
+                        }
                         publish_runner_state(
                             "PAYMENT_ACCEPT_COMMITTED",
-                            &format!("amount={} after=server_BACK_TO_TRADE retry_allowed=false", amount),
+                            &format!(
+                                "amount={} after=server_BACK_TO_TRADE scam_guard_ms={} retry_allowed=false",
+                                amount, scam_guard_ms
+                            ),
                         );
                         write_encrypted_raw(
                             stream,
@@ -154,8 +187,8 @@ fn tele10_customer_pay_after_teleport(
                             &format!("target={} amount={}", target_name, amount),
                         );
                         println!(
-                            "[TELE10-PAYER-TX] accept=sent_once after=server_BACK_TO_TRADE amount={}",
-                            amount
+                            "[TELE10-PAYER-TX] accept=sent_once after=server_BACK_TO_TRADE+{}ms_guard amount={}",
+                            scam_guard_ms, amount
                         );
                     }
                     TRADE_STATUS_TRADE_COMPLETE => {
