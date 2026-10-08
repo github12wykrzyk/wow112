@@ -4,6 +4,26 @@
   "version": "__VERSION__",
   "source_sha": "__SOURCE_SHA__",
   "built_utc": "__BUILT_UTC__",
-  "demo_only": false,
+  "demo_only": true,
+  "package_layout_version": 1,
+  "config_schema_version": 1,
+  "data_layout_version": 1,
+  "compatibility": {
+    "operating_system": "Windows 11",
+    "powershell": "Windows PowerShell 5.1+",
+    "service_runtime_contract": "summon-service-v1",
+    "operator_console_contract": "summon-operator-console-v1"
+  },
+  "required_executables": [
+    "bin/WoW112SummonService.exe",
+    "bin/WoW112SummonOperatorConsole.exe"
+  ],
+  "mutable_paths": [
+    "config/service.json",
+    "data/",
+    "logs/",
+    "state/",
+    "backups/"
+  ],
   "files": []
 }
