@@ -25,3 +25,4 @@ SummonScout_CompetitionSmartHot.lua
 SummonScout_EngineApiAnchorHot.lua
 SummonScout_CoreErrorGuardHot.lua
 SummonScout_PostPaymentRouteGuardHot.lua
+SummonScout_WhisperRelayHot.lua
