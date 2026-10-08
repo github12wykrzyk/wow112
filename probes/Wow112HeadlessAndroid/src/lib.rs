@@ -1,6 +1,7 @@
 //! Reusable pure-logic APIs for the headless summon service.
 
 pub mod summon_mutation_coordinator;
+pub mod summon_portal_worker;
 pub mod summon_service_control;
 pub mod summon_service_core;
 pub mod summon_service_runtime;
