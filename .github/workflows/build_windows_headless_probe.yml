@@ -6,6 +6,7 @@ on:
     branches:
       - parallel
       - feature/native-windows-portal-clicker-v1
+      - feature/summon-service-core-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_windows_headless_probe.yml'
@@ -89,62 +90,95 @@ jobs:
         shell: pwsh
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
-      - name: Build native Windows x86 executable
+      - name: Build native Windows x86 executables
         shell: pwsh
-        run: cargo build --release --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+        run: cargo build --release --bins --target i686-pc-windows-msvc --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
-      - name: Verify and stage Windows portal bundle
+      - name: Verify and stage Windows service bundle
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $src = 'probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
-          if (-not (Test-Path $src)) { throw "Native worker not found: $src" }
+          $release = 'probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release'
           $out = 'dist/windows-headless-portal'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $dst = Join-Path $out 'wow112-headless-windows.exe'
-          Copy-Item $src $dst -Force
+
+          $required = @{
+            'wow112-headless-android-probe.exe' = 'wow112-headless-windows.exe'
+            'summon_service_helper.exe' = 'summon_service_helper.exe'
+            'summon_service_ctl.exe' = 'summon_service_ctl.exe'
+            'summon_service_history.exe' = 'summon_service_history.exe'
+            'summon_service_report.exe' = 'summon_service_report.exe'
+          }
+          foreach ($entry in $required.GetEnumerator()) {
+            $src = Join-Path $release $entry.Key
+            if (-not (Test-Path $src)) { throw "Required Windows binary not found: $src" }
+            Copy-Item $src (Join-Path $out $entry.Value) -Force
+          }
 
           @'
           import hashlib, struct
           from pathlib import Path
-          p = Path(r'dist/windows-headless-portal/wow112-headless-windows.exe')
-          data = p.read_bytes()
-          if data[:2] != b'MZ':
-              raise SystemExit('native worker is not PE/MZ')
-          pe = struct.unpack_from('<I', data, 0x3C)[0]
-          if data[pe:pe+4] != b'PE\0\0':
-              raise SystemExit('native worker missing PE signature')
-          machine = struct.unpack_from('<H', data, pe + 4)[0]
-          if machine != 0x014C:
-              raise SystemExit(f'expected x86 PE machine 0x014C, got 0x{machine:04X}')
-          print(f'PE32 x86 verified, bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
+          root = Path(r'dist/windows-headless-portal')
+          names = [
+              'wow112-headless-windows.exe',
+              'summon_service_helper.exe',
+              'summon_service_ctl.exe',
+              'summon_service_history.exe',
+              'summon_service_report.exe',
+          ]
+          for name in names:
+              p = root / name
+              data = p.read_bytes()
+              if data[:2] != b'MZ':
+                  raise SystemExit(f'{name}: not PE/MZ')
+              pe = struct.unpack_from('<I', data, 0x3C)[0]
+              if data[pe:pe+4] != b'PE\0\0':
+                  raise SystemExit(f'{name}: missing PE signature')
+              machine = struct.unpack_from('<H', data, pe + 4)[0]
+              if machine != 0x014C:
+                  raise SystemExit(f'{name}: expected x86 PE machine 0x014C, got 0x{machine:04X}')
+              print(f'{name}: PE32 x86 verified bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
           '@ | python -
 
-          $binSha = (Get-FileHash -Algorithm SHA256 $dst).Hash.ToLowerInvariant()
+          $main = Join-Path $out 'wow112-headless-windows.exe'
+          $helper = Join-Path $out 'summon_service_helper.exe'
+          $mainSha = (Get-FileHash -Algorithm SHA256 $main).Hash.ToLowerInvariant()
+          $helperSha = (Get-FileHash -Algorithm SHA256 $helper).Hash.ToLowerInvariant()
           @"
           POC=WINDOWS-PORTAL-02
+          PRODUCT=SUMMON_SERVICE_V1
           REPOSITORY=${{ github.repository }}
           BRANCH=${{ github.ref_name }}
           EXACT_SHA=${{ github.sha }}
           WORKFLOW_RUN_ID=${{ github.run_id }}
           WORKFLOW_RUN_ATTEMPT=${{ github.run_attempt }}
           TARGET=i686-pc-windows-msvc
-          BINARY=wow112-headless-windows.exe
-          BINARY_SHA256=$binSha
+          SUMMONER_BINARY=wow112-headless-windows.exe
+          SUMMONER_BINARY_SHA256=$mainSha
+          HELPER_BINARY=summon_service_helper.exe
+          HELPER_BINARY_SHA256=$helperSha
+          TOOL_BINARIES=summon_service_ctl.exe,summon_service_history.exe,summon_service_report.exe
           PORTAL_BACKEND=windows-native-v2-stop-safe
           "@ | Set-Content -Path (Join-Path $out 'BUILD_INFO.txt') -Encoding ascii
 
           Push-Location $out
           try {
             $lines = @()
-            foreach ($name in @('wow112-headless-windows.exe','BUILD_INFO.txt')) {
+            foreach ($name in @(
+              'wow112-headless-windows.exe',
+              'summon_service_helper.exe',
+              'summon_service_ctl.exe',
+              'summon_service_history.exe',
+              'summon_service_report.exe',
+              'BUILD_INFO.txt'
+            )) {
               $sha = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()
               $lines += "$sha  $name"
             }
             $lines | Set-Content -Path 'SHA256SUMS.txt' -Encoding ascii
           } finally { Pop-Location }
 
-      - name: Upload Windows portal bundle
+      - name: Upload Windows service bundle
         uses: actions/upload-artifact@v4
         with:
           name: WoW112-Windows-Headless-Portal-${{ github.sha }}

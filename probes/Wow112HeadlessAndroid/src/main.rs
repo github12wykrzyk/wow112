@@ -4,9 +4,11 @@ use std::thread;
 use std::time::Duration;
 
 mod auth;
+mod tele_party_observer;
 mod wire_build;
 mod world_poc05_retry;
 mod world_portal;
+mod world_summon_service;
 mod world_tele;
 
 use wire_build::OCTOWOW_WIRE_BUILD;
@@ -42,7 +44,13 @@ fn parse_env_u32(name: &str, default_value: u32) -> Result<u32, String> {
 }
 
 fn is_transient_network_error(error: &str) -> bool {
-    if error.contains("MAIL_MUTATION_") {
+    if error.contains("MAIL_MUTATION_")
+        || error.contains("MUTATION_UNCERTAIN")
+        || error.contains("SUMMON_INVITE_MUTATION_UNCERTAIN")
+        || error.contains("SUMMON_RITUAL_MUTATION_UNCERTAIN")
+        || error.contains("SUMMON_SELECTION_MUTATION_UNCERTAIN")
+        || error.contains("SUMMON_GROUP_RESET_MUTATION_UNCERTAIN")
+    {
         return false;
     }
     [
@@ -84,19 +92,44 @@ fn run() -> Result<(), String> {
     let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
     let mut mail_mutation_committed = false;
 
-    if !matches!(mode.as_str(), "poc05" | "portal" | "portal-clicker" | "clicker" | "tele" | "tele-sniffer" | "whisper-sniffer") {
+    if !matches!(
+        mode.as_str(),
+        "poc05"
+            | "portal"
+            | "portal-clicker"
+            | "clicker"
+            | "tele"
+            | "tele-sniffer"
+            | "whisper-sniffer"
+            | "summon-service"
+            | "summon-service-v1"
+    ) {
         return Err(format!("unsupported WOW112_MODE={mode:?}"));
     }
     let portal_mode = matches!(mode.as_str(), "portal" | "portal-clicker" | "clicker");
     let tele_mode = matches!(mode.as_str(), "tele" | "tele-sniffer" | "whisper-sniffer");
-    let mode_label = if tele_mode { "tele-sniffer" } else if portal_mode { "portal-clicker" } else { "poc05" };
+    let summon_service_mode = matches!(mode.as_str(), "summon-service" | "summon-service-v1");
+    let mode_label = if summon_service_mode {
+        "summon-service-v1"
+    } else if tele_mode {
+        "tele-sniffer"
+    } else if portal_mode {
+        "portal-clicker"
+    } else {
+        "poc05"
+    };
 
     println!(
         "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless mode={}",
         OCTOWOW_WIRE_BUILD,
         mode_label
     );
-    if tele_mode {
+    if summon_service_mode {
+        println!(
+            "[SUMMON-SERVICE] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} queue=persistent payment_ledger=TELE10 uncertain_retry=disabled",
+            soak_seconds, reconnect_limit, reconnect_delay_ms
+        );
+    } else if tele_mode {
         println!(
             "[TELE] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} rx_only=yes chat_tx=disabled invite=disabled cast=disabled portal_use=disabled",
             soak_seconds, reconnect_limit, reconnect_delay_ms
@@ -126,7 +159,15 @@ fn run() -> Result<(), String> {
             &mut mail_mutation_committed,
         ) {
             Ok(()) => {
-                let pass_label = if tele_mode { "TELE" } else if portal_mode { "PORTAL" } else { "POC-05" };
+                let pass_label = if summon_service_mode {
+                    "SUMMON-SERVICE"
+                } else if tele_mode {
+                    "TELE"
+                } else if portal_mode {
+                    "PORTAL"
+                } else {
+                    "POC-05"
+                };
                 println!("[RESILIENCE] {pass_label} RECONNECT/KEEPALIVE PASS attempts={attempt}");
                 println!("[WOW112-ANDROID-PROBE] PASS: {mode_label} persistent world session");
                 return Ok(());
@@ -188,7 +229,16 @@ fn run_session(
     let mut world_stream = TcpStream::connect(&world_addr)
         .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
 
-    if matches!(mode, "tele" | "tele-sniffer" | "whisper-sniffer") {
+    if matches!(mode, "summon-service" | "summon-service-v1") {
+        world_summon_service::login_summon_service(
+            &mut world_stream,
+            session_key,
+            realm.realm_id,
+            username,
+            character_name,
+            soak_seconds,
+        )?;
+    } else if matches!(mode, "tele" | "tele-sniffer" | "whisper-sniffer") {
         world_tele::login_tele_sniffer(
             &mut world_stream,
             session_key,

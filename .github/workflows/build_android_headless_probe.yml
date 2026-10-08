@@ -9,6 +9,7 @@ on:
       - parallel
       - feature/updater-android-portal-control-v1
       - feature/android-headless-poc05-unified-v1
+      - feature/summon-service-core-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_android_headless_probe.yml'
@@ -69,22 +70,39 @@ jobs:
         shell: bash
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
-      - name: Build Android x86_64 executable
+      - name: Build Android x86_64 executables
         shell: bash
         run: |
           set -euo pipefail
           cd probes/Wow112HeadlessAndroid
-          cargo ndk -t x86_64 --platform 21 build --release
+          cargo ndk -t x86_64 --platform 21 build --release --bins
 
-      - name: Verify and stage Android portal bundle
+      - name: Verify and stage Android service bundle
         shell: bash
         run: |
           set -euo pipefail
-          BIN="$(find probes/Wow112HeadlessAndroid/target -type f -name wow112-headless-android-probe -perm -111 -print -quit)"
-          test -n "$BIN"
+          TARGET_ROOT="probes/Wow112HeadlessAndroid/target"
           OUT="dist/android-headless-probe"
           mkdir -p "$OUT"
-          cp "$BIN" "$OUT/wow112-headless-android-probe"
+
+          copy_bin() {
+            local name="$1"
+            local src
+            src="$(find "$TARGET_ROOT" -type f -name "$name" -perm -111 -print -quit)"
+            if [[ -z "$src" ]]; then
+              echo "required Android binary missing: $name" >&2
+              exit 2
+            fi
+            cp "$src" "$OUT/$name"
+            file "$OUT/$name"
+          }
+
+          copy_bin wow112-headless-android-probe
+          copy_bin summon_service_helper
+          copy_bin summon_service_ctl
+          copy_bin summon_service_history
+          copy_bin summon_service_report
+
           cp probes/Wow112HeadlessAndroid/README.md "$OUT/README.md"
           cp probes/Wow112HeadlessAndroid/RUN_POC05.cmd "$OUT/RUN_POC05.cmd"
           cp probes/Wow112HeadlessAndroid/RUN_POC05.ps1 "$OUT/RUN_POC05.ps1"
@@ -93,10 +111,11 @@ jobs:
           cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.cmd "$OUT/RUN_PORTAL_CLICKER_GUI.cmd"
           cp probes/Wow112HeadlessAndroid/RUN_PORTAL_CLICKER_GUI.ps1 "$OUT/RUN_PORTAL_CLICKER_GUI.ps1"
 
-          file "$OUT/wow112-headless-android-probe"
-          BIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
+          MAIN_SHA="$(sha256sum "$OUT/wow112-headless-android-probe" | awk '{print $1}')"
+          HELPER_SHA="$(sha256sum "$OUT/summon_service_helper" | awk '{print $1}')"
           cat > "$OUT/BUILD_INFO.txt" <<INFO
           POC=05
+          PRODUCT=SUMMON_SERVICE_V1
           REPOSITORY=${GITHUB_REPOSITORY}
           BRANCH=${GITHUB_REF_NAME}
           EXACT_SHA=${GITHUB_SHA}
@@ -104,8 +123,11 @@ jobs:
           WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
           TARGET=x86_64-linux-android
           ANDROID_API=21
-          BINARY=wow112-headless-android-probe
-          BINARY_SHA256=${BIN_SHA}
+          SUMMONER_BINARY=wow112-headless-android-probe
+          SUMMONER_BINARY_SHA256=${MAIN_SHA}
+          HELPER_BINARY=summon_service_helper
+          HELPER_BINARY_SHA256=${HELPER_SHA}
+          TOOL_BINARIES=summon_service_ctl,summon_service_history,summon_service_report
           PORTAL_BACKEND=android-detached-v5
           INFO
 
@@ -113,6 +135,10 @@ jobs:
             cd "$OUT"
             sha256sum \
               wow112-headless-android-probe \
+              summon_service_helper \
+              summon_service_ctl \
+              summon_service_history \
+              summon_service_report \
               RUN_POC05.cmd \
               RUN_POC05.ps1 \
               RUN_PORTAL_CLICKER.cmd \
@@ -123,10 +149,12 @@ jobs:
               BUILD_INFO.txt > SHA256SUMS.txt
             sha256sum -c SHA256SUMS.txt
           )
+          grep -Fx "PRODUCT=SUMMON_SERVICE_V1" "$OUT/BUILD_INFO.txt"
           grep -Fx "EXACT_SHA=${GITHUB_SHA}" "$OUT/BUILD_INFO.txt"
-          grep -Fx "BINARY_SHA256=${BIN_SHA}" "$OUT/BUILD_INFO.txt"
+          grep -Fx "SUMMONER_BINARY_SHA256=${MAIN_SHA}" "$OUT/BUILD_INFO.txt"
+          grep -Fx "HELPER_BINARY_SHA256=${HELPER_SHA}" "$OUT/BUILD_INFO.txt"
 
-      - name: Upload Android portal bundle
+      - name: Upload Android service bundle
         uses: actions/upload-artifact@v4
         with:
           name: WoW112-Android-Headless-POC05-${{ github.sha }}

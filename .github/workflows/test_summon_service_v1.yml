@@ -1,0 +1,45 @@
+name: Test Summon Service V1
+
+# Final feature gate: library + public integration suites must execute on the exact feature head.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/summon-service-core-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/test_summon_service_v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-summon-service-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test summon service library
+        shell: bash
+        run: cargo test --lib --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Cargo test public integration suites
+        shell: bash
+        run: cargo test --tests --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Compile all test targets
+        shell: bash
+        run: cargo test --no-run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Cargo check summon service crate
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
