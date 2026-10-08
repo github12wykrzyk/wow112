@@ -24,145 +24,129 @@ jobs:
           $ErrorActionPreference = 'Stop'
           @'
           from pathlib import Path
+
           p = Path('probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs')
           s = p.read_text(encoding='utf-8')
 
-          old = '''            match role.child.try_wait() {
-                      Ok(Some(status)) => {
-                          return CycleVerdict {
-                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
-                              detail: format!(
-                                  "role={label} exited status={status}; active phase never auto-restarts"
-                              ),
-                          };
-                      }
-                      Err(error) => {
-                          return CycleVerdict {
-                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
-                              detail: format!(
-                                  "role={label} status error={error}; active phase never auto-restarts"
-                              ),
-                          };
-                      }
-                      Ok(None) => {}
-                  }
-                  let state = observe_role(role, log);
-          '''
-          new = '''            let state = observe_role(role, log);
-                  if label == "SUMMONER" && state.state == "FAIL_SERVER_REJECT" {
-                      return CycleVerdict {
-                          code: "FAIL_SERVER_REJECT".to_string(),
-                          detail: state.detail.clone(),
-                      };
-                  }
-                  match role.child.try_wait() {
-                      Ok(Some(status)) => {
-                          return CycleVerdict {
-                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
-                              detail: format!(
-                                  "role={label} exited status={status}; active phase never auto-restarts"
-                              ),
-                          };
-                      }
-                      Err(error) => {
-                          return CycleVerdict {
-                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
-                              detail: format!(
-                                  "role={label} status error={error}; active phase never auto-restarts"
-                              ),
-                          };
-                      }
-                      Ok(None) => {}
-                  }
-          '''
-          if old not in s:
-              raise SystemExit('active-state classification anchor missing')
-          s = s.replace(old, new, 1)
+          # 1) Active cycle: state-file authority must win over a just-exited process.
+          m0 = s.index('fn monitor_active_cycle(')
+          m1 = s.index('\nfn append_cycle_result', m0)
+          mon = s[m0:m1]
+          match_anchor = '            match role.child.try_wait() {'
+          state_anchor = '            let state = observe_role(role, log);\n'
+          if mon.count(match_anchor) != 1 or mon.count(state_anchor) != 1:
+              raise SystemExit(f'monitor anchors unexpected match={mon.count(match_anchor)} state={mon.count(state_anchor)}')
+          mon = mon.replace(
+              match_anchor,
+              '''            let state = observe_role(role, log);
+            if label == "SUMMONER" && state.state == "FAIL_SERVER_REJECT" {
+                return CycleVerdict {
+                    code: "FAIL_SERVER_REJECT".to_string(),
+                    detail: state.detail.clone(),
+                };
+            }
+            match role.child.try_wait() {''',
+              1,
+          )
+          # Delete the old state observation that followed try_wait, not the new one.
+          first = mon.index(state_anchor)
+          second = mon.find(state_anchor, first + len(state_anchor))
+          if second < 0:
+              raise SystemExit('second monitor state observation not found after insertion')
+          mon = mon[:second] + mon[second + len(state_anchor):]
+          s = s[:m0] + mon + s[m1:]
 
-          old = '''    for cycle in 1..=config.cycles {
-                  if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
-                      break;
-                  }
-          '''
-          new = '''    for cycle in 1..=config.cycles {
-                  let mut confirmed_reject_retries = 0u32;
-                  'cycle_attempt: loop {
-                      if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
-                          break 'cycle_attempt;
-                      }
-          '''
-          if old not in s:
-              raise SystemExit('cycle loop anchor missing')
-          s = s.replace(old, new, 1)
+          # 2) Supervisor: retry exactly the same logical cycle only for confirmed reject.
+          r0 = s.index('fn run_service(')
+          r1 = s.index('\nfn write_summary(', r0)
+          rs = s[r0:r1]
 
-          old = '''            thread::sleep(Duration::from_millis(750));
-                      continue;
-                  }
+          loop_old = '''    for cycle in 1..=config.cycles {
+        if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+            break;
+        }
+'''
+          loop_new = '''    for cycle in 1..=config.cycles {
+        let mut confirmed_reject_retries = 0u32;
+        'cycle_attempt: loop {
+            if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+                break 'cycle_attempt;
+            }
+'''
+          if rs.count(loop_old) != 1:
+              raise SystemExit(f'cycle loop anchor count={rs.count(loop_old)}')
+          rs = rs.replace(loop_old, loop_new, 1)
 
-                  let uncertain =
-          '''
-          new = '''            thread::sleep(Duration::from_millis(750));
-                      break 'cycle_attempt;
-                  }
+          pass_old = '''            thread::sleep(Duration::from_millis(750));
+            continue;
+        }
 
-                  if verdict.code == "FAIL_SERVER_REJECT"
-                      && !managed.values().any(role_has_uncertain_marker)
-                      && confirmed_reject_retries < config.restart_budget
-                  {
-                      confirmed_reject_retries += 1;
-                      total_restarts += 1;
-                      log.log(&format!(
-                          "RECOVER cycle={cycle} action=full_cycle_replay reason=confirmed_server_reject retry={}/{} detail={}",
-                          confirmed_reject_retries, config.restart_budget, verdict.detail
-                      ));
-                      write_supervisor_state(
-                          &run_dir,
-                          "RECOVERING",
-                          &format!(
-                              "cycle={cycle} confirmed server reject; safe replay={}/{}",
-                              confirmed_reject_retries, config.restart_budget
-                          ),
-                      );
-                      stop_all(&mut managed, &mut log);
-                      thread::sleep(Duration::from_millis(1000));
-                      continue 'cycle_attempt;
-                  }
+        let uncertain =
+'''
+          pass_new = '''            thread::sleep(Duration::from_millis(750));
+            break 'cycle_attempt;
+        }
 
-                  let uncertain =
-          '''
-          if old not in s:
-              raise SystemExit('pass/retry anchor missing')
-          s = s.replace(old, new, 1)
+        if verdict.code == "FAIL_SERVER_REJECT"
+            && !managed.values().any(role_has_uncertain_marker)
+            && confirmed_reject_retries < config.restart_budget
+        {
+            confirmed_reject_retries += 1;
+            total_restarts += 1;
+            log.log(&format!(
+                "RECOVER cycle={cycle} action=full_cycle_replay reason=confirmed_server_reject retry={}/{} detail={}",
+                confirmed_reject_retries, config.restart_budget, verdict.detail
+            ));
+            write_supervisor_state(
+                &run_dir,
+                "RECOVERING",
+                &format!(
+                    "cycle={cycle} confirmed server reject; safe replay={}/{}",
+                    confirmed_reject_retries, config.restart_budget
+                ),
+            );
+            stop_all(&mut managed, &mut log);
+            thread::sleep(Duration::from_millis(1000));
+            continue 'cycle_attempt;
+        }
 
-          old = '''        return Ok(2);
-              }
+        let uncertain =
+'''
+          if rs.count(pass_old) != 1:
+              raise SystemExit(f'pass/retry anchor count={rs.count(pass_old)}')
+          rs = rs.replace(pass_old, pass_new, 1)
 
-              stop_all(&mut managed, &mut log);
-          '''
-          new = '''        return Ok(2);
-                  }
-              }
+          close_old = '''        return Ok(2);
+    }
 
-              stop_all(&mut managed, &mut log);
-          '''
-          if old not in s:
-              raise SystemExit('cycle close anchor missing')
-          s = s.replace(old, new, 1)
+    stop_all(&mut managed, &mut log);
+'''
+          close_new = '''        return Ok(2);
+        }
+    }
 
-          old = '''    fn active_exit_is_fail_closed() {
-                  assert!(is_uncertain_code("FAIL_ACTIVE_ROLE_EXITED"));
-                  assert!(is_uncertain_code("FAIL_ACTIVE_STALE"));
-              }
-          '''
-          new = old + '''
-              #[test]
-              fn confirmed_server_reject_is_not_uncertain() {
-                  assert!(!is_uncertain_code("FAIL_SERVER_REJECT"));
-              }
-          '''
-          if old not in s:
-              raise SystemExit('test anchor missing')
-          s = s.replace(old, new, 1)
+    stop_all(&mut managed, &mut log);
+'''
+          if rs.count(close_old) != 1:
+              raise SystemExit(f'cycle close anchor count={rs.count(close_old)}')
+          rs = rs.replace(close_old, close_new, 1)
+          s = s[:r0] + rs + s[r1:]
+
+          # 3) Lock the critical invariant in unit tests.
+          test_anchor = '''    fn active_exit_is_fail_closed() {
+        assert!(is_uncertain_code("FAIL_ACTIVE_ROLE_EXITED"));
+        assert!(is_uncertain_code("FAIL_ACTIVE_STALE"));
+    }
+'''
+          test_add = test_anchor + '''
+    #[test]
+    fn confirmed_server_reject_is_not_uncertain() {
+        assert!(!is_uncertain_code("FAIL_SERVER_REJECT"));
+    }
+'''
+          if s.count(test_anchor) != 1:
+              raise SystemExit(f'test anchor count={s.count(test_anchor)}')
+          s = s.replace(test_anchor, test_add, 1)
 
           p.write_text(s, encoding='utf-8')
           '@ | python -
@@ -184,6 +168,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
-          git diff --cached --quiet; if ($LASTEXITCODE -eq 0) { throw 'No source diff produced' }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { throw 'No source diff produced' }
           git commit -m "fix(summon): safely replay confirmed ritual reject"
           git push origin HEAD:feature/summon-terminal-soak-v1
