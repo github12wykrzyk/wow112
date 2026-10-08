@@ -124,7 +124,17 @@ class CloudExportTests(unittest.TestCase):
         self.assertEqual(manifest["counts"]["events"], 5)
         self.assertEqual(manifest["counts"]["requests"], 1)
         self.assertEqual(manifest["counts"]["operator_commands"], 1)
-        self.assertEqual(manifest["cursor"]["event_id"], "paid")
+
+        exported_events = [
+            json.loads(line)
+            for line in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        last_event = exported_events[-1]
+        self.assertEqual(
+            manifest["cursor"],
+            {"ts_utc": last_event["ts_utc"], "event_id": last_event["event_id"]},
+        )
 
         disk_manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
         for name, meta in disk_manifest["files"].items():
