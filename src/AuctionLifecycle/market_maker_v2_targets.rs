@@ -25,6 +25,9 @@ fn mm2_fence_after_probe(stream:&mut TcpStream,crypto:&mut HeaderCrypto,label:&s
 fn mm2_resolve_auctioneer(stream:&mut TcpStream,crypto:&mut HeaderCrypto,candidates:&[u64])->Result<(u64,u32),String>{
     let mut list=candidates.to_vec();if let Ok(v)=env::var("WOW112_AH_GUID"){let g=parse_guid_override("WOW112_AH_GUID",&v)?;list.retain(|x|*x==g);}if list.is_empty(){return Err("MM2 configured auctioneer not discovered".into());}
     for guid in list{
+        // A pre-probe fence makes the hello proof belong to this exact probe rather than
+        // accepting a delayed response from earlier AH traffic on the same connection.
+        mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"targets/ah-preprobe-fence")?;
         println!("[MM2-TARGETS] AH_PROBE guid=0x{guid:016X}");write_encrypted_raw(stream,crypto.encrypter(),u32::from(MSG_AUCTION_HELLO_OPCODE),&guid.to_le_bytes())?;let deadline=Mm2Instant::now()+Mm2Duration::from_secs(2);let mut timeout=false;
         loop{if Mm2Instant::now()>=deadline{timeout=true;break;}match mm2_read_encrypted_raw_until(stream,crypto.decrypter(),deadline,"targets/ah-probe"){
             Ok((op,p)) if op==MSG_AUCTION_HELLO_OPCODE=>{if p.len()<12{return Err("MM2 short AH hello".into());}let response=u64::from_le_bytes(p[0..8].try_into().unwrap());let house=u32::from_le_bytes(p[8..12].try_into().unwrap());if response!=guid{return Err(format!("MM2 mismatched AH hello 0x{response:016X} expected 0x{guid:016X}"));}mm2_set_normal_timeout(stream)?;println!("[MM2-TARGETS] AH_BOUND guid=0x{guid:016X} house={house}");return Ok((guid,house));},
@@ -44,9 +47,11 @@ fn mm2_mail_list_once(stream:&mut TcpStream,crypto:&mut HeaderCrypto,mailbox:u64
 fn mm2_resolve_mailbox(stream:&mut TcpStream,crypto:&mut HeaderCrypto,candidates:&[u64])->Result<u64,String>{
     let mut list=candidates.to_vec();if let Ok(v)=env::var("WOW112_MAILBOX_GUID"){let g=parse_guid_override("WOW112_MAILBOX_GUID",&v)?;list.retain(|x|*x==g);}if list.is_empty(){return Err("MM2 configured mailbox not discovered".into());}
     for mailbox in list{
-        // Fence means no response from a previous candidate can be mistaken for this one.
+        // Fences make each proof independent: no response from discovery, another mailbox, or
+        // probe 1 can be mistaken for probe 2.
         mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"targets/mailbox-preprobe-fence")?;
         println!("[MM2-TARGETS] MAIL_PROBE1 guid=0x{mailbox:016X}");if mm2_mail_list_once(stream,crypto,mailbox,"targets/mail-probe1")?.is_none(){println!("[MM2-TARGETS] MAIL_REJECT guid=0x{mailbox:016X} probe=1");continue;}
+        mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"targets/mailbox-between-probes-fence")?;
         println!("[MM2-TARGETS] MAIL_PROBE2 guid=0x{mailbox:016X}");if mm2_mail_list_once(stream,crypto,mailbox,"targets/mail-probe2")?.is_none(){println!("[MM2-TARGETS] MAIL_REJECT guid=0x{mailbox:016X} probe=2");continue;}
         println!("[MM2-TARGETS] MAIL_BOUND guid=0x{mailbox:016X}");return Ok(mailbox);
     }Err("MM2 no proven mailbox responder".into())
