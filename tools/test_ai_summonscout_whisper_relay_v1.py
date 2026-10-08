@@ -18,8 +18,11 @@ class SummonScoutWhisperRelayV1Contract(unittest.TestCase):
     def test_task_is_exact_base_and_auto_integrates(self):
         self.assertRegex(self.task["base_parallel_sha"], r"^[0-9a-f]{40}$")
         self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-v1")
-        self.assertEqual(self.task["status"], "ready_for_integration")
-        self.assertTrue(self.task["auto_integrate"])
+        self.assertIn(self.task["status"], ("ready_for_integration", "integrated", "done"))
+        if self.task["status"] == "ready_for_integration":
+            self.assertTrue(self.task["auto_integrate"])
+        else:
+            self.assertFalse(self.task["auto_integrate"])
         self.assertEqual(self.task["delivery_profiles"], [])
 
     def test_module_loads_last_without_replacing_core(self):

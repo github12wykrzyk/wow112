@@ -27,3 +27,4 @@ SummonScout_CoreErrorGuardHot.lua
 SummonScout_PostPaymentRouteGuardHot.lua
 SummonScout_WhisperRelayHot.lua
 SummonScout_WhisperRelayIntentGuardHot.lua
+SummonScout_WhisperRelaySpamGuardHot.lua
