@@ -7,7 +7,13 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
+from .cloud_export import export_bundle
 from .ledger import EventConflictError, EventValidationError, Ledger, parse_since
+from .operator_commands import (
+    CommandConflictError,
+    CommandValidationError,
+    OperatorCommandQueue,
+)
 
 
 def emit(value: Any) -> None:
@@ -72,12 +78,62 @@ def build_parser() -> argparse.ArgumentParser:
     uncertain.add_argument("--limit", type=int, default=1000)
 
     sub.add_parser("stats")
+
+    operator = sub.add_parser(
+        "operator-command",
+        help="enqueue Pause, Resume or ManualWhisper intent; never sends game packets itself",
+    )
+    operator.add_argument("type", choices=("Pause", "Resume", "ManualWhisper"))
+    operator.add_argument("--command-id")
+    operator.add_argument("--customer")
+    operator.add_argument("--message")
+    operator.add_argument("--correlation-id")
+
+    commands = sub.add_parser("operator-commands", help="list pending operator command intents")
+    commands.add_argument("--limit", type=int, default=100)
+
+    consume = sub.add_parser("operator-consume", help="acknowledge one consumed command intent")
+    consume.add_argument("command_id")
+
+    cloud = sub.add_parser("cloud-export", help="write cloud-neutral checksummed JSONL bundle")
+    cloud.add_argument("output_dir")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "operator-command":
+            with OperatorCommandQueue(Path(args.db)) as queue:
+                status, command = queue.enqueue(
+                    {
+                        "command_id": args.command_id,
+                        "type": args.type,
+                        "customer": args.customer,
+                        "message": args.message,
+                        "correlation_id": args.correlation_id,
+                        "metadata": {},
+                    }
+                )
+                emit({"status": status, "command": command})
+            return 0
+        if args.command == "operator-commands":
+            with OperatorCommandQueue(Path(args.db)) as queue:
+                emit(queue.pending(args.limit))
+            return 0
+        if args.command == "operator-consume":
+            with OperatorCommandQueue(Path(args.db)) as queue:
+                consumed = queue.mark_consumed(args.command_id)
+                emit({"command_id": args.command_id, "consumed": consumed})
+                return 0 if consumed else 2
+        if args.command == "cloud-export":
+            # Open Ledger first so an empty/new DB receives the normal migrations.
+            with Ledger(Path(args.db)):
+                pass
+            emit(export_bundle(Path(args.db), Path(args.output_dir)))
+            return 0
+
         with Ledger(Path(args.db)) as ledger:
             if args.command == "ingest":
                 results = ledger.ingest_many(read_events(args.path))
@@ -107,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
                 emit(ledger.stats())
             else:
                 raise AssertionError(args.command)
-    except (EventValidationError, EventConflictError) as exc:
+    except (EventValidationError, EventConflictError, CommandValidationError, CommandConflictError) as exc:
         print("summon-ledger: %s" % exc, file=sys.stderr)
         return 3
     return 0
