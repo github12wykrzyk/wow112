@@ -19,7 +19,7 @@ concurrency:
 jobs:
   packaging-tests:
     runs-on: windows-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Run Windows packaging failure matrix
@@ -29,7 +29,7 @@ jobs:
   demo-artifact:
     needs: packaging-tests
     runs-on: windows-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Build DEMO_ONLY fixture binaries
@@ -53,6 +53,39 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path artifacts -Force | Out-Null
           .\packaging\summon_service_v1\scripts\Build-Package.ps1 -InputBinDir "$env:BIN_DIR" -SourceSha '${{ github.sha }}' -Version '1.0.0-demo.${{ github.run_number }}' -OutputZip "$pwd\artifacts\WoW112SummonServiceV1_DEMO_ONLY.zip" -DemoOnly
+      - name: Verify inner ZIP digest and release manifest contract
+        shell: powershell
+        run: |
+          $zip = "$pwd\artifacts\WoW112SummonServiceV1_DEMO_ONLY.zip"
+          $sidecar = "$zip.sha256"
+          $expected = ((Get-Content -LiteralPath $sidecar -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $expected){ throw "ZIP sidecar mismatch expected=$expected actual=$actual" }
+          $root = Join-Path $env:RUNNER_TEMP 'Summon Service Package With Spaces'
+          if(Test-Path $root){Remove-Item $root -Recurse -Force}
+          Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
+          .\packaging\summon_service_v1\scripts\Verify-ReleaseContract.ps1 -PackageRoot $root -ExpectedSourceSha '${{ github.sha }}' -RequireDemoOnly
+          "DEMO_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Operator launcher lifecycle smoke
+        shell: powershell
+        run: |
+          $env:WOW112_PASSWORD='PACKAGING_WRAPPER_CANARY_SECRET'
+          function Run-Cmd([string]$Name,[int]$Expected=0){
+            & cmd.exe /d /c "`"$env:DEMO_ROOT\$Name`""
+            $code=$LASTEXITCODE
+            if($code -ne $Expected){throw "$Name exit=$code expected=$Expected"}
+          }
+          Run-Cmd 'START_SUMMON_SERVICE.cmd'
+          Run-Cmd 'STATUS_SUMMON_SERVICE.cmd'
+          Run-Cmd 'BACKUP_DATA.cmd'
+          Run-Cmd 'STATUS_SUMMON_SERVICE.cmd'
+          Run-Cmd 'OPEN_CONSOLE.cmd'
+          Run-Cmd 'STOP_SUMMON_SERVICE.cmd'
+          Run-Cmd 'OPEN_CONSOLE.cmd' 3
+          $backups=@(Get-ChildItem -LiteralPath (Join-Path $env:DEMO_ROOT 'backups/data') -Filter '*.zip' -File)
+          if($backups.Count -lt 1){throw 'safe backup launcher produced no backup'}
+          $hits=Get-ChildItem -LiteralPath (Join-Path $env:DEMO_ROOT 'logs') -File -Recurse -ErrorAction SilentlyContinue | Select-String -SimpleMatch 'PACKAGING_WRAPPER_CANARY_SECRET' -ErrorAction SilentlyContinue
+          if($hits){throw 'credential canary leaked to logs'}
       - uses: actions/upload-artifact@v4
         with:
           name: WoW112SummonServiceV1_DEMO_ONLY-${{ github.sha }}
