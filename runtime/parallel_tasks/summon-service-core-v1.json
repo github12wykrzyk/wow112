@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "summon-service-core-v1",
+  "goal": "Build a long-lived headless Summon Service V1 that reuses proven TELE08/09/10 primitives, processes multiple customers sequentially, persists lifecycle state, emits the shared structured-event contract, and fails closed after uncertain mutations.",
+  "branch": "feature/summon-service-core-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "Wow112HeadlessAndroid",
+    "SummonServiceCoreV1",
+    "TELE08CanonicalParserQueue",
+    "TELE10TradePayment"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "headless-summon-runtime",
+    "summon-request-queue",
+    "tele10-payment-mutation-guards"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "User-owned isolated feature. Do not integrate to parallel. Live-tested authority is d753829314db39e5cd9aad57ce1d46daaf4d55da; minimal stored-source primitives are reused from b5c793d0a55915a9cfd3b08395ee16f7000e6352. No tools/operator_console or packaging ownership. Hard-stop and no automatic mutation retry after uncertain send are mandatory."
+}
