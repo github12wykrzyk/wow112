@@ -45,6 +45,12 @@ Required primitives include the supervisor, production whisper parser/request qu
 
 Synthetic/quality PASS is never equivalent to LIVE PASS.
 
+## Deterministic reconnect recovery
+
+The TELE07 supervisor may replay a logical summon cycle only for one proven-safe case: the CUSTOMER reconnects after `PASS_RITUAL_STARTED` but before receiving `SMSG_SUMMON_REQUEST` (`0x02AB`) and before any payment state is entered. The replay is bounded by the existing restart budget, recycles every role with fresh one-shot guards, and is recorded as a recovery in supervisor evidence.
+
+Any mutation-uncertain marker, active-role uncertain exit/stale condition, or payment/trade uncertainty remains fail-closed with no automatic replay.
+
 ## Security
 
-Credentials are never fixtures or report data. A future live orchestrator may consume `WOW112_PASSWORD` from process memory/environment or prompt with masked input when the canonical primitives are available. The current blocker is detected before credentials are requested.
+Credentials are never fixtures or report data. LIVE orchestration consumes `WOW112_PASSWORD` from process memory/environment; the password is not written to evidence or logs.
