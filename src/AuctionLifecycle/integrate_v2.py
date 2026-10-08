@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Second-pass Market Maker V2 integration.
 
-V1/canonical source files stay untouched. V2 writes generated adapter copies inside the
-build tree so the tracker can bind before world updates and dispatch marketmaker2 safely.
+V1/canonical source files stay untouched. V2 writes generated adapter/runtime copies inside
+the build tree so the tracker can bind before world updates and dispatch marketmaker2 safely.
 """
 from pathlib import Path
 import sys
@@ -12,6 +12,19 @@ def once(text: str, old: str, new: str) -> str:
     n=text.count(old)
     if n!=1: raise ValueError(f"MM2 integration marker mismatch count={n}: {old[:100]!r}")
     return text.replace(old,new,1)
+
+
+def include_safe(text: str, name: str) -> str:
+    # These files are injected with include! after existing items, so crate/module-level
+    # inner doc comments are illegal there. Convert comments only; runtime semantics stay unchanged.
+    text='\n'.join(('//'+line[3:]) if line.startswith('//!') else line for line in text.split('\n'))
+    if name=='market_maker_v2_inventory.rs':
+        text=once(text,'#[derive(Clone,Copy,Debug,PartialEq,Eq)]\nstruct Mm2PhysicalSlot',
+                       '#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]\nstruct Mm2PhysicalSlot')
+        old='if s.pushes.len()>128{s.pushes.drain(..s.pushes.len()-128);}'
+        new='if s.pushes.len()>128{let trim=s.pushes.len()-128;s.pushes.drain(..trim);}'
+        text=once(text,old,new)
+    return text
 
 
 def integrate(root: Path) -> None:
@@ -41,16 +54,18 @@ def integrate(root: Path) -> None:
     mm=once(mm,old,new)
     (gen/'mm2_market_maker_v1.rs').write_text(mm,encoding='utf-8')
 
+    runtime_names=[
+      'market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs',
+      'market_maker_v2_depth.rs','market_maker_v2_runtime.rs']
+    for name in runtime_names:
+        src=(life/name).read_text(encoding='utf-8-sig')
+        (gen/name).write_text(include_safe(src,name),encoding='utf-8')
+
     w=world7.read_text(encoding='utf-8-sig')
     w=once(w,'include!("../../../src/AuctionLifecycle/adapter.rs");','include!("mm2_adapter.rs");')
     w=once(w,'include!("../../../src/AuctionLifecycle/market_maker.rs");','include!("mm2_market_maker_v1.rs");')
     marker='include!("mm2_market_maker_v1.rs");\n'
-    tail=marker+''.join([
-      'include!("../../../src/AuctionLifecycle/market_maker_v2_inventory.rs");\n',
-      'include!("../../../src/AuctionLifecycle/market_maker_v2_io.rs");\n',
-      'include!("../../../src/AuctionLifecycle/market_maker_v2_targets.rs");\n',
-      'include!("../../../src/AuctionLifecycle/market_maker_v2_depth.rs");\n',
-      'include!("../../../src/AuctionLifecycle/market_maker_v2_runtime.rs");\n'])
+    tail=marker+''.join(f'include!("{name}");\n' for name in runtime_names)
     w=once(w,marker,tail)
 
     main.write_text(m,encoding='utf-8');world7.write_text(w,encoding='utf-8')
