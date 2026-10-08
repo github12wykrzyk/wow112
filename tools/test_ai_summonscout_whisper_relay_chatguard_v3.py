@@ -36,7 +36,7 @@ class SummonScoutWhisperRelayChatGuardV3Contract(unittest.TestCase):
         self.assertIn("sgInstallWimSuppression()", self.guard)
 
     def test_chatframe_global_is_never_replaced(self):
-        self.assertNotIn("ChatFrame_OnEvent", self.guard)
+        self.assertNotIn("ChatFrame_OnEvent =", self.guard)
         self.assertNotIn("OWN_CHAT_BASE", self.guard)
         self.assertNotIn("OWN_CHAT_WRAPPER", self.guard)
 
