@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "summon-service-soak-v1",
+  "goal": "Autonomous fault/adversarial/soak harness for Summon Service V1. Test and break whisper, queue, summon, payment, persistence and soak behavior without changing production summon logic; emit JSON/Markdown evidence and minimal reproducers.",
+  "branch": "feature/summon-service-soak-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "reference_proof_sha": "d753829314db39e5cd9aad57ce1d46daaf4d55da",
+  "modules": [
+    "SummonScout test harness",
+    "AutoSummonAssist source attestation"
+  ],
+  "dependencies": [
+    "current parallel SummonScout production sources",
+    "current parallel AutoSummonAssist production sources"
+  ],
+  "shared_resources": [
+    "Summon Service V1 event contract",
+    "SummonScout public parser/runtime surface",
+    "trusted payment ledger invariants"
+  ],
+  "status": "testing",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Test-only branch. Production SummonScout/native core must not be edited here. Synthetic PASS is not live-game proof. Source-attestation failures are retained as evidence/blockers instead of being repaired. No arbitrary Lua, packet send, economic mutation, or automatic integration is permitted. Live workflow intentionally requires separate evidenced live infrastructure and is not assumed from GitHub-hosted CI."
+}

@@ -1,0 +1,57 @@
+name: Summon Service Soak V1
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: Synthetic soak cycles (minimum 20)
+        required: true
+        default: "20"
+        type: choice
+        options: ["20", "50"]
+  push:
+    branches:
+      - feature/summon-service-soak-v1
+    paths:
+      - tools/summon_service_soak_v1.py
+      - tools/test_ai_summon_service_soak_v1.py
+      - .github/workflows/summon_service_soak_v1.yml
+      - runtime/parallel_tasks/summon-service-soak-v1.json
+      - src/AddOns/SummonScout/**
+      - src/AutoSummonAssist/**
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-fault-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Unit-test harness invariants
+        run: python -m unittest tools/test_ai_summon_service_soak_v1.py -v
+      - name: Run fault/adversarial/soak matrix
+        shell: bash
+        env:
+          REQUESTED_CYCLES: ${{ github.event.inputs.cycles }}
+        run: |
+          CYCLES="${REQUESTED_CYCLES:-20}"
+          python tools/summon_service_soak_v1.py \
+            --cycles "$CYCLES" \
+            --exact-sha "${GITHUB_SHA}" \
+            --base-ref parallel \
+            --run-id "${GITHUB_RUN_ID}" \
+            --strict-synthetic
+      - name: Upload JSON and Markdown evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: summon-service-soak-v1-${{ github.sha }}
+          path: artifacts/summon_service_soak_v1/
+          if-no-files-found: error
+          retention-days: 30
