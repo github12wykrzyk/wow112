@@ -25,7 +25,7 @@
     "operator-console-service-adapter",
     "summon-service-packaging"
   ],
-  "status": "testing",
+  "status": "preflight",
   "auto_integrate": false,
   "delivery_profiles": [],
   "notes": "Dedicated integration checkpoint created on operator instruction to stop blocking on Terminal Soak D. D is intentionally excluded. Core checkpoint: b13099734a77873b82ce74f75421fe7474e646fc. Ledger checkpoint: e77662ff13f78a59fcce060503e5e93adf66cd58. Console adapter checkpoint: 624efdb37962f43b7de893e8915a76bd1e38c536. Packaging checkpoint: 350e433620043ee758f0c03ffc07dd49eba5fa7c. Known packaging manual-rollback health-check failure remains open and must not be represented as a production release PASS until resolved."
