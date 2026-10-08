@@ -30,8 +30,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tested='5032859ba8bb916acbcd456d69a1c851746da450'
-          $run='37765051576'
+          $tested='b56f16ed0b420522172fb65fd73c7769ab835ce6'
+          $run='37765815470'
           $artifact="WoW112-AH-MARKET-MAKER-V2-FOUNDATION-$tested"
           git merge-base --is-ancestor $tested HEAD
           if ($LASTEXITCODE -ne 0) { throw 'tested MM2 SHA is not an ancestor' }
