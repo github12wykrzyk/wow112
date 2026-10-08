@@ -1,8 +1,9 @@
 -- SummonScout Whisper Relay spam guard for WoW 1.12.1 / Lua 5.0.
 --
--- Keeps the V1 relay transport and session model intact while fixing two live issues:
---   * relay H/K control whispers must not run as a permanent 5-second heartbeat,
---   * [SSWR1] transport packets must not pollute the player's visible whisper chat.
+-- Keeps the V1 relay transport and session model intact while fixing live spam:
+--   * zero SSWR1 H/K traffic while there is no real relay queue,
+--   * bounded handshake retries only while customer/lifecycle data is queued,
+--   * [SSWR1] transport packets are suppressed from the standard visible chat path.
 --
 -- The guard is intentionally last in TOC. It wraps the already-registered relay
 -- module, never replaces canonical summon/payment/routing primitives.
@@ -18,7 +19,7 @@ if type(relay) ~= "table" or type(relay.OnEvent) ~= "function"
     return
 end
 
-local VERSION = "1-bounded-handshake-hidden-control"
+local VERSION = "2-demand-only-handshake-hidden-control"
 local PROTO = "[SSWR1]"
 local HELLO_MAX_IDLE_ATTEMPTS = 3
 local HELLO_RETRY_1 = 10
@@ -94,8 +95,10 @@ local function sgHandshakeNeeded()
     local me = sgPlayer()
     if master == "" or me == "" or sgSame(master, me) then return false end
     if R.masterReady and sgSame(R.masterReadyName, master) then return false end
-    if (tonumber(G.helloAttempts) or 0) < HELLO_MAX_IDLE_ATTEMPTS then return true end
-    return sgRelayQueued()
+    -- Critical V2 rule: no startup/login/master-change heartbeat at all.
+    -- H exists only to release actual queued relay traffic.
+    if not sgRelayQueued() then return false end
+    return (tonumber(G.helloAttempts) or 0) < HELLO_MAX_IDLE_ATTEMPTS
 end
 
 local function sgWrappedOnUpdate()
@@ -133,7 +136,7 @@ local function sgWrappedOnUpdate()
         R.nextHelloAt = t + HELLO_PARK
     elseif due then
         G.helloAttempts = (tonumber(G.helloAttempts) or 0) + 1
-        if G.helloAttempts >= HELLO_MAX_IDLE_ATTEMPTS and not sgRelayQueued() then
+        if G.helloAttempts >= HELLO_MAX_IDLE_ATTEMPTS then
             G.nextHelloAllowedAt = t + HELLO_PARK
         else
             G.nextHelloAllowedAt = t + sgNextRetryDelay(G.helloAttempts)
@@ -154,14 +157,18 @@ local function sgWrappedOnEvent(ev, a1, a2, a3)
 
     if ev == "PLAYER_LOGIN" then
         sgResetHandshake(sgMaster())
+        R.nextHelloAt = sgNow() + HELLO_PARK
     elseif ev == "CHAT_MSG_WHISPER" and R.masterReady and sgSame(R.masterReadyName, sgMaster()) then
         -- A valid relay ACK was just consumed by the wrapped relay.
         G.helloAttempts = 0
         G.nextHelloAllowedAt = 0
         R.nextHelloAt = sgNow() + HELLO_PARK
     elseif ev == "CHAT_MSG_WHISPER" and not R.masterReady and sgRelayQueued() then
-        -- A real customer message after idle exhaustion rearms one immediate
-        -- handshake attempt; subsequent retries are still bounded/backed off.
+        -- Real queued customer traffic may arm an immediate bounded handshake.
+        -- Idle state never arms H.
+        if (tonumber(G.helloAttempts) or 0) >= HELLO_MAX_IDLE_ATTEMPTS then
+            G.helloAttempts = 0
+        end
         G.nextHelloAllowedAt = 0
         R.nextHelloAt = 0
     end
@@ -207,6 +214,7 @@ function M.Init()
     relay.OnEvent = sgWrappedOnEvent
     relay.OnUpdate = sgWrappedOnUpdate
     sgResetHandshake(sgMaster())
+    R.nextHelloAt = sgNow() + HELLO_PARK
     sgInstallChatSuppression()
     W112_SUMMONSCOUT_WHISPER_RELAY_SPAM_GUARD_VERSION = VERSION
 end
