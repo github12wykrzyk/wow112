@@ -26,22 +26,24 @@ fn mm2_owner_list(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:u64,
     }
     all.sort_by_key(|r|r.row.auction_id);println!("[MM2] MY_AUCTIONS count={} ms={}",all.len(),started.elapsed().as_millis());Ok(all)
 }
-fn mm2_tracker_stats()->Result<(u64,usize,usize),String>{mm2_inventory_healthy()?;MM2_INV.with(|c|{let s=c.borrow();Ok((s.generation,s.objects.len(),s.slots.len()))})}
+fn mm2_tracker_snapshot()->Result<(u64,usize,usize,bool),String>{mm2_inventory_healthy()?;MM2_INV.with(|c|{let s=c.borrow();Ok((s.generation,s.objects.len(),s.slots.len(),s.player!=0&&s.objects.contains_key(&s.player)))})}
+fn mm2_tracker_stats()->Result<(u64,usize,usize),String>{let(g,o,s,_)=mm2_tracker_snapshot()?;Ok((g,o,s))}
 fn mm2_preflight_journals(player:u64)->Result<(),String>{
     let(server,realm)=mm2_bound_identity(player)?;let recovery=Mm2RecoveryJournal::open(&server,realm,player)?;let saga=Mm2SagaJournal::open(&server,realm,player)?;
     if !recovery.is_idle(){return Err(format!("MM2_RECOVERY_REQUIRED state={:?} path={}",recovery.state(),recovery.path().display()));}
     if saga.has_unfinished(){return Err(format!("MM2_SAGA_RECONCILIATION_REQUIRED state={:?} path={}",saga.state(),saga.path().display()));}Ok(())
 }
 
-// lifecycle_dispatch is entered as soon as SMSG_LOGIN_VERIFY_WORLD is seen. Vanilla sends the
-// authoritative UPDATE_OBJECT burst immediately afterwards, so V2 must consume that burst through
-// its single authority reader before requiring inventory evidence. This is strictly read-only.
+// lifecycle_dispatch is entered as soon as SMSG_LOGIN_VERIFY_WORLD is seen. Do not call the
+// tracker ready merely because nearby world objects arrived: V2 needs the authoritative object for
+// its own player first. Requiring player_seen also drains the initial inventory burst before AH/mail
+// request fences, while keeping this phase strictly read-only and wall-clock bounded.
 fn mm2_warm_tracker(stream:&mut TcpStream,crypto:&mut HeaderCrypto)->Result<(),String>{
-    if let Ok((generation,objects,_))=mm2_tracker_stats(){if generation>0&&objects>0{return Ok(());}}
-    let started=Mm2Instant::now();let deadline=started+Mm2Duration::from_secs(6);
+    if let Ok((generation,_,_,player_seen))=mm2_tracker_snapshot(){if generation>0&&player_seen{return Ok(());}}
+    let started=Mm2Instant::now();let deadline=started+Mm2Duration::from_secs(10);
     mm2_wait_for(stream,crypto,deadline,"tracker-warmup",|_,_|{
-        let(generation,objects,slots)=mm2_tracker_stats()?;
-        if generation>0&&objects>0{println!("[MM2] TRACKER_WARM_PASS generation={generation} objects={objects} physical_slots={slots} ms={}",started.elapsed().as_millis());Ok(Some(()))}else{Ok(None)}
+        let(generation,objects,slots,player_seen)=mm2_tracker_snapshot()?;
+        if generation>0&&player_seen{println!("[MM2] TRACKER_WARM_PASS generation={generation} objects={objects} physical_slots={slots} player_seen=YES ms={}",started.elapsed().as_millis());Ok(Some(()))}else{Ok(None)}
     })
 }
 
@@ -50,8 +52,8 @@ fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64
     // Durable unresolved state blocks all new work before even a read-only world warm-up.
     mm2_preflight_journals(player)?;
     mm2_warm_tracker(stream,crypto)?;
-    let(generation,objects,slots)=mm2_tracker_stats()?;println!("[MM2] TRACKER generation={generation} objects={objects} physical_slots={slots}");
-    if generation==0||objects==0{return Err("MM2 inventory/world tracker has no authoritative object evidence".into());}
+    let(generation,objects,slots,player_seen)=mm2_tracker_snapshot()?;println!("[MM2] TRACKER generation={generation} objects={objects} physical_slots={slots}");
+    if generation==0||objects==0||!player_seen{return Err("MM2 inventory/world tracker lacks authoritative player evidence".into());}
     match mode.as_str(){
         "inventory"|"inventory-tracker"=>{println!("[MM2] INVENTORY_TRACKER_PASS read_only=YES");Ok(())},
         "mailbox"|"mailbox-resolver"=>{let(_ah,mail)=mm2_collect_candidates(stream,crypto,player,Mm2Duration::from_millis(1500))?;let mailbox=mm2_resolve_mailbox(stream,crypto,&mail)?;println!("[MM2] MAILBOX_RESOLVER_PASS mailbox=0x{mailbox:016X} read_only=YES");Ok(())},
