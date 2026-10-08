@@ -1,7 +1,7 @@
 {
   "enabled": true,
-  "request_id": "mm2-prompt1-final-audit-20261008-01",
-  "target_ref": "feature/ah-market-maker-v2",
-  "tier": "deep",
-  "task": "RETURN VERDICT FIRST. Audit Market Maker V2 Prompt 1 only at current target ref. Scope: src/AuctionLifecycle/market_maker_v2_policy.rs, market_maker_v2_recovery.rs, market_maker_v2_saga.rs, market_maker_v2_inventory.rs, market_maker_v2_io.rs, market_maker_v2_targets.rs, market_maker_v2_depth.rs, market_maker_v2_runtime.rs, market_maker_v2_freeze_tests.rs, coordinator.rs, integrate_v2.py, RUN_MM2_FINAL.ps1, and .github/workflows/ah_market_maker_v2.yml. Prompt1 must remain non-live: no canonical merge, no live economic mutations, no Prompt2 canary source in binary/artifact, no BUY semantic change. Check only BLOCKER/HIGH issues affecting fail-closed mutation safety, uncertain-send no-retry semantics, durable coordinator debt, mailbox/inventory authority, stale depth/owner/bid fences, launcher single-effect cap, source/artifact whitelist, and Windows x86 reproducibility. Also assess whether the current Parallel feature preflight lease failure is a Prompt1 code defect or an unrelated repo control-plane lease issue. Do not edit. Max 900 words. First line exactly one of: SAFE / SAFE WITH FIX / UNSAFE. For every issue give severity, exact file/symbol/evidence, and minimal correction."
+  "request_id": "ah-lifecycle-mailbox-review-20261008-01",
+  "target_ref": "feature/ah-auction-lifecycle-v1",
+  "tier": "cheap",
+  "task": "Review only the mailbox selection/list path causing the live post-BUY warning 'SMSG_MAIL_LIST_RESULT not received within 256 packets'. Focus on probes/Wow112HeadlessAndroid/src/world_poc05.rs, world_poc05_retry.rs, src/AuctionLifecycle/adapter.rs, and the live evidence that four mailbox GUIDs were discovered but discover_poc05_context_retry selects HashSet.iter().next(). Determine whether arbitrary mailbox selection is the most likely blocker, whether using the previously proven mailbox override 0xF11002A4A5002A0C for a one-shot SettleOne canary is safe, and what the minimal robust candidate-probing design should be. Do not edit. Preserve BUY semantics and uncertain-send no-retry. Return verdict first, exact evidence, and minimal recommendation. Max 700 words."
 }
