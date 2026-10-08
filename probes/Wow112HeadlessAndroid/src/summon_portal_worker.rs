@@ -1,4 +1,4 @@
-use crate::summon_mutation_coordinator::{MutationCoordinator, MutationKind};
+use crate::summon_mutation_coordinator::{MutationCoordinator, MutationKind, MutationState};
 use crate::summon_service_control::{ControlInbox, ServiceControlCommand};
 use crate::summon_service_core::{RequestPhase, ServiceSnapshot};
 use std::fs;
@@ -62,6 +62,13 @@ impl PortalWorker {
             return Err(format!("portal worker blocked by unresolved mutation: {reason}"));
         }
         let operation_id = format!("{request_id}:portal-use:{portal_guid:016X}");
+        if mutations
+            .records()
+            .iter()
+            .any(|record| record.operation_id == operation_id && record.state == MutationState::Confirmed)
+        {
+            return Ok(None);
+        }
         mutations.commit_before_send(
             &request_id,
             MutationKind::PortalUse,
@@ -131,7 +138,7 @@ impl PortalWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::summon_mutation_coordinator::{MutationKind, MutationState};
+    use crate::summon_mutation_coordinator::MutationKind;
     use crate::summon_service_control::apply_control;
     use crate::summon_service_runtime::{ServiceRuntimeConfig, SummonServiceRuntime};
     use std::cell::Cell;
@@ -211,6 +218,29 @@ mod tests {
             inbox.next().unwrap().unwrap().command,
             ServiceControlCommand::PortalCommitted { .. }
         ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn confirmed_click_is_idempotent_while_service_state_is_still_ritual_committed() {
+        let root = root("idempotent_window");
+        let (_runtime, _id) = ritual_ready(&root);
+        let worker = PortalWorker::open(&root).unwrap();
+        let sends = Cell::new(0u32);
+        worker
+            .execute_portal_use_once(0xD00D, 30, |_| {
+                sends.set(sends.get() + 1);
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+        let second = worker
+            .execute_portal_use_once(0xD00D, 31, |_| {
+                panic!("confirmed portal operation must not replay before control inbox is consumed")
+            })
+            .unwrap();
+        assert!(second.is_none());
+        assert_eq!(sends.get(), 1);
         let _ = fs::remove_dir_all(root);
     }
 
