@@ -44,14 +44,31 @@ fn finish_one(
         .confirm_from_server(&ritual_op, now + 3, "SMSG_SPELL_GO spell=698")
         .unwrap();
 
-    runtime.mark_summon_completed(&active, now + 4).unwrap();
+    let portal_op = format!("{active}:portal:1");
+    journal
+        .commit_before_send(
+            &active,
+            MutationKind::PortalUse,
+            &portal_op,
+            true,
+            now + 4,
+            "portal_use",
+        )
+        .unwrap();
+    journal.mark_send_ok(&portal_op, now + 5).unwrap();
+    journal
+        .confirm_from_server(&portal_op, now + 6, "SMSG_SUMMON_REQUEST observed")
+        .unwrap();
+    runtime.mark_portal_committed(&active).unwrap();
+
+    runtime.mark_summon_completed(&active, now + 7).unwrap();
     assert_eq!(
         runtime.request(&active).unwrap().phase,
         RequestPhase::AwaitingPayment
     );
 
     runtime
-        .mark_payment_received(&active, 40_000, &format!("trade:{active}"), now + 5)
+        .mark_payment_received(&active, 40_000, &format!("trade:{active}"), now + 8)
         .unwrap();
     assert_eq!(runtime.request(&active).unwrap().phase, RequestPhase::Completed);
     assert!(journal.unresolved().is_none());
