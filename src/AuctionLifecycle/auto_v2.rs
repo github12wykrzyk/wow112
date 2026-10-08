@@ -233,7 +233,7 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
     fn a(id:u32,owner:u64,count:u32,price:u32)->LifecycleAuction {
         LifecycleAuction{row:Poc06AuctionRecord{auction_id:id,item_id:10998,count,owner_guid:owner,start_bid:1,minimum_bid:0,buyout:price,time_left_ms:1000,highest_bid:0},signature:[0,0,0]}
     }
-    fn inv(entry:i32,stack:i32)->Poc05InventoryEntry { Poc05InventoryEntry{entry,stack} }
+    fn inv(entry:i32,stack:i32)->Poc05InventoryEntry { Poc05InventoryEntry{entry,stack,kind:"test"} }
     #[test] fn strict_ratio_price_respects_floor() {
         let own=a(1,7,1,50); let w=a(2,8,1,45);
         assert_eq!(lifecycle_auto_price(&own,&w,40),Some(44));
