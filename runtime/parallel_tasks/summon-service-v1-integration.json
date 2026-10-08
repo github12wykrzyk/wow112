@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "summon-service-v1-integration",
+  "goal": "Integrate Summon Service V1 Core, durable Ledger, Operator Console service adapter, and Packaging into one validation branch while explicitly excluding Terminal Soak D from the release gate.",
+  "branch": "feature/summon-service-v1-integration",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "SummonServiceCoreV1",
+    "SummonLedgerV1",
+    "OperatorConsoleServiceAdapterV1",
+    "SummonServicePackagingV1"
+  ],
+  "dependencies": [
+    "summon-service-core-v1",
+    "summon-ledger-v1",
+    "summon-console-service-adapter-v1",
+    "summon-service-packaging-v1"
+  ],
+  "shared_resources": [
+    "headless-summon-runtime",
+    "summon-request-queue",
+    "tele10-payment-mutation-guards",
+    "summon-service-event-contract",
+    "summon-ledger-db",
+    "operator-console-service-adapter",
+    "summon-service-packaging"
+  ],
+  "status": "testing",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Dedicated integration checkpoint created on operator instruction to stop blocking on Terminal Soak D. D is intentionally excluded. Core checkpoint: b13099734a77873b82ce74f75421fe7474e646fc. Ledger checkpoint: e77662ff13f78a59fcce060503e5e93adf66cd58. Console adapter checkpoint: 624efdb37962f43b7de893e8915a76bd1e38c536. Packaging checkpoint: 350e433620043ee758f0c03ffc07dd49eba5fa7c. Known packaging manual-rollback health-check failure remains open and must not be represented as a production release PASS until resolved."
+}
