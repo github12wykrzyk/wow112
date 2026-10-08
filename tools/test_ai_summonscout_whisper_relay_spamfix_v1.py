@@ -15,12 +15,12 @@ class SummonScoutWhisperRelaySpamFixV1Contract(unittest.TestCase):
         cls.toc = (ADDON / "SummonScout.toc").read_text(encoding="utf-8").splitlines()
         cls.task = json.loads(TASK.read_text(encoding="utf-8"))
 
-    def test_task_is_current_base_and_auto_integrates(self):
-        self.assertEqual(self.task["base_parallel_sha"], "2e5ea99c36e81d98b4074776370c6d0c63a7b67e")
-        self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-spamfix-v1")
-        self.assertEqual(self.task["status"], "ready_for_integration")
-        self.assertTrue(self.task["auto_integrate"])
+    def test_v1_task_is_integrated_history(self):
+        self.assertEqual(self.task["id"], "summonscout-whisper-relay-spamfix-v1")
+        self.assertEqual(self.task["status"], "integrated")
+        self.assertFalse(self.task["auto_integrate"])
         self.assertEqual(self.task["delivery_profiles"], [])
+        self.assertEqual(len(self.task["integrated_feature_sha"]), 40)
 
     def test_guard_loads_after_relay_and_intent_guard(self):
         relay = self.toc.index("SummonScout_WhisperRelayHot.lua")
@@ -29,7 +29,7 @@ class SummonScoutWhisperRelaySpamFixV1Contract(unittest.TestCase):
         self.assertGreater(guard, relay)
         self.assertGreater(guard, intent)
 
-    def test_permanent_five_second_heartbeat_is_neutralized(self):
+    def test_base_five_second_heartbeat_is_overridden(self):
         self.assertIn("local HELLO_MAX_IDLE_ATTEMPTS = 3", self.guard)
         self.assertIn("local HELLO_RETRY_1 = 10", self.guard)
         self.assertIn("local HELLO_RETRY_2 = 30", self.guard)
@@ -37,8 +37,16 @@ class SummonScoutWhisperRelaySpamFixV1Contract(unittest.TestCase):
         self.assertIn("local HELLO_PARK = 86400", self.guard)
         self.assertIn("R.nextHelloAt = t + HELLO_PARK", self.guard)
         self.assertIn("if R.masterReady and sgSame(R.masterReadyName, master) then", self.guard)
-        self.assertIn("return sgRelayQueued()", self.guard)
         self.assertIn("local HELLO_INTERVAL = 5", self.relay)
+
+    def test_zero_idle_handshake_regression(self):
+        marker = "if not sgRelayQueued() then return false end"
+        self.assertIn(marker, self.guard)
+        start = self.guard.index("local function sgHandshakeNeeded()")
+        end = self.guard.index("local function sgWrappedOnUpdate()")
+        block = self.guard[start:end]
+        self.assertIn(marker, block)
+        self.assertIn("return (tonumber(G.helloAttempts) or 0) < HELLO_MAX_IDLE_ATTEMPTS", block)
 
     def test_empty_customer_whispers_are_dropped_before_capture(self):
         marker = 'if ev == "CHAT_MSG_WHISPER" and sgTrim(a1 or "") == "" then'
