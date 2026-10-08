@@ -72,11 +72,11 @@ impl GroupAcceptWorker {
         let operation_id = format!("{request_id}:group-accept:{inviter_key}");
         mutations.commit_before_send(
             &request_id,
-            MutationKind::Invite,
+            MutationKind::GroupAccept,
             &operation_id,
             false,
             now_ms,
-            format!("direction=accept inviter={inviter_key}"),
+            format!("inviter={inviter_key}"),
         )?;
         let claim = GroupAcceptClaim {
             request_id,
