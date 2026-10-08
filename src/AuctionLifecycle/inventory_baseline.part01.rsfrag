@@ -1,0 +1,141 @@
+// Pure (std-only) inventory-baseline logic for AUTO Lifecycle V2.
+// Included into the canonical module by integrate.py and also compiled standalone by CI
+// (`rustc --edition=2021 --test`) so every state transition is unit tested without a socket.
+//
+// Why this exists: the lifecycle inventory cache is fed by object-update packets. A single
+// update that the typed parser rejects used to wipe the cache, and nothing could ever restore
+// it (vanilla has no read-only "resend my inventory" request). The live server emits many tiny
+// compressed updates that the typed parser rejects, so the cache was always empty before the
+// first CANCEL and every candidate was skipped as "baseline not established".
+//
+// Model: an unparsable update is classified by an independent byte-level scanner.
+//   Irrelevant  -> proven to touch no Item/Container GUID and not the player itself.
+//   Relevant    -> may have touched inventory (or could not be proven otherwise): uncertainty
+//                  is recorded and is STICKY. Unknown is never treated as "item absent".
+
+use std::fmt::Write as _;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LifecycleUnparsed { Irrelevant, Relevant(String) }
+
+#[derive(Debug, Default, Clone)]
+struct LifecycleBaselineFacts {
+    parsed_updates: u32,
+    irrelevant_unparsed: u32,
+    uncertain: u32,
+    first_uncertain: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LifecycleBaselineItem { guid: u64, entry: i32, stack: i32, verified: bool, container: bool }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LifecycleBaselineVerdict {
+    NotEstablished(String),
+    Invalid(String),
+    Present(Vec<(u64, i32)>),
+    Absent,
+}
+
+impl LifecycleBaselineVerdict {
+    fn describe(&self) -> String {
+        match self {
+            Self::NotEstablished(w) => format!("inventory baseline not established: {w}"),
+            Self::Invalid(w) => format!("inventory baseline invalid: {w}"),
+            Self::Present(v) => format!("same item present in bags (guid,stack)={v:?}"),
+            Self::Absent => "target item absent".to_string(),
+        }
+    }
+}
+
+fn lifecycle_hex_prefix(d: &[u8], n: usize) -> String {
+    let mut s = String::new();
+    for b in d.iter().take(n) { let _ = write!(s, "{b:02x}"); }
+    s
+}
+
+fn lifecycle_baseline_note_uncertain(f: &mut LifecycleBaselineFacts, why: String) {
+    f.uncertain = f.uncertain.saturating_add(1);
+    if f.first_uncertain.is_none() { f.first_uncertain = Some(why); }
+}
+
+// ---------------------------------------------------------------- authoritative slot structure
+//
+// Protocol analysis (vanilla 1.12.1):
+//  * SMSG_LOGIN_VERIFY_WORLD is sent BEFORE the player is added to the map, so the create-object
+//    burst for the player and every bag/item follows it. No packet marks "initial object set
+//    complete"; a fixed packet count after coinage proves nothing.
+//  * The Player object carries one GUID per inventory slot (PLAYER_FIELD_INV_SLOT_HEAD, 113
+//    slots = ItemSlot 0..112: equipment, 4 bags, 16 backpack, bank, bank bags, buyback, keyring).
+//  * Every bag Container carries CONTAINER_NUM_SLOTS (field 48) and one GUID per slot starting at
+//    CONTAINER_SLOT_1 (field 50, 2 dwords each).
+// Therefore the EXPECTED item set is derivable from authoritative fields, and the baseline is
+// complete only when every expected GUID is a verified, observed object (and nothing else owned
+// by the player is observed). Unknown at any step is never "absent".
+
+const LIFECYCLE_INV_SLOTS: usize = 113;
+const LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD: u16 = 48;
+const LIFECYCLE_CONTAINER_SLOT1_FIELD: u16 = 50;
+const LIFECYCLE_CONTAINER_MAX_SLOTS: usize = 36;
+
+#[derive(Debug, Clone)]
+struct LifecycleContainer {
+    created: bool,
+    unknown: bool,
+    num_slots: Option<u32>,
+    lo: [Option<u32>; LIFECYCLE_CONTAINER_MAX_SLOTS],
+    hi: [Option<u32>; LIFECYCLE_CONTAINER_MAX_SLOTS],
+}
+impl LifecycleContainer {
+    fn blank() -> Self { Self { created: false, unknown: false, num_slots: None, lo: [None; LIFECYCLE_CONTAINER_MAX_SLOTS], hi: [None; LIFECYCLE_CONTAINER_MAX_SLOTS] } }
+    fn apply(&mut self, fields: &[(u16, u32)]) {
+        for &(f, v) in fields {
+            if f == LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD { self.num_slots = Some(v); }
+            else if f >= LIFECYCLE_CONTAINER_SLOT1_FIELD && usize::from(f - LIFECYCLE_CONTAINER_SLOT1_FIELD) < LIFECYCLE_CONTAINER_MAX_SLOTS * 2 {
+                let i = usize::from(f - LIFECYCLE_CONTAINER_SLOT1_FIELD) / 2;
+                if (f - LIFECYCLE_CONTAINER_SLOT1_FIELD) % 2 == 0 { self.lo[i] = Some(v); } else { self.hi[i] = Some(v); }
+            }
+        }
+    }
+    fn slot(&self, i: usize) -> Option<u64> { Some(u64::from(self.lo[i]?) | (u64::from(self.hi[i]?) << 32)) }
+}
+
+#[derive(Debug, Clone)]
+struct LifecycleInvTracker {
+    player_created: bool,
+    player_slots: [Option<u64>; LIFECYCLE_INV_SLOTS],
+    containers: std::collections::HashMap<u64, LifecycleContainer>,
+}
+impl Default for LifecycleInvTracker {
+    fn default() -> Self { Self { player_created: false, player_slots: [None; LIFECYCLE_INV_SLOTS], containers: std::collections::HashMap::new() } }
+}
+impl LifecycleInvTracker {
+    /// Player CREATE block: authoritative for every slot; an absent field means an empty slot.
+    fn player_create(&mut self, slots: &[Option<u64>; LIFECYCLE_INV_SLOTS]) {
+        self.player_created = true;
+        for (d, s) in self.player_slots.iter_mut().zip(slots.iter()) { *d = Some(s.unwrap_or(0)); }
+    }
+    /// Player VALUES block: only slots present in the delta change.
+    fn player_values(&mut self, slots: &[Option<u64>; LIFECYCLE_INV_SLOTS]) {
+        for (d, s) in self.player_slots.iter_mut().zip(slots.iter()) { if let Some(v) = s { *d = Some(*v); } }
+    }
+    fn container_create(&mut self, guid: u64, fields: &[(u16, u32)]) {
+        let mut c = LifecycleContainer::blank();
+        c.created = true;
+        c.lo = [Some(0); LIFECYCLE_CONTAINER_MAX_SLOTS];
+        c.hi = [Some(0); LIFECYCLE_CONTAINER_MAX_SLOTS];
+        c.apply(fields);
+        self.containers.insert(guid, c);
+    }
+    fn container_values(&mut self, guid: u64, fields: &[(u16, u32)]) {
+        self.containers.entry(guid).or_insert_with(LifecycleContainer::blank).apply(fields);
+    }
+    /// A container was seen through a path that cannot read its slot list.
+    fn container_unknown(&mut self, guid: u64) {
+        let c = self.containers.entry(guid).or_insert_with(LifecycleContainer::blank);
+        if !c.created { c.unknown = true; }
+    }
+    fn remove(&mut self, guid: u64) { self.containers.remove(&guid); }
+    fn apply_event(&mut self, ev: &LifecycleInvEvent) {
+        match ev {
+            LifecycleInvEvent::ContainerCreate { guid, fields } => self.container_create(*guid, fields),
