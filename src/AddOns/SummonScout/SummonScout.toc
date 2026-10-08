@@ -20,6 +20,7 @@ SummonScout_WorldBuyerRelationHot.lua
 SummonScout_RosterOwnershipHot.lua
 SummonScout_FallbackRouterHot.lua
 SummonScout_FallbackRouterHubAckHot.lua
+SummonScout_TotalPoolHot.lua
 SummonScout_UnknownWhisperReportHot.lua
 SummonScout_DestinationInfoGuardHot.lua
 SummonScout_CompetitionSmartHot.lua
