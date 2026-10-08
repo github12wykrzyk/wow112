@@ -127,12 +127,27 @@ class OperatorCommandQueue:
         self.conn.commit()
 
     def enqueue(self, command: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-        canonical = _canonical_command(command)
+        raw = dict(command)
+        supplied_id = _clean_optional(raw.get("command_id"), "command_id")
+        if supplied_id:
+            existing = self.conn.execute(
+                "SELECT payload_hash,ts_utc FROM operator_commands WHERE command_id=?",
+                (supplied_id,),
+            ).fetchone()
+            if existing and not _clean_optional(raw.get("ts_utc"), "ts_utc"):
+                # Replays that omit ts_utc inherit the original canonical timestamp,
+                # so the same logical command_id remains idempotent.
+                raw["ts_utc"] = existing["ts_utc"]
+        else:
+            existing = None
+
+        canonical = _canonical_command(raw)
         payload_hash = _payload_hash(canonical)
-        existing = self.conn.execute(
-            "SELECT payload_hash FROM operator_commands WHERE command_id=?",
-            (canonical["command_id"],),
-        ).fetchone()
+        if existing is None:
+            existing = self.conn.execute(
+                "SELECT payload_hash,ts_utc FROM operator_commands WHERE command_id=?",
+                (canonical["command_id"],),
+            ).fetchone()
         if existing:
             if existing["payload_hash"] == payload_hash:
                 return "duplicate", canonical
