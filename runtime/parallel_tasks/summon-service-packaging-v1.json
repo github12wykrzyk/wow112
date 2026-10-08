@@ -11,7 +11,7 @@
   "shared_resources": [
     "summon-service-packaging"
   ],
-  "status": "complete",
+  "status": "done",
   "auto_integrate": false,
   "delivery_profiles": [],
   "notes": "Packaging-only track complete and validated on dedicated Windows CI. Authoritative run 37755443779 passed packaging-tests and demo-artifact on exact source SHA f91d912b83d07f4fb14b183248a575b8637b631e. Downloaded DEMO_ONLY artifact 11539558136 was independently inspected: outer artifact digest matched GitHub metadata, inner ZIP SHA256 matched its sidecar, manifest source_sha matched exact HEAD, demo_only=true, all manifest file hashes verified with zero mismatches, required launchers and both expected executable names were present. No summon implementation, no AH, no edits to probes/Wow112HeadlessAndroid, tools/operator_console, or ledger core. This task remains intentionally not auto-integrated into parallel."
