@@ -1,7 +1,7 @@
 {
-  "enabled": false,
-  "request_id": "ah-market-maker-v1-deep-review-20261008-002",
+  "enabled": true,
+  "request_id": "ah-market-maker-v1-narrow-final-20261008-003",
   "target_ref": "feature/ah-market-maker-v1",
   "tier": "deep",
-  "task": "Deep review request already dispatched. Disabled to avoid duplicate runs."
+  "task": "NARROW FINAL REVIEW. Do not explore the repository broadly and do not run tests. Read only git diff 5b36272d7711b8fc4fab8dd24047d5100d02bb6c..HEAD plus src/AuctionLifecycle/market_maker.rs and market_maker_policy.rs if needed. Answer immediately with a compact verdict on exactly three questions: (1) Does enforcing max_clear_units <= max_post_units correctly prevent the bot from buying a clear volume it cannot later split/post? Identify any bypass. (2) Is requiring final MmSnapshot.complete before mm_target_for_stock safe while intentionally not requiring stable, given CLEAR decisions still require complete&&stable and floors remain enforced? Identify any path that could post below floor or from an incomplete scan. (3) Is keeping an equal-price external competitor as Keep (rather than forcing a 1c undercut) economically/safety acceptable for V1, or is it a correctness violation of the intended lowest-buyout strategy? Return BLOCKER/HIGH/MEDIUM/LOW findings only, with exact symbol names and minimal fix. Do not inspect unrelated files. Produce the final answer within the available turns instead of continuing exploration."
 }
