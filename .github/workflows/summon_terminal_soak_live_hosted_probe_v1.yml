@@ -11,7 +11,7 @@ permissions:
 jobs:
   live-hosted-probe:
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
     steps:
@@ -27,14 +27,14 @@ jobs:
       - name: Build proven headless roles
         shell: pwsh
         run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip --bin tele10_ledger --bin tele07_supervisor --bin tele06a_acceptor_runtime --bin tele06a_ritual_runtime
-      - name: Real wire E2E soak - 20 cycles
+      - name: Real wire E2E soak - 50 cycles
         shell: pwsh
-        run: python tools/summon_terminal_soak/harness.py --live --cycles 20
+        run: python tools/summon_terminal_soak/harness.py --live --cycles 50
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LIVE-hosted-soak20-${{ github.sha }}
+          name: LIVE-hosted-soak50-${{ github.sha }}
           path: |
             tools/summon_terminal_soak/runs/**
             tools/summon_terminal_soak/results/**
