@@ -30,8 +30,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tested='b56f16ed0b420522172fb65fd73c7769ab835ce6'
-          $run='37765815470'
+          $tested='48f1519408876382c7fd8f0945513f4f7006a4f1'
+          $run='37766794478'
           $artifact="WoW112-AH-MARKET-MAKER-V2-FOUNDATION-$tested"
           git merge-base --is-ancestor $tested HEAD
           if ($LASTEXITCODE -ne 0) { throw 'tested MM2 SHA is not an ancestor' }
@@ -70,9 +70,9 @@ jobs:
           $results=@()
           foreach($case in @(
             @{mode='inventory-tracker'; marker='[MM2] INVENTORY_TRACKER_PASS'},
-            @{mode='mailbox-resolver'; marker='[MM2] MAILBOX_RESOLVER_PASS'},
-            @{mode='capability'; marker='[MM2] CAPABILITY_PASS'},
-            @{mode='targeted-depth'; marker='[MM2] TARGETED_DEPTH_PASS'}
+            @{mode='auction-capability'; marker='[MM2] AUCTION_CAPABILITY_PASS'},
+            @{mode='targeted-depth'; marker='[MM2] TARGETED_DEPTH_PASS'},
+            @{mode='mailbox-resolver'; marker='[MM2] MAILBOX_RESOLVER_PASS'}
           )) {
             $env:WOW112_MM2_MODE=$case.mode
             if ($case.mode -eq 'targeted-depth') { $env:WOW112_MM2_ITEM_ID='13468' } else { Remove-Item Env:WOW112_MM2_ITEM_ID -ErrorAction SilentlyContinue }
