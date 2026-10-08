@@ -1,5 +1,5 @@
 //! One process/session lease and durable no-retry barrier for every economic mutation.
-use std::{cell::RefCell, fs::{self, File, OpenOptions}, io::Write, path::{Path, PathBuf}};
+use std::{cell::RefCell, fs::{self, File, OpenOptions}, io::{Read,Write}, path::{Path, PathBuf}};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind { Buy, Mail, Cancel, Post, Split }
@@ -13,6 +13,25 @@ pub struct Coordinator {
     active: Option<Kind>, sent: bool, stopped: bool,
 }
 fn fail(e: impl std::fmt::Display) -> String { format!("AH_MUTATION_COORDINATOR_HARD_STOP: {e}") }
+fn coordinator_root()->Result<PathBuf,String>{
+    Ok(if cfg!(windows) {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or_else(||fail("LOCALAPPDATA unavailable"))?)
+    } else {
+        PathBuf::from(std::env::var_os("HOME").ok_or_else(||fail("HOME unavailable"))?).join(".local/share")
+    }.join("WoW112/MutationCoordinatorV1"))
+}
+fn scope_key(server:&str,realm:u32,guid:u64)->Result<String,String>{
+    let server=server.to_ascii_lowercase();
+    let encoded=server.bytes().map(|b|format!("{b:02x}")).collect::<String>();
+    if encoded.is_empty() || encoded.len()>160 || guid==0 { return Err(fail("invalid server/character identity")); }
+    Ok(format!("{encoded}-{realm}-{guid:016x}"))
+}
+pub fn inspect_pending(server:&str,realm:u32,guid:u64)->Result<Option<String>,String>{
+    let path=coordinator_root()?.join(format!("{}.pending",scope_key(server,realm,guid)?));
+    if !path.exists(){return Ok(None);}
+    let mut text=String::new();File::open(&path).map_err(fail)?.read_to_string(&mut text).map_err(fail)?;
+    Ok(Some(text))
+}
 impl Coordinator {
     pub fn open(root: &Path, key: &str) -> Result<Self, String> {
         if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
@@ -77,21 +96,16 @@ thread_local! { static CURRENT: RefCell<Option<Coordinator>> = const { RefCell::
 pub struct Session;
 impl Drop for Session { fn drop(&mut self) { CURRENT.with(|c| { c.borrow_mut().take(); }); } }
 pub fn bind(server: &str, realm: u32, guid: u64) -> Result<Session,String> {
-    let root = if cfg!(windows) {
-        PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or_else(||fail("LOCALAPPDATA unavailable"))?)
-    } else {
-        PathBuf::from(std::env::var_os("HOME").ok_or_else(||fail("HOME unavailable"))?).join(".local/share")
-    }.join("WoW112/MutationCoordinatorV1");
-    // An explicit stable server identity avoids world-address aliases splitting the lock.
-    let server=server.to_ascii_lowercase();
-    let encoded=server.bytes().map(|b|format!("{b:02x}")).collect::<String>();
-    if encoded.is_empty() || encoded.len()>160 || guid==0 { return Err(fail("invalid server/character identity")); }
+    let root=coordinator_root()?;let key=scope_key(server,realm,guid)?;
     CURRENT.with(|c| {
         let mut c=c.borrow_mut();
         if c.is_some() { return Err(fail("session already bound")); }
-        *c=Some(Coordinator::open(&root,&format!("{encoded}-{realm}-{guid:016x}"))?); Ok(Session)
+        *c=Some(Coordinator::open(&root,&key)?); Ok(Session)
     })
 }
+// Read-only MM2 diagnostic/reconcile modes intentionally do not acquire the mutation lock or touch
+// `.pending`. They cannot call before_send for mutation opcodes because CURRENT remains None.
+pub fn bind_read_only() -> Session { Session }
 pub fn before_send(opcode:u32,payload:&[u8])->Result<(),String> {
     if !matches!(opcode,0x10e|0x245|0x246|0x256|0x257|0x25a) { return Ok(()); }
     CURRENT.with(|c| c.borrow_mut().as_mut().ok_or_else(||fail("no character session"))?.before_send(opcode,payload))
@@ -119,4 +133,5 @@ mod tests {
     #[test] fn split_reconcile_allows_post() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Split).unwrap();c.before_send(0x10e,&[]).unwrap();c.finish(Ok(())).unwrap();c.begin(Kind::Post).unwrap();c.before_send(0x256,&[]).unwrap();c.finish(Ok(())).unwrap();drop(c);assert!(Coordinator::open(&r,"a").is_ok());fs::remove_dir_all(r).unwrap();}
     #[test] fn no_send_failure_is_not_uncertain() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Buy).unwrap();assert!(c.finish(Err("stale target".into())).is_err());assert!(!c.sent_in_current_tx());assert!(!c.has_pending_send());c.begin(Kind::Mail).unwrap();assert!(c.before_send(0x257,&[]).is_err());assert!(!c.sent_in_current_tx());c.finish(Err("wrong op".into())).unwrap_err();drop(c);fs::remove_dir_all(r).unwrap();}
     #[test] fn nested_and_duplicate_sends_blocked() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Cancel).unwrap();assert!(c.begin(Kind::Buy).is_err());c.before_send(0x257,&[]).unwrap();assert!(c.before_send(0x257,&[]).is_err());drop(c);fs::remove_dir_all(r).unwrap();}
+    #[test] fn read_only_session_has_no_mutation_permit(){let _s=bind_read_only();assert!(before_send(0x257,&[]).is_err());}
 }
