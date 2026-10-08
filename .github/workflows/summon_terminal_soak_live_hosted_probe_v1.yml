@@ -1,8 +1,6 @@
 name: LIVE Summon Terminal Soak V1 Hosted Probe
 
 on:
-  push:
-    branches: [ 'feature/summon-terminal-soak-v1' ]
   workflow_dispatch:
 
 permissions:
