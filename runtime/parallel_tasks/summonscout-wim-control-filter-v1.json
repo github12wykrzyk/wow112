@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-wim-control-filter-v1",
+  "goal": "Hide all SummonScout internal control-plane whispers from WIM while preserving the native customer conversation relay. Live evidence showed [SSI] lifecycle reports and [SSFR1] fallback-router packets visible in the Kalisum WIM window after SSWR1-only filtering.",
+  "branch": "feature/summonscout-wim-control-filter-v1",
+  "base_parallel_sha": "7e996edc8fe07188e92486164ff2c00c9fdc0984",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": ["SummonScout"],
+  "dependencies": ["summonscout-relay-native-whisper-v1"],
+  "shared_resources": ["SummonScout WIM filters", "SummonScout internal whisper control plane"],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Keep canonical SSWR1 native rendering unchanged. Extend the existing WIM Block filter to the other already-reserved internal families observed live: %[SSFR1%] and %[SSI . This is presentation-only, introduces no new SendChatMessage path, and self-repairs filters during OnUpdate just like the existing SSWR1 filter. Expected live result after exact-SHA update + /reload: no [SSI ...], [SSFR1] or raw [SSWR1] lines in WIM; only rendered customer conversation remains."
+}
