@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summon-ledger-v1",
+  "goal": "Implement an independent crash-safe persistent Summon Service V1 ledger with structured-event ingestion, durable payment/summon history, operator queries, migrations, tests and benchmark evidence.",
+  "branch": "feature/summon-ledger-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "SummonLedger"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summon-ledger-db-schema",
+    "summon-ledger-event-contract"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "User-directed isolated feature from current parallel. No integration to parallel/main. Runtime/gameplay, operator console and packaging are out of scope."
+}
