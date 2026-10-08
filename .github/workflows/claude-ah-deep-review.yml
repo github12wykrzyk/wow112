@@ -1,0 +1,139 @@
+name: Claude AH Deep Review
+
+on:
+  push:
+    branches: [claude-requests]
+    paths:
+      - '.ai/claude/ah-deep-request.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-ah-deep-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout request
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Read request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .ai/claude/ah-deep-request.json
+          target_ref="$(jq -er '.target_ref' .ai/claude/ah-deep-request.json)"
+          request_id="$(jq -er '.request_id' .ai/claude/ah-deep-request.json)"
+          task="$(jq -er '.task' .ai/claude/ah-deep-request.json)"
+          delim="TASK_${GITHUB_RUN_ID}_${RANDOM}"
+          {
+            echo "target_ref=$target_ref"
+            echo "request_id=$request_id"
+            echo "task<<$delim"
+            printf '%s\n' "$task"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.request.outputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Target SHA
+        id: target
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Baseline state
+        id: baseline
+        shell: bash
+        run: |
+          echo "status=$(git status --porcelain=v1 | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Claude deep review
+        id: claude
+        uses: anthropics/claude-code-base-action@4541c106b5f267e74536bf5dfaf887c09ae88edf
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: 'false'
+          prompt: |
+            You are the second engineering reviewer. This is a READ-ONLY root-cause review.
+            Repository: ${{ github.repository }}
+            Exact target SHA: ${{ steps.target.outputs.sha }}
+            Request: ${{ steps.request.outputs.request_id }}
+
+            Rules:
+            - Do not edit/create/delete/commit/push files.
+            - Do not delegate to subagents.
+            - Start only with paths/symbols named in the task; expand only when strictly required.
+            - Prefer exact code evidence and a decisive architecture recommendation over exploration.
+            - Produce the final report before the turn limit. Keep it under 2200 words.
+            - Explicitly distinguish confirmed defects, plausible hypotheses, and missing live evidence.
+
+            TASK:
+            ${{ steps.request.outputs.task }}
+          claude_args: |
+            --model sonnet
+            --max-turns 12
+            --max-budget-usd 2.00
+            --permission-mode plan
+            --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell,Task"
+
+      - name: Enforce read-only
+        if: always()
+        shell: bash
+        env:
+          BEFORE: ${{ steps.baseline.outputs.status }}
+        run: |
+          AFTER="$(git status --porcelain=v1 | sha256sum | cut -d' ' -f1)"
+          if [ "$AFTER" != "$BEFORE" ]; then
+            echo 'Claude modified repository state; failing closed.' >&2
+            git status --short >&2
+            exit 1
+          fi
+
+      - name: Extract report
+        if: always() && steps.claude.outputs.execution_file != ''
+        shell: bash
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          events=json.loads(Path(os.environ['EXECUTION_FILE']).read_text(encoding='utf-8'))
+          report=''
+          for event in reversed(events):
+              if isinstance(event,dict) and event.get('type')=='result' and isinstance(event.get('result'),str) and event.get('result'):
+                  report=event['result']; break
+          if not report:
+              for event in reversed(events):
+                  if not isinstance(event,dict) or event.get('type')!='assistant': continue
+                  chunks=[b.get('text','') for b in ((event.get('message') or {}).get('content') or []) if isinstance(b,dict) and b.get('type')=='text']
+                  if any(chunks): report='\n'.join(x for x in chunks if x); break
+          if not report: report='NO_FINAL_REPORT'
+          Path('claude-ah-deep-report.md').write_text(report+'\n',encoding='utf-8')
+          Path('claude-ah-deep-meta.json').write_text(json.dumps({'request_id':os.environ['REQUEST_ID'],'target_sha':os.environ['TARGET_SHA'],'conclusion':os.environ['CONCLUSION']},indent=2)+'\n',encoding='utf-8')
+          PY
+
+      - name: Upload report
+        if: always() && hashFiles('claude-ah-deep-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-ah-deep-${{ steps.request.outputs.request_id }}-${{ github.run_id }}
+          path: |
+            claude-ah-deep-report.md
+            claude-ah-deep-meta.json
+          retention-days: 14
