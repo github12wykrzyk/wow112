@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "antiafk-character-profile-v1",
+  "goal": "Persist AutoSummonAssist Anti-AFK independently per live WoW character GUID, including same-process character switches, while preserving the existing level-1 and active-SLAVE forced-ON policy and per-window SPACE delivery.",
+  "branch": "feature/antiafk-character-profile-v1",
+  "base_parallel_sha": "cc813253ceacb9b87d3ead57de491d032fafcfec",
+  "status": "preflight",
+  "auto_integrate": false,
+  "modules": [
+    "AutoSummonAssist"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "wow112_parallel_gui.ini autosummonassist persistence namespace"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Isolates setting 21 by 64-bit character GUID. The native control provider stays unavailable to persistence until a live character GUID is bound, preventing restoration of the legacy shared [autosummonassist] section. AutoSummonAssist also reloads the scoped value itself on character changes so same-process relog/character switching does not inherit the previous character state. No AH/BUY, payment, summon-cast, portal-click or trade semantics are changed."
+}
