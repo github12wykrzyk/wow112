@@ -1,0 +1,112 @@
+            LifecycleInvEvent::ContainerValues { guid, fields } => self.container_values(*guid, fields),
+        }
+    }
+}
+
+fn lifecycle_baseline_summary(f: &LifecycleBaselineFacts, inv: &LifecycleInvTracker, cache: &[LifecycleBaselineItem]) -> String {
+    let nz = inv.player_slots.iter().filter(|s| s.is_some_and(|g| g != 0)).count();
+    let unk = inv.player_slots.iter().filter(|s| s.is_none()).count();
+    let created = inv.containers.values().filter(|c| c.created && !c.unknown).count();
+    format!("player_created={} slots_nonzero={nz} slots_unknown={unk} containers_tracked={} containers_with_slots={created} cached_objects={} parsed_updates={} irrelevant_unparsed={} uncertain={} first_uncertain={}",
+        inv.player_created, inv.containers.len(), cache.len(), f.parsed_updates, f.irrelevant_unparsed, f.uncertain, f.first_uncertain.as_deref().unwrap_or("-"))
+}
+
+/// The only place that may answer "is the target item absent from bags".
+/// Absent requires: no sticky uncertainty, the player's slot fields known, and EVERY referenced
+/// GUID (player slots + contents of every referenced container) observed as a verified object,
+/// with no extra owned object outside that set. Anything else is not Absent.
+fn lifecycle_baseline_verdict(f: &LifecycleBaselineFacts, inv: &LifecycleInvTracker, cache: &[LifecycleBaselineItem], item: u32) -> LifecycleBaselineVerdict {
+    use LifecycleBaselineVerdict as V;
+    if f.uncertain > 0 {
+        return V::Invalid(format!("{} relevant/undecodable update(s) since login, first: {}", f.uncertain, f.first_uncertain.clone().unwrap_or_default()));
+    }
+    // Presence is decided on whatever is cached, even if the baseline is incomplete (still a skip).
+    let hit: Vec<(u64, i32)> = cache.iter().filter(|c| !c.container && c.entry > 0 && c.entry as u32 == item).map(|c| (c.guid, c.stack)).collect();
+    if !hit.is_empty() { return V::Present(hit); }
+    if !inv.player_created { return V::NotEstablished("player create block (slot fields) not observed".into()); }
+    if let Some(i) = inv.player_slots.iter().position(|s| s.is_none()) { return V::NotEstablished(format!("player slot {i} unknown")); }
+
+    let by_guid: std::collections::HashMap<u64, &LifecycleBaselineItem> = cache.iter().map(|c| (c.guid, c)).collect();
+    let mut expected: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut missing: Vec<u64> = Vec::new();
+    let mut containers: Vec<u64> = Vec::new();
+
+    let mut top: Vec<u64> = inv.player_slots.iter().flatten().copied().filter(|g| *g != 0).collect();
+    top.sort_unstable(); top.dedup();
+    for g in &top {
+        expected.insert(*g);
+        match by_guid.get(g) {
+            Some(c) if c.verified && c.entry > 0 && c.stack > 0 => { if c.container || inv.containers.contains_key(g) { containers.push(*g); } }
+            _ => missing.push(*g),
+        }
+    }
+    for g in &containers {
+        let Some(c) = inv.containers.get(g) else { return V::NotEstablished(format!("container 0x{g:016X} slot list never observed")); };
+        if c.unknown || !c.created { return V::NotEstablished(format!("container 0x{g:016X} slot list not observed in a create block")); }
+        let Some(n) = c.num_slots else { return V::NotEstablished(format!("container 0x{g:016X} num_slots unknown")); };
+        let n = n as usize;
+        if n > LIFECYCLE_CONTAINER_MAX_SLOTS { return V::Invalid(format!("container 0x{g:016X} num_slots={n} out of range")); }
+        for i in 0..LIFECYCLE_CONTAINER_MAX_SLOTS {
+            let Some(sg) = c.slot(i) else { return V::NotEstablished(format!("container 0x{g:016X} slot {i} unknown")); };
+            if sg == 0 { continue; }
+            if i >= n { return V::Invalid(format!("container 0x{g:016X} slot {i} populated beyond num_slots={n}")); }
+            expected.insert(sg);
+            match by_guid.get(&sg) {
+                Some(x) if x.container => return V::Invalid(format!("nested container 0x{sg:016X}")),
+                Some(x) if x.verified && x.entry > 0 && x.stack > 0 => {}
+                _ => missing.push(sg),
+            }
+        }
+    }
+    if !missing.is_empty() {
+        return V::NotEstablished(format!("{} referenced GUID(s) not yet observed as verified objects, first 0x{:016X}", missing.len(), missing[0]));
+    }
+    if let Some(extra) = cache.iter().find(|c| !expected.contains(&c.guid)) {
+        return V::NotEstablished(format!("cached object 0x{:016X} entry={} not referenced by any slot field", extra.guid, extra.entry));
+    }
+    V::Absent
+}
+
+// ---------------------------------------------------------------- inflate (RFC 1950/1951)
+
+struct LifecycleBits<'a> { d: &'a [u8], pos: usize, buf: u32, cnt: u32 }
+impl<'a> LifecycleBits<'a> {
+    fn bits(&mut self, need: u32) -> Result<u32, &'static str> {
+        let mut v = self.buf;
+        while self.cnt < need {
+            let b = *self.d.get(self.pos).ok_or("inflate: out of input")? as u32;
+            self.pos += 1;
+            v |= b << self.cnt;
+            self.cnt += 8;
+        }
+        self.buf = v >> need;
+        self.cnt -= need;
+        Ok(v & ((1u32 << need) - 1))
+    }
+}
+struct LifecycleHuff { count: [u16; 16], symbol: Vec<u16> }
+fn lifecycle_huff(lengths: &[u8]) -> Result<LifecycleHuff, &'static str> {
+    let mut count = [0u16; 16];
+    for &l in lengths { count[l as usize] += 1; }
+    let mut left: i32 = 1;
+    for len in 1..16 { left <<= 1; left -= count[len] as i32; if left < 0 { return Err("inflate: over-subscribed code"); } }
+    let mut offs = [0u16; 16];
+    for len in 1..15 { offs[len + 1] = offs[len] + count[len]; }
+    let mut symbol = vec![0u16; lengths.len()];
+    for (s, &l) in lengths.iter().enumerate() { if l != 0 { symbol[offs[l as usize] as usize] = s as u16; offs[l as usize] += 1; } }
+    Ok(LifecycleHuff { count, symbol })
+}
+fn lifecycle_decode(br: &mut LifecycleBits, h: &LifecycleHuff) -> Result<u16, &'static str> {
+    let (mut code, mut first, mut index) = (0i32, 0i32, 0i32);
+    for len in 1..16 {
+        code |= br.bits(1)? as i32;
+        let count = h.count[len] as i32;
+        if code - count < first { return Ok(h.symbol[(index + (code - first)) as usize]); }
+        index += count; first += count; first <<= 1; code <<= 1;
+    }
+    Err("inflate: bad code")
+}
+const LEN_BASE: [u16; 29] = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+const LEN_EXTRA: [u8; 29] = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+const DIST_BASE: [u16; 30] = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+const DIST_EXTRA: [u8; 30] = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
