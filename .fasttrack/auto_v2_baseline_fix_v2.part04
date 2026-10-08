@@ -1,0 +1,215 @@
+count_ones()).sum();
++                pos += mlen + set as usize * 4;
++                if pos > d.len() { return rel("truncated values".into()); }
++            }
++            4 | 5 => {
++                if pos + 4 > d.len() { return rel("truncated out-of-range count".into()); }
++                let n = u32::from_le_bytes([d[pos], d[pos + 1], d[pos + 2], d[pos + 3]]) as usize;
++                pos += 4;
++                if n > 4096 { return rel("implausible out-of-range count".into()); }
++                for _ in 0..n {
++                    let Some(g) = lifecycle_packed_guid(d, &mut pos) else { return rel("truncated out-of-range guid".into()); };
++                    if let Some(why) = lifecycle_guid_concern(g, player) { return rel(format!("out-of-range block touches {why} 0x{g:016X}")); }
++                }
++            }
++            1 | 2 | 3 => {
++                let Some(g) = lifecycle_packed_guid(d, &mut pos) else { return rel("truncated create/movement guid".into()); };
++                if let Some(why) = lifecycle_guid_concern(g, player) { return rel(format!("create/movement block touches {why} 0x{g:016X}")); }
++                if i + 1 == count { return Irrelevant; }
++                return rel("undecodable create/movement block is not the last block".into());
++            }
++            other => return rel(format!("unknown update type {other}")),
++        }
++    }
++    if pos != d.len() { return rel("trailing bytes after declared blocks".into()); }
++    Irrelevant
++}
++
++/// Classify an update packet the typed parser rejected. `payload` is the raw server payload.
++fn lifecycle_classify_unparsed_update(compressed: bool, payload: &[u8], player: u64) -> LifecycleUnparsed {
++    let prefix = lifecycle_hex_prefix(payload, 48);
++    let tag = |r: LifecycleUnparsed| match r {
++        LifecycleUnparsed::Relevant(w) => LifecycleUnparsed::Relevant(format!("{w} [compressed={compressed} len={} head={prefix}]", payload.len())),
++        ok => ok,
++    };
++    if !compressed { return tag(lifecycle_scan_update_body(payload, player)); }
++    if payload.len() < 6 { return tag(LifecycleUnparsed::Relevant("compressed payload too short".into())); }
++    let declared = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
++    if declared == 0 || declared > (1 << 20) { return tag(LifecycleUnparsed::Relevant("implausible decompressed size".into())); }
++    match lifecycle_zlib_inflate(&payload[4..], declared) {
++        Ok(body) if body.len() == declared => tag(lifecycle_scan_update_body(&body, player)),
++        Ok(body) => tag(LifecycleUnparsed::Relevant(format!("decompressed {} != declared {declared}", body.len()))),
++        Err(e) => tag(LifecycleUnparsed::Relevant(format!("zlib failure: {e}"))),
++    }
++}
++
++// ---------------------------------------------------------------- container slot walker
++//
++// The typed parser exposes only CONTAINER_SLOT_1, so container slot lists are read straight from
++// the update bytes. Only blocks whose layout is self-describing (VALUES / OUT_OF_RANGE / NEAR) or
++// whose movement block is non-LIVING (items, containers, most gameobjects) can be walked. The walk
++// stops at the first block it cannot size; the caller decides (using the typed parse) whether any
++// container block lies beyond the stop and fails closed if so.
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++enum LifecycleInvEvent {
++    ContainerCreate { guid: u64, fields: Vec<(u16, u32)> },
++    ContainerValues { guid: u64, fields: Vec<(u16, u32)> },
++}
++
++#[derive(Debug, Default)]
++struct LifecycleWalk { events: Vec<LifecycleInvEvent>, stopped_at: Option<usize>, reason: String, total: usize }
++
++fn lifecycle_rd_u32(d: &[u8], pos: &mut usize) -> Option<u32> {
++    let b = d.get(*pos..*pos + 4)?; *pos += 4;
++    Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
++}
++
++/// Walk `u8 nblocks, nblocks*u32 mask, one u32 per set bit`; return fields inside the container range.
++fn lifecycle_walk_mask(d: &[u8], pos: &mut usize) -> Option<Vec<(u16, u32)>> {
++    let nb = usize::from(*d.get(*pos)?); *pos += 1;
++    let mut masks = Vec::with_capacity(nb);
++    for _ in 0..nb { masks.push(lifecycle_rd_u32(d, pos)?); }
++    let mut out = Vec::new();
++    for (w, m) in masks.iter().enumerate() {
++        for bit in 0..32u32 {
++            if m & (1 << bit) != 0 {
++                let v = lifecycle_rd_u32(d, pos)?;
++                let f = w as u32 * 32 + bit;
++                if (LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD as u32..(LIFECYCLE_CONTAINER_SLOT1_FIELD as u32 + 72)).contains(&f) { out.push((f as u16, v)); }
++            }
++        }
++    }
++    Some(out)
++}
++
++fn lifecycle_walk_step(d: &[u8], pos: &mut usize, w: &mut LifecycleWalk) -> Result<(), String> {
++    let t = *d.get(*pos).ok_or("truncated block type")?; *pos += 1;
++    match t {
++        0 => {
++            let g = lifecycle_packed_guid(d, pos).ok_or("truncated values guid")?;
++            let fields = lifecycle_walk_mask(d, pos).ok_or("truncated values mask")?;
++            if g >> 48 == 0x4000 && !fields.is_empty() { w.events.push(LifecycleInvEvent::ContainerValues { guid: g, fields }); }
++        }
++        4 | 5 => {
++            let n = lifecycle_rd_u32(d, pos).ok_or("truncated out-of-range count")? as usize;
++            if n > 4096 { return Err("implausible out-of-range count".into()); }
++            for _ in 0..n { lifecycle_packed_guid(d, pos).ok_or("truncated out-of-range guid")?; }
++        }
++        2 | 3 => {
++            let g = lifecycle_packed_guid(d, pos).ok_or("truncated create guid")?;
++            let objtype = *d.get(*pos).ok_or("truncated object type")?; *pos += 1;
++            let flags = *d.get(*pos).ok_or("truncated update flags")?; *pos += 1;
++            if flags & 0x20 != 0 { return Err("LIVING movement block is not decoded".into()); }
++            let mut skip = 0usize;
++            if flags & 0x40 != 0 { skip += 16; }
++            if flags & 0x08 != 0 { skip += 4; }
++            if flags & 0x10 != 0 { skip += 4; }
++            if flags & 0x02 != 0 { skip += 4; }
++            if *pos + skip > d.len() { return Err("truncated movement block".into()); }
++            *pos += skip;
++            if flags & 0x04 != 0 { lifecycle_packed_guid(d, pos).ok_or("truncated target guid")?; }
++            let fields = lifecycle_walk_mask(d, pos).ok_or("truncated create mask")?;
++            if objtype == 2 {
++                if g >> 48 != 0x4000 { return Err("container object type with non-item guid".into()); }
++                w.events.push(LifecycleInvEvent::ContainerCreate { guid: g, fields });
++            }
++        }
++        other => return Err(format!("undecodable update type {other}")),
++    }
++    Ok(())
++}
++
++fn lifecycle_walk_inventory_blocks(d: &[u8]) -> LifecycleWalk {
++    let mut w = LifecycleWalk::default();
++    if d.len() < 5 { w.stopped_at = Some(0); w.reason = "body too short".into(); return w; }
++    let count = u32::from_le_bytes([d[0], d[1], d[2], d[3]]) as usize;
++    if count == 0 || count > 4096 { w.stopped_at = Some(0); w.reason = format!("implausible count {count}"); return w; }
++    w.total = count;
++    let mut pos = 5usize;
++    for i in 0..count {
++        if let Err(r) = lifecycle_walk_step(d, &mut pos, &mut w) { w.stopped_at = Some(i); w.reason = r; return w; }
++    }
++    if pos != d.len() { w.stopped_at = Some(count); w.reason = "trailing bytes after declared blocks".into(); }
++    w
++}
++
++/// Decompress (when needed) and walk an update packet payload.
++fn lifecycle_walk_update_payload(compressed: bool, payload: &[u8]) -> LifecycleWalk {
++    if !compressed { return lifecycle_walk_inventory_blocks(payload); }
++    let fail = |r: String| LifecycleWalk { stopped_at: Some(0), reason: r, ..Default::default() };
++    if payload.len() < 6 { return fail("compressed payload too short".into()); }
++    let declared = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
++    if declared == 0 || declared > (1 << 20) { return fail("implausible decompressed size".into()); }
++    match lifecycle_zlib_inflate(&payload[4..], declared) {
++        Ok(b) if b.len() == declared => lifecycle_walk_inventory_blocks(&b),
++        Ok(_) => fail("decompressed size mismatch".into()),
++        Err(e) => fail(format!("zlib failure: {e}")),
++    }
++}
++
++// ---------------------------------------------------------------- bounded read-only baseline wait
++
++/// Read-only: `barrier` may only issue non-mutating requests that drain world packets. The loop
++/// waits (bounded) for a transient NotEstablished to resolve; any other verdict ends it at once.
++fn lifecycle_baseline_wait_loop(
++    rounds: u32,
++    mut barrier: impl FnMut(u32) -> Result<(), String>,
++    mut verdict: impl FnMut() -> LifecycleBaselineVerdict,
++    mut pause: impl FnMut(),
++) -> Result<LifecycleBaselineVerdict, String> {
++    let mut last = LifecycleBaselineVerdict::NotEstablished("no wait rounds".into());
++    for r in 0..rounds {
++        barrier(r)?;
++        last = verdict();
++        if matches!(last, LifecycleBaselineVerdict::NotEstablished(_)) { if r + 1 < rounds { pause(); } } else { return Ok(last); }
++    }
++    Ok(last)
++}
++
++// ---------------------------------------------------------------- bounded read-only settle
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++enum LifecycleSettleStep { Exact(u64), Pending, Merged, Ambiguous(String) }
++
++/// Bounded read-only settle: `poll` may only read (no sends of mutations); `classify` is pure.
++/// Never retries a mutation; exhausting the rounds is an error (caller hard-stops).
++fn lifecycle_settle_loop<S>(
++    rounds: u32,
++    mut poll: impl FnMut(u32) -> Result<S, String>,
++    mut classify: impl FnMut(&S) -> LifecycleSettleStep,
++    mut pause: impl FnMut(),
++) -> Result<u64, String> {
++    for round in 0..rounds {
++        let snap = poll(round)?;
++        match classify(&snap) {
++            LifecycleSettleStep::Exact(g) => return Ok(g),
++            LifecycleSettleStep::Pending => { if round + 1 < rounds { pause(); } }
++            LifecycleSettleStep::Merged => return Err(format!("returned item MERGED into existing stack at settle_round={round}; manual reconciliation required")),
++            LifecycleSettleStep::Ambiguous(w) => return Err(format!("returned item ambiguous at settle_round={round}: {w}; reconciliation required")),
++        }
++    }
++    Err("exact returned full-stack GUID not observed within bounded read-only settle window; reconciliation required".into())
++}
++
++#[cfg(test)]
++mod lifecycle_baseline_tests {
++    use super::*;
++
++    const ME: u64 = 0x0000_0000_0000_1234;
++    fn it(guid: u64, entry: i32, stack: i32) -> LifecycleBaselineItem { LifecycleBaselineItem { guid, entry, stack, verified: true, container: false } }
++    fn bag(guid: u64) -> LifecycleBaselineItem { LifecycleBaselineItem { guid, entry: 4496, stack: 1, verified: true, container: true } }
++    const G: u64 = 0x4000_0000_0000_0000;
++    fn slots(pairs: &[(usize, u64)]) -> [Option<u64>; LIFECYCLE_INV_SLOTS] { let mut s = [None; LIFECYCLE_INV_SLOTS]; for (i, g) in pairs { s[*i] = Some(*g); } s }
++    fn inv_with(pairs: &[(usize, u64)]) -> LifecycleInvTracker { let mut t = LifecycleInvTracker::default(); t.player_create(&slots(pairs)); t }
++    fn add_bag(t: &mut LifecycleInvTracker, guid: u64, num: u32, contents: &[(usize, u64)]) {
++        let mut f = vec![(LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD, num)];
++        for (i, g) in contents { f.push((LIFECYCLE_CONTAINER_SLOT1_FIELD + 2 * *i as u16, *g as u32)); f.push((LIFECYCLE_CONTAINER_SLOT1_FIELD + 2 * *i as u16 + 1, (*g >> 32) as u32)); }
++        t.container_create(guid, &f);
++    }
++    fn facts() -> LifecycleBaselineFacts { LifecycleBaselineFacts::default() }
++    fn v(t: &LifecycleInvTracker, c: &[LifecycleBaselineItem]) -> LifecycleBaselineVerdict { lifecycle_baseline_verdict(&facts(), t, c, 10998) }
++
++    // ---- baseline state machine
++    #[test] fn no_player_create_means_not_established() {
++        asser
