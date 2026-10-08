@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 mod auth;
+mod tele_party_observer;
 mod wire_build;
 mod world_poc05_retry;
 mod world_portal;
