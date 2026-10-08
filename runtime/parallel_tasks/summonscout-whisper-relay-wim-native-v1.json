@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-whisper-relay-wim-native-v1",
+  "goal": "Present mirrored customer conversations to the configured Master as normal WIM whisper conversations while preserving canonical SSWR1 whisper transport and routing Master replies through the exact owning summoner instead of directly to the customer.",
+  "branch": "feature/summonscout-whisper-relay-wim-native-v1",
+  "base_parallel_sha": "37c7e663b9e1a2bbf58175abb25838b1084d758f",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout whisper relay WIM presentation"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live evidence showed canonical relay data reaching Master only as SummonRelay lines in DEFAULT_CHAT_FRAME while technical SSWR1 packets were hidden from WIM. This change does not replace transport: Summoner<->Master remains canonical SSWR1 over WHISPER. A last-loaded hot module polls the persistent mirrored relay sessions, renders remote WHISPER_IN/WHISPER_OUT events through WIM_PostMessage under the real customer conversation, and installs a stable per-WIM-editbox dispatcher. Normal text in a relay-managed WIM window reuses canonical /ssr exact-owner routing; slash commands retain native WIM behavior. No SendChatMessage path is added by the bridge. Failure to resolve the canonical router/session fails closed and never falls back to a direct customer whisper. Existing sessions are baselined on first load to avoid replay spam. Full in-game WIM behavior remains to be live-proven after exact-SHA delivery."
+}
