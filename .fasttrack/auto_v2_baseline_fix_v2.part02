@@ -1,0 +1,211 @@
+one(', 'fn poc07_buy_exact_one_canonical(') + '\ninclude!("../../../src/AuctionLifecycle/inventory_baseline.rs");\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\ninclude!("../../../src/AuctionLifecycle/auto_v2.rs");\n'
+     p = src / 'world.rs'
+     s = replace(p.read_text(), '    Ok((header.opcode, payload))',
+                 '    lifecycle_observe_raw(header.opcode, &payload);\n    Ok((header.opcode, payload))')
+@@ -38,19 +38,13 @@ def integrate(root):
+         s = replace(s, marker, marker+'\n    if lifecycle_enabled() { if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="auto" { return lifecycle_auto_run(stream, &mut crypto, player_guid); } return lifecycle_run(stream, &mut crypto, player_guid); }')
+         changes[p] = s
+ 
+-    # Repost inventory evidence must fail closed without becoming permanently poisoned.
+-    # Real Octo sessions occasionally contain partial/malformed object updates. On such
+-    # a packet, discard all previously verified inventory evidence. A later POST is
+-    # permitted only after a subsequent successfully parsed update explicitly proves
+-    # owner + entry + stack again. This preserves safety while allowing MAIL -> POST
+-    # recovery in the same session.
++    # Inventory evidence: the observer (adapter.rs) classifies every update the typed parser
++    # rejects with an independent byte-level scanner (inventory_baseline.rs). Proven-irrelevant
++    # packets keep the baseline; anything else clears POST evidence and records sticky uncertainty.
+     adapter = root / 'src/AuctionLifecycle/adapter.rs'
+     adapter_text = adapter.read_text(encoding='utf-8')
+-    adapter_text = replace(
+-        adapter_text,
+-        'Err(_)=>LIFE_OBSERVED.with(|s|s.borrow_mut().inventory_bad=true),',
+-        'Err(_)=>LIFE_OBSERVED.with(|s|{let mut s=s.borrow_mut();s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;}),'
+-    )
++    if 'lifecycle_note_unparsed_update(op,payload)' not in adapter_text or 'inventory_bad=true' in adapter_text:
++        raise ValueError('adapter inventory observer drift: unparsed-update classification missing')
+ 
+     # Targeted read-only inspect: resolve one owned auction to its first positive cheaper
+     # competitor witness and stop immediately. This avoids traversing the entire AH when
+@@ -65,7 +59,7 @@ def integrate(root):
+     # Validate every anchor before any write; a second run is an explicit error.
+     for p, text in changes.items():
+         p.write_text(text, encoding='utf-8')
+-    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory evidence resets fail-closed; targeted witness inspect + isolated AUTO V2 enabled')
++    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory baseline classification fail-closed; targeted witness inspect + isolated AUTO V2 enabled')
+ 
+ if __name__=='__main__':
+     integrate(Path(sys.argv[1] if len(sys.argv)>1 else '.').resolve())
+diff --git a/src/AuctionLifecycle/inventory_baseline.rs b/src/AuctionLifecycle/inventory_baseline.rs
+new file mode 100644
+index 0000000..64b3728
+--- /dev/null
++++ b/src/AuctionLifecycle/inventory_baseline.rs
+@@ -0,0 +1,897 @@
++// Pure (std-only) inventory-baseline logic for AUTO Lifecycle V2.
++// Included into the canonical module by integrate.py and also compiled standalone by CI
++// (`rustc --edition=2021 --test`) so every state transition is unit tested without a socket.
++//
++// Why this exists: the lifecycle inventory cache is fed by object-update packets. A single
++// update that the typed parser rejects used to wipe the cache, and nothing could ever restore
++// it (vanilla has no read-only "resend my inventory" request). The live server emits many tiny
++// compressed updates that the typed parser rejects, so the cache was always empty before the
++// first CANCEL and every candidate was skipped as "baseline not established".
++//
++// Model: an unparsable update is classified by an independent byte-level scanner.
++//   Irrelevant  -> proven to touch no Item/Container GUID and not the player itself.
++//   Relevant    -> may have touched inventory (or could not be proven otherwise): uncertainty
++//                  is recorded and is STICKY. Unknown is never treated as "item absent".
++
++use std::fmt::Write as _;
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++enum LifecycleUnparsed { Irrelevant, Relevant(String) }
++
++#[derive(Debug, Default, Clone)]
++struct LifecycleBaselineFacts {
++    parsed_updates: u32,
++    irrelevant_unparsed: u32,
++    uncertain: u32,
++    first_uncertain: Option<String>,
++}
++
++#[derive(Debug, Clone)]
++struct LifecycleBaselineItem { guid: u64, entry: i32, stack: i32, verified: bool, container: bool }
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++enum LifecycleBaselineVerdict {
++    NotEstablished(String),
++    Invalid(String),
++    Present(Vec<(u64, i32)>),
++    Absent,
++}
++
++impl LifecycleBaselineVerdict {
++    fn describe(&self) -> String {
++        match self {
++            Self::NotEstablished(w) => format!("inventory baseline not established: {w}"),
++            Self::Invalid(w) => format!("inventory baseline invalid: {w}"),
++            Self::Present(v) => format!("same item present in bags (guid,stack)={v:?}"),
++            Self::Absent => "target item absent".to_string(),
++        }
++    }
++}
++
++fn lifecycle_hex_prefix(d: &[u8], n: usize) -> String {
++    let mut s = String::new();
++    for b in d.iter().take(n) { let _ = write!(s, "{b:02x}"); }
++    s
++}
++
++fn lifecycle_baseline_note_uncertain(f: &mut LifecycleBaselineFacts, why: String) {
++    f.uncertain = f.uncertain.saturating_add(1);
++    if f.first_uncertain.is_none() { f.first_uncertain = Some(why); }
++}
++
++// ---------------------------------------------------------------- authoritative slot structure
++//
++// Protocol analysis (vanilla 1.12.1):
++//  * SMSG_LOGIN_VERIFY_WORLD is sent BEFORE the player is added to the map, so the create-object
++//    burst for the player and every bag/item follows it. No packet marks "initial object set
++//    complete"; a fixed packet count after coinage proves nothing.
++//  * The Player object carries one GUID per inventory slot (PLAYER_FIELD_INV_SLOT_HEAD, 113
++//    slots = ItemSlot 0..112: equipment, 4 bags, 16 backpack, bank, bank bags, buyback, keyring).
++//  * Every bag Container carries CONTAINER_NUM_SLOTS (field 48) and one GUID per slot starting at
++//    CONTAINER_SLOT_1 (field 50, 2 dwords each).
++// Therefore the EXPECTED item set is derivable from authoritative fields, and the baseline is
++// complete only when every expected GUID is a verified, observed object (and nothing else owned
++// by the player is observed). Unknown at any step is never "absent".
++
++const LIFECYCLE_INV_SLOTS: usize = 113;
++const LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD: u16 = 48;
++const LIFECYCLE_CONTAINER_SLOT1_FIELD: u16 = 50;
++const LIFECYCLE_CONTAINER_MAX_SLOTS: usize = 36;
++
++#[derive(Debug, Clone)]
++struct LifecycleContainer {
++    created: bool,
++    unknown: bool,
++    num_slots: Option<u32>,
++    lo: [Option<u32>; LIFECYCLE_CONTAINER_MAX_SLOTS],
++    hi: [Option<u32>; LIFECYCLE_CONTAINER_MAX_SLOTS],
++}
++impl LifecycleContainer {
++    fn blank() -> Self { Self { created: false, unknown: false, num_slots: None, lo: [None; LIFECYCLE_CONTAINER_MAX_SLOTS], hi: [None; LIFECYCLE_CONTAINER_MAX_SLOTS] } }
++    fn apply(&mut self, fields: &[(u16, u32)]) {
++        for &(f, v) in fields {
++            if f == LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD { self.num_slots = Some(v); }
++            else if f >= LIFECYCLE_CONTAINER_SLOT1_FIELD && usize::from(f - LIFECYCLE_CONTAINER_SLOT1_FIELD) < LIFECYCLE_CONTAINER_MAX_SLOTS * 2 {
++                let i = usize::from(f - LIFECYCLE_CONTAINER_SLOT1_FIELD) / 2;
++                if (f - LIFECYCLE_CONTAINER_SLOT1_FIELD) % 2 == 0 { self.lo[i] = Some(v); } else { self.hi[i] = Some(v); }
++            }
++        }
++    }
++    fn slot(&self, i: usize) -> Option<u64> { Some(u64::from(self.lo[i]?) | (u64::from(self.hi[i]?) << 32)) }
++}
++
++#[derive(Debug, Clone)]
++struct LifecycleInvTracker {
++    player_created: bool,
++    player_slots: [Option<u64>; LIFECYCLE_INV_SLOTS],
++    containers: std::collections::HashMap<u64, LifecycleContainer>,
++}
++impl Default for LifecycleInvTracker {
++    fn default() -> Self { Self { player_created: false, player_slots: [None; LIFECYCLE_INV_SLOTS], containers: std::collections::HashMap::new() } }
++}
++impl LifecycleInvTracker {
++    /// Player CREATE block: authoritative for every slot; an absent field means an empty slot.
++    fn player_create(&mut self, slots: &[Option<u64>; LIFECYCLE_INV_SLOTS]) {
++        self.player_created = true;
++        for (d, s) in self.player_slots.iter_mut().zip(slots.iter()) { *d = Some(s.unwrap_or(0)); }
++    }
++    /// Player VALUES block: only slots present in the delta change.
++    fn player_values(&mut self, slots: &[Option<u64>; LIFECYCLE_INV_SLOTS]) {
++        for (d, s) in self.player_slots.iter_mut().zip(slots.iter()) { if let Some(v) = s { *d = Some(*v); } }
++    }
++    fn container_create(&mut self, guid: u64, fields: &[(u16, u32)]) {
++        let mut c = LifecycleContainer::blank();
++        c.created = true;
++        c.lo = [Some(0); LIFECYCLE_CONTAINER_MAX_SLOTS];
++        c.hi = [Some(0); LIFECYCLE_CONTAINER_MAX_SLOTS];
++        c.apply(fields);
++        self.containers.insert(guid, c);
++    }
++    fn container_values(&mut self, guid: u64, fields: &[(u16, u32)]) {
++        self.containers.entry(guid).or_insert_with(LifecycleContainer::blank).apply(fields);
++    }
++    /// A container was seen through a path that cannot read its slot list.
++    fn container_unknown(&mut self, guid: u64) {
++        let c = self.containers.entry(guid).or_insert_with(LifecycleContainer::blank);
++        if !c.created { c.unknown = true; }
++    }
++    fn remove(&mut self, guid: u64) { self.containers.remove(&guid); }
++    fn apply_event(&mut self, ev: &LifecycleInvEvent) {
++        match ev {
++            LifecycleInvEvent::ContainerCreate { guid, fields } => self.container_create(*guid, fields),
++            LifecycleInvEvent::ContainerValues { guid, fields } => self.container_values(*guid, fields),
++        }
++    }
++}
++
++fn lifecycle_baseline_summary(f: &LifecycleBaselineFacts, inv: &LifecycleInvTracker, cache: &[LifecycleBaselineItem]) -> String {
++    let nz = inv.player_slots.iter().filter(|s| s.is_some_and(|g| g != 0)).count();
++    let unk = inv.player_slots.iter().filter(|s| s.is_none()).count();
++    let created = inv.containers.values().filter(|c| c.created && !c.unknown).count();
++    format!("player_created={} slots_nonzero={nz} slots_unknown={unk} containers_tracked={} containers_with_slots={created} cached_objects={} parsed_updates={} irrelevant_unparsed={} uncertain={} first_uncertain={}",
++        inv.player_created, inv.containers.len(), cache.len(), f.parsed_updates, f.irrelevant_unparsed, f.uncertain, f.first_uncertain.as_deref().unwrap_or("-"))
++}
++
++/// The only place that may answer "is the target item absent from bags".
++/// Absent requires: no sticky uncertainty, the player's slot fields known, and EVERY referenced
++/// GUID (player slots + contents of every referenced container) observed as a verified object,
++/// with no extra owned object outside that set. Anything else is not Absent.
++fn lifecycle_baseline_verdict(f: &LifecycleBaselineFacts, inv: &LifecycleInvTracker, cache: &[LifecycleBaselineItem], item: u32) -> LifecycleBaselineVerdict {
++    use LifecycleBaselineVerdict as V;
++    if f.uncertain > 0 {
++        return V::Invalid(format!("{} relevant/undecodable update(s) since login, first: {}", f.uncertain, f.first_uncertain.clone().unwrap_or_default()));
++    }
++    // Presence is decided on whatever is cached, even if the baseline is incomplete (still a skip).
++    let hit: Vec<(u64, i32)> = cache.iter().filter(|c| !c.container && c.entry > 0 && c.entry as u32 == item).map(|c| (c.guid, c.stack)).collect();
++    if !hit.is_empty() { return V::Present(hit); }
++    
