@@ -5,6 +5,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wow_world_messages::vanilla::SMSG_MESSAGECHAT_ChatType;
+use wow112_headless_android_probe::summon_mutation_coordinator::{
+    MutationCoordinator, MutationKind,
+};
+use wow112_headless_android_probe::summon_service_control::{
+    apply_control, ControlInbox, ServiceControlCommand,
+};
 use wow112_headless_android_probe::summon_service_core::{RequestPhase, ServiceState};
 use wow112_headless_android_probe::summon_service_runtime::{
     ServiceRuntimeConfig, SummonServiceRuntime,
@@ -45,6 +51,10 @@ enum DriverPhase {
     RitualWaiting {
         target_guid: u64,
         summon_id: Option<String>,
+    },
+    AwaitingPortal {
+        target_guid: u64,
+        summon_id: String,
     },
     AwaitingPayment {
         since_ms: u64,
@@ -239,10 +249,129 @@ fn reconcile_driver(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn guarded_mutation_write(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    runtime: &mut SummonServiceRuntime,
+    mutations: &mut MutationCoordinator,
+    request_id: &str,
+    kind: MutationKind,
+    operation_id: &str,
+    requires_server_confirmation: bool,
+    detail: &str,
+    opcode: u32,
+    payload: &[u8],
+) -> Result<(), String> {
+    let committed_at = now_ms();
+    mutations.commit_before_send(
+        request_id,
+        kind,
+        operation_id,
+        requires_server_confirmation,
+        committed_at,
+        detail,
+    )?;
+    match write_encrypted_raw(stream, crypto.encrypter(), opcode, payload) {
+        Ok(()) => mutations.mark_send_ok(operation_id, now_ms()),
+        Err(error) => {
+            let reason = format!(
+                "socket_write_uncertain kind={kind:?} operation={operation_id} cause={error}"
+            );
+            mutations.mark_uncertain(operation_id, now_ms(), &reason)?;
+            runtime.mark_uncertain(request_id, &reason, now_ms())?;
+            Err(format!(
+                "MUTATION_UNCERTAIN request={request_id} kind={kind:?} operation={operation_id} retry_allowed=false cause={error}"
+            ))
+        }
+    }
+}
+
+fn resolve_ritual_mutation(
+    mutations: &mut MutationCoordinator,
+    request_id: &str,
+    detail: &str,
+) -> Result<(), String> {
+    let operation = mutations
+        .unresolved()
+        .filter(|record| {
+            record.request_id == request_id && record.kind == MutationKind::CastRitual
+        })
+        .map(|record| record.operation_id.clone());
+    if let Some(operation_id) = operation {
+        mutations.confirm_from_server(&operation_id, now_ms(), detail)?;
+    }
+    Ok(())
+}
+
+fn apply_pending_controls(
+    inbox: &ControlInbox,
+    runtime: &mut SummonServiceRuntime,
+    driver: &mut Option<ActiveDriver>,
+    ledger: &mut LedgerStore,
+) -> Result<(), String> {
+    loop {
+        let Some(pending) = inbox.next()? else {
+            return Ok(());
+        };
+        let command = pending.command.clone();
+
+        if let ServiceControlCommand::SummonCompleted { request_id, .. } = &command {
+            if let Some(active) = driver.as_ref() {
+                if active.request_id == *request_id {
+                    if let DriverPhase::AwaitingPortal { summon_id, .. } = &active.phase {
+                        ledger.mark_summoned(summon_id, unix_now())?;
+                    }
+                }
+            }
+        }
+
+        apply_control(runtime, &command)?;
+
+        match &command {
+            ServiceControlCommand::PortalCommitted { request_id } => {
+                println!(
+                    "[SUMMON-SERVICE] request={} portal=committed evidence=control_inbox",
+                    request_id
+                );
+            }
+            ServiceControlCommand::SummonCompleted { request_id, .. } => {
+                if let Some(active) = driver.as_mut() {
+                    if active.request_id == *request_id {
+                        match &active.phase {
+                            DriverPhase::AwaitingPortal { summon_id, .. } => {
+                                let summon_id = summon_id.clone();
+                                active.phase = DriverPhase::AwaitingPayment {
+                                    since_ms: now_ms(),
+                                    summon_id: Some(summon_id),
+                                };
+                            }
+                            DriverPhase::AwaitingPayment { .. } => {}
+                            other => {
+                                return Err(format!(
+                                    "summon completion evidence incompatible driver phase request={} phase={other:?}",
+                                    request_id
+                                ));
+                            }
+                        }
+                    }
+                }
+                println!(
+                    "[SUMMON-SERVICE] request={} summon=completed evidence=control_inbox payment_window=open",
+                    request_id
+                );
+            }
+            _ => {}
+        }
+        inbox.ack(pending)?;
+    }
+}
+
 fn drive_active(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
     runtime: &mut SummonServiceRuntime,
+    mutations: &mut MutationCoordinator,
     driver: &mut Option<ActiveDriver>,
     roster: &HashMap<String, u64>,
     helpers: &[String],
@@ -256,20 +385,21 @@ fn drive_active(
     match &mut active.phase {
         DriverPhase::ResetGroup { sent_at_ms } => {
             if sent_at_ms.is_none() {
+                let operation_id = format!("{}:group-reset:1", active.request_id);
                 println!("[SUMMON-SERVICE] request={} state=RESET_GROUP_COMMITTED retry_allowed=false", active.request_id);
-                if let Err(error) = write_encrypted_raw(
+                guarded_mutation_write(
                     stream,
-                    crypto.encrypter(),
+                    crypto,
+                    runtime,
+                    mutations,
+                    &active.request_id,
+                    MutationKind::GroupReset,
+                    &operation_id,
+                    false,
+                    "group_reset",
                     CMSG_GROUP_DISBAND_OPCODE,
                     &[],
-                ) {
-                    runtime.mark_uncertain(
-                        &active.request_id,
-                        &format!("group_reset_socket_uncertain:{error}"),
-                        now,
-                    )?;
-                    return Err(format!("SUMMON_GROUP_RESET_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
-                }
+                )?;
                 *sent_at_ms = Some(now);
                 return Ok(());
             }
@@ -292,20 +422,28 @@ fn drive_active(
             PartyAction::Wait => {}
             PartyAction::SendInvite { index, name } => {
                 let payload = encode_group_invite_target(&name)?;
+                let operation_id = format!(
+                    "{}:invite:{}:{}",
+                    active.request_id,
+                    index,
+                    name.to_ascii_lowercase()
+                );
                 println!("[SUMMON-SERVICE] request={} invite={:?} state=COMMITTED retry_allowed=false", active.request_id, name);
-                if let Err(error) = write_encrypted_raw(
+                if let Err(error) = guarded_mutation_write(
                     stream,
-                    crypto.encrypter(),
+                    crypto,
+                    runtime,
+                    mutations,
+                    &active.request_id,
+                    MutationKind::Invite,
+                    &operation_id,
+                    false,
+                    &format!("target={}", name.to_ascii_lowercase()),
                     CMSG_GROUP_INVITE_OPCODE,
                     &payload,
                 ) {
                     let _ = seq.on_write_uncertain(index);
-                    runtime.mark_uncertain(
-                        &active.request_id,
-                        &format!("invite_socket_uncertain target={name:?}:{error}"),
-                        now,
-                    )?;
-                    return Err(format!("SUMMON_INVITE_MUTATION_UNCERTAIN retry_allowed=false target={name:?} cause={error}"));
+                    return Err(error);
                 }
             }
             PartyAction::Fail(reason) => {
@@ -317,23 +455,32 @@ fn drive_active(
                     .get(&active.customer.to_ascii_lowercase())
                     .copied()
                     .ok_or_else(|| format!("target {:?} missing after party convergence", active.customer))?;
-                runtime.mark_ritual_committed(
-                    &active.request_id,
-                    &format!("ritual:{}", active.request_id),
-                )?;
-                if let Err(error) = write_encrypted_raw(
+
+                let selection_operation = format!("{}:selection:1", active.request_id);
+                guarded_mutation_write(
                     stream,
-                    crypto.encrypter(),
+                    crypto,
+                    runtime,
+                    mutations,
+                    &active.request_id,
+                    MutationKind::SetSelection,
+                    &selection_operation,
+                    false,
+                    &format!("target_guid=0x{target_guid:016X}"),
                     CMSG_SET_SELECTION_OPCODE,
                     &target_guid.to_le_bytes(),
-                ) {
-                    runtime.mark_uncertain(
-                        &active.request_id,
-                        &format!("selection_socket_uncertain:{error}"),
-                        now,
-                    )?;
-                    return Err(format!("SUMMON_SELECTION_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
-                }
+                )?;
+
+                let ritual_operation = format!("{}:ritual:1", active.request_id);
+                mutations.commit_before_send(
+                    &active.request_id,
+                    MutationKind::CastRitual,
+                    &ritual_operation,
+                    true,
+                    now_ms(),
+                    "spell=698",
+                )?;
+                runtime.mark_ritual_committed(&active.request_id, &ritual_operation)?;
                 thread::sleep(Duration::from_millis(150));
                 if let Err(error) = write_encrypted_raw(
                     stream,
@@ -341,13 +488,12 @@ fn drive_active(
                     CMSG_CAST_SPELL_OPCODE,
                     &encode_ritual_cast(),
                 ) {
-                    runtime.mark_uncertain(
-                        &active.request_id,
-                        &format!("ritual_cast_socket_uncertain:{error}"),
-                        now_ms(),
-                    )?;
-                    return Err(format!("SUMMON_RITUAL_MUTATION_UNCERTAIN retry_allowed=false cause={error}"));
+                    let reason = format!("ritual_cast_socket_uncertain:{error}");
+                    mutations.mark_uncertain(&ritual_operation, now_ms(), &reason)?;
+                    runtime.mark_uncertain(&active.request_id, &reason, now_ms())?;
+                    return Err(format!("MUTATION_UNCERTAIN request={} kind=CastRitual operation={} retry_allowed=false cause={error}", active.request_id, ritual_operation));
                 }
+                mutations.mark_send_ok(&ritual_operation, now_ms())?;
                 println!("[SUMMON-SERVICE] request={} spell=698 state=CAST_SENT retry_allowed=false", active.request_id);
                 active.phase = DriverPhase::RitualWaiting {
                     target_guid,
@@ -356,6 +502,7 @@ fn drive_active(
             }
         },
         DriverPhase::RitualWaiting { .. } => {}
+        DriverPhase::AwaitingPortal { .. } => {}
         DriverPhase::AwaitingPayment { since_ms, .. } => {
             if now.saturating_sub(*since_ms) >= payment_grace_ms {
                 runtime.mark_payment_missing(
@@ -493,6 +640,13 @@ pub fn login_summon_service(
         }
     }
     let mut runtime = SummonServiceRuntime::open(config, now_ms())?;
+    let control_inbox = ControlInbox::open(&root)?;
+    let mut mutations = MutationCoordinator::open(root.join("summon_mutations.json"))?;
+    if let Some(reason) = mutations.hard_block_reason() {
+        return Err(format!(
+            "MUTATION_UNCERTAIN recovered_from_journal retry_allowed=false {reason}"
+        ));
+    }
     let helpers = configured_helpers();
     let invite_timeout_ms = env_u64("WOW112_TELE_INVITE_TIMEOUT_MS", DEFAULT_INVITE_TIMEOUT_MS);
     let payment_grace_ms = env_u64("WOW112_SUMMON_PAYMENT_GRACE_MS", DEFAULT_PAYMENT_GRACE_MS);
@@ -515,10 +669,19 @@ pub fn login_summon_service(
 
     loop {
         if deadline.is_some_and(|value| Instant::now() >= value) { return Ok(()); }
+
+        apply_pending_controls(
+            &control_inbox,
+            &mut runtime,
+            &mut driver,
+            &mut ledger,
+        )?;
+
         drive_active(
             stream,
             &mut crypto,
             &mut runtime,
+            &mut mutations,
             &mut driver,
             &roster,
             &helpers,
@@ -625,10 +788,20 @@ pub fn login_summon_service(
                         if let Some(active) = driver.as_mut() {
                             if let DriverPhase::RitualWaiting { target_guid, summon_id } = &mut active.phase {
                                 if matches!(opcode, SMSG_CAST_RESULT_OPCODE | SMSG_SPELL_FAILURE_OPCODE) {
+                                    resolve_ritual_mutation(
+                                        &mut mutations,
+                                        &active.request_id,
+                                        &format!("server_ritual_reject:{parsed}"),
+                                    )?;
                                     runtime.mark_terminal_failure(&active.request_id, &format!("server_ritual_reject:{parsed}"), now_ms())?;
                                     driver = None;
                                     continue;
                                 }
+                                resolve_ritual_mutation(
+                                    &mut mutations,
+                                    &active.request_id,
+                                    &format!("server_ritual_evidence opcode=0x{opcode:04X}"),
+                                )?;
                                 if summon_id.is_none() {
                                     *summon_id = Some(tele10_record_ritual_started(
                                         &active.customer,
@@ -640,11 +813,14 @@ pub fn login_summon_service(
                                 }
                                 if opcode == SMSG_SPELL_GO_OPCODE {
                                     let id = summon_id.clone().unwrap();
-                                    ledger = LedgerStore::open(tele10_ledger_path())?;
-                                    ledger.set_policy(tele10_expected_price_copper(), tele10_partial_enabled());
-                                    ledger.mark_summoned(&id, unix_now())?;
-                                    runtime.mark_summon_completed(&active.request_id, now_ms())?;
-                                    active.phase = DriverPhase::AwaitingPayment { since_ms: now_ms(), summon_id: Some(id) };
+                                    active.phase = DriverPhase::AwaitingPortal {
+                                        target_guid: *target_guid,
+                                        summon_id: id,
+                                    };
+                                    println!(
+                                        "[SUMMON-SERVICE] request={} ritual=confirmed portal_evidence=required payment_window=closed",
+                                        active.request_id
+                                    );
                                 }
                             }
                         }
