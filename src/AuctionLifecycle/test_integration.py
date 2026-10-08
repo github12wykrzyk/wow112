@@ -12,6 +12,19 @@ LIFECYCLE=Path('src/AuctionLifecycle')
 spec=importlib.util.spec_from_file_location('integration',Path(__file__).with_name('integrate.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
+LIFECYCLE_INCLUDES=(
+    '\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n',
+    'include!("../../../src/AuctionLifecycle/auto_v2.rs");\n',
+)
+
+def canonical_buy_body(text):
+    text=text.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(')
+    for marker in LIFECYCLE_INCLUDES:
+        if marker not in text:
+            raise AssertionError(f'missing lifecycle include marker: {marker!r}')
+        text=text.replace(marker,'',1)
+    return text
+
 class Integration(unittest.TestCase):
     def test_actual_canonical_anchors_and_buy_body_preserved(self):
         with tempfile.TemporaryDirectory() as td:
@@ -21,7 +34,7 @@ class Integration(unittest.TestCase):
             before=(root/SRC/'world_poc07.rs').read_text()
             m.integrate(root)
             after=(root/SRC/'world_poc07.rs').read_text()
-            self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix('\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'),before)
+            self.assertEqual(canonical_buy_body(after),before)
             adapter=(root/LIFECYCLE/'adapter.rs').read_text()
             self.assertIn('s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;',adapter)
             files={p:p.read_bytes() for p in (root/SRC).glob('*.rs')}
@@ -53,8 +66,9 @@ class Integration(unittest.TestCase):
             unified=(root/SRC/'world_poc08_unified.rs').read_text()
             m.integrate(root)
             after=(root/SRC/'world_poc07.rs').read_text()
-            self.assertEqual(after.replace('fn poc07_buy_exact_one_canonical(', 'fn poc07_buy_exact_one(').removesuffix('\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n'),buy)
+            self.assertEqual(canonical_buy_body(after),buy)
             self.assertIn('POC08-UNIFIED-V4',unified)
+            self.assertIn('lifecycle_auto_run', (root/SRC/'world_poc08_unified.rs').read_text())
             self.assertIn('return lifecycle_run', (root/SRC/'world_poc08_unified.rs').read_text())
             self.assertIn('s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;', (root/LIFECYCLE/'adapter.rs').read_text())
 if __name__=='__main__':unittest.main()
