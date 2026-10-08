@@ -1,0 +1,120 @@
+name: AH Market Maker V2 Windows x86
+
+on:
+  push:
+    branches: [feature/ah-market-maker-v2]
+    paths:
+      - 'src/AuctionLifecycle/**'
+      - '.github/workflows/ah_market_maker_v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Pure V2 durable-state and policy tests
+        shell: pwsh
+        run: |
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_policy.rs -o "$env:RUNNER_TEMP/mm2-policy.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/mm2-policy.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_recovery.rs -o "$env:RUNNER_TEMP/mm2-recovery.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/mm2-recovery.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_saga.rs -o "$env:RUNNER_TEMP/mm2-saga.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/mm2-saga.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Replay authoritative canonical V4 plus Lifecycle source generation
+        shell: pwsh
+        run: |
+          python -m pip install pyyaml
+          @'
+          import os, subprocess, yaml
+          from pathlib import Path
+          wf=yaml.safe_load(Path('.github/workflows/ah_auction_lifecycle_v1.yml').read_text(encoding='utf-8'))
+          wanted=[
+            'Harden shared BUY primitive and attach best-effort history capture',
+            'Generate DE model base','Build full DE cache','Generate F2 risk engine',
+            'Merge unified engine and apply V1 V2 V3 V3.1 V3.2 V4',
+            'Attach Lifecycle to canonical V4 primitives',
+          ]
+          steps={s.get('name'):s for s in wf['jobs']['build']['steps'] if s.get('name')}
+          for name in wanted:
+            step=steps.get(name)
+            if not step or 'run' not in step: raise SystemExit(f'missing authoritative step: {name}')
+            print(f'===== REPLAY {name} =====',flush=True)
+            r=subprocess.run(['pwsh','-NoProfile','-Command',step['run']],env=os.environ.copy())
+            if r.returncode: raise SystemExit(r.returncode)
+          '@ | Set-Content "$env:RUNNER_TEMP/replay.py" -Encoding utf8
+          python "$env:RUNNER_TEMP/replay.py"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Attach V2 without changing canonical BUY or login
+        shell: pwsh
+        run: |
+          $buy='probes/Wow112HeadlessAndroid/src/world_poc07.rs'
+          $before=(Get-FileHash $buy -Algorithm SHA256).Hash
+          python src/AuctionLifecycle/integrate_v2.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # V2 integrator may append include declarations only; canonical BUY body must remain present exactly once.
+          $txt=Get-Content $buy -Raw
+          if(([regex]::Matches($txt,'fn poc07_buy_exact_one_canonical\(')).Count -ne 1){throw 'canonical BUY symbol drift'}
+          foreach($m in @('market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs','market_maker_v2_depth.rs')){if(-not($txt.Contains($m))){throw "V2 include missing: $m"}}
+          Write-Host "V2_SOURCE_INTEGRATION_PASS pre_include_sha=$before"
+
+      - name: V2 static safety contracts
+        shell: pwsh
+        run: |
+          $files=Get-ChildItem src/AuctionLifecycle/market_maker_v2_*.rs
+          $all=($files | Get-Content -Raw) -join "`n"
+          foreach($m in @('BLOCKED_UNCERTAIN','MailboxVerified','DepthSource::Targeted','MM2_PRE_SEND_DEADLINE','market_maker_v2_inventory_bind')){if(-not($all.Contains($m))){throw "V2 safety marker missing: $m"}}
+          if($all -match 'HashSet[^\n]*\.iter\(\)\.next\(\)'){throw 'V2 arbitrary HashSet authority forbidden'}
+          if((Get-Content src/AuctionLifecycle/market_maker_v2_inventory.rs -Raw) -match 'for _ in 0\.\.256'){throw 'V2 packet-count deadline forbidden'}
+          if((Get-Content src/AuctionLifecycle/market_maker_v2_io.rs -Raw) -notmatch 'Instant'){throw 'V2 wall-clock deadline implementation missing'}
+          $saga=Get-Content src/AuctionLifecycle/market_maker_v2_saga.rs -Raw
+          if($saga -match 'Planned,Mm2SagaPhase::ClearBuyIntent'){throw 'CLEAR may not mutate before mailbox verification'}
+          if($saga -match 'ClearBuyConfirmed\{\.\.\},Mm2SagaPhase::ClearBuyIntent'){throw 'CLEAR may not buy twice without mail/inventory reconciliation'}
+          Write-Host 'MM2_STATIC_SAFETY_PASS'
+
+      - name: Windows i686 compile and deterministic tests
+        shell: pwsh
+        run: |
+          cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --release --target i686-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
+          $b=[IO.File]::ReadAllBytes($exe);if($b.Length -lt 2 -or $b[0]-ne 0x4d -or $b[1]-ne 0x5a){throw 'PE MZ smoke failed'}
+          Write-Host "MM2_WINDOWS_X86_PASS bytes=$($b.Length) sha256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
+
+      - name: Stage V2 foundation artifact
+        shell: pwsh
+        run: |
+          $d='dist/ah-market-maker-v2';New-Item -ItemType Directory -Force $d|Out-Null
+          $exe='probes/Wow112HeadlessAndroid/target/i686-pc-windows-msvc/release/wow112-headless-android-probe.exe'
+          Copy-Item $exe "$d/wow112-ah-market-maker-v2-foundation.exe"
+          Copy-Item src/AuctionLifecycle/market_maker_v2_*.rs $d
+          Copy-Item src/AuctionLifecycle/MARKET_MAKER_V2_DESIGN.md $d
+          @("SHA=$env:GITHUB_SHA","STATUS=FOUNDATION_NOT_LIVE_CANARY_APPROVED","EXE_SHA256=$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())") | Set-Content "$d/MANIFEST.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-AH-MARKET-MAKER-V2-FOUNDATION-${{ github.sha }}
+          path: dist/ah-market-maker-v2
+          if-no-files-found: error
+          retention-days: 14
