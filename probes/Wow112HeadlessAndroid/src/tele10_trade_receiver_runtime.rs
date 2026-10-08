@@ -17,12 +17,44 @@ fn tele10_ledger_path() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("tele10_payment_ledger.json"))
 }
 
-fn tele10_expected_price_copper() -> u64 {
-    std::env::var("WOW112_TELE10_PRICE_COPPER")
+fn tele10_parse_price_env(name: &str) -> Option<u64> {
+    std::env::var(name)
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
+}
+
+fn tele10_price_key_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn tele10_expected_price_copper() -> u64 {
+    tele10_parse_price_env("WOW112_TELE10_PRICE_COPPER")
         .unwrap_or(wow112_headless_android_probe::tele10_trade_payment::DEFAULT_EXPECTED_PRICE_COPPER)
+}
+
+fn tele10_expected_price_for(summoner_name: &str, destination: &str) -> u64 {
+    let summoner = tele10_price_key_component(summoner_name);
+    let destination = tele10_price_key_component(destination);
+    let summoner_destination = format!(
+        "WOW112_SUMMON_PRICE_{}_{}_COPPER",
+        summoner, destination
+    );
+    let destination_only = format!("WOW112_SUMMON_PRICE_{}_COPPER", destination);
+    tele10_parse_price_env(&summoner_destination)
+        .or_else(|| tele10_parse_price_env(&destination_only))
+        .unwrap_or_else(tele10_expected_price_copper)
 }
 
 fn tele10_partial_enabled() -> bool {
@@ -39,7 +71,8 @@ fn tele10_record_ritual_started(
     summoner_name: &str,
 ) -> Result<String, String> {
     let mut ledger = LedgerStore::open(tele10_ledger_path())?;
-    ledger.set_policy(tele10_expected_price_copper(), tele10_partial_enabled());
+    let expected_price = tele10_expected_price_for(summoner_name, destination);
+    ledger.set_policy(expected_price, tele10_partial_enabled());
     let summon_id = ledger.record_ritual_started(
         unix_now(),
         target_name,
@@ -48,7 +81,7 @@ fn tele10_record_ritual_started(
         destination,
         trigger_message,
     )?;
-    println!("[SUMMON-SERVICE][LEDGER] SUMMON_CREATE summon_id={} client={:?} guid=0x{:016X} destination={:?} expected={}", summon_id, target_name, target_guid, destination, ledger.state.expected_price_copper);
+    println!("[SUMMON-SERVICE][LEDGER] SUMMON_CREATE summon_id={} client={:?} guid=0x{:016X} summoner={:?} destination={:?} expected={} price_source=resolved", summon_id, target_name, target_guid, summoner_name, destination, ledger.state.expected_price_copper);
     Ok(summon_id)
 }
 
