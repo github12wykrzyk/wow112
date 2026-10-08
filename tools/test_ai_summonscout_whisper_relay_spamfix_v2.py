@@ -13,11 +13,14 @@ class SummonScoutWhisperRelaySpamFixV2Contract(unittest.TestCase):
         cls.guard = (ADDON / "SummonScout_WhisperRelaySpamGuardHot.lua").read_text(encoding="utf-8")
         cls.task = json.loads(TASK.read_text(encoding="utf-8"))
 
-    def test_task_targets_current_canonical_and_auto_integrates(self):
+    def test_task_targets_current_canonical_and_tracks_integration_lifecycle(self):
         self.assertEqual(self.task["base_parallel_sha"], "1d0f1a5690fc32bb5d31d93daf24da08363f3bf7")
         self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-spamfix-v2")
-        self.assertEqual(self.task["status"], "ready_for_integration")
-        self.assertTrue(self.task["auto_integrate"])
+        self.assertIn(self.task["status"], ("ready_for_integration", "integrated", "done"))
+        if self.task["status"] == "ready_for_integration":
+            self.assertTrue(self.task["auto_integrate"])
+        else:
+            self.assertFalse(self.task["auto_integrate"])
         self.assertEqual(self.task["delivery_profiles"], [])
 
     def test_version_is_demand_only(self):

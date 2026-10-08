@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-world-buyer-relation-v1",
+  "goal": "Recognize order-independent World buyer summon calls such as 'LF hydraxian summon' across the canonical destination catalog, while preserving seller, recruitment, multi-destination, ownership, blacklist, dedupe and queue guards.",
+  "branch": "feature/summonscout-world-buyer-relation-v1",
+  "base_parallel_sha": "4511245836cedb06f2161047fd194507bca85ccf",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout World buyer classifier"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live evidence: '[4] [Justino]: LF hydraxian summon' was not detected as a summon call. The hotfix is catalog-driven rather than Hydraxian-specific: buyer intent, one recognized destination and a summon/travel token may appear in any order. It adds only an internal canonical 'lf summon' marker and fails closed for seller, recruitment and multi-destination traffic.",
+  "integrated_feature_sha": "52941c2e42165cc34d57e7e0237f4506726a04d7"
+}
