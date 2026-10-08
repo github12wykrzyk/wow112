@@ -410,8 +410,9 @@ if ($MyInvocation.InvocationName -ne '.') {
         exit [int]$code
     } catch {
         $stack = $_.ScriptStackTrace
-        if ([string]::IsNullOrWhiteSpace($stack)) { Write-Error $_.Exception.Message }
-        else { Write-Error ($_.Exception.Message + [Environment]::NewLine + $stack) }
+        $message = $_.Exception.Message
+        if (-not [string]::IsNullOrWhiteSpace($stack)) { $message = $message + [Environment]::NewLine + $stack }
+        [Console]::Error.WriteLine($message)
         exit 1
     }
 }
