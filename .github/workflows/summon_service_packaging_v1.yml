@@ -1,0 +1,60 @@
+name: Summon Service Packaging V1
+
+on:
+  push:
+    branches:
+      - 'feature/summon-service-packaging-v1'
+    paths:
+      - 'packaging/summon_service_v1/**'
+      - '.github/workflows/summon_service_packaging_v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: summon-service-packaging-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaging-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Windows packaging failure matrix
+        shell: powershell
+        run: .\packaging\summon_service_v1\tests\Invoke-PackagingTests.ps1 -SourceSha '${{ github.sha }}'
+
+  demo-artifact:
+    needs: packaging-tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build DEMO_ONLY fixture binaries
+        shell: powershell
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'summon-demo-bin'
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          @'
+          using System; using System.IO; using System.Threading;
+          class P { static string A(string[] a,string k){for(int i=0;i<a.Length-1;i++)if(a[i]==k)return a[i+1];return null;} static int Main(string[] a){var stop=A(a,"--stop-file");var health=A(a,"--health-file"); while(true){if(health!=null)File.WriteAllText(health,"{\"ready\":true,\"demo_only\":true}");if(stop!=null&&File.Exists(stop))return 0;Thread.Sleep(500);}}}
+          '@ | Set-Content (Join-Path $out 'service.cs') -Encoding UTF8
+          'class P { static int Main(string[] a){ return 0; } }' | Set-Content (Join-Path $out 'console.cs') -Encoding UTF8
+          & $csc /nologo /target:exe /out:"$out\WoW112SummonService.exe" "$out\service.cs"
+          if($LASTEXITCODE){exit $LASTEXITCODE}
+          & $csc /nologo /target:exe /out:"$out\WoW112SummonOperatorConsole.exe" "$out\console.cs"
+          if($LASTEXITCODE){exit $LASTEXITCODE}
+          "BIN_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build one-click DEMO_ONLY ZIP and SHA256
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          .\packaging\summon_service_v1\scripts\Build-Package.ps1 -InputBinDir "$env:BIN_DIR" -SourceSha '${{ github.sha }}' -Version '1.0.0-demo.${{ github.run_number }}' -OutputZip "$pwd\artifacts\WoW112SummonServiceV1_DEMO_ONLY.zip" -DemoOnly
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112SummonServiceV1_DEMO_ONLY-${{ github.sha }}
+          path: |
+            artifacts/WoW112SummonServiceV1_DEMO_ONLY.zip
+            artifacts/WoW112SummonServiceV1_DEMO_ONLY.zip.sha256
+          if-no-files-found: error
