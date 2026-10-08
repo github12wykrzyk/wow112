@@ -55,18 +55,19 @@ class SummonScoutWhisperRelaySpamFixV1Contract(unittest.TestCase):
         self.assertIn("return true", after[:220])
         self.assertNotIn("wrCaptureCustomer", self.guard)
 
-    def test_transport_packets_are_hidden_only_from_chat_display(self):
+    def test_transport_packets_stay_whisper_but_use_wim_native_filter(self):
         self.assertIn('local PROTO = "[SSWR1]"', self.guard)
-        self.assertIn('type(ChatFrame_OnEvent) ~= "function"', self.guard)
-        self.assertIn("if sgStarts(message, PROTO) then", self.guard)
-        self.assertIn("return OWN_CHAT_BASE(a, b, c, d, e, f, g, h, i)", self.guard)
+        self.assertIn('local WIM_FILTER_PATTERN = "%[SSWR1%]"', self.guard)
+        self.assertIn('WIM_Filters[WIM_FILTER_PATTERN] = "Block"', self.guard)
         self.assertIn("relay.OnEvent = sgWrappedOnEvent", self.guard)
+        self.assertNotIn("ChatFrame_OnEvent", self.guard)
         self.assertNotIn("SendChatMessage", self.guard)
 
-    def test_shutdown_is_wrapper_safe(self):
+    def test_shutdown_has_no_chatframe_wrapper_lifecycle(self):
         self.assertIn("if relay and relay.OnEvent == sgWrappedOnEvent then", self.guard)
         self.assertIn("if relay and relay.OnUpdate == sgWrappedOnUpdate then", self.guard)
-        self.assertIn("if OWN_CHAT_WRAPPER and ChatFrame_OnEvent == OWN_CHAT_WRAPPER", self.guard)
+        self.assertNotIn("OWN_CHAT_WRAPPER", self.guard)
+        self.assertNotIn("OWN_CHAT_BASE", self.guard)
 
     def test_vanilla_lua_compatibility(self):
         self.assertNotIn("string.match(", self.guard)
