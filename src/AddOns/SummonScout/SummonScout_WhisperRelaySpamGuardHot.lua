@@ -3,7 +3,8 @@
 -- Keeps the V1 relay transport and session model intact while fixing live spam:
 --   * zero SSWR1 H/K traffic while there is no real relay queue,
 --   * bounded handshake retries only while customer/lifecycle data is queued,
---   * [SSWR1] transport stays on WHISPER but is filtered by WIM's own filter path,
+--   * all reserved SummonScout control whispers stay on WHISPER but are filtered
+--     by WIM's own filter path,
 --   * no ChatFrame_OnEvent replacement, so repeated hot/reload cycles cannot leave
 --     a dangling wrapper calling a nil base function.
 --
@@ -21,10 +22,14 @@ if type(relay) ~= "table" or type(relay.OnEvent) ~= "function"
     return
 end
 
-local VERSION = "3-demand-only-wim-filter-reload-safe"
+local VERSION = "4-demand-only-wim-all-control-filter"
 local PROTO = "[SSWR1]"
 -- WIM_FilterResult uses Lua pattern matching, so [ and ] must be escaped.
+-- Keep the original name for backwards contract compatibility, then add the
+-- other SummonScout control-plane families observed live in WIM.
 local WIM_FILTER_PATTERN = "%[SSWR1%]"
+local WIM_FALLBACK_FILTER_PATTERN = "%[SSFR1%]"
+local WIM_MASTER_FILTER_PATTERN = "%[SSI "
 local HELLO_MAX_IDLE_ATTEMPTS = 3
 local HELLO_RETRY_1 = 10
 local HELLO_RETRY_2 = 30
@@ -98,6 +103,12 @@ local function sgInstallWimSuppression()
     end
     if WIM_Filters[WIM_FILTER_PATTERN] ~= "Block" then
         WIM_Filters[WIM_FILTER_PATTERN] = "Block"
+    end
+    if WIM_Filters[WIM_FALLBACK_FILTER_PATTERN] ~= "Block" then
+        WIM_Filters[WIM_FALLBACK_FILTER_PATTERN] = "Block"
+    end
+    if WIM_Filters[WIM_MASTER_FILTER_PATTERN] ~= "Block" then
+        WIM_Filters[WIM_MASTER_FILTER_PATTERN] = "Block"
     end
     G.wimFilterInstalled = true
     return true
@@ -212,9 +223,9 @@ function M.Shutdown()
     if relay and relay.OnUpdate == sgWrappedOnUpdate then
         relay.OnUpdate = OWN_RELAY_ON_UPDATE
     end
-    -- Intentionally do not remove the reserved WIM filter during hot swap.
-    -- Keeping it avoids a visible transport leak between Shutdown and Init,
-    -- and the prefix is SummonScout-internal only.
+    -- Intentionally do not remove the reserved WIM filters during hot swap.
+    -- Keeping them avoids a visible transport leak between Shutdown and Init,
+    -- and the prefixes are SummonScout-internal only.
 end
 
 H.Register("whisperrelayspamguard", M, VERSION)
