@@ -9,7 +9,7 @@
   "shared_resources": ["TELE10 headless summon runtime", "TELE10 trade payment ledger", "operator live-test runner"],
   "status": "test_ready",
   "auto_integrate": false,
-  "delivery_profiles": [],
+  "delivery_profiles": ["autologinbridge"],
   "lease": null,
-  "notes": "Isolated operator/test branch. Reuses stored-source TELE10 headless runtime from feature/tele10-headless-trade-payment-ledger-v1f at b5c793d0a55915a9cfd3b08395ee16f7000e6352. No AH mutation path and no WoW GUI automation are added. Trade payment remains one-shot and fail-closed on uncertain send. Live E2E payer honors the vMaNGOS trade scam-prevention window after SET_TRADE_GOLD before its single ACCEPT mutation. Real hosted live E2E passed on code SHA d753829314db39e5cd9aad57ce1d46daaf4d55da: whisper=true, supervisor_exit=0, server_trade_complete=true, paid=1/1, uncertain=false."
+  "notes": "Isolated operator/test branch. Reuses stored-source TELE10 headless summon/trade/payment stored source from feature/tele10-headless-trade-payment-ledger-v1f at b5c793d0a55915a9cfd3b08395ee16f7000e6352. No AH mutation path and no WoW GUI automation are added. Trade payment remains one-shot and fail-closed on uncertain send. Live E2E payer honors the vMaNGOS trade scam-prevention window after SET_TRADE_GOLD before its single ACCEPT mutation. Real hosted live E2E passed on code SHA d753829314db39e5cd9aad57ce1d46daaf4d55da: whisper=true, supervisor_exit=0, server_trade_complete=true, paid=1/1, uncertain=false. The autologinbridge delivery profile is declared because the branch inherits the already-tested Operator Console AutoLoginBridge transport changes relative to the current parallel merge-base."
 }
