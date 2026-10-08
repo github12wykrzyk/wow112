@@ -38,8 +38,8 @@ impl Coordinator {
         if self.stopped || self.sent || !self.active.is_some_and(|k| k.permits(opcode)) {
             return Err(fail("send has no matching exclusive mutation permit"));
         }
-        // Barrier precedes the first byte, including a partial header write.
-        self.sent=true;
+        // Durable barrier precedes the first network byte. `sent` becomes true only after the
+        // barrier itself is durable; a barrier-creation failure therefore remains explicitly unsent.
         let result=(|| -> std::io::Result<()> {
             let mut p=OpenOptions::new().write(true).create_new(true).open(&self.pending)?;
             writeln!(p, "kind={:?} opcode={opcode:04x} payload={payload:02x?}", self.active)?;
@@ -48,12 +48,16 @@ impl Coordinator {
             self.journal.sync_all()
         })();
         if let Err(e)=result { self.stopped=true; return Err(fail(e)); }
+        self.sent=true;
         Ok(())
     }
     pub fn finish(&mut self, result: Result<(),String>) -> Result<(),String> {
         if self.stopped { return Err(fail("coordinator already stopped")); }
         if self.sent {
-            if let Err(e)=result { self.stopped=true; return Err(fail(e)); }
+            if let Err(e)=result {
+                let _=writeln!(self.journal,"UNCERTAIN {:?} reason={}",self.active,e).and_then(|_|self.journal.sync_all());
+                self.stopped=true; return Err(fail(e));
+            }
             let done=(|| -> std::io::Result<()> {
                 writeln!(self.journal,"CONFIRMED_RECONCILED {:?}",self.active)?;
                 self.journal.sync_all()?;
@@ -64,6 +68,7 @@ impl Coordinator {
         self.active=None; self.sent=false; Ok(())
     }
     pub fn has_pending_send(&self) -> bool { self.pending.exists() }
+    pub fn sent_in_current_tx(&self) -> bool { self.sent }
 }
 impl Drop for Coordinator {
     fn drop(&mut self) { let _=fs::remove_file(&self.lock); }
@@ -94,6 +99,9 @@ pub fn before_send(opcode:u32,payload:&[u8])->Result<(),String> {
 pub fn pending_send_exists() -> bool {
     CURRENT.with(|c| c.borrow().as_ref().is_some_and(|x| x.has_pending_send()))
 }
+pub fn sent_in_current_tx() -> bool {
+    CURRENT.with(|c| c.borrow().as_ref().is_some_and(|x| x.sent_in_current_tx()))
+}
 pub fn transaction(kind:Kind, action:impl FnOnce()->Result<(),String>)->Result<(),String> {
     CURRENT.with(|c| c.borrow_mut().as_mut().ok_or_else(||fail("no session"))?.begin(kind))?;
     let result=action();
@@ -105,10 +113,10 @@ mod tests {
     use super::*;
     fn root()->PathBuf { static N:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0); std::env::temp_dir().join(format!("life-test-{}-{}",std::process::id(),N.fetch_add(1,std::sync::atomic::Ordering::Relaxed))) }
     #[test] fn exclusive_and_independent_characters() { let r=root(); let c=Coordinator::open(&r,"a").unwrap(); assert!(Coordinator::open(&r,"a").is_err()); assert!(Coordinator::open(&r,"b").is_ok()); drop(c); assert!(Coordinator::open(&r,"a").is_ok()); fs::remove_dir_all(r).unwrap(); }
-    #[test] fn all_mutations_freeze_on_uncertain_send_and_restart() { for (kind,op) in [(Kind::Buy,0x25a),(Kind::Mail,0x245),(Kind::Mail,0x246),(Kind::Cancel,0x257),(Kind::Post,0x256),(Kind::Split,0x10e)] {let r=root(); let mut c=Coordinator::open(&r,"a").unwrap();c.begin(kind).unwrap();c.before_send(op,&[1]).unwrap();assert!(c.has_pending_send());assert!(c.finish(Err("partial write / timeout".into())).is_err());for k in [Kind::Buy,Kind::Mail,Kind::Cancel,Kind::Post,Kind::Split] {assert!(c.begin(k).is_err());}drop(c);assert!(Coordinator::open(&r,"a").is_err());fs::remove_dir_all(r).unwrap();} }
-    #[test] fn crash_after_intent_survives_without_finish() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Post).unwrap();c.before_send(0x256,&[]).unwrap();assert!(c.has_pending_send());drop(c);assert!(Coordinator::open(&r,"a").is_err());fs::remove_dir_all(r).unwrap();}
-    #[test] fn ack_and_reconcile_allow_next_operation() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();for k in [Kind::Mail,Kind::Mail] {c.begin(k).unwrap();c.before_send(0x246,&[]).unwrap();c.finish(Ok(())).unwrap();assert!(!c.has_pending_send());}drop(c);assert!(Coordinator::open(&r,"a").is_ok());fs::remove_dir_all(r).unwrap();}
+    #[test] fn all_mutations_freeze_on_uncertain_send_and_restart() { for (kind,op) in [(Kind::Buy,0x25a),(Kind::Mail,0x245),(Kind::Mail,0x246),(Kind::Cancel,0x257),(Kind::Post,0x256),(Kind::Split,0x10e)] {let r=root(); let mut c=Coordinator::open(&r,"a").unwrap();c.begin(kind).unwrap();c.before_send(op,&[1]).unwrap();assert!(c.sent_in_current_tx());assert!(c.has_pending_send());assert!(c.finish(Err("partial write / timeout".into())).is_err());for k in [Kind::Buy,Kind::Mail,Kind::Cancel,Kind::Post,Kind::Split] {assert!(c.begin(k).is_err());}drop(c);assert!(Coordinator::open(&r,"a").is_err());fs::remove_dir_all(r).unwrap();} }
+    #[test] fn crash_after_intent_survives_without_finish() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Post).unwrap();c.before_send(0x256,&[]).unwrap();assert!(c.sent_in_current_tx());assert!(c.has_pending_send());drop(c);assert!(Coordinator::open(&r,"a").is_err());fs::remove_dir_all(r).unwrap();}
+    #[test] fn ack_and_reconcile_allow_next_operation() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();for k in [Kind::Mail,Kind::Mail] {c.begin(k).unwrap();c.before_send(0x246,&[]).unwrap();c.finish(Ok(())).unwrap();assert!(!c.sent_in_current_tx());assert!(!c.has_pending_send());}drop(c);assert!(Coordinator::open(&r,"a").is_ok());fs::remove_dir_all(r).unwrap();}
     #[test] fn split_reconcile_allows_post() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Split).unwrap();c.before_send(0x10e,&[]).unwrap();c.finish(Ok(())).unwrap();c.begin(Kind::Post).unwrap();c.before_send(0x256,&[]).unwrap();c.finish(Ok(())).unwrap();drop(c);assert!(Coordinator::open(&r,"a").is_ok());fs::remove_dir_all(r).unwrap();}
-    #[test] fn no_send_failure_is_not_uncertain() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Buy).unwrap();assert!(c.finish(Err("stale target".into())).is_err());assert!(!c.has_pending_send());c.begin(Kind::Mail).unwrap();assert!(c.before_send(0x257,&[]).is_err());c.finish(Err("wrong op".into())).unwrap_err();drop(c);fs::remove_dir_all(r).unwrap();}
+    #[test] fn no_send_failure_is_not_uncertain() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Buy).unwrap();assert!(c.finish(Err("stale target".into())).is_err());assert!(!c.sent_in_current_tx());assert!(!c.has_pending_send());c.begin(Kind::Mail).unwrap();assert!(c.before_send(0x257,&[]).is_err());assert!(!c.sent_in_current_tx());c.finish(Err("wrong op".into())).unwrap_err();drop(c);fs::remove_dir_all(r).unwrap();}
     #[test] fn nested_and_duplicate_sends_blocked() {let r=root();let mut c=Coordinator::open(&r,"a").unwrap();c.begin(Kind::Cancel).unwrap();assert!(c.begin(Kind::Buy).is_err());c.before_send(0x257,&[]).unwrap();assert!(c.before_send(0x257,&[]).is_err());drop(c);fs::remove_dir_all(r).unwrap();}
 }
