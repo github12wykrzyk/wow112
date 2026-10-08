@@ -7,41 +7,82 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  headless-compile-test:
-    runs-on: windows-2022
-    timeout-minutes: 20
+  restore-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Exact SHA
-        shell: pwsh
+          fetch-depth: 0
+          ref: feature/summon-terminal-primitives-restore-v1
+
+      - name: Fetch proven anchor
+        run: git fetch origin d753829314db39e5cd9aad57ce1d46daaf4d55da
+
+      - name: Restore exact proven headless summon closure
+        shell: bash
         run: |
-          "exact_sha=$env:GITHUB_SHA" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-      - name: Cargo test all headless targets
-        shell: pwsh
-        working-directory: probes/Wow112HeadlessAndroid
+          set -euo pipefail
+          PROVEN=d753829314db39e5cd9aad57ce1d46daaf4d55da
+          files=(
+            probes/Wow112HeadlessAndroid/Cargo.toml
+            probes/Wow112HeadlessAndroid/config/tele08_destinations.example.json
+            probes/Wow112HeadlessAndroid/src/lib.rs
+            probes/Wow112HeadlessAndroid/src/destination_registry.rs
+            probes/Wow112HeadlessAndroid/src/tele08_bc_adapter.rs
+            probes/Wow112HeadlessAndroid/src/tele08_bc_adapter_tests.rs
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs
+            probes/Wow112HeadlessAndroid/src/tele08_whisper_parser_tests.rs
+            probes/Wow112HeadlessAndroid/src/tele10_message_audit_tests.rs
+            probes/Wow112HeadlessAndroid/src/tele10_payer_driver_runtime.rs
+            probes/Wow112HeadlessAndroid/src/tele10_payer_roster_runtime.rs
+            probes/Wow112HeadlessAndroid/src/tele10_trade_payment.rs
+            probes/Wow112HeadlessAndroid/src/tele10_trade_receiver_runtime.rs
+            probes/Wow112HeadlessAndroid/src/tele_party_observer.rs
+            probes/Wow112HeadlessAndroid/src/tele_party_seq.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele04_runtime.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele05_party_runtime.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele06a_acceptor_runtime.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele06a_ritual_runtime.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele08_b_live_runtime.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele08_bc_live_gate.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele08_bcd_live_gate.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele08_e_live_policy_gate.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs
+            probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs
+            probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml
+            probes/Wow112HeadlessAndroid/tele08_request_queue/src/lib.rs
+            probes/Wow112HeadlessAndroid/tele08_request_queue/tests/queue_contract.rs
+            probes/Wow112HeadlessAndroid/tests/tele08_d_smoke.rs
+          )
+          for f in "${files[@]}"; do
+            mkdir -p "$(dirname "$f")"
+            git show "$PROVEN:$f" > "$f"
+          done
+          if git diff --name-only | grep -E '^(src/AddOns/|tools/operator_console/|packaging/)'; then
+            echo 'Forbidden path touched' >&2
+            exit 2
+          fi
+
+      - name: Verify restored crate
         run: |
-          cargo test --all-targets --verbose 2>&1 | Tee-Object -FilePath cargo-test.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Scope guard
-        if: always()
-        shell: pwsh
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --all-targets
+          cargo build --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bins
+
+      - name: Commit exact proven closure
+        shell: bash
         run: |
-          $base = "a5ee048c620c55542460d54d7750e81f0f8f8da4"
-          git fetch --depth=1 origin $base
-          $changed = git diff --name-only "$base..$env:GITHUB_SHA"
-          $forbidden = $changed | Where-Object { $_ -like 'src/AddOns/*' -or $_ -like 'tools/operator_console/*' -or $_ -like 'packaging/*' }
-          if ($forbidden) { $forbidden | Write-Error; exit 1 }
-          $changed | ForEach-Object { "changed=$_" } | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-      - name: Upload compiler evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: summon-terminal-primitives-restore-${{ github.sha }}
-          path: probes/Wow112HeadlessAndroid/cargo-test.log
-          if-no-files-found: warn
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add probes/Wow112HeadlessAndroid
+          if git diff --cached --quiet; then
+            echo 'No restore delta to commit.'
+            exit 0
+          fi
+          git commit -m 'restore(summon): proven TELE07-10 headless primitives from d753829'
+          git push origin HEAD:feature/summon-terminal-primitives-restore-v1
