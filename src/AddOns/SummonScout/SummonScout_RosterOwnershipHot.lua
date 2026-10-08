@@ -4,8 +4,10 @@
 -- marker may enter the automatic Ritual path through roster synchronization.
 -- World side: a destination-qualified summoner never invites a World requester
 -- for another known/unknown destination.
--- Buyer side: WTB + taxi + a recognized destination is treated as a summon request
--- even when the player omits the word "summon" (e.g. "WTB Hydraxian taxi").
+-- Buyer side: destination-qualified buyer shorthand is normalized into the
+-- canonical core request path even when the player omits the word "summon".
+-- Multi-destination buyer requests fail closed instead of picking the first
+-- catalog match.
 --
 -- P0.2 consumes the explicit Engine V2 API/state. Legacy core upvalue discovery
 -- and setupvalue are centralized in SummonScout_EngineV2FoundationHot.lua.
@@ -15,7 +17,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "5-explicit-api-l1-leader-handoff"
+local VERSION = "6-world-intent-multidest-guard"
 local S = H.GetState("rosterguard")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
@@ -55,6 +57,58 @@ local function rgPhraseHas(s, phrase)
     return string.find(" " .. s .. " ", " " .. phrase .. " ", 1, true) ~= nil
 end
 
+local function rgTokenHasRoot(s, root)
+    s = rgNormalize(s)
+    root = rgNormalize(root)
+    if string.len(root) < 5 then return false end
+    local token
+    for token in string.gfind(s, "%S+") do
+        if string.len(token) >= string.len(root)
+            and string.sub(token, 1, string.len(root)) == root then
+            return true
+        end
+    end
+    return false
+end
+
+local function rgHasCue(s, cues)
+    local i
+    for i = 1, table.getn(cues) do
+        if rgPhraseHas(s, cues[i]) then return true end
+    end
+    return false
+end
+
+local WORLD_BUYER_CUES = {
+    "wtb", "need", "lf", "looking for", "want", "pls", "plz", "please",
+    "can i", "could i", "anyone", "anybody", "who can", "inv", "invite",
+    "port", "taxi"
+}
+
+local WORLD_DIRECT_REQUEST_CUES = {
+    "summon me", "sum me", "can someone summon", "can somebody summon",
+    "can you summon", "could you summon", "anyone can summon", "anybody can summon",
+    "who can summon", "who can summ"
+}
+
+local WORLD_SELLER_CUES = {
+    "wts", "selling", "sell", "service", "available", "offering",
+    "summons available", "summon service", "summoning service",
+    "selling summon", "sell summon", "summoning to", "summoning portals",
+    "portal service", "pst", "whisper me", "dm me", "travel service"
+}
+
+local function rgHasSummonToken(s)
+    s = rgNormalize(s)
+    return rgPhraseHas(s, "summon")
+        or rgPhraseHas(s, "summons")
+        or rgPhraseHas(s, "summoning")
+        or rgPhraseHas(s, "summ")
+        or rgPhraseHas(s, "summs")
+        or rgPhraseHas(s, "sum")
+        or rgPhraseHas(s, "sumon")
+end
+
 local function rgResolveApi()
     local api = W112_SUMMONSCOUT_API_V1
     if type(api) ~= "table"
@@ -62,6 +116,7 @@ local function rgResolveApi()
         or type(api.syncPartyRoster) ~= "function"
         or type(api.handleChannelMessage) ~= "function"
         or type(api.FindLocation) ~= "function"
+        or type(api.GetLocationCatalog) ~= "function"
         or type(api.InstallRosterQueueGuard) ~= "function" then
         return nil
     end
@@ -99,30 +154,95 @@ local function rgServiceContains(locationId)
     return string.find(haystack, needle, 1, true) ~= nil
 end
 
-local function rgBuyerTaxiMessage(api, message)
+local function rgFindLocations(api, message)
+    local result = {}
+    local seen = {}
+    local catalog = api and api.GetLocationCatalog and api.GetLocationCatalog() or nil
     local normalized = rgNormalize(message)
-    if not rgPhraseHas(normalized, "wtb") then return message, false, nil end
-    if not (rgPhraseHas(normalized, "taxi") or rgPhraseHas(normalized, "t a x i")) then
-        return message, false, nil
+    local i, j
+
+    if type(catalog) == "table" then
+        for i = 1, table.getn(catalog) do
+            local loc = catalog[i]
+            local matched = false
+            if type(loc) == "table" and loc.id then
+                if type(loc.aliases) == "table" then
+                    for j = 1, table.getn(loc.aliases) do
+                        if rgPhraseHas(normalized, loc.aliases[j]) then
+                            matched = true
+                            break
+                        end
+                    end
+                end
+                if not matched and type(loc.roots) == "table" then
+                    for j = 1, table.getn(loc.roots) do
+                        if rgTokenHasRoot(normalized, loc.roots[j]) then
+                            matched = true
+                            break
+                        end
+                    end
+                end
+                if matched and not seen[rgKey(loc.id)] then
+                    seen[rgKey(loc.id)] = true
+                    result[table.getn(result) + 1] = loc
+                end
+            end
+        end
     end
 
-    local loc, ambiguous = api.FindLocation(message or "")
-    if ambiguous or not loc or not loc.id then
-        return message, false, nil
+    if table.getn(result) == 0 and api and type(api.FindLocation) == "function" then
+        local loc, ambiguous = api.FindLocation(message or "")
+        if loc and not ambiguous then result[1] = loc end
+    end
+    return result
+end
+
+local function rgLocationsLabel(locations)
+    local labels = {}
+    local i
+    for i = 1, table.getn(locations or {}) do
+        local loc = locations[i]
+        labels[table.getn(labels) + 1] = tostring(loc.label or loc.id or "?")
+    end
+    if table.getn(labels) == 0 then return "UNKNOWN" end
+    return table.concat(labels, " + ")
+end
+
+local function rgBuyerLike(message)
+    local s = rgNormalize(message)
+    if rgHasCue(s, WORLD_BUYER_CUES) then return true end
+    if rgHasCue(s, WORLD_DIRECT_REQUEST_CUES) then return true end
+    return false
+end
+
+local function rgSellerLike(message, locations)
+    local s = rgNormalize(message)
+    if rgHasCue(s, WORLD_SELLER_CUES) then return true end
+
+    -- Paid multi-route menus are competitor advertisements, not ambiguous buyers.
+    if table.getn(locations or {}) >= 2 and string.find(s, "%d+%s*g") then
+        return true
+    end
+    return false
+end
+
+local function rgPrepareWorldBuyer(api, message)
+    local normalized = rgNormalize(message)
+    local locations = rgFindLocations(api, message)
+    local buyerLike = rgBuyerLike(message)
+    local sellerLike = rgSellerLike(message, locations)
+
+    if table.getn(locations) > 1 and buyerLike and not sellerLike then
+        return message, false, locations, "multiple-destinations"
     end
 
-    -- The core World parser requires a summon token. Inject one only for this
-    -- narrow buyer pattern and keep all destination / blacklist / dedupe gates
-    -- in the existing core path.
-    if rgPhraseHas(normalized, "summon")
-        or rgPhraseHas(normalized, "summons")
-        or rgPhraseHas(normalized, "summoning")
-        or rgPhraseHas(normalized, "summ")
-        or rgPhraseHas(normalized, "sum") then
-        return message, false, loc
+    if table.getn(locations) ~= 1 or not buyerLike or sellerLike or rgHasSummonToken(normalized) then
+        return message, false, locations, nil
     end
 
-    return tostring(message or "") .. " summon", true, loc
+    -- Keep blacklist, ownership, dedupe, logging and queue semantics in the
+    -- canonical core. We only provide the missing lexical summon token.
+    return tostring(message or "") .. " summon", true, locations, nil
 end
 
 local function rgWorldDestinationBlocked(findLocation, message)
@@ -185,12 +305,20 @@ local function rgPatchWorldDestination(api, state)
     end
 
     local wrapper = function(message, sender, channelBaseName, channelFullName)
-        local routedMessage, buyerTaxi, buyerLoc = rgBuyerTaxiMessage(api, message)
-        local blocked, destination = rgWorldDestinationBlocked(api.FindLocation, routedMessage)
+        local routedMessage, injected, locations, parserBlock = rgPrepareWorldBuyer(api, message)
+        local blocked, destination = false, nil
+
+        if parserBlock == "multiple-destinations" then
+            blocked = true
+            destination = rgLocationsLabel(locations)
+        else
+            blocked, destination = rgWorldDestinationBlocked(api.FindLocation, routedMessage)
+        end
+
         if not blocked then
-            if buyerTaxi and SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r WTB taxi -> summon request: "
-                    .. tostring(sender or "?") .. " [" .. tostring(buyerLoc and (buyerLoc.label or buyerLoc.id) or "?") .. "]")
+            if injected and SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r shorthand -> summon request: "
+                    .. tostring(sender or "?") .. " [" .. rgLocationsLabel(locations) .. "]")
             end
             return original(routedMessage, sender, channelBaseName, channelFullName)
         end
@@ -208,9 +336,10 @@ local function rgPatchWorldDestination(api, state)
         if SummonScoutDB then SummonScoutDB.autoInvite = previousAutoInvite end
 
         if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+            local reason = parserBlock == "multiple-destinations" and "multiple destinations" or "destination ownership"
             DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World guard:|r invite blocked -> "
                 .. tostring(sender or "?") .. " [" .. tostring(destination or "?")
-                .. "], serving=" .. tostring(SummonScoutDB.service or "all"))
+                .. "] reason=" .. reason .. ", serving=" .. tostring(SummonScoutDB.service or "all"))
         end
 
         if not ok then error(err) end
