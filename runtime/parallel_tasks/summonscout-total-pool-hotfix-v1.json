@@ -13,9 +13,9 @@
     "SummonScout SSFR1 provider ownership",
     "SummonScout hot fanout delivery"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Minimal hotfix in the already TOC-declared SummonScout_FallbackRouterHubAckHot.lua, so the existing STANDARD hot fanout can deliver it without adding a new addon module. The four canonical pool IDs are silithus, winterspring, hydraxian (Azshara/Hydraxis), hyjal. Provider ownership is learned from existing SSFR1 H packets and persisted; the existing route ACK/6s timeout remains authoritative for actually offline owners."
+  "notes": "Minimal hotfix in the already TOC-declared SummonScout_FallbackRouterHubAckHot.lua, so the existing STANDARD hot fanout can deliver it without adding a new addon module. The four canonical pool IDs are silithus, winterspring, hydraxian (Azshara/Hydraxis), hyjal. Provider ownership is learned from existing SSFR1 H packets and persisted; the existing route ACK/6s timeout remains authoritative for actually offline owners. Exact feature preflight PASS on cc08add631b845aae39e332e305b35262a4f1c5b."
 }
