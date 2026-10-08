@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-whisper-relay-spamfix-v1",
+  "goal": "Stop Whisper Relay V1 from generating permanent empty-looking H/K whisper spam while preserving customer relay, lifecycle/payment history and Master reply semantics; hide SSWR1 transport packets from the visible Vanilla chat frame and drop empty RAW customer events.",
+  "branch": "feature/summonscout-whisper-relay-spamfix-v1",
+  "base_parallel_sha": "2e5ea99c36e81d98b4074776370c6d0c63a7b67e",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-whisper-relay-v1"
+  ],
+  "shared_resources": [
+    "SummonScout WhisperRelay control transport",
+    "SummonScout visible whisper chat filtering"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live blocker fix: the base relay emits H every 5 seconds forever and Master ACKs K every time. This guard makes handshake bounded/backed off, parks it after ACK, retries only when needed, suppresses [SSWR1] transport packets from ChatFrame display, and rejects empty/whitespace customer RAW before the relay capture path. No summon/payment/parser/reply semantics are replaced."
+}

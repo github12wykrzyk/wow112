@@ -1,0 +1,71 @@
+import json
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ADDON = ROOT / "src" / "AddOns" / "SummonScout"
+TASK = ROOT / "runtime" / "parallel_tasks" / "summonscout-whisper-relay-spamfix-v1.json"
+
+
+class SummonScoutWhisperRelaySpamFixV1Contract(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.guard = (ADDON / "SummonScout_WhisperRelaySpamGuardHot.lua").read_text(encoding="utf-8")
+        cls.relay = (ADDON / "SummonScout_WhisperRelayHot.lua").read_text(encoding="utf-8")
+        cls.toc = (ADDON / "SummonScout.toc").read_text(encoding="utf-8").splitlines()
+        cls.task = json.loads(TASK.read_text(encoding="utf-8"))
+
+    def test_task_is_current_base_and_auto_integrates(self):
+        self.assertEqual(self.task["base_parallel_sha"], "2e5ea99c36e81d98b4074776370c6d0c63a7b67e")
+        self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-spamfix-v1")
+        self.assertEqual(self.task["status"], "ready_for_integration")
+        self.assertTrue(self.task["auto_integrate"])
+        self.assertEqual(self.task["delivery_profiles"], [])
+
+    def test_guard_loads_after_relay_and_intent_guard(self):
+        relay = self.toc.index("SummonScout_WhisperRelayHot.lua")
+        intent = self.toc.index("SummonScout_WhisperRelayIntentGuardHot.lua")
+        guard = self.toc.index("SummonScout_WhisperRelaySpamGuardHot.lua")
+        self.assertGreater(guard, relay)
+        self.assertGreater(guard, intent)
+
+    def test_permanent_five_second_heartbeat_is_neutralized(self):
+        self.assertIn("local HELLO_MAX_IDLE_ATTEMPTS = 3", self.guard)
+        self.assertIn("local HELLO_RETRY_1 = 10", self.guard)
+        self.assertIn("local HELLO_RETRY_2 = 30", self.guard)
+        self.assertIn("local HELLO_QUEUE_RETRY = 60", self.guard)
+        self.assertIn("local HELLO_PARK = 86400", self.guard)
+        self.assertIn("R.nextHelloAt = t + HELLO_PARK", self.guard)
+        self.assertIn("if R.masterReady and sgSame(R.masterReadyName, master) then", self.guard)
+        self.assertIn("return sgRelayQueued()", self.guard)
+        self.assertIn("local HELLO_INTERVAL = 5", self.relay)
+
+    def test_empty_customer_whispers_are_dropped_before_capture(self):
+        marker = 'if ev == "CHAT_MSG_WHISPER" and sgTrim(a1 or "") == "" then'
+        self.assertIn(marker, self.guard)
+        after = self.guard[self.guard.index(marker):]
+        self.assertIn("return true", after[:220])
+        self.assertNotIn("wrCaptureCustomer", self.guard)
+
+    def test_transport_packets_are_hidden_only_from_chat_display(self):
+        self.assertIn('local PROTO = "[SSWR1]"', self.guard)
+        self.assertIn('type(ChatFrame_OnEvent) ~= "function"', self.guard)
+        self.assertIn("if sgStarts(message, PROTO) then", self.guard)
+        self.assertIn("return OWN_CHAT_BASE(a, b, c, d, e, f, g, h, i)", self.guard)
+        self.assertIn("relay.OnEvent = sgWrappedOnEvent", self.guard)
+        self.assertNotIn("SendChatMessage", self.guard)
+
+    def test_shutdown_is_wrapper_safe(self):
+        self.assertIn("if relay and relay.OnEvent == sgWrappedOnEvent then", self.guard)
+        self.assertIn("if relay and relay.OnUpdate == sgWrappedOnUpdate then", self.guard)
+        self.assertIn("if OWN_CHAT_WRAPPER and ChatFrame_OnEvent == OWN_CHAT_WRAPPER", self.guard)
+
+    def test_vanilla_lua_compatibility(self):
+        self.assertNotIn("string.match(", self.guard)
+        self.assertNotIn("table.unpack", self.guard)
+        self.assertNotIn("goto ", self.guard)
+        self.assertIn("table.getn", self.guard)
+
+
+if __name__ == "__main__":
+    unittest.main()
