@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-relay-native-whisper-v1",
+  "goal": "Present the existing SSWR1 summoner-to-Master WHISPER as a readable native WIM whisper from the summoner, suppress the legacy SummonRelay default-chat mirror, keep technical packets invisible, and route replies through canonical /ssr without adding any direct customer-send path.",
+  "branch": "feature/summonscout-relay-native-whisper-v1",
+  "base_parallel_sha": "89c91eea06aa8c9a2c03f5443eb603cdd3e932ac",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-whisper-relay-wim-native-v1"
+  ],
+  "shared_resources": [
+    "SummonScout SSWR1 whisper presentation",
+    "WIM whisper event presentation"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Rebased from exact canonical 89c91eea06aa8c9a2c03f5443eb603cdd3e932ac after total-pool hotfix v2. Live evidence showed relay data arriving only as the legacy SummonRelay DEFAULT_CHAT_FRAME mirror. Updater packaging was verified to contain the prior WIM bridge, so the failure is presentation rather than delivery. This revision replaces the existing WhisperRelayWimNativeHot slot instead of adding another hot module, reducing that file from about 11.1 KB to about 9.6 KB and preserving the native watcher payload cap. The real SSWR1 CHAT_MSG_WHISPER is consumed before WIM's Block filter: I/IB/IC render in the summoner WIM as [Customer] raw text, confirmed WHISPER_OUT_* E events render as [to Customer], and H/K/R/lifecycle control remains hidden. The legacy SummonRelay chat mirror is suppressed only when WIM is available. WIM replies reuse exact-session canonical /ssr routing; this module contains no direct customer chat send call. Stable pass-through global wrappers avoid the earlier dangling-wrapper nil failure. Live behavior still requires in-game proof after exact-SHA delivery.",
+  "integrated_feature_sha": "5794802d64d3f372e2abd4bd6858f8e95fa342f2"
+}
