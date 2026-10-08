@@ -27,9 +27,13 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cargo test summon service crate
+      - name: Cargo test summon service library
         shell: bash
-        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+        run: cargo test --lib --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Compile all test targets
+        shell: bash
+        run: cargo test --no-run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
       - name: Cargo check summon service crate
         shell: bash
