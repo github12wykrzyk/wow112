@@ -1,0 +1,106 @@
+        assert_eq!(v(&inv_with(&[]), &[]), LifecycleBaselineVerdict::Absent);
+        // cache empty but slots reference an object -> not absent
+        assert!(matches!(v(&inv_with(&[(23, G | 1)]), &[]), LifecycleBaselineVerdict::NotEstablished(_)));
+    }
+    #[test] fn bag_contents_are_reconciled_target_in_bag_is_found_or_blocks_absent() {
+        let mut t = inv_with(&[(19, G | 100), (23, G | 1)]);
+        add_bag(&mut t, G | 100, 16, &[(0, G | 2), (5, G | 3)]);
+        let base = [bag(G | 100), it(G | 1, 2589, 5), it(G | 2, 4306, 5)];
+        // G|3 (inside the bag) not observed yet -> NOT absent
+        assert!(matches!(v(&t, &base), LifecycleBaselineVerdict::NotEstablished(_)));
+        let mut with_target = base.to_vec(); with_target.push(it(G | 3, 10998, 2));
+        assert_eq!(v(&t, &with_target), LifecycleBaselineVerdict::Present(vec![(G | 3, 2)]));
+        let mut other = base.to_vec(); other.push(it(G | 3, 11175, 2));
+        assert_eq!(v(&t, &other), LifecycleBaselineVerdict::Absent);
+    }
+    #[test] fn bag_slot_list_unknown_or_typed_path_only_is_not_established() {
+        let t = inv_with(&[(19, G | 100)]);
+        assert!(matches!(v(&t, &[bag(G | 100)]), LifecycleBaselineVerdict::NotEstablished(_)));
+        let mut t2 = inv_with(&[(19, G | 100)]);
+        t2.container_unknown(G | 100);
+        assert!(matches!(v(&t2, &[bag(G | 100)]), LifecycleBaselineVerdict::NotEstablished(_)));
+        // a Values-only view of a bag (never saw its create) is not a slot list
+        let mut t3 = inv_with(&[(19, G | 100)]);
+        t3.container_values(G | 100, &[(LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD, 16)]);
+        assert!(matches!(v(&t3, &[bag(G | 100)]), LifecycleBaselineVerdict::NotEstablished(_)));
+    }
+    #[test] fn structural_contradictions_are_invalid() {
+        let mut t = inv_with(&[(19, G | 100)]);
+        add_bag(&mut t, G | 100, 4, &[(7, G | 2)]); // slot 7 populated beyond num_slots=4
+        assert!(matches!(v(&t, &[bag(G | 100), it(G | 2, 5, 1)]), LifecycleBaselineVerdict::Invalid(_)));
+        let mut t2 = inv_with(&[(19, G | 100)]);
+        add_bag(&mut t2, G | 100, 4, &[(0, G | 101)]);
+        assert!(matches!(v(&t2, &[bag(G | 100), bag(G | 101)]), LifecycleBaselineVerdict::Invalid(_)));
+    }
+    #[test] fn unreferenced_or_unverified_cached_objects_are_not_absent() {
+        let t = inv_with(&[(23, G | 1)]);
+        assert!(matches!(v(&t, &[it(G | 1, 5, 1), it(G | 77, 5, 1)]), LifecycleBaselineVerdict::NotEstablished(_)));
+        let mut unv = it(G | 1, 5, 1); unv.verified = false;
+        assert!(matches!(v(&t, &[unv]), LifecycleBaselineVerdict::NotEstablished(_)));
+        let mut zero = it(G | 1, 0, 1); zero.verified = true;
+        assert!(matches!(v(&t, &[zero]), LifecycleBaselineVerdict::NotEstablished(_)));
+    }
+    #[test] fn player_values_delta_changes_only_present_slots() {
+        let mut t = inv_with(&[(23, G | 1), (24, G | 2)]);
+        t.player_values(&slots(&[(24, 0)]));        // slot 24 emptied, slot 23 untouched
+        assert_eq!(v(&t, &[it(G | 1, 5, 1)]), LifecycleBaselineVerdict::Absent);
+        t.player_values(&slots(&[(25, G | 3)]));    // new item appears in slot 25
+        assert!(matches!(v(&t, &[it(G | 1, 5, 1)]), LifecycleBaselineVerdict::NotEstablished(_)));
+    }
+    #[test] fn uncertainty_is_sticky_and_beats_everything() {
+        let t = inv_with(&[(23, G | 1)]);
+        let mut f = facts();
+        lifecycle_baseline_note_uncertain(&mut f, "malformed inventory update".into());
+        let r = lifecycle_baseline_verdict(&f, &t, &[it(G | 1, 5, 1)], 10998);
+        assert!(matches!(r, LifecycleBaselineVerdict::Invalid(ref w) if w.contains("malformed inventory update")));
+        f.parsed_updates += 100;
+        assert!(matches!(lifecycle_baseline_verdict(&f, &t, &[it(G | 1, 5, 1)], 10998), LifecycleBaselineVerdict::Invalid(_)));
+    }
+
+    // ---- wait loop
+    #[test] fn wait_loop_resolves_transient_not_established_within_bound() {
+        let mut barriers = 0; let mut calls = 0;
+        let r = lifecycle_baseline_wait_loop(8, |_| { barriers += 1; Ok(()) }, || { calls += 1; if calls < 3 { LifecycleBaselineVerdict::NotEstablished("x".into()) } else { LifecycleBaselineVerdict::Absent } }, || {});
+        assert_eq!(r, Ok(LifecycleBaselineVerdict::Absent)); assert_eq!(barriers, 3);
+    }
+    #[test] fn wait_loop_never_upgrades_unknown_to_absent_and_is_bounded() {
+        let mut barriers = 0;
+        let r = lifecycle_baseline_wait_loop(8, |_| { barriers += 1; Ok(()) }, || LifecycleBaselineVerdict::NotEstablished("x".into()), || {}).unwrap();
+        assert!(matches!(r, LifecycleBaselineVerdict::NotEstablished(_))); assert_eq!(barriers, 8);
+    }
+    #[test] fn wait_loop_stops_immediately_on_present_or_invalid_and_propagates_errors() {
+        let mut b = 0;
+        assert_eq!(lifecycle_baseline_wait_loop(8, |_| { b += 1; Ok(()) }, || LifecycleBaselineVerdict::Present(vec![(1, 1)]), || {}), Ok(LifecycleBaselineVerdict::Present(vec![(1, 1)])));
+        assert_eq!(b, 1);
+        assert!(lifecycle_baseline_wait_loop(8, |_| Err("socket".into()), || LifecycleBaselineVerdict::Absent, || {}).is_err());
+    }
+
+    // ---- scanner helpers
+    fn pg(g: u64) -> Vec<u8> { // packed guid
+        let mut m = 0u8; let mut b = Vec::new();
+        for i in 0..8 { let x = ((g >> (8 * i)) & 0xff) as u8; if x != 0 { m |= 1 << i; b.push(x); } }
+        let mut v = vec![m]; v.extend(b); v
+    }
+    fn body(count: u32, blocks: &[Vec<u8>]) -> Vec<u8> {
+        let mut v = count.to_le_bytes().to_vec(); v.push(0);
+        for b in blocks { v.extend(b); }
+        v
+    }
+    fn values_block(g: u64, set_bits: u32) -> Vec<u8> { // 1 mask word with `set_bits` low bits
+        let mut v = vec![0u8]; v.extend(pg(g)); v.push(1);
+        let mask = if set_bits >= 32 { u32::MAX } else { (1u32 << set_bits) - 1 };
+        v.extend(mask.to_le_bytes());
+        for i in 0..set_bits { v.extend((i + 1).to_le_bytes()); }
+        v
+    }
+    fn create_block(g: u64) -> Vec<u8> { let mut v = vec![3u8]; v.extend(pg(g)); v.extend([3u8, 0x70, 1, 2, 3, 4, 5, 6, 7, 8]); v }
+    fn oor_block(gs: &[u64]) -> Vec<u8> { let mut v = vec![4u8]; v.extend((gs.len() as u32).to_le_bytes()); for g in gs { v.extend(pg(*g)); } v }
+    const CREATURE: u64 = 0xF130_0000_0000_0042;
+    const ITEM: u64 = 0x4000_0000_0000_0777;
+    fn stored_zlib(raw: &[u8]) -> Vec<u8> { // stored-block zlib stream (no compressor needed)
+        let mut v = vec![0x78, 0x01, 0x01];
+        v.extend((raw.len() as u16).to_le_bytes()); v.extend((!(raw.len() as u16)).to_le_bytes());
+        v.extend(raw); v.extend([0, 0, 0, 0]); v
+    }
+    fn compressed_payload(raw: &[u8]) -> Vec<u8> { let mut p = (raw.len() as u32).to_le_bytes().to_vec(); p.extend(stored_zlib(raw)); p }
+
