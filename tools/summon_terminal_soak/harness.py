@@ -23,6 +23,7 @@ ROLE_KEYS = {
     "payer": ("payer", "trade", "payment", "tele10"),
 }
 MAX_TRANSIENT_WHISPER_PREFLIGHT_ATTEMPTS = 3
+MAX_CONFIRMED_RITUAL_REJECT_REPLAYS = 5
 
 
 def utc(): return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -92,6 +93,30 @@ def is_transient_whisper_preflight_failure(report, text):
     ))
 
 
+def is_confirmed_ritual_server_reject(report, text, requested_cycles):
+    if not report or report.get("result") != "FAIL":
+        return False
+    whisper = report.get("whisper") or {}
+    sp = report.get("summon_payment") or {}
+    if whisper.get("passed") is not True:
+        return False
+    if sp.get("hard_uncertain") is not False:
+        return False
+    try:
+        paid = int(sp.get("paid_summon_count", 0))
+    except Exception:
+        return False
+    if paid < 0 or paid >= requested_cycles:
+        return False
+    upper = text.upper()
+    return (
+        "SERVER_REJECT SPELL=698" in upper
+        and "SMSG_CAST_RESULT" in upper
+        and "FAILURE" in upper
+        and "TELE10_" not in upper.split("SERVER_REJECT SPELL=698", 1)[0][-300:]
+    )
+
+
 def run_live(run, cycles, faults=False):
     if not os.environ.get("WOW112_PASSWORD"):
         return False,[{"case":"credential","stage":"preflight","player":None,"request_id":None,"expected":"WOW112_PASSWORD present in process memory","actual":"missing","relevant_log_lines":[],"reproducer_command":"RUN_SUMMON_SOAK.cmd --cycles 1 --live"}],[],0,0
@@ -106,17 +131,23 @@ def run_live(run, cycles, faults=False):
         segment_ok=False
         final_cp=None
         final_report=None
-        for attempt in range(1, MAX_TRANSIENT_WHISPER_PREFLIGHT_ATTEMPTS + 1):
+        remaining=n
+        completed=0
+        invocation=0
+        whisper_retries=0
+        reject_replays=0
+        while remaining > 0:
+            invocation += 1
             before={p.resolve() for p in results_root.iterdir() if p.is_dir()}
-            cmd=["powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",str(PROVEN),"-Cycles",str(n)]
+            cmd=["powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",str(PROVEN),"-Cycles",str(remaining)]
             t0=time.monotonic()
             cp=subprocess.run(cmd,cwd=ROOT,env=env,text=True,capture_output=True)
             elapsed=time.monotonic()-t0
-            timings.append({"segment":idx,"attempt":attempt,"cycles":n,"elapsed_seconds":elapsed,"exit_code":cp.returncode})
-            (run/f"segment_{idx}_attempt_{attempt}.stdout.log").write_text(cp.stdout,encoding="utf-8",errors="replace")
-            (run/f"segment_{idx}_attempt_{attempt}.stderr.log").write_text(cp.stderr,encoding="utf-8",errors="replace")
+            timings.append({"segment":idx,"attempt":invocation,"cycles":remaining,"completed_before":completed,"elapsed_seconds":elapsed,"exit_code":cp.returncode})
+            (run/f"segment_{idx}_attempt_{invocation}.stdout.log").write_text(cp.stdout,encoding="utf-8",errors="replace")
+            (run/f"segment_{idx}_attempt_{invocation}.stderr.log").write_text(cp.stderr,encoding="utf-8",errors="replace")
             newdirs=latest_result_dirs(before)
-            segdest=raw/f"segment_{idx}"/f"attempt_{attempt}"; segdest.mkdir(parents=True)
+            segdest=raw/f"segment_{idx}"/f"attempt_{invocation}"; segdest.mkdir(parents=True)
             report=None
             if newdirs:
                 src=max(newdirs,key=lambda p:p.stat().st_mtime)
@@ -132,19 +163,40 @@ def run_live(run, cycles, faults=False):
                 except Exception: pass
             uncertain += text.upper().count("UNCERTAIN")
             reconnects += text.upper().count("RECONNECT")
-            ok=(cp.returncode==0 and report and report.get("result")=="PASS" and report.get("whisper",{}).get("passed") is True and report.get("summon_payment",{}).get("server_trade_complete") is True and report.get("summon_payment",{}).get("paid_summon_count",0)>=n and report.get("summon_payment",{}).get("hard_uncertain") is False)
+            sp=(report or {}).get("summon_payment",{}) or {}
+            paid_now=int(sp.get("paid_summon_count",0) or 0) if report else 0
+            ok=(cp.returncode==0 and report and report.get("result")=="PASS" and report.get("whisper",{}).get("passed") is True and sp.get("server_trade_complete") is True and paid_now>=remaining and sp.get("hard_uncertain") is False)
             final_cp, final_report = cp, report
             if ok:
+                completed += remaining
+                remaining = 0
                 segment_ok=True
                 break
-            transient_preflight = is_transient_whisper_preflight_failure(report, text)
-            if not transient_preflight or attempt >= MAX_TRANSIENT_WHISPER_PREFLIGHT_ATTEMPTS:
-                break
-            time.sleep(1.0)
+
+            if is_transient_whisper_preflight_failure(report, text):
+                whisper_retries += 1
+                if whisper_retries >= MAX_TRANSIENT_WHISPER_PREFLIGHT_ATTEMPTS:
+                    break
+                time.sleep(1.0)
+                continue
+
+            if is_confirmed_ritual_server_reject(report, text, remaining):
+                if reject_replays >= MAX_CONFIRMED_RITUAL_REJECT_REPLAYS:
+                    break
+                # Only already server-confirmed Paid cycles are removed from the remainder.
+                # The rejected ritual itself has no successful ritual record/payment mutation.
+                completed += paid_now
+                remaining -= paid_now
+                reject_replays += 1
+                time.sleep(1.0)
+                continue
+
+            break
+
         if not segment_ok:
             cp = final_cp
             report = final_report
-            failures.append({"case":f"live_segment_{idx}_{n}_cycles","stage":"wire_e2e","player":"Smokinpole/Teletanaris","request_id":None,"expected":"real whisper + summon + teleport + server TRADE_COMPLETE + trusted Paid ledger","actual":{"exit_code":cp.returncode if cp else None,"report":report},"relevant_log_lines":((cp.stdout+"\n"+cp.stderr).splitlines()[-40:] if cp else []),"reproducer_command":f"RUN_SUMMON_SOAK.cmd --cycles {n} --live"})
+            failures.append({"case":f"live_segment_{idx}_{n}_cycles","stage":"wire_e2e","player":"Smokinpole/Teletanaris","request_id":None,"expected":"real whisper + summon + teleport + server TRADE_COMPLETE + trusted Paid ledger","actual":{"exit_code":cp.returncode if cp else None,"report":report,"completed_before_failure":completed,"remaining":remaining,"confirmed_reject_replays":reject_replays},"relevant_log_lines":((cp.stdout+"\n"+cp.stderr).splitlines()[-40:] if cp else []),"reproducer_command":f"RUN_SUMMON_SOAK.cmd --cycles {remaining or n} --live"})
             break
     collect_role_logs(raw,run)
     return not failures,failures,timings,reconnects,uncertain
