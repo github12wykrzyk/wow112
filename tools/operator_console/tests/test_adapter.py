@@ -24,9 +24,10 @@ class ReplayServer(threading.Thread):
         s.close()
     def stop(self): self.stop_evt.set(); self.join(2)
 
+
 class CommandServer(threading.Thread):
     def __init__(self):
-        super().__init__(daemon=True); self.ready=threading.Event(); self.port=0; self.command=None
+        super().__init__(daemon=True); self.ready=threading.Event(); self.stop_evt=threading.Event(); self.port=0; self.command=None
     def run(self):
         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); s.listen(); self.port=s.getsockname()[1]; self.ready.set()
         c,_=s.accept(); f=c.makefile('rb'); f.readline(); c.sendall(encode_line({'kind':'hello_ack','schema_version':1}))
@@ -48,6 +49,24 @@ class AdapterTests(unittest.TestCase):
             while time.time()<deadline and srv.command is None: time.sleep(.02)
             self.assertEqual(srv.command['type'],'ManualWhisper'); self.assertEqual(srv.command['session_id'],'session-1'); self.assertEqual(srv.command['customer'],'Alice')
             c.stop(); store.close()
+
+    def test_uncertain_send_hard_stops_without_retry(self):
+        from protocol import make_command
+        class FailingSocket:
+            def __init__(self): self.calls=0; self.closed=False
+            def sendall(self, payload):
+                self.calls += 1
+                raise OSError('synthetic uncertain send')
+            def close(self): self.closed=True
+        with tempfile.TemporaryDirectory() as d:
+            store=EventStore(Path(d)/'db.sqlite3'); c=ServiceConnector(store,'127.0.0.1',9)
+            sock=FailingSocket(); c._sock=sock; c.connected=True
+            with self.assertRaises(ConnectionError): c.send_command(make_command('Pause'))
+            self.assertEqual(sock.calls,1)
+            self.assertEqual(c.command_uncertain,1)
+            self.assertFalse(c.connected)
+            self.assertTrue(sock.closed)
+            store.close()
     def test_reconnect_cursor_and_dedupe(self):
         events=[make_event('WhisperReceived',event_id=f'e{i}',customer='Alice') for i in range(5)]
         srv=ReplayServer(events); srv.start(); srv.ready.wait(2)
