@@ -13,7 +13,8 @@ spec=importlib.util.spec_from_file_location('integration',Path(__file__).with_na
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 LIFECYCLE_INCLUDES=(
-    '\ninclude!("../../../src/AuctionLifecycle/adapter.rs");\n',
+    '\ninclude!("../../../src/AuctionLifecycle/inventory_baseline.rs");\n',
+    'include!("../../../src/AuctionLifecycle/adapter.rs");\n',
     'include!("../../../src/AuctionLifecycle/auto_v2.rs");\n',
 )
 
@@ -36,7 +37,8 @@ class Integration(unittest.TestCase):
             after=(root/SRC/'world_poc07.rs').read_text()
             self.assertEqual(canonical_buy_body(after),before)
             adapter=(root/LIFECYCLE/'adapter.rs').read_text()
-            self.assertIn('s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;',adapter)
+            self.assertIn('lifecycle_note_unparsed_update(op,payload)',adapter)
+            self.assertNotIn('inventory_bad=true',adapter)
             files={p:p.read_bytes() for p in (root/SRC).glob('*.rs')}
             adapter_before=(root/LIFECYCLE/'adapter.rs').read_bytes()
             with self.assertRaises(ValueError):m.integrate(root)
@@ -70,5 +72,7 @@ class Integration(unittest.TestCase):
             self.assertIn('POC08-UNIFIED-V4',unified)
             self.assertIn('lifecycle_auto_run', (root/SRC/'world_poc08_unified.rs').read_text())
             self.assertIn('return lifecycle_run', (root/SRC/'world_poc08_unified.rs').read_text())
-            self.assertIn('s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;', (root/LIFECYCLE/'adapter.rs').read_text())
+            self.assertIn('lifecycle_note_unparsed_update(op,payload)', (root/LIFECYCLE/'adapter.rs').read_text())
+            self.assertIn('lifecycle_baseline_wait_loop', (root/LIFECYCLE/'auto_v2.rs').read_text())
+            self.assertNotIn('lifecycle_baseline_mark_settled', (root/LIFECYCLE/'auto_v2.rs').read_text())
 if __name__=='__main__':unittest.main()
