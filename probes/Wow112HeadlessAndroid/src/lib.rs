@@ -5,6 +5,7 @@ pub mod summon_service_runtime;
 pub mod tele08_bc_adapter;
 pub mod tele08_whisper_parser;
 pub mod tele10_trade_payment;
+pub mod tele_party_seq;
 
 #[cfg(test)]
 mod tele08_bc_adapter_tests;
