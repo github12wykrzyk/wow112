@@ -1,5 +1,6 @@
 name: Test Summon Service V1
 
+# Final feature gate: library + public integration suites must execute on the exact feature head.
 on:
   workflow_dispatch:
   push:
