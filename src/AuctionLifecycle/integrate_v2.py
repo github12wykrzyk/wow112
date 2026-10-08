@@ -47,8 +47,13 @@ def integrate(root: Path) -> None:
       '#[path = "../../../src/AuctionLifecycle/market_maker_v2_saga.rs"]','mod market_maker_v2_saga;']))
 
     # Generated V2 adapter: bind tracker while lifecycle_bind still knows the canonical realm id.
-    # Also route every canonical raw world packet into MM2 after bind, including initial object state.
+    # Read-only MM2 diagnostics/reconcile deliberately do not acquire the economic mutation lock,
+    # so they remain available to inspect an unresolved `.pending` without gaining SEND authority.
+    # Mutation modes still use the normal character-scoped coordinator binding.
     a=(life/'adapter.rs').read_text(encoding='utf-8-sig')
+    old='    let server=env::var("WOW112_SERVER_ID").unwrap_or_else(|_|"octowow".into());\n    let session=mutations::bind(&server,realm,player)?;'
+    new='    let server=env::var("WOW112_SERVER_ID").unwrap_or_else(|_|"octowow".into());\n    let action=env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default();\n    let mm2_mode=env::var("WOW112_MM2_MODE").unwrap_or_else(|_|"capability".into()).trim().to_ascii_lowercase();\n    let mm2_read_only=action=="marketmaker2" && matches!(mm2_mode.as_str(),"capability"|"read-only"|"readonly"|"inventory"|"inventory-tracker"|"mailbox"|"mailbox-resolver"|"auction-capability"|"ah-capability"|"depth"|"targeted-depth"|"reconcile"|"mm2-reconcile");\n    let session=if mm2_read_only{mutations::bind_read_only()}else{mutations::bind(&server,realm,player)?};'
+    a=once(a,old,new)
     old='LIFE_OBSERVED.with(|s| *s.borrow_mut()=LifecycleObserved {player,..Default::default()});\n    Ok(session)'
     new='LIFE_OBSERVED.with(|s| *s.borrow_mut()=LifecycleObserved {player,..Default::default()});\n    if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="marketmaker2" { market_maker_v2_bind(player,realm); }\n    Ok(session)'
     a=once(a,old,new)
