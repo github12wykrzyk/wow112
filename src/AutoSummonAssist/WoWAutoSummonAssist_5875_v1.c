@@ -1,5 +1,5 @@
 /*
- * WoWAutoSummonAssist 5875 v24 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
+ * WoWAutoSummonAssist 5875 v25 - direct summon bridge + startup logout escape + payer-first trade + Anti-AFK.
  * World of Warcraft 1.12.1 build 5875, Windows x86 ONLY.
  *
  * Detection:
@@ -25,6 +25,13 @@
  * - AcceptTrade() is called only after the paying player has accepted first,
  *   with a positive target-gold offer while this client contributes no money/items;
  * - one local AcceptTrade() call is allowed per payer-accept cycle (no accept spam).
+ *
+ * Anti-AFK persistence:
+ * - runtime delivery remains strictly per-process/per-window;
+ * - the persisted enabled flag is additionally scoped by the live 64-bit
+ *   character GUID, not by account, process id or a shared global section;
+ * - character switches in the same WoW process rebind and reload immediately;
+ * - level-1 / active SLAVE policy still forces Anti-AFK ON for that character.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error WoWAutoSummonAssist requires 32-bit x86.
@@ -57,6 +64,9 @@ typedef int BOOL32;
 
 __declspec(dllimport) BOOL32 STDCALL PostMessageA(HWND32,u32,u32,u32);
 __declspec(dllimport) u32 STDCALL GetCurrentProcessId(void);
+__declspec(dllimport) u32 STDCALL GetModuleFileNameA(HANDLE32,char*,u32);
+__declspec(dllimport) u32 STDCALL GetPrivateProfileStringA(const char*,const char*,const char*,char*,u32,const char*);
+__declspec(dllimport) BOOL32 STDCALL WritePrivateProfileStringA(const char*,const char*,const char*,const char*);
 __declspec(dllimport) HANDLE32 STDCALL CreateFileMappingA(HANDLE32,void*,u32,u32,u32,const char*);
 __declspec(dllimport) void* STDCALL MapViewOfFile(HANDLE32,u32,u32,u32,u32);
 __declspec(dllimport) BOOL32 STDCALL UnmapViewOfFile(const void*);
@@ -129,6 +139,9 @@ typedef void (__thiscall *RightClickObjectFn)(void*,int);
 #define TRADE_POLL_MS               100u
 #define SUMMON_BRIDGE_POLL_MS         50u
 #define SUMMON_START_WATCH_MS        1600u
+#define ANTI_AFK_PROFILE_NAME        "wow112_parallel_gui.ini"
+#define ANTI_AFK_PROFILE_KEY         "21"
+#define ANTI_AFK_PROFILE_PREFIX      "autosummonassist_"
 
 #define SUMMON_COORD_MAGIC           0x41323157u
 #define SUMMON_COORD_VERSION         1u
@@ -247,6 +260,9 @@ static u32 g_coordLastPublishedState = 0xFFFFFFFFu;
 static u32 g_mgr = 0u, g_lo = 0u, g_hi = 0u, g_readyAt = 0u;
 static u32 g_portalLo = 0u, g_portalHi = 0u;
 static u32 g_lastClick = 0u, g_portalAttempts = 0u, g_announced = 0u;
+static char g_profilePath[512];
+static char g_profileModuleId[48];
+static u32 g_profileBoundLo=0u,g_profileBoundHi=0u;
 
 static W112_ControlSettingV1 g_settings[33];
 static u32 g_descriptorReady = 0u;
@@ -291,6 +307,88 @@ static char *appendU32Dec(char *p,u32 value)
     while(value&&n<15u){tmp[n++]=(char)('0'+(value%10u));value/=10u;}
     while(n) *p++=tmp[--n];
     return p;
+}
+
+static char *appendU32Hex8(char *p,u32 value)
+{
+    static const char hex[]="0123456789ABCDEF";
+    int shift;
+    for(shift=28;shift>=0;shift-=4) *p++=hex[(value>>(u32)shift)&15u];
+    return p;
+}
+
+static int parseHex8(const char *s,u32 *out)
+{
+    u32 i,bits=0u;
+    if(!s||!out)return 0;
+    for(i=0u;i<8u;++i) {
+        u8 c=(u8)s[i];
+        u32 v;
+        if(c>='0'&&c<='9')v=(u32)(c-'0');
+        else if(c>='A'&&c<='F')v=10u+(u32)(c-'A');
+        else if(c>='a'&&c<='f')v=10u+(u32)(c-'a');
+        else return 0;
+        bits=(bits<<4u)|v;
+    }
+    if(s[8]!=0)return 0;
+    *out=bits;
+    return 1;
+}
+
+static int profilePreparePath(void)
+{
+    u32 n,start,i;
+    if(g_profilePath[0])return 1;
+    n=GetModuleFileNameA(0,g_profilePath,(u32)sizeof(g_profilePath));
+    if(!n||n>=(u32)sizeof(g_profilePath)){g_profilePath[0]=0;return 0;}
+    start=n;
+    while(start&&g_profilePath[start-1u]!='\\'&&g_profilePath[start-1u]!='/')--start;
+    if(!start||start+(u32)sizeof(ANTI_AFK_PROFILE_NAME)>(u32)sizeof(g_profilePath)){
+        g_profilePath[0]=0;return 0;
+    }
+    for(i=0u;i<(u32)sizeof(ANTI_AFK_PROFILE_NAME);++i)
+        g_profilePath[start+i]=ANTI_AFK_PROFILE_NAME[i];
+    return 1;
+}
+
+static void profileUnbindCharacter(void)
+{
+    g_profileModuleId[0]=0;
+    g_profileBoundLo=0u;
+    g_profileBoundHi=0u;
+    g_antiAfkEnabled=1u;
+}
+
+static void profileBindCharacter(u32 lo,u32 hi)
+{
+    char *p;
+    char value[16];
+    u32 saved=0u,n;
+    if((!lo&&!hi)||(g_profileBoundLo==lo&&g_profileBoundHi==hi&&g_profileModuleId[0]))return;
+    p=g_profileModuleId;
+    p=appendAscii(p,ANTI_AFK_PROFILE_PREFIX);
+    p=appendU32Hex8(p,hi);
+    *p++='_';
+    p=appendU32Hex8(p,lo);
+    *p=0;
+    g_profileBoundLo=lo;
+    g_profileBoundHi=hi;
+    g_antiAfkEnabled=1u;
+    if(!profilePreparePath())return;
+    n=GetPrivateProfileStringA(g_profileModuleId,ANTI_AFK_PROFILE_KEY,"",value,(u32)sizeof(value),g_profilePath);
+    if(n==8u&&parseHex8(value,&saved)&&saved<=1u)
+        g_antiAfkEnabled=saved;
+}
+
+static void profilePersistAntiAfk(void)
+{
+    char text[9];
+    static const char hex[]="0123456789ABCDEF";
+    u32 bits=g_antiAfkEnabled?1u:0u,i;
+    if(!g_profileModuleId[0]||!profilePreparePath())return;
+    for(i=0u;i<8u;++i)text[i]=hex[(bits>>(28u-i*4u))&15u];
+    text[8]=0;
+    WritePrivateProfileStringA(g_profileModuleId,ANTI_AFK_PROFILE_KEY,text,g_profilePath);
 }
 
 static u32 coordinatorDestinationCode(const char *s)
@@ -423,6 +521,7 @@ static void resetWorld(void)
     g_lo=0u;
     g_hi=0u;
     g_readyAt=0u;
+    profileUnbindCharacter();
     g_antiAfkSlashInstallAt=0u;
     g_antiAfkNextAt=0u;
     g_antiAfkDeferCheckAt=0u;
@@ -494,6 +593,7 @@ static u32 localPlayer(u32 now)
         g_mgr=mgr;
         g_lo=lo;
         g_hi=hi;
+        profileBindCharacter(lo,hi);
         g_readyAt=now+WORLD_GRACE_MS;
         return 0u;
     }
@@ -557,6 +657,7 @@ static void antiAfkSetEnabled(u32 enabled)
 {
     g_antiAfkEnabled=enabled?1u:0u;
     antiAfkResetRuntime();
+    profilePersistAntiAfk();
 }
 
 static void enforceLevelProfile(u32 player)
@@ -1254,15 +1355,16 @@ static int W112_CTL_STDCALL setValue(w112_u32 id,const W112_ControlValueV1 *v)
             return 1;
         }
         if(g_antiAfkEnabled!=v->u32) antiAfkSetEnabled(v->u32);
+        else profilePersistAntiAfk();
         return 1;
     }
     return 0;
 }
 
-static const W112_ControlModuleV1 g_module={
+static W112_ControlModuleV1 g_module={
     W112_CONTROL_API_V1,
     sizeof(W112_ControlModuleV1),
-    "autosummonassist",
+    0,
     "AutoSummon Assist",
     0x00130000u,
     33u,
@@ -1274,6 +1376,10 @@ static const W112_ControlModuleV1 g_module={
 DLLEXPORT const W112_ControlModuleV1 * W112_CTL_STDCALL W112_Control_GetModuleV1(void)
 {
     initSettings();
+    /* Fail closed before the live character GUID is known: PlayerESP therefore
+     * cannot restore/write the old shared [autosummonassist] section. Once the
+     * GUID is bound, module_id itself becomes the per-character INI section. */
+    g_module.module_id=g_profileModuleId[0]?g_profileModuleId:0;
     return &g_module;
 }
 
@@ -1294,6 +1400,10 @@ BOOL32 STDCALL DllMain(void *module,u32 reason,void *reserved)
 
     if(reason==1u) {
         SetTimerFn setTimer;
+        g_profilePath[0]=0;
+        g_profileModuleId[0]=0;
+        g_profileBoundLo=0u;
+        g_profileBoundHi=0u;
         resetWorld();
         g_attemptCount=0u;
         g_postCallCount=0u;
