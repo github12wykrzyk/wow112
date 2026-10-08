@@ -2,6 +2,8 @@ include!("world.rs");
 
 use wow_world_messages::vanilla::SMSG_MESSAGECHAT_ChatType;
 
+include!("tele_trace.rs");
+
 const SMSG_MESSAGECHAT_OPCODE: u16 = 0x0096;
 const CMSG_MESSAGECHAT_OPCODE: u32 = 0x0095;
 const CMSG_NAME_QUERY_OPCODE: u32 = 0x0050;
@@ -142,7 +144,7 @@ fn tele_sniffer_loop(
     let mut reply_sent = false;
 
     println!(
-        "[TELE] WHISPER SNIFFER ACTIVE rx_only=no name_resolution=cmsg-name-query chat_tx={} invite=disabled cast=disabled portal_use=disabled duration={}",
+        "[TELE] WHISPER SNIFFER ACTIVE rx_only=no name_resolution=cmsg-name-query party_rx=enabled chat_tx={} invite=disabled cast=disabled portal_use=disabled duration={}",
         if test_reply.is_empty() { "disabled" } else { "armed_once" },
         if soak_seconds == 0 {
             "infinite".to_string()
@@ -152,6 +154,7 @@ fn tele_sniffer_loop(
     );
 
     loop {
+        tele_trace::poll_outcome("Sniffer");
         if deadline.is_some_and(|value| Instant::now() >= value) {
             println!("[TELE] soak complete whispers={whisper_count}");
             let _ = stream.set_read_timeout(previous_timeout);
@@ -185,6 +188,12 @@ fn tele_sniffer_loop(
                             awaiting_pong = None;
                         }
                     }
+                    continue;
+                }
+
+                tele_trace::trace_packet("Sniffer", opcode, &payload);
+
+                if crate::tele_party_observer::inspect_party_packet(opcode, &payload) {
                     continue;
                 }
 
@@ -381,6 +390,7 @@ pub fn login_tele_sniffer(
         None => &characters.characters[0],
     };
     println!("[WORLD] logging character={}", selected.name);
+    tele_trace::set_local_guid(selected.guid.guid());
     CMSG_PLAYER_LOGIN { guid: selected.guid }
         .write_encrypted_client(&mut *stream, crypto.encrypter())
         .map_err(|e| format!("write player login failed: {e:?}"))?;
