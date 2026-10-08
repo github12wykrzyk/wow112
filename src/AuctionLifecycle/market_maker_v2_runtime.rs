@@ -116,7 +116,7 @@ fn mm2_preflight_journals(player:u64)->Result<(),String>{
 // its own player first. Requiring player_seen also drains the initial inventory burst before AH/mail
 // request fences, while keeping this phase strictly read-only and wall-clock bounded.
 fn mm2_warm_tracker(stream:&mut TcpStream,crypto:&mut HeaderCrypto)->Result<(),String>{
-    if let Ok((generation,_,_,player_seen))=mm2_tracker_snapshot(){if generation>0&&player_seen{return Ok(()));}}
+    if let Ok((generation,_,_,player_seen))=mm2_tracker_snapshot(){if generation>0&&player_seen{return Ok(());}}
     let started=Mm2Instant::now();let deadline=started+Mm2Duration::from_secs(10);
     mm2_wait_for(stream,crypto,deadline,"tracker-warmup",|_,_|{
         let(generation,objects,slots,player_seen)=mm2_tracker_snapshot()?;
