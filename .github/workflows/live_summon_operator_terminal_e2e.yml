@@ -69,6 +69,7 @@ jobs:
       - name: Run real taxi1 whisper-to-payment E2E
         shell: pwsh
         run: |
+          $env:WOW112_TELE10_PAY_SETTLE_MS = '4000'
           & ./tools/summon_operator_livetest/Run-LiveTest.ps1 -NoBuild -Cycles 1 -CustomerAccount 'taxi1' -CustomerCharacter '${{ steps.taxi1.outputs.character }}' -PayCopper 40000 -Destination 'winterspring'
           exit $LASTEXITCODE
 
