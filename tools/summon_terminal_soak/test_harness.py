@@ -1,7 +1,5 @@
 import importlib.util
-import json
 import pathlib
-import tempfile
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -25,6 +23,25 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(inv["trade_complete_requires_server_confirmation"])
         self.assertTrue(inv["paid_requires_trusted_confirmation"])
         self.assertTrue(inv["ledger_entry_unique"])
+
+    def test_synthetic_state_machine_contract(self):
+        # Contract-only: this deliberately does not duplicate TELE07/08/10 implementation.
+        allowed = {
+            "WhisperReceived": {"RequestQueued", "Rejected"},
+            "RequestQueued": {"SummonStarted", "Cancelled"},
+            "SummonStarted": {"SummonCompleted", "SummonFailed", "Uncertain"},
+            "SummonCompleted": {"PaymentExpected"},
+            "PaymentExpected": {"PaymentReceived", "PaymentMissing", "TradeUncertain"},
+            "PaymentReceived": {"Paid"},
+        }
+        happy = [
+            "WhisperReceived", "RequestQueued", "SummonStarted", "SummonCompleted",
+            "PaymentExpected", "PaymentReceived", "Paid",
+        ]
+        for before, after in zip(happy, happy[1:]):
+            self.assertIn(after, allowed[before])
+        self.assertNotIn("Paid", allowed["PaymentExpected"])
+        self.assertNotIn("SummonCompleted", allowed["RequestQueued"])
 
     def test_current_parallel_missing_core_is_reported_not_faked(self):
         audit = harness.primitive_audit()
