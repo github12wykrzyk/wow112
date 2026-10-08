@@ -2,7 +2,7 @@
 param(
     [ValidateSet('Start','Stop','Status','Console','Backup','Rollback','Upgrade','Verify','Supervisor')]
     [string]$Action,
-    [string]$Root,
+    [Alias('Root')][string]$PackageRootArg,
     [string]$Package,
     [string]$ExpectedSourceSha,
     [switch]$NoPrompt,
@@ -389,7 +389,7 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
 }
 
 function Invoke-Main {
-    $packageRoot = Normalize-Root $Root
+    $packageRoot = Normalize-Root $PackageRootArg
     switch ($Action) {
         'Start' { Start-ServiceSupervisor $packageRoot; return 0 }
         'Stop' { Stop-ServiceSupervisor $packageRoot; return 0 }
