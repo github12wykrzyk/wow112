@@ -26,12 +26,15 @@ class ParallelDeliveryRouteTests(unittest.TestCase):
         self.assertFalse(result["require_standard"])
         self.assertEqual(result["reason"], "validation_only")
 
-    def test_economy_only_uses_profile_without_standard(self):
+    def test_economy_only_keeps_profile_and_standard_compat(self):
         result = classify(
             task(["economy"]), CONFIG, "route-test",
             ["src/AddOns/AuxVmangos/AuxVmangos.lua", "runtime/parallel_tasks/route-test.json"],
         )
-        self.assertFalse(result["require_standard"])
+        self.assertTrue(result["require_standard"])
+        self.assertFalse(result["fast_path"])
+        self.assertEqual(result["standard_mode"], "standard")
+        self.assertEqual(result["reason"], "profile_contained_standard_compat")
         self.assertEqual(result["profiles_used"], ["economy"])
 
     def test_economy_source_without_declared_profile_fails_closed(self):
@@ -42,23 +45,25 @@ class ParallelDeliveryRouteTests(unittest.TestCase):
         self.assertTrue(result["require_standard"])
         self.assertIn("src/AddOns/AuxVmangos/AuxVmangos.lua", result["uncovered_paths"])
 
-    def test_updater_only_uses_profile_without_standard(self):
+    def test_updater_only_keeps_profile_and_standard_compat(self):
         result = classify(
             task(["updater"]), CONFIG, "route-test",
             ["tools/updater/WoW112Updater.cs", "runtime/parallel_tasks/route-test.json"],
         )
-        self.assertFalse(result["require_standard"])
+        self.assertTrue(result["require_standard"])
+        self.assertEqual(result["reason"], "profile_contained_standard_compat")
         self.assertEqual(result["profiles_used"], ["updater"])
 
-    def test_autologinbridge_only_uses_profile_without_standard(self):
+    def test_autologinbridge_only_keeps_profile_and_standard_compat(self):
         result = classify(
             task(["autologinbridge"]), CONFIG, "route-test",
             ["src/AutoLoginBridge/WoWAutoLoginBridge_5875_v1_HOTPROBE.c", "runtime/parallel_tasks/route-test.json"],
         )
-        self.assertFalse(result["require_standard"])
+        self.assertTrue(result["require_standard"])
+        self.assertEqual(result["reason"], "profile_contained_standard_compat")
         self.assertEqual(result["profiles_used"], ["autologinbridge"])
 
-    def test_cross_profile_change_runs_both_profiles_without_standard(self):
+    def test_cross_profile_change_keeps_both_profiles_and_standard_compat(self):
         result = classify(
             task(["economy", "updater"]), CONFIG, "route-test",
             [
@@ -67,7 +72,8 @@ class ParallelDeliveryRouteTests(unittest.TestCase):
                 "runtime/parallel_tasks/route-test.json",
             ],
         )
-        self.assertFalse(result["require_standard"])
+        self.assertTrue(result["require_standard"])
+        self.assertEqual(result["reason"], "profile_contained_standard_compat")
         self.assertEqual(result["profiles_used"], ["economy", "updater"])
 
     def test_generic_summonscout_lua_still_requires_standard(self):
