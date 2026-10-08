@@ -5,5 +5,5 @@ if "%~1"=="" (
   exit /b 2
 )
 set "EXPECTED=%~2"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\SummonService.ps1" -Action Upgrade -Root "%~dp0" -Package "%~1" -ExpectedSourceSha "%EXPECTED%"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Invoke-SafeUpgrade.ps1" -Root "%~dp0" -Package "%~1" -ExpectedSourceSha "%EXPECTED%"
 exit /b %ERRORLEVEL%
