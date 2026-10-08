@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-whisper-relay-spamfix-v2",
+  "goal": "Eliminate all idle SSWR1 H/K heartbeat traffic seen live at 22:17 by making Whisper Relay handshake strictly demand-driven: zero H while relayQueue is empty, bounded retries only while real relay data is queued, preserving relay/session/payment/reply semantics.",
+  "branch": "feature/summonscout-whisper-relay-spamfix-v2",
+  "base_parallel_sha": "1d0f1a5690fc32bb5d31d93daf24da08363f3bf7",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-whisper-relay-v1",
+    "summonscout-whisper-relay-spamfix-v1"
+  ],
+  "shared_resources": [
+    "SummonScout WhisperRelay control transport",
+    "SummonScout HotHost whisper relay state"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live evidence after V1 showed new [SSWR1] H:hyjal / H:hydraxian lines at 22:17. Root cause: V1 intentionally allowed up to three idle startup/login/master-change hello attempts. V2 changes sgHandshakeNeeded so an empty relayQueue is an unconditional hard stop. H may be armed only by real queued relay traffic and is capped at three attempts for that queue episode. PLAYER_LOGIN parks hello immediately. No summon/payment/parser/customer-reply semantics are changed."
+}
