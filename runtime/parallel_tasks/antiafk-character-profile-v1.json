@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "antiafk-character-profile-v1",
+  "goal": "Persist AutoSummonAssist Anti-AFK independently per live WoW character GUID, including same-process character switches, while preserving the existing level-1 and active-SLAVE forced-ON policy and per-window SPACE delivery.",
+  "branch": "feature/antiafk-character-profile-v1",
+  "base_parallel_sha": "cc813253ceacb9b87d3ead57de491d032fafcfec",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "AutoSummonAssist"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "wow112_parallel_gui.ini autosummonassist persistence namespace"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Feature preflight run 37843792720 passed against canonical main cc813253ceacb9b87d3ead57de491d032fafcfec. Windows-2022 compiled WoWAutoSummonAssist_5875_v1.dll successfully as a companion; CI DLL SHA-256 b13e10bb4653f8973451a5e77797d095c4d46b8bdfc0a27ae6a774bb06c38509. Setting 21 is isolated by the live 64-bit character GUID. The provider exposes no persistence module_id before a live GUID is bound, so the legacy shared [autosummonassist] section cannot be restored. Same-process character switches explicitly reload the newly scoped value. Level-1 and active-SLAVE forced-ON behavior is preserved. No AH/BUY, payment, summon-cast, portal-click or trade semantics are changed.",
+  "integrated_feature_sha": "e68a88b035007f439bf93951e6cf362b3dcf93a6"
+}
