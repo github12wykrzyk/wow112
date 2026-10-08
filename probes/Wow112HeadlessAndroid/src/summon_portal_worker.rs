@@ -49,7 +49,11 @@ impl PortalWorker {
         }
     }
 
-    pub fn claim_portal_use(&self, portal_guid: u64, now_ms: u64) -> Result<Option<PortalClaim>, String> {
+    pub fn claim_portal_use(
+        &self,
+        portal_guid: u64,
+        now_ms: u64,
+    ) -> Result<Option<PortalClaim>, String> {
         let Some(request_id) = self.active_ritual_request()? else {
             return Ok(None);
         };
@@ -71,6 +75,34 @@ impl PortalWorker {
             operation_id,
             portal_guid,
         }))
+    }
+
+    pub fn execute_portal_use_once<F>(
+        &self,
+        portal_guid: u64,
+        now_ms: u64,
+        send_once: F,
+    ) -> Result<Option<PortalClaim>, String>
+    where
+        F: FnOnce(u64) -> Result<(), String>,
+    {
+        let Some(claim) = self.claim_portal_use(portal_guid, now_ms)? else {
+            return Ok(None);
+        };
+        match send_once(portal_guid) {
+            Ok(()) => {
+                self.mark_send_ok(&claim, now_ms.saturating_add(1))?;
+                Ok(Some(claim))
+            }
+            Err(error) => {
+                let reason = format!(
+                    "portal_use_socket_uncertain request={} guid=0x{:016X} cause={error}",
+                    claim.request_id, claim.portal_guid
+                );
+                self.mark_send_uncertain(&claim, now_ms.saturating_add(1), &reason)?;
+                Err(format!("{reason} retry_allowed=false"))
+            }
+        }
     }
 
     pub fn mark_send_ok(&self, claim: &PortalClaim, now_ms: u64) -> Result<(), String> {
@@ -102,6 +134,7 @@ mod tests {
     use crate::summon_mutation_coordinator::{MutationKind, MutationState};
     use crate::summon_service_control::apply_control;
     use crate::summon_service_runtime::{ServiceRuntimeConfig, SummonServiceRuntime};
+    use std::cell::Cell;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn root(tag: &str) -> PathBuf {
@@ -154,6 +187,53 @@ mod tests {
             pending.command,
             ServiceControlCommand::PortalCommitted { request_id: id }
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn execute_once_calls_transport_exactly_once_and_publishes_portal_evidence() {
+        let root = root("execute_once");
+        let (_runtime, id) = ritual_ready(&root);
+        let worker = PortalWorker::open(&root).unwrap();
+        let sends = Cell::new(0u32);
+        let claim = worker
+            .execute_portal_use_once(0xDEAD, 30, |guid| {
+                assert_eq!(guid, 0xDEAD);
+                sends.set(sends.get() + 1);
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.request_id, id);
+        assert_eq!(sends.get(), 1);
+        let inbox = ControlInbox::open(&root).unwrap();
+        assert!(matches!(
+            inbox.next().unwrap().unwrap().command,
+            ServiceControlCommand::PortalCommitted { .. }
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn execute_once_transport_error_is_durable_uncertain_and_never_replayed() {
+        let root = root("execute_error");
+        let (_runtime, _id) = ritual_ready(&root);
+        let worker = PortalWorker::open(&root).unwrap();
+        let sends = Cell::new(0u32);
+        let error = worker
+            .execute_portal_use_once(0xBEEF, 30, |_| {
+                sends.set(sends.get() + 1);
+                Err("ambiguous socket result".to_string())
+            })
+            .unwrap_err();
+        assert!(error.contains("retry_allowed=false"));
+        assert_eq!(sends.get(), 1);
+
+        let restored = PortalWorker::open(&root).unwrap();
+        let second = restored.execute_portal_use_once(0xBEEF, 40, |_| {
+            panic!("transport must not be called after unresolved uncertain mutation")
+        });
+        assert!(second.unwrap_err().contains("blocked by unresolved mutation"));
         let _ = fs::remove_dir_all(root);
     }
 
