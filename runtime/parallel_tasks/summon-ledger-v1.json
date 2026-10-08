@@ -12,8 +12,8 @@
     "summon-ledger-db-schema",
     "summon-ledger-event-contract"
   ],
-  "status": "preflight",
+  "status": "test_ready",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "notes": "User-directed isolated feature from current parallel. No integration to parallel/main. Runtime/gameplay, operator console and packaging are out of scope."
+  "notes": "User-directed isolated feature from current parallel. No integration to parallel/main. Runtime/gameplay, operator console and packaging are out of scope. Functional ledger code passed dedicated Ubuntu and Windows CI on 78307d1a8be4bce369155efc30c6b54f11eb1957; final feature remains auto-integration disabled."
 }
