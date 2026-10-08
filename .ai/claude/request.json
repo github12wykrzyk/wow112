@@ -1,7 +1,7 @@
 {
-  "enabled": true,
+  "enabled": false,
   "request_id": "ah-market-maker-v1-deep-review-20261008-002",
   "target_ref": "feature/ah-market-maker-v1",
   "tier": "deep",
-  "task": "Perform a deep read-only safety and correctness review of the latest AH Market Maker V1 on feature/ah-market-maker-v1. Focus narrowly on src/AuctionLifecycle/market_maker_policy.rs, market_maker_inventory.rs, market_maker.rs, coordinator.rs, adapter.rs, integrate.py, test_integration.py, .github/workflows/ah_market_maker_v1.yml, and the canonical poc07 BUY primitive they call. Verify exact unit-price/depth arithmetic, cumulative max_clear_spend/max_clear_units across repeated rescans, effective floor/min-price enforcement, CLEAR_THEN_RELIST profitability after AH cut, fresh revalidation before every BUY/CANCEL/POST, canonical BUY semantics preservation, CANCEL->MAIL->SPLIT->POST state transitions, native MutationKind::Split exclusivity and durable pending barrier before first split byte, no automatic retry after any uncertain mutation, behavior when mail merges into an existing stack, correctness of split destination/reconciliation, posting stack=1 units only, behavior if market changes during mail/split, ownership/bid guards, incomplete/drifting snapshot fail-closed behavior, and likely Rust compile/runtime edge cases. Look for ways the bot could overspend, undercut below floor, buy too many units, post stale prices, duplicate mutations, or leave coordinator state incorrectly cleared. Return prioritized findings with exact file/symbol evidence, concrete minimal fixes, and tests. Do not edit files or redesign unrelated login/history/economy code. Use the full deep budget if needed; correctness is more important than brevity."
+  "task": "Deep review request already dispatched. Disabled to avoid duplicate runs."
 }
