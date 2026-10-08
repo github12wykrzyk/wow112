@@ -2,8 +2,7 @@ name: Summon Terminal Soak V1 Quality
 
 on:
   push:
-    branches:
-      - 'feature/summon-terminal-soak-v1'
+    branches: [ 'feature/summon-terminal-soak-v1' ]
   workflow_dispatch:
 
 permissions:
@@ -11,42 +10,33 @@ permissions:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: windows-2022
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Materialize canonical parallel ref for scope audit
-        run: git fetch origin parallel:refs/heads/parallel
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Compile current canonical headless probe
-        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
-
-      - name: Harness unit and invariant tests
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Rust production headless tests
+        shell: pwsh
+        working-directory: probes/Wow112HeadlessAndroid
+        run: cargo test --all-targets --verbose
+      - name: Harness tests
+        shell: pwsh
         run: python -m unittest tools/summon_terminal_soak/test_harness.py -v
-
-      - name: Parser fixtures and structured evidence quality run
+      - name: Quality evidence
+        shell: pwsh
         run: python tools/summon_terminal_soak/harness.py --quality-only
-
-      - name: Prove forbidden production scopes are untouched
-        shell: bash
+      - name: Scope guard
+        shell: pwsh
         run: |
-          changed="$(git diff --name-only parallel...HEAD)"
-          echo "$changed"
-          if echo "$changed" | grep -E '^(src/AddOns/|tools/operator_console/|packaging/)'; then
-            echo 'Forbidden scope changed.' >&2
-            exit 1
-          fi
-
-      - name: Upload quality evidence
+          $base='a5ee048c620c55542460d54d7750e81f0f8f8da4'
+          git fetch --depth=1 origin $base
+          $changed=git diff --name-only "$base..$env:GITHUB_SHA"
+          $bad=$changed | Where-Object { $_ -like 'src/AddOns/*' -or $_ -like 'tools/operator_console/*' -or $_ -like 'packaging/*' }
+          if($bad){$bad | Write-Error; exit 1}
+      - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:

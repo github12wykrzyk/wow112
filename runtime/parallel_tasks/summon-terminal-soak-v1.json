@@ -1,21 +1,13 @@
 {
   "schema_version": 1,
   "id": "summon-terminal-soak-v1",
-  "goal": "Build a terminal/headless-only autonomous fault/adversarial/soak harness for Summon Service V1, reusing canonical primitives and reporting blockers instead of implementing AddOn/Lua/GUI fallbacks.",
+  "goal": "Terminal/headless-only autonomous fault/adversarial/soak harness for Summon Service V1 using restored exact proven TELE06a-10 primitives.",
   "branch": "feature/summon-terminal-soak-v1",
   "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
-  "status": "coding",
+  "proven_reference_sha": "d753829314db39e5cd9aad57ce1d46daaf4d55da",
+  "prerequisite_restore_sha": "4f7cf5b581d6f089998ce0d1a8a70a27b9515c55",
+  "status": "testing",
   "auto_integrate": false,
-  "modules": [
-    "SummonTerminalSoak"
-  ],
-  "dependencies": [],
-  "shared_resources": [
-    "probes/Wow112HeadlessAndroid",
-    "TELE07/08/09/10 headless primitives",
-    "live-tested reference d753829314db39e5cd9aad57ce1d46daaf4d55da"
-  ],
-  "delivery_profiles": [],
-  "lease": null,
-  "notes": "Strict terminal/headless test scope. No src/AddOns, Lua, WoW GUI, operator_console, packaging, or automatic parallel integration. Reference branch is evidence only. Current parallel lacks required TELE07/08/10 primitives, so live E2E remains fail-closed BLOCKED until canonical provides them."
+  "modules": ["SummonTerminalSoak"],
+  "notes": "Strict terminal/headless scope. No src/AddOns, Lua, WoW GUI, operator_console or packaging. LIVE PASS requires real whisper + summon + server TRADE_COMPLETE + trusted Paid ledger. Unsupported fault/variant seams are BLOCKED, never synthetic PASS."
 }

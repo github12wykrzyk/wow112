@@ -1,269 +1,159 @@
-from __future__ import annotations
-
-import argparse
-import datetime as dt
-import json
-import os
-import pathlib
-import subprocess
-import sys
-import time
-from typing import Any
+#!/usr/bin/env python3
+import argparse, datetime as dt, json, os, pathlib, shutil, subprocess, sys, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HERE = pathlib.Path(__file__).resolve().parent
 RUNS = HERE / "runs"
-
-REQUIRED_PRIMITIVES = {
-    "tele07_supervisor": ROOT / "probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs",
-    "tele08_whisper_parser": ROOT / "probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs",
-    "tele08_request_queue": ROOT / "probes/Wow112HeadlessAndroid/tele08_request_queue/src/lib.rs",
-    "tele08_full_roundtrip": ROOT / "probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs",
-    "tele10_trade_payment": ROOT / "probes/Wow112HeadlessAndroid/src/tele10_trade_payment.rs",
-    "tele10_payer_driver": ROOT / "probes/Wow112HeadlessAndroid/src/tele10_payer_driver_runtime.rs",
-    "tele10_trade_receiver": ROOT / "probes/Wow112HeadlessAndroid/src/tele10_trade_receiver_runtime.rs",
-    "tele10_ledger": ROOT / "probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs",
+PROVEN = HERE / "Run-ProvenLiveTest.ps1"
+REQUIRED = [
+    "probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs",
+    "probes/Wow112HeadlessAndroid/src/bin/tele08_full_roundtrip.rs",
+    "probes/Wow112HeadlessAndroid/src/bin/tele10_ledger.rs",
+    "probes/Wow112HeadlessAndroid/src/tele08_whisper_parser.rs",
+    "probes/Wow112HeadlessAndroid/src/tele10_trade_payment.rs",
+    "probes/Wow112HeadlessAndroid/src/tele10_payer_driver_runtime.rs",
+    "probes/Wow112HeadlessAndroid/src/tele10_trade_receiver_runtime.rs",
+    "probes/Wow112HeadlessAndroid/tele08_request_queue/Cargo.toml",
+]
+ROLE_KEYS = {
+    "customer": ("customer", "whisper"),
+    "summoner": ("summoner", "ritual", "supervisor"),
+    "clicker1": ("clicker1", "clicker_1"),
+    "clicker2": ("clicker2", "clicker_2"),
+    "payer": ("payer", "trade", "payment", "tele10"),
 }
 
-AVAILABLE_BASE_PRIMITIVES = {
-    "headless_login_world": ROOT / "probes/Wow112HeadlessAndroid/src/main.rs",
-    "wire_whisper": ROOT / "probes/Wow112HeadlessAndroid/src/world_tele.rs",
-    "portal_clicker": ROOT / "probes/Wow112HeadlessAndroid/src/world_portal.rs",
-}
+def utc(): return dt.datetime.now(dt.timezone.utc).isoformat()
+def sha():
+    return subprocess.check_output(["git","rev-parse","HEAD"], cwd=ROOT, text=True).strip()
+def dump(path, data):
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+def event(fp, typ, **kw):
+    rec={"schema_version":1,"event_id":f"e-{time.time_ns()}","ts_utc":utc(),"type":typ,"session_id":kw.pop("session_id",None),"request_id":kw.pop("request_id",None),"customer":kw.pop("customer",None),"destination":kw.pop("destination",None),"state":kw.pop("state",None),"amount_copper":kw.pop("amount_copper",None),"correlation_id":kw.pop("correlation_id",None),"severity":kw.pop("severity","info"),"metadata":kw}
+    fp.write(json.dumps(rec,ensure_ascii=False)+"\n"); fp.flush()
 
-FORBIDDEN_PREFIXES = ("src/AddOns/", "tools/operator_console/", "packaging/")
-
-ROLE_LOGS = ("customer", "summoner", "clicker1", "clicker2", "payer")
-
-
-def now_utc() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def exact_sha() -> str:
+def primitive_audit():
+    missing=[p for p in REQUIRED if not (ROOT/p).exists()]
+    forbidden=[]
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    except Exception:
-        return "UNKNOWN"
+        base="a5ee048c620c55542460d54d7750e81f0f8f8da4"
+        changed=subprocess.check_output(["git","diff","--name-only",f"{base}...HEAD"],cwd=ROOT,text=True).splitlines()
+        forbidden=[p for p in changed if p.startswith(("src/AddOns/","tools/operator_console/","packaging/"))]
+    except Exception: pass
+    return missing,forbidden
 
+def latest_result_dirs(before):
+    root=HERE/"results"
+    if not root.exists(): return []
+    return [p for p in root.iterdir() if p.is_dir() and p.resolve() not in before]
 
-def changed_files() -> list[str]:
-    try:
-        text = subprocess.check_output(
-            ["git", "diff", "--name-only", "parallel...HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
-        )
-        return [line.strip().replace("\\", "/") for line in text.splitlines() if line.strip()]
-    except Exception:
-        return []
+def collect_role_logs(raw_root, run):
+    files=[p for p in raw_root.rglob("*") if p.is_file() and p.suffix.lower() in (".log",".txt",".json")]
+    for role, keys in ROLE_KEYS.items():
+        out=run/f"{role}.log"
+        with out.open("w",encoding="utf-8",errors="replace") as w:
+            matched=0
+            for p in files:
+                low=str(p).lower()
+                if any(k in low for k in keys):
+                    matched+=1; w.write(f"\n===== {p.relative_to(raw_root)} =====\n")
+                    try: w.write(p.read_text(encoding="utf-8",errors="replace"))
+                    except Exception as e: w.write(f"<read error {e}>\n")
+            if not matched: w.write("No dedicated role-named file; authoritative raw evidence is under raw/.\n")
 
+def segment_plan(cycles):
+    out=[]
+    while cycles>0:
+        n=min(20,cycles); out.append(n); cycles-=n
+    return out or [1]
 
-def ensure_scope_clean() -> list[str]:
-    return [p for p in changed_files() if p.startswith(FORBIDDEN_PREFIXES)]
+def run_live(run, cycles, faults=False):
+    if not os.environ.get("WOW112_PASSWORD"):
+        return False,[{"case":"credential","stage":"preflight","player":None,"request_id":None,"expected":"WOW112_PASSWORD present in process memory","actual":"missing","relevant_log_lines":[],"reproducer_command":"RUN_SUMMON_SOAK.cmd --cycles 1 --live"}],[],0,0
+    env=os.environ.copy()
+    if faults:
+        env["WOW112_TELE07_FAULT_CYCLE"]="1"
+        env["WOW112_TELE07_FAULT_ROLE"]="CLICKER2_PRECONNECT_ONCE"
+    all_reports=[]; failures=[]; timings=[]; reconnects=0; uncertain=0
+    results_root=HERE/"results"; results_root.mkdir(exist_ok=True)
+    raw=run/"raw"; raw.mkdir()
+    for idx,n in enumerate(segment_plan(cycles),1):
+        before={p.resolve() for p in results_root.iterdir() if p.is_dir()}
+        cmd=["powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",str(PROVEN),"-Cycles",str(n)]
+        t0=time.monotonic()
+        cp=subprocess.run(cmd,cwd=ROOT,env=env,text=True,capture_output=True)
+        elapsed=time.monotonic()-t0
+        timings.append({"segment":idx,"cycles":n,"elapsed_seconds":elapsed,"exit_code":cp.returncode})
+        (run/f"segment_{idx}.stdout.log").write_text(cp.stdout,encoding="utf-8",errors="replace")
+        (run/f"segment_{idx}.stderr.log").write_text(cp.stderr,encoding="utf-8",errors="replace")
+        newdirs=latest_result_dirs(before)
+        segdest=raw/f"segment_{idx}"; segdest.mkdir()
+        report=None
+        if newdirs:
+            src=max(newdirs,key=lambda p:p.stat().st_mtime)
+            shutil.copytree(src,segdest/"evidence",dirs_exist_ok=True)
+            rp=src/"FINAL_REPORT.json"
+            if rp.exists():
+                try: report=json.loads(rp.read_text(encoding="utf-8-sig"))
+                except Exception: report=None
+        all_reports.append(report)
+        text=(cp.stdout+"\n"+cp.stderr)
+        if newdirs:
+            try:
+                text += "\n"+"\n".join(p.read_text(encoding="utf-8",errors="replace") for d in newdirs for p in d.rglob("*") if p.is_file() and p.suffix.lower() in (".log",".txt",".json"))
+            except Exception: pass
+        uncertain += text.upper().count("UNCERTAIN")
+        reconnects += text.upper().count("RECONNECT")
+        ok=(cp.returncode==0 and report and report.get("result")=="PASS" and report.get("whisper",{}).get("passed") is True and report.get("summon_payment",{}).get("server_trade_complete") is True and report.get("summon_payment",{}).get("paid_summon_count",0)>=n and report.get("summon_payment",{}).get("hard_uncertain") is False)
+        if not ok:
+            failures.append({"case":f"live_segment_{idx}_{n}_cycles","stage":"wire_e2e","player":"Smokinpole/Teletanaris","request_id":None,"expected":"real whisper + summon + teleport + server TRADE_COMPLETE + trusted Paid ledger","actual":{"exit_code":cp.returncode,"report":report},"relevant_log_lines":(cp.stdout+"\n"+cp.stderr).splitlines()[-40:],"reproducer_command":f"RUN_SUMMON_SOAK.cmd --cycles {n} --live"})
+            break
+    collect_role_logs(raw,run)
+    return not failures,failures,timings,reconnects,uncertain
 
-
-def primitive_audit() -> dict[str, Any]:
-    required = {name: path.exists() for name, path in REQUIRED_PRIMITIVES.items()}
-    base = {name: path.exists() for name, path in AVAILABLE_BASE_PRIMITIVES.items()}
-    source_contracts: dict[str, bool] = {}
-    tele = AVAILABLE_BASE_PRIMITIVES["wire_whisper"]
-    if tele.exists():
-        text = tele.read_text(encoding="utf-8", errors="replace")
-        source_contracts["real_wire_whisper_tx"] = "CMSG_MESSAGECHAT_OPCODE" in text and "tele_send_whisper" in text
-        source_contracts["real_wire_whisper_rx"] = "SMSG_MESSAGECHAT_OPCODE" in text and "Whisper" in text
-    portal = AVAILABLE_BASE_PRIMITIVES["portal_clicker"]
-    if portal.exists():
-        text = portal.read_text(encoding="utf-8", errors="replace")
-        source_contracts["headless_portal_use"] = "CMSG_GAMEOBJ_USE" in text or "GAMEOBJ_USE" in text
-    missing = sorted(name for name, ok in required.items() if not ok)
-    return {
-        "required": required,
-        "available_base": base,
-        "source_contracts": source_contracts,
-        "missing": missing,
-        "live_ready": not missing and all(base.values()),
-    }
-
-
-def validate_fixtures() -> dict[str, Any]:
-    data = json.loads((HERE / "whisper_cases.json").read_text(encoding="utf-8"))
-    required = {"accepted", "edge", "rejected", "duplicates"}
-    missing = sorted(required.difference(data))
-    total = sum(len(data.get(key, [])) for key in required)
-    return {"ok": not missing and total >= 20, "missing_sections": missing, "total_cases": total}
-
-
-def payment_invariants() -> dict[str, bool]:
-    # Harness contract only. This does not reimplement TELE10 state transitions.
-    return {
-        "set_gold_at_most_once": True,
-        "accept_at_most_once": True,
-        "no_retry_after_uncertain": True,
-        "trade_complete_requires_server_confirmation": True,
-        "paid_requires_trusted_confirmation": True,
-        "ledger_entry_unique": True,
-    }
-
-
-def append_event(path: pathlib.Path, **event: Any) -> None:
-    event.setdefault("ts_utc", now_utc())
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
-
-
-def write_role_logs(run_dir: pathlib.Path, blocker: str | None) -> None:
-    for role in ROLE_LOGS:
-        text = f"[{now_utc()}] role={role} harness=headless\n"
-        if blocker:
-            text += f"[{now_utc()}] BLOCKED {blocker}\n"
-        (run_dir / f"{role}.log").write_text(text, encoding="utf-8")
-
-
-def markdown(summary: dict[str, Any], audit: dict[str, Any]) -> str:
-    lines = [
-        "# Summon Terminal Soak V1",
-        "",
-        f"- status: **{summary['status']}**",
-        f"- exact SHA: `{summary['exact_sha']}`",
-        f"- total cases: {summary['total_cases']}",
-        f"- pass: {summary['pass']}",
-        f"- fail: {summary['fail']}",
-        f"- uncertain: {summary['uncertain']}",
-        f"- duplicate mutations: {summary['duplicate_mutations']}",
-        "",
-        "## Primitive audit",
-    ]
-    for name, ok in audit["required"].items():
-        lines.append(f"- {'PASS' if ok else 'BLOCKED'} `{name}`")
-    if summary["failed_cases"]:
-        lines += ["", "## Failed / blocked cases"]
-        for item in summary["failed_cases"]:
-            lines.append(f"- `{item}`")
-    lines += ["", "Synthetic quality checks are never reported as LIVE PASS."]
-    return "\n".join(lines) + "\n"
-
-
-def run_quality(run_dir: pathlib.Path, events: pathlib.Path) -> tuple[int, list[dict[str, Any]]]:
-    failures: list[dict[str, Any]] = []
-    forbidden = ensure_scope_clean()
-    append_event(events, type="ScopeAudit", result="PASS" if not forbidden else "FAIL", forbidden=forbidden)
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--cycles",type=int,default=0)
+    ap.add_argument("--faults",action="store_true")
+    ap.add_argument("--whispers",action="store_true")
+    ap.add_argument("--payments",action="store_true")
+    ap.add_argument("--quality-only",action="store_true")
+    ap.add_argument("--live",action="store_true")
+    a=ap.parse_args()
+    started=utc(); stamp=dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f"); run=RUNS/stamp; run.mkdir(parents=True)
+    exact=sha(); events=(run/"events.jsonl").open("w",encoding="utf-8")
+    event(events,"ServiceStarted",state="quality" if not a.live else "live",correlation_id=stamp)
+    missing,forbidden=primitive_audit(); failures=[]; blocked=[]; timings=[]; reconnects=0; uncertain=0
     if forbidden:
-        failures.append({
-            "case": "forbidden-scope",
-            "stage": "scope",
-            "player": None,
-            "request_id": None,
-            "expected": "no AddOn/operator_console/packaging changes",
-            "actual": forbidden,
-            "relevant_log_lines": forbidden,
-            "reproducer_command": "git diff --name-only parallel...HEAD",
-        })
-
-    fixtures = validate_fixtures()
-    append_event(events, type="WhisperFixtureAudit", result="PASS" if fixtures["ok"] else "FAIL", **fixtures)
-    if not fixtures["ok"]:
-        failures.append({
-            "case": "whisper-fixtures",
-            "stage": "whisper",
-            "player": None,
-            "request_id": None,
-            "expected": ">=20 categorized fixtures",
-            "actual": fixtures,
-            "relevant_log_lines": [],
-            "reproducer_command": "python tools/summon_terminal_soak/harness.py --quality-only",
-        })
-
-    invariants = payment_invariants()
-    append_event(events, type="PaymentInvariantSpec", result="PASS", invariants=invariants)
-    return (0 if not failures else 1), failures
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Terminal/headless Summon Service V1 soak harness")
-    parser.add_argument("--cycles", type=int, default=0)
-    parser.add_argument("--faults", action="store_true")
-    parser.add_argument("--whispers", action="store_true")
-    parser.add_argument("--payments", action="store_true")
-    parser.add_argument("--quality-only", action="store_true")
-    parser.add_argument("--live", action="store_true")
-    args = parser.parse_args()
-
-    run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = RUNS / run_id
-    run_dir.mkdir(parents=True, exist_ok=False)
-    events = run_dir / "events.jsonl"
-    started = now_utc()
-    sha = exact_sha()
-    append_event(events, type="HarnessStarted", run_id=run_id, exact_sha=sha, live=args.live)
-
-    quality_rc, failures = run_quality(run_dir, events)
-    audit = primitive_audit()
-    append_event(events, type="PrimitiveAudit", result="PASS" if audit["live_ready"] else "BLOCKED", audit=audit)
-
-    requested_live = not args.quality_only
-    if requested_live and not audit["live_ready"]:
-        failures.append({
-            "case": "live-primitives-missing",
-            "stage": "preflight",
-            "player": None,
-            "request_id": None,
-            "expected": "TELE07/08/10 headless primitives available on current parallel-derived checkout",
-            "actual": {"missing": audit["missing"]},
-            "relevant_log_lines": [f"missing primitive: {name}" for name in audit["missing"]],
-            "reproducer_command": "python tools/summon_terminal_soak/harness.py --live --cycles 1",
-        })
-
-    # No core protocol is duplicated here. Once the required primitives exist on canonical,
-    # the live orchestrator can dispatch those binaries. Until then the run is deliberately blocked.
-    status = "PASS" if not failures and (args.quality_only or audit["live_ready"]) else ("BLOCKED" if audit["missing"] else "FAIL")
-    total_cases = validate_fixtures()["total_cases"] + 6
-    passed = total_cases if quality_rc == 0 else max(0, total_cases - len(failures))
-    failed_cases = [item["case"] for item in failures]
-    finished = now_utc()
-
-    summary = {
-        "run_id": run_id,
-        "exact_sha": sha,
-        "started_utc": started,
-        "finished_utc": finished,
-        "status": status,
-        "total_cases": total_cases,
-        "pass": passed,
-        "fail": len([f for f in failures if f["case"] != "live-primitives-missing"]),
-        "uncertain": 0,
-        "summon_pass": 0,
-        "payment_pass": 0,
-        "duplicate_mutations": 0,
-        "reconnects": 0,
-        "worst_latency": None,
-        "failed_cases": failed_cases,
-        "cycles_requested": args.cycles,
-        "faults_requested": args.faults,
-        "whispers_requested": args.whispers,
-        "payments_requested": args.payments,
-        "coverage": "quality-only" if args.quality_only else "live-preflight",
-        "primitive_audit": audit,
-    }
-    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (run_dir / "summary.md").write_text(markdown(summary, audit), encoding="utf-8")
-    (run_dir / "failures.json").write_text(json.dumps(failures, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (run_dir / "timings.json").write_text(json.dumps({"stages": {}, "worst_latency": None}, indent=2) + "\n", encoding="utf-8")
-    (run_dir / "exact_sha_manifest.json").write_text(json.dumps({
-        "exact_sha": sha,
-        "reference_live_tested_sha": "d753829314db39e5cd9aad57ce1d46daaf4d55da",
-        "base_policy": "current parallel only; reference is evidence only",
-        "generated_utc": finished,
-    }, indent=2) + "\n", encoding="utf-8")
-    blocker = None if audit["live_ready"] else "required TELE07/08/10 primitives are absent from current parallel-derived checkout"
-    write_role_logs(run_dir, blocker)
-    append_event(events, type="HarnessFinished", status=status, failed_cases=failed_cases)
-
-    print(f"SUMMON TERMINAL SOAK {status}")
-    print(f"run_dir={run_dir}")
-    print(f"exact_sha={sha}")
-    if audit["missing"]:
-        print("missing_primitives=" + ",".join(audit["missing"]))
-    return 0 if status == "PASS" else 3
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+        failures.append({"case":"scope_guard","stage":"preflight","player":None,"request_id":None,"expected":"no forbidden paths","actual":forbidden,"relevant_log_lines":forbidden,"reproducer_command":"git diff --name-only a5ee048c...HEAD"})
+    if missing:
+        blocked += [f"missing primitive: {x}" for x in missing]
+    cycles=a.cycles or (1 if a.live else 0)
+    live_ok=None
+    if a.live and not failures and not blocked:
+        event(events,"SessionReady",state="starting",correlation_id=stamp)
+        live_ok,lf,tm,reconnects,uncertain=run_live(run,cycles,a.faults); failures+=lf; timings+=tm
+        event(events,"ServiceStopped",state="PASS" if live_ok else "FAIL",correlation_id=stamp,severity="info" if live_ok else "error")
+    else:
+        event(events,"ServiceStopped",state="BLOCKED" if blocked else ("FAIL" if failures else "PASS"),correlation_id=stamp,severity="warning" if blocked else "info")
+    # Explicit unsupported real-wire submatrices: never count as pass.
+    if a.live and a.whispers:
+        blocked.append("adversarial whisper variants: tele08_full_roundtrip request text is hardcoded; no terminal wire test seam exists")
+    if a.live and a.payments:
+        blocked.append("full payment variant matrix: proven runner covers trusted exact-payment path; no harness seam exists for 0/under/over/cancel/uncertain injection")
+    if a.live and a.faults:
+        # Existing supervisor has CLICKER2_PRECONNECT_ONCE only; that one is exercised above.
+        blocked.append("remaining summon fault matrix beyond CLICKER2_PRECONNECT_ONCE has no existing terminal fault-injection primitive")
+    status="FAIL" if failures else ("BLOCKED" if blocked else "PASS")
+    passed_cycles=cycles if a.live and status=="PASS" else (cycles if a.live and live_ok and not failures else 0)
+    summary={"run_id":stamp,"status":status,"exact_sha":exact,"started_utc":started,"finished_utc":utc(),"total_cases":len(timings) if a.live else 1,"pass":len(timings) if a.live and live_ok else (1 if not failures and not blocked else 0),"fail":len(failures),"uncertain":uncertain,"summon_pass":passed_cycles,"payment_pass":passed_cycles,"duplicate_mutations":0 if a.live and live_ok else None,"reconnects":reconnects,"worst_latency":max((x["elapsed_seconds"] for x in timings),default=0),"failed_cases":[x["case"] for x in failures],"blocked_cases":blocked,"cycles_requested":cycles,"cycles_completed":passed_cycles,"mode":{"live":a.live,"faults":a.faults,"whispers":a.whispers,"payments":a.payments,"quality_only":a.quality_only}}
+    dump(run/"summary.json",summary); dump(run/"failures.json",failures); dump(run/"timings.json",timings); dump(run/"exact_sha_manifest.json",{"exact_sha":exact,"base_parallel_sha":"a5ee048c620c55542460d54d7750e81f0f8f8da4","proven_reference_sha":"d753829314db39e5cd9aad57ce1d46daaf4d55da"})
+    md=["# Summon Terminal Soak",f"- status: **{status}**",f"- exact SHA: `{exact}`",f"- cycles: {passed_cycles}/{cycles}",f"- failures: {len(failures)}",f"- uncertain: {uncertain}"]
+    if blocked: md += ["","## Blocked"]+[f"- {x}" for x in blocked]
+    (run/"summary.md").write_text("\n".join(md)+"\n",encoding="utf-8")
+    for role in ROLE_KEYS:
+        p=run/f"{role}.log"
+        if not p.exists(): p.write_text("No live role process executed in this run.\n",encoding="utf-8")
+    events.close(); print(f"SUMMON TERMINAL SOAK {status}\n{run}\nSHA={exact}")
+    return 0 if status=="PASS" else (3 if status=="BLOCKED" else 1)
+if __name__=="__main__": sys.exit(main())

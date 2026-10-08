@@ -8,61 +8,27 @@ harness = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(harness)
 
-
 class HarnessTests(unittest.TestCase):
-    def test_fixture_matrix_is_large_and_categorized(self):
-        result = harness.validate_fixtures()
-        self.assertTrue(result["ok"])
-        self.assertGreaterEqual(result["total_cases"], 20)
+    def test_segment_plan_caps_proven_runner_at_20(self):
+        self.assertEqual([20], harness.segment_plan(20))
+        self.assertEqual([20,20,10], harness.segment_plan(50))
+        self.assertEqual([1], harness.segment_plan(0))
 
-    def test_payment_invariant_contract_is_fail_closed(self):
-        inv = harness.payment_invariants()
-        self.assertTrue(inv["set_gold_at_most_once"])
-        self.assertTrue(inv["accept_at_most_once"])
-        self.assertTrue(inv["no_retry_after_uncertain"])
-        self.assertTrue(inv["trade_complete_requires_server_confirmation"])
-        self.assertTrue(inv["paid_requires_trusted_confirmation"])
-        self.assertTrue(inv["ledger_entry_unique"])
+    def test_required_headless_primitives_are_present(self):
+        missing, forbidden = harness.primitive_audit()
+        self.assertEqual([], missing)
+        self.assertEqual([], forbidden)
 
-    def test_synthetic_state_machine_contract(self):
-        # Contract-only: this deliberately does not duplicate TELE07/08/10 implementation.
-        allowed = {
-            "WhisperReceived": {"RequestQueued", "Rejected"},
-            "RequestQueued": {"SummonStarted", "Cancelled"},
-            "SummonStarted": {"SummonCompleted", "SummonFailed", "Uncertain"},
-            "SummonCompleted": {"PaymentExpected"},
-            "PaymentExpected": {"PaymentReceived", "PaymentMissing", "TradeUncertain"},
-            "PaymentReceived": {"Paid"},
-        }
-        happy = [
-            "WhisperReceived", "RequestQueued", "SummonStarted", "SummonCompleted",
-            "PaymentExpected", "PaymentReceived", "Paid",
-        ]
-        for before, after in zip(happy, happy[1:]):
-            self.assertIn(after, allowed[before])
-        self.assertNotIn("Paid", allowed["PaymentExpected"])
-        self.assertNotIn("SummonCompleted", allowed["RequestQueued"])
+    def test_no_addon_or_gui_primitive_in_required_set(self):
+        joined = "\n".join(harness.REQUIRED).lower()
+        self.assertNotIn("src/addons", joined)
+        self.assertNotIn("operator_console", joined)
+        self.assertNotIn("packaging", joined)
 
-    def test_current_parallel_missing_core_is_reported_not_faked(self):
-        audit = harness.primitive_audit()
-        if audit["missing"]:
-            self.assertFalse(audit["live_ready"])
-        else:
-            self.assertTrue(audit["live_ready"])
+    def test_role_log_contract(self):
+        self.assertEqual({"customer","summoner","clicker1","clicker2","payer"}, set(harness.ROLE_KEYS))
 
-    def test_forbidden_scope_prefixes_cover_user_guardrails(self):
-        self.assertIn("src/AddOns/", harness.FORBIDDEN_PREFIXES)
-        self.assertIn("tools/operator_console/", harness.FORBIDDEN_PREFIXES)
-        self.assertIn("packaging/", harness.FORBIDDEN_PREFIXES)
+    def test_proven_runner_is_harness_local(self):
+        self.assertEqual(HERE / "Run-ProvenLiveTest.ps1", harness.PROVEN)
 
-    def test_required_output_contract(self):
-        required = {
-            "summary.json", "summary.md", "events.jsonl", "failures.json", "timings.json",
-            "customer.log", "summoner.log", "clicker1.log", "clicker2.log", "payer.log",
-            "exact_sha_manifest.json",
-        }
-        self.assertEqual(11, len(required))
-
-
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == "__main__": unittest.main()

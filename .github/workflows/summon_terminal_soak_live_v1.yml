@@ -2,77 +2,49 @@ name: LIVE Summon Terminal Soak V1
 
 on:
   push:
-    branches:
-      - 'feature/summon-terminal-soak-v1'
+    branches: [ 'feature/summon-terminal-soak-v1' ]
   workflow_dispatch:
-    inputs:
-      cycles:
-        description: 'Full live cycles'
-        required: true
-        default: '20'
 
 permissions:
   contents: read
-
 concurrency:
   group: wow112-live-summon-terminal-soak
   cancel-in-progress: false
 
 jobs:
   live:
-    runs-on: windows-2022
-    timeout-minutes: 45
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 180
     env:
       WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Materialize canonical parallel ref for scope audit
-        shell: pwsh
-        run: git fetch origin parallel:refs/heads/parallel
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Canonical primitive/live preflight
-        id: soak
-        continue-on-error: true
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Credential gate
         shell: pwsh
         run: |
-          $cycles = '${{ inputs.cycles }}'
-          if ([string]::IsNullOrWhiteSpace($cycles)) { $cycles = '20' }
-          python tools/summon_terminal_soak/harness.py --live --cycles $cycles
-          exit $LASTEXITCODE
-
-      - name: Verify secret only after canonical primitive gate
-        if: steps.soak.outcome == 'success'
+          if([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)){ throw 'WOW112_PASSWORD repo secret missing' }
+      - name: Build proven headless roles
         shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
-            throw 'WOW112_PASSWORD repo secret is missing'
-          }
-          Write-Host 'WOW112_PASSWORD available (value not printed).'
-
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip --bin tele10_ledger --bin tele07_supervisor --bin tele06a_acceptor_runtime --bin tele06a_ritual_runtime
+      - name: LIVE 20-cycle gate
+        shell: pwsh
+        run: python tools/summon_terminal_soak/harness.py --live --cycles 20
+      - name: LIVE 50-cycle soak after 20 PASS
+        shell: pwsh
+        run: python tools/summon_terminal_soak/harness.py --live --cycles 50
+      - name: Existing fault primitive - clicker2 preconnect/recovery
+        shell: pwsh
+        run: python tools/summon_terminal_soak/harness.py --live --cycles 2 --faults
       - name: Upload LIVE evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: LIVE-summon-terminal-soak-${{ github.sha }}
-          path: tools/summon_terminal_soak/runs/**
+          path: |
+            tools/summon_terminal_soak/runs/**
+            tools/summon_terminal_soak/results/**
           if-no-files-found: error
-
-      - name: Enforce real LIVE result
-        if: always()
-        shell: pwsh
-        run: |
-          $summary = Get-ChildItem tools/summon_terminal_soak/runs -Filter summary.json -Recurse -File -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-          if ($null -eq $summary) { throw 'No live summary.json produced' }
-          $data = Get-Content $summary.FullName -Raw | ConvertFrom-Json
-          Write-Host ("LIVE status={0} sha={1} failed={2}" -f $data.status, $data.exact_sha, ($data.failed_cases -join ','))
-          if ($data.status -ne 'PASS') { exit 3 }
