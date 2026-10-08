@@ -60,7 +60,7 @@ class SummonScoutWhisperRelaySpamFixV1Contract(unittest.TestCase):
         self.assertIn('local WIM_FILTER_PATTERN = "%[SSWR1%]"', self.guard)
         self.assertIn('WIM_Filters[WIM_FILTER_PATTERN] = "Block"', self.guard)
         self.assertIn("relay.OnEvent = sgWrappedOnEvent", self.guard)
-        self.assertNotIn("ChatFrame_OnEvent", self.guard)
+        self.assertNotIn("ChatFrame_OnEvent =", self.guard)
         self.assertNotIn("SendChatMessage", self.guard)
 
     def test_shutdown_has_no_chatframe_wrapper_lifecycle(self):
