@@ -1,0 +1,72 @@
+name: LIVE Summon Terminal Soak V1
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: 'Full live cycles'
+        required: true
+        default: '20'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wow112-live-summon-terminal-soak
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Materialize canonical parallel ref for scope audit
+        shell: pwsh
+        run: git fetch origin parallel:refs/heads/parallel
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify secret without printing it
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            throw 'WOW112_PASSWORD repo secret is missing'
+          }
+          Write-Host 'WOW112_PASSWORD available (value not printed).'
+
+      - name: Canonical primitive/live preflight
+        id: soak
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python tools/summon_terminal_soak/harness.py --live --cycles '${{ inputs.cycles }}'
+          exit $LASTEXITCODE
+
+      - name: Upload LIVE evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LIVE-summon-terminal-soak-${{ github.sha }}
+          path: tools/summon_terminal_soak/runs/**
+          if-no-files-found: error
+
+      - name: Enforce real LIVE result
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = Get-ChildItem tools/summon_terminal_soak/runs -Filter summary.json -Recurse -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          if ($null -eq $summary) { throw 'No live summary.json produced' }
+          $data = Get-Content $summary.FullName -Raw | ConvertFrom-Json
+          Write-Host ("LIVE status={0} sha={1} failed={2}" -f $data.status, $data.exact_sha, ($data.failed_cases -join ','))
+          if ($data.status -ne 'PASS') { exit 3 }
