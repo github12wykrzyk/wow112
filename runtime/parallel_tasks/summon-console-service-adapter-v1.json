@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "summon-console-service-adapter-v1",
   "goal": "Build Operator Console as a durable frontend adapter for headless Summon Service V1 using structured events and only Pause, Resume and ManualWhisper operator commands.",
-  "branch": "feature/summon-console-service-adapter-v1",
+  "branch": "feature/summon-console-final-validation",
   "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
   "modules": [
     "SummonConsoleAdapter"
@@ -14,5 +14,5 @@
   "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "notes": "Product implementation scope remains tools/operator_console/**. This record exists only because the canonical merge base contains runtime/parallel_task_enforcement_v1.marker. Do not auto-integrate."
+  "notes": "Synthetic final-validation branch only. Product implementation remains tools/operator_console/** on feature/summon-console-service-adapter-v1. This branch additionally carries the independently verified delivery-route test compatibility repair and a repo-level wrapper that executes the complete operator-console suite. Do not auto-integrate."
 }
