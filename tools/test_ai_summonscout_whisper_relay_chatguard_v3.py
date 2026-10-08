@@ -15,11 +15,12 @@ class SummonScoutWhisperRelayChatGuardV3Contract(unittest.TestCase):
         cls.toc = (ADDON / "SummonScout.toc").read_text(encoding="utf-8")
         cls.task = json.loads(TASK.read_text(encoding="utf-8"))
 
-    def test_task_targets_exact_current_canonical_and_auto_integrates(self):
+    def test_task_tracks_integrated_lifecycle(self):
         self.assertEqual(self.task["base_parallel_sha"], "9ffc0fdb1efb5b28a9fa1c093abf442a587e75d3")
         self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-chatguard-v3")
-        self.assertEqual(self.task["status"], "ready_for_integration")
-        self.assertTrue(self.task["auto_integrate"])
+        self.assertEqual(self.task["status"], "integrated")
+        self.assertFalse(self.task["auto_integrate"])
+        self.assertEqual(self.task["integrated_feature_sha"], "3f4ceef20712a14734f6bcf5d4439293b3a96c27")
         self.assertEqual(self.task["delivery_profiles"], [])
 
     def test_transport_remains_real_whisper(self):
