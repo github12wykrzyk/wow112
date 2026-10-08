@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "parallel-delivery-route-tests-compat",
+  "goal": "Align delivery router regression tests with the intentional exact-HEAD STANDARD compatibility policy introduced on 2026-10-06, without changing router semantics.",
+  "branch": "feature/parallel-delivery-route-tests-compat",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "ParallelDeliveryRouteTests"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-delivery-routing-tests"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Test-only control-plane repair. The router implementation intentionally requires STANDARD for profile-contained changes until inherited-artifact updater routing is proven safe. Do not auto-integrate."
+}
