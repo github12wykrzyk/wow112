@@ -134,7 +134,8 @@ function Save-CredentialDpapi([string]$PackageRoot, $Config, [scriptblock]$Promp
     } else { throw "Credential source '$envName' is missing." }
     if ($null -eq $secure) { throw 'Credential prompt returned no secret.' }
     $target = Join-Path $PackageRoot 'state/credential.dpapi'
-    ConvertFrom-SecureString -SecureString $secure | Set-Content -LiteralPath $target -Encoding ASCII
+    $cipher = ConvertFrom-SecureString -SecureString $secure
+    [IO.File]::WriteAllText($target, $cipher)
     return $target
 }
 
@@ -344,7 +345,8 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
         while (-not (Test-Path -LiteralPath (Join-Path $PackageRoot 'state/supervisor.stop'))) {
             Remove-Item -LiteralPath (Join-Path $PackageRoot 'state/service.stop') -Force -ErrorAction SilentlyContinue
             if (-not (Test-Path -LiteralPath $DpapiFile)) { throw 'Encrypted credential state is missing.' }
-            $secure = ConvertTo-SecureString (Get-Content -LiteralPath $DpapiFile -Raw)
+            $cipher = (Get-Content -LiteralPath $DpapiFile -Raw).Trim()
+            $secure = ConvertTo-SecureString $cipher
             $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
             try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
             $envName = $cfg.credential.environment_variable -as [string]
