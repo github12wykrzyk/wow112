@@ -43,6 +43,7 @@ No automatic retry is allowed after an uncertain mutation send.
 | Variable | Default | Meaning |
 |---|---:|---|
 | `WOW112_MM_MODE` | `audit` | `audit` or `live` |
+| `WOW112_MM_ACTION_FILTER` | `any` | `any`, `undercut`, or `clear`; isolates canary action type without changing price economics |
 | `WOW112_MM_MAX_PAGES` | 4096 | full-market scan cap |
 | `WOW112_MM_MAX_ACTIONS` | 10 | bounded live decisions per run |
 | `WOW112_MM_MAX_CLEAR_BUYS` | 5 | max sequential clear buys in one clear chain |
@@ -61,6 +62,7 @@ No automatic retry is allowed after an uncertain mutation send.
 ## Safety notes
 
 - Ordinary repricing no longer inherits an implicit 80%/95% floor from the stale owned listing. Explicit/economic floors remain authoritative; the old-price percentage guard is opt-in only.
+- `WOW112_MM_ACTION_FILTER` isolates UNDERCUT and CLEAR canaries directly in runtime; test launchers must not fake isolation with a 95%/100% own-price floor.
 - Market clearing does not require the entire 50k+ AH total to remain unchanged. Instead, before every CLEAR BUY, two complete consecutive scans must yield the exact same decision for that specific item's depth.
 - Each actual BUY is still freshly validated by the canonical BUY primitive after the item-local confirmation.
 - After every clear BUY, the next decision is rebuilt from new scans and cumulative spend/unit limits continue from the already used budget.
@@ -79,6 +81,6 @@ No automatic retry is allowed after an uncertain mutation send.
 4. Windows i686 `cargo check` + `cargo test`,
 5. Windows PE build artifact,
 6. live `audit`,
-7. one controlled undercut canary,
-8. one controlled shallow-clear canary,
+7. one controlled `WOW112_MM_ACTION_FILTER=undercut` canary,
+8. one controlled `WOW112_MM_ACTION_FILTER=clear` shallow-clear canary,
 9. repeated run only after reconciliation is clean.
