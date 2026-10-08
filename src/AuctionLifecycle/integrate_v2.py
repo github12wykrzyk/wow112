@@ -24,6 +24,12 @@ def include_safe(text: str, name: str) -> str:
         old='if s.pushes.len()>128{s.pushes.drain(..s.pushes.len()-128);}'
         new='if s.pushes.len()>128{let trim=s.pushes.len()-128;s.pushes.drain(..trim);}'
         text=once(text,old,new)
+    if name=='market_maker_v2_io.rs':
+        # lifecycle_observe_raw is the one global observer reached by canonical and MM2 reads.
+        # The generated adapter fans that hook into the MM2 tracker, so do not observe twice here.
+        old='if lifecycle_enabled(){lifecycle_observe_raw(header.opcode,&payload);market_maker_observe_raw(header.opcode,&payload);}market_maker_v2_observe_raw(header.opcode,&payload);'
+        new='if lifecycle_enabled(){lifecycle_observe_raw(header.opcode,&payload);market_maker_observe_raw(header.opcode,&payload);}'
+        text=once(text,old,new)
     return text
 
 
@@ -41,9 +47,13 @@ def integrate(root: Path) -> None:
       '#[path = "../../../src/AuctionLifecycle/market_maker_v2_saga.rs"]','mod market_maker_v2_saga;']))
 
     # Generated V2 adapter: bind tracker while lifecycle_bind still knows the canonical realm id.
+    # Also route every canonical raw world packet into MM2 after bind, including initial object state.
     a=(life/'adapter.rs').read_text(encoding='utf-8-sig')
     old='LIFE_OBSERVED.with(|s| *s.borrow_mut()=LifecycleObserved {player,..Default::default()});\n    Ok(session)'
     new='LIFE_OBSERVED.with(|s| *s.borrow_mut()=LifecycleObserved {player,..Default::default()});\n    if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="marketmaker2" { market_maker_v2_bind(player,realm); }\n    Ok(session)'
+    a=once(a,old,new)
+    old='fn lifecycle_observe_raw(op:u16,payload:&[u8]) {\n    if !lifecycle_enabled() {return;}'
+    new='fn lifecycle_observe_raw(op:u16,payload:&[u8]) {\n    if !lifecycle_enabled() {return;}\n    if env::var("WOW112_LIFECYCLE_ACTION").unwrap_or_default()=="marketmaker2" { market_maker_v2_observe_raw(op,payload); }'
     a=once(a,old,new)
     (gen/'mm2_adapter.rs').write_text(a,encoding='utf-8')
 
