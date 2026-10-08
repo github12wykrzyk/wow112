@@ -29,22 +29,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tested='d7eac81cc97fc9b414c2a6067d44a21080445e61'
+          $tested='23a978771098c5a42d562dec8c0f51e8c6ab1b07'
           git merge-base --is-ancestor $tested HEAD
           if ($LASTEXITCODE -ne 0) { throw 'tested Lifecycle SHA is not an ancestor' }
           $changed=@(git diff --name-only "$tested..HEAD")
           $unexpected=@($changed | Where-Object { $_ -ne '.github/workflows/ah_auction_lifecycle_live_inspect_v1.yml' })
           if ($unexpected.Count -ne 0) { throw "unexpected changes after tested SHA: $($unexpected -join ', ')" }
-          gh run download 37790409029 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-d7eac81cc97fc9b414c2a6067d44a21080445e61' --dir live
+          gh run download 37798859290 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-23a978771098c5a42d562dec8c0f51e8c6ab1b07' --dir live
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $manifest=Get-Content 'live/LIFECYCLE_PACKAGE.json' -Raw | ConvertFrom-Json
           if ($manifest.commit -ne $tested) { throw 'artifact commit mismatch' }
           if ($manifest.base_commit -ne '99d0a45b1b62a98214f927f960156ba313de252b') { throw 'canonical base mismatch' }
           if ($manifest.local_mutation_runner -ne 'SAME_HOST_SINGLE_INVOCATION_NO_RETRY') { throw 'same-host canary marker missing' }
           if ($manifest.final_package -ne 'PASS') { throw 'artifact package not PASS' }
-          Write-Host 'LIVE_INSPECT_ARTIFACT PASS'
+          Write-Host 'LIVE_TARGETED_INSPECT_ARTIFACT PASS'
 
-      - name: Run read-only My Auctions inspection
+      - name: Run targeted read-only witness inspection
         shell: pwsh
         env:
           WOW112_ACCOUNT: octowar1
@@ -52,30 +52,32 @@ jobs:
           WOW112_CHARACTER: Smokinpole
           WOW112_REALM_INDEX: '1'
           WOW112_LIFECYCLE_ACTION: inspect
+          WOW112_LIFECYCLE_INSPECT_AUCTION_ID: '10143'
           WOW112_LIFECYCLE_MAX_PAGES: '4096'
           WOW112_AUTOBUY_ACTION: scan-only
           WOW112_RECONNECT_LIMIT: '1'
           WOW112_SOAK_SECONDS: '0'
+          WOW112_AH_GUID: '0xF130003D4100023A'
+          WOW112_MAILBOX_GUID: '0xF11002A4A5002A0C'
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) { throw 'WOW112_PASSWORD secret missing' }
           if (Test-Path Env:WOW112_LIFECYCLE_CONFIRM) { throw 'mutation confirmation must be absent' }
           $raw=& (Resolve-Path 'live/wow112-ah-auction-lifecycle-v1.exe').Path 2>&1
           $exit=$LASTEXITCODE
-          $rows=@($raw | Where-Object { "$_" -match '^\[MY-AUCTIONS\].*buybox=(LOST|NO_LOWER_OBSERVED|UNKNOWN)$' })
-          $summary=@($raw | Where-Object { "$_" -match '^\[LIFECYCLE\] MY_AUCTIONS count=\d+ shared_market_scan=YES complete=(YES|NO)$' })
-          $partial=@($raw | Where-Object { "$_" -match '^\[LIFECYCLE\] INSPECT_PARTIAL reason=' })
+          $witness=@($raw | Where-Object { "$_" -match '^\[MY-AUCTIONS-WITNESS\] id=10143 item=10998 count=1 buyout=4998 highest_bid=0 buybox=LOST witness_page=\d+ witness_id=\d+ witness_buyout=\d+ witness_count=\d+$' })
           foreach ($needle in @('MAIL-ACTION] SENT','POC07-BUY] SENT','CANCEL_CONFIRMED','POST_CONFIRMED','MUTATION_UNCERTAIN')) {
             if (@($raw | Where-Object { "$_" -like "*$needle*" }).Count -ne 0) { throw "mutation marker observed: $needle" }
           }
-          if ($exit -ne 0 -or $summary.Count -ne 1) { throw "read-only inspect failed exit=$exit" }
-          $rows | ForEach-Object { Write-Host "$_" }
-          $partial | ForEach-Object { Write-Host "$_" }
-          $summary | ForEach-Object { Write-Host "$_" }
-          @{tested_sha='d7eac81cc97fc9b414c2a6067d44a21080445e61';canonical_base='99d0a45b1b62a98214f927f960156ba313de252b';result='PASS';rows=$rows;partial=$partial;summary="$($summary[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
+          if ($exit -ne 0 -or $witness.Count -ne 1) {
+            $raw | ForEach-Object { Write-Host "$_" }
+            throw "targeted read-only inspect failed exit=$exit witness_count=$($witness.Count)"
+          }
+          $witness | ForEach-Object { Write-Host "$_" }
+          @{tested_sha='23a978771098c5a42d562dec8c0f51e8c6ab1b07';canonical_base='99d0a45b1b62a98214f927f960156ba313de252b';result='PASS';target_auction_id=10143;witness="$($witness[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
 
       - name: Upload sanitized summary
         uses: actions/upload-artifact@v4
         with:
-          name: ah-auction-lifecycle-v1-live-inspect-summary
+          name: ah-auction-lifecycle-v1-targeted-witness-summary
           path: LIVE_INSPECT_SUMMARY.json
           retention-days: 7
