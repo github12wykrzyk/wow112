@@ -1,1 +1,297 @@
-# trigger-fast-hotfix
+name: Fast hotfix slave 1-5 and Silithus
+
+on:
+  push:
+    branches:
+      - feature/summon-slave1-5-silithus-hotfix-v1
+    paths:
+      - HOTFIX_TRIGGER_SLAVE_SILITHUS.txt
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply guarded hotfix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def load(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def save(path, text):
+              Path(path).write_text(text, encoding='utf-8', newline='')
+
+          def replace_once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: expected exactly one anchor, got {n}')
+              return text.replace(old, new, 1)
+
+          # Native SLAVE policy: lvl1 forced; lvl2-5 manual; >5 rejected.
+          p = 'src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c'
+          s = load(p)
+          old = '''    /* SLAVE is a hard role only for the level-1 helper alt. It always keeps
+     * portal assist and Anti-AFK enabled; GUI/profile writes cannot turn them off. */
+    if(level==1u) {
+        g_summonRole=1u;
+        g_roleUserSelected=0u;
+        if(!g_enabled) g_enabled=1u;
+        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+        return;
+    }
+
+    /* Above level 1 there is no SLAVE role. Level 20 keeps the historical
+     * MASTER default for a fresh world session, but the user may toggle it to
+     * NONE. Other levels default to NONE and may opt into MASTER. */
+    if(g_summonRole==1u) g_summonRole=0u;
+    if(!g_roleUserSelected) g_summonRole=(level==20u)?2u:0u;
+    if(g_enabled) {
+        g_enabled=0u;
+        resetPortal();
+    }'''
+          new = '''    /* Level 1 remains the forced helper SLAVE. Levels 2-5 may opt into
+     * SLAVE manually. Any active SLAVE keeps portal assist and Anti-AFK ON. */
+    if(level==1u) {
+        g_summonRole=1u;
+        g_roleUserSelected=0u;
+        if(!g_enabled) g_enabled=1u;
+        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+        return;
+    }
+
+    if(level>=2u && level<=5u && g_summonRole==1u && g_roleUserSelected) {
+        if(!g_enabled) g_enabled=1u;
+        if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+        return;
+    }
+
+    /* Outside an explicitly selected level-2..5 SLAVE profile, preserve the
+     * historical defaults: level 20 starts MASTER, all other levels NONE. */
+    if(g_summonRole==1u) g_summonRole=0u;
+    if(!g_roleUserSelected) g_summonRole=(level==20u)?2u:0u;
+    if(g_enabled) {
+        g_enabled=0u;
+        resetPortal();
+    }'''
+          s = replace_once(s, old, new, 'native enforceLevelProfile')
+
+          s = replace_once(
+              s,
+              '''    /* Level 1 is a forced SLAVE with Anti-AFK ON. Above level 1, SLAVE is
+     * unavailable; level 20 starts as MASTER but may be toggled to NONE. */''',
+              '''    /* Level 1 is forced SLAVE. Levels 2-5 may manually use SLAVE; while
+     * selected it keeps portal assist and Anti-AFK ON. Above level 5 SLAVE is unavailable. */''',
+              'native timer comment')
+
+          old = '''    if(id==32u) {
+        if(v->u32>2u) return 0;
+        if(g_playerLevel==1u) {
+            g_summonRole=1u;
+            g_roleUserSelected=0u;
+            if(!g_enabled) g_enabled=1u;
+            if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+            return 1;
+        }
+        if(v->u32==1u) return 0;
+        g_summonRole=v->u32;
+        g_roleUserSelected=1u;
+        if(g_enabled) {
+            g_enabled=0u;
+            resetPortal();
+        }
+        return 1;
+    }
+    if(v->u32>1u) return 0;
+    if(id==1u){
+        u32 wanted=(g_playerLevel==1u)?1u:0u;
+        g_enabled=wanted;
+        if(!g_enabled) resetPortal();
+        return 1;
+    }'''
+          new = '''    if(id==32u) {
+        if(v->u32>2u) return 0;
+        if(g_playerLevel==1u) {
+            g_summonRole=1u;
+            g_roleUserSelected=0u;
+            if(!g_enabled) g_enabled=1u;
+            if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+            return 1;
+        }
+        if(v->u32==1u) {
+            if(g_playerLevel<2u || g_playerLevel>5u) return 0;
+            g_summonRole=1u;
+            g_roleUserSelected=1u;
+            if(!g_enabled) g_enabled=1u;
+            if(!g_antiAfkEnabled) antiAfkSetEnabled(1u);
+            return 1;
+        }
+        g_summonRole=v->u32;
+        g_roleUserSelected=1u;
+        if(g_enabled) {
+            g_enabled=0u;
+            resetPortal();
+        }
+        return 1;
+    }
+    if(v->u32>1u) return 0;
+    if(id==1u){
+        u32 wanted=(g_summonRole==1u)?1u:0u;
+        g_enabled=wanted;
+        if(!g_enabled) resetPortal();
+        return 1;
+    }'''
+          s = replace_once(s, old, new, 'native setValue role policy')
+          save(p, s)
+
+          # Native aggregate GUI: enable SLAVE checkbox for levels 1..5 and fix help text.
+          p = 'src/WoWPlayerESP/WoWPlayerESP_v1_3_CHALLENGES.c'
+          s = load(p)
+          s = replace_once(s,
+              'if(level.u32!=1u)return FALSE;',
+              'if(level.u32<1u||level.u32>5u)return FALSE;',
+              'GUI SLAVE level guard')
+          s = replace_once(s,
+              'Lvl 1 = forced SLAVE + Anti-AFK ON.',
+              'Lvl 1 forced SLAVE; lvl 2-5 manual SLAVE + Anti-AFK ON.',
+              'GUI SLAVE help text')
+          save(p, s)
+
+          # Behavioral verifier follows the GUI contract.
+          p = 'tools/verify_parallel_gui_contract.py'
+          s = load(p)
+          s = replace_once(s,
+              "'if(level.u32!=1u)return FALSE;'",
+              "'if(level.u32<1u||level.u32>5u)return FALSE;'",
+              'verifier SLAVE guard')
+          s = replace_once(s,
+              "'Lvl 1 = forced SLAVE + Anti-AFK ON.',",
+              "'Lvl 1 forced SLAVE; lvl 2-5 manual SLAVE + Anti-AFK ON.',",
+              'verifier SLAVE help text')
+          save(p, s)
+
+          # Coordinator V5: first-class Silithus route, preserving custom V4 slot 4.
+          p = 'tools/updater/UpdaterSummonCoordinatorFeature.cs'
+          s = load(p)
+          s = replace_once(s,
+              '''                new SummonCoordinatorRouteConfig { Id = "hydraxian", Slot = 1 },
+                new SummonCoordinatorRouteConfig { Id = "hyjal", Slot = 2 },
+                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 3 }''',
+              '''                new SummonCoordinatorRouteConfig { Id = "hydraxian", Slot = 1 },
+                new SummonCoordinatorRouteConfig { Id = "hyjal", Slot = 2 },
+                new SummonCoordinatorRouteConfig { Id = "winterspring", Slot = 3 },
+                new SummonCoordinatorRouteConfig { Id = "silithus", Slot = 4 }''',
+              'coordinator default route')
+          s = replace_once(s, 'Version = 4, WorkerAId = "", WorkerBId = "",',
+                           'Version = 5, WorkerAId = "", WorkerBId = "",',
+                           'coordinator default version')
+          s = replace_once(s, 'if (cfg == null || cfg.Version < 1 || cfg.Version > 4) return fallback;',
+                           'if (cfg == null || cfg.Version < 1 || cfg.Version > 5) return fallback;',
+                           'coordinator load version bound')
+          anchor = '''                if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
+                ValidateSummonRoutes(cfg.Routes);'''
+          insert = '''                if (cfg.Version == 4)
+                {
+                    if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
+                    var hasSilithus = cfg.Routes.Any(r => r != null && string.Equals(r.Id, "silithus", StringComparison.OrdinalIgnoreCase));
+                    var slot4Used = cfg.Routes.Any(r => r != null && r.Slot == 4);
+                    if (!hasSilithus && !slot4Used)
+                        cfg.Routes.Add(new SummonCoordinatorRouteConfig { Id = "silithus", Slot = 4 });
+                    cfg.Version = 5;
+                }
+
+                if (cfg.Routes == null) cfg.Routes = DefaultSummonRoutes();
+                ValidateSummonRoutes(cfg.Routes);'''
+          s = replace_once(s, anchor, insert, 'coordinator V4->V5 migration')
+          s = replace_once(s, 'cfg.Version = 4;\n            var hyjal = cfg.Routes.FirstOrDefault',
+                           'cfg.Version = 5;\n            var hyjal = cfg.Routes.FirstOrDefault',
+                           'coordinator save version')
+          s = replace_once(s,
+              'V4: jedna wspólna para slave obsługuje summonerów FIFO. Default: hydraxian=1, hyjal=2, winterspring=3.',
+              'V5: jedna wspólna para slave obsługuje summonerów FIFO. Default: hydraxian=1, hyjal=2, winterspring=3, silithus=4.',
+              'coordinator footer')
+          save(p, s)
+
+          # Competition fallback recognizes Silithus.
+          p = 'src/AddOns/SummonScout/SummonScout_CompetitionSmartHot.lua'
+          s = load(p)
+          s = replace_once(s,
+              '"winterspring", "everlook", "tanaris", "telabim", "tel abim",',
+              '"winterspring", "silithus", "everlook", "tanaris", "telabim", "tel abim",',
+              'competition Silithus cue')
+          save(p, s)
+
+          # Local label maps used by hot modules: make Silithus display first-class.
+          label_files = [
+              'src/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua',
+              'src/AddOns/SummonScout/SummonScout_FallbackRouterHot.lua',
+              'src/AddOns/SummonScout/SummonScout_DestinationInfoGuardHot.lua',
+              'src/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua',
+          ]
+          for p in label_files:
+              s = load(p)
+              if re.search(r'\bsilithus\s*=\s*"Silithus"', s):
+                  continue
+              s2, n = re.subn(r'(\bwinterspring\s*=\s*"Winterspring")',
+                              r'\1, silithus = "Silithus"', s, count=1)
+              if n != 1:
+                  raise SystemExit(f'{p}: missing Winterspring label anchor')
+              save(p, s2)
+
+          p = 'src/AddOns/SummonScout/SummonScout_FallbackRouterHubAckHot.lua'
+          s = load(p)
+          if 'service == "silithus"' not in s:
+              needle = 'if service == "winterspring" then return "Winterspring" end'
+              if needle in s:
+                  s = s.replace(needle, needle + '\n    if service == "silithus" then return "Silithus" end', 1)
+                  save(p, s)
+
+          # Fail-closed assertions before any commit.
+          native = load('src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c')
+          assert 'g_playerLevel<2u || g_playerLevel>5u' in native
+          assert 'u32 wanted=(g_summonRole==1u)?1u:0u;' in native
+          assert 'level>=2u && level<=5u && g_summonRole==1u && g_roleUserSelected' in native
+          gui = load('src/WoWPlayerESP/WoWPlayerESP_v1_3_CHALLENGES.c')
+          assert 'if(level.u32<1u||level.u32>5u)return FALSE;' in gui
+          coord = load('tools/updater/UpdaterSummonCoordinatorFeature.cs')
+          assert 'Id = "silithus", Slot = 4' in coord
+          assert 'cfg.Version = 5;' in coord
+          assert 'cfg.Version > 5' in coord
+          comp = load('src/AddOns/SummonScout/SummonScout_CompetitionSmartHot.lua')
+          assert '"winterspring", "silithus", "everlook"' in comp
+          print('HOTFIX_PATCH_PASS')
+          PY
+
+      - name: Verify parallel GUI behavioral contract
+        run: python tools/verify_parallel_gui_contract.py
+
+      - name: Diff safety check
+        run: git diff --check
+
+      - name: Commit patched sources
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AutoSummonAssist/WoWAutoSummonAssist_5875_v1.c \
+                  src/WoWPlayerESP/WoWPlayerESP_v1_3_CHALLENGES.c \
+                  tools/verify_parallel_gui_contract.py \
+                  tools/updater/UpdaterSummonCoordinatorFeature.cs \
+                  src/AddOns/SummonScout/SummonScout_CompetitionSmartHot.lua \
+                  src/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua \
+                  src/AddOns/SummonScout/SummonScout_FallbackRouterHot.lua \
+                  src/AddOns/SummonScout/SummonScout_DestinationInfoGuardHot.lua \
+                  src/AddOns/SummonScout/SummonScout_PostPaymentOfferHot.lua \
+                  src/AddOns/SummonScout/SummonScout_FallbackRouterHubAckHot.lua
+          git diff --cached --stat
+          git commit -m "hotfix(summon): allow slave 1-5 and add silithus route"
+          git push origin HEAD:${GITHUB_REF_NAME}
