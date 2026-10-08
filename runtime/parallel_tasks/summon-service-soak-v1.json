@@ -6,13 +6,10 @@
   "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
   "reference_proof_sha": "d753829314db39e5cd9aad57ce1d46daaf4d55da",
   "modules": [
-    "SummonScout test harness",
-    "AutoSummonAssist source attestation"
+    "SummonScout",
+    "AutoSummonAssist"
   ],
-  "dependencies": [
-    "current parallel SummonScout production sources",
-    "current parallel AutoSummonAssist production sources"
-  ],
+  "dependencies": [],
   "shared_resources": [
     "Summon Service V1 event contract",
     "SummonScout public parser/runtime surface",
