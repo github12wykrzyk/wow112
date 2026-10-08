@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "service_executable": "bin/WoW112SummonService.exe",
+  "console_executable": "bin/WoW112SummonOperatorConsole.exe",
+  "credential": {
+    "environment_variable": "WOW112_PASSWORD",
+    "prompt_if_missing": true
+  },
+  "supervisor": {
+    "graceful_stop_seconds": 15,
+    "health_timeout_seconds": 20,
+    "restart_backoff_seconds": 2,
+    "max_restarts": 5,
+    "restart_window_seconds": 120
+  },
+  "logging": {
+    "max_file_bytes": 5242880,
+    "max_files": 10
+  }
+}
