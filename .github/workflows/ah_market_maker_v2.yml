@@ -36,6 +36,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:RUNNER_TEMP/mm2-saga.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_freeze_tests.rs -o "$env:RUNNER_TEMP/mm2-freeze-tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/mm2-freeze-tests.exe" --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustc --edition=2021 --test src/AuctionLifecycle/coordinator.rs -o "$env:RUNNER_TEMP/mm2-coordinator.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:RUNNER_TEMP/mm2-coordinator.exe"
@@ -88,13 +92,16 @@ jobs:
           $inv=Get-Content src/AuctionLifecycle/market_maker_v2_inventory.rs -Raw
           if($inv -match 'for _ in 0\.\.256'){throw 'V2 packet-count deadline forbidden'}
           if($inv.Contains('4|5=>')){throw 'OUT_OF_RANGE and NEAR_OBJECTS must not share removal semantics'}
-          foreach($m in @('near_objects_does_not_delete_authoritative_state','out_of_range_deletes_authoritative_state')){if(-not $inv.Contains($m)){throw "inventory regression test missing: $m"}}
+          foreach($m in @('near_objects_does_not_delete_authoritative_state','out_of_range_deletes_authoritative_state','duplicate_guid_in_two_physical_slots_degrades','malformed_update_packet_fails_closed','contained!=expected_container')){if(-not $inv.Contains($m)){throw "inventory safety marker missing: $m"}}
           if((Get-Content src/AuctionLifecycle/market_maker_v2_io.rs -Raw) -notmatch 'Instant'){throw 'V2 wall-clock deadline implementation missing'}
           $targets=Get-Content src/AuctionLifecycle/market_maker_v2_targets.rs -Raw
           foreach($m in @('targets/ah-preprobe-fence','targets/mailbox-preprobe-fence','targets/mailbox-between-probes-fence')){if(-not $targets.Contains($m)){throw "deterministic target fence missing: $m"}}
           $saga=Get-Content src/AuctionLifecycle/market_maker_v2_saga.rs -Raw
           if($saga -match 'Planned,Mm2SagaPhase::ClearBuyIntent'){throw 'CLEAR may not mutate before mailbox verification'}
           if($saga -match 'ClearBuyConfirmed\{\.\.\},Mm2SagaPhase::ClearBuyIntent'){throw 'CLEAR may not buy twice without mail/inventory reconciliation'}
+          $runtime=Get-Content src/AuctionLifecycle/market_maker_v2_runtime.rs -Raw
+          if(([regex]::Matches($runtime,'highest_bid!=0')).Count -lt 2){throw 'active-bid cancel guard missing from both fresh/final checks'}
+          foreach($m in @('fresh owner identity changed','targeted own identity/owner mismatch','final owner identity changed','final depth freshness expired')){if(-not $runtime.Contains($m)){throw "stale identity/freshness guard missing: $m"}}
           $coord=Get-Content src/AuctionLifecycle/coordinator.rs -Raw
           foreach($m in @('create_new(true)','sync_all()','unresolved send from earlier process','before_send(opcode','Kind { Buy, Mail, Cancel, Post, Split }')){if(-not $coord.Contains($m)){throw "coordinator safety marker missing: $m"}}
           Write-Host 'MM2_STATIC_SAFETY_PASS'
