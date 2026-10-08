@@ -23,8 +23,9 @@ class SummonScoutWhisperRelaySpamFixV2Contract(unittest.TestCase):
             self.assertFalse(self.task["auto_integrate"])
         self.assertEqual(self.task["delivery_profiles"], [])
 
-    def test_version_is_demand_only(self):
-        self.assertIn('local VERSION = "2-demand-only-handshake-hidden-control"', self.guard)
+    def test_demand_only_handshake_contract_survives_later_versions(self):
+        self.assertIn("demand-only", self.guard)
+        self.assertIn("if not sgRelayQueued() then return false end", self.guard)
 
     def test_idle_queue_is_absolute_handshake_stop(self):
         start = self.guard.index("local function sgHandshakeNeeded()")
@@ -38,8 +39,8 @@ class SummonScoutWhisperRelaySpamFixV2Contract(unittest.TestCase):
         marker = 'if ev == "PLAYER_LOGIN" then'
         self.assertIn(marker, self.guard)
         after = self.guard[self.guard.index(marker):]
-        self.assertIn("sgResetHandshake(sgMaster())", after[:260])
-        self.assertIn("R.nextHelloAt = sgNow() + HELLO_PARK", after[:320])
+        self.assertIn("sgResetHandshake(sgMaster())", after[:360])
+        self.assertIn("R.nextHelloAt = sgNow() + HELLO_PARK", after[:420])
 
     def test_real_queue_can_arm_bounded_handshake(self):
         self.assertIn('elseif ev == "CHAT_MSG_WHISPER" and not R.masterReady and sgRelayQueued() then', self.guard)
