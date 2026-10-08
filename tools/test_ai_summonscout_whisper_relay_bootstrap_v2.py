@@ -11,6 +11,9 @@ class SummonScoutWhisperRelayBootstrapV2Contract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.bridge = (ADDON / "SummonScout_WhisperRelayTrustBridgeHot.lua").read_text(encoding="utf-8")
+        cls.bridge_code = "\n".join(
+            line for line in cls.bridge.splitlines() if not line.lstrip().startswith("--")
+        )
         cls.toc = (ADDON / "SummonScout.toc").read_text(encoding="utf-8").splitlines()
         cls.task = json.loads(TASK.read_text(encoding="utf-8"))
 
@@ -54,19 +57,19 @@ class SummonScoutWhisperRelayBootstrapV2Contract(unittest.TestCase):
         self.assertIn("D.trustedSummoners[key] = nil", self.bridge)
 
     def test_bridge_does_not_create_any_chat_send_path(self):
-        self.assertNotIn("SendChatMessage", self.bridge)
-        self.assertNotIn("CastSpell", self.bridge)
-        self.assertNotIn("AcceptTrade", self.bridge)
+        self.assertNotIn("SendChatMessage", self.bridge_code)
+        self.assertNotIn("CastSpell", self.bridge_code)
+        self.assertNotIn("AcceptTrade", self.bridge_code)
 
     def test_runtime_peers_reset_on_login(self):
         self.assertIn('if ev == "PLAYER_LOGIN" then', self.bridge)
         self.assertIn("B.peers = {}", self.bridge)
 
     def test_vanilla_lua_compatibility(self):
-        self.assertNotIn("string.match(", self.bridge)
-        self.assertNotIn("table.unpack", self.bridge)
-        self.assertNotIn("goto ", self.bridge)
-        self.assertNotIn("continue", self.bridge)
+        self.assertNotIn("string.match(", self.bridge_code)
+        self.assertNotIn("table.unpack", self.bridge_code)
+        self.assertNotIn("goto ", self.bridge_code)
+        self.assertNotIn("continue", self.bridge_code)
 
 
 if __name__ == "__main__":
