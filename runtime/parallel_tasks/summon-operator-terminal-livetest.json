@@ -10,6 +10,12 @@
   "status": "coding",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "lease": null,
+  "lease": {
+    "holder": "chatgpt-autonomy",
+    "claimed_at_utc": "2026-10-08T01:34:56Z",
+    "heartbeat_utc": "2026-10-08T01:34:56Z",
+    "ttl_seconds": 86400,
+    "scopes": ["module:SummonOperatorLiveTest", "module:TELE10Headless"]
+  },
   "notes": "Isolated operator/test branch. Reuses stored-source TELE10 headless runtime from feature/tele10-headless-trade-payment-ledger-v1f at b5c793d0a55915a9cfd3b08395ee16f7000e6352. No AH mutation path and no WoW GUI automation are added. Trade payment remains one-shot and fail-closed on uncertain send."
 }
