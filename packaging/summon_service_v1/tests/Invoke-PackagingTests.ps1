@@ -48,13 +48,16 @@ function Run([string]$Root,[string]$Action,[int[]]$Ok=@(0),[string]$Package=$nul
   $script=Join-Path $Root 'scripts/SummonService.ps1'
   $parts=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Q $script),'-Action',$Action,'-Root',(Q $Root),'-NoPrompt')
   if($Package){$parts+=@('-Package',(Q $Package))};if($Expected){$parts+=@('-ExpectedSourceSha',$Expected)}
-  $out=Join-Path $work ('run-'+[Guid]::NewGuid().ToString('N')+'.out.log'); $err=Join-Path $work ('run-'+[Guid]::NewGuid().ToString('N')+'.err.log')
-  $p=Start-Process -FilePath 'powershell.exe' -ArgumentList ($parts -join ' ') -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName='powershell.exe'; $psi.Arguments=($parts -join ' '); $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
+  $p=New-Object System.Diagnostics.Process; $p.StartInfo=$psi
+  if(-not $p.Start()){throw "failed to start $Action"}
+  $stdoutTask=$p.StandardOutput.ReadToEndAsync(); $stderrTask=$p.StandardError.ReadToEndAsync()
   if(-not $p.WaitForExit($TimeoutSeconds*1000)){ try{$p.Kill()}catch{}; throw "$Action timed out after ${TimeoutSeconds}s" }
-  $p.WaitForExit(); $p.Refresh()
-  $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}; $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
+  $p.WaitForExit(); $stdout=$stdoutTask.Result; $stderr=$stderrTask.Result
   if($stdout){Write-Host $stdout.TrimEnd()}; if($stderr){Write-Host $stderr.TrimEnd()}
-  $c=[int]$p.ExitCode; if($Ok -notcontains $c){throw "$Action exit=$c expected=$($Ok -join ',')"};return $c
+  $c=[int]$p.ExitCode; $p.Dispose(); if($Ok -notcontains $c){throw "$Action exit=$c expected=$($Ok -join ',')"};return $c
 }
 try {
   $zip1=New-Package '1.0.0'; $root=Expand-Package $zip1 'live'; Tune-TestConfig $root; $env:WOW112_PASSWORD='PACKAGING_CANARY_SECRET'
