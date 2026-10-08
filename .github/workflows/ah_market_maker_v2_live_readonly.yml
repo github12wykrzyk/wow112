@@ -30,8 +30,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tested='1b85467643462b3814f30d239452cf666a988fc7'
-          $run='37764138082'
+          $tested='5032859ba8bb916acbcd456d69a1c851746da450'
+          $run='37765051576'
           $artifact="WoW112-AH-MARKET-MAKER-V2-FOUNDATION-$tested"
           git merge-base --is-ancestor $tested HEAD
           if ($LASTEXITCODE -ne 0) { throw 'tested MM2 SHA is not an ancestor' }
@@ -81,9 +81,9 @@ jobs:
             $exit=$LASTEXITCODE
             foreach($line in $raw) { Write-Host "$line" }
             foreach($needle in @('[MAIL-ACTION] SENT','[POC07-BUY] SENT','CANCEL_CONFIRMED','POST_CONFIRMED','MUTATION_UNCERTAIN','BLOCKED_UNCERTAIN')) {
-              if (@($raw | Where-Object { "$_" -like "*$needle*" }).Count -ne 0) { throw "mutation/uncertainty marker observed mode=$($case.mode): $needle" }
+              if (@($raw | Where-Object { "$($_)".Contains($needle) }).Count -ne 0) { throw "mutation/uncertainty marker observed mode=$($case.mode): $needle" }
             }
-            $pass=@($raw | Where-Object { "$_" -like "*$($case.marker)*" })
+            $pass=@($raw | Where-Object { "$($_)".Contains($case.marker) })
             if ($exit -ne 0 -or $pass.Count -ne 1) { throw "MM2 read-only mode failed mode=$($case.mode) exit=$exit marker_count=$($pass.Count)" }
             $tracker=@($raw | Where-Object { "$_" -match '^\[MM2\] TRACKER generation=\d+ objects=\d+ physical_slots=\d+$' })
             if ($tracker.Count -ne 1) { throw "MM2 tracker evidence missing/ambiguous mode=$($case.mode)" }
