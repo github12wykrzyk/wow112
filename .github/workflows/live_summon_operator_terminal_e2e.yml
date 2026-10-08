@@ -1,0 +1,72 @@
+name: Live Summon Operator Terminal E2E
+
+on:
+  push:
+    branches:
+      - 'feature/summon-operator-terminal-livetest'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wow112-live-summon-headless
+  cancel-in-progress: false
+
+jobs:
+  live-e2e:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify live secret exists
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            throw 'WOW112_PASSWORD repo secret is missing'
+          }
+          Write-Host 'WOW112_PASSWORD available (value not printed).'
+
+      - name: Build required live binaries
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele08_full_roundtrip','tele10_ledger','tele07_supervisor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Run real whisper-to-payment E2E
+        shell: pwsh
+        run: |
+          & ./tools/summon_operator_livetest/Run-LiveTest.ps1 -NoBuild -Cycles 1
+          exit $LASTEXITCODE
+
+      - name: Summarize final report
+        if: always()
+        shell: pwsh
+        run: |
+          $report = Get-ChildItem tools/summon_operator_livetest/results -Filter FINAL_REPORT.json -Recurse -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($null -eq $report) {
+            Write-Host 'No FINAL_REPORT.json produced.'
+            exit 0
+          }
+          $data = Get-Content $report.FullName -Raw | ConvertFrom-Json
+          Write-Host ("FINAL result={0} whisper={1} supervisor_exit={2} trade_complete={3} paid={4}/{5} uncertain={6}" -f `
+            $data.result, $data.whisper.passed, $data.summon_payment.supervisor_exit_code, `
+            $data.summon_payment.server_trade_complete, $data.summon_payment.paid_summon_count, `
+            $data.cycles_requested, $data.summon_payment.hard_uncertain)
+
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Summon-Operator-Live-Evidence-${{ github.sha }}
+          path: tools/summon_operator_livetest/results/**
+          if-no-files-found: warn
