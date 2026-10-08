@@ -3,7 +3,7 @@
   "id": "summonscout-whisper-relay-v1",
   "goal": "Add persistent RAW customer whisper conversation relay to Master with exact-summoner guarded replies and lifecycle/payment linkage without replacing canonical SummonScout routing, summon or payment engines.",
   "branch": "feature/summonscout-whisper-relay-v1",
-  "base_parallel_sha": "8ad07c5a7ad583b4e1ce04b7b73c8fae7d4d024b",
+  "base_parallel_sha": "b85c0e79c3a069a8cfcd000a3a25f65442aec3f2",
   "modules": [
     "SummonScout"
   ],
@@ -17,6 +17,6 @@
   "auto_integrate": false,
   "delivery_profiles": [],
   "lease": null,
-  "notes": "V1 is addon-local and behavior-additive. It uses HotHost, canonical W112_SUMMONSCOUT_API_V1/W112_SUMMONSCOUT_STATE, SummonScoutDB.paymentLog and the existing masterName/fallback peer trust plane. Reply mutations fail closed on ambiguous ownership and never auto-retry after a customer SendChatMessage call. GUI P2 intentionally deferred; /ssr list/show/close provide P1 browsing. Local contract matrix: 21/21 PASS.",
-  "integrated_feature_sha": "880778c75d9f7cc156f5d619ae78df0db100538a"
+  "notes": "Rebased/rebuilt from current canonical after first integration because the mandated matrix vector 'yo wait sec my friend relogging xd' must remain UNKNOWN while preserving RAW. V1 remains addon-local and behavior-additive. The conservative intent guard wraps only the relay event entry point, holds remote delivery until the persistent event tag is corrected, never sends customer chat, and preserves existing summon/payment/routing primitives. Existing relay contract: 21 tests; added matrix regression: 9 tests. GUI P2 intentionally deferred; /ssr list/show/close provide P1 browsing.",
+  "integrated_feature_sha": "90868ff4d99c3396ace9380d71aea564bb06b0d4"
 }

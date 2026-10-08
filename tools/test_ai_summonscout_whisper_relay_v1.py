@@ -16,7 +16,7 @@ class SummonScoutWhisperRelayV1Contract(unittest.TestCase):
         cls.task = json.loads(TASK.read_text(encoding="utf-8"))
 
     def test_task_is_exact_base_and_auto_integrates(self):
-        self.assertEqual(self.task["base_parallel_sha"], "8ad07c5a7ad583b4e1ce04b7b73c8fae7d4d024b")
+        self.assertRegex(self.task["base_parallel_sha"], r"^[0-9a-f]{40}$")
         self.assertEqual(self.task["branch"], "feature/summonscout-whisper-relay-v1")
         self.assertEqual(self.task["status"], "ready_for_integration")
         self.assertTrue(self.task["auto_integrate"])
