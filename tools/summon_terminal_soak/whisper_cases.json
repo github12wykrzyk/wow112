@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "accepted": [
+    "need winterspring",
+    "+",
+    "inv pls",
+    "need one",
+    "here",
+    "can i get one",
+    "NEED WINTERSPRING",
+    "inv pls!!!",
+    "need one?"
+  ],
+  "edge": [
+    "invi",
+    "inv plz",
+    "need 1",
+    "need wintersprng",
+    "inv",
+    "one pls"
+  ],
+  "rejected": [
+    "umm maybe later idk",
+    "random unrelated text",
+    "hello there",
+    "price of black lotus?"
+  ],
+  "duplicates": [
+    "need winterspring",
+    "need winterspring",
+    "need winterspring",
+    "+",
+    "+"
+  ]
+}
