@@ -89,7 +89,10 @@ fn mm2_parse_update_body(state:&mut Mm2InventoryState,buf:&[u8])->Result<(),Stri
         0=>{let g=mm2_packed_guid(buf,&mut p)?;let f=mm2_update_mask(buf,&mut p)?;mm2_apply_fields(state,g,None,f,false);},
         1=>{let _=mm2_packed_guid(buf,&mut p)?;mm2_skip_movement(buf,&mut p)?;},
         2|3=>{let g=mm2_packed_guid(buf,&mut p)?;let typ=mm2_u8(buf,&mut p)?;mm2_skip_movement(buf,&mut p)?;let f=mm2_update_mask(buf,&mut p)?;mm2_apply_fields(state,g,Some(typ),f,true);},
-        4|5=>{let n=mm2_u32(buf,&mut p)?;if n>10000{return Err("MM2 guid list cap".into());}for _ in 0..n{let g=mm2_packed_guid(buf,&mut p)?;if g!=0{mm2_remove(state,g);}}},
+        // OUT_OF_RANGE invalidates object authority. NEAR_OBJECTS is only a proximity hint and
+        // must never delete state; confusing the two can erase valid inventory/world evidence.
+        4=>{let n=mm2_u32(buf,&mut p)?;if n>10000{return Err("MM2 guid list cap".into());}for _ in 0..n{let g=mm2_packed_guid(buf,&mut p)?;if g!=0{mm2_remove(state,g);}}},
+        5=>{let n=mm2_u32(buf,&mut p)?;if n>10000{return Err("MM2 guid list cap".into());}for _ in 0..n{let _=mm2_packed_guid(buf,&mut p)?;}},
         x=>return Err(format!("MM2 unknown update type {x}")),
     }}
     if p!=buf.len(){return Err(format!("MM2 update trailing bytes {}",buf.len()-p));}mm2_rebuild_slots(state);Ok(())
@@ -119,8 +122,10 @@ fn mm2_push_after(seq:u64,item_id:u32)->Vec<Mm2PushEvidence>{MM2_INV.with(|s|s.b
     fn mask(fields:&[(u16,u32)])->Vec<u8>{let blocks=fields.iter().map(|x|x.0 as usize/32+1).max().unwrap_or(1);let mut masks=vec![0u32;blocks];for(i,_)in fields{masks[*i as usize/32]|=1u32<<(*i as usize%32);}let mut v=vec![blocks as u8];for m in &masks{v.extend_from_slice(&m.to_le_bytes());}for bi in 0..blocks{for bit in 0..32{let idx=(bi*32+bit)as u16;if masks[bi]&(1<<bit)!=0{v.extend_from_slice(&fields.iter().find(|x|x.0==idx).unwrap().1.to_le_bytes());}}}v}
     fn pg(g:u64)->Vec<u8>{let mut m=0u8;let mut b=Vec::new();for i in 0..8{let x=((g>>(8*i))&0xff)as u8;if x!=0{m|=1<<i;b.push(x);}}let mut v=vec![m];v.extend(b);v}
     #[test]fn tracks_backpack_item_from_create_and_incremental_values(){let player=0x11u64;market_maker_v2_inventory_bind(player);let item=0x22u64;let mut body=Vec::new();body.extend_from_slice(&2u32.to_le_bytes());body.push(0);
-        body.push(3);body.extend(pg(player));body.push(4);body.push(0);let mut pf=vec![(MM2_PLAYER_FIELD_PACK_SLOT_1,item as u32),(MM2_PLAYER_FIELD_PACK_SLOT_1+1,(item>>32)as u32)];body.extend(mask(&pf));
+        body.push(3);body.extend(pg(player));body.push(4);body.push(0);let pf=vec![(MM2_PLAYER_FIELD_PACK_SLOT_1,item as u32),(MM2_PLAYER_FIELD_PACK_SLOT_1+1,(item>>32)as u32)];body.extend(mask(&pf));
         body.push(2);body.extend(pg(item));body.push(1);body.push(0);let f=vec![(MM2_OBJECT_FIELD_ENTRY,777),(MM2_ITEM_FIELD_OWNER,player as u32),(MM2_ITEM_FIELD_OWNER+1,(player>>32)as u32),(MM2_ITEM_FIELD_STACK_COUNT,3)];body.extend(mask(&f));
         MM2_INV.with(|s|{let mut st=s.borrow_mut();mm2_parse_update_body(&mut st,&body).unwrap();});let v=mm2_item_view(item).unwrap();assert_eq!(v.item_id,777);assert_eq!(v.count,3);assert_eq!(v.physical,Mm2PhysicalSlot{bag:255,slot:23});
         let mut upd=Vec::new();upd.extend_from_slice(&1u32.to_le_bytes());upd.push(0);upd.push(0);upd.extend(pg(item));upd.extend(mask(&[(MM2_ITEM_FIELD_STACK_COUNT,2)]));MM2_INV.with(|s|mm2_parse_update_body(&mut s.borrow_mut(),&upd).unwrap());assert_eq!(mm2_item_view(item).unwrap().count,2);}
+    #[test]fn near_objects_does_not_delete_authoritative_state(){let guid=0x1122u64;let mut s=Mm2InventoryState::default();s.objects.insert(guid,Mm2ObjectState{object_type:Some(1),fields:std::collections::HashMap::new()});let mut body=Vec::new();body.extend_from_slice(&1u32.to_le_bytes());body.push(0);body.push(5);body.extend_from_slice(&1u32.to_le_bytes());body.extend(pg(guid));mm2_parse_update_body(&mut s,&body).unwrap();assert!(s.objects.contains_key(&guid));}
+    #[test]fn out_of_range_deletes_authoritative_state(){let guid=0x1122u64;let mut s=Mm2InventoryState::default();s.objects.insert(guid,Mm2ObjectState{object_type:Some(1),fields:std::collections::HashMap::new()});let mut body=Vec::new();body.extend_from_slice(&1u32.to_le_bytes());body.push(0);body.push(4);body.extend_from_slice(&1u32.to_le_bytes());body.extend(pg(guid));mm2_parse_update_body(&mut s,&body).unwrap();assert!(!s.objects.contains_key(&guid));}
 }
