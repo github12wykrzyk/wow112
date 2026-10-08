@@ -13,12 +13,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: summon-service-packaging-v1-${{ github.ref }}
+  group: summon-service-packaging-v1-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
   packaging-tests:
     runs-on: windows-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - name: Run Windows packaging failure matrix
@@ -28,6 +29,7 @@ jobs:
   demo-artifact:
     needs: packaging-tests
     runs-on: windows-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Build DEMO_ONLY fixture binaries
