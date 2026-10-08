@@ -1,0 +1,252 @@
+name: TEMP Apply Multi Helper Portal
+
+on:
+  push:
+    branches:
+      - feature/summon-service-core-v1
+    paths:
+      - '.github/workflows/_tmp_apply_multi_helper_portal.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/summon-service-core-v1
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply actor-scoped portal fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          # PortalWorker actor scope + PortalCommitted observation wait.
+          p = Path('probes/Wow112HeadlessAndroid/src/summon_portal_worker.rs')
+          s = p.read_text()
+          struct_old = '''pub struct PortalWorker {
+              root: PathBuf,
+          }
+          '''
+          struct_new = '''pub struct PortalWorker {
+              root: PathBuf,
+              actor_key: String,
+          }
+          '''
+          if s.count(struct_old) != 1:
+              raise SystemExit(f'portal struct anchor count={s.count(struct_old)}')
+          s = s.replace(struct_old, struct_new, 1)
+
+          open_start = '    pub fn open(root: impl AsRef<Path>) -> Result<Self, String> {'
+          active_marker = '\n    pub fn active_ritual_request(&self) -> Result<Option<String>, String> {'
+          if s.count(open_start) != 1 or s.count(active_marker) != 1:
+              raise SystemExit('portal open markers invalid')
+          a = s.index(open_start)
+          b = s.index(active_marker, a)
+          open_new = '''    pub fn open(root: impl AsRef<Path>) -> Result<Self, String> {
+              Self::open_for_actor(root, "default")
+          }
+
+          pub fn open_for_actor(
+              root: impl AsRef<Path>,
+              actor: impl AsRef<str>,
+          ) -> Result<Self, String> {
+              let root = root.as_ref().to_path_buf();
+              fs::create_dir_all(&root)
+                  .map_err(|e| format!("create portal worker root {} failed: {e}", root.display()))?;
+              let actor_key = actor.as_ref().trim().to_ascii_lowercase();
+              if actor_key.is_empty()
+                  || actor_key.len() > 64
+                  || actor_key.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+              {
+                  return Err(format!("invalid portal worker actor={:?}", actor.as_ref()));
+              }
+              Ok(Self { root, actor_key })
+          }
+          '''
+          s = s[:a] + open_new + s[b:]
+
+          phase_old = '.filter(|r| r.phase == RequestPhase::RitualCommitted)'
+          phase_new = '.filter(|r| matches!(r.phase, RequestPhase::RitualCommitted | RequestPhase::PortalCommitted))'
+          if s.count(phase_old) != 1:
+              raise SystemExit(f'portal phase anchor count={s.count(phase_old)}')
+          s = s.replace(phase_old, phase_new, 1)
+          s = s.replace(
+              'ritual-committed requests; refusing ambiguous portal mutation',
+              'portal-wait requests; refusing ambiguous portal mutation',
+              1,
+          )
+
+          guard_start = '        if mutations.records_for_request(&request_id).any(|record| {'
+          guard_end = '        mutations.commit_before_send('
+          if s.count(guard_start) != 1 or s.count(guard_end) != 1:
+              raise SystemExit(f'portal guard markers start={s.count(guard_start)} end={s.count(guard_end)}')
+          a = s.index(guard_start)
+          b = s.index(guard_end, a)
+          guard_new = '''        let actor_prefix = format!("{request_id}:portal-use:{}:", self.actor_key);
+              if mutations.records_for_request(&request_id).any(|record| {
+                  record.kind == MutationKind::PortalUse
+                      && record.state == MutationState::Confirmed
+                      && record.operation_id.starts_with(&actor_prefix)
+              }) {
+                  return Ok(None);
+              }
+              let operation_id = format!(
+                  "{request_id}:portal-use:{}:{portal_guid:016X}",
+                  self.actor_key
+              );
+          '''
+          s = s[:a] + guard_new + s[b:]
+
+          detail_old = 'format!("portal_guid=0x{portal_guid:016X}"),'
+          detail_new = 'format!("helper_actor={} portal_guid=0x{portal_guid:016X}", self.actor_key),'
+          if s.count(detail_old) != 1:
+              raise SystemExit(f'portal detail anchor count={s.count(detail_old)}')
+          s = s.replace(detail_old, detail_new, 1)
+
+          test_marker = '    #[test]\n    fn execute_once_transport_error_is_durable_uncertain_and_never_replayed() {'
+          if s.count(test_marker) != 1:
+              raise SystemExit(f'portal test marker count={s.count(test_marker)}')
+          test_new = '''    #[test]
+          fn two_distinct_helpers_can_each_click_once_for_same_request() {
+              let root = root("two_helpers");
+              let (mut runtime, id) = ritual_ready(&root);
+              let a = PortalWorker::open_for_actor(&root, "Winterone").unwrap();
+              let b = PortalWorker::open_for_actor(&root, "Wintertwoo").unwrap();
+              let sends = Cell::new(0u32);
+              a.execute_portal_use_once(0xD00D, 30, |_| {
+                  sends.set(sends.get() + 1);
+                  Ok(())
+              })
+              .unwrap()
+              .unwrap();
+              apply_next_control(&root, &mut runtime);
+              assert_eq!(runtime.request(&id).unwrap().phase, RequestPhase::PortalCommitted);
+              b.execute_portal_use_once(0xD00D, 32, |_| {
+                  sends.set(sends.get() + 1);
+                  Ok(())
+              })
+              .unwrap()
+              .unwrap();
+              assert_eq!(sends.get(), 2);
+              let journal = MutationCoordinator::open(root.join("summon_mutations.json")).unwrap();
+              let confirmed = journal
+                  .records_for_request(&id)
+                  .filter(|record| record.kind == MutationKind::PortalUse)
+                  .filter(|record| record.state == MutationState::Confirmed)
+                  .count();
+              assert_eq!(confirmed, 2);
+              let _ = fs::remove_dir_all(root);
+          }
+
+          '''
+          s = s.replace(test_marker, test_new + test_marker, 1)
+          p.write_text(s)
+
+          # Helper uses selected character as durable actor identity and keeps clicking in PortalCommitted wait.
+          p = Path('probes/Wow112HeadlessAndroid/src/bin/summon_service_helper.rs')
+          s = p.read_text()
+          worker_old = '    let portal_worker = PortalWorker::open(&root)?;'
+          worker_new = '    let portal_worker = PortalWorker::open_for_actor(&root, &selected.name)?;'
+          if s.count(worker_old) != 1:
+              raise SystemExit(f'helper worker anchor count={s.count(worker_old)}')
+          s = s.replace(worker_old, worker_new, 1)
+          phase_old = '                if active_phase(&root)? == Some(RequestPhase::RitualCommitted) {'
+          phase_new = '''                if matches!(
+                      active_phase(&root)?,
+                      Some(RequestPhase::RitualCommitted | RequestPhase::PortalCommitted)
+                  ) {'''
+          if s.count(phase_old) != 1:
+              raise SystemExit(f'helper phase anchor count={s.count(phase_old)}')
+          s = s.replace(phase_old, phase_new, 1)
+          p.write_text(s)
+
+          # Boot recovery accepts multiple confirmed helper clicks / idempotent controls.
+          p = Path('probes/Wow112HeadlessAndroid/src/summon_boot_recovery.rs')
+          s = p.read_text()
+          count_block = '''    if confirmed_portals.len() != 1 {
+              return Err(format!(
+                  "boot recovery refuses multiple confirmed portal mutations request_id={} count={}",
+                  request_id,
+                  confirmed_portals.len()
+              ));
+          }
+
+          '''
+          if s.count(count_block) != 1:
+              raise SystemExit(f'boot portal count block={s.count(count_block)}')
+          s = s.replace(count_block, '', 1)
+          control_block = '''    if matching_controls != 1 {
+              return Err(format!(
+                  "boot recovery refuses duplicate portal controls request_id={} count={}",
+                  request_id, matching_controls
+              ));
+          }
+
+          '''
+          if s.count(control_block) != 1:
+              raise SystemExit(f'boot control count block={s.count(control_block)}')
+          s = s.replace(control_block, '', 1)
+
+          test_start = '    fn duplicate_confirmed_portal_mutations_fail_closed() {'
+          if s.count(test_start) != 1:
+              raise SystemExit(f'boot duplicate test marker={s.count(test_start)}')
+          a = s.index('    #[test]', s.rfind('\n', 0, s.index(test_start)) - 20)
+          fn_pos = s.index(test_start)
+          body_open = s.index('{', fn_pos)
+          depth = 0
+          end = None
+          for i in range(body_open, len(s)):
+              if s[i] == '{': depth += 1
+              elif s[i] == '}':
+                  depth -= 1
+                  if depth == 0:
+                      end = i + 1
+                      break
+          if end is None:
+              raise SystemExit('boot duplicate test end not found')
+          replacement = '''    #[test]
+              fn multiple_confirmed_helper_portals_are_valid_boot_evidence() {
+                  let root = root("multiple_helpers");
+                  let (snapshot, id) = ritual_snapshot(&root);
+                  confirmed_portal(&root, &id, "portal-helper-a");
+                  confirmed_portal(&root, &id, "portal-helper-b");
+                  ControlInbox::submit(
+                      &root,
+                      &ServiceControlCommand::PortalCommitted {
+                          request_id: id.clone(),
+                      },
+                  )
+                  .unwrap();
+                  let result = reconcile_boot_snapshot(&root, snapshot).unwrap();
+                  assert_eq!(result.promoted_request_id.as_deref(), Some(id.as_str()));
+                  assert_eq!(
+                      result.snapshot.requests.iter().find(|r| r.request_id == id).unwrap().phase,
+                      RequestPhase::PortalCommitted
+                  );
+                  let _ = fs::remove_dir_all(root);
+              }'''
+          s = s[:a] + replacement + s[end:]
+          p.write_text(s)
+
+      - name: Test library
+        run: cargo test --lib --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+      - name: Compile all test targets
+        run: cargo test --no-run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+      - name: Cargo check
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add probes/Wow112HeadlessAndroid/src/summon_portal_worker.rs \
+                  probes/Wow112HeadlessAndroid/src/bin/summon_service_helper.rs \
+                  probes/Wow112HeadlessAndroid/src/summon_boot_recovery.rs
+          git diff --cached --check
+          git commit -m 'fix(summon): scope portal clicks per helper actor'
+          git push origin HEAD:feature/summon-service-core-v1
