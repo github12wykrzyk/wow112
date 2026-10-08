@@ -31,3 +31,4 @@ SummonScout_WhisperRelayIntentGuardHot.lua
 SummonScout_WhisperRelaySpamGuardHot.lua
 SummonScout_WhisperRelayTrustBridgeHot.lua
 SummonScout_WhisperRelayWimNativeHot.lua
+SummonScout_LocalDestinationInviteGuardHot.lua
