@@ -75,8 +75,9 @@ try{
 
     switch($Mode){
         'Vendor'{
-            Write-Host 'HOTKEY V: VENDOR STABLE REAL BUY - AUTO ARMED' -ForegroundColor Yellow
-            & (Join-Path $PSScriptRoot 'RUN_VENDOR_STABLE_HOTKEY.ps1') -Root $Root -Account $env:WOW112_ACCOUNT -Character $env:WOW112_CHARACTER -RealmIndex ([int]$env:WOW112_REALM_INDEX)
+            Write-Host 'HOTKEY V: VENDOR ONE-BUY LIVEPASS - AUTO ARMED' -ForegroundColor Yellow
+            $env:WOW112_LAUNCHER_ARM='VENDOR_ONE'
+            & (Join-Path $PSScriptRoot 'RUN_VENDOR_LIVEPASS.ps1') -Root $Root
             exit $LASTEXITCODE
         }
         'DeLive3'{
