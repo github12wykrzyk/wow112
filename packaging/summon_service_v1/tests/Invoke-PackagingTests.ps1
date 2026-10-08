@@ -54,7 +54,7 @@ function Run([string]$Root,[string]$Action,[int[]]$Ok=@(0),[string]$Package=$nul
   $p=New-Object System.Diagnostics.Process; $p.StartInfo=$psi
   if(-not $p.Start()){throw "failed to start $Action"}
   $stdoutTask=$p.StandardOutput.ReadToEndAsync(); $stderrTask=$p.StandardError.ReadToEndAsync()
-  if(-not $p.WaitForExit($TimeoutSeconds*1000)){ try{$p.Kill()}catch{}; throw "$Action timed out after ${TimeoutSeconds}s" }
+  if(-not $p.WaitForExit($TimeoutSeconds*1000)){ try{$p.Kill()}catch{}; try{$p.WaitForExit(5000)|Out-Null}catch{}; throw "$Action timed out after ${TimeoutSeconds}s" }
   $p.WaitForExit(); $stdout=$stdoutTask.Result; $stderr=$stderrTask.Result
   if($stdout){Write-Host $stdout.TrimEnd()}; if($stderr){Write-Host $stderr.TrimEnd()}
   $c=[int]$p.ExitCode; $p.Dispose(); if($Ok -notcontains $c){throw "$Action exit=$c expected=$($Ok -join ',')"};return $c
@@ -80,7 +80,7 @@ try {
   $results | Format-Table -AutoSize | Out-Host
   Write-Host 'PACKAGING TEST SUITE PASS'
 } finally {
-  try { if($root){ & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts/SummonService.ps1') -Action Stop -Root $root | Out-Null } } catch {}
+  try { if($root -and (Test-Path (Join-Path $root 'scripts/SummonService.ps1'))){ Run $root Stop -Ok @(0,1) -TimeoutSeconds 12 | Out-Null } } catch { Write-Host "cleanup stop bounded failure: $($_.Exception.Message)" }
   Remove-Item Env:WOW112_PASSWORD -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
