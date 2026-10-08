@@ -1,0 +1,189 @@
+name: TMP Apply Summon Confirmed Reject Fastfix
+
+on:
+  push:
+    branches: [ 'tmp/summon-confirmed-reject-fastfix-20261008' ]
+    paths: [ '.github/workflows/tmp_summon_confirmed_reject_fastfix.yml' ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-push:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/summon-terminal-soak-v1
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Patch confirmed server reject classification and bounded replay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          from pathlib import Path
+          p = Path('probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs')
+          s = p.read_text(encoding='utf-8')
+
+          old = '''            match role.child.try_wait() {
+                      Ok(Some(status)) => {
+                          return CycleVerdict {
+                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
+                              detail: format!(
+                                  "role={label} exited status={status}; active phase never auto-restarts"
+                              ),
+                          };
+                      }
+                      Err(error) => {
+                          return CycleVerdict {
+                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
+                              detail: format!(
+                                  "role={label} status error={error}; active phase never auto-restarts"
+                              ),
+                          };
+                      }
+                      Ok(None) => {}
+                  }
+                  let state = observe_role(role, log);
+          '''
+          new = '''            let state = observe_role(role, log);
+                  if label == "SUMMONER" && state.state == "FAIL_SERVER_REJECT" {
+                      return CycleVerdict {
+                          code: "FAIL_SERVER_REJECT".to_string(),
+                          detail: state.detail.clone(),
+                      };
+                  }
+                  match role.child.try_wait() {
+                      Ok(Some(status)) => {
+                          return CycleVerdict {
+                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
+                              detail: format!(
+                                  "role={label} exited status={status}; active phase never auto-restarts"
+                              ),
+                          };
+                      }
+                      Err(error) => {
+                          return CycleVerdict {
+                              code: "FAIL_ACTIVE_ROLE_EXITED".to_string(),
+                              detail: format!(
+                                  "role={label} status error={error}; active phase never auto-restarts"
+                              ),
+                          };
+                      }
+                      Ok(None) => {}
+                  }
+          '''
+          if old not in s:
+              raise SystemExit('active-state classification anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '''    for cycle in 1..=config.cycles {
+                  if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+                      break;
+                  }
+          '''
+          new = '''    for cycle in 1..=config.cycles {
+                  let mut confirmed_reject_retries = 0u32;
+                  'cycle_attempt: loop {
+                      if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+                          break 'cycle_attempt;
+                      }
+          '''
+          if old not in s:
+              raise SystemExit('cycle loop anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '''            thread::sleep(Duration::from_millis(750));
+                      continue;
+                  }
+
+                  let uncertain =
+          '''
+          new = '''            thread::sleep(Duration::from_millis(750));
+                      break 'cycle_attempt;
+                  }
+
+                  if verdict.code == "FAIL_SERVER_REJECT"
+                      && !managed.values().any(role_has_uncertain_marker)
+                      && confirmed_reject_retries < config.restart_budget
+                  {
+                      confirmed_reject_retries += 1;
+                      total_restarts += 1;
+                      log.log(&format!(
+                          "RECOVER cycle={cycle} action=full_cycle_replay reason=confirmed_server_reject retry={}/{} detail={}",
+                          confirmed_reject_retries, config.restart_budget, verdict.detail
+                      ));
+                      write_supervisor_state(
+                          &run_dir,
+                          "RECOVERING",
+                          &format!(
+                              "cycle={cycle} confirmed server reject; safe replay={}/{}",
+                              confirmed_reject_retries, config.restart_budget
+                          ),
+                      );
+                      stop_all(&mut managed, &mut log);
+                      thread::sleep(Duration::from_millis(1000));
+                      continue 'cycle_attempt;
+                  }
+
+                  let uncertain =
+          '''
+          if old not in s:
+              raise SystemExit('pass/retry anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '''        return Ok(2);
+              }
+
+              stop_all(&mut managed, &mut log);
+          '''
+          new = '''        return Ok(2);
+                  }
+              }
+
+              stop_all(&mut managed, &mut log);
+          '''
+          if old not in s:
+              raise SystemExit('cycle close anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '''    fn active_exit_is_fail_closed() {
+                  assert!(is_uncertain_code("FAIL_ACTIVE_ROLE_EXITED"));
+                  assert!(is_uncertain_code("FAIL_ACTIVE_STALE"));
+              }
+          '''
+          new = old + '''
+              #[test]
+              fn confirmed_server_reject_is_not_uncertain() {
+                  assert!(!is_uncertain_code("FAIL_SERVER_REJECT"));
+              }
+          '''
+          if old not in s:
+              raise SystemExit('test anchor missing')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2021 probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Focused tests and release build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip --bin tele10_ledger --bin tele07_supervisor --bin tele06a_acceptor_runtime --bin tele06a_ritual_runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit only tested supervisor fix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add probes/Wow112HeadlessAndroid/src/bin/tele07_supervisor.rs
+          git diff --cached --quiet; if ($LASTEXITCODE -eq 0) { throw 'No source diff produced' }
+          git commit -m "fix(summon): safely replay confirmed ritual reject"
+          git push origin HEAD:feature/summon-terminal-soak-v1
