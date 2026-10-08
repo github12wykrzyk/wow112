@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "parallel-delivery-test-standard-compat-v1",
+  "goal": "Align the delivery-routing policy text and unit-test expectations with the existing fail-closed profile-contained STANDARD compatibility gate implemented by parallel_delivery_route.py.",
+  "branch": "feature/parallel-delivery-test-standard-compat-v1",
+  "base_parallel_sha": "ef6558cb88475b076e2298f08b75cbac21ce8a04",
+  "modules": [
+    "ParallelControlPlane"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "parallel-delivery-routing"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "notes": "Baseline contract repair only. The runtime classifier already requires STANDARD for profile-contained changes; this task updates stale policy prose/tests to that existing behavior so feature preflight can validate current main consistently."
+}
