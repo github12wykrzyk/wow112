@@ -1,7 +1,6 @@
 name: Build Android WoW112 headless probe
 
-# Bootstrap note: touching this workflow on parallel intentionally seeds the first
-# branch-local Android artifact consumed by MULTIBOX TERMINAL in the updater.
+# Validation branch only: same production build plus executed Rust unit tests.
 on:
   workflow_dispatch:
   push:
@@ -68,6 +67,10 @@ jobs:
       - name: Host compile check
         shell: bash
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Summon service Rust tests
+        shell: bash
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml -- --nocapture
 
       - name: Build Android x86_64 executable
         shell: bash
