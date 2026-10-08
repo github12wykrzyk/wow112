@@ -10,6 +10,7 @@ pub const MUTATION_SCHEMA_VERSION: u32 = 1;
 pub enum MutationKind {
     GroupReset,
     Invite,
+    GroupAccept,
     SetSelection,
     CastRitual,
     PortalUse,
@@ -276,7 +277,7 @@ fn atomic_write(path: &Path, body: &[u8]) -> Result<(), String> {
             .map_err(|error| format!("sync mutation journal {} failed: {error}", next.display()))?;
     }
     if path.exists() {
-        let _ = fs::copy(path, &bak);
+        let _ = fs::copy(&self::PathBuf::from(path), &bak);
         fs::remove_file(path)
             .map_err(|error| format!("remove mutation journal {} failed: {error}", path.display()))?;
     }
