@@ -1,0 +1,43 @@
+name: AH MM2 Pure Diagnostic
+on:
+  push:
+    branches: [feature/ah-market-maker-v2]
+    paths:
+      - 'src/AuctionLifecycle/market_maker_v2_policy.rs'
+      - 'src/AuctionLifecycle/market_maker_v2_recovery.rs'
+      - 'src/AuctionLifecycle/market_maker_v2_saga.rs'
+      - '.github/workflows/ah_mm2_pure_diag.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - shell: pwsh
+        run: |
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_policy.rs -o "$env:RUNNER_TEMP/mm2-policy.exe"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          & "$env:RUNNER_TEMP/mm2-policy.exe" --nocapture
+  recovery:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - shell: pwsh
+        run: |
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_recovery.rs -o "$env:RUNNER_TEMP/mm2-recovery.exe"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          & "$env:RUNNER_TEMP/mm2-recovery.exe" --nocapture
+  saga:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - shell: pwsh
+        run: |
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_v2_saga.rs -o "$env:RUNNER_TEMP/mm2-saga.exe"
+          if($LASTEXITCODE-ne 0){exit $LASTEXITCODE}
+          & "$env:RUNNER_TEMP/mm2-saga.exe" --nocapture
