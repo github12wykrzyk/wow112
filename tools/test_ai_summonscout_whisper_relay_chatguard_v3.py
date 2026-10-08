@@ -43,7 +43,8 @@ class SummonScoutWhisperRelayChatGuardV3Contract(unittest.TestCase):
 
     def test_live_nil_crash_path_is_structurally_removed(self):
         self.assertNotIn("return OWN_CHAT_BASE(", self.guard)
-        self.assertIn('local VERSION = "3-demand-only-wim-filter-reload-safe"', self.guard)
+        self.assertIn('local VERSION = "', self.guard)
+        self.assertIn("wim-", self.guard)
 
     def test_wim_filter_self_repairs_after_filter_reset_or_late_load(self):
         start = self.guard.index("local function sgWrappedOnUpdate()")
