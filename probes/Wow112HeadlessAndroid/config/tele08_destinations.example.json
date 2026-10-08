@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "destinations": [
+    {
+      "id": "azshara",
+      "display_name": "Azshara",
+      "aliases": [
+        "azsh",
+        "hydraxian",
+        "hydraxian waterlords",
+        "waterlords",
+        "waterlord"
+      ],
+      "enabled": true,
+      "execution_team": "team-azshara",
+      "required_clickers": 2,
+      "metadata": {
+        "legacy_service_name": "Hydraxian Waterlords (Azshara)"
+      }
+    },
+    {
+      "id": "hyjal",
+      "display_name": "Hyjal",
+      "aliases": ["mount hyjal"],
+      "enabled": true,
+      "execution_team": "team-hyjal",
+      "required_clickers": 2,
+      "metadata": {}
+    },
+    {
+      "id": "winterspring",
+      "display_name": "Winterspring",
+      "aliases": ["everlook"],
+      "enabled": true,
+      "execution_team": "team-winterspring",
+      "required_clickers": 2,
+      "metadata": {}
+    }
+  ],
+  "execution_teams": [
+    {
+      "id": "team-azshara",
+      "resource_key": "summon/azshara",
+      "summoner": {"role": "summoner", "character": null, "exclusive": true},
+      "clickers": [
+        {"role": "clicker-1", "character": null, "exclusive": true},
+        {"role": "clicker-2", "character": null, "exclusive": true}
+      ]
+    },
+    {
+      "id": "team-hyjal",
+      "resource_key": "summon/hyjal",
+      "summoner": {"role": "summoner", "character": null, "exclusive": true},
+      "clickers": [
+        {"role": "clicker-1", "character": null, "exclusive": true},
+        {"role": "clicker-2", "character": null, "exclusive": true}
+      ]
+    },
+    {
+      "id": "team-winterspring",
+      "resource_key": "summon/winterspring",
+      "summoner": {"role": "summoner", "character": null, "exclusive": true},
+      "clickers": [
+        {"role": "clicker-1", "character": null, "exclusive": true},
+        {"role": "clicker-2", "character": null, "exclusive": true}
+      ]
+    }
+  ]
+}
