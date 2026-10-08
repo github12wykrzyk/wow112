@@ -65,7 +65,7 @@ local HARD_BLACKLIST = {
 local SERVICE_LABELS = {
     hyjal = "Mount Hyjal",
     hydraxian = "Hydraxian Waterlords",
-    winterspring = "Winterspring",
+    winterspring = "Winterspring", silithus = "Silithus",
     everlook = "Everlook",
     azshara = "Azshara"
 }

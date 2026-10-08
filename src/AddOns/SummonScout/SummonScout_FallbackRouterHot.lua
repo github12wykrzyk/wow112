@@ -46,7 +46,7 @@ local MAX_DIRECTORY_DESTINATIONS = 12
 local DISPLAY_LABELS = {
     hyjal = "Hyjal",
     hydraxian = "Hydraxis",
-    winterspring = "Winterspring"
+    winterspring = "Winterspring", silithus = "Silithus"
 }
 
 local SOCIAL_NOISE = {
