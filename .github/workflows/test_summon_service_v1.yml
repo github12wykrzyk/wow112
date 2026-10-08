@@ -1,0 +1,36 @@
+name: Test Summon Service V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/summon-service-core-v1
+    paths:
+      - 'probes/Wow112HeadlessAndroid/**'
+      - '.github/workflows/test_summon_service_v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-summon-service-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test summon service crate
+        shell: bash
+        run: cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Cargo check summon service crate
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
