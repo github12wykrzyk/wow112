@@ -25,61 +25,108 @@ fn lifecycle_auto_price(own:&LifecycleAuction,w:&LifecycleAuction,floor:u32)->Op
     if buyout<floor || buyout>=own.row.buyout || buyout==0 { None } else { Some(buyout) }
 }
 
-fn lifecycle_auto_same_item_present(inv:&std::collections::HashMap<u64,Poc05InventoryEntry>,item:u32)->bool {
-    inv.values().any(|i| i.entry>0 && i.entry as u32==item && i.stack>0)
+#[derive(Debug,PartialEq,Eq)]
+enum LifecycleAutoReturnedItemState {
+    Pending,
+    ExactNew(u64),
+    Merged,
+    Ambiguous(&'static str),
 }
 
-fn lifecycle_auto_return_guid_from_snapshots(
+fn lifecycle_auto_is_item(e:&Poc05InventoryEntry,item:u32)->bool {
+    e.entry>0 && e.entry as u32==item && e.stack>0
+}
+fn lifecycle_auto_stack(e:&Poc05InventoryEntry)->u32 {
+    if e.stack>0 { e.stack as u32 } else { 0 }
+}
+
+fn lifecycle_auto_classify_returned(
     old:&std::collections::HashMap<u64,Poc05InventoryEntry>,
     fresh:&std::collections::HashMap<u64,Poc05InventoryEntry>,
     item:u32,
     count:u32,
-)->Result<Option<u64>,String> {
-    let mut exact_new=Vec::new();
-    let mut merge_seen=false;
-    for (guid,i) in fresh {
-        if i.entry<=0 || i.entry as u32!=item || i.stack<=0 { continue; }
-        let stack=i.stack as u32;
-        match old.get(guid) {
-            None => {
-                if stack==count { exact_new.push(*guid); }
-                else { merge_seen=true; }
-            }
-            Some(prev) if prev.entry>0 && prev.entry as u32==item && prev.stack>0 => {
-                if stack>prev.stack as u32 { merge_seen=true; }
-            }
-            Some(_) => { merge_seen=true; }
+)->LifecycleAutoReturnedItemState {
+    let mut grown=false;
+    let mut old_changed=false;
+    for (guid,prev) in old.iter().filter(|(_,e)|lifecycle_auto_is_item(e,item)) {
+        match fresh.get(guid) {
+            Some(now) if lifecycle_auto_is_item(now,item) && lifecycle_auto_stack(now)>lifecycle_auto_stack(prev) => grown=true,
+            Some(now) if lifecycle_auto_is_item(now,item) && lifecycle_auto_stack(now)==lifecycle_auto_stack(prev) => {},
+            _ => old_changed=true,
         }
     }
-    if exact_new.len()>1 { return Err("AUTO multiple exact new full-stack GUIDs observed; reconciliation required".into()); }
-    if exact_new.len()==1 { return Ok(Some(exact_new[0])); }
-    if merge_seen { return Err("AUTO returned item merged/changed an existing stack; exact full-stack repost unsafe".into()); }
-    Ok(None)
+    if grown { return LifecycleAutoReturnedItemState::Merged; }
+    if old_changed { return LifecycleAutoReturnedItemState::Ambiguous("existing same-item stack changed"); }
+
+    let new_same:Vec<_>=fresh.iter()
+        .filter(|(guid,e)|!old.contains_key(*guid)&&lifecycle_auto_is_item(e,item))
+        .collect();
+    match new_same.as_slice() {
+        []=>LifecycleAutoReturnedItemState::Pending,
+        [(guid,e)] if lifecycle_auto_stack(e)==count=>LifecycleAutoReturnedItemState::ExactNew(**guid),
+        [_]=>LifecycleAutoReturnedItemState::Ambiguous("new GUID stack != target count"),
+        _=>LifecycleAutoReturnedItemState::Ambiguous("multiple new same-item GUIDs"),
+    }
+}
+
+fn lifecycle_auto_inventory_risk()->Vec<(u64,i32,i32)> {
+    LIFE_OBSERVED.with(|s| {
+        let s=s.borrow();
+        s.inventory.items.iter().map(|(guid,e)|(*guid,e.entry,e.stack)).collect()
+    })
+}
+
+fn lifecycle_auto_merge_risk(item:u32)->Option<String> {
+    let all=lifecycle_auto_inventory_risk();
+    if all.is_empty() { return Some("inventory baseline not established".into()); }
+    let hit:Vec<_>=all.iter().filter(|(_,entry,_)|*entry<=0 || *entry as u32==item).collect();
+    if hit.is_empty() { None } else { Some(format!("same/unknown item cached: {hit:?}")) }
+}
+
+fn lifecycle_auto_inventory_diag(
+    old:&std::collections::HashMap<u64,Poc05InventoryEntry>,
+    fresh:&std::collections::HashMap<u64,Poc05InventoryEntry>,
+    item:u32,
+    round:u32,
+) {
+    let old_rows:Vec<_>=old.iter().filter(|(_,e)|lifecycle_auto_is_item(e,item)).map(|(g,e)|(*g,e.stack)).collect();
+    let fresh_rows:Vec<_>=fresh.iter().filter(|(_,e)|lifecycle_auto_is_item(e,item)).map(|(g,e)|(*g,e.stack)).collect();
+    println!("[LIFECYCLE-AUTO] RETURN_DIAG item={} round={} old={:?} fresh={:?}",item,round,old_rows,fresh_rows);
 }
 
 fn lifecycle_auto_wait_returned_full_stack(
     stream:&mut TcpStream,
     crypto:&mut HeaderCrypto,
+    mailbox:u64,
     old:&std::collections::HashMap<u64,Poc05InventoryEntry>,
     item:u32,
     count:u32,
 )->Result<u64,String> {
-    for packet in 0..128usize {
+    const SETTLE_ROUNDS:u32=8;
+    for round in 0..SETTLE_ROUNDS {
+        // Read-only mailbox barrier. Its receive loop drains intervening world packets,
+        // and read_encrypted_raw feeds lifecycle_observe_raw, allowing delayed inventory
+        // updates to enter the verified cache without any mutation retry.
+        let _=poc05_request_mail_list(stream,crypto,mailbox)?;
         let fresh=lifecycle_inventory()?;
-        match lifecycle_auto_return_guid_from_snapshots(old,&fresh,item,count)? {
-            Some(guid)=>{
-                println!("[LIFECYCLE-AUTO] RETURN_GUID_CONFIRMED item={} count={} guid=0x{:016X} waited_packets={}",item,count,guid,packet);
+        lifecycle_auto_inventory_diag(old,&fresh,item,round);
+        match lifecycle_auto_classify_returned(old,&fresh,item,count) {
+            LifecycleAutoReturnedItemState::ExactNew(guid)=>{
+                println!("[LIFECYCLE-AUTO] RETURN_GUID_CONFIRMED item={} count={} guid=0x{:016X} settle_round={}",item,count,guid,round);
                 return Ok(guid);
             }
-            None=>{}
+            LifecycleAutoReturnedItemState::Pending=>{
+                if round+1<SETTLE_ROUNDS { std::thread::sleep(Duration::from_millis(250)); }
+            }
+            LifecycleAutoReturnedItemState::Merged=>{
+                return Err(format!("AUTO returned item MERGED into existing stack at settle_round={round}; manual reconciliation required"));
+            }
+            LifecycleAutoReturnedItemState::Ambiguous(why)=>{
+                return Err(format!("AUTO returned item ambiguous at settle_round={round}: {why}; reconciliation required"));
+            }
         }
-        if packet==127 { break; }
-        // Read-only settling wait. read_encrypted_raw feeds lifecycle_observe_raw,
-        // so a delayed SMSG_UPDATE_OBJECT can establish fresh ownership/stack evidence.
-        // No mutation is resent here.
-        let _=read_encrypted_raw(stream,crypto.decrypter())?;
     }
-    Err("AUTO exact returned full-stack GUID not observed within 128 settling packets; reconciliation required".into())
+    Err("AUTO exact returned full-stack GUID not observed within bounded read-only settle window; reconciliation required".into())
 }
 
 fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String> {
@@ -142,12 +189,10 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
         let floor=*floors.get(&target.row.item_id).ok_or("AUTO floor disappeared internally")?;
         let buyout=lifecycle_auto_price(target,&witness.1,floor).ok_or("AUTO price invalid before cancel")?;
 
-        // Do not cancel if the same item already exists in bags. A returned mail stack
-        // could merge with it; vanilla CMSG_AUCTION_SELL_ITEM has no count field, so
-        // posting from a larger merged stack would auction the wrong quantity.
-        let pre_cancel_inventory=lifecycle_inventory()?;
-        if lifecycle_auto_same_item_present(&pre_cancel_inventory,target.row.item_id) {
-            println!("[LIFECYCLE-AUTO] SKIP id={} item={} reason=same-item-inventory-merge-risk",target.row.auction_id,target.row.item_id);
+        // Read-only barrier first, then conservative risk cache. False positives only skip.
+        let _=poc05_request_mail_list(stream,crypto,mailbox)?;
+        if let Some(why)=lifecycle_auto_merge_risk(target.row.item_id) {
+            println!("[LIFECYCLE-AUTO] SKIP_MERGE_RISK id={} item={} reason={}",target.row.auction_id,target.row.item_id,why);
             continue;
         }
 
@@ -165,8 +210,11 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
             if returned.len()!=1 { return Err("AUTO return mail not uniquely identified; reconciliation required".into()); }
 
             let old_inventory=lifecycle_inventory()?;
+            if old_inventory.values().any(|e|lifecycle_auto_is_item(e,target.row.item_id)) {
+                return Err("AUTO same item appeared in bags before take; returned item left in mailbox; reconciliation required".into());
+            }
             lifecycle_mail(stream,crypto,mailbox,Poc05MailAction::TakeItem(returned[0].id))?;
-            let guid=lifecycle_auto_wait_returned_full_stack(stream,crypto,&old_inventory,target.row.item_id,target.row.count)?;
+            let guid=lifecycle_auto_wait_returned_full_stack(stream,crypto,mailbox,&old_inventory,target.row.item_id,target.row.count)?;
             lifecycle_post(stream,crypto,npc,player,guid,target.row.item_id,target.row.count,buyout,buyout,floor,minutes)
         })();
         after_cancel.map_err(|e|format!("AH_MUTATION_LIFECYCLE_AUTO_STOP_AFTER_CANCEL auction_id={}: {e}",target.row.auction_id))?;
@@ -195,19 +243,38 @@ fn lifecycle_auto_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)
         let own=a(1,7,3,120); let w=a(2,8,2,67);
         assert_eq!(lifecycle_auto_price(&own,&w,1),Some(100));
     }
-    #[test] fn exact_new_return_guid_is_accepted() {
+    #[test] fn classifier_pending_without_inventory_change() {
+        let old=std::collections::HashMap::new(); let fresh=std::collections::HashMap::new();
+        assert_eq!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::Pending);
+    }
+    #[test] fn classifier_exact_new_return_guid() {
         let old=std::collections::HashMap::new();
         let mut fresh=std::collections::HashMap::new(); fresh.insert(77,inv(10998,1));
-        assert_eq!(lifecycle_auto_return_guid_from_snapshots(&old,&fresh,10998,1).unwrap(),Some(77));
+        assert_eq!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::ExactNew(77));
     }
-    #[test] fn merge_into_existing_stack_is_rejected() {
+    #[test] fn classifier_merge_into_existing_stack() {
         let mut old=std::collections::HashMap::new(); old.insert(77,inv(10998,3));
         let mut fresh=std::collections::HashMap::new(); fresh.insert(77,inv(10998,4));
-        assert!(lifecycle_auto_return_guid_from_snapshots(&old,&fresh,10998,1).is_err());
+        assert_eq!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::Merged);
     }
-    #[test] fn unrelated_inventory_update_keeps_waiting() {
+    #[test] fn classifier_multiple_new_is_ambiguous() {
+        let old=std::collections::HashMap::new();
+        let mut fresh=std::collections::HashMap::new();fresh.insert(77,inv(10998,1));fresh.insert(78,inv(10998,1));
+        assert!(matches!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::Ambiguous(_)));
+    }
+    #[test] fn classifier_wrong_new_stack_is_ambiguous() {
+        let old=std::collections::HashMap::new();
+        let mut fresh=std::collections::HashMap::new();fresh.insert(77,inv(10998,2));
+        assert!(matches!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::Ambiguous(_)));
+    }
+    #[test] fn classifier_unrelated_item_keeps_pending() {
         let old=std::collections::HashMap::new();
         let mut fresh=std::collections::HashMap::new(); fresh.insert(88,inv(11175,1));
-        assert_eq!(lifecycle_auto_return_guid_from_snapshots(&old,&fresh,10998,1).unwrap(),None);
+        assert_eq!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::Pending);
+    }
+    #[test] fn classifier_existing_same_item_disappears_is_ambiguous() {
+        let mut old=std::collections::HashMap::new();old.insert(77,inv(10998,2));
+        let fresh=std::collections::HashMap::new();
+        assert!(matches!(lifecycle_auto_classify_returned(&old,&fresh,10998,1),LifecycleAutoReturnedItemState::Ambiguous(_)));
     }
 }
