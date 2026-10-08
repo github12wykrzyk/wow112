@@ -39,7 +39,7 @@ fn mm_config()->Result<MmConfig,String>{
         max_clear_units:poc07_env_u32_default("WOW112_MM_MAX_CLEAR_UNITS",5)?,clear_min_profit:poc07_env_u32_default("WOW112_MM_CLEAR_MIN_PROFIT",100)?,
         clear_min_roi_bps:poc07_env_u32_default("WOW112_MM_CLEAR_MIN_ROI_BPS",1000)?,clear_min_jump_bps:poc07_env_u32_default("WOW112_MM_CLEAR_MIN_JUMP_BPS",1000)?,
     };
-    if c.max_pages==0||c.max_pages>4096||c.max_actions==0||c.max_actions>100||c.max_clear_buys==0||c.max_clear_buys>50||c.max_post_units==0||c.max_post_units>200||c.default_floor_unit==0||c.min_price_bps_of_own==0||c.min_price_bps_of_own>10000||c.ah_cut_bps>=10000||c.max_clear_units==0||!matches!(c.minutes,120|480|1440){return Err("MARKET_MAKER invalid hard limits".into());}
+    if c.max_pages==0||c.max_pages>4096||c.max_actions==0||c.max_actions>100||c.max_clear_buys==0||c.max_clear_buys>50||c.max_post_units==0||c.max_post_units>200||c.default_floor_unit==0||c.min_price_bps_of_own==0||c.min_price_bps_of_own>10000||c.ah_cut_bps>=10000||c.max_clear_units==0||c.max_clear_units>c.max_post_units||!matches!(c.minutes,120|480|1440){return Err("MARKET_MAKER invalid hard limits".into());}
     Ok(c)
 }
 
@@ -94,6 +94,10 @@ fn mm_execute_clear_buy(stream:&mut TcpStream,crypto:&mut HeaderCrypto,npc:u64,h
 }
 
 fn mm_target_for_stock(item:u32,signature:[u32;3],player:u64,s:&MmSnapshot,ceiling:u32,floor:u32)->Result<u32,String>{
+    // A partial scan may have missed a cheaper frontier row. Never price/post stock from it.
+    // `stable` is intentionally not required here: total-count drift is common on a live AH;
+    // a complete pass plus the economic floor is safe, while CLEAR itself remains stable-only.
+    if !s.complete{return Err("MARKET_MAKER final pricing snapshot incomplete; stock held, not posted".into());}
     let mut ext:Vec<_>=s.rows.iter().filter(|r|r.auction.row.owner_guid!=player&&r.auction.row.item_id==item&&r.auction.signature==signature&&r.auction.row.buyout>0&&r.auction.row.count>0).collect();
     ext.sort_by(|a,b|mm_cmp_unit(&a.auction,&b.auction));
     let target=ext.first().map(|r|mm_strict_below(&r.auction)).unwrap_or(ceiling).min(ceiling);
