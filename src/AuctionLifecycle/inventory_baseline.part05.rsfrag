@@ -1,0 +1,114 @@
+fn lifecycle_walk_inventory_blocks(d: &[u8]) -> LifecycleWalk {
+    let mut w = LifecycleWalk::default();
+    if d.len() < 5 { w.stopped_at = Some(0); w.reason = "body too short".into(); return w; }
+    let count = u32::from_le_bytes([d[0], d[1], d[2], d[3]]) as usize;
+    if count == 0 || count > 4096 { w.stopped_at = Some(0); w.reason = format!("implausible count {count}"); return w; }
+    w.total = count;
+    let mut pos = 5usize;
+    for i in 0..count {
+        if let Err(r) = lifecycle_walk_step(d, &mut pos, &mut w) { w.stopped_at = Some(i); w.reason = r; return w; }
+    }
+    if pos != d.len() { w.stopped_at = Some(count); w.reason = "trailing bytes after declared blocks".into(); }
+    w
+}
+
+/// Decompress (when needed) and walk an update packet payload.
+fn lifecycle_walk_update_payload(compressed: bool, payload: &[u8]) -> LifecycleWalk {
+    if !compressed { return lifecycle_walk_inventory_blocks(payload); }
+    let fail = |r: String| LifecycleWalk { stopped_at: Some(0), reason: r, ..Default::default() };
+    if payload.len() < 6 { return fail("compressed payload too short".into()); }
+    let declared = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+    if declared == 0 || declared > (1 << 20) { return fail("implausible decompressed size".into()); }
+    match lifecycle_zlib_inflate(&payload[4..], declared) {
+        Ok(b) if b.len() == declared => lifecycle_walk_inventory_blocks(&b),
+        Ok(_) => fail("decompressed size mismatch".into()),
+        Err(e) => fail(format!("zlib failure: {e}")),
+    }
+}
+
+// ---------------------------------------------------------------- bounded read-only baseline wait
+
+/// Read-only: `barrier` may only issue non-mutating requests that drain world packets. The loop
+/// waits (bounded) for a transient NotEstablished to resolve; any other verdict ends it at once.
+fn lifecycle_baseline_wait_loop(
+    rounds: u32,
+    mut barrier: impl FnMut(u32) -> Result<(), String>,
+    mut verdict: impl FnMut() -> LifecycleBaselineVerdict,
+    mut pause: impl FnMut(),
+) -> Result<LifecycleBaselineVerdict, String> {
+    let mut last = LifecycleBaselineVerdict::NotEstablished("no wait rounds".into());
+    for r in 0..rounds {
+        barrier(r)?;
+        last = verdict();
+        if matches!(last, LifecycleBaselineVerdict::NotEstablished(_)) { if r + 1 < rounds { pause(); } } else { return Ok(last); }
+    }
+    Ok(last)
+}
+
+// ---------------------------------------------------------------- bounded read-only settle
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LifecycleSettleStep { Exact(u64), Pending, Merged, Ambiguous(String) }
+
+/// Bounded read-only settle: `poll` may only read (no sends of mutations); `classify` is pure.
+/// Never retries a mutation; exhausting the rounds is an error (caller hard-stops).
+fn lifecycle_settle_loop<S>(
+    rounds: u32,
+    mut poll: impl FnMut(u32) -> Result<S, String>,
+    mut classify: impl FnMut(&S) -> LifecycleSettleStep,
+    mut pause: impl FnMut(),
+) -> Result<u64, String> {
+    for round in 0..rounds {
+        let snap = poll(round)?;
+        match classify(&snap) {
+            LifecycleSettleStep::Exact(g) => return Ok(g),
+            LifecycleSettleStep::Pending => { if round + 1 < rounds { pause(); } }
+            LifecycleSettleStep::Merged => return Err(format!("returned item MERGED into existing stack at settle_round={round}; manual reconciliation required")),
+            LifecycleSettleStep::Ambiguous(w) => return Err(format!("returned item ambiguous at settle_round={round}: {w}; reconciliation required")),
+        }
+    }
+    Err("exact returned full-stack GUID not observed within bounded read-only settle window; reconciliation required".into())
+}
+
+#[cfg(test)]
+mod lifecycle_baseline_tests {
+    use super::*;
+
+    const ME: u64 = 0x0000_0000_0000_1234;
+    fn it(guid: u64, entry: i32, stack: i32) -> LifecycleBaselineItem { LifecycleBaselineItem { guid, entry, stack, verified: true, container: false } }
+    fn bag(guid: u64) -> LifecycleBaselineItem { LifecycleBaselineItem { guid, entry: 4496, stack: 1, verified: true, container: true } }
+    const G: u64 = 0x4000_0000_0000_0000;
+    fn slots(pairs: &[(usize, u64)]) -> [Option<u64>; LIFECYCLE_INV_SLOTS] { let mut s = [None; LIFECYCLE_INV_SLOTS]; for (i, g) in pairs { s[*i] = Some(*g); } s }
+    fn inv_with(pairs: &[(usize, u64)]) -> LifecycleInvTracker { let mut t = LifecycleInvTracker::default(); t.player_create(&slots(pairs)); t }
+    fn add_bag(t: &mut LifecycleInvTracker, guid: u64, num: u32, contents: &[(usize, u64)]) {
+        let mut f = vec![(LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD, num)];
+        for (i, g) in contents { f.push((LIFECYCLE_CONTAINER_SLOT1_FIELD + 2 * *i as u16, *g as u32)); f.push((LIFECYCLE_CONTAINER_SLOT1_FIELD + 2 * *i as u16 + 1, (*g >> 32) as u32)); }
+        t.container_create(guid, &f);
+    }
+    fn facts() -> LifecycleBaselineFacts { LifecycleBaselineFacts::default() }
+    fn v(t: &LifecycleInvTracker, c: &[LifecycleBaselineItem]) -> LifecycleBaselineVerdict { lifecycle_baseline_verdict(&facts(), t, c, 10998) }
+
+    // ---- baseline state machine
+    #[test] fn no_player_create_means_not_established() {
+        assert!(matches!(v(&LifecycleInvTracker::default(), &[]), LifecycleBaselineVerdict::NotEstablished(_)));
+        assert!(matches!(v(&LifecycleInvTracker::default(), &[it(G | 1, 5, 1)]), LifecycleBaselineVerdict::NotEstablished(_)));
+    }
+    #[test] fn partial_cache_with_unrelated_items_while_target_may_be_unobserved_is_never_absent() {
+        // Real backpack: A, B and the target item 10998 (guid C). Only A and B have been observed.
+        let t = inv_with(&[(23, G | 1), (24, G | 2), (25, G | 3)]);
+        let cache = [it(G | 1, 2589, 20), it(G | 2, 4306, 5)];
+        let verdict = v(&t, &cache);
+        assert_ne!(verdict, LifecycleBaselineVerdict::Absent);
+        assert!(matches!(verdict, LifecycleBaselineVerdict::NotEstablished(_)));
+        // once C arrives and is the target -> Present, never Absent
+        let mut cache2 = cache.to_vec(); cache2.push(it(G | 3, 10998, 4));
+        assert_eq!(v(&t, &cache2), LifecycleBaselineVerdict::Present(vec![(G | 3, 4)]));
+        // once C arrives and is something else -> Absent is now proven
+        let mut cache3 = cache.to_vec(); cache3.push(it(G | 3, 11175, 1));
+        assert_eq!(v(&t, &cache3), LifecycleBaselineVerdict::Absent);
+    }
+    #[test] fn target_missing_from_cache_even_if_only_one_slot_unobserved_is_not_absent() {
+        let t = inv_with(&[(23, G | 1), (30, G | 9)]);
+        assert!(matches!(v(&t, &[it(G | 1, 5, 1)]), LifecycleBaselineVerdict::NotEstablished(_)));
+    }
+    #[test] fn empty_character_is_absent_only_with_authoritative_empty_slots() {
