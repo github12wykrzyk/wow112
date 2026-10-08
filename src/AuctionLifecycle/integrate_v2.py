@@ -30,6 +30,11 @@ def include_safe(text: str, name: str) -> str:
         old='if lifecycle_enabled(){lifecycle_observe_raw(header.opcode,&payload);market_maker_observe_raw(header.opcode,&payload);}market_maker_v2_observe_raw(header.opcode,&payload);'
         new='if lifecycle_enabled(){lifecycle_observe_raw(header.opcode,&payload);market_maker_observe_raw(header.opcode,&payload);}'
         text=once(text,old,new)
+    if name=='market_maker_v2_canary.rs':
+        # Prompt-2 live path must use the stricter canary CANCEL whose final market authority is
+        # targeted exact-item depth. Keep the generic dormant runtime primitive unchanged.
+        text=once(text,'mm2_guarded_cancel(stream,crypto,targets.auctioneer,player,&choice.own,&mut saga,&mut recovery)?;',
+                       'mm2_canary_guarded_cancel_fresh(stream,crypto,targets.auctioneer,player,&choice.own,&mut saga,&mut recovery)?;')
     return text
 
 
@@ -73,8 +78,8 @@ def integrate(root: Path) -> None:
 
     runtime_names=[
       'market_maker_v2_inventory.rs','market_maker_v2_io.rs','market_maker_v2_targets.rs',
-      'market_maker_v2_depth.rs','market_maker_v2_runtime.rs','market_maker_v2_canary.rs',
-      'market_maker_v2_prompt2_guard.rs']
+      'market_maker_v2_depth.rs','market_maker_v2_runtime.rs','market_maker_v2_canary_cancel.rs',
+      'market_maker_v2_canary.rs','market_maker_v2_prompt2_guard.rs']
     for name in runtime_names:
         src=(life/name).read_text(encoding='utf-8-sig')
         (gen/name).write_text(include_safe(src,name),encoding='utf-8')
