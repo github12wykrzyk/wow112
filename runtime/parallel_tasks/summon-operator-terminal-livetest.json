@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "summon-operator-terminal-livetest",
+  "goal": "Provide a one-command autonomous headless summon live-test runner that starts the TELE10 customer, clickers and summoner, performs summon plus real trade payment, and produces durable PASS/FAIL evidence without manual WoW window handling.",
+  "branch": "feature/summon-operator-terminal-livetest",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": ["SummonOperatorLiveTest", "TELE10Headless"],
+  "dependencies": [],
+  "shared_resources": ["TELE10 headless summon runtime", "TELE10 trade payment ledger", "operator live-test runner"],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Isolated operator/test branch. Reuses stored-source TELE10 headless runtime from feature/tele10-headless-trade-payment-ledger-v1f at b5c793d0a55915a9cfd3b08395ee16f7000e6352. No AH mutation path and no WoW GUI automation are added. Trade payment remains one-shot and fail-closed on uncertain send."
+}
