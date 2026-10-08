@@ -11,9 +11,9 @@
     "SummonScout SSFR1 provider ownership",
     "SummonScout hot fanout delivery"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Follow-up to v1 after exact integrated STANDARD delivery failed at repo-managed addon packaging. Keep implementation inside the existing TOC-declared HubAck hot module and reduce payload growth aggressively."
+  "notes": "Follow-up to v1 after exact integrated STANDARD delivery failed at repo-managed addon packaging. Compact implementation stays in the existing TOC-declared HubAck hot module. Exact feature preflight PASS on 27db8b411aad28c86f171dbdb7258f2ce2065883."
 }
