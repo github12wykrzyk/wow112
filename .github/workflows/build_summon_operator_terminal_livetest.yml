@@ -1,0 +1,78 @@
+name: Build Summon Operator Terminal LiveTest
+
+on:
+  push:
+    branches:
+      - 'feature/summon-operator-terminal-livetest'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Validate runner PowerShell syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/summon_operator_livetest/Run-LiveTest.ps1'),
+            [ref]$null,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) { $errors | Format-List; throw 'runner PowerShell syntax invalid' }
+
+      - name: Rust library tests including TELE10 payment ledger
+        shell: pwsh
+        run: |
+          cargo test --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --lib -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Supervisor self-test
+        shell: pwsh
+        run: |
+          cargo run --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele07_supervisor -- --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build headless live-test binaries
+        shell: pwsh
+        run: |
+          foreach ($bin in @('tele10_ledger','tele07_supervisor','tele06a_acceptor_runtime','tele06a_ritual_runtime')) {
+            cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin $bin
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Package one-command runner
+        shell: pwsh
+        run: |
+          $stage = 'dist/WoW112-Summon-Operator-LiveTest'
+          New-Item -ItemType Directory -Force -Path "$stage/bin" | Out-Null
+          Copy-Item tools/summon_operator_livetest/Run-LiveTest.ps1 $stage/
+          Copy-Item tools/summon_operator_livetest/RUN_LIVE_TEST.cmd $stage/
+          Copy-Item tools/summon_operator_livetest/README.md $stage/
+          foreach ($bin in @('tele10_ledger.exe','tele07_supervisor.exe','tele06a_acceptor_runtime.exe','tele06a_ritual_runtime.exe')) {
+            Copy-Item "probes/Wow112HeadlessAndroid/target/release/$bin" "$stage/bin/$bin"
+          }
+          $manifest = [ordered]@{
+            artifact = "WoW112-Summon-Operator-LiveTest-${{ github.sha }}"
+            git_sha = "${{ github.sha }}"
+            source_payment_runtime = 'feature/tele10-headless-trade-payment-ledger-v1f@b5c793d0a55915a9cfd3b08395ee16f7000e6352'
+            execution = 'fully_headless_four_world_sessions'
+            pass_gate = 'supervisor_success_plus_server_trade_complete_plus_durable_paid_ledger'
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$stage/manifest.json"
+          Get-ChildItem "$stage/bin/*.exe" | Get-FileHash -Algorithm SHA256 | ForEach-Object { "{0}  {1}" -f $_.Hash.ToLowerInvariant(), (Split-Path $_.Path -Leaf) } | Set-Content "$stage/SHA256SUMS.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoW112-Summon-Operator-LiveTest-${{ github.sha }}
+          path: dist/WoW112-Summon-Operator-LiveTest
+          if-no-files-found: error
