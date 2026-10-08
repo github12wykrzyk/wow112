@@ -11,8 +11,8 @@
   "shared_resources": [
     "parallel-delivery-routing-tests"
   ],
-  "status": "coding",
+  "status": "test_ready",
   "auto_integrate": false,
   "delivery_profiles": [],
-  "notes": "Test-only control-plane repair. The router implementation intentionally requires STANDARD for profile-contained changes until inherited-artifact updater routing is proven safe. Do not auto-integrate."
+  "notes": "Test-only control-plane repair. Full feature preflight passed at e279cd80531cf41b51c2ef333be4fa1a0aac29a8 with 149/149 test_ai_* tests passing. The router implementation intentionally requires STANDARD for profile-contained changes until inherited-artifact updater routing is proven safe. Do not auto-integrate."
 }
