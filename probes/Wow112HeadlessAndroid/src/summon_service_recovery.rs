@@ -1,3 +1,5 @@
+//! Durable correlation recovery for post-portal and payment-wait restarts.
+
 use crate::tele10_trade_payment::{LedgerState, PaymentStatus, SummonStatus};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
