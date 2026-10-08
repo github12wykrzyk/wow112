@@ -79,6 +79,16 @@ fn mm2_guarded_cancel(
     let item_id=target.row.item_id;
     let count=target.row.count;
     let tx=mutations::transaction(MutationKind::Cancel,||{
+        // Final no-SEND guard. The last owner proof happens after CancelIntent fsync and immediately
+        // before the network mutation. Any active bid / identity drift here returns while the
+        // coordinator still reports sent=false and no REMOVE byte has been emitted.
+        mm2_order_fence(stream,crypto,Mm2Duration::from_secs(2),"cancel/final-owner")?;
+        let final_owners=mm2_owner_list(stream,crypto,auctioneer,player)?;
+        let final_own=final_owners.iter().find(|r|r.row.auction_id==auction_id).ok_or("MM2 CANCEL final target absent")?;
+        if !lifecycle_same(final_own,target)||final_own.row.owner_guid!=player{return Err("MM2 CANCEL final owner identity changed".into());}
+        if final_own.row.highest_bid!=0{return Err("MM2 CANCEL final guard blocked: active bid".into());}
+        if depth.observed_at.elapsed()>Mm2Duration::from_secs(3){return Err("MM2 CANCEL final depth freshness expired".into());}
+
         stream.set_write_timeout(Some(Mm2Duration::from_secs(4))).map_err(|e|format!("MM2 CANCEL set write timeout: {e}"))?;
         lifecycle_send(stream,crypto,wow_world_messages::vanilla::CMSG_AUCTION_REMOVE_ITEM{auctioneer:auctioneer.into(),auction_id})?;
         stream.set_write_timeout(Some(Mm2Duration::from_secs(20))).map_err(|e|format!("MM2 CANCEL restore write timeout: {e}"))?;
