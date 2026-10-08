@@ -1,4 +1,4 @@
 @echo off
 setlocal
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\SummonService.ps1" -Action Backup -Root "%~dp0"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Invoke-SafeBackup.ps1" -Root "%~dp0"
 exit /b %ERRORLEVEL%
