@@ -31,6 +31,10 @@ jobs:
         shell: bash
         run: cargo test --lib --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
+      - name: Cargo test public integration suites
+        shell: bash
+        run: cargo test --tests --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
       - name: Compile all test targets
         shell: bash
         run: cargo test --no-run --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
