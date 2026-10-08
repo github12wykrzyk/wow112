@@ -1,0 +1,118 @@
+name: Claude Market Maker Deep Oneoff
+
+on:
+  push:
+    branches: [claude-requests]
+    paths:
+      - '.ai/claude/mm-deep-oneoff.json'
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/ah-market-maker-v1
+          fetch-depth: 0
+
+      - name: Resolve target and baseline
+        id: target
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git status --porcelain=v1 > "$RUNNER_TEMP/before.status"
+
+      - name: Run Claude deep specialist
+        id: claude
+        uses: anthropics/claude-code-base-action@4541c106b5f267e74536bf5dfaf887c09ae88edf
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: 'false'
+          prompt: |
+            You are the second-model safety reviewer for AH Market Maker V1.
+            Repository: ${{ github.repository }}
+            Exact target SHA: ${{ steps.target.outputs.sha }}
+
+            Review only these files and their direct canonical dependencies:
+            - src/AuctionLifecycle/market_maker_policy.rs
+            - src/AuctionLifecycle/market_maker_inventory.rs
+            - src/AuctionLifecycle/market_maker.rs
+            - src/AuctionLifecycle/coordinator.rs
+            - src/AuctionLifecycle/adapter.rs
+            - src/AuctionLifecycle/integrate.py
+            - src/AuctionLifecycle/test_integration.py
+            - .github/workflows/ah_market_maker_v1.yml
+            - canonical poc07 BUY primitive used by Market Maker
+
+            You may run targeted cargo/rust/python tests, but do not edit repository files.
+            Do not broaden into unrelated login, summon, GUI, history, or economy work.
+
+            Required checks:
+            1. Exact rational unit-price/depth arithmetic and lowest-buyout minus 1c behavior.
+            2. Cumulative max_clear_spend and max_clear_units across repeated rescans and BUYs.
+            3. Floor/min-price enforcement in UNDERCUT, CLEAR and final relist paths.
+            4. Whether every CLEAR BUY is freshly revalidated and canonical BUY semantics remain unchanged.
+            5. CANCEL -> MAIL -> SPLIT -> POST state machine, item identity, stack=1 posting, and mail-merge behavior.
+            6. Native MutationKind::Split exclusivity, durable pending written before first split byte, and no automatic retry after uncertain sends.
+            7. Incomplete/drifting market snapshots and whether any mutating path can act on unsafe/stale depth.
+            8. Price staleness between scan, mail/split, and multiple unit POSTs.
+            9. Ways to overspend, overbuy, undercut below floor, duplicate a mutation, or clear coordinator state too early.
+            10. Rust compile/runtime edge cases that CI may miss.
+
+            Finish with a concrete report, not an exploration log. Prioritize findings as BLOCKER/HIGH/MEDIUM/LOW. For every nontrivial finding give exact file/symbol evidence, minimal fix, and regression test. Explicitly say if no blocker exists.
+          claude_args: |
+            --model sonnet
+            --max-turns 10
+            --max-budget-usd 2.00
+            --permission-mode plan
+            --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git rev-parse:*),Bash(cargo check:*),Bash(cargo test:*),Bash(rustc:*),Bash(python:*),Bash(python3:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell,Task"
+
+      - name: Enforce no repository edits
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain=v1)" ]; then
+            echo 'Claude changed tracked/unignored repository state; failing closed.' >&2
+            git status --short >&2
+            exit 1
+          fi
+
+      - name: Extract report
+        if: always() && steps.claude.outputs.execution_file != ''
+        shell: bash
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          events=json.loads(Path(os.environ['EXECUTION_FILE']).read_text(encoding='utf-8'))
+          report=''
+          for e in reversed(events):
+              if isinstance(e,dict) and e.get('type')=='result' and isinstance(e.get('result'),str) and e.get('result'):
+                  report=e['result']; break
+          if not report:
+              for e in reversed(events):
+                  if not isinstance(e,dict) or e.get('type')!='assistant': continue
+                  chunks=[b.get('text','') for b in ((e.get('message') or {}).get('content') or []) if isinstance(b,dict) and b.get('type')=='text']
+                  if any(chunks): report='\n'.join(x for x in chunks if x); break
+          Path('claude-mm-deep-report.md').write_text(report or 'NO_FINAL_REPORT\n',encoding='utf-8')
+          Path('claude-mm-deep-meta.txt').write_text('TARGET_SHA='+os.environ['TARGET_SHA']+'\n',encoding='utf-8')
+          PY
+
+      - name: Upload report
+        if: always() && hashFiles('claude-mm-deep-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-mm-deep-oneoff-${{ steps.target.outputs.sha }}-${{ github.run_id }}
+          path: |
+            claude-mm-deep-report.md
+            claude-mm-deep-meta.txt
+          if-no-files-found: error
+          retention-days: 14
