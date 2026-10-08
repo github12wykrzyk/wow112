@@ -1,9 +1,9 @@
 use wow112_headless_android_probe::tele10_trade_payment::{
     parse_trade_status, CMSG_ACCEPT_TRADE_OPCODE, CMSG_INITIATE_TRADE_OPCODE,
-    CMSG_SET_TRADE_GOLD_OPCODE, SMSG_TRADE_STATUS_OPCODE, TRADE_STATUS_BUSY,
-    TRADE_STATUS_CLOSE_WINDOW, TRADE_STATUS_NO_TARGET, TRADE_STATUS_OPEN_WINDOW,
-    TRADE_STATUS_TARGET_TO_FAR, TRADE_STATUS_TRADE_CANCELED, TRADE_STATUS_TRADE_COMPLETE,
-    TRADE_STATUS_TRADE_REJECTED,
+    CMSG_SET_TRADE_GOLD_OPCODE, SMSG_TRADE_STATUS_OPCODE, TRADE_STATUS_BACK_TO_TRADE,
+    TRADE_STATUS_BUSY, TRADE_STATUS_CLOSE_WINDOW, TRADE_STATUS_NO_TARGET,
+    TRADE_STATUS_OPEN_WINDOW, TRADE_STATUS_TARGET_TO_FAR, TRADE_STATUS_TRADE_CANCELED,
+    TRADE_STATUS_TRADE_COMPLETE, TRADE_STATUS_TRADE_REJECTED,
 };
 
 fn tele10_pay_target() -> Option<String> {
@@ -126,8 +126,18 @@ fn tele10_customer_pay_after_teleport(
                         })?;
                         gold_sent = true;
                         publish_runner_state(
+                            "WAIT_PAYMENT_GOLD_APPLY",
+                            &format!("target={} amount={} wait=server_BACK_TO_TRADE", target_name, amount),
+                        );
+                        println!(
+                            "[TELE10-PAYER-TX] gold={} sent_once wait=server_BACK_TO_TRADE",
+                            amount
+                        );
+                    }
+                    TRADE_STATUS_BACK_TO_TRADE if gold_sent && !accept_sent => {
+                        publish_runner_state(
                             "PAYMENT_ACCEPT_COMMITTED",
-                            &format!("amount={} retry_allowed=false", amount),
+                            &format!("amount={} after=server_BACK_TO_TRADE retry_allowed=false", amount),
                         );
                         write_encrypted_raw(
                             stream,
@@ -143,7 +153,10 @@ fn tele10_customer_pay_after_teleport(
                             "WAIT_PAYMENT_COMPLETE",
                             &format!("target={} amount={}", target_name, amount),
                         );
-                        println!("[TELE10-PAYER-TX] gold={} accept=sent_once", amount);
+                        println!(
+                            "[TELE10-PAYER-TX] accept=sent_once after=server_BACK_TO_TRADE amount={}",
+                            amount
+                        );
                     }
                     TRADE_STATUS_TRADE_COMPLETE => {
                         let _ = stream.set_read_timeout(previous_timeout);
