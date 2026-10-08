@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-total-pool-hotfix-v1",
+  "goal": "Hotfix fallback routing so customer destination selection uses the operator's total configured summon pool (Silithus, Winterspring, Azshara/Hydraxis, Hyjal) instead of dropping a route solely because the short live provider TTL expired; preserve existing ACK/timeout fail-safe semantics.",
+  "branch": "feature/summonscout-total-pool-v1",
+  "base_parallel_sha": "14679ef8d04f2530e89def1da45746f83deab2db",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout fallbackrouter directory",
+    "SummonScout SSFR1 provider ownership",
+    "SummonScout hot fanout delivery"
+  ],
+  "status": "integrated",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Minimal hotfix in the already TOC-declared SummonScout_FallbackRouterHubAckHot.lua, so the existing STANDARD hot fanout can deliver it without adding a new addon module. The four canonical pool IDs are silithus, winterspring, hydraxian (Azshara/Hydraxis), hyjal. Provider ownership is learned from existing SSFR1 H packets and persisted; the existing route ACK/6s timeout remains authoritative for actually offline owners. Exact feature preflight PASS on cc08add631b845aae39e332e305b35262a4f1c5b.",
+  "integrated_feature_sha": "5185c86df8ab1d14e23de774875906b06d075459"
+}
