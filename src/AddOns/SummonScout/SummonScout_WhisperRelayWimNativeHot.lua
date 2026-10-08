@@ -2,7 +2,7 @@
 -- Transport stays the canonical WHISPER protocol. This module only renders it.
 local H=W112_SUMMONSCOUT_HOT
 if not H or type(H.Register)~="function" or type(H.GetState)~="function" then return end
-local V="2-native-whisper-wim", P="[SSWR1]", W=H.GetState("whisperrelaywim")
+local V, P, W = "2-native-whisper-wim", "[SSWR1]", H.GetState("whisperrelaywim")
 W.chunks=W.chunks or {}; W.shown=W.shown or {}; W.nextClean=tonumber(W.nextClean) or 0
 
 local function trim(s) s=tostring(s or ""); s=string.gsub(s,"^%s+",""); return string.gsub(s,"%s+$","") end

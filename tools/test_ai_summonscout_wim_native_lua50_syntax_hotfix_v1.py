@@ -1,0 +1,58 @@
+import importlib.util
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ADDON = ROOT / "src" / "AddOns" / "SummonScout"
+MODULE = ADDON / "SummonScout_WhisperRelayWimNativeHot.lua"
+PACKAGER = ROOT / "tools" / "package_lazyrogue_addons.py"
+
+
+def load_packager():
+    spec = importlib.util.spec_from_file_location("package_lazyrogue_addons_test", PACKAGER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class SummonScoutWimNativeLua50SyntaxHotfixV1(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = MODULE.read_text(encoding="utf-8")
+        cls.packager = load_packager()
+        host = ADDON / "SummonScout_WhisperConfirmSpam.lua"
+        cls.packaged = cls.packager.package_bytes("SummonScout", host).decode("utf-8")
+
+    def test_source_uses_lua50_compatible_multi_local_declaration(self):
+        self.assertIn(
+            'local V, P, W = "2-native-whisper-wim", "[SSWR1]", H.GetState("whisperrelaywim")',
+            self.source,
+        )
+        self.assertNotIn(
+            'local V="2-native-whisper-wim", P="[SSWR1]", W=',
+            self.source,
+        )
+
+    def test_final_hot_fanout_contains_fixed_declaration(self):
+        marker = "W112 HOT FANOUT BEGIN SummonScout_WhisperRelayWimNativeHot.lua"
+        self.assertIn(marker, self.packaged)
+        start = self.packaged.index(marker)
+        end = self.packaged.index(
+            "W112 HOT FANOUT END SummonScout_WhisperRelayWimNativeHot.lua", start
+        )
+        block = self.packaged[start:end]
+        self.assertIn(
+            'local V, P, W = "2-native-whisper-wim", "[SSWR1]", H.GetState("whisperrelaywim")',
+            block,
+        )
+        self.assertNotIn(
+            'local V="2-native-whisper-wim", P="[SSWR1]", W=',
+            block,
+        )
+
+    def test_fix_does_not_add_transport_send_path(self):
+        self.assertNotIn("SendChatMessage", self.source)
+
+
+if __name__ == "__main__":
+    unittest.main()

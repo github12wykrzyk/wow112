@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-wim-native-lua50-syntax-hotfix-v1",
+  "goal": "Fix the live updater package parser failure at SummonScout_WhisperConfirmSpam.lua:7533 by replacing an invalid multi-assignment local declaration in SummonScout_WhisperRelayWimNativeHot.lua with Lua 5.0-compatible syntax, and add a regression check against the generated hot fanout.",
+  "branch": "feature/summonscout-wim-native-lua50-syntax-hotfix-v1",
+  "base_parallel_sha": "04c05027d92bc64e710171f5de71b10c3d36b5b6",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-relay-native-whisper-v1",
+    "summonscout-wim-control-filter-v1"
+  ],
+  "shared_resources": [
+    "SummonScout HOT fanout host",
+    "SummonScout native WIM relay"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live proof from exact-SHA updater artifact 04c05027d92bc64e710171f5de71b10c3d36b5b6: generated Interface/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua line 7533 is `local V=\"2-native-whisper-wim\", P=\"[SSWR1]\", W=H.GetState(...)`, which is invalid Lua 5.0 syntax and produces `unexpected symbol near '='` on /reload. Correct declaration is `local V, P, W = ...`. This is a syntax-only runtime repair; relay routing and WIM behavior are otherwise unchanged. Live retest required after exact-SHA updater delivery.",
+  "integrated_feature_sha": "51ccb2bc9a83f71697cc10cb2420e6a2a9054045"
+}
