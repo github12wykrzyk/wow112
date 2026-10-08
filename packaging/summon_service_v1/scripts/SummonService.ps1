@@ -76,7 +76,7 @@ function Verify-Package([string]$PackageRoot, [string]$ExpectedSha) {
 }
 
 function Write-Log([string]$PackageRoot, [string]$Message) {
-    $line = ('{0:o} {1}' -f [DateTime]::UtcNow, $Message)
+    $line = [DateTime]::UtcNow.ToString('o') + ' ' + $Message
     $path = Join-Path $PackageRoot 'logs/supervisor.log'
     $cfg = $null
     try { $cfg = Get-Config $PackageRoot } catch { }
@@ -331,9 +331,12 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
     Ensure-Layout $PackageRoot
     $cfg = Get-Config $PackageRoot
     $serviceExe = Get-SafeChildPath $PackageRoot ($cfg.service_executable -as [string])
-    $mutexName = 'Local\WoW112SummonService_' + ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([Text.Encoding]::UTF8.GetBytes($PackageRoot))).Replace('-','').Substring(0,24))
-    $created = $false; $mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref]$created)
-    if (-not $created) { throw 'A supervisor instance already owns this package root.' }
+    $lockPath = Join-Path $PackageRoot 'state/supervisor.lock'
+    try {
+        $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch {
+        throw 'A supervisor instance already owns this package root.'
+    }
     try {
         Set-Content -LiteralPath (Join-Path $PackageRoot 'state/supervisor.pid') -Value $PID -Encoding ASCII
         Write-Log $PackageRoot 'supervisor_started'
@@ -378,7 +381,8 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
     } finally {
         Remove-Item -LiteralPath (Join-Path $PackageRoot 'state/service.pid') -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath (Join-Path $PackageRoot 'state/supervisor.pid') -Force -ErrorAction SilentlyContinue
-        $mutex.ReleaseMutex(); $mutex.Dispose()
+        if ($lock) { $lock.Dispose() }
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -399,7 +403,9 @@ function Invoke-Main {
         }
         exit 0
     } catch {
-        Write-Error $_.Exception.Message
+        $stack = $_.ScriptStackTrace
+        if ([string]::IsNullOrWhiteSpace($stack)) { Write-Error $_.Exception.Message }
+        else { Write-Error ($_.Exception.Message + [Environment]::NewLine + $stack) }
         exit 1
     }
 }
