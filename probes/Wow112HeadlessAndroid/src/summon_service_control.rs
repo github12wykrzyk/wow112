@@ -146,13 +146,13 @@ pub fn apply_control(
             destination_context: destination_context.clone(),
             now_ms: *now_ms,
         }),
-        ServiceControlCommand::GracefulShutdown { now_ms } => match runtime.core().state() {
+        ServiceControlCommand::GracefulShutdown { .. } => match runtime.core().state() {
             ServiceState::Draining | ServiceState::Stopped => Ok(()),
             ServiceState::BlockedUncertain => Err(
                 "graceful shutdown refused while blocked uncertain; reconciliation required"
                     .to_string(),
             ),
-            _ => runtime.operator(OperatorCommand::GracefulShutdown { now_ms: *now_ms }),
+            _ => runtime.operator(OperatorCommand::GracefulShutdown),
         },
         ServiceControlCommand::PortalCommitted { request_id } => {
             let phase = runtime
