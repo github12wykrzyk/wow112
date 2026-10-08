@@ -277,7 +277,7 @@ namespace WoW112Updater
 
         private async Task<TerminalWindowsBundle> EnsureTerminalWindowsBinaryAsync()
         {
-            var companionDir = Path.Combine(configDir, "companions", "windows-portal-v2");
+            var companionDir = Path.Combine(configDir, "companions", "windows-portal-v3-summoner-invite");
             Directory.CreateDirectory(companionDir);
             var dest = Path.Combine(companionDir, TerminalWindowsBinaryName);
             var stamp = Path.Combine(companionDir, "verified.txt");
