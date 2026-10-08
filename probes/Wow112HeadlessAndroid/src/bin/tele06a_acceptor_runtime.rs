@@ -83,6 +83,7 @@ mod agent {
 
     static RESET_ATTEMPTED: AtomicBool = AtomicBool::new(false);
     static ACCEPT_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+    static SERVICE_REQUEST_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
     const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
     const SMSG_SUMMON_REQUEST_OPCODE: u16 = 0x02AB;
@@ -920,6 +921,45 @@ mod agent {
         }
     }
 
+    fn maybe_send_service_request_once(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+) -> Result<(), String> {
+    let Some(target) = std::env::var("WOW112_SUMMON_REQUEST_TO")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let text = std::env::var("WOW112_SUMMON_REQUEST_TEXT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "WOW112_SUMMON_REQUEST_TO requires WOW112_SUMMON_REQUEST_TEXT".to_string())?;
+    if SERVICE_REQUEST_ATTEMPTED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        println!("[SUMMON-LIVE-CUSTOMER] request whisper already attempted; replay disabled");
+        return Ok(());
+    }
+    publish_runner_state(
+        "SUMMON_REQUEST_WHISPER_COMMITTED",
+        &format!("target={target} retry_allowed=false"),
+    );
+    tele_send_whisper(stream, crypto, &target, &text).map_err(|error| {
+        format!(
+            "TELE06A_REQUEST_WHISPER_UNCERTAIN target={target:?} retry_allowed=false cause={error}"
+        )
+    })?;
+    publish_runner_state(
+        "SUMMON_REQUEST_WHISPER_SENT",
+        &format!("target={target} text={text:?} retry_allowed=false"),
+    );
+    Ok(())
+}
+
     fn configured_accept_from() -> Result<String, String> {
         std::env::var("WOW112_TELE_AUTO_ACCEPT_FROM")
             .ok()
@@ -1161,6 +1201,7 @@ mod agent {
         }
 
         reset_group_once(stream, &mut crypto)?;
+        maybe_send_service_request_once(stream, &mut crypto)?;
         let inviter = configured_accept_from()?;
         wait_for_invite(stream, &mut crypto, &inviter)?;
         publish_runner_state("HANDSHAKE", "invite accepted");
@@ -1189,6 +1230,9 @@ fn parse_env_u32(name: &str, default_value: u32) -> Result<u32, String> {
 }
 
 fn is_transient_network_error(error: &str) -> bool {
+    if error.contains("TELE06A_REQUEST_WHISPER_UNCERTAIN") {
+        return false;
+    }
     if error.contains("TELE06C_MOVE_MUTATION_UNCERTAIN") {
         return false;
     }
