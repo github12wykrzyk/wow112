@@ -5,6 +5,7 @@ use crate::market_maker_v2_policy as mm2_policy;
 
 const MM2_CMSG_ITEM_QUERY_SINGLE:u32=0x0056;
 const MM2_SMSG_ITEM_QUERY_SINGLE_RESPONSE:u16=0x0058;
+const MM2_TARGETED_DEPTH_TOTAL:Mm2Duration=Mm2Duration::from_secs(8);
 
 #[derive(Clone,Debug)]
 struct Mm2DepthSnapshot {
@@ -57,11 +58,12 @@ fn mm2_build_named_auction_query(auctioneer:u64,list_from:u32,name:&str)->Result
     Ok(q)
 }
 
-fn mm2_targeted_page(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:u64,page:u32,name:&str)->Result<(Vec<LifecycleAuction>,u32),String>{
+fn mm2_targeted_page(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:u64,page:u32,name:&str,total_deadline:Mm2Instant)->Result<(Vec<LifecycleAuction>,u32),String>{
+    if Mm2Instant::now()>=total_deadline{return Err("MM2 targeted depth wall-clock deadline before page".into());}
     let list_from=page.checked_mul(50).ok_or("MM2 targeted page overflow")?;
     let q=mm2_build_named_auction_query(auctioneer,list_from,name)?;
     write_encrypted_raw(stream,crypto.encrypter(),CMSG_AUCTION_LIST_ITEMS_OPCODE,&q)?;
-    let deadline=Mm2Instant::now()+Mm2Duration::from_secs(4);
+    let deadline=std::cmp::min(total_deadline,Mm2Instant::now()+Mm2Duration::from_secs(4));
     mm2_wait_for(stream,crypto,deadline,&format!("depth/page-{page}"),|op,p|{
         if op!=SMSG_AUCTION_LIST_RESULT_OPCODE{return Ok(None);}
         let(rows,total)=lifecycle_rows(p)?;
@@ -72,11 +74,13 @@ fn mm2_targeted_page(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:u
 fn mm2_targeted_depth(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:u64,item_id:u32,signature:[u32;3],max_pages:u32)->Result<Mm2DepthSnapshot,String>{
     if max_pages==0||max_pages>128{return Err("MM2 targeted max_pages outside 1..=128".into());}
     let started=Mm2Instant::now();
+    let total_deadline=started+MM2_TARGETED_DEPTH_TOTAL;
     let name=mm2_resolve_item_name(stream,crypto,item_id)?;
+    if Mm2Instant::now()>=total_deadline{return Err("MM2 targeted depth wall-clock deadline after item name".into());}
     let mut rows=std::collections::HashMap::<u32,LifecycleAuction>::new();
     let mut expected_total=None;let mut complete=false;let mut coherent=true;let mut raw_total=0;
     for page in 0..max_pages{
-        let(page_rows,total)=mm2_targeted_page(stream,crypto,auctioneer,page,&name)?;
+        let(page_rows,total)=mm2_targeted_page(stream,crypto,auctioneer,page,&name,total_deadline)?;
         raw_total=raw_total.max(total);
         if expected_total.is_some_and(|x|x!=total){coherent=false;}else if expected_total.is_none(){expected_total=Some(total);}
         for r in page_rows{
@@ -88,6 +92,7 @@ fn mm2_targeted_depth(stream:&mut TcpStream,crypto:&mut HeaderCrypto,auctioneer:
             }
         }
         if (page+1).saturating_mul(50)>=total{complete=true;break;}
+        if Mm2Instant::now()>=total_deadline{return Err("MM2 targeted depth wall-clock deadline during pagination".into());}
     }
     let mut rows=rows.into_values().collect::<Vec<_>>();rows.sort_by_key(|r|r.row.auction_id);
     println!("[MM2-DEPTH] item={item_id} name={name:?} sig={signature:?} exact_rows={} raw_total={raw_total} complete={} coherent={} ms={}",rows.len(),complete,coherent,started.elapsed().as_millis());
@@ -117,4 +122,5 @@ fn mm2_exact_auction(snapshot:&Mm2DepthSnapshot,auction_id:u32)->Option<&Lifecyc
     #[test]fn parses_vanilla_item_name(){let mut p=Vec::new();p.extend_from_slice(&10940u32.to_le_bytes());p.extend_from_slice(&0u64.to_le_bytes());p.extend_from_slice(b"Strange Dust\0rest");assert_eq!(mm2_item_name_from_response(&p,10940).unwrap().as_deref(),Some("Strange Dust"));}
     #[test]fn unrelated_item_response_is_ignored(){let mut p=Vec::new();p.extend_from_slice(&1u32.to_le_bytes());p.extend_from_slice(&[0;9]);assert!(mm2_item_name_from_response(&p,2).unwrap().is_none());}
     #[test]fn not_found_fails(){let p=(10940u32|0x8000_0000).to_le_bytes();assert!(mm2_item_name_from_response(&p,10940).is_err());}
+    #[test]fn total_depth_budget_is_tighter_than_page_product(){assert!(MM2_TARGETED_DEPTH_TOTAL<Mm2Duration::from_secs(16*4));}
 }
