@@ -6,7 +6,7 @@
   "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
   "proven_reference_sha": "d753829314db39e5cd9aad57ce1d46daaf4d55da",
   "prerequisite_restore_sha": "4f7cf5b581d6f089998ce0d1a8a70a27b9515c55",
-  "status": "complete",
+  "status": "done",
   "auto_integrate": false,
   "modules": ["SummonTerminalSoak"],
   "notes": "DONE for current milestone. Authoritative real-wire 20-cycle LIVE soak PASS plus prior full-chain evidence. 50-cycle soak is explicitly waived/deferred as WAIVED_EXTERNAL_PRECONDITION_NO_SOUL_SHARDS because Teletanaris lacked Soul Shards; this is not counted as 50/50 PASS and not treated as a demonstrated product regression. Strict terminal/headless scope. No src/AddOns, Lua, WoW GUI, operator_console or packaging. Future long-soak runs require sufficient shards before start."
