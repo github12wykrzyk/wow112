@@ -40,10 +40,36 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-      - name: Run real whisper-to-payment E2E
+      - name: Resolve taxi1 real first character
+        id: taxi1
         shell: pwsh
         run: |
-          & ./tools/summon_operator_livetest/Run-LiveTest.ps1 -NoBuild -Cycles 1
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'taxi1_discovery'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $env:WOW112_TELE08_CUSTOMER_ACCOUNT = 'taxi1'
+          $env:WOW112_TELE08_CUSTOMER_CHARACTER = '__FIRST__'
+          $env:WOW112_TELE08_SUMMONER_ACCOUNT = 'taxi3'
+          $env:WOW112_TELE08_SUMMONER_CHARACTER = 'Teletanaris'
+          $env:WOW112_TELE08_ROUNDTRIP_ROOT = $root
+          & probes/Wow112HeadlessAndroid/target/release/tele08_full_roundtrip.exe
+          if ($LASTEXITCODE -ne 0) { throw "taxi1 discovery roundtrip failed: $LASTEXITCODE" }
+          $guid = Get-ChildItem -Path $root -Filter GUID_CUSTOMER.txt -Recurse -File -ErrorAction Stop |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($null -eq $guid) { throw 'GUID_CUSTOMER.txt missing after taxi1 discovery' }
+          $body = Get-Content $guid.FullName -Raw
+          $match = [regex]::Match($body, '(?m)^name=(.+)$')
+          if (-not $match.Success) { throw 'taxi1 character name missing in GUID_CUSTOMER.txt' }
+          $character = $match.Groups[1].Value.Trim()
+          if ([string]::IsNullOrWhiteSpace($character)) { throw 'taxi1 character resolved empty' }
+          "character=$character" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Resolved taxi1 character: $character"
+
+      - name: Run real taxi1 whisper-to-payment E2E
+        shell: pwsh
+        run: |
+          & ./tools/summon_operator_livetest/Run-LiveTest.ps1 -NoBuild -Cycles 1 -CustomerAccount 'taxi1' -CustomerCharacter '${{ steps.taxi1.outputs.character }}' -PayCopper 40000 -Destination 'winterspring'
           exit $LASTEXITCODE
 
       - name: Summarize final report
@@ -58,8 +84,8 @@ jobs:
             exit 0
           }
           $data = Get-Content $report.FullName -Raw | ConvertFrom-Json
-          Write-Host ("FINAL result={0} whisper={1} supervisor_exit={2} trade_complete={3} paid={4}/{5} uncertain={6}" -f `
-            $data.result, $data.whisper.passed, $data.summon_payment.supervisor_exit_code, `
+          Write-Host ("FINAL result={0} customer={1}/{2} whisper={3} supervisor_exit={4} trade_complete={5} paid={6}/{7} uncertain={8}" -f `
+            $data.result, $data.customer_account, $data.customer, $data.whisper.passed, $data.summon_payment.supervisor_exit_code, `
             $data.summon_payment.server_trade_complete, $data.summon_payment.paid_summon_count, `
             $data.cycles_requested, $data.summon_payment.hard_uncertain)
 
