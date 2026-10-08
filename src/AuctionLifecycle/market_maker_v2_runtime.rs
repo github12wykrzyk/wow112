@@ -33,9 +33,23 @@ fn mm2_preflight_journals(player:u64)->Result<(),String>{
     if saga.has_unfinished(){return Err(format!("MM2_SAGA_RECONCILIATION_REQUIRED state={:?} path={}",saga.state(),saga.path().display()));}Ok(())
 }
 
+// lifecycle_dispatch is entered as soon as SMSG_LOGIN_VERIFY_WORLD is seen. Vanilla sends the
+// authoritative UPDATE_OBJECT burst immediately afterwards, so V2 must consume that burst through
+// its single authority reader before requiring inventory evidence. This is strictly read-only.
+fn mm2_warm_tracker(stream:&mut TcpStream,crypto:&mut HeaderCrypto)->Result<(),String>{
+    if let Ok((generation,objects,_))=mm2_tracker_stats(){if generation>0&&objects>0{return Ok(());}}
+    let started=Mm2Instant::now();let deadline=started+Mm2Duration::from_secs(6);
+    mm2_wait_for(stream,crypto,deadline,"tracker-warmup",|_,_|{
+        let(generation,objects,slots)=mm2_tracker_stats()?;
+        if generation>0&&objects>0{println!("[MM2] TRACKER_WARM_PASS generation={generation} objects={objects} physical_slots={slots} ms={}",started.elapsed().as_millis());Ok(Some(()))}else{Ok(None)}
+    })
+}
+
 fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{
     let mode=env::var("WOW112_MM2_MODE").unwrap_or_else(|_|"capability".into()).trim().to_ascii_lowercase();
+    // Durable unresolved state blocks all new work before even a read-only world warm-up.
     mm2_preflight_journals(player)?;
+    mm2_warm_tracker(stream,crypto)?;
     let(generation,objects,slots)=mm2_tracker_stats()?;println!("[MM2] TRACKER generation={generation} objects={objects} physical_slots={slots}");
     if generation==0||objects==0{return Err("MM2 inventory/world tracker has no authoritative object evidence".into());}
     match mode.as_str(){
