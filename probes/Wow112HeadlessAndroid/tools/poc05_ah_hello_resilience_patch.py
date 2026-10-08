@@ -24,7 +24,7 @@ replacement = r'''fn poc05_send_auction_hello_candidates(
 
     const HELLO_TIMEOUT_DEFAULT_SECS: u64 = 20;
     const HELLO_TIMEOUT_MIN_SECS: u64 = 8;
-    const HELLO_TIMEOUT_MAX_SECS: u64 = 30;
+    const HELLO_TIMEOUT_MAX_SECS: u64 = 120;
     const HELLO_PACKET_SAFETY_CAP: usize = 4096;
     const HELLO_FALLBACK_AFTER_MS: u128 = 1500;
     const HELLO_RESEND_AFTER_MS: u128 = 5000;
