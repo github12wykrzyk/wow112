@@ -39,14 +39,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Verify secret without printing it
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
-            throw 'WOW112_PASSWORD repo secret is missing'
-          }
-          Write-Host 'WOW112_PASSWORD available (value not printed).'
-
       - name: Canonical primitive/live preflight
         id: soak
         continue-on-error: true
@@ -56,6 +48,15 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($cycles)) { $cycles = '20' }
           python tools/summon_terminal_soak/harness.py --live --cycles $cycles
           exit $LASTEXITCODE
+
+      - name: Verify secret only after canonical primitive gate
+        if: steps.soak.outcome == 'success'
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)) {
+            throw 'WOW112_PASSWORD repo secret is missing'
+          }
+          Write-Host 'WOW112_PASSWORD available (value not printed).'
 
       - name: Upload LIVE evidence
         if: always()
