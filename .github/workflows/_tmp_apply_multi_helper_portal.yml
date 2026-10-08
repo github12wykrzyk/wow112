@@ -165,43 +165,38 @@ jobs:
           s = s.replace(phase_old, phase_new, 1)
           p.write_text(s)
 
-          # Boot recovery accepts multiple confirmed helper clicks / idempotent controls.
+          # Boot recovery accepts >=1 confirmed helper click and >=1 matching control.
           p = Path('probes/Wow112HeadlessAndroid/src/summon_boot_recovery.rs')
           s = p.read_text()
-          count_block = '''    if confirmed_portals.len() != 1 {
-              return Err(format!(
-                  "boot recovery refuses multiple confirmed portal mutations request_id={} count={}",
-                  request_id,
-                  confirmed_portals.len()
-              ));
-          }
+          portal_start = '    if confirmed_portals.len() != 1 {'
+          portal_end = '\n\n    let inbox = root.join("control_inbox");'
+          if s.count(portal_start) != 1 or s.count(portal_end) != 1:
+              raise SystemExit(f'boot portal markers start={s.count(portal_start)} end={s.count(portal_end)}')
+          a = s.index(portal_start)
+          b = s.index(portal_end, a)
+          s = s[:a] + s[b:]
 
-          '''
-          if s.count(count_block) != 1:
-              raise SystemExit(f'boot portal count block={s.count(count_block)}')
-          s = s.replace(count_block, '', 1)
-          control_block = '''    if matching_controls != 1 {
-              return Err(format!(
-                  "boot recovery refuses duplicate portal controls request_id={} count={}",
-                  request_id, matching_controls
-              ));
-          }
-
-          '''
-          if s.count(control_block) != 1:
-              raise SystemExit(f'boot control count block={s.count(control_block)}')
-          s = s.replace(control_block, '', 1)
+          control_start = '    if matching_controls != 1 {'
+          control_end = '\n\n    let record = snapshot'
+          if s.count(control_start) != 1 or s.count(control_end) != 1:
+              raise SystemExit(f'boot control markers start={s.count(control_start)} end={s.count(control_end)}')
+          a = s.index(control_start)
+          b = s.index(control_end, a)
+          s = s[:a] + s[b:]
 
           test_start = '    fn duplicate_confirmed_portal_mutations_fail_closed() {'
           if s.count(test_start) != 1:
               raise SystemExit(f'boot duplicate test marker={s.count(test_start)}')
-          a = s.index('    #[test]', s.rfind('\n', 0, s.index(test_start)) - 20)
           fn_pos = s.index(test_start)
+          attr_pos = s.rfind('    #[test]', 0, fn_pos)
+          if attr_pos < 0:
+              raise SystemExit('boot duplicate test attribute not found')
           body_open = s.index('{', fn_pos)
           depth = 0
           end = None
           for i in range(body_open, len(s)):
-              if s[i] == '{': depth += 1
+              if s[i] == '{':
+                  depth += 1
               elif s[i] == '}':
                   depth -= 1
                   if depth == 0:
@@ -210,27 +205,34 @@ jobs:
           if end is None:
               raise SystemExit('boot duplicate test end not found')
           replacement = '''    #[test]
-              fn multiple_confirmed_helper_portals_are_valid_boot_evidence() {
-                  let root = root("multiple_helpers");
-                  let (snapshot, id) = ritual_snapshot(&root);
-                  confirmed_portal(&root, &id, "portal-helper-a");
-                  confirmed_portal(&root, &id, "portal-helper-b");
-                  ControlInbox::submit(
-                      &root,
-                      &ServiceControlCommand::PortalCommitted {
-                          request_id: id.clone(),
-                      },
-                  )
-                  .unwrap();
-                  let result = reconcile_boot_snapshot(&root, snapshot).unwrap();
-                  assert_eq!(result.promoted_request_id.as_deref(), Some(id.as_str()));
-                  assert_eq!(
-                      result.snapshot.requests.iter().find(|r| r.request_id == id).unwrap().phase,
-                      RequestPhase::PortalCommitted
-                  );
-                  let _ = fs::remove_dir_all(root);
-              }'''
-          s = s[:a] + replacement + s[end:]
+          fn multiple_confirmed_helper_portals_are_valid_boot_evidence() {
+              let root = root("multiple_helpers");
+              let (snapshot, id) = ritual_snapshot(&root);
+              confirmed_portal(&root, &id, "portal-helper-a");
+              confirmed_portal(&root, &id, "portal-helper-b");
+              ControlInbox::submit(
+                  &root,
+                  &ServiceControlCommand::PortalCommitted {
+                      request_id: id.clone(),
+                  },
+              )
+              .unwrap();
+              ControlInbox::submit(
+                  &root,
+                  &ServiceControlCommand::PortalCommitted {
+                      request_id: id.clone(),
+                  },
+              )
+              .unwrap();
+              let result = reconcile_boot_snapshot(&root, snapshot).unwrap();
+              assert_eq!(result.promoted_request_id.as_deref(), Some(id.as_str()));
+              assert_eq!(
+                  result.snapshot.requests.iter().find(|r| r.request_id == id).unwrap().phase,
+                  RequestPhase::PortalCommitted
+              );
+              let _ = fs::remove_dir_all(root);
+          }'''
+          s = s[:attr_pos] + replacement + s[end:]
           p.write_text(s)
 
       - name: Test library
