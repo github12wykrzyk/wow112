@@ -51,12 +51,21 @@ def integrate(root):
         'Err(_)=>LIFE_OBSERVED.with(|s|s.borrow_mut().inventory_bad=true),',
         'Err(_)=>LIFE_OBSERVED.with(|s|{let mut s=s.borrow_mut();s.inventory.items.clear();s.verified_items.clear();s.inventory_bad=false;}),'
     )
+
+    # Targeted read-only inspect: resolve one owned auction to its first positive cheaper
+    # competitor witness and stop immediately. This avoids traversing the entire AH when
+    # preparing a guarded repost price. No mutation confirmation is required or consumed.
+    adapter_text = replace(
+        adapter_text,
+        '    if action=="inspect" {\n        // A positive cheaper-competitor witness is useful even while the live market count moves.',
+        '    if action=="inspect" {\n        if let Ok(raw_id)=env::var("WOW112_LIFECYCLE_INSPECT_AUCTION_ID") {\n            let inspect_id:u32=raw_id.parse().map_err(|_|"invalid WOW112_LIFECYCLE_INSPECT_AUCTION_ID")?;\n            let own=mine.iter().find(|x|x.row.auction_id==inspect_id).ok_or("LIFECYCLE inspect target not owned")?;\n            match lifecycle_lost(stream,crypto,npc,house,own,max_pages)? {\n                Some((page,w))=>println!("[MY-AUCTIONS-WITNESS] id={} item={} count={} buyout={} highest_bid={} buybox=LOST witness_page={} witness_id={} witness_buyout={} witness_count={}",own.row.auction_id,own.row.item_id,own.row.count,own.row.buyout,own.row.highest_bid,page,w.row.auction_id,w.row.buyout,w.row.count),\n                None=>println!("[MY-AUCTIONS-WITNESS] id={} item={} count={} buyout={} highest_bid={} buybox=NO_LOWER_OBSERVED",own.row.auction_id,own.row.item_id,own.row.count,own.row.buyout,own.row.highest_bid),\n            }\n            return Ok(());\n        }\n        // A positive cheaper-competitor witness is useful even while the live market count moves.'
+    )
     changes[adapter] = adapter_text
 
     # Validate every anchor before any write; a second run is an explicit error.
     for p, text in changes.items():
         p.write_text(text, encoding='utf-8')
-    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory evidence resets fail-closed on malformed update')
+    print('LIFECYCLE CANONICAL INTEGRATION PASS; BUY/login preserved; inventory evidence resets fail-closed; targeted witness inspect enabled')
 
 if __name__=='__main__':
     integrate(Path(sys.argv[1] if len(sys.argv)>1 else '.').resolve())
