@@ -11,9 +11,9 @@
     "SummonScout masterName whisper control plane",
     "SummonScout lifecycle/payment conversation audit"
   ],
-  "status": "coding",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Whisper Conversation Relay V1 implementation in progress on exact canonical main. Addon-local and behavior-additive; no summon/payment/routing engine replacement."
+  "notes": "V1 is addon-local and behavior-additive. It uses HotHost, canonical W112_SUMMONSCOUT_API_V1/W112_SUMMONSCOUT_STATE, SummonScoutDB.paymentLog and the existing masterName/fallback peer trust plane. Reply mutations fail closed on ambiguous ownership and never auto-retry after a customer SendChatMessage call. GUI P2 intentionally deferred; /ssr list/show/close provide P1 browsing. Local contract matrix: 21/21 PASS."
 }
