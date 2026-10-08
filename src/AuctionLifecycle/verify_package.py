@@ -37,7 +37,18 @@ assert "WOW112_LIFECYCLE_MAIL_LIMIT='1'" in canary,'mail canary must be bounded 
 assert 'Existing same-host coordinator lock/pending state is authoritative' in canary
 shutil.copy2(canary_src,root/'RUN_LIFECYCLE_LOCAL_CANARY.ps1')
 
+# Temporary live diagnostic wrapper: it only pins the mailbox GUID that previously
+# worked on the target server and delegates the single mutation to the same canary.
+# It contains no retry loop and does not bypass MutationCoordinatorV1.
+settle_src=Path('src/AuctionLifecycle/RUN_SETTLE_ONE_PROVEN_MAILBOX.ps1')
+assert settle_src.is_file(),'proven-mailbox settle canary missing'
+settle=settle_src.read_text(encoding='utf-8')
+assert '0xF11002A4A5002A0C' in settle,'expected proven mailbox default missing'
+assert 'SettleOne' in settle and 'LIFECYCLE_CANARY_ONCE' in settle
+assert 'Start-Sleep' not in settle,'settle wrapper must not retry'
+shutil.copy2(settle_src,root/'RUN_SETTLE_ONE_PROVEN_MAILBOX.ps1')
+
 files={str(p.relative_to(root)).replace('\\','/'):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for p in sorted(root.rglob('*')) if p.is_file() and p.name!='LIFECYCLE_PACKAGE.json'}
 manifest={'branch':'feature/ah-auction-lifecycle-v1','commit':sha,'base_commit':'99d0a45b1b62a98214f927f960156ba313de252b','platform':'windows-x86','files':files,'live_validation':'NOT_RUN','local_mutation_runner':'SAME_HOST_SINGLE_INVOCATION_NO_RETRY','final_package':'PASS'}
 (root/'LIFECYCLE_PACKAGE.json').write_text(json.dumps(manifest,indent=2)+'\n')
-print('FINAL_PACKAGE: PASS (headless Lifecycle V1 Windows x86 + same-host canary)')
+print('FINAL_PACKAGE: PASS (headless Lifecycle V1 Windows x86 + same-host canary + proven-mailbox settle diagnostic)')
