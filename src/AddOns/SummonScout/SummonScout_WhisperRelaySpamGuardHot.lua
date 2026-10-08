@@ -3,10 +3,12 @@
 -- Keeps the V1 relay transport and session model intact while fixing live spam:
 --   * zero SSWR1 H/K traffic while there is no real relay queue,
 --   * bounded handshake retries only while customer/lifecycle data is queued,
---   * [SSWR1] transport packets are suppressed from the standard visible chat path.
+--   * [SSWR1] transport stays on WHISPER but is filtered by WIM's own filter path,
+--   * no ChatFrame_OnEvent replacement, so repeated hot/reload cycles cannot leave
+--     a dangling wrapper calling a nil base function.
 --
--- The guard is intentionally last in TOC. It wraps the already-registered relay
--- module, never replaces canonical summon/payment/routing primitives.
+-- The guard wraps only the relay module. WIM integration is data-only via
+-- WIM_Filters and therefore does not replace WIM or Blizzard chat handlers.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
@@ -19,8 +21,10 @@ if type(relay) ~= "table" or type(relay.OnEvent) ~= "function"
     return
 end
 
-local VERSION = "2-demand-only-handshake-hidden-control"
+local VERSION = "3-demand-only-wim-filter-reload-safe"
 local PROTO = "[SSWR1]"
+-- WIM_FilterResult uses Lua pattern matching, so [ and ] must be escaped.
+local WIM_FILTER_PATTERN = "%[SSWR1%]"
 local HELLO_MAX_IDLE_ATTEMPTS = 3
 local HELLO_RETRY_1 = 10
 local HELLO_RETRY_2 = 30
@@ -32,11 +36,10 @@ local G = H.GetState("whisperrelayspamguard")
 G.helloAttempts = tonumber(G.helloAttempts) or 0
 G.nextHelloAllowedAt = tonumber(G.nextHelloAllowedAt) or 0
 G.lastMasterName = G.lastMasterName or ""
+G.wimFilterInstalled = G.wimFilterInstalled and true or false
 
 local OWN_RELAY_ON_EVENT = relay.OnEvent
 local OWN_RELAY_ON_UPDATE = relay.OnUpdate
-local OWN_CHAT_BASE = nil
-local OWN_CHAT_WRAPPER = nil
 
 local function sgNow()
     if GetTime then return GetTime() end
@@ -58,11 +61,6 @@ local function sgSame(a, b)
     a = sgLower(a)
     b = sgLower(b)
     return a ~= "" and a == b
-end
-
-local function sgStarts(raw, prefix)
-    raw = tostring(raw or "")
-    return string.sub(raw, 1, string.len(prefix)) == prefix
 end
 
 local function sgPlayer()
@@ -90,12 +88,27 @@ local function sgNextRetryDelay(attempts)
     return HELLO_QUEUE_RETRY
 end
 
+local function sgInstallWimSuppression()
+    -- WIM 1.3.x exposes WIM_Filters as a SavedVariable and applies it to both
+    -- its messenger windows and its chat-frame suppressor. "Block" hides the
+    -- packet instead of merely ignoring it in the WIM window.
+    if type(WIM_Filters) ~= "table" then
+        G.wimFilterInstalled = false
+        return false
+    end
+    if WIM_Filters[WIM_FILTER_PATTERN] ~= "Block" then
+        WIM_Filters[WIM_FILTER_PATTERN] = "Block"
+    end
+    G.wimFilterInstalled = true
+    return true
+end
+
 local function sgHandshakeNeeded()
     local master = sgMaster()
     local me = sgPlayer()
     if master == "" or me == "" or sgSame(master, me) then return false end
     if R.masterReady and sgSame(R.masterReadyName, master) then return false end
-    -- Critical V2 rule: no startup/login/master-change heartbeat at all.
+    -- Critical rule: no startup/login/master-change heartbeat at all.
     -- H exists only to release actual queued relay traffic.
     if not sgRelayQueued() then return false end
     return (tonumber(G.helloAttempts) or 0) < HELLO_MAX_IDLE_ATTEMPTS
@@ -104,6 +117,10 @@ end
 local function sgWrappedOnUpdate()
     local t = sgNow()
     local master = sgMaster()
+
+    -- Cheap idempotent repair in case WIM was loaded after us or the user reset
+    -- WIM filters during the session.
+    sgInstallWimSuppression()
 
     if sgLower(master) ~= sgLower(G.lastMasterName) then
         R.masterReady = false
@@ -156,6 +173,7 @@ local function sgWrappedOnEvent(ev, a1, a2, a3)
     local result = OWN_RELAY_ON_EVENT(ev, a1, a2, a3)
 
     if ev == "PLAYER_LOGIN" then
+        sgInstallWimSuppression()
         sgResetHandshake(sgMaster())
         R.nextHelloAt = sgNow() + HELLO_PARK
     elseif ev == "CHAT_MSG_WHISPER" and R.masterReady and sgSame(R.masterReadyName, sgMaster()) then
@@ -176,38 +194,6 @@ local function sgWrappedOnEvent(ev, a1, a2, a3)
     return result
 end
 
-local function sgChatEventName(a, b)
-    if b == "CHAT_MSG_WHISPER" or b == "CHAT_MSG_WHISPER_INFORM" then return b end
-    if a == "CHAT_MSG_WHISPER" or a == "CHAT_MSG_WHISPER_INFORM" then return a end
-    if event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_WHISPER_INFORM" then return event end
-    return nil
-end
-
-local function sgChatMessage(a, b, c)
-    if b == "CHAT_MSG_WHISPER" or b == "CHAT_MSG_WHISPER_INFORM" then
-        return tostring(c or "")
-    end
-    return tostring(arg1 or "")
-end
-
-local function sgInstallChatSuppression()
-    if OWN_CHAT_WRAPPER then return end
-    if type(ChatFrame_OnEvent) ~= "function" then return end
-
-    OWN_CHAT_BASE = ChatFrame_OnEvent
-    OWN_CHAT_WRAPPER = function(a, b, c, d, e, f, g, h, i)
-        local ev = sgChatEventName(a, b)
-        if ev then
-            local message = sgChatMessage(a, b, c)
-            if sgStarts(message, PROTO) then
-                return
-            end
-        end
-        return OWN_CHAT_BASE(a, b, c, d, e, f, g, h, i)
-    end
-    ChatFrame_OnEvent = OWN_CHAT_WRAPPER
-end
-
 local M = {}
 
 function M.Init()
@@ -215,7 +201,7 @@ function M.Init()
     relay.OnUpdate = sgWrappedOnUpdate
     sgResetHandshake(sgMaster())
     R.nextHelloAt = sgNow() + HELLO_PARK
-    sgInstallChatSuppression()
+    sgInstallWimSuppression()
     W112_SUMMONSCOUT_WHISPER_RELAY_SPAM_GUARD_VERSION = VERSION
 end
 
@@ -226,11 +212,9 @@ function M.Shutdown()
     if relay and relay.OnUpdate == sgWrappedOnUpdate then
         relay.OnUpdate = OWN_RELAY_ON_UPDATE
     end
-    if OWN_CHAT_WRAPPER and ChatFrame_OnEvent == OWN_CHAT_WRAPPER and OWN_CHAT_BASE then
-        ChatFrame_OnEvent = OWN_CHAT_BASE
-    end
-    OWN_CHAT_WRAPPER = nil
-    OWN_CHAT_BASE = nil
+    -- Intentionally do not remove the reserved WIM filter during hot swap.
+    -- Keeping it avoids a visible transport leak between Shutdown and Init,
+    -- and the prefix is SummonScout-internal only.
 end
 
 H.Register("whisperrelayspamguard", M, VERSION)
