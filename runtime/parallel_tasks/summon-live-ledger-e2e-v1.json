@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "summon-live-ledger-e2e-v1",
+  "goal": "Validate the real taxi1 summon-to-payment flow end to end and bridge server-confirmed TELE10 settlements into the durable SQLite Summon Ledger V1 with queryable structured events.",
+  "branch": "feature/summon-live-ledger-e2e-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": ["SummonOperatorLiveTest", "SummonLedger", "TELE10Headless"],
+  "dependencies": ["summon-operator-terminal-livetest", "summon-ledger-v1"],
+  "shared_resources": ["TELE10 headless summon runtime", "TELE10 trade payment ledger", "summon-ledger event contract", "summon-ledger sqlite schema"],
+  "status": "in_progress",
+  "auto_integrate": false,
+  "delivery_profiles": ["autologinbridge"],
+  "lease": null,
+  "notes": "Integration/test branch only. Real economic trade mutations remain one-shot and fail-closed with no automatic retry after uncertain send. Live customer is taxi1 with real character resolved by char enum; octowar1 is not used as the test customer. The SQLite bridge consumes only durable TELE10 settlement evidence and produces idempotent structured events; it does not perform game mutations."
+}
