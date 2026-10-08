@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-whisper-relay-bootstrap-v2",
+  "goal": "Fix the live SSWR1 bootstrap deadlock where a summoner queues a real customer whisper but the Master refuses H before the sender is trusted, so K never returns and the customer text never flushes. Add runtime-only H-established admission for summoner-to-Master relay data while preserving canonical Master reply ACLs and all customer-facing mutation semantics.",
+  "branch": "feature/summonscout-whisper-relay-bootstrap-v2",
+  "base_parallel_sha": "4511245836cedb06f2161047fd194507bca85ccf",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout whisper relay OnEvent wrapper chain"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Live evidence: Feltaxi sends [SSWR1] H to the configured Master and canonical [SSI INVITE/JOIN/SUMMON] reports arrive, but no customer WHISPER_IN relay appears. V1 requires wrTrustedSummoner(sender) before H can establish the relay relationship, creating a circular bootstrap dependency when fallback-router trust is absent/stale. The fix is a last-loaded runtime-only trust bridge: H establishes an in-memory peer; only I/IB/IC/E from that peer receive temporary compatibility admission to the canonical V1 handler. K/R/RB/RC are never bridge-authorised, so Master reply ACLs remain unchanged. No SendChatMessage, summon, payment, trade, invite or customer-mutation path is added by the bridge.",
+  "integrated_feature_sha": "d8c23c0c6eb302a66d08a93362c8c9bdef861e47"
+}
