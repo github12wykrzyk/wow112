@@ -18,7 +18,7 @@
     "SummonScout public parser/runtime surface",
     "trusted payment ledger invariants"
   ],
-  "status": "testing",
+  "status": "preflight",
   "auto_integrate": false,
   "delivery_profiles": [],
   "lease": null,
