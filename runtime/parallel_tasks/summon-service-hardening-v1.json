@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summon-service-hardening-v1",
+  "goal": "Close Summon Service V1 audit/safety gaps found by feature/summon-service-soak-v1: durable correlated event journal, explicit fail-closed trade-reopen guard, and production event contract without changing summon/native execution semantics.",
+  "branch": "feature/summon-service-hardening-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": ["SummonScout"],
+  "dependencies": [],
+  "shared_resources": [
+    "Summon Service V1 event contract",
+    "trusted payment ledger invariants",
+    "SummonScout SavedVariables audit journal"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Production hardening only. Reuse canonical W112_SUMMONSCOUT_API_V1/W112_SUMMONSCOUT_STATE and existing trusted wallet ledger. Do not change native Ritual execution semantics. Integration remains disabled until exact-SHA validation is green."
+}
