@@ -7,9 +7,9 @@
   "modules": ["SummonOperatorLiveTest", "SummonLedger", "TELE10Headless"],
   "dependencies": ["summon-operator-terminal-livetest", "summon-ledger-v1"],
   "shared_resources": ["TELE10 headless summon runtime", "TELE10 trade payment ledger", "summon-ledger event contract", "summon-ledger sqlite schema"],
-  "status": "in_progress",
+  "status": "test_ready",
   "auto_integrate": false,
   "delivery_profiles": ["autologinbridge"],
   "lease": null,
-  "notes": "Integration/test branch only. Real economic trade mutations remain one-shot and fail-closed with no automatic retry after uncertain send. Live customer is taxi1 with real character resolved by char enum; octowar1 is not used as the test customer. The SQLite bridge consumes only durable TELE10 settlement evidence and produces idempotent structured events; it does not perform game mutations."
+  "notes": "Integration/test branch only. Real economic trade mutations remain one-shot and fail-closed with no automatic retry after uncertain send. Live customer is taxi1 with real character resolved by char enum; octowar1 is not used as the test customer. The SQLite bridge consumes only durable TELE10 settlement evidence and produces idempotent structured events; it does not perform game mutations. Exact-SHA live E2E 902a0e9b65feeffc7a5356621f2e992fd3d897d0 passed with authenticated taxi1/Feltaxi, server TRADE_COMPLETE, durable TELE10 settlement, structured event ingestion, and SQLite find-player verification. Sustainable CI smoke uses a 1c sentinel; production payment default remains 40000c and was separately proven live on 37744e139aca131fe7100204284f717f5dff519f."
 }
