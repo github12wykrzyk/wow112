@@ -29,13 +29,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tested='2c947997db6c2fc9ad69785cf0a40203b3d55829'
+          $tested='d7eac81cc97fc9b414c2a6067d44a21080445e61'
           git merge-base --is-ancestor $tested HEAD
           if ($LASTEXITCODE -ne 0) { throw 'tested Lifecycle SHA is not an ancestor' }
           $changed=@(git diff --name-only "$tested..HEAD")
           $unexpected=@($changed | Where-Object { $_ -ne '.github/workflows/ah_auction_lifecycle_live_inspect_v1.yml' })
           if ($unexpected.Count -ne 0) { throw "unexpected changes after tested SHA: $($unexpected -join ', ')" }
-          gh run download 37661468013 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-2c947997db6c2fc9ad69785cf0a40203b3d55829' --dir live
+          gh run download 37790409029 --name 'WoW112-AH-AUCTION-LIFECYCLE-V1-d7eac81cc97fc9b414c2a6067d44a21080445e61' --dir live
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $manifest=Get-Content 'live/LIFECYCLE_PACKAGE.json' -Raw | ConvertFrom-Json
           if ($manifest.commit -ne $tested) { throw 'artifact commit mismatch' }
@@ -71,7 +71,7 @@ jobs:
           $rows | ForEach-Object { Write-Host "$_" }
           $partial | ForEach-Object { Write-Host "$_" }
           $summary | ForEach-Object { Write-Host "$_" }
-          @{tested_sha='2c947997db6c2fc9ad69785cf0a40203b3d55829';canonical_base='99d0a45b1b62a98214f927f960156ba313de252b';result='PASS';rows=$rows;partial=$partial;summary="$($summary[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
+          @{tested_sha='d7eac81cc97fc9b414c2a6067d44a21080445e61';canonical_base='99d0a45b1b62a98214f927f960156ba313de252b';result='PASS';rows=$rows;partial=$partial;summary="$($summary[0])"} | ConvertTo-Json -Depth 4 | Set-Content 'LIVE_INSPECT_SUMMARY.json' -Encoding utf8
 
       - name: Upload sanitized summary
         uses: actions/upload-artifact@v4
