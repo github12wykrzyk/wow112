@@ -1,0 +1,41 @@
+name: LIVE Summon Terminal Soak V1 Hosted Probe
+
+on:
+  push:
+    branches: [ 'feature/summon-terminal-soak-v1' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-hosted-probe:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      WOW112_PASSWORD: ${{ secrets.WOW112_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Credential gate
+        shell: pwsh
+        run: |
+          if([string]::IsNullOrWhiteSpace($env:WOW112_PASSWORD)){ throw 'WOW112_PASSWORD repo secret missing' }
+      - name: Build proven headless roles
+        shell: pwsh
+        run: cargo build --release --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml --bin tele08_full_roundtrip --bin tele10_ledger --bin tele07_supervisor --bin tele06a_acceptor_runtime --bin tele06a_ritual_runtime
+      - name: One real wire E2E cycle
+        shell: pwsh
+        run: python tools/summon_terminal_soak/harness.py --live --cycles 1
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LIVE-hosted-probe-${{ github.sha }}
+          path: |
+            tools/summon_terminal_soak/runs/**
+            tools/summon_terminal_soak/results/**
+          if-no-files-found: warn
