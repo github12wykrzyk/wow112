@@ -1,15 +1,16 @@
 include!("../world.rs");
 
-use std::collections::{HashMap, HashSet};
-use std::env;
+use std::collections::HashMap;
 use std::fs;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use wow112_headless_android_probe::summon_group_accept_worker::GroupAcceptWorker;
 use wow112_headless_android_probe::summon_portal_worker::PortalWorker;
 use wow112_headless_android_probe::summon_service_core::{RequestPhase, ServiceSnapshot};
 
+#[path = "../wire_build.rs"]
+mod wire_build;
 #[path = "../auth.rs"]
 mod auth;
 
