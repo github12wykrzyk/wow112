@@ -17,7 +17,14 @@ assert struct.unpack_from('<H',data,pe+24)[0]==0x10b,'PE32 required'
 assert struct.unpack_from('<I',data,pe+40)[0]>0,'entrypoint required'
 info=(root/'BUILD_INFO.txt').read_text(encoding='utf-8-sig')
 assert f'EXACT_SHA={sha}' in info
-assert 'BRANCH=feature/ah-auction-lifecycle-v1' in info
+branch_lines=[line for line in info.splitlines() if line.startswith('BRANCH=')]
+assert len(branch_lines)==1,'exactly one BRANCH marker required'
+build_branch=branch_lines[0].split('=',1)[1]
+allowed_branches={
+    'feature/ah-auction-lifecycle-v1',
+    'feature/ah-auction-lifecycle-v2-baseline-fasttrack',
+}
+assert build_branch in allowed_branches,f'unexpected lifecycle build branch: {build_branch}'
 assert hashlib.sha256(data).hexdigest() in info
 for name in ('coordinator.rs','adapter.rs','auto_v2.rs','inventory_baseline.rs','world_poc08_unified.rs'):
     assert (root/'source'/name).is_file(),name
@@ -60,6 +67,6 @@ for name in ('START_AUTO_V2_BASELINE_FIX.ps1','START_AUTO_V2_BASELINE_FIX.bat'):
     shutil.copy2(src,root/name)
 
 files={str(p.relative_to(root)).replace('\\','/'):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for p in sorted(root.rglob('*')) if p.is_file() and p.name!='LIFECYCLE_PACKAGE.json'}
-manifest={'branch':'feature/ah-auction-lifecycle-v1','commit':sha,'base_commit':'99d0a45b1b62a98214f927f960156ba313de252b','platform':'windows-x86','files':files,'live_validation':'NOT_RUN','local_mutation_runner':'SAME_HOST_SINGLE_INVOCATION_NO_RETRY','final_package':'PASS'}
+manifest={'branch':build_branch,'commit':sha,'base_commit':'99d0a45b1b62a98214f927f960156ba313de252b','platform':'windows-x86','files':files,'live_validation':'NOT_RUN','local_mutation_runner':'SAME_HOST_SINGLE_INVOCATION_NO_RETRY','final_package':'PASS'}
 (root/'LIFECYCLE_PACKAGE.json').write_text(json.dumps(manifest,indent=2)+'\n')
-print('FINAL_PACKAGE: PASS (headless Lifecycle V1 Windows x86 + same-host canary + proven-mailbox settle diagnostic)')
+print(f'FINAL_PACKAGE: PASS (headless Lifecycle AUTO V2 Windows x86; branch={build_branch}; same-host single invocation)')
