@@ -47,6 +47,11 @@ fn mm2_warm_tracker(stream:&mut TcpStream,crypto:&mut HeaderCrypto)->Result<(),S
     })
 }
 
+fn mm2_resolve_auction_only(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(u64,u32),String>{
+    let(ah,_mail)=mm2_collect_candidates(stream,crypto,player,Mm2Duration::from_millis(1500))?;
+    mm2_resolve_auctioneer(stream,crypto,&ah)
+}
+
 fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64)->Result<(),String>{
     let mode=env::var("WOW112_MM2_MODE").unwrap_or_else(|_|"capability".into()).trim().to_ascii_lowercase();
     // Durable unresolved state blocks all new work before even a read-only world warm-up.
@@ -57,10 +62,11 @@ fn market_maker_v2_run(stream:&mut TcpStream,crypto:&mut HeaderCrypto,player:u64
     match mode.as_str(){
         "inventory"|"inventory-tracker"=>{println!("[MM2] INVENTORY_TRACKER_PASS read_only=YES");Ok(())},
         "mailbox"|"mailbox-resolver"=>{let(_ah,mail)=mm2_collect_candidates(stream,crypto,player,Mm2Duration::from_millis(1500))?;let mailbox=mm2_resolve_mailbox(stream,crypto,&mail)?;println!("[MM2] MAILBOX_RESOLVER_PASS mailbox=0x{mailbox:016X} read_only=YES");Ok(())},
+        "auction-capability"|"ah-capability"=>{let(auctioneer,house)=mm2_resolve_auction_only(stream,crypto,player)?;let mine=mm2_owner_list(stream,crypto,auctioneer,player)?;println!("[MM2] AUCTION_CAPABILITY_PASS auctioneer=0x{auctioneer:016X} house={house} own={} read_only=YES",mine.len());Ok(())},
         "capability"|"read-only"|"readonly"=>{let targets=mm2_resolve_targets(stream,crypto,player)?;let mine=mm2_owner_list(stream,crypto,targets.auctioneer,player)?;println!("[MM2] CAPABILITY_PASS auctioneer=0x{:016X} house={} mailbox=0x{:016X} own={} read_only=YES",targets.auctioneer,targets.auction_house,targets.mailbox,mine.len());Ok(())},
-        "depth"|"targeted-depth"=>{let item=env::var("WOW112_MM2_ITEM_ID").map_err(|_|"MM2 targeted-depth requires WOW112_MM2_ITEM_ID")?.parse::<u32>().map_err(|_|"MM2 invalid WOW112_MM2_ITEM_ID")?;let targets=mm2_resolve_targets(stream,crypto,player)?;let snap=mm2_targeted_depth(stream,crypto,targets.auctioneer,item,[0,0,0],16)?;if !snap.complete||!snap.coherent{return Err("MM2 targeted depth incomplete/incoherent".into());}println!("[MM2] TARGETED_DEPTH_PASS item={} rows={} raw_total={} read_only=YES",item,snap.rows.len(),snap.raw_total);Ok(())},
+        "depth"|"targeted-depth"=>{let item=env::var("WOW112_MM2_ITEM_ID").map_err(|_|"MM2 targeted-depth requires WOW112_MM2_ITEM_ID")?.parse::<u32>().map_err(|_|"MM2 invalid WOW112_MM2_ITEM_ID")?;let(auctioneer,_house)=mm2_resolve_auction_only(stream,crypto,player)?;let snap=mm2_targeted_depth(stream,crypto,auctioneer,item,[0,0,0],16)?;if !snap.complete||!snap.coherent{return Err("MM2 targeted depth incomplete/incoherent".into());}println!("[MM2] TARGETED_DEPTH_PASS item={} rows={} raw_total={} read_only=YES",item,snap.rows.len(),snap.raw_total);Ok(())},
         "undercut-canary"|"clear-one-buy-canary"=>Err("MM2 mutation canary BLOCKED: execution primitives not yet safety-approved".into()),
-        _=>Err("WOW112_MM2_MODE must be capability, mailbox-resolver, inventory-tracker, targeted-depth, undercut-canary, or clear-one-buy-canary".into()),
+        _=>Err("WOW112_MM2_MODE must be capability, auction-capability, mailbox-resolver, inventory-tracker, targeted-depth, undercut-canary, or clear-one-buy-canary".into()),
     }
 }
 #[cfg(test)]mod mm2_runtime_tests{#[test]fn mutation_modes_are_not_implicitly_passed(){assert_eq!(["undercut-canary","clear-one-buy-canary"].len(),2);}}
