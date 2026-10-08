@@ -9,7 +9,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $sourceRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-foreach($required in @('WoW112SummonService.exe','WoW112SummonOperatorConsole.exe')) {
+$requiredBinaryNames = @('WoW112SummonService.exe','WoW112SummonOperatorConsole.exe')
+foreach($required in $requiredBinaryNames) {
     if(-not (Test-Path -LiteralPath (Join-Path $InputBinDir $required) -PathType Leaf)) { throw "Missing binary input: $required" }
 }
 $stage = Join-Path $env:TEMP ('summon-package-' + [Guid]::NewGuid().ToString('N'))
@@ -40,8 +41,31 @@ try {
         if($mutablePrefixes -contains $rel -or $rel.StartsWith('data/') -or $rel.StartsWith('logs/') -or $rel.StartsWith('state/') -or $rel.StartsWith('backups/')) { return }
         $entries += [ordered]@{path=$rel;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
     }
-    $manifest=[ordered]@{schema_version=1;product='WoW112 Summon Service V1';version=$Version;source_sha=$SourceSha.ToLowerInvariant();built_utc=[DateTime]::UtcNow.ToString('o');demo_only=[bool]$DemoOnly;files=$entries}
-    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
+    $requiredExecutables = @(
+        'bin/WoW112SummonService.exe',
+        'bin/WoW112SummonOperatorConsole.exe'
+    )
+    $manifest=[ordered]@{
+        schema_version=1
+        product='WoW112 Summon Service V1'
+        version=$Version
+        source_sha=$SourceSha.ToLowerInvariant()
+        built_utc=[DateTime]::UtcNow.ToString('o')
+        demo_only=[bool]$DemoOnly
+        package_layout_version=1
+        config_schema_version=1
+        data_layout_version=1
+        compatibility=[ordered]@{
+            operating_system='Windows 11'
+            powershell='Windows PowerShell 5.1+'
+            service_runtime_contract='summon-service-v1'
+            operator_console_contract='summon-operator-console-v1'
+        }
+        required_executables=$requiredExecutables
+        mutable_paths=@('config/service.json','data/','logs/','state/','backups/')
+        files=$entries
+    }
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
     if(Test-Path -LiteralPath $OutputZip){Remove-Item -LiteralPath $OutputZip -Force}
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $OutputZip -CompressionLevel Optimal
     $hash=(Get-FileHash -LiteralPath $OutputZip -Algorithm SHA256).Hash.ToLowerInvariant()
