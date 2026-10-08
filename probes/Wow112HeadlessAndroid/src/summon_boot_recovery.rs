@@ -59,13 +59,7 @@ pub fn reconcile_boot_snapshot(
             promoted_request_id: None,
         });
     }
-    if confirmed_portals.len() != 1 {
-        return Err(format!(
-            "boot recovery refuses multiple confirmed portal mutations request_id={} count={}",
-            request_id,
-            confirmed_portals.len()
-        ));
-    }
+
 
     let inbox = root.join("control_inbox");
     let mut matching_controls = 0usize;
@@ -96,12 +90,7 @@ pub fn reconcile_boot_snapshot(
             promoted_request_id: None,
         });
     }
-    if matching_controls != 1 {
-        return Err(format!(
-            "boot recovery refuses duplicate portal controls request_id={} count={}",
-            request_id, matching_controls
-        ));
-    }
+
 
     let record = snapshot
         .requests
@@ -244,20 +233,31 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_confirmed_portal_mutations_fail_closed() {
-        let root = root("duplicate_mutation");
-        let (snapshot, id) = ritual_snapshot(&root);
-        confirmed_portal(&root, &id, "portal-1");
-        confirmed_portal(&root, &id, "portal-2");
-        ControlInbox::submit(
-            &root,
-            &ServiceControlCommand::PortalCommitted {
-                request_id: id,
-            },
-        )
-        .unwrap();
-        let error = reconcile_boot_snapshot(&root, snapshot).unwrap_err();
-        assert!(error.contains("multiple confirmed portal mutations"));
-        let _ = fs::remove_dir_all(root);
-    }
+fn multiple_confirmed_helper_portals_are_valid_boot_evidence() {
+    let root = root("multiple_helpers");
+    let (snapshot, id) = ritual_snapshot(&root);
+    confirmed_portal(&root, &id, "portal-helper-a");
+    confirmed_portal(&root, &id, "portal-helper-b");
+    ControlInbox::submit(
+        &root,
+        &ServiceControlCommand::PortalCommitted {
+            request_id: id.clone(),
+        },
+    )
+    .unwrap();
+    ControlInbox::submit(
+        &root,
+        &ServiceControlCommand::PortalCommitted {
+            request_id: id.clone(),
+        },
+    )
+    .unwrap();
+    let result = reconcile_boot_snapshot(&root, snapshot).unwrap();
+    assert_eq!(result.promoted_request_id.as_deref(), Some(id.as_str()));
+    assert_eq!(
+        result.snapshot.requests.iter().find(|r| r.request_id == id).unwrap().phase,
+        RequestPhase::PortalCommitted
+    );
+    let _ = fs::remove_dir_all(root);
+}
 }

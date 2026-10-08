@@ -271,7 +271,7 @@ fn login_and_run(
     let local_position = local_position.ok_or_else(|| "SMSG_LOGIN_VERIFY_WORLD not received".to_string())?;
 
     let accept_worker = GroupAcceptWorker::open(&root)?;
-    let portal_worker = PortalWorker::open(&root)?;
+    let portal_worker = PortalWorker::open_for_actor(&root, &selected.name)?;
     let max_range = max_range()?;
     let settle_ms = click_settle_ms()?;
     let mut portals = HashMap::<u64, [f32; 3]>::new();
@@ -342,7 +342,10 @@ fn login_and_run(
                 }
 
                 inspect_portals(opcode, &payload, &mut portals, &mut seen_portals);
-                if active_phase(&root)? == Some(RequestPhase::RitualCommitted) {
+                if matches!(
+            active_phase(&root)?,
+            Some(RequestPhase::RitualCommitted | RequestPhase::PortalCommitted)
+        ) {
                     let candidates = portals.iter().map(|(guid, pos)| (*guid, *pos)).collect::<Vec<_>>();
                     for (guid, position) in candidates {
                         let distance = distance3(local_position, position);

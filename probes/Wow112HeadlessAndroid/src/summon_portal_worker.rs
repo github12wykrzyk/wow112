@@ -14,15 +14,30 @@ pub struct PortalClaim {
 #[derive(Clone, Debug)]
 pub struct PortalWorker {
     root: PathBuf,
+    actor_key: String,
 }
 
 impl PortalWorker {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, String> {
-        let root = root.as_ref().to_path_buf();
-        fs::create_dir_all(&root)
-            .map_err(|e| format!("create portal worker root {} failed: {e}", root.display()))?;
-        Ok(Self { root })
+    Self::open_for_actor(root, "default")
+}
+
+pub fn open_for_actor(
+    root: impl AsRef<Path>,
+    actor: impl AsRef<str>,
+) -> Result<Self, String> {
+    let root = root.as_ref().to_path_buf();
+    fs::create_dir_all(&root)
+        .map_err(|e| format!("create portal worker root {} failed: {e}", root.display()))?;
+    let actor_key = actor.as_ref().trim().to_ascii_lowercase();
+    if actor_key.is_empty()
+        || actor_key.len() > 64
+        || actor_key.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+    {
+        return Err(format!("invalid portal worker actor={:?}", actor.as_ref()));
     }
+    Ok(Self { root, actor_key })
+}
 
     pub fn active_ritual_request(&self) -> Result<Option<String>, String> {
         let path = self.root.join("summon_service_state.json");
@@ -36,7 +51,7 @@ impl PortalWorker {
         let mut active = snapshot
             .requests
             .iter()
-            .filter(|r| r.phase == RequestPhase::RitualCommitted)
+            .filter(|r| matches!(r.phase, RequestPhase::RitualCommitted | RequestPhase::PortalCommitted))
             .map(|r| r.request_id.clone())
             .collect::<Vec<_>>();
         active.sort();
@@ -44,7 +59,7 @@ impl PortalWorker {
             0 => Ok(None),
             1 => Ok(active.pop()),
             count => Err(format!(
-                "portal worker found {count} ritual-committed requests; refusing ambiguous portal mutation"
+                "portal worker found {count} portal-wait requests; refusing ambiguous portal mutation"
             )),
         }
     }
@@ -61,26 +76,25 @@ impl PortalWorker {
         if let Some(reason) = mutations.hard_block_reason() {
             return Err(format!("portal worker blocked by unresolved mutation: {reason}"));
         }
-        if mutations.records_for_request(&request_id).any(|record| {
-    record.kind == MutationKind::PortalUse && record.state == MutationState::Confirmed
-}) {
-    return Ok(None);
-}
-        let operation_id = format!("{request_id}:portal-use:{portal_guid:016X}");
-        if mutations
-            .records()
-            .iter()
-            .any(|record| record.operation_id == operation_id && record.state == MutationState::Confirmed)
-        {
-            return Ok(None);
-        }
+        let actor_prefix = format!("{request_id}:portal-use:{}:", self.actor_key);
+    if mutations.records_for_request(&request_id).any(|record| {
+        record.kind == MutationKind::PortalUse
+            && record.state == MutationState::Confirmed
+            && record.operation_id.starts_with(&actor_prefix)
+    }) {
+        return Ok(None);
+    }
+    let operation_id = format!(
+        "{request_id}:portal-use:{}:{portal_guid:016X}",
+        self.actor_key
+    );
         mutations.commit_before_send(
             &request_id,
             MutationKind::PortalUse,
             &operation_id,
             false,
             now_ms,
-            format!("portal_guid=0x{portal_guid:016X}"),
+            format!("helper_actor={} portal_guid=0x{portal_guid:016X}", self.actor_key),
         )?;
         Ok(Some(PortalClaim {
             request_id,
@@ -264,6 +278,38 @@ fn confirmed_portal_for_request_blocks_different_guid_before_control_consumption
         })
         .unwrap();
     assert!(second.is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+    #[test]
+fn two_distinct_helpers_can_each_click_once_for_same_request() {
+    let root = root("two_helpers");
+    let (mut runtime, id) = ritual_ready(&root);
+    let a = PortalWorker::open_for_actor(&root, "Winterone").unwrap();
+    let b = PortalWorker::open_for_actor(&root, "Wintertwoo").unwrap();
+    let sends = Cell::new(0u32);
+    a.execute_portal_use_once(0xD00D, 30, |_| {
+        sends.set(sends.get() + 1);
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    apply_next_control(&root, &mut runtime);
+    assert_eq!(runtime.request(&id).unwrap().phase, RequestPhase::PortalCommitted);
+    b.execute_portal_use_once(0xD00D, 32, |_| {
+        sends.set(sends.get() + 1);
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(sends.get(), 2);
+    let journal = MutationCoordinator::open(root.join("summon_mutations.json")).unwrap();
+    let confirmed = journal
+        .records_for_request(&id)
+        .filter(|record| record.kind == MutationKind::PortalUse)
+        .filter(|record| record.state == MutationState::Confirmed)
+        .count();
+    assert_eq!(confirmed, 2);
     let _ = fs::remove_dir_all(root);
 }
 
