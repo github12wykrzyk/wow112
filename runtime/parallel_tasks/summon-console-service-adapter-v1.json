@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "summon-console-service-adapter-v1",
+  "goal": "Build Operator Console as a durable frontend adapter for headless Summon Service V1 using structured events and only Pause, Resume and ManualWhisper operator commands.",
+  "branch": "feature/summon-console-service-adapter-v1",
+  "base_parallel_sha": "a5ee048c620c55542460d54d7750e81f0f8f8da4",
+  "modules": [
+    "SummonConsoleAdapter"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summon-console-service-adapter"
+  ],
+  "status": "test_ready",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Product implementation scope remains tools/operator_console/**. Repository acceptance passed on synthetic validation branch feature/summon-console-final-validation at e38870ec3b9b4c64a0cce4db10c1ccd124d8f595, GitHub Actions run 37749062554: 150/150 repo tests PASS, full operator-console suite PASS, all routed gates PASS, integration skipped. Real live E2E still requires an actually reachable Summon Service and acceptance.py evidence. Do not auto-integrate."
+}
