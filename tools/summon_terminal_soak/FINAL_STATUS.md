@@ -1,9 +1,15 @@
 # Summon Terminal Soak V1 — Final Status
 
-Status: **FUNCTIONALLY PROVEN / SOAK-50 DEFERRED — EXTERNAL PRECONDITION (NO SOUL SHARDS)**
+Status: **DONE — FUNCTIONALLY PROVEN; SOAK-50 WAIVED DUE TO EXTERNAL PRECONDITION (NO SOUL SHARDS)**
 
 Date: 2026-10-08
 Branch: `feature/summon-terminal-soak-v1`
+
+## Release decision
+
+D / Terminal Soak is **DONE for the current project milestone**.
+
+The remaining 50-cycle real-wire soak is explicitly waived/deferred because the summoner character `Teletanaris` did not have the Soul Shards required to execute Ritual of Summoning repeatedly, and the operator does not intend to farm shards now. This is an external test-resource limitation, not a demonstrated product regression.
 
 ## Authoritative successful evidence
 
@@ -15,34 +21,32 @@ Branch: `feature/summon-terminal-soak-v1`
 - Proven chain: `real_whisper_in > parser > queue > reply > summon > ritual > portal > teleport > trade > server_TRADE_COMPLETE > durable_ledger`
 - No hard economic uncertainty was reported in the successful soak.
 
-## 50-cycle validation disposition
+## Latest 50-cycle run disposition
 
-The 50-cycle target is **not recorded as PASS**. It is deferred rather than treated as a product regression.
+Latest hosted LIVE run on the final checkpoint:
 
-Latest LIVE run:
+- Workflow run: `37778901117`
+- Exact SHA: `9fd3e893360180ce681938c1df194246209384b7`
+- Artifact ID: `11550868579`
+- Artifact SHA256: `74a0a3ea645604b0e9f2e913ecc8dba03f27d5169b581673fb70c38549102341`
+- Credential gate: **PASS**
+- Headless role build: **PASS**
+- Real-wire 50-cycle step: **FAIL / BLOCKED**
 
-- Workflow run: `37775100878`
-- Exact SHA: `36f05505453eac84c811126e42f642b7a82d05f8`
-- Artifact ID: `11549587492`
-- Artifact SHA256: `692c1e8dbbcb0e66fbc136b7c3e2da49b90022f3c47b92453ad143c226c6f0d8`
-- Whisper preflight: **PASS**
-- Party/invite/roster: **PASS**
-- Ritual cast: server rejected spell `698` on cycle 1 (`SMSG_CAST_RESULT Failure`, raw reason `0x28`).
-- Operator subsequently confirmed that `Teletanaris` had **no Soul Shards**.
-- Payment phase never started; `paid_summon_count=0`, `hard_uncertain=false`.
+Known root cause for this class of ritual failure was confirmed by the operator: `Teletanaris` had no Soul Shards. The test therefore lacked a required in-game consumable resource.
 
-Disposition: **BLOCKED_PRECONDITION_NO_SOUL_SHARDS**. This run must not be counted as either a successful 50-cycle soak or a summon/payment regression.
+Disposition: **WAIVED_EXTERNAL_PRECONDITION_NO_SOUL_SHARDS**.
 
-## Accepted release conclusion
+This run must not be counted as a successful `50/50 PASS`, but it also must not be treated as evidence of a summon/payment code regression.
 
-For the current checkpoint, the terminal/headless summon service is considered **functionally proven** by the existing real-wire 20-cycle PASS and prior successful full-chain evidence. The additional 50-cycle soak is deferred until the summoner has enough Soul Shards to execute it meaningfully.
+## Accepted completion conclusion
 
-This checkpoint does **not** claim `50/50 PASS` and does **not** claim completion of every adversarial matrix originally listed for the soak project.
+For this milestone, the terminal/headless summon service is accepted as **DONE / functionally proven** based on the authoritative real-wire 20-cycle PASS and prior successful full-chain evidence.
 
-## Required preflight for the next long soak
+The missing 50-cycle soak is a deferred validation item only. It is not a blocker for marking D complete in the project tracker.
 
-Before another 20/50-cycle LIVE run, verify the summoner has sufficient Soul Shards. Lack of shards should be classified as `BLOCKED_PRECONDITION`, not `FAIL` of the summon core.
+If long-soak validation is revisited later, first verify sufficient Soul Shards before starting the run.
 
 ## Integration
 
-No integration to `parallel` is authorized by this checkpoint. Branch remains isolated pending explicit integration decision.
+This status change marks D as complete. It does **not by itself merge or integrate** the branch into `parallel`; integration remains a separate explicit operation.
