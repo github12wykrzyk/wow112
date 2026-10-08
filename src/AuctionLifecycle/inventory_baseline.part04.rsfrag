@@ -1,0 +1,124 @@
+                let mlen = nb as usize * 4;
+                if pos + mlen > d.len() { return rel("truncated mask".into()); }
+                let set: u32 = d[pos..pos + mlen].iter().map(|b| b.count_ones()).sum();
+                pos += mlen + set as usize * 4;
+                if pos > d.len() { return rel("truncated values".into()); }
+            }
+            4 | 5 => {
+                if pos + 4 > d.len() { return rel("truncated out-of-range count".into()); }
+                let n = u32::from_le_bytes([d[pos], d[pos + 1], d[pos + 2], d[pos + 3]]) as usize;
+                pos += 4;
+                if n > 4096 { return rel("implausible out-of-range count".into()); }
+                for _ in 0..n {
+                    let Some(g) = lifecycle_packed_guid(d, &mut pos) else { return rel("truncated out-of-range guid".into()); };
+                    if let Some(why) = lifecycle_guid_concern(g, player) { return rel(format!("out-of-range block touches {why} 0x{g:016X}")); }
+                }
+            }
+            1 | 2 | 3 => {
+                let Some(g) = lifecycle_packed_guid(d, &mut pos) else { return rel("truncated create/movement guid".into()); };
+                if let Some(why) = lifecycle_guid_concern(g, player) { return rel(format!("create/movement block touches {why} 0x{g:016X}")); }
+                if i + 1 == count { return Irrelevant; }
+                return rel("undecodable create/movement block is not the last block".into());
+            }
+            other => return rel(format!("unknown update type {other}")),
+        }
+    }
+    if pos != d.len() { return rel("trailing bytes after declared blocks".into()); }
+    Irrelevant
+}
+
+/// Classify an update packet the typed parser rejected. `payload` is the raw server payload.
+fn lifecycle_classify_unparsed_update(compressed: bool, payload: &[u8], player: u64) -> LifecycleUnparsed {
+    let prefix = lifecycle_hex_prefix(payload, 48);
+    let tag = |r: LifecycleUnparsed| match r {
+        LifecycleUnparsed::Relevant(w) => LifecycleUnparsed::Relevant(format!("{w} [compressed={compressed} len={} head={prefix}]", payload.len())),
+        ok => ok,
+    };
+    if !compressed { return tag(lifecycle_scan_update_body(payload, player)); }
+    if payload.len() < 6 { return tag(LifecycleUnparsed::Relevant("compressed payload too short".into())); }
+    let declared = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+    if declared == 0 || declared > (1 << 20) { return tag(LifecycleUnparsed::Relevant("implausible decompressed size".into())); }
+    match lifecycle_zlib_inflate(&payload[4..], declared) {
+        Ok(body) if body.len() == declared => tag(lifecycle_scan_update_body(&body, player)),
+        Ok(body) => tag(LifecycleUnparsed::Relevant(format!("decompressed {} != declared {declared}", body.len()))),
+        Err(e) => tag(LifecycleUnparsed::Relevant(format!("zlib failure: {e}"))),
+    }
+}
+
+// ---------------------------------------------------------------- container slot walker
+//
+// The typed parser exposes only CONTAINER_SLOT_1, so container slot lists are read straight from
+// the update bytes. Only blocks whose layout is self-describing (VALUES / OUT_OF_RANGE / NEAR) or
+// whose movement block is non-LIVING (items, containers, most gameobjects) can be walked. The walk
+// stops at the first block it cannot size; the caller decides (using the typed parse) whether any
+// container block lies beyond the stop and fails closed if so.
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LifecycleInvEvent {
+    ContainerCreate { guid: u64, fields: Vec<(u16, u32)> },
+    ContainerValues { guid: u64, fields: Vec<(u16, u32)> },
+}
+
+#[derive(Debug, Default)]
+struct LifecycleWalk { events: Vec<LifecycleInvEvent>, stopped_at: Option<usize>, reason: String, total: usize }
+
+fn lifecycle_rd_u32(d: &[u8], pos: &mut usize) -> Option<u32> {
+    let b = d.get(*pos..*pos + 4)?; *pos += 4;
+    Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// Walk `u8 nblocks, nblocks*u32 mask, one u32 per set bit`; return fields inside the container range.
+fn lifecycle_walk_mask(d: &[u8], pos: &mut usize) -> Option<Vec<(u16, u32)>> {
+    let nb = usize::from(*d.get(*pos)?); *pos += 1;
+    let mut masks = Vec::with_capacity(nb);
+    for _ in 0..nb { masks.push(lifecycle_rd_u32(d, pos)?); }
+    let mut out = Vec::new();
+    for (w, m) in masks.iter().enumerate() {
+        for bit in 0..32u32 {
+            if m & (1 << bit) != 0 {
+                let v = lifecycle_rd_u32(d, pos)?;
+                let f = w as u32 * 32 + bit;
+                if (LIFECYCLE_CONTAINER_NUM_SLOTS_FIELD as u32..(LIFECYCLE_CONTAINER_SLOT1_FIELD as u32 + 72)).contains(&f) { out.push((f as u16, v)); }
+            }
+        }
+    }
+    Some(out)
+}
+
+fn lifecycle_walk_step(d: &[u8], pos: &mut usize, w: &mut LifecycleWalk) -> Result<(), String> {
+    let t = *d.get(*pos).ok_or("truncated block type")?; *pos += 1;
+    match t {
+        0 => {
+            let g = lifecycle_packed_guid(d, pos).ok_or("truncated values guid")?;
+            let fields = lifecycle_walk_mask(d, pos).ok_or("truncated values mask")?;
+            if g >> 48 == 0x4000 && !fields.is_empty() { w.events.push(LifecycleInvEvent::ContainerValues { guid: g, fields }); }
+        }
+        4 | 5 => {
+            let n = lifecycle_rd_u32(d, pos).ok_or("truncated out-of-range count")? as usize;
+            if n > 4096 { return Err("implausible out-of-range count".into()); }
+            for _ in 0..n { lifecycle_packed_guid(d, pos).ok_or("truncated out-of-range guid")?; }
+        }
+        2 | 3 => {
+            let g = lifecycle_packed_guid(d, pos).ok_or("truncated create guid")?;
+            let objtype = *d.get(*pos).ok_or("truncated object type")?; *pos += 1;
+            let flags = *d.get(*pos).ok_or("truncated update flags")?; *pos += 1;
+            if flags & 0x20 != 0 { return Err("LIVING movement block is not decoded".into()); }
+            let mut skip = 0usize;
+            if flags & 0x40 != 0 { skip += 16; }
+            if flags & 0x08 != 0 { skip += 4; }
+            if flags & 0x10 != 0 { skip += 4; }
+            if flags & 0x02 != 0 { skip += 4; }
+            if *pos + skip > d.len() { return Err("truncated movement block".into()); }
+            *pos += skip;
+            if flags & 0x04 != 0 { lifecycle_packed_guid(d, pos).ok_or("truncated target guid")?; }
+            let fields = lifecycle_walk_mask(d, pos).ok_or("truncated create mask")?;
+            if objtype == 2 {
+                if g >> 48 != 0x4000 { return Err("container object type with non-item guid".into()); }
+                w.events.push(LifecycleInvEvent::ContainerCreate { guid: g, fields });
+            }
+        }
+        other => return Err(format!("undecodable update type {other}")),
+    }
+    Ok(())
+}
+
