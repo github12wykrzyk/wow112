@@ -51,9 +51,10 @@ function Run([string]$Root,[string]$Action,[int[]]$Ok=@(0),[string]$Package=$nul
   $out=Join-Path $work ('run-'+[Guid]::NewGuid().ToString('N')+'.out.log'); $err=Join-Path $work ('run-'+[Guid]::NewGuid().ToString('N')+'.err.log')
   $p=Start-Process -FilePath 'powershell.exe' -ArgumentList ($parts -join ' ') -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
   if(-not $p.WaitForExit($TimeoutSeconds*1000)){ try{$p.Kill()}catch{}; throw "$Action timed out after ${TimeoutSeconds}s" }
+  $p.WaitForExit(); $p.Refresh()
   $stdout=if(Test-Path $out){Get-Content $out -Raw}else{''}; $stderr=if(Test-Path $err){Get-Content $err -Raw}else{''}
   if($stdout){Write-Host $stdout.TrimEnd()}; if($stderr){Write-Host $stderr.TrimEnd()}
-  $c=$p.ExitCode; if($Ok -notcontains $c){throw "$Action exit=$c expected=$($Ok -join ',')"};return $c
+  $c=[int]$p.ExitCode; if($Ok -notcontains $c){throw "$Action exit=$c expected=$($Ok -join ',')"};return $c
 }
 try {
   $zip1=New-Package '1.0.0'; $root=Expand-Package $zip1 'live'; Tune-TestConfig $root; $env:WOW112_PASSWORD='PACKAGING_CANARY_SECRET'
