@@ -390,20 +390,24 @@ function Invoke-Supervisor([string]$PackageRoot, [string]$DpapiFile) {
 
 function Invoke-Main {
     $packageRoot = Normalize-Root $Root
+    switch ($Action) {
+        'Start' { Start-ServiceSupervisor $packageRoot; return 0 }
+        'Stop' { Stop-ServiceSupervisor $packageRoot; return 0 }
+        'Status' { if (Get-ServiceStatus $packageRoot) { return 0 } else { return 3 } }
+        'Console' { Invoke-Console $packageRoot; return 0 }
+        'Backup' { New-DataBackup $packageRoot | Out-Null; return 0 }
+        'Rollback' { Invoke-Rollback $packageRoot; return 0 }
+        'Upgrade' { Invoke-Upgrade $packageRoot $Package $ExpectedSourceSha; return 0 }
+        'Verify' { Verify-Package $packageRoot $ExpectedSourceSha | Out-Null; Write-Host 'Package verification PASS.'; return 0 }
+        'Supervisor' { Invoke-Supervisor $packageRoot $CredentialFile; return 0 }
+        default { throw 'Action is required.' }
+    }
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
     try {
-        switch ($Action) {
-            'Start' { Start-ServiceSupervisor $packageRoot }
-            'Stop' { Stop-ServiceSupervisor $packageRoot }
-            'Status' { if (Get-ServiceStatus $packageRoot) { exit 0 } else { exit 3 } }
-            'Console' { Invoke-Console $packageRoot }
-            'Backup' { New-DataBackup $packageRoot | Out-Null }
-            'Rollback' { Invoke-Rollback $packageRoot }
-            'Upgrade' { Invoke-Upgrade $packageRoot $Package $ExpectedSourceSha }
-            'Verify' { Verify-Package $packageRoot $ExpectedSourceSha | Out-Null; Write-Host 'Package verification PASS.' }
-            'Supervisor' { Invoke-Supervisor $packageRoot $CredentialFile }
-            default { throw 'Action is required.' }
-        }
-        exit 0
+        $code = Invoke-Main
+        exit [int]$code
     } catch {
         $stack = $_.ScriptStackTrace
         if ([string]::IsNullOrWhiteSpace($stack)) { Write-Error $_.Exception.Message }
@@ -411,5 +415,3 @@ function Invoke-Main {
         exit 1
     }
 }
-
-if ($MyInvocation.InvocationName -ne '.') { Invoke-Main }
