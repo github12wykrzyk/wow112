@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-whisper-relay-v1",
+  "goal": "Add persistent RAW customer whisper conversation relay to Master with exact-summoner guarded replies and lifecycle/payment linkage without replacing canonical SummonScout routing, summon or payment engines.",
+  "branch": "feature/summonscout-whisper-relay-v1",
+  "base_parallel_sha": "8ad07c5a7ad583b4e1ce04b7b73c8fae7d4d024b",
+  "modules": ["SummonScout"],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout CHAT_MSG_WHISPER capture",
+    "SummonScout masterName whisper control plane",
+    "SummonScout lifecycle/payment conversation audit"
+  ],
+  "status": "coding",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Whisper Conversation Relay V1 implementation in progress on exact canonical main. Addon-local and behavior-additive; no summon/payment/routing engine replacement."
+}
