@@ -145,7 +145,7 @@ jobs:
                                 }
                             }
                         }
-'''
+          '''
           s = s[:start] + new + s[end:]
           p.write_text(s)
       - name: Test library
