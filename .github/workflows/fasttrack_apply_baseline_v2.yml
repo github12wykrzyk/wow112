@@ -1,0 +1,62 @@
+name: AH Lifecycle V2 Baseline Fasttrack Apply
+
+on:
+  push:
+    branches: [feature/ah-auction-lifecycle-v2-baseline-fasttrack]
+    paths:
+      - 'src/AuctionLifecycle/_fasttrack/**'
+      - '.github/workflows/fasttrack_apply_baseline_v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  apply-and-dispatch:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct exact Claude v2 patch
+        shell: pwsh
+        run: |
+          $patch=Join-Path $env:RUNNER_TEMP 'AUTO_V2_BASELINE_FIX_v2.patch'
+          python src/AuctionLifecycle/_fasttrack/reconstruct.py $patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:FASTTRACK_PATCH=$patch
+          "FASTTRACK_PATCH=$patch" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Apply source patch only
+        shell: pwsh
+        run: |
+          git merge-base --is-ancestor f4745a7b80ee52be4b7e73b15bcc34f789e4f821 HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'baseline f4745a7b is not an ancestor' }
+          git apply --check --exclude=.github/workflows/ah_auction_lifecycle_v1.yml $env:FASTTRACK_PATCH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply --exclude=.github/workflows/ah_auction_lifecycle_v1.yml $env:FASTTRACK_PATCH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path src/AuctionLifecycle/inventory_baseline.rs)) { throw 'inventory_baseline.rs missing after patch' }
+          Select-String -Path src/AuctionLifecycle/auto_v2.rs -Pattern 'lifecycle_baseline_verdict_now' -SimpleMatch -Quiet | Out-Null
+          if (-not $?) { throw 'baseline guard marker missing' }
+      - name: Commit patched sources to staging branch
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/AuctionLifecycle
+          git commit -m 'feat(lifecycle): apply inventory-complete baseline v2'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:$env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Dispatch full Windows x86 lifecycle CI on patched staging ref
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ah_auction_lifecycle_v1.yml --ref $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host 'FASTTRACK_DISPATCH_PASS'
