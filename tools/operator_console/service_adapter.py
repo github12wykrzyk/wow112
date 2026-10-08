@@ -23,7 +23,7 @@ class ServiceConnector:
         self.reconnect_seconds = max(0.2, reconnect_seconds)
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._run, name='summon-service-connector', daemon=True)
-        self._send_lock = threading.Lock()
+        self._send_lock = threading.RLock()
         self._sock: socket.socket | None = None
         self.connected = False
         self.connection_since = 0.0
@@ -66,6 +66,7 @@ class ServiceConnector:
                 self.commands_sent += 1
                 return {'accepted_for_transport': True, 'command_id': command['command_id']}
             except OSError as exc:
+                # A partial TCP send is not distinguishable here. Never retry a mutating/operator command.
                 self.command_uncertain += 1
                 self.disconnect_reason = f'command send uncertain: {type(exc).__name__}'
                 self._close_socket()
@@ -201,7 +202,7 @@ def handler_factory(app: ConsoleApp):
                 return self._json(400, {'error': str(exc)})
             except ConnectionError as exc:
                 return self._json(503, {'error': str(exc), 'automatic_retry': False})
-            except Exception:
+            except Exception as exc:
                 LOG.exception('command endpoint failed')
                 return self._json(500, {'error': 'internal error'})
     return Handler
