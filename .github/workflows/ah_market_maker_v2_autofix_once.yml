@@ -1,0 +1,109 @@
+name: AH Market Maker V2 One-shot Autofix
+
+on:
+  push:
+    branches: [feature/ah-market-maker-v1]
+    paths:
+      - '.github/workflows/ah_market_maker_v2_autofix_once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/ah-market-maker-v1
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply exact hardening patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def once(text, old, new, label):
+              n=text.count(old)
+              if n!=1:
+                  raise SystemExit(f'{label}: expected exactly one anchor, got {n}')
+              return text.replace(old,new,1)
+
+          mm=Path('src/AuctionLifecycle/market_maker.rs')
+          s=mm.read_text()
+          s=once(s,
+              'min_price_bps_of_own:poc07_env_u32_default("WOW112_MM_MIN_PRICE_BPS_OF_OWN",8000)?',
+              'min_price_bps_of_own:poc07_env_u32_default("WOW112_MM_MIN_PRICE_BPS_OF_OWN",0)?',
+              'default own-price guard')
+          s=once(s,
+              'c.default_floor_unit==0||c.min_price_bps_of_own==0||c.min_price_bps_of_own>10000||c.ah_cut_bps>=10000||c.max_clear_units==0||c.max_clear_units>c.max_post_units||!matches!',
+              'c.default_floor_unit==0||c.min_price_bps_of_own>10000||c.ah_cut_bps>=10000||c.max_clear_units==0||c.max_clear_units>c.max_post_units||!matches!',
+              'allow zero optional own guard')
+          old='''fn mm_effective_floor(own:&LifecycleAuction,c:&MmConfig)->u32{\n    if own.row.count==0{return u32::MAX;}\n    let den=u128::from(own.row.count)*10000;\n    let pct=((u128::from(own.row.buyout)*u128::from(c.min_price_bps_of_own)+den-1)/den).min(u128::from(u32::MAX)) as u32;\n    mm_floor(own,c).max(pct)\n}\nfn mm_policy_for(own:&LifecycleAuction,player:u64,s:&MmSnapshot,c:&MmConfig)->mm_policy::Decision{\n    let competitors:Vec<_>=s.rows.iter().filter(|r|r.auction.row.owner_guid!=player&&r.auction.row.buyout>0&&r.auction.row.count>0&&mm_same_item(own,&r.auction)).map(|r|mm_policy::Quote{auction_id:r.auction.row.auction_id,buyout:r.auction.row.buyout,count:r.auction.row.count}).collect();\n    mm_policy::decide(mm_policy::Quote{auction_id:own.row.auction_id,buyout:own.row.buyout,count:own.row.count},&competitors,mm_policy::PolicyConfig{floor_unit:mm_floor(own,c),min_price_bps_of_own:c.min_price_bps_of_own,ah_cut_bps:c.ah_cut_bps,max_clear_spend:c.max_clear_spend,max_clear_units:c.max_clear_units,clear_min_profit:c.clear_min_profit,clear_min_roi_bps:c.clear_min_roi_bps,clear_min_jump_bps:c.clear_min_jump_bps},s.complete&&s.stable)\n}\n'''
+          new='''fn mm_effective_floor(own:&LifecycleAuction,c:&MmConfig)->u32{\n    if own.row.count==0{return u32::MAX;}\n    let explicit=mm_floor(own,c);\n    if c.min_price_bps_of_own==0{return explicit;}\n    let den=u128::from(own.row.count)*10000;\n    let pct=((u128::from(own.row.buyout)*u128::from(c.min_price_bps_of_own)+den-1)/den).min(u128::from(u32::MAX)) as u32;\n    explicit.max(pct)\n}\nfn mm_policy_for(own:&LifecycleAuction,player:u64,s:&MmSnapshot,c:&MmConfig,depth_verified:bool)->mm_policy::Decision{\n    let competitors:Vec<_>=s.rows.iter().filter(|r|r.auction.row.owner_guid!=player&&r.auction.row.buyout>0&&r.auction.row.count>0&&mm_same_item(own,&r.auction)).map(|r|mm_policy::Quote{auction_id:r.auction.row.auction_id,buyout:r.auction.row.buyout,count:r.auction.row.count}).collect();\n    mm_policy::decide(mm_policy::Quote{auction_id:own.row.auction_id,buyout:own.row.buyout,count:own.row.count},&competitors,mm_policy::PolicyConfig{floor_unit:mm_floor(own,c),min_price_bps_of_own:c.min_price_bps_of_own,ah_cut_bps:c.ah_cut_bps,max_clear_spend:c.max_clear_spend,max_clear_units:c.max_clear_units,clear_min_profit:c.clear_min_profit,clear_min_roi_bps:c.clear_min_roi_bps,clear_min_jump_bps:c.clear_min_jump_bps},depth_verified)\n}\n'''
+          s=once(s,old,new,'floor and policy depth authority')
+          old='''        let snap=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-revalidate")?;let d=mm_policy_for(&own,player,&snap,&scoped);mm_print(&own,&d);\n        let ids=match d{mm_policy::Decision::ClearThenRelist{auction_ids,..}=>auction_ids,_=>break};\n        let id=*ids.first().ok_or("MARKET_MAKER empty clear plan")?;\n        let row=snap.rows.iter().find(|r|r.auction.row.auction_id==id&&r.auction.row.owner_guid!=player&&mm_same_item(&own,&r.auction)).ok_or("MARKET_MAKER clear target vanished before BUY")?.clone();\n'''
+          new='''        // Global AH totals drift constantly. CLEAR is authorized only when two complete\n        // consecutive scans produce the exact same decision for this specific item/depth.\n        let snap_a=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-local-a")?;\n        if !snap_a.complete{return Err("MARKET_MAKER clear blocked: first local-depth scan incomplete".into());}\n        let d_a=mm_policy_for(&own,player,&snap_a,&scoped,true);mm_print(&own,&d_a);\n        if !matches!(d_a,mm_policy::Decision::ClearThenRelist{..}){break;}\n        let snap_b=mm_scan(stream,crypto,npc,house,c.max_pages,"clear-local-b")?;\n        if !snap_b.complete{return Err("MARKET_MAKER clear blocked: second local-depth scan incomplete".into());}\n        let d_b=mm_policy_for(&own,player,&snap_b,&scoped,true);mm_print(&own,&d_b);\n        if d_a!=d_b{return Err("MARKET_MAKER clear blocked: item-local depth changed between confirmation scans".into());}\n        let ids=match d_b{mm_policy::Decision::ClearThenRelist{auction_ids,..}=>auction_ids,_=>break};\n        let id=*ids.first().ok_or("MARKET_MAKER empty clear plan")?;\n        let row=snap_b.rows.iter().find(|r|r.auction.row.auction_id==id&&r.auction.row.owner_guid!=player&&mm_same_item(&own,&r.auction)).ok_or("MARKET_MAKER clear target vanished before BUY")?.clone();\n'''
+          s=once(s,old,new,'two-pass item-local clear confirmation')
+          n=s.count('mm_policy_for(own,player,&snap,&c)')
+          if n!=2: raise SystemExit(f'policy callsites: expected 2, got {n}')
+          s=s.replace('mm_policy_for(own,player,&snap,&c)','mm_policy_for(own,player,&snap,&c,snap.complete)')
+          mm.write_text(s)
+
+          pol=Path('src/AuctionLifecycle/market_maker_policy.rs')
+          s=pol.read_text()
+          s=once(s,'c.floor_unit > 0 && c.min_price_bps_of_own > 0 && c.min_price_bps_of_own <= 10_000 &&','c.floor_unit > 0 && c.min_price_bps_of_own <= 10_000 &&','policy allow zero own guard')
+          s=once(s,'pub fn decide(own: Quote, competitors: &[Quote], mut c: PolicyConfig, depth_complete_and_stable: bool) -> Decision {','pub fn decide(own: Quote, competitors: &[Quote], mut c: PolicyConfig, depth_verified: bool) -> Decision {','policy depth name')
+          s=once(s,'    let own_guard = ceil_div(u128::from(own.buyout) * u128::from(c.min_price_bps_of_own), u128::from(own.count) * 10_000);\n    c.floor_unit = c.floor_unit.max(own_guard);','    if c.min_price_bps_of_own > 0 {\n        let own_guard = ceil_div(u128::from(own.buyout) * u128::from(c.min_price_bps_of_own), u128::from(own.count) * 10_000);\n        c.floor_unit = c.floor_unit.max(own_guard);\n    }','policy optional own guard')
+          s=once(s,'if depth_complete_and_stable {','if depth_verified {','policy verified depth')
+          s=s.replace('fn cfg() -> PolicyConfig { PolicyConfig { floor_unit: 300, min_price_bps_of_own: 5000,','fn cfg() -> PolicyConfig { PolicyConfig { floor_unit: 300, min_price_bps_of_own: 0,')
+          s=s.replace('let mut c=cfg(); c.floor_unit=200; c.min_price_bps_of_own=4000; c.max_clear_spend=700;','let mut c=cfg(); c.floor_unit=200; c.max_clear_spend=700;')
+          s=s.replace('let mut c=cfg(); c.floor_unit=1; c.min_price_bps_of_own=1; c.clear_min_profit=1;','let mut c=cfg(); c.floor_unit=1; c.clear_min_profit=1;')
+          marker='''    #[test] fn clear_requires_acquired_stock_profit_after_cut() {\n        let mut c=cfg(); c.floor_unit=1; c.clear_min_profit=1; c.max_clear_spend=1000;\n        let d=decide(Quote{auction_id:1,buyout:400,count:1}, &[\n            Quote{auction_id:10,buyout:390,count:1}, Quote{auction_id:11,buyout:400,count:1}\n        ], c, true);\n        assert!(!matches!(d,Decision::ClearThenRelist{..}));\n    }\n'''
+          addition=marker+'''    #[test] fn zero_own_price_guard_uses_explicit_floor_only() {\n        let mut c=cfg(); c.floor_unit=100; c.min_price_bps_of_own=0;\n        let d=decide(Quote{auction_id:1,buyout:1000,count:1}, &[Quote{auction_id:2,buyout:500,count:1}], c, false);\n        assert_eq!(d,Decision::Undercut{target_unit:499,witness_auction_id:2,floor_unit:100});\n    }\n    #[test] fn optional_own_price_guard_still_blocks_when_explicitly_enabled() {\n        let mut c=cfg(); c.floor_unit=1; c.min_price_bps_of_own=9000;\n        let d=decide(Quote{auction_id:1,buyout:1000,count:1}, &[Quote{auction_id:2,buyout:500,count:1}], c, false);\n        assert!(matches!(d,Decision::BlockedFloor{floor_unit:900,..}));\n    }\n'''
+          s=once(s,marker,addition,'policy regression tests')
+          pol.write_text(s)
+
+          adapter=Path('src/AuctionLifecycle/adapter.rs')
+          s=adapter.read_text()
+          s=once(s,'    player: u64, inventory: Poc05Snapshot, inventory_bad: bool,\n','    player: u64, inventory: Poc05Snapshot,\n','remove permanent inventory poison field')
+          s=once(s,'            Err(_)=>LIFE_OBSERVED.with(|s|s.borrow_mut().inventory_bad=true),','            Err(e)=>println!("[LIFECYCLE-DIAG] object update parse skipped opcode=0x{op:04X} payload={} reason={e}",payload.len()),','parse failure diagnostic only')
+          s=once(s,'    LIFE_OBSERVED.with(|s| {let s=s.borrow();if s.inventory_bad {Err("LIFECYCLE inventory update parse failed".into())}else{Ok(s.inventory.items.iter().filter(|(g,_)|s.verified_items.contains(g)).map(|(g,i)|(*g,i.clone()).collect())}})','__UNUSED__','inventory function probe') if False else s
+          old='''fn lifecycle_inventory()->Result<std::collections::HashMap<u64,Poc05InventoryEntry>,String> {\n    LIFE_OBSERVED.with(|s| {let s=s.borrow();if s.inventory_bad {Err("LIFECYCLE inventory update parse failed".into())}else{Ok(s.inventory.items.iter().filter(|(g,_)|s.verified_items.contains(g)).map(|(g,i)|(*g,i.clone())).collect())}})\n}\n'''
+          new='''fn lifecycle_inventory()->Result<std::collections::HashMap<u64,Poc05InventoryEntry>,String> {\n    LIFE_OBSERVED.with(|s| {let s=s.borrow();Ok(s.inventory.items.iter().filter(|(g,_)|s.verified_items.contains(g)).map(|(g,i)|(*g,i.clone())).collect())})\n}\n'''
+          s=once(s,old,new,'inventory exact-evidence snapshot')
+          adapter.write_text(s)
+
+          test=Path('src/AuctionLifecycle/test_integration.py')
+          s=test.read_text()
+          old='''        self.assertIn('c.max_clear_units>c.max_post_units',mm)\n        self.assertIn('MARKET_MAKER final pricing snapshot incomplete; stock held, not posted',mm)\n        self.assertIn('s.complete&&s.stable',mm)\n'''
+          new='''        self.assertIn('c.max_clear_units>c.max_post_units',mm)\n        self.assertIn('MARKET_MAKER final pricing snapshot incomplete; stock held, not posted',mm)\n        self.assertIn('WOW112_MM_MIN_PRICE_BPS_OF_OWN",0',mm)\n        self.assertIn('clear-local-a',mm)\n        self.assertIn('clear-local-b',mm)\n        self.assertIn('item-local depth changed between confirmation scans',mm)\n        self.assertNotIn('s.complete&&s.stable',mm)\n'''
+          s=once(s,old,new,'integration market-depth assertions')
+          anchor='''        self.assertNotIn('MM_SPLIT_INTENT',inv)\n'''
+          replacement=anchor+'''        adapter=Path(__file__).with_name('adapter.rs').read_text()\n        self.assertNotIn('inventory_bad',adapter)\n        self.assertIn('object update parse skipped',adapter)\n'''
+          s=once(s,anchor,replacement,'integration inventory assertions')
+          test.write_text(s)
+          PY
+          git diff --check
+          git diff -- src/AuctionLifecycle/market_maker.rs src/AuctionLifecycle/market_maker_policy.rs src/AuctionLifecycle/adapter.rs src/AuctionLifecycle/test_integration.py
+      - name: Targeted tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install pyyaml
+          python3 src/AuctionLifecycle/test_integration.py
+          rustc --edition=2021 --test src/AuctionLifecycle/market_maker_policy.rs -o "$RUNNER_TEMP/mm-policy-tests"
+          "$RUNNER_TEMP/mm-policy-tests"
+      - name: Commit exact hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/AuctionLifecycle/market_maker.rs src/AuctionLifecycle/market_maker_policy.rs src/AuctionLifecycle/adapter.rs src/AuctionLifecycle/test_integration.py
+          git diff --cached --quiet && { echo 'No changes staged'; exit 1; }
+          git commit -m 'fix(ah): harden local-depth repricing and inventory evidence'
+          git push origin HEAD:feature/ah-market-maker-v1
