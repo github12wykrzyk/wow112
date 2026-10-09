@@ -53,7 +53,15 @@ class SummonScoutWhisperRelayBootstrapV2Contract(unittest.TestCase):
         self.assertNotIn('code == "RC" or', self.bridge)
         self.assertIn("K/R/RB/RC", self.bridge)
 
-    def test_trust_admission_is_temporary_and_restored(self):
+    def test_fixed_pair_summoner_gets_persistent_canonical_reply_trust(self):
+        self.assertIn('local VERSION = "3-fixed-owner-reply-trust"', self.bridge)
+        self.assertIn("W112_SUMMONSCOUT_SLAVE_MASTER_PAIRS_ACTIVE", self.bridge)
+        self.assertIn("if not key or not tbFixedSummoner(sender) then return false end", self.bridge)
+        self.assertIn("D.trustedSummoners[key] = sender", self.bridge)
+        self.assertIn("tbPersistFixedTrust(sender)", self.bridge)
+        self.assertIn("tbSeedFixedTrust()", self.bridge)
+
+    def test_unknown_peer_trust_admission_is_temporary_and_restored(self):
         self.assertIn("local previous = D.trustedSummoners[key]", self.bridge)
         self.assertIn("local hadPrevious = previous ~= nil", self.bridge)
         self.assertIn("D.trustedSummoners[key] = sender", self.bridge)
