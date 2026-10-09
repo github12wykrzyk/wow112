@@ -41,6 +41,18 @@ class SummonScoutOwnedQueueApiContract(unittest.TestCase):
         self.assertIn("api.queuePartySummon = publicQueue", foundation)
         self.assertIn('return false, "ownership-required"', foundation)
 
+    def test_grouped_resume_accepts_single_letter_ready(self):
+        grouped = self.text(GROUPED)
+        self.assertIn('["r"] = true', grouped)
+        self.assertIn('whisper r or 123 when you\'re ready', grouped)
+
+    def test_combat_error_is_authoritative_when_remote_flag_is_stale(self):
+        grouped = self.text(GROUPED)
+        self.assertIn("confirmedByError", grouped)
+        self.assertIn("if telemetry ~= true and not confirmedByError then return false end", grouped)
+        self.assertIn("seenCombatTelemetry = telemetry == true", grouped)
+        self.assertIn("combat == false and item.seenCombatTelemetry", grouped)
+
     def test_p01_event_guard_remains_defense_in_depth(self):
         text = self.text(FOUNDATION)
         self.assertIn('event == "CHAT_MSG_SYSTEM"', text)
