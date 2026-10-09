@@ -241,15 +241,15 @@ end
 
 local function brCanonicalize(api, message)
     local accepted, locations, reason = brRelation(api, message)
-    if not accepted then return message, false, locations, reason end
+    if not accepted then return message, false, locations, reason, false end
 
     local normalized = brNormalize(message)
     if brAny(normalized, DIRECT_BUYER_SUMMON) then
-        return message, false, locations, reason
+        return message, false, locations, reason, true
     end
 
     -- Internal lexical bridge only; the original chat line is never re-sent.
-    return tostring(message or "") .. " lf summon", true, locations, reason
+    return tostring(message or "") .. " lf summon", true, locations, reason, true
 end
 
 local function brRelaxRecent(sender)
@@ -280,10 +280,7 @@ local function brInstall()
 
     local original = api.handleChannelMessage
     local wrapper = function(message, sender, channelBaseName, channelFullName)
-        local routed, changed, locations, reason = brCanonicalize(api, message)
-        local accepted = locations and table.getn(locations) == 1
-            and (changed or brAny(brNormalize(message), DIRECT_BUYER_SUMMON)
-                or brBuyerLead(brNormalize(message)) or brHasTravel(brNormalize(message)))
+        local routed, changed, locations, reason, accepted = brCanonicalize(api, message)
         local relaxed = false
 
         if accepted then relaxed = brRelaxRecent(sender) end
@@ -291,13 +288,14 @@ local function brInstall()
         S.lastRaw = tostring(message or "")
         S.lastSender = tostring(sender or "")
         S.lastReason = tostring(reason or "")
+        S.lastAccepted = accepted and true or false
         S.lastChanged = changed and true or false
         S.lastRelaxedRecent = relaxed and true or false
         S.lastLocation = locations and locations[1]
             and tostring(locations[1].id or locations[1].label or "") or ""
 
         if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
-            if changed or relaxed then
+            if accepted and (changed or relaxed) then
                 local loc = locations and locations[1] or nil
                 DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r relation="
                     .. tostring(reason or "?") .. " -> " .. tostring(sender or "?")
@@ -322,16 +320,9 @@ function M.Init()
     brInstall()
 end
 
-function M.OnUpdate()
-    -- Other hot modules legitimately wrap the same API. If this wrapper gets
-    -- displaced entirely, reinstall it around the current canonical chain.
-    if not S.wrapper or W112_SUMMONSCOUT_API_V1.handleChannelMessage ~= S.wrapper then
-        brInstall()
-    end
-end
-
 function M.Shutdown()
-    -- Do not peel outer canonical guards during hot-host shutdown.
+    -- RosterOwnership may legitimately wrap this handler after load. Do not
+    -- peel an outer canonical guard during hot-host shutdown.
 end
 
 H.Register("worldbuyerrelation", M, VERSION)
