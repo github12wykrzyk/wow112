@@ -13,8 +13,8 @@
  * Exact packaged-EXE disassembly confirms the 5875 DBC reads used below:
  *   Spell records 0x00C0D788 / count 0x00C0D78C,
  *   SpellIcon records 0x00C0D7EC / count 0x00C0D7F0,
- *   locale 0x00C0E080, SpellIconID +0x1D4, localized name +0x1E0,
- *   SpellIcon path +0x04.
+ *   locale 0x00C0E080, DispelType +0x10, SpellIconID +0x1D4,
+ *   localized name +0x1E0, SpellIcon path +0x04.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error Requires WoW 1.12.1 build 5875 x86
@@ -58,8 +58,10 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 #define SPELLICON_RECORDS_VAR  0x00C0D7ECu
 #define SPELLICON_COUNT_VAR    0x00C0D7F0u
 #define LOCALE_INDEX           0x00C0E080u
+#define SPELL_DISPEL_OFF       0x00000010u
 #define SPELL_ICON_OFF         0x000001D4u
 #define SPELL_NAME_OFF         0x000001E0u
+#define DISPEL_MAGIC           1u
 
 #define OBJ_TYPE           0x00000014u
 #define OBJ_GUID_LO        0x00000030u
@@ -82,7 +84,7 @@ static TIMER32 g_timer=0u;
 static u32 g_lastHash=0u,g_lastRefresh=0u;
 static char g_lua[LUA_CAP];
 
-struct AuraRow { u32 spellId; u32 rawSlot; u32 applications; char name[NAME_CAP]; char icon[ICON_CAP]; };
+struct AuraRow { u32 spellId; u32 rawSlot; u32 applications; u32 dispelType; char name[NAME_CAP]; char icon[ICON_CAP]; };
 static struct AuraRow g_rows[POSITIVE_AURAS];
 static u32 g_diagSpell=0u,g_diagTable=0u,g_diagCount=0u,g_diagRow=0u,g_diagLocale=0u,g_diagNamePtr=0u;
 static u32 g_diagIconId=0u,g_diagIconTable=0u,g_diagIconCount=0u,g_diagIconRow=0u,g_diagIconPtr=0u;
@@ -179,14 +181,15 @@ static u32 localized_name_ptr(u32 rec,u32 locale){
     }
     return 0u;
 }
-static int spell_visual(u32 spellId,char *name,char *icon){
+static int spell_visual(u32 spellId,char *name,char *icon,u32 *dispelType){
     u32 rec,iconId,iconRec,namePtr,iconPtr,locale;
-    name[0]=0;icon[0]=0;
+    name[0]=0;icon[0]=0;if(dispelType)*dispelType=0u;
     g_diagSpell=spellId;
     g_diagTable=read32(SPELL_RECORDS_VAR);g_diagCount=read32(SPELL_COUNT_VAR);
     g_diagRow=0u;g_diagNamePtr=0u;g_diagIconId=0u;g_diagIconTable=read32(SPELLICON_RECORDS_VAR);
     g_diagIconCount=read32(SPELLICON_COUNT_VAR);g_diagIconRow=0u;g_diagIconPtr=0u;
     rec=dbc_row(SPELL_RECORDS_VAR,SPELL_COUNT_VAR,spellId);g_diagRow=rec;if(!rec)return 0;
+    if(dispelType)*dispelType=read32(rec+SPELL_DISPEL_OFF);
     locale=read32(LOCALE_INDEX);if(locale>8u)locale=0u;g_diagLocale=locale;
     namePtr=localized_name_ptr(rec,locale);g_diagNamePtr=namePtr;
     copy_text(name,NAME_CAP,namePtr);
@@ -209,7 +212,8 @@ static u32 collect(u32 obj,u32 *hashOut){
         spell=read32(fields+UNIT_AURA_OFF+slot*4u);h=hash_mix(h,spell);
         if(!spell)continue;
         if(count<POSITIVE_AURAS){
-            if(!spell_visual(spell,g_rows[count].name,g_rows[count].icon)){
+            u32 dispelType=0u;
+            if(!spell_visual(spell,g_rows[count].name,g_rows[count].icon,&dispelType)){
                 char *np=g_rows[count].name,*ne=g_rows[count].name+NAME_CAP;
                 np=cat(np,ne,"Spell ");np=num(np,ne,spell);*np=0;
             }
@@ -222,6 +226,7 @@ static u32 collect(u32 obj,u32 *hashOut){
                 g_rows[count].spellId=spell;
                 g_rows[count].rawSlot=slot;
                 g_rows[count].applications=(rawApplications<255u)?(rawApplications+1u):1u;
+                g_rows[count].dispelType=dispelType;
                 ++count;
             }
         }
@@ -231,7 +236,7 @@ static u32 collect(u32 obj,u32 *hashOut){
 static char *append_setup(char *p,char *end){
     p=cat(p,end,"if not W112AuraReveal and TargetFrame and TargetFrameBuff1 then W112AuraReveal={};for i=1,32 do local b=CreateFrame('Button','W112AuraRevealBuff'..i,TargetFrame);b:SetWidth(21);b:SetHeight(21);local t=b:CreateTexture(nil,'ARTWORK');t:SetAllPoints(b);b.icon=t;");
     p=cat(p,end,"if i==1 then b:SetPoint('TOPLEFT',TargetFrameBuff1,'TOPLEFT',0,0);elseif math.mod(i-1,6)==0 then b:SetPoint('TOPLEFT',getglobal('W112AuraRevealBuff'..(i-6)),'BOTTOMLEFT',0,-2);else b:SetPoint('LEFT',getglobal('W112AuraRevealBuff'..(i-1)),'RIGHT',3,0);end;");
-    p=cat(p,end,"b:SetScript('OnEnter',function() GameTooltip:SetOwner(this,'ANCHOR_BOTTOMRIGHT',15,-25);GameTooltip:SetText(this.spellName or '');local d=W112AuraRevealDiag;if d and d.spellId==this.spellId and string.sub(this.spellName or '',1,6)=='Spell ' then GameTooltip:AddLine('DBC row='..tostring(d.row or 0)..' name='..tostring(d.namePtr or 0),1,0.82,0,1);GameTooltip:AddLine('table='..tostring(d.table or 0)..' count='..tostring(d.count or 0),0.8,0.8,0.8,1);end;GameTooltip:Show();end);b:SetScript('OnLeave',function() GameTooltip:Hide();end);b:Hide();W112AuraReveal[i]=b;end;end;");
+    p=cat(p,end,"b:SetScript('OnEnter',function() GameTooltip:SetOwner(this,'ANCHOR_BOTTOMRIGHT',15,-25);GameTooltip:SetText(this.spellName or '');if this.dispelType==1 then GameTooltip:AddLine('Dispel: Magic',0.25,0.75,1,1);end;local d=W112AuraRevealDiag;if d and d.spellId==this.spellId and string.sub(this.spellName or '',1,6)=='Spell ' then GameTooltip:AddLine('DBC row='..tostring(d.row or 0)..' name='..tostring(d.namePtr or 0),1,0.82,0,1);GameTooltip:AddLine('table='..tostring(d.table or 0)..' count='..tostring(d.count or 0),0.8,0.8,0.8,1);end;GameTooltip:Show();end);b:SetScript('OnLeave',function() GameTooltip:Hide();end);b:Hide();W112AuraReveal[i]=b;end;end;");
     return p;
 }
 static void publish(u32 count,u32 targetLo,u32 targetHi){
@@ -246,16 +251,17 @@ static void publish(u32 count,u32 targetLo,u32 targetHi){
     p=cat(p,end,",iconRow=");p=num(p,end,g_diagIconRow);p=cat(p,end,",iconPtr=");p=num(p,end,g_diagIconPtr);p=cat(p,end,"};");
     p=cat(p,end,"W112NativeTargetBuffs={count=");p=num(p,end,count);
     p=cat(p,end,",targetLo=");p=num(p,end,targetLo);p=cat(p,end,",targetHi=");p=num(p,end,targetHi);
-    p=cat(p,end,",hostile=(UnitExists('target') and UnitIsEnemy('player','target')) and 1 or 0,bySpell={},byName={}};");
+    p=cat(p,end,",hostile=(UnitExists('target') and UnitIsEnemy('player','target')) and 1 or 0,hasMagic=0,bySpell={},byName={}};");
     p=cat(p,end,"if W112AuraReveal then local hostile=W112NativeTargetBuffs.hostile==1;for i=1,32 do W112AuraReveal[i]:Hide();end;if hostile then MAX_TARGET_BUFFS=0;for i=1,5 do local b=getglobal('TargetFrameBuff'..i);if b then b:Hide();end;end;");
-    for(i=0u;i<count&&p+256<end;++i){
+    for(i=0u;i<count&&p+320<end;++i){
         p=cat(p,end,"local r={spellId=");p=num(p,end,g_rows[i].spellId);
         p=cat(p,end,",rawSlot=");p=num(p,end,g_rows[i].rawSlot);
         p=cat(p,end,",applications=");p=num(p,end,g_rows[i].applications);
+        p=cat(p,end,",dispelType=");p=num(p,end,g_rows[i].dispelType);
         p=cat(p,end,",name=");p=lua_q(p,end,g_rows[i].name);
         p=cat(p,end,",texture=");p=lua_q(p,end,g_rows[i].icon);
-        p=cat(p,end,"};W112NativeTargetBuffs[");p=num(p,end,i+1u);p=cat(p,end,"]=r;W112NativeTargetBuffs.bySpell[r.spellId]=r;W112NativeTargetBuffs.byName[r.name]=r;");
-        p=cat(p,end,"W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=r.name;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(r.texture);W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"]:Show();");
+        p=cat(p,end,"};W112NativeTargetBuffs[");p=num(p,end,i+1u);p=cat(p,end,"]=r;W112NativeTargetBuffs.bySpell[r.spellId]=r;W112NativeTargetBuffs.byName[r.name]=r;if r.dispelType==1 then W112NativeTargetBuffs.hasMagic=1 end;");
+        p=cat(p,end,"W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=r.name;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].dispelType=r.dispelType;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(r.texture);W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"]:Show();");
     }
     p=cat(p,end,"else MAX_TARGET_BUFFS=5;if TargetDebuffButton_Update then TargetDebuffButton_Update();end;end;end;if lazyScript then lazyScript.nativeTargetBuffs=W112NativeTargetBuffs;end");
     *p=0;run(g_lua,"WoWTargetAuraReveal");
