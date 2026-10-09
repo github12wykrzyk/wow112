@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "summonscout-fleet-counter-hot-cap-v1",
   "goal": "Restore safe native HOT fanout payload headroom after Fleet Counter integration without changing runtime behavior.",
-  "branch": "fix/summonscout-fleet-counter-hot-cap-v1",
+  "branch": "feature/summonscout-fleet-counter-hot-cap-v1",
   "base_parallel_sha": "6bf60592028cbcdccaf3e3c47938a864b2192900",
   "status": "preflight",
   "auto_integrate": false,
