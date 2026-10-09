@@ -49,7 +49,19 @@ fn configured_summoner_names() -> Vec<String> {
 }
 
 fn fixed_slave_master(player_name: &str) -> Option<&'static str> {
-    if player_name.eq_ignore_ascii_case("winterone")
+    if player_name.eq_ignore_ascii_case("silione")
+        || player_name.eq_ignore_ascii_case("silitwo")
+    {
+        Some("kalisum")
+    } else if player_name.eq_ignore_ascii_case("hyjaluno")
+        || player_name.eq_ignore_ascii_case("hyjalone")
+    {
+        Some("bolthyjal")
+    } else if player_name.eq_ignore_ascii_case("hydratwo")
+        || player_name.eq_ignore_ascii_case("hydraone")
+    {
+        Some("feltaxi")
+    } else if player_name.eq_ignore_ascii_case("winterone")
         || player_name.eq_ignore_ascii_case("wintertwoo")
     {
         Some("taxiwinter")
