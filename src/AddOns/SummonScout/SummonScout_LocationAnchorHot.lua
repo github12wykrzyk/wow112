@@ -2,19 +2,30 @@
 --
 -- Exact aliases remain authoritative. This hot module augments every location
 -- with a short, distinctive anchor derived from its dictionary aliases/ID and
--- makes root matching substring-based. P0.2 consumes only the explicit Engine
--- V2 API; legacy upvalue access is owned by EngineV2FoundationHot.
+-- makes root matching substring-based. It may also install narrowly-scoped live
+-- exact aliases for customer shorthand observed in production.
+-- P0.2 consumes only the explicit Engine V2 API; legacy upvalue access is owned
+-- by EngineV2FoundationHot.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "2-explicit-api-anchor-dict"
+local VERSION = "3-explicit-api-short-alias-dict"
 local S = H.GetState("locationanchor")
 S.nextPatchAt = tonumber(S.nextPatchAt) or 0
 S.lastFailure = S.lastFailure or ""
 S.generatedCount = tonumber(S.generatedCount) or 0
+S.addedAliasCount = tonumber(S.addedAliasCount) or 0
+
+-- Live customer wording seen on the Hydraxian summoner uses "hydra" as the
+-- destination name (for example "1 to hydra"). The canonical catalog used
+-- "hydrax" as its tolerant root, which does not match the shorter token.
+-- Keep this as an exact destination alias rather than broad substring matching.
+local EXTRA_EXACT_ALIASES = {
+    hydraxian = { "hydra" }
+}
 
 local function laNow()
     if GetTime then return GetTime() end
@@ -41,6 +52,33 @@ local function laResolveApi()
         return nil
     end
     return api
+end
+
+local function laInstallExtraAliases(locations)
+    if type(locations) ~= "table" then return 0 end
+
+    local added = 0
+    local i, j
+    for i = 1, table.getn(locations) do
+        local loc = locations[i]
+        local extras = type(loc) == "table" and EXTRA_EXACT_ALIASES[tostring(loc.id or "")] or nil
+        if type(extras) == "table" then
+            if type(loc.aliases) ~= "table" then loc.aliases = {} end
+            local existing = {}
+            for j = 1, table.getn(loc.aliases) do
+                existing[laNormalize(loc.aliases[j])] = true
+            end
+            for j = 1, table.getn(extras) do
+                local alias = laNormalize(extras[j])
+                if alias ~= "" and not existing[alias] then
+                    table.insert(loc.aliases, alias)
+                    existing[alias] = true
+                    added = added + 1
+                end
+            end
+        end
+    end
+    return added
 end
 
 local function laCandidateKey(token)
@@ -151,6 +189,7 @@ local function laPatch()
         return true
     end
 
+    S.addedAliasCount = laInstallExtraAliases(locations)
     S.generatedCount = laInstallRoots(locations)
     local ok, reason = api.InstallLocationRootMatcher(laAnchorHas)
     if not ok then
@@ -162,6 +201,7 @@ local function laPatch()
     S.patchedRootFn = laAnchorHas
     S.lastFailure = ""
     W112_SUMMONSCOUT_LOCATION_ANCHOR_ROOTS = S.generatedCount
+    W112_SUMMONSCOUT_LOCATION_EXTRA_ALIASES = S.addedAliasCount
     return true
 end
 
