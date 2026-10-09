@@ -1,5 +1,5 @@
 /*
- * PARALLEL read-only cast/channel + movement + target melee-range observer
+ * PARALLEL read-only cast/channel + movement + target range observer
  * for WoW 1.12.1 build 5875 x86.
  * LazyScript alone authorizes/dispatches gameplay actions.
  * Verified native address lineage: src/AutoKick/WoWAutoKick_5875_v3_SAFE_GUI.c
@@ -22,6 +22,7 @@ typedef int BOOL32;
 typedef void* HANDLE32;
 typedef void* HWND32;
 typedef u32 TIMER32;
+typedef union FloatBits { float f; u32 u; } FloatBits;
 typedef void (STDCALL *TimerProc)(HWND32,u32,TIMER32,u32);
 typedef TIMER32 (STDCALL *SetTimerFn)(HWND32,TIMER32,u32,TimerProc);
 typedef BOOL32 (STDCALL *KillTimerFn)(HWND32,TIMER32);
@@ -68,6 +69,7 @@ static u32 g_motionObject=0u,g_motionCandidate=0u,g_motionCandidateSince=0u;
 static u32 g_motionState=0u,g_motionKnown=0u,g_motionLastEmit=0u;
 static float g_previousX=0.0f,g_previousY=0.0f;
 static u32 g_meleeKnown=0u,g_meleeState=0u,g_meleeLastEmit=0u;
+static u32 g_rangeKnown=0u,g_rangeLastEmit=0u;
 
 static u32 read32(u32 a){return *(volatile u32*)(u32)a;}
 static float readf(u32 a){return *(volatile float*)(u32)a;}
@@ -176,7 +178,8 @@ static void observe_player_motion(u32 now){
  * Generic selected-target melee range for classes without a 5 yd spell probe.
  * The 1.12 client exposes combat reach in the unit descriptor. The classic
  * melee rule is both units' combat reach + ~1.333 yd, clamped to at least
- * 5 yd. We compare squared 3D world distance, so no CRT sqrt dependency.
+ * 5 yd. We also publish raw IEEE-754 bits for squared 3D center distance so
+ * Lua can evaluate arbitrary-yard criteria without introducing CRT helpers.
  */
 static void publish_melee(u32 state,u32 now){
     char lua[150],*p=lua;
@@ -191,17 +194,33 @@ static void clear_melee(u32 now){
     g_meleeKnown=0u;
     publish_melee(2u,now); /* any non-0/1 state clears Lua's sample */
 }
+static void publish_range(u32 squaredBits,u32 now){
+    char lua[170],*p=lua;
+    FrameScriptExecuteFn run=(FrameScriptExecuteFn)(u32)FRAME_EXECUTE;
+    p=cat(p,"if lazyScript and lazyScript.OnNativeTargetRangeSquared then lazyScript.OnNativeTargetRangeSquared(");
+    p=decimal(p,squaredBits);p=cat(p,") end");*p=0;
+    run(lua,"WoWCastObserverTargetRange");
+    g_rangeLastEmit=now;
+}
+static void clear_range(u32 now){
+    FrameScriptExecuteFn run=(FrameScriptExecuteFn)(u32)FRAME_EXECUTE;
+    if(!g_rangeKnown)return;
+    g_rangeKnown=0u;
+    run("if lazyScript and lazyScript.OnNativeTargetRangeSquared then lazyScript.OnNativeTargetRangeSquared(nil) end","WoWCastObserverTargetRange");
+    g_rangeLastEmit=now;
+}
 static void observe_target_melee(u32 now){
     u32 pobj=player_object(),tlo,thi,tobj,pdesc,tdesc,typeId,state;
     float px,py,pz,tx,ty,tz,pr,tr,reach,dx,dy,dz,d2;
-    if(!pobj){clear_melee(now);return;}
+    FloatBits rangeBits;
+    if(!pobj){clear_melee(now);clear_range(now);return;}
     tlo=read32(TARGET_GUID_LO);thi=read32(TARGET_GUID_HI);
     tobj=object_by_guid(tlo,thi);
-    if(!tobj){clear_melee(now);return;}
+    if(!tobj){clear_melee(now);clear_range(now);return;}
     typeId=read32(tobj+OBJ_TYPE_OFFSET);
-    if(typeId!=OBJECT_UNIT && typeId!=OBJECT_PLAYER){clear_melee(now);return;}
+    if(typeId!=OBJECT_UNIT && typeId!=OBJECT_PLAYER){clear_melee(now);clear_range(now);return;}
     pdesc=read32(pobj+OBJ_DESCRIPTOR_OFFSET);tdesc=read32(tobj+OBJ_DESCRIPTOR_OFFSET);
-    if(!valid_ptr(pdesc)||!valid_ptr(tdesc)){clear_melee(now);return;}
+    if(!valid_ptr(pdesc)||!valid_ptr(tdesc)){clear_melee(now);clear_range(now);return;}
 
     px=readf(pobj+PLAYER_X_OFFSET);py=readf(pobj+PLAYER_Y_OFFSET);pz=readf(pobj+PLAYER_Z_OFFSET);
     tx=readf(tobj+PLAYER_X_OFFSET);ty=readf(tobj+PLAYER_Y_OFFSET);tz=readf(tobj+PLAYER_Z_OFFSET);
@@ -209,12 +228,16 @@ static void observe_target_melee(u32 now){
     if(!valid_coord(px)||!valid_coord(py)||!valid_coord(pz)||
        !valid_coord(tx)||!valid_coord(ty)||!valid_coord(tz)||
        !valid_reach(pr)||!valid_reach(tr)){
-        clear_melee(now);return;
+        clear_melee(now);clear_range(now);return;
     }
 
     reach=pr+tr+BASE_MELEE_OFFSET;
     if(reach<BASE_MELEE_RANGE)reach=BASE_MELEE_RANGE;
     dx=px-tx;dy=py-ty;dz=pz-tz;d2=dx*dx+dy*dy+dz*dz;
+    if(!g_rangeKnown || (u32)(now-g_rangeLastEmit)>=100u){
+        rangeBits.f=d2;
+        g_rangeKnown=1u;publish_range(rangeBits.u,now);
+    }
     state=(d2<=reach*reach)?1u:0u;
     if(!g_meleeKnown || state!=g_meleeState || (u32)(now-g_meleeLastEmit)>=100u){
         g_meleeState=state;g_meleeKnown=1u;publish_melee(state,now);
@@ -229,12 +252,12 @@ static void STDCALL observe_timer(HWND32 hwnd,u32 msg,TIMER32 timer,u32 tick){
     now=current_tick();
     if(!world_ready()){
         g_inWorld=0u;g_readyAfter=0u;g_lastKind=0u;
-        g_motionKnown=0u;g_motionObject=0u;g_meleeKnown=0u;
+        g_motionKnown=0u;g_motionObject=0u;g_meleeKnown=0u;g_rangeKnown=0u;
         g_busy=0u;return;
     }
     if(!g_inWorld){
         g_inWorld=1u;g_readyAfter=now+750u;g_lastKind=0u;
-        g_motionKnown=0u;g_motionObject=0u;g_meleeKnown=0u;
+        g_motionKnown=0u;g_motionObject=0u;g_meleeKnown=0u;g_rangeKnown=0u;
         g_busy=0u;return;
     }
     if((s32)(now-g_readyAfter)<0){g_busy=0u;return;}
