@@ -4,7 +4,7 @@
   "goal": "Port OctoLogin-style auth endpoint selection into the native Windows headless portal worker: shared last-good cache, OctoWoW play/normal DNS candidates, bounded challenge probes and reconnect failover without loading WoW DLLs.",
   "branch": "feature/terminal-win-octologin-selector-v1",
   "base_parallel_sha": "54603ead1a4038fc4f67b33f7d758b274572a81a",
-  "status": "preflight",
+  "status": "ready_for_integration",
   "auto_integrate": true,
   "modules": [
     "WindowsHeadlessPortal",
