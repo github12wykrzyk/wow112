@@ -7,6 +7,7 @@ on:
       - parallel
       - feature/native-windows-portal-clicker-v1
       - fix/terminal-win-canonical-ci-gate-v1
+      - hotfix/terminal-win-world-entry-retry-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_windows_headless_probe.yml'
