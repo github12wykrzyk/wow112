@@ -99,6 +99,61 @@ jobs:
 
           Set-Content -Path $path -Value $text -Encoding UTF8
 
+      - name: Expose and synchronize TERMINAL WIN updates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nl = [Environment]::NewLine
+
+          $terminalPath = 'tools/updater/UpdaterWindowsTerminalPortalFeature.cs'
+          $terminal = Get-Content $terminalPath -Raw
+
+          $oldInfo = '                        Text = "Windows native V1: bez Androida/ADB, osobny proces + PID/log na konto, pierwsza postać automatycznie, portal click + reconnect. Zamknięcie tego okna NIE zatrzymuje workerów. Realm: " + realm'
+          $newInfo = '                        Text = "WORKER " + bundle.GitSha.Substring(0, Math.Min(8, bundle.GitSha.Length)) + " • " + bundle.Sha256.Substring(0, Math.Min(12, bundle.Sha256.Length)) + "… • Realm: " + realm + "\r\nWindows native: bez Androida/ADB • PID/log per konto • portal click + reconnect • zamknięcie okna nie zatrzymuje workerów."'
+          if (-not $terminal.Contains($oldInfo)) { throw 'Expected TERMINAL WIN dialog info line not found' }
+          $terminal = $terminal.Replace($oldInfo, $newInfo)
+
+          $oldTokenGuard = '            if (string.IsNullOrWhiteSpace(token.Text))'
+          $newTokenGuard = '            if (false && string.IsNullOrWhiteSpace(token.Text)) // anonymous latest-check allowed; stale cache may not start silently'
+          if (-not $terminal.Contains($oldTokenGuard)) { throw 'Expected TERMINAL WIN no-token guard not found' }
+          $terminal = $terminal.Replace($oldTokenGuard, $newTokenGuard)
+
+          $oldFallback = '                    Log("TERMINAL WIN: update check FAILED; używam zweryfikowanego cache " + cached.GitSha.Substring(0, 8) + ": " + ShortTerminalText(ex.Message, 160));' + $nl + '                    return cached;'
+          $newFallback = '                    throw new InvalidOperationException("TERMINAL WIN: nie mogę potwierdzić aktualności cache " + cached.GitSha.Substring(0, 8) + ". Worker NIE ZOSTAŁ uruchomiony. " + ShortTerminalText(ex.Message, 160), ex);'
+          if (-not $terminal.Contains($oldFallback)) { throw 'Expected TERMINAL WIN stale-cache fallback not found' }
+          $terminal = $terminal.Replace($oldFallback, $newFallback)
+
+          $oldStale = '                if (cachedValid)' + $nl + '                    Log("TERMINAL WIN: CACHE STALE " + cached.GitSha.Substring(0, 8) + " -> " + runSha.Substring(0, Math.Min(8, runSha.Length)) + "; pobieram aktualny worker.");'
+          $newStale = '                if (string.IsNullOrWhiteSpace(token.Text))' + $nl + '                {' + $nl + '                    var currentSha = cachedValid ? cached.GitSha.Substring(0, Math.Min(8, cached.GitSha.Length)) : "BRAK CACHE";' + $nl + '                    throw new InvalidOperationException("TERMINAL WIN UPDATE AVAILABLE: CURRENT " + currentSha + " -> LATEST " + runSha.Substring(0, Math.Min(8, runSha.Length)) + ". Wpisz token GitHub i użyj głównego Update. Stary worker nie zostanie uruchomiony.");' + $nl + '                }' + $nl + $oldStale
+          if (-not $terminal.Contains($oldStale)) { throw 'Expected TERMINAL WIN stale-cache marker not found' }
+          $terminal = $terminal.Replace($oldStale, $newStale)
+          Set-Content -Path $terminalPath -Value $terminal -Encoding UTF8
+
+          $corePath = 'tools/updater/WoW112Updater.cs'
+          $core = Get-Content $corePath -Raw
+          $oldAuth = '            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Text.Trim());'
+          $newAuth = '            if (!string.IsNullOrWhiteSpace(token.Text))' + $nl + '                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Text.Trim());'
+          if (-not $core.Contains($oldAuth)) { throw 'Expected GitHub Authorization header line not found' }
+          $core = $core.Replace($oldAuth, $newAuth)
+
+          $oldCheckTail = '                    Log("Nowy artefakt jest dostępny, ale SHA256 EXE, DLL i dodatków już są zgodne.");' + $nl + '                }'
+          $newCheckTail = $oldCheckTail + $nl + '                try' + $nl + '                {' + $nl + '                    var terminalBundle = await EnsureTerminalWindowsBinaryAsync();' + $nl + '                    var terminalShort = terminalBundle.GitSha.Substring(0, Math.Min(8, terminalBundle.GitSha.Length));' + $nl + '                    status.Text += " • TERMINAL WIN " + terminalShort;' + $nl + '                    Log("TERMINAL WIN CHECK: CURRENT " + terminalShort + " / " + terminalBundle.Sha256.Substring(0, Math.Min(12, terminalBundle.Sha256.Length)) + "…");' + $nl + '                }' + $nl + '                catch (Exception terminalCheckError)' + $nl + '                {' + $nl + '                    status.Text += " • TERMINAL WIN: BŁĄD";' + $nl + '                    Log("TERMINAL WIN CHECK ERROR: " + terminalCheckError.Message);' + $nl + '                }'
+          if (-not $core.Contains($oldCheckTail)) { throw 'Expected updater CHECK tail not found' }
+          $core = $core.Replace($oldCheckTail, $newCheckTail)
+
+          $oldUpdateTail = '                TrimBackups(gameDir.Text.Trim(), MaxBackups);' + $nl + '                RefreshLocalState();'
+          $newUpdateTail = '                TrimBackups(gameDir.Text.Trim(), MaxBackups);' + $nl + '                try' + $nl + '                {' + $nl + '                    var terminalBundle = await EnsureTerminalWindowsBinaryAsync();' + $nl + '                    var terminalShort = terminalBundle.GitSha.Substring(0, Math.Min(8, terminalBundle.GitSha.Length));' + $nl + '                    status.Text += " • TERMINAL WIN " + terminalShort;' + $nl + '                    Log("TERMINAL WIN UPDATE: CURRENT " + terminalShort + " / " + terminalBundle.Sha256.Substring(0, Math.Min(12, terminalBundle.Sha256.Length)) + "…");' + $nl + '                }' + $nl + '                catch (Exception terminalUpdateError)' + $nl + '                {' + $nl + '                    status.Text += " • TERMINAL WIN: BŁĄD";' + $nl + '                    Log("TERMINAL WIN UPDATE ERROR: " + terminalUpdateError.Message);' + $nl + '                }' + $nl + '                RefreshLocalState();'
+          if (-not $core.Contains($oldUpdateTail)) { throw 'Expected updater UPDATE tail not found' }
+          $core = $core.Replace($oldUpdateTail, $newUpdateTail)
+          Set-Content -Path $corePath -Value $core -Encoding UTF8
+
+          $versionPath = 'tools/updater/UpdaterSafety.cs'
+          $version = Get-Content $versionPath -Raw
+          $oldVersion = '        public const string Version = "2.10-parallel.4";'
+          $newVersion = '        public const string Version = "2.10-parallel.5";'
+          if (-not $version.Contains($oldVersion)) { throw 'Expected updater version 2.10-parallel.4 not found' }
+          Set-Content -Path $versionPath -Value ($version.Replace($oldVersion, $newVersion)) -Encoding UTF8
+
       - name: Compile WinForms updater and bootstrap x86
         shell: pwsh
         run: |
