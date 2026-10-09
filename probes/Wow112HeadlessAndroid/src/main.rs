@@ -4,11 +4,13 @@ use std::thread;
 use std::time::Duration;
 
 mod auth;
+mod auth_endpoint;
 mod wire_build;
 mod world_poc05_retry;
 mod world_portal;
 mod world_tele;
 
+use auth_endpoint::AuthEndpointSelector;
 use wire_build::OCTOWOW_WIRE_BUILD;
 
 const DEFAULT_AUTH_ADDR: &str = "play.octowow.st:3724";
@@ -57,6 +59,14 @@ fn is_transient_network_error(error: &str) -> bool {
         "connection refused",
         "world socket closed",
         "world keepalive pong timeout",
+        "auth endpoint selection failed",
+        "auth endpoint selected",
+        "read auth challenge failed",
+        "write auth challenge failed",
+        "read auth proof failed",
+        "write auth proof failed",
+        "read realm-list failed",
+        "write realm-list request failed",
     ]
     .iter()
     .any(|needle| error.contains(needle))
@@ -70,6 +80,7 @@ fn run() -> Result<(), String> {
         .map_err(|_| "missing WOW112_PASSWORD".to_string())?;
     let auth_addr = env::var("WOW112_AUTH_ADDR")
         .unwrap_or_else(|_| DEFAULT_AUTH_ADDR.to_string());
+    let mut auth_selector = AuthEndpointSelector::new(&auth_addr)?;
     let character_name = env::var("WOW112_CHARACTER").ok();
     let mode = env::var("WOW112_MODE")
         .unwrap_or_else(|_| "poc05".to_string())
@@ -116,7 +127,7 @@ fn run() -> Result<(), String> {
     for attempt in 1..=reconnect_limit {
         println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
         match run_session(
-            &auth_addr,
+            &mut auth_selector,
             realm_index,
             &username,
             &password,
@@ -146,7 +157,7 @@ fn run() -> Result<(), String> {
 }
 
 fn run_session(
-    auth_addr: &str,
+    auth_selector: &mut AuthEndpointSelector,
     realm_index: usize,
     username: &str,
     password: &str,
@@ -155,11 +166,21 @@ fn run_session(
     mode: &str,
     mail_mutation_committed: &mut bool,
 ) -> Result<(), String> {
-    println!("[AUTH] connecting to {auth_addr}");
+    let (mut auth_stream, selected_auth_addr) = auth_selector.connect()?;
+    println!("[AUTH] connecting selected endpoint {selected_auth_addr}");
 
-    let mut auth_stream = TcpStream::connect(auth_addr)
-        .map_err(|e| format!("auth connect {auth_addr} failed: {e}"))?;
-    let (session_key, realms) = auth::authenticate(&mut auth_stream, username, password)?;
+    let (session_key, realms) = match auth::authenticate(&mut auth_stream, username, password) {
+        Ok(result) => {
+            auth_selector.mark_good(selected_auth_addr);
+            result
+        }
+        Err(error) => {
+            if is_transient_network_error(&error) {
+                auth_selector.mark_failed(selected_auth_addr);
+            }
+            return Err(error);
+        }
+    };
 
     if realms.realms.is_empty() {
         return Err("auth succeeded but realm list is empty".to_string());
