@@ -1,8 +1,9 @@
 -- Tanaris fleet/routing integration for SummonScout / WoW 1.12.1 Lua 5.0.
 -- Core location parsing already contains Tanaris; this module fills fleet/runtime gaps.
+-- Cold-loaded intentionally so configuration/fleet state does not consume HOT watcher payload.
 local H=W112_SUMMONSCOUT_HOT
 if not H or type(H.Register)~="function" or type(H.GetState)~="function" then return end
-local VERSION="1-tanaris-full-service"
+local VERSION="2-tanaris-full-service-cold"
 local S=H.GetState("tanarisfullservice")
 local TANARIS="tanaris"
 

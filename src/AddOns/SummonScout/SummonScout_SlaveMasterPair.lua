@@ -1,9 +1,10 @@
 -- SummonScout fixed slave <-> master party ownership for WoW 1.12.1 / Lua 5.0.
 -- Explicit, fail-closed character ownership. Tanaris is master-initiated by design.
+-- Cold-loaded intentionally: fixed ownership is configuration/state policy, not HOT fanout payload.
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "5-tanaris-master-owned"
+local VERSION = "6-tanaris-master-owned-cold"
 local WATCH_INTERVAL = 2.00
 local INVITE_COOLDOWN = 5.00
 local PROMOTE_COOLDOWN = 2.00
@@ -30,7 +31,6 @@ local MASTER_SLAVE_LIST = {
     taxiwinter={"Winterone","Wintertwoo"},
     teletanaris={"Tanarisone","Tanaristwo"},
 }
--- Tanaris uses the requested topology: Master actively owns bootstrap and repairs.
 local MASTER_INITIATED = { teletanaris=true }
 
 local S=H.GetState("slavemasterpairs")
@@ -113,7 +113,6 @@ local function watchdog()
     local player=key(me()); local master=SLAVE_TO_MASTER[player]
     if master then
         S.lastRole="slave"; S.lastOwner=master
-        -- Tanaris is master-initiated to avoid crossing invites; old pairs keep legacy bootstrap.
         if not grouped() then
             if key(master)~="teletanaris" then inviteMaster(master) end
             return

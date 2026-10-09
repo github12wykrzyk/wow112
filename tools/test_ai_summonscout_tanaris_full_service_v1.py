@@ -10,8 +10,8 @@ class TanarisFullServiceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.core=(ADDON/"SummonScout.lua").read_text(encoding="utf-8")
-        cls.pairs=(ADDON/"SummonScout_SlaveMasterPairHot.lua").read_text(encoding="utf-8")
-        cls.tanaris=(ADDON/"SummonScout_TanarisFullServiceHot.lua").read_text(encoding="utf-8")
+        cls.pairs=(ADDON/"SummonScout_SlaveMasterPair.lua").read_text(encoding="utf-8")
+        cls.tanaris=(ADDON/"SummonScout_TanarisFullService.lua").read_text(encoding="utf-8")
         cls.hub=(ADDON/"SummonScout_FallbackRouterHubAckHot.lua").read_text(encoding="utf-8")
         cls.toc=(ADDON/"SummonScout.toc").read_text(encoding="utf-8").splitlines()
 
@@ -19,7 +19,7 @@ class TanarisFullServiceTests(unittest.TestCase):
         self.assertIn('id="tanaris", label="Tanaris"', self.core)
 
     def test_pair_module_loaded_and_owns_both_tanaris_slaves(self):
-        self.assertIn("SummonScout_SlaveMasterPairHot.lua", self.toc)
+        self.assertIn("SummonScout_SlaveMasterPair.lua", self.toc)
         self.assertIn('tanarisone="Teletanaris"', self.pairs)
         self.assertIn('tanaristwo="Teletanaris"', self.pairs)
         self.assertIn('teletanaris={"Tanarisone","Tanaristwo"}', self.pairs)
@@ -44,7 +44,7 @@ class TanarisFullServiceTests(unittest.TestCase):
 
     def test_tanaris_fleet_patch_is_loaded_after_coordinator(self):
         fleet=self.toc.index("SummonScout_FleetCounterCoordinator.lua")
-        patch=self.toc.index("SummonScout_TanarisFullServiceHot.lua")
+        patch=self.toc.index("SummonScout_TanarisFullService.lua")
         self.assertGreater(patch,fleet)
         self.assertIn('C.EXPECTED={"hydraxian","hyjal","winterspring","silithus","tanaris"}', self.tanaris)
         self.assertIn('C.ALLOWED.tanaris=true', self.tanaris)
@@ -58,6 +58,12 @@ class TanarisFullServiceTests(unittest.TestCase):
     def test_pair_slaves_are_never_customer_invite_targets(self):
         self.assertIn("inviteBlacklist.tanarisone", self.pairs)
         self.assertIn("inviteBlacklist.tanaristwo", self.pairs)
+
+    def test_delivery_is_cold_loaded_not_hot_fanout(self):
+        self.assertNotIn("SummonScout_SlaveMasterPairHot.lua", self.toc)
+        self.assertNotIn("SummonScout_TanarisFullServiceHot.lua", self.toc)
+        self.assertIn("Cold-loaded intentionally", self.pairs)
+        self.assertIn("Cold-loaded intentionally", self.tanaris)
 
     def test_lua50_safety(self):
         for text in (self.pairs,self.tanaris,self.hub):
