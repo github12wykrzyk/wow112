@@ -17,6 +17,8 @@ const DEFAULT_AUTH_ADDR: &str = "play.octowow.st:3724";
 const DEFAULT_SOAK_SECONDS: u64 = 60;
 const DEFAULT_RECONNECT_LIMIT: u32 = 60;
 const DEFAULT_REALM_INDEX: usize = 1;
+const PORTAL_MIN_RECONNECT_LIMIT: u32 = 600;
+const PORTAL_MIN_RECONNECT_DELAY_MS: u64 = 1000;
 
 fn main() {
     if let Err(error) = run() {
@@ -86,14 +88,6 @@ fn run() -> Result<(), String> {
         .unwrap_or_else(|_| "poc05".to_string())
         .trim()
         .to_ascii_lowercase();
-    let realm_index = env::var("WOW112_REALM_INDEX")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_REALM_INDEX);
-    let soak_seconds = parse_env_u64("WOW112_SOAK_SECONDS", DEFAULT_SOAK_SECONDS)?;
-    let reconnect_limit = parse_env_u32("WOW112_RECONNECT_LIMIT", DEFAULT_RECONNECT_LIMIT)?.max(1);
-    let reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
-    let mut mail_mutation_committed = false;
 
     if !matches!(mode.as_str(), "poc05" | "portal" | "portal-clicker" | "clicker" | "tele" | "tele-sniffer" | "whisper-sniffer") {
         return Err(format!("unsupported WOW112_MODE={mode:?}"));
@@ -101,6 +95,35 @@ fn run() -> Result<(), String> {
     let portal_mode = matches!(mode.as_str(), "portal" | "portal-clicker" | "clicker");
     let tele_mode = matches!(mode.as_str(), "tele" | "tele-sniffer" | "whisper-sniffer");
     let mode_label = if tele_mode { "tele-sniffer" } else if portal_mode { "portal-clicker" } else { "poc05" };
+
+    let realm_index = env::var("WOW112_REALM_INDEX")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_REALM_INDEX);
+    let soak_seconds = parse_env_u64("WOW112_SOAK_SECONDS", DEFAULT_SOAK_SECONDS)?;
+    let requested_reconnect_limit = parse_env_u32("WOW112_RECONNECT_LIMIT", DEFAULT_RECONNECT_LIMIT)?.max(1);
+    let requested_reconnect_delay_ms = parse_env_u64("WOW112_RECONNECT_DELAY_MS", 0)?;
+    let reconnect_limit = if portal_mode {
+        requested_reconnect_limit.max(PORTAL_MIN_RECONNECT_LIMIT)
+    } else {
+        requested_reconnect_limit
+    };
+    let reconnect_delay_ms = if portal_mode {
+        requested_reconnect_delay_ms.max(PORTAL_MIN_RECONNECT_DELAY_MS)
+    } else {
+        requested_reconnect_delay_ms
+    };
+    let mut mail_mutation_committed = false;
+
+    if portal_mode && (requested_reconnect_limit != reconnect_limit || requested_reconnect_delay_ms != reconnect_delay_ms) {
+        println!(
+            "[RESILIENCE] portal reconnect guard applied requested_limit={} requested_delay_ms={} effective_limit={} effective_delay_ms={}",
+            requested_reconnect_limit,
+            requested_reconnect_delay_ms,
+            reconnect_limit,
+            reconnect_delay_ms
+        );
+    }
 
     println!(
         "[WOW112-ANDROID-PROBE] binary-build=5875 wire-build={} protocol=vanilla target=headless mode={}",

@@ -104,6 +104,19 @@ impl AuthEndpointSelector {
             return Ok((stream, peer));
         }
 
+        // A failed address is excluded only inside one endpoint-selection pass.  A full
+        // reconnect is a new observation window: an endpoint that was unavailable a
+        // moment ago may already be healthy again.  Keeping this set across reconnects
+        // poisoned the process after one bad sweep and made the remaining retries spin
+        // immediately with "no usable candidates remain".
+        if !self.failed.is_empty() {
+            println!(
+                "[AUTH-SELECT] new reconnect pass: clearing {} transient endpoint penalties",
+                self.failed.len()
+            );
+            self.failed.clear();
+        }
+
         let shared_cache = self.read_cache();
         let trusted = self.last_good.or_else(|| shared_cache.map(|entry| entry.0));
         if let Some(addr) = trusted {
@@ -247,7 +260,7 @@ impl AuthEndpointSelector {
         if self.last_good == Some(addr) {
             self.last_good = None;
         }
-        println!("[AUTH-SELECT] endpoint penalized for this process addr={addr}");
+        println!("[AUTH-SELECT] endpoint penalized for current selection pass addr={addr}");
     }
 
     fn resolve_candidates(&self) -> Result<Vec<SocketAddr>, String> {
