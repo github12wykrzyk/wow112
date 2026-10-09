@@ -28,17 +28,19 @@ jobs:
           from pathlib import Path
           path = Path('probes/Wow112HeadlessAndroid/src/world_portal.rs')
           text = path.read_text(encoding='utf-8')
-          old = '''    if members.iter().any(|member| member.guid == leader_guid) {
-              return Ok(());
-          }
-          '''
-          new = '''    if members.iter().any(|member| member.guid == leader_guid) {
-              if auto_invite_missing {
-                  *last_invite = None;
-              }
-              return Ok(());
-          }
-          '''
+          old = (
+              "    if members.iter().any(|member| member.guid == leader_guid) {\n"
+              "        return Ok(());\n"
+              "    }\n"
+          )
+          new = (
+              "    if members.iter().any(|member| member.guid == leader_guid) {\n"
+              "        if auto_invite_missing {\n"
+              "            *last_invite = None;\n"
+              "        }\n"
+              "        return Ok(());\n"
+              "    }\n"
+          )
           count = text.count(old)
           if count != 1:
               raise SystemExit(f'expected exact nonleader block once, found {count}')
