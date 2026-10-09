@@ -45,7 +45,9 @@ local function boxFor(summoner)
 end
 local function route(box)
  if not box then return false end
- local sid=trim(box.W112RelaySid or ""), s=trim(box.W112RelaySummoner or ""), c=trim(box.W112RelayCustomer or "")
+ local sid=trim(box.W112RelaySid or "")
+ local s=trim(box.W112RelaySummoner or "")
+ local c=trim(box.W112RelayCustomer or "")
  if sid=="" or s=="" or c=="" then return false end
  local text=trim(box.GetText and box:GetText() or ""); if text=="" then if box.SetText then box:SetText("") end; return true end
  if string.sub(text,1,1)=="/" then return false end
@@ -86,7 +88,10 @@ local function begin(sender,f)
  W.chunks[low(sender).."|"..sid]={sender=sender,sid=sid,customer=c,seq=f[7] or "0",count=count,p={},at=now()}; return true
 end
 local function part(sender,f)
- local sid=f[1] or "", idx=tonumber(f[2]) or 0, k=low(sender).."|"..sid; local x=W.chunks[k]
+ local sid=f[1] or ""
+ local idx=tonumber(f[2]) or 0
+ local k=low(sender).."|"..sid
+ local x=W.chunks[k]
  if type(x)~="table" or not same(x.sender,sender) or idx<1 or idx>x.count then return true end; x.p[idx]=f[3] or ""
  for i=1,x.count do if x.p[i]==nil then return true end end
  local raw=""; for i=1,x.count do raw=raw..x.p[i] end; W.chunks[k]=nil; return show(sender,x.sid,x.customer,x.seq,raw,false)
