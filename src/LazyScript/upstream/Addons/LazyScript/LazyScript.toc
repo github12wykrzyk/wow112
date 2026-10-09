@@ -29,6 +29,7 @@ HotfixStopChannel.lua
 NativeMeleeRange.lua
 ParseBuffs.lua
 NativeMagicDispel.lua
+SearingReplant.lua
 Tooltip.lua
 LazyScript.xml
 Bindings.xml
