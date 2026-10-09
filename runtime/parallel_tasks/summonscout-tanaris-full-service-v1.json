@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-tanaris-full-service-v1",
+  "goal": "Add Tanaris as a full SummonScout fleet destination and bind Tanarisone/Tanaristwo as fixed slaves owned by Teletanaris, including master-initiated party bootstrap, trusted invite acceptance, leader handoff, fallback routing and five-destination fleet coordination.",
+  "branch": "feature/tanaris-full-service-pairs-v1",
+  "base_parallel_sha": "eb68b902d8469a779f196dcae08156e3e10875f4",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "SummonScout fixed master/slave party ownership",
+    "SummonScout fallbackrouter directory",
+    "SummonScout SSFR1 provider ownership",
+    "SummonScout fleet counter service coverage"
+  ],
+  "status": "preflight",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Core Tanaris location parsing already exists and is reused. Account credentials remain local in the updater DPAPI vault and are not committed to the public repository."
+}
