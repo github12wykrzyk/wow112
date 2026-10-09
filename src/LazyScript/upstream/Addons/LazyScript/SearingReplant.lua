@@ -68,7 +68,7 @@ if lazyScript and lazyScript.bitParsers and lazyScript.masks then
 		if not at or moving == nil then return nil end
 		local age = now - at
 		if age < 0 or age > NATIVE_MOVEMENT_MAX_AGE then return nil end
-		return moving == 1
+		return moving == 1 or moving == true
 	end
 
 	local function updateMovement(now)
@@ -103,7 +103,7 @@ if lazyScript and lazyScript.bitParsers and lazyScript.masks then
 	local function targetSuitableForReplant()
 		if not UnitExists("target") then return false end
 		if UnitIsDead and UnitIsDead("target") then return false end
-		if UnitCanAttack and UnitCanAttack("player", "target") ~= 1 then return false end
+		if UnitCanAttack and not UnitCanAttack("player", "target") then return false end
 		-- Replant only when the new totem has a reasonable chance to engage.
 		if CheckInteractDistance and not CheckInteractDistance("target", 4) then return false end
 		return true
