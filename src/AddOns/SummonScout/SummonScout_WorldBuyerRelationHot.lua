@@ -1,13 +1,3 @@
--- Relation-based World buyer summon canonicalizer for WoW 1.12.1 / Lua 5.0.
---
--- Goal: stop chasing individual word-order corner cases. A World line is treated
--- as summon demand from the relation between buyer intent, one known destination
--- and travel intent, not from one exact phrase such as "lf summon".
---
--- The module remains fail-closed for seller/recruitment/multi-destination traffic.
--- It also relaxes the legacy 120s World invite dedupe only for a confirmed buyer
--- relation: the same player may be re-invited after 8s if they are still asking.
-
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
@@ -16,6 +6,7 @@ end
 local VERSION = "2-relation-matrix-reinvite8"
 local S = H.GetState("worldbuyerrelation")
 local REINVITE_SECONDS = 8
+local REINVITE_DEBUG_TAG = "reinvite-dedupe-reset"
 
 local function brNow()
     if GetTime then return GetTime() end
@@ -236,14 +227,10 @@ local function brRelation(api, message)
     local question = string.find(raw, "?", 1, true) ~= nil
     local price = brHasPrice(normalized)
 
-    -- Strong buyer wording + a known destination is enough on a configured
-    -- destination-specific summoner, even if the player omits "summon".
     if buyer and (travel or brSpecificServiceContains(locations[1].id)) then
         return true, locations, travel and "buyer+travel" or "buyer+served-destination"
     end
 
-    -- Compact natural World shorthand such as "Hyjal summon", "summ Hyjal?",
-    -- "port hyjal" or typo variants. Price-only short lines stay fail-closed.
     if travel and not price and (question or short) then
         return true, locations, question and "travel-question" or "short-travel"
     end
@@ -260,7 +247,6 @@ local function brCanonicalize(api, message)
         return message, false, locations, reason, true
     end
 
-    -- Internal lexical bridge only; the original chat line is never re-sent.
     return tostring(message or "") .. " lf summon", true, locations, reason, true
 end
 
@@ -316,7 +302,7 @@ local function brInstall()
                 DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r relation="
                     .. tostring(reason or "?") .. " -> " .. tostring(sender or "?")
                     .. " [" .. tostring(loc and (loc.label or loc.id) or "?") .. "]"
-                    .. (relaxed and " reinvite-dedupe-reset" or ""))
+                    .. (relaxed and (" " .. REINVITE_DEBUG_TAG) or ""))
             end
         end
 
@@ -337,8 +323,6 @@ function M.Init()
 end
 
 function M.Shutdown()
-    -- RosterOwnership may legitimately wrap this handler after load. Do not
-    -- peel an outer canonical guard during hot-host shutdown.
 end
 
 H.Register("worldbuyerrelation", M, VERSION)
