@@ -279,11 +279,11 @@ namespace WoW112Updater
         {
             var companionDir = Path.Combine(configDir, "companions", "windows-portal-v2");
             Directory.CreateDirectory(companionDir);
-            var dest = Path.Combine(companionDir, TerminalWindowsBinaryName);
+            var legacyDest = Path.Combine(companionDir, TerminalWindowsBinaryName);
             var stamp = Path.Combine(companionDir, "verified.txt");
 
             TerminalWindowsBundle cached;
-            var cachedValid = TryLoadTerminalWindowsCachedBinary(dest, stamp, out cached);
+            var cachedValid = TryLoadTerminalWindowsCachedBinary(companionDir, legacyDest, stamp, out cached);
             if (string.IsNullOrWhiteSpace(token.Text))
             {
                 if (cachedValid)
@@ -374,34 +374,71 @@ namespace WoW112Updater
                 if (!sumMatch.Success || !string.Equals(sumMatch.Groups[1].Value, binarySha, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Windows SHA256SUMS binary mismatch.");
 
-                var temp = dest + ".tmp";
-                File.WriteAllBytes(temp, binary);
-                if (!string.Equals(TerminalSha256(File.ReadAllBytes(temp)), binarySha, StringComparison.OrdinalIgnoreCase))
-                    throw new IOException("Windows binary SHA mismatch po zapisie.");
-                if (File.Exists(dest)) File.Delete(dest);
-                File.Move(temp, dest);
-                UpdaterSafety.WriteUtf8Atomic(stamp, "GIT_SHA=" + runSha + "\nBINARY_SHA256=" + binarySha + "\nRUN_ID=" + runId + "\n", ".tmp", ".previous");
-                Log("TERMINAL WIN binary verified: " + runSha.Substring(0, Math.Min(8, runSha.Length)) + " / run " + runId + ".");
+                var versionedName = TerminalWindowsVersionedBinaryName(runSha, binarySha);
+                var dest = Path.Combine(companionDir, versionedName);
+                if (File.Exists(dest))
+                {
+                    var existingSha = TerminalSha256(File.ReadAllBytes(dest));
+                    if (!string.Equals(existingSha, binarySha, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("Windows versioned binary hash mismatch: " + versionedName);
+                }
+                else
+                {
+                    var temp = dest + ".tmp-" + Guid.NewGuid().ToString("N");
+                    try
+                    {
+                        File.WriteAllBytes(temp, binary);
+                        if (!string.Equals(TerminalSha256(File.ReadAllBytes(temp)), binarySha, StringComparison.OrdinalIgnoreCase))
+                            throw new IOException("Windows binary SHA mismatch po zapisie.");
+                        File.Move(temp, dest);
+                    }
+                    finally
+                    {
+                        try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                    }
+                }
+                UpdaterSafety.WriteUtf8Atomic(stamp, "GIT_SHA=" + runSha + "\nBINARY_SHA256=" + binarySha + "\nRUN_ID=" + runId + "\nBINARY_FILE=" + versionedName + "\n", ".tmp", ".previous");
+                Log("TERMINAL WIN binary verified side-by-side: " + runSha.Substring(0, Math.Min(8, runSha.Length)) + " / run " + runId + " / " + versionedName + ".");
                 return new TerminalWindowsBundle { Path = dest, GitSha = runSha, Sha256 = binarySha };
             }
         }
 
-        private bool TryLoadTerminalWindowsCachedBinary(string dest, string stamp, out TerminalWindowsBundle bundle)
+        private static string TerminalWindowsVersionedBinaryName(string gitSha, string binarySha)
+        {
+            if (!Regex.IsMatch(gitSha ?? "", "^[0-9a-fA-F]{40}$")) throw new InvalidDataException("Invalid Windows worker git SHA.");
+            if (!Regex.IsMatch(binarySha ?? "", "^[0-9a-fA-F]{64}$")) throw new InvalidDataException("Invalid Windows worker binary SHA.");
+            var stem = Path.GetFileNameWithoutExtension(TerminalWindowsBinaryName);
+            return stem + "-" + gitSha.Substring(0, 12).ToLowerInvariant() + "-" + binarySha.Substring(0, 12).ToLowerInvariant() + ".exe";
+        }
+
+        private bool TryLoadTerminalWindowsCachedBinary(string companionDir, string legacyDest, string stamp, out TerminalWindowsBundle bundle)
         {
             bundle = null;
-            if (!File.Exists(dest) || !File.Exists(stamp)) return false;
+            if (!File.Exists(stamp)) return false;
             try
             {
                 var saved = File.ReadAllLines(stamp);
                 var savedSha = saved.FirstOrDefault(x => x.StartsWith("GIT_SHA=", StringComparison.Ordinal));
                 var savedBin = saved.FirstOrDefault(x => x.StartsWith("BINARY_SHA256=", StringComparison.Ordinal));
+                var savedFile = saved.FirstOrDefault(x => x.StartsWith("BINARY_FILE=", StringComparison.Ordinal));
                 if (savedSha == null || savedBin == null) return false;
                 var gitSha = savedSha.Substring("GIT_SHA=".Length).Trim();
                 var expected = savedBin.Substring("BINARY_SHA256=".Length).Trim();
                 if (!Regex.IsMatch(gitSha, "^[0-9a-fA-F]{40}$") || !Regex.IsMatch(expected, "^[0-9a-fA-F]{64}$")) return false;
-                var actual = TerminalSha256(File.ReadAllBytes(dest));
+
+                var binaryPath = legacyDest;
+                if (savedFile != null)
+                {
+                    var fileName = savedFile.Substring("BINARY_FILE=".Length).Trim();
+                    if (string.IsNullOrWhiteSpace(fileName) || !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal)) return false;
+                    if (!fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return false;
+                    binaryPath = Path.Combine(companionDir, fileName);
+                }
+                if (!File.Exists(binaryPath)) return false;
+
+                var actual = TerminalSha256(File.ReadAllBytes(binaryPath));
                 if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase)) return false;
-                bundle = new TerminalWindowsBundle { Path = dest, GitSha = gitSha, Sha256 = actual };
+                bundle = new TerminalWindowsBundle { Path = binaryPath, GitSha = gitSha, Sha256 = actual };
                 return true;
             }
             catch { return false; }
