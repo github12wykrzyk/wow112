@@ -2,6 +2,8 @@ include!("world.rs");
 
 use wow_world_messages::vanilla::CMSG_GROUP_INVITE;
 
+const SMSG_GROUP_INVITE_OPCODE: u16 = 0x006F;
+const CMSG_GROUP_ACCEPT_OPCODE: u32 = 0x0072;
 const CMSG_GROUP_SET_LEADER_OPCODE: u32 = 0x0078;
 const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
 const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
@@ -49,7 +51,19 @@ fn configured_summoner_names() -> Vec<String> {
 }
 
 fn fixed_slave_master(player_name: &str) -> Option<&'static str> {
-    if player_name.eq_ignore_ascii_case("winterone")
+    if player_name.eq_ignore_ascii_case("silione")
+        || player_name.eq_ignore_ascii_case("silitwo")
+    {
+        Some("kalisum")
+    } else if player_name.eq_ignore_ascii_case("hyjaluno")
+        || player_name.eq_ignore_ascii_case("hyjalone")
+    {
+        Some("bolthyjal")
+    } else if player_name.eq_ignore_ascii_case("hydratwo")
+        || player_name.eq_ignore_ascii_case("hydraone")
+    {
+        Some("feltaxi")
+    } else if player_name.eq_ignore_ascii_case("winterone")
         || player_name.eq_ignore_ascii_case("wintertwoo")
     {
         Some("taxiwinter")
@@ -69,6 +83,56 @@ fn write_group_invite(
     }
     .write_encrypted_client(&mut *stream, crypto.encrypter())
     .map_err(|e| format!("write fixed-master group invite failed target={target}: {e:?}"))
+}
+
+fn accept_fixed_master_invite_once(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    payload: &[u8],
+    fixed_master: &str,
+    accept_committed: &mut bool,
+) -> Result<(), String> {
+    let message = parse_raw_server_message(SMSG_GROUP_INVITE_OPCODE, payload)
+        .map_err(|error| format!("parse fixed-master group invite failed: {error}"))?;
+    let ServerOpcodeMessage::SMSG_GROUP_INVITE(invite) = message else {
+        return Ok(());
+    };
+
+    if !invite.name.eq_ignore_ascii_case(fixed_master) {
+        println!(
+            "[PARTY] ignore invite from untrusted inviter={} fixed_master={}",
+            invite.name, fixed_master
+        );
+        return Ok(());
+    }
+
+    if *accept_committed {
+        println!(
+            "[PARTY] trusted invite duplicate ignored inviter={} reason=accept_already_committed retry_allowed=false",
+            invite.name
+        );
+        return Ok(());
+    }
+
+    // Mutation rule: commit guard BEFORE socket I/O. If the write result is
+    // uncertain, the session hard-stops and never retries this accept.
+    *accept_committed = true;
+    println!(
+        "[PARTY] trusted master invite ACCEPT COMMITTED inviter={} opcode=0x0072 retry_allowed=false",
+        invite.name
+    );
+    write_encrypted_raw(stream, crypto.encrypter(), CMSG_GROUP_ACCEPT_OPCODE, &[])
+        .map_err(|error| {
+            format!(
+                "GROUP_ACCEPT_MUTATION_UNCERTAIN inviter={} retry_allowed=false cause={error}",
+                invite.name
+            )
+        })?;
+    println!(
+        "[PARTY] trusted master invite ACCEPT SENT inviter={} opcode=0x0072 retry_allowed=false",
+        invite.name
+    );
+    Ok(())
 }
 
 fn read_party_u8(payload: &[u8], offset: &mut usize) -> Result<u8, String> {
@@ -355,6 +419,7 @@ fn portal_click_loop(
     let mut portals = std::collections::HashMap::<u64, PortalAttemptState>::new();
     let mut last_summoner_invite: Option<(String, Instant)> = None;
     let mut last_leader_transfer: Option<(u64, Instant)> = None;
+    let mut trusted_accept_committed = false;
     let mut last_ping = Instant::now();
     let mut ping_sequence = 1u32;
     let mut awaiting_pong: Option<(u32, Instant)> = None;
@@ -425,6 +490,18 @@ fn portal_click_loop(
                         if awaiting_pong.map(|value| value.0) == Some(sequence) {
                             awaiting_pong = None;
                         }
+                    }
+                    continue;
+                }
+                if opcode == SMSG_GROUP_INVITE_OPCODE {
+                    if let Some(master) = fixed_master {
+                        accept_fixed_master_invite_once(
+                            stream,
+                            crypto,
+                            &payload,
+                            master,
+                            &mut trusted_accept_committed,
+                        )?;
                     }
                     continue;
                 }
