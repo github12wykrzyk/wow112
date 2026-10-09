@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-fleet-hot-margin-v1",
+  "goal": "Restore durable SummonScout HOT payload headroom by cold-loading CompetitionSmart unchanged through TOC while keeping Fleet Counter behavior intact.",
+  "branch": "feature/summonscout-fleet-hot-margin-v1",
+  "base_parallel_sha": "6bf60592028cbcdccaf3e3c47938a864b2192900",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summonscout-runtime"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "CompetitionSmart code blob is unchanged; only filename/TOC placement moves it outside *Hot.lua fanout. This directly addresses the 262188/262144 standard packaging failure on Fleet Counter canonical SHA while preserving startup loading and runtime behavior. Retry follows safe fast-forward convergence of canonical main to the one-commit-ahead parallel alias; no parallel work was discarded.",
+  "integrated_feature_sha": "c2dbbb430709f41df0da4285f1414e38841c37ce"
+}
