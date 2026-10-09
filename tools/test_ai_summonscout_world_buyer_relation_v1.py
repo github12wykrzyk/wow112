@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression contract for order-independent World summon buyer wording."""
+"""Regression contract for relation-based World summon buyer wording."""
 from pathlib import Path
 import unittest
 
@@ -27,25 +27,61 @@ class WorldBuyerRelationHotfixTests(unittest.TestCase):
         self.assertNotIn('loc.id == "hydraxian"', self.hot)
         self.assertNotIn('loc.id == "hyjal"', self.hot)
 
-    def test_order_independent_buyer_relation_is_canonicalized(self):
-        for cue in ('"lf"', '"need"', '"wtb"', '"want"', '"looking for"'):
+    def test_relation_parser_is_word_order_independent(self):
+        for cue in (
+            '"lf"', '"need"', '"wtb"', '"buy"', '"want"',
+            '"looking for"', '"pls"', '"inv"', '"invite"',
+        ):
             self.assertIn(cue, self.hot)
-        self.assertIn("if table.getn(locations) ~= 1", self.hot)
-        self.assertIn("if not brAny(normalized, BUYER_LEADS)", self.hot)
-        self.assertIn("if not brHasTravel(normalized)", self.hot)
+        self.assertIn("brBuyerLead", self.hot)
+        self.assertIn("brHasTravel", self.hot)
+        self.assertIn("brTokenStarts", self.hot)
         self.assertIn('.. " lf summon"', self.hot)
 
+    def test_short_natural_shorthand_and_typo_roots_are_supported(self):
+        self.assertIn('brTokenStarts(s, "summ")', self.hot)
+        self.assertIn('brTokenStarts(s, "sumon")', self.hot)
+        self.assertIn('brTokenStarts(s, "port")', self.hot)
+        self.assertIn('brTokenStarts(s, "tele")', self.hot)
+        self.assertIn('brTokenStarts(s, "taxi")', self.hot)
+        self.assertIn("brTokenCount(normalized) <= 4", self.hot)
+        self.assertIn('"short-travel"', self.hot)
+        self.assertIn('"travel-question"', self.hot)
+
+    def test_destination_specific_buyer_shorthand_can_omit_summon(self):
+        self.assertIn("brSpecificServiceContains(locations[1].id)", self.hot)
+        self.assertIn('"buyer+served-destination"', self.hot)
+        self.assertIn('"need one"', self.hot)
+        self.assertIn('"one pls"', self.hot)
+
     def test_false_positive_guards_remain_fail_closed(self):
-        self.assertIn("SELLER_CUES", self.hot)
+        self.assertIn("HARD_SELLER_CUES", self.hot)
+        self.assertIn("CONTACT_CUES", self.hot)
         self.assertIn("OWN_SUMMON_CUES", self.hot)
         self.assertIn("RECRUITMENT_CUES", self.hot)
-        self.assertIn("if brAny(normalized, SELLER_CUES)", self.hot)
+        self.assertIn("if brAny(normalized, HARD_SELLER_CUES)", self.hot)
+        self.assertIn("if brAny(normalized, CONTACT_CUES) and not buyer", self.hot)
         self.assertIn("if brRecruitment(normalized)", self.hot)
-        self.assertIn("table.getn(locations) ~= 1", self.hot)
+        self.assertIn('"multi-destination"', self.hot)
+        self.assertIn("brHasPrice", self.hot)
 
-    def test_live_miss_shape_is_documented_without_destination_special_case(self):
-        self.assertIn("LF hydraxian summon", self.hot)
-        self.assertIn('local VERSION = "1-catalog-order-independent"', self.hot)
+    def test_world_reinvite_dedupe_is_bounded_not_120_seconds(self):
+        self.assertIn("local REINVITE_SECONDS = 8", self.hot)
+        self.assertIn("brRelaxRecent", self.hot)
+        self.assertIn("W112_SUMMONSCOUT_STATE", self.hot)
+        self.assertIn("state.recent[key] = nil", self.hot)
+        self.assertIn("brServiceContains(locations[1].id)", self.hot)
+        self.assertIn('"reinvite-dedupe-reset"', self.hot)
+
+    def test_debug_state_explains_why_a_line_was_classified(self):
+        for field in (
+            "S.lastRaw", "S.lastSender", "S.lastReason", "S.lastAccepted",
+            "S.lastChanged", "S.lastRelaxedRecent", "S.lastLocation",
+        ):
+            self.assertIn(field, self.hot)
+
+    def test_v2_contract_version(self):
+        self.assertIn('local VERSION = "2-relation-matrix-reinvite8"', self.hot)
         self.assertIn("W112_SUMMONSCOUT_WORLD_BUYER_RELATION_VERSION", self.hot)
 
 
