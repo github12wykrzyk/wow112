@@ -1,0 +1,9 @@
+{
+  "id": "target-aura-dbc-lookup-v4",
+  "status": "awaiting_game_test",
+  "scope": "TargetAuraReveal spell identity resolver only",
+  "source_commit": "f05fc32c2f586c39155de492210ad71268764578",
+  "change": "Use verified WoW 1.12.1/5875 DBC dense records[id] lookup; do not require decoded record[0] to equal spellId.",
+  "evidence": "ClassicAPI src/dbc/Lookup.cpp DBC::Record returns records[id] after count/null checks and does not validate record[0] == id.",
+  "expected_game_result": "Hostile positive auras resolve to real localized spell names/icons; W112NativeTargetBuffs.byName becomes usable by LazyScript. Raw Spell <ID> fallback remains only for genuine lookup failure."
+}
