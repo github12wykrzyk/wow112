@@ -1,7 +1,9 @@
--- SummonScout exact `sold` whisper invite hotfix for WoW 1.12.1 / Lua 5.0.
+-- SummonScout exact customer-acceptance whisper invite hotfix for WoW 1.12.1 / Lua 5.0.
 --
--- Live customer shorthand uses `sold` as an explicit acceptance of the summon
--- service. Treat only the normalized exact whisper `sold` as an invite request.
+-- Live customer shorthand uses very short replies such as `sold` and `pls` as
+-- explicit acceptance of the summon service. Treat only normalized exact
+-- whitelisted replies as invite requests. Longer conversational text containing
+-- these words is intentionally ignored.
 -- All actual mutation/blacklist/dedupe/service guards remain in the canonical
 -- core tryWhisperInvite path.
 
@@ -10,8 +12,13 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "1-exact-sold-invite"
+local VERSION = "2-exact-sold-pls-invite"
 local S = H.GetState("soldinvite")
+
+local EXACT_INVITE_REPLIES = {
+    ["sold"] = true,
+    ["pls"] = true,
+}
 
 local function siTrim(s)
     s = tostring(s or "")
@@ -76,17 +83,21 @@ end
 
 function M.OnEvent(evt, message, sender)
     if evt ~= "CHAT_MSG_WHISPER" then return end
-    if siNormalize(message) ~= "sold" then return end
+
+    local normalized = siNormalize(message)
+    if not EXACT_INVITE_REPLIES[normalized] then return end
 
     local invited, reason = siTryInvite(sender)
     S.lastSender = tostring(sender or "")
     S.lastMessage = tostring(message or "")
+    S.lastNormalized = normalized
     S.lastReason = tostring(reason or "")
     S.lastInvited = invited and true or false
 
     if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout sold invite:|r "
-            .. tostring(sender or "?") .. " -> " .. (invited and "invited" or tostring(reason or "suppressed")))
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout shorthand invite:|r "
+            .. tostring(sender or "?") .. " [" .. tostring(normalized or "?") .. "] -> "
+            .. (invited and "invited" or tostring(reason or "suppressed")))
     end
 end
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression contract for exact `sold` direct-whisper invite hotfix."""
+"""Regression contract for exact direct-whisper invite shorthand hotfix."""
 from pathlib import Path
 import unittest
 
@@ -17,9 +17,13 @@ class SoldInviteHotfixTests(unittest.TestCase):
     def test_loaded_by_toc(self):
         self.assertIn("SummonScout_SoldInviteHot.lua", self.toc)
 
-    def test_exact_normalized_sold_only(self):
-        self.assertIn('if siNormalize(message) ~= "sold" then return end', self.hot)
+    def test_exact_normalized_short_replies_are_allowlisted(self):
+        self.assertIn('local EXACT_INVITE_REPLIES = {', self.hot)
+        self.assertIn('["sold"] = true', self.hot)
+        self.assertIn('["pls"] = true', self.hot)
+        self.assertIn('if not EXACT_INVITE_REPLIES[normalized] then return end', self.hot)
         self.assertNotIn('string.find(siNormalize(message), "sold"', self.hot)
+        self.assertNotIn('string.find(siNormalize(message), "pls"', self.hot)
 
     def test_uses_canonical_invite_path(self):
         self.assertIn("W112_SUMMONSCOUT_API_V1", self.hot)
@@ -31,10 +35,14 @@ class SoldInviteHotfixTests(unittest.TestCase):
         self.assertIn("state.shardGuardPaused", self.hot)
         self.assertIn("W112_SUMMONSCOUT_STATE", self.hot)
 
+    def test_debug_records_normalized_trigger(self):
+        self.assertIn("S.lastNormalized = normalized", self.hot)
+        self.assertIn("SummonScout shorthand invite", self.hot)
+
     def test_hot_contract(self):
         self.assertIn('H.RegisterEvent("CHAT_MSG_WHISPER")', self.hot)
         self.assertIn('H.Register("soldinvite", M, VERSION)', self.hot)
-        self.assertIn('local VERSION = "1-exact-sold-invite"', self.hot)
+        self.assertIn('local VERSION = "2-exact-sold-pls-invite"', self.hot)
 
 
 if __name__ == "__main__":
