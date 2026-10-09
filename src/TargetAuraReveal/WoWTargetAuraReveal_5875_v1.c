@@ -147,19 +147,22 @@ static u32 dbc_row(u32 db,u32 id){
     return row;
 }
 static int spell_visual(u32 spellId,char *name,char *icon){
-    u32 rec,attrs,attrsEx,iconId,iconRec,namePtr,iconPtr,locale;
+    u32 rec,iconId,iconRec,namePtr,iconPtr,locale;
     name[0]=0;icon[0]=0;
     rec=dbc_row(SPELL_DB,spellId);if(!rec)return 0;
-    attrs=read32(rec+SPELL_ATTR_OFF);attrsEx=read32(rec+SPELL_ATTR_EX_OFF);
-    if((attrs&SPELL_HIDDEN)||(attrsEx&SPELL_NO_AURA_ICON))return 0;
-    iconId=read32(rec+SPELL_ICON_OFF);if(!iconId)return 0;
-    iconRec=dbc_row(SPELLICON_DB,iconId);if(!iconRec)return 0;
-    iconPtr=read32(iconRec+4u);if(!valid_byte_ptr(iconPtr))return 0;
     locale=read32(LOCALE_INDEX);if(locale>8u)locale=0u;
     namePtr=read32(rec+SPELL_NAME_OFF+locale*4u);
     if(!valid_byte_ptr(namePtr))namePtr=read32(rec+SPELL_NAME_OFF);
-    copy_text(name,NAME_CAP,namePtr);copy_text(icon,ICON_CAP,iconPtr);
-    return icon[0]!=0;
+    copy_text(name,NAME_CAP,namePtr);
+    iconId=read32(rec+SPELL_ICON_OFF);
+    if(iconId){
+        iconRec=dbc_row(SPELLICON_DB,iconId);
+        if(iconRec){
+            iconPtr=read32(iconRec+4u);
+            if(valid_byte_ptr(iconPtr))copy_text(icon,ICON_CAP,iconPtr);
+        }
+    }
+    return name[0]!=0;
 }
 static u32 collect(u32 obj,u32 *hashOut){
     u32 fields,slot,spell,count=0u,h=2166136261u;
@@ -172,8 +175,10 @@ static u32 collect(u32 obj,u32 *hashOut){
         if(count<POSITIVE_AURAS){
             if(!spell_visual(spell,g_rows[count].name,g_rows[count].icon)){
                 char *np=g_rows[count].name,*ne=g_rows[count].name+NAME_CAP;
-                char *ip=g_rows[count].icon,*ie=g_rows[count].icon+ICON_CAP;
                 np=cat(np,ne,"Spell ");np=num(np,ne,spell);*np=0;
+            }
+            if(!g_rows[count].icon[0]){
+                char *ip=g_rows[count].icon,*ie=g_rows[count].icon+ICON_CAP;
                 ip=cat(ip,ie,"Interface\\Icons\\INV_Misc_QuestionMark");*ip=0;
             }
             {
