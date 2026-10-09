@@ -4,7 +4,7 @@
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "6-tanaris-master-owned-cold"
+local VERSION = "7-master-slave-readiness-gate"
 local WATCH_INTERVAL = 2.00
 local INVITE_COOLDOWN = 5.00
 local PROMOTE_COOLDOWN = 2.00
@@ -52,10 +52,33 @@ local function debug(v)
         DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffSummonScout pairs:|r "..tostring(v or ""))
     end
 end
+local function notice(v)
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00SummonScout safety:|r "..tostring(v or ""))
+    end
+end
+local function refreshGui()
+    local api=W112_SUMMONSCOUT_API_V1
+    if type(api)=="table" and type(api.guiRefreshSafe)=="function" then
+        if pcall then pcall(api.guiRefreshSafe) else api.guiRefreshSafe() end
+    end
+end
 local function findParty(wanted)
     local i,name
     for i=1,partyCount() do name=UnitName("party"..i); if name and key(name)==wanted then return name end end
     return nil
+end
+local function findRaid(wanted)
+    local i,name
+    for i=1,raidCount() do
+        name=GetRaidRosterInfo and GetRaidRosterInfo(i) or nil
+        if not name and UnitName then name=UnitName("raid"..i) end
+        if name and key(name)==wanted then return name end
+    end
+    return nil
+end
+local function findGroup(wanted)
+    return findParty(wanted) or findRaid(wanted)
 end
 local function trusted(player,inviter)
     if player=="" or inviter=="" then return false,"" end
@@ -109,6 +132,65 @@ local function seedPairBlacklist()
     SummonScoutDB.inviteBlacklist.tanarisone=SummonScoutDB.inviteBlacklist.tanarisone or "fixed-pair-slave"
     SummonScoutDB.inviteBlacklist.tanaristwo=SummonScoutDB.inviteBlacklist.tanaristwo or "fixed-pair-slave"
 end
+local function masterGateState(masterKey)
+    SummonScoutDB=SummonScoutDB or {}
+    if type(SummonScoutDB.slaveSafetyGateByCharacter)~="table" then SummonScoutDB.slaveSafetyGateByCharacter={} end
+    local state=SummonScoutDB.slaveSafetyGateByCharacter[masterKey]
+    if type(state)~="table" then
+        state={active=false,desiredEnabled=nil}
+        SummonScoutDB.slaveSafetyGateByCharacter[masterKey]=state
+    end
+    return state
+end
+local function slaveReadiness(masterKey)
+    local list=MASTER_SLAVE_LIST[masterKey]
+    if type(list)~="table" then return true,0,0,{} end
+    local present=0; local missing={}; local i,slave
+    for i=1,table.getn(list) do
+        slave=list[i]
+        if findGroup(key(slave)) then
+            present=present+1
+        else
+            missing[table.getn(missing)+1]=slave
+        end
+    end
+    return present==table.getn(list),present,table.getn(list),missing
+end
+local function applySlaveSafetyGate(masterKey)
+    local ready,present,total,missing=slaveReadiness(masterKey)
+    local gate=masterGateState(masterKey)
+    local wasActive=gate.active==true
+
+    S.slaveSafetyReady=ready and true or false
+    S.slaveSafetyPresent=present
+    S.slaveSafetyTotal=total
+    S.slaveSafetyMissing=table.concat(missing,",")
+    W112_SUMMONSCOUT_SLAVE_SAFETY_READY=ready and true or false
+    W112_SUMMONSCOUT_SLAVE_SAFETY_STATUS=(ready and "READY " or "BLOCKED ")..tostring(present).."/"..tostring(total)
+
+    if not ready then
+        if not wasActive then
+            gate.desiredEnabled=SummonScoutDB.enabled==true
+            gate.active=true
+            notice("OFF - missing slaves "..table.concat(missing,", ").." ["..tostring(present).."/"..tostring(total).."]")
+        end
+        -- Fail closed even if another module/UI toggles SummonScout back on while
+        -- the summoner cannot complete a Ritual of Summoning.
+        SummonScoutDB.enabled=false
+        refreshGui()
+        return false
+    end
+
+    if wasActive then
+        local restore=gate.desiredEnabled==true
+        gate.active=false
+        gate.desiredEnabled=nil
+        SummonScoutDB.enabled=restore
+        notice("READY - slaves "..tostring(present).."/"..tostring(total).."; SummonScout "..(restore and "ON" or "remains OFF"))
+        refreshGui()
+    end
+    return true
+end
 local function watchdog()
     local player=key(me()); local master=SLAVE_TO_MASTER[player]
     if master then
@@ -122,8 +204,13 @@ local function watchdog()
     end
     if MASTER_TO_SLAVES[player] then
         S.lastRole="master"; S.lastOwner=""
+        applySlaveSafetyGate(player)
         inviteMissingSlaves(player,MASTER_INITIATED[player] and true or false)
-    else S.lastRole="inactive"; S.lastOwner="" end
+    else
+        S.lastRole="inactive"; S.lastOwner=""
+        W112_SUMMONSCOUT_SLAVE_SAFETY_READY=true
+        W112_SUMMONSCOUT_SLAVE_SAFETY_STATUS="N/A"
+    end
 end
 
 local M={}
@@ -134,7 +221,10 @@ function M.Init()
 end
 function M.OnEvent(ev,a1)
     if ev=="PARTY_INVITE_REQUEST" then acceptTrusted(a1); return end
-    if ev=="PARTY_MEMBERS_CHANGED" or ev=="RAID_ROSTER_UPDATE" then S.nextWatchAt=0 end
+    if ev=="PARTY_MEMBERS_CHANGED" or ev=="RAID_ROSTER_UPDATE" then
+        S.nextWatchAt=now()+WATCH_INTERVAL
+        watchdog()
+    end
 end
 function M.OnUpdate()
     local t=now(); if t<(S.nextWatchAt or 0) then return end; S.nextWatchAt=t+WATCH_INTERVAL; watchdog()
