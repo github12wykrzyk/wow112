@@ -1,0 +1,11 @@
+{
+  "id": "target-aura-dbc-layout-v5",
+  "status": "in_progress",
+  "goal": "Fix TargetAuraReveal DBC lookup to use the documented WoW 1.12.1 build 5875 records/count globals: records=*db, count=*(db+8).",
+  "evidence": {
+    "spell_records_var": "0x00C0D780",
+    "spell_count_var": "0x00C0D788",
+    "spellicon_records_var": "0x00C0D7E4",
+    "spellicon_count_var": "0x00C0D7EC"
+  }
+}
