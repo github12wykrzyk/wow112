@@ -56,7 +56,7 @@ fn fixed_slave_master(player_name: &str) -> Option<&'static str> {
     {
         Some("kalisum")
     } else if player_name.eq_ignore_ascii_case("hyjaluno")
-        || player_name.eq_ignore_ascii_case("hyjalone")
+        || player_name.eq_ignore_ascii_case("hyjalonee")
     {
         Some("bolthyjal")
     } else if player_name.eq_ignore_ascii_case("hydratwo")
