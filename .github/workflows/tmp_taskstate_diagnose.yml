@@ -1,0 +1,33 @@
+name: TEMP task-state diagnose
+
+on:
+  push:
+    branches:
+      - tmp/summonscout-taskstate-diagnose
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Find invalid base_parallel_sha records
+        run: |
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          rx=re.compile(r'[0-9a-f]{40}\Z')
+          bad=[]
+          for p in sorted(Path('runtime/parallel_tasks').glob('*.json')):
+              d=json.loads(p.read_text(encoding='utf-8'))
+              v=d.get('base_parallel_sha')
+              if not isinstance(v,str) or not rx.fullmatch(v):
+                  bad.append((str(p),repr(v),len(v) if isinstance(v,str) else None))
+          print('BAD_COUNT',len(bad))
+          for row in bad: print('BAD',*row)
+          mine=json.loads(Path('runtime/parallel_tasks/summonscout-fleet-counter-hot-cap-v1.json').read_text())['base_parallel_sha']
+          print('MINE',repr(mine),len(mine),bool(rx.fullmatch(mine)))
+          if bad: raise SystemExit(2)
+          PY
