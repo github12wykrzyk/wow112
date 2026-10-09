@@ -1,5 +1,7 @@
 include!("world.rs");
 
+use wow_world_messages::vanilla::CMSG_GROUP_INVITE;
+
 const CMSG_GROUP_SET_LEADER_OPCODE: u32 = 0x0078;
 const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
 const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
@@ -7,6 +9,7 @@ const SUMMONING_PORTAL_ENTRY: i32 = 36727;
 const GAMEOBJECT_TYPE_RITUAL: i32 = 18;
 const PORTAL_RETRY_GAP_MS: u64 = 180;
 const PORTAL_DEFAULT_ATTEMPTS: u32 = 3;
+const PARTY_INVITE_RETRY_GAP_MS: u64 = 5000;
 const PARTY_LEADER_RETRY_GAP_MS: u64 = 5000;
 const DEFAULT_SUMMONER_NAMES: &str = "teletanaris,bolthyjal,feltaxi";
 
@@ -43,6 +46,29 @@ fn configured_summoner_names() -> Vec<String> {
         }
     }
     names
+}
+
+fn fixed_slave_master(player_name: &str) -> Option<&'static str> {
+    if player_name.eq_ignore_ascii_case("winterone")
+        || player_name.eq_ignore_ascii_case("wintertwoo")
+    {
+        Some("taxiwinter")
+    } else {
+        None
+    }
+}
+
+fn write_group_invite(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    target: &str,
+) -> Result<(), String> {
+    println!("[PARTY] invite fixed master by name: {target}");
+    CMSG_GROUP_INVITE {
+        name: target.to_string(),
+    }
+    .write_encrypted_client(&mut *stream, crypto.encrypter())
+    .map_err(|e| format!("write fixed-master group invite failed target={target}: {e:?}"))
 }
 
 fn read_party_u8(payload: &[u8], offset: &mut usize) -> Result<u8, String> {
@@ -91,6 +117,8 @@ fn service_party_leader_handoff(
     crypto: &mut HeaderCrypto,
     payload: &[u8],
     summoner_names: &[String],
+    auto_invite_missing: bool,
+    last_invite: &mut Option<(String, Instant)>,
     last_transfer: &mut Option<(u64, Instant)>,
 ) -> Result<(), String> {
     let mut offset = 0usize;
@@ -132,9 +160,28 @@ fn service_party_leader_handoff(
         }
     }
 
-    let Some(target) = target else {
+    if target.is_none() {
+        if !auto_invite_missing {
+            return Ok(());
+        }
+        let Some(wanted) = summoner_names.first() else {
+            return Ok(());
+        };
+        if let Some((name, sent_at)) = last_invite.as_ref() {
+            if name.eq_ignore_ascii_case(wanted)
+                && sent_at.elapsed() < Duration::from_millis(PARTY_INVITE_RETRY_GAP_MS)
+            {
+                return Ok(());
+            }
+        }
+
+        write_group_invite(stream, crypto, wanted)?;
+        *last_invite = Some((wanted.to_string(), Instant::now()));
         return Ok(());
-    };
+    }
+
+    let target = target.unwrap();
+    *last_invite = None;
 
     if let Some((guid, sent_at)) = *last_transfer {
         if guid == target.guid && sent_at.elapsed() < Duration::from_millis(PARTY_LEADER_RETRY_GAP_MS) {
@@ -285,6 +332,7 @@ fn service_portal_clicks(
 fn portal_click_loop(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
+    player_name: &str,
     soak_seconds: u64,
 ) -> Result<(), String> {
     let previous_timeout = stream.read_timeout().ok().flatten();
@@ -293,13 +341,19 @@ fn portal_click_loop(
         .map_err(|e| format!("set portal read timeout failed: {e}"))?;
 
     let max_attempts = portal_attempt_limit();
-    let summoner_names = configured_summoner_names();
+    let fixed_master = fixed_slave_master(player_name);
+    let summoner_names = match fixed_master {
+        Some(master) => vec![master.to_string()],
+        None => configured_summoner_names(),
+    };
+    let auto_invite_missing = fixed_master.is_some();
     let deadline = if soak_seconds == 0 {
         None
     } else {
         Some(Instant::now() + Duration::from_secs(soak_seconds))
     };
     let mut portals = std::collections::HashMap::<u64, PortalAttemptState>::new();
+    let mut last_summoner_invite: Option<(String, Instant)> = None;
     let mut last_leader_transfer: Option<(u64, Instant)> = None;
     let mut last_ping = Instant::now();
     let mut ping_sequence = 1u32;
@@ -314,9 +368,16 @@ fn portal_click_loop(
         if soak_seconds == 0 { "infinite".to_string() } else { format!("{soak_seconds}s") }
     );
     println!(
-        "[PARTY] auto leader handoff enabled summoners={}",
+        "[PARTY] auto leader handoff enabled player={} summoners={}",
+        player_name,
         summoner_names.join(",")
     );
+
+    if let Some(master) = fixed_master {
+        println!("[PARTY] fixed slave/master pair active slave={player_name} master={master}");
+        write_group_invite(stream, crypto, master)?;
+        last_summoner_invite = Some((master.to_string(), Instant::now()));
+    }
 
     loop {
         if deadline.is_some_and(|value| Instant::now() >= value) {
@@ -326,6 +387,17 @@ fn portal_click_loop(
         }
 
         service_portal_clicks(stream, crypto, &mut portals, max_attempts)?;
+
+        if auto_invite_missing {
+            if let (Some(master), Some((name, sent_at))) = (fixed_master, last_summoner_invite.as_ref()) {
+                if name.eq_ignore_ascii_case(master)
+                    && sent_at.elapsed() >= Duration::from_millis(PARTY_INVITE_RETRY_GAP_MS)
+                {
+                    write_group_invite(stream, crypto, master)?;
+                    last_summoner_invite = Some((master.to_string(), Instant::now()));
+                }
+            }
+        }
 
         if let Some((sequence, sent_at)) = awaiting_pong {
             if sent_at.elapsed() >= Duration::from_secs(PONG_TIMEOUT_SECONDS) {
@@ -362,9 +434,11 @@ fn portal_click_loop(
                         crypto,
                         &payload,
                         &summoner_names,
+                        auto_invite_missing,
+                        &mut last_summoner_invite,
                         &mut last_leader_transfer,
                     ) {
-                        println!("[PARTY-DIAG] roster parse/handoff skipped: {error}");
+                        println!("[PARTY-DIAG] roster invite/handoff skipped: {error}");
                     }
                 }
                 inspect_portal_update_packet(opcode, &payload, &mut portals);
@@ -499,7 +573,7 @@ pub fn login_portal_clicker(
         return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());
     }
 
-    portal_click_loop(stream, &mut crypto, soak_seconds)?;
+    portal_click_loop(stream, &mut crypto, &selected.name, soak_seconds)?;
     println!("[PORTAL] CLICKER PASS");
     Ok(())
 }
