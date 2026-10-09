@@ -104,6 +104,11 @@ impl AuthEndpointSelector {
             return Ok((stream, peer));
         }
 
+        // A failed address is excluded only inside one endpoint-selection pass.  A full
+        // reconnect is a new observation window: an endpoint that was unavailable a
+        // moment ago may already be healthy again.  Keeping this set across reconnects
+        // poisoned the process after one bad sweep and made the remaining retries spin
+        // immediately with "no usable candidates remain".
         if !self.failed.is_empty() {
             println!(
                 "[AUTH-SELECT] new reconnect pass: clearing {} transient endpoint penalties",
@@ -156,6 +161,8 @@ impl AuthEndpointSelector {
             }
         }
 
+        // Give another worker a very small window to publish a shared last-good endpoint
+        // before this process fans out. This keeps normal multi-account startup light.
         let stagger_ms = (std::process::id() as u64 % 5) * 35;
         if stagger_ms != 0 {
             thread::sleep(Duration::from_millis(stagger_ms));
