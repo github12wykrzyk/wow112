@@ -6,7 +6,6 @@ on:
     branches:
       - parallel
       - feature/native-windows-portal-clicker-v1
-      - feature/terminal-win-octologin-selector-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_windows_headless_probe.yml'
