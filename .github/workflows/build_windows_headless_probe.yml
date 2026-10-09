@@ -6,6 +6,7 @@ on:
     branches:
       - parallel
       - feature/native-windows-portal-clicker-v1
+      - fix/terminal-win-auth-reconnect-churn-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_windows_headless_probe.yml'
