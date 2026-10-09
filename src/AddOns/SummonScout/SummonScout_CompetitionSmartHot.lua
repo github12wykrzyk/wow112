@@ -1,7 +1,3 @@
--- Smart competitor classifier + rate-limit GUI bridge for SummonScout.
--- WoW 1.12.1 / Lua 5.0 compatible. Fleet coordination is attempted first;
--- legacy local scheduling remains the fail-open fallback when no fleet lease exists.
-
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
@@ -186,9 +182,6 @@ local function csClassify(message)
     if locationCount > 0 then score = score + 2; reasons[table.getn(reasons) + 1] = "dest" .. tostring(locationCount) end
     if locationCount > 1 then score = score + 1 end
 
-    -- Buyer-like wording is rejected unless the same line contains an explicit
-    -- seller/CTA marker. This keeps "can u summon me?" and "need Hyjal" out,
-    -- while still accepting ads such as "Need a summon? 5g, PST".
     if buyer and not seller then return false, score, "buyer" end
 
     local qualified = false
@@ -292,10 +285,6 @@ function M.OnEvent(evt, message, sender)
 
     S.detections = (tonumber(S.detections) or 0) + 1
 
-    -- Cross-client arbitration owns only qualified competitor events. If a
-    -- fresh fleet lease exists, it cancels the already-scheduled core-local
-    -- counter for this same sender and returns true. Otherwise legacy behavior
-    -- below remains untouched.
     local fleet = W112_SUMMONSCOUT_FLEET_COUNTER_V1
     if fleet and type(fleet.Submit) == "function" then
         local handled = false
@@ -344,8 +333,6 @@ function M.OnUpdate(elapsed)
 end
 
 function M.Shutdown()
-    -- Controls are owned by the stable options frame. Hide old generation
-    -- controls before the replacement generation attaches fresh closures.
     if S.cooldownLabel then S.cooldownLabel:Hide() end
     if S.cooldownEdit then S.cooldownEdit:Hide() end
     if S.cooldownButton then S.cooldownButton:Hide() end
