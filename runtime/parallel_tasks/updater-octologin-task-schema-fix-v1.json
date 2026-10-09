@@ -4,8 +4,8 @@
   "goal": "Repair the canonical updater-octologin-v1 task record to the enforced base_parallel_sha schema so feature preflight can validate all task records again.",
   "branch": "feature/updater-octologin-task-schema-fix-v1",
   "base_parallel_sha": "6bf60592028cbcdccaf3e3c47938a864b2192900",
-  "status": "preflight",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "modules": [
     "Updater"
   ],
@@ -15,5 +15,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Metadata-only compatibility repair. The merged updater-octologin-v1 record still uses legacy base_main_sha, while the canonical validator requires base_parallel_sha. Preserve its original base value and all implementation metadata; no updater runtime code is changed."
+  "notes": "Metadata-only compatibility repair. The merged updater-octologin-v1 record still uses legacy base_main_sha and status implementation, while the canonical validator requires base_parallel_sha and canonical status coding. Preserve its original base value and implementation metadata; no updater runtime code is changed. Preflight passed on the corrected schema before queue opt-in."
 }
