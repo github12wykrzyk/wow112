@@ -143,7 +143,7 @@ static u32 dbc_row(u32 db,u32 id){
     table=read32(db+8u);maxId=read32(db+12u);
     if(!valid_ptr(table)||id>maxId||maxId>1000000u)return 0u;
     row=read32(table+id*4u);
-    if(!valid_ptr(row)||read32(row)!=id)return 0u;
+    if(!valid_ptr(row))return 0u;
     return row;
 }
 static int spell_visual(u32 spellId,char *name,char *icon){
@@ -213,7 +213,7 @@ static void publish(u32 count,u32 targetLo,u32 targetHi){
         p=cat(p,end,",name=");p=lua_q(p,end,g_rows[i].name);
         p=cat(p,end,",texture=");p=lua_q(p,end,g_rows[i].icon);
         p=cat(p,end,"};W112NativeTargetBuffs[");p=num(p,end,i+1u);p=cat(p,end,"]=r;W112NativeTargetBuffs.bySpell[r.spellId]=r;W112NativeTargetBuffs.byName[r.name]=r;");
-        p=cat(p,end,"W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=r.name;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(r.texture);W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"]:Show();");
+        p=cat(p,end,"W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=r.name;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(r.texture);W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellId=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].spellName=r.name;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].icon:SetTexture(r.texture);W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"].id=r.spellId;W112AuraReveal[");p=num(p,end,i+1u);p=cat(p,end,"]:Show();");
     }
     p=cat(p,end,"else MAX_TARGET_BUFFS=5;if TargetDebuffButton_Update then TargetDebuffButton_Update();end;end;end;if lazyScript then lazyScript.nativeTargetBuffs=W112NativeTargetBuffs;end");
     *p=0;run(g_lua,"WoWTargetAuraReveal");
