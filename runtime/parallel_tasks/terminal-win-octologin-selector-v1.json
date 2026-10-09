@@ -16,9 +16,7 @@
     "probes/Wow112HeadlessAndroid/src/auth_endpoint.rs",
     ".github/workflows/build_windows_headless_probe.yml"
   ],
-  "delivery_profiles": [
-    "terminal-windows"
-  ],
+  "delivery_profiles": [],
   "lease": null,
   "notes": "Windows-only by default (WOW112_AUTH_SELECTOR can override). The selector caches a fully authenticated last-good SocketAddr for 180s beside the shared worker binary, so normal fleet reconnects do not fan out. On failure it probes a bounded maximum of 8 endpoints using only a WoW logon challenge with a nonexistent account, then performs the real SRP login on the selected endpoint. Existing mail mutation hard-stop semantics are untouched."
 }
