@@ -52,28 +52,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
-          changed="$(git diff --name-only)"
-          test "$changed" = "probes/Wow112HeadlessAndroid/src/world_portal.rs"
-          git diff -- probes/Wow112HeadlessAndroid/src/world_portal.rs
+          target='probes/Wow112HeadlessAndroid/src/world_portal.rs'
+          git diff --check -- "$target"
+          changed="$(git diff --name-only -- "$target")"
+          test "$changed" = "$target"
+          git diff -- "$target"
 
       - name: Host cargo check
         shell: bash
         run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
 
-      - name: Remove one-shot workflow and commit only intended source change
+      - name: Remove one-shot workflow and commit only intended staged changes
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/one_shot_terminal_party_leader_guard.yml
-          mapfile -t changed < <(git status --short | sed 's/^...//')
-          printf 'changed: %s\n' "${changed[@]}"
-          test "${#changed[@]}" -eq 2
-          printf '%s\n' "${changed[@]}" | sort > /tmp/changed.txt
-          printf '%s\n' ".github/workflows/one_shot_terminal_party_leader_guard.yml" "probes/Wow112HeadlessAndroid/src/world_portal.rs" | sort > /tmp/expected.txt
-          diff -u /tmp/expected.txt /tmp/changed.txt
+          target='probes/Wow112HeadlessAndroid/src/world_portal.rs'
+          workflow='.github/workflows/one_shot_terminal_party_leader_guard.yml'
+          rm "$workflow"
+          git add "$target" "$workflow"
+          git diff --cached --check -- "$target" "$workflow"
+          git diff --cached --name-only | sort > /tmp/staged.txt
+          printf '%s\n' "$workflow" "$target" | sort > /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/staged.txt
+          git diff --cached -- "$target"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add probes/Wow112HeadlessAndroid/src/world_portal.rs .github/workflows/one_shot_terminal_party_leader_guard.yml
           git commit -m 'fix(terminal): suppress nonleader master invite retries'
           git push origin HEAD:fix/terminal-party-leader-invite-guard-v1
