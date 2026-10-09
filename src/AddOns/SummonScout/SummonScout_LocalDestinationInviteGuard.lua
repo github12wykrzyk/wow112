@@ -1,19 +1,14 @@
--- Hard local-destination invite guard for SummonScout / WoW 1.12.1 / Lua 5.0.
+-- Hard local-destination + slave-readiness invite guard for SummonScout / WoW 1.12.1 / Lua 5.0.
 -- Cold-load module by design: it is kept out of the 256 KiB WhisperConfirm HOT fanout carrier.
 --
 -- Core routing already rejects explicit requests for another destination, but
--- two hot modules can bypass it by calling InviteByName() directly:
---   * PostPaymentOffer direct-prefix invites (inv*/port*/taxi*/buy*/wtb*)
---   * WhisperConfirmSpam positive confirmations
---
--- This guard is deliberately narrow: it blocks only reserved control packets,
--- ambiguous destination text, or an explicit destination outside this client's
--- SummonScoutDB.service. Bare "inv" still targets the local configured service.
+-- hot modules can bypass it by calling InviteByName() directly. This guard
+-- protects the canonical API and those legacy direct-whisper modules.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "1-local-destination-hard-guard"
+local VERSION = "2-destination-plus-slave-safety"
 local G = H.GetState("localdestinationinviteguard")
 local TOKEN = {}
 local ENSURE_INTERVAL = 0.50
@@ -41,6 +36,12 @@ local function gdReserved(raw)
         or string.sub(raw, 1, 5) == "[SSI "
 end
 
+local function gdSafetyBlocked()
+    if W112_SUMMONSCOUT_SLAVE_SAFETY_READY == false then return true end
+    if not SummonScoutDB or SummonScoutDB.enabled ~= true then return true end
+    return false
+end
+
 local function gdServiceContains(id)
     local service = gdLower(SummonScoutDB and SummonScoutDB.service or "all")
     id = gdLower(id or "")
@@ -62,6 +63,7 @@ local function gdResolve(raw)
 end
 
 local function gdBlockLegacyWhisper(raw)
+    if gdSafetyBlocked() then return true, "slave-safety" end
     if gdReserved(raw) then return true, "control" end
     local service = gdLower(SummonScoutDB and SummonScoutDB.service or "all")
     if service == "" or service == "all" then return false, nil end
@@ -76,7 +78,7 @@ end
 
 local function gdDebug(text)
     if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555SummonScout destination guard:|r " .. tostring(text or ""))
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555SummonScout invite guard:|r " .. tostring(text or ""))
     end
 end
 
@@ -110,6 +112,10 @@ local function gdInstallApi()
 
     local base = api.tryWhisperInvite
     local wrapper = function(name, loc)
+        if gdSafetyBlocked() then
+            gdDebug("core invite blocked -> " .. tostring(name or "?") .. " [slave-safety/disabled]")
+            return false, "slave-safety-blocked"
+        end
         if type(loc) == "table" and loc.id and not gdServiceContains(loc.id) then
             gdDebug("core invite blocked -> " .. tostring(name or "?") .. " ["
                 .. tostring(loc.label or loc.id) .. "] serving="
@@ -122,6 +128,23 @@ local function gdInstallApi()
     api.tryWhisperInvite = wrapper
     G.apiOwner, G.apiBase, G.apiWrapper = api, base, wrapper
     return true
+end
+
+local function gdClearLegacyPending(prefix, sender)
+    local key = gdLower(sender or "")
+    if prefix == "post" then
+        local state = H.GetState("postpay")
+        if type(state) == "table" and type(state.directInvitePending) == "table" then
+            state.directInvitePending[key] = nil
+        end
+    else
+        local state = H.GetState("whisperconfirm")
+        if type(state) == "table" then
+            if type(state.candidates) == "table" then state.candidates[key] = nil end
+            if type(state.pending) == "table" then state.pending[key] = nil end
+            if type(state.confirmations) == "table" then state.confirmations[key] = nil end
+        end
+    end
 end
 
 local function gdInstallModule(moduleName, prefix)
@@ -138,23 +161,10 @@ local function gdInstallModule(moduleName, prefix)
         if ev == "CHAT_MSG_WHISPER" then
             local blocked, reason = gdBlockLegacyWhisper(a1 or "")
             if blocked then
-                local key = gdLower(a2 or "")
-                if prefix == "post" then
-                    local state = H.GetState("postpay")
-                    if type(state) == "table" and type(state.directInvitePending) == "table" then
-                        state.directInvitePending[key] = nil
-                    end
-                else
-                    local state = H.GetState("whisperconfirm")
-                    if type(state) == "table" then
-                        if type(state.candidates) == "table" then state.candidates[key] = nil end
-                        if type(state.pending) == "table" then state.pending[key] = nil end
-                        if type(state.confirmations) == "table" then state.confirmations[key] = nil end
-                    end
-                end
+                gdClearLegacyPending(prefix, a2 or "")
                 if reason ~= "control" then
                     gdDebug(moduleName .. " blocked -> " .. tostring(a2 or "?")
-                        .. " [" .. tostring(reason or "other destination") .. "]")
+                        .. " [" .. tostring(reason or "guard") .. "]")
                 end
                 return nil
             end
@@ -182,6 +192,7 @@ local function gdEnsure()
     gdInstallApi()
     gdInstallModule("postpay", "post")
     gdInstallModule("whisperconfirm", "confirm")
+    if gdSafetyBlocked() then gdResetTransient() end
 end
 
 local M = {}
