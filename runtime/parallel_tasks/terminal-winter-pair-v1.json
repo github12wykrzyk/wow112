@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "terminal-winter-pair-v1",
+  "goal": "Bind the Windows/headless Winterspring slave characters winterone and wintertwoo exclusively to taxiwinter: invite taxiwinter after entering world, retry while unpaired, and transfer party leadership to taxiwinter once present.",
+  "branch": "feature/terminal-winter-pair-v1",
+  "base_parallel_sha": "ef552e3bdffeadbdd662c2cd8e125165aeeed9fe",
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "modules": [
+    "HeadlessPortalClicker"
+  ],
+  "dependencies": [
+    "terminal-portal-clicker-v2"
+  ],
+  "shared_resources": [
+    "probes/Wow112HeadlessAndroid",
+    "Headless terminal party ownership"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Pair-scoped and fail-closed: only winterone/wintertwoo auto-invite taxiwinter. Other terminal characters retain existing leader-handoff behavior and do not gain missing-summoner invites. Gameplay evidence remains required after exact Windows artifact delivery."
+}
