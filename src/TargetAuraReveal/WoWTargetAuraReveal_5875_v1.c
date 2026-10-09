@@ -169,12 +169,20 @@ static u32 collect(u32 obj,u32 *hashOut){
     for(slot=0u;slot<POSITIVE_AURAS;++slot){
         spell=read32(fields+UNIT_AURA_OFF+slot*4u);h=hash_mix(h,spell);
         if(!spell)continue;
-        if(count<POSITIVE_AURAS && spell_visual(spell,g_rows[count].name,g_rows[count].icon)){
-            u32 rawApplications=(u32)read8(fields+UNIT_AURA_APPLICATIONS_OFF+slot);
-            g_rows[count].spellId=spell;
-            g_rows[count].rawSlot=slot;
-            g_rows[count].applications=(rawApplications<255u)?(rawApplications+1u):1u;
-            ++count;
+        if(count<POSITIVE_AURAS){
+            if(!spell_visual(spell,g_rows[count].name,g_rows[count].icon)){
+                char *np=g_rows[count].name,*ne=g_rows[count].name+NAME_CAP;
+                char *ip=g_rows[count].icon,*ie=g_rows[count].icon+ICON_CAP;
+                np=cat(np,ne,"Spell ");np=num(np,ne,spell);*np=0;
+                ip=cat(ip,ie,"Interface\\Icons\\INV_Misc_QuestionMark");*ip=0;
+            }
+            {
+                u32 rawApplications=(u32)read8(fields+UNIT_AURA_APPLICATIONS_OFF+slot);
+                g_rows[count].spellId=spell;
+                g_rows[count].rawSlot=slot;
+                g_rows[count].applications=(rawApplications<255u)?(rawApplications+1u):1u;
+                ++count;
+            }
         }
     }
     h=hash_mix(h,count);if(hashOut)*hashOut=h;return count;
