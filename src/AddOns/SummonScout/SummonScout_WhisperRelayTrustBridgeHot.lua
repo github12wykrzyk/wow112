@@ -1,15 +1,18 @@
 -- SummonScout Whisper Relay trust bootstrap bridge for WoW 1.12.1 / Lua 5.0.
 --
--- Live failure fixed here:
---   summoner queues a real customer whisper -> sends [SSWR1] H to Master ->
---   Master rejects H because V1 requires the sender to be trusted before H can
---   establish that trust -> K never returns -> queued customer text never flushes.
+-- Live failures fixed here:
+--   * summoner queues a real customer whisper -> sends [SSWR1] H to Master ->
+--     Master rejects H because V1 requires the sender to be trusted before H can
+--     establish that trust -> K never returns -> queued customer text never flushes,
+--   * Master can see an owned customer conversation but /ssr reply is blocked with
+--     summoner-not-trusted because runtime bootstrap trust was restored immediately
+--     after admitting the inbound relay packet.
 --
--- This bridge breaks only that circular bootstrap. A syntactically valid H from a
--- valid non-self player opens a runtime-only relay peer. Subsequent summoner->Master
--- data packets from that exact peer are temporarily admitted to the canonical V1
--- handler. Master->summoner reply packets keep the original exact-master ACL and are
--- never authorised by this bridge. No SendChatMessage path is added here.
+-- Runtime H bootstrap remains temporary for unknown peers.  Separately, summoners
+-- proven by the canonical fixed slave<->master ownership map are persisted into the
+-- relay's canonical trustedSummoners table.  This lets Master replies pass the normal
+-- V1 ACL without opening reply authority to arbitrary [SSWR1] senders.
+-- K/R/RB/RC are never bridge-admitted and no SendChatMessage path is added here.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
@@ -21,10 +24,11 @@ if type(relay) ~= "table" or type(relay.OnEvent) ~= "function" then
     return
 end
 
-local VERSION = "2-runtime-h-bootstrap"
+local VERSION = "3-fixed-owner-reply-trust"
 local PROTO = "[SSWR1]"
 local B = H.GetState("whisperrelaytrustbridge")
 B.peers = B.peers or {}
+B.fixedTrusted = B.fixedTrusted or {}
 
 local OWN_RELAY_ON_EVENT = relay.OnEvent
 
@@ -104,6 +108,54 @@ local function tbEnsureRelayDb()
     return D
 end
 
+local function tbFixedSummoner(sender)
+    local wanted = tbLower(sender)
+    local ownership = W112_SUMMONSCOUT_SLAVE_MASTER_PAIRS_ACTIVE
+    local _, master
+    if wanted == "" or type(ownership) ~= "table" then return false end
+    for _, master in pairs(ownership) do
+        if tbLower(master) == wanted then return true end
+    end
+    return false
+end
+
+local function tbPersistFixedTrust(sender)
+    sender = tbTrim(sender)
+    local key = tbPeerKey(sender)
+    if not key or not tbFixedSummoner(sender) then return false end
+    local D = tbEnsureRelayDb()
+    D.trustedSummoners[key] = sender
+    B.fixedTrusted[key] = sender
+    B.lastFixedTrusted = sender
+    return true
+end
+
+local function tbSeedFixedTrust()
+    local ownership = W112_SUMMONSCOUT_SLAVE_MASTER_PAIRS_ACTIVE
+    local seen = {}
+    local _, master, key
+    local count = 0
+    if type(ownership) ~= "table" then
+        B.fixedTrustCount = 0
+        return 0
+    end
+    for _, master in pairs(ownership) do
+        master = tbTrim(master)
+        key = tbLower(master)
+        if key ~= "" and not seen[key] and tbValidName(master) then
+            seen[key] = true
+            if not tbSame(master, tbPlayer()) then
+                local D = tbEnsureRelayDb()
+                D.trustedSummoners[key] = master
+                B.fixedTrusted[key] = master
+            end
+            count = count + 1
+        end
+    end
+    B.fixedTrustCount = count
+    return count
+end
+
 local function tbCallTemporarilyTrusted(ev, a1, a2, a3)
     local sender = tbTrim(a2 or "")
     local key = tbLower(sender)
@@ -111,8 +163,8 @@ local function tbCallTemporarilyTrusted(ev, a1, a2, a3)
     local previous = D.trustedSummoners[key]
     local hadPrevious = previous ~= nil
 
-    -- Temporary compatibility admission only. The canonical handler still owns all
-    -- packet semantics and all Master reply ACLs.
+    -- Unknown runtime peers receive compatibility admission only for this one
+    -- canonical handler call. Fixed summoners already have persistent canonical trust.
     D.trustedSummoners[key] = sender
 
     local ok, result
@@ -136,6 +188,8 @@ end
 local function tbWrappedOnEvent(ev, a1, a2, a3)
     if ev == "PLAYER_LOGIN" then
         B.peers = {}
+        B.fixedTrusted = {}
+        tbSeedFixedTrust()
         return OWN_RELAY_ON_EVENT(ev, a1, a2, a3)
     end
 
@@ -153,15 +207,17 @@ local function tbWrappedOnEvent(ev, a1, a2, a3)
         if not tbRememberHello(sender) then
             return OWN_RELAY_ON_EVENT(ev, a1, a2, a3)
         end
+        tbPersistFixedTrust(sender)
         return tbCallTemporarilyTrusted(ev, a1, a2, a3)
     end
 
     if tbSummonerDataCode(code) and tbKnownPeer(sender) then
+        tbPersistFixedTrust(sender)
         return tbCallTemporarilyTrusted(ev, a1, a2, a3)
     end
 
-    -- K/R/RB/RC and every unknown code remain entirely canonical. In particular,
-    -- this bridge can never authorise a customer-facing Master reply mutation.
+    -- K/R/RB/RC and every unknown code remain entirely canonical. Fixed ownership
+    -- only seeds canonical trustedSummoners; this wrapper never executes reply packets.
     return OWN_RELAY_ON_EVENT(ev, a1, a2, a3)
 end
 
@@ -170,6 +226,8 @@ local M = {}
 function M.Init()
     relay.OnEvent = tbWrappedOnEvent
     B.peers = {}
+    B.fixedTrusted = {}
+    tbSeedFixedTrust()
     W112_SUMMONSCOUT_WHISPER_RELAY_TRUST_BRIDGE_VERSION = VERSION
 end
 
