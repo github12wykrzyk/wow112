@@ -1,11 +1,12 @@
 use std::env;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 
 mod auth;
 mod auth_endpoint;
 mod wire_build;
+mod world_endpoint;
 mod world_poc05_retry;
 mod world_portal;
 mod world_tele;
@@ -19,6 +20,7 @@ const DEFAULT_RECONNECT_LIMIT: u32 = 60;
 const DEFAULT_REALM_INDEX: usize = 1;
 const PORTAL_MIN_RECONNECT_LIMIT: u32 = 600;
 const PORTAL_MIN_RECONNECT_DELAY_MS: u64 = 1000;
+const WORLD_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() {
     if let Err(error) = run() {
@@ -49,6 +51,11 @@ fn is_transient_network_error(error: &str) -> bool {
     if error.contains("MAIL_MUTATION_") {
         return false;
     }
+
+    if error.starts_with("auth connect ") || error.starts_with("world connect ") {
+        return true;
+    }
+
     [
         "ConnectionReset",
         "Connection reset by peer",
@@ -59,6 +66,8 @@ fn is_transient_network_error(error: &str) -> bool {
         "WouldBlock",
         "ConnectionRefused",
         "connection refused",
+        "NetworkUnreachable",
+        "HostUnreachable",
         "world socket closed",
         "world keepalive pong timeout",
         "auth endpoint selection failed",
@@ -69,9 +78,40 @@ fn is_transient_network_error(error: &str) -> bool {
         "write auth proof failed",
         "read realm-list failed",
         "write realm-list request failed",
+        "read world auth challenge failed",
+        "write world auth session failed",
+        "read world pre-auth opcode failed",
+        "write character enum request failed",
+        "read character enum failed",
+        "write player login failed",
+        "read world opcode failed before login verify",
+        "world session did not reach SMSG_LOGIN_VERIFY_WORLD",
+        "character login failed before world entry",
     ]
     .iter()
     .any(|needle| error.contains(needle))
+}
+
+fn connect_world(spec: &str) -> Result<TcpStream, String> {
+    let addrs = spec
+        .to_socket_addrs()
+        .map_err(|e| format!("world connect {spec} resolve failed: {e}"))?
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err(format!("world connect {spec} failed: DNS returned no addresses"));
+    }
+
+    let mut failures = Vec::new();
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, WORLD_CONNECT_TIMEOUT) {
+            Ok(stream) => {
+                let _ = stream.set_nodelay(true);
+                return Ok(stream);
+            }
+            Err(error) => failures.push(format!("{addr}: {error}")),
+        }
+    }
+    Err(format!("world connect {spec} failed: {}", failures.join(" | ")))
 }
 
 fn run() -> Result<(), String> {
@@ -137,7 +177,7 @@ fn run() -> Result<(), String> {
         );
     } else if portal_mode {
         println!(
-            "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled",
+            "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled octologin_world_race=enabled",
             soak_seconds, reconnect_limit, reconnect_delay_ms
         );
     } else {
@@ -222,15 +262,22 @@ fn run_session(
         .get(realm_index)
         .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
 
-    let world_addr = env::var("WOW112_WORLD_ADDR")
-        .unwrap_or_else(|_| realm.address.clone());
+    // OctoLogin does not blindly trust the realm-list world address. It probes the
+    // offered and known same-realm world endpoints for a real SMSG_AUTH_CHALLENGE and
+    // uses the lowest-loss/best-latency route. Keep an explicit operator override intact.
+    let world_addr = match env::var("WOW112_WORLD_ADDR") {
+        Ok(explicit) => {
+            println!("[WORLD-RACE] explicit override; selection bypassed address={explicit}");
+            explicit
+        }
+        Err(_) => world_endpoint::select_world_endpoint(&realm.address),
+    };
     println!(
-        "[WORLD] connecting realm={} id={} address={}",
-        realm.name, realm.realm_id, world_addr
+        "[WORLD] connecting realm={} id={} offered={} selected={}",
+        realm.name, realm.realm_id, realm.address, world_addr
     );
 
-    let mut world_stream = TcpStream::connect(&world_addr)
-        .map_err(|e| format!("world connect {world_addr} failed: {e}"))?;
+    let mut world_stream = connect_world(&world_addr)?;
 
     if matches!(mode, "tele" | "tele-sniffer" | "whisper-sniffer") {
         world_tele::login_tele_sniffer(
