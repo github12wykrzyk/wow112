@@ -33,7 +33,23 @@ class SummonScoutWimNativeLua50SyntaxHotfixV1(unittest.TestCase):
             self.source,
         )
 
-    def test_final_hot_fanout_contains_fixed_declaration(self):
+    def test_source_avoids_named_assignments_inside_local_declaration(self):
+        self.assertIn('local sid=trim(box.W112RelaySid or "")', self.source)
+        self.assertIn('local s=trim(box.W112RelaySummoner or "")', self.source)
+        self.assertIn('local c=trim(box.W112RelayCustomer or "")', self.source)
+        self.assertIn('local sid=f[1] or ""', self.source)
+        self.assertIn('local idx=tonumber(f[2]) or 0', self.source)
+        self.assertIn('local k=low(sender).."|"..sid', self.source)
+        self.assertNotIn(
+            'local sid=trim(box.W112RelaySid or ""), s=trim(box.W112RelaySummoner or ""), c=trim(box.W112RelayCustomer or "")',
+            self.source,
+        )
+        self.assertNotIn(
+            'local sid=f[1] or "", idx=tonumber(f[2]) or 0, k=low(sender).."|"..sid',
+            self.source,
+        )
+
+    def test_final_hot_fanout_contains_fixed_declarations(self):
         marker = "W112 HOT FANOUT BEGIN SummonScout_WhisperRelayWimNativeHot.lua"
         self.assertIn(marker, self.packaged)
         start = self.packaged.index(marker)
@@ -45,8 +61,18 @@ class SummonScoutWimNativeLua50SyntaxHotfixV1(unittest.TestCase):
             'local V, P, W = "2-native-whisper-wim", "[SSWR1]", H.GetState("whisperrelaywim")',
             block,
         )
+        self.assertIn('local sid=trim(box.W112RelaySid or "")', block)
+        self.assertIn('local idx=tonumber(f[2]) or 0', block)
         self.assertNotIn(
             'local V="2-native-whisper-wim", P="[SSWR1]", W=',
+            block,
+        )
+        self.assertNotIn(
+            'local sid=trim(box.W112RelaySid or ""), s=trim(box.W112RelaySummoner or ""), c=trim(box.W112RelayCustomer or "")',
+            block,
+        )
+        self.assertNotIn(
+            'local sid=f[1] or "", idx=tonumber(f[2]) or 0, k=low(sender).."|"..sid',
             block,
         )
 

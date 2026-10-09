@@ -1,4 +1,5 @@
 -- Hard local-destination invite guard for SummonScout / WoW 1.12.1 / Lua 5.0.
+-- Cold-load module by design: it is kept out of the 256 KiB WhisperConfirm HOT fanout carrier.
 --
 -- Core routing already rejects explicit requests for another destination, but
 -- two hot modules can bypass it by calling InviteByName() directly:
