@@ -10,10 +10,11 @@
  * Exact-build evidence already present in this repo:
  *   target GUID globals / timer IAT / FrameScript_Execute: CastObserver
  *   object+descriptor / aura raw slots 0..47: PlayerESP / PickPocketSelective
- * Additional 5875 DBC layout evidence was cross-checked against ClassicAPI:
- *   Spell.dbc records 0x00C0D780 / count 0x00C0D788,
- *   SpellIcon.dbc records 0x00C0D7E4 / count 0x00C0D7EC,
- *   SpellRec SpellIconID +0x1D4, localized name +0x1E0.
+ * Exact packaged-EXE disassembly confirms the 5875 DBC reads used below:
+ *   Spell records 0x00C0D788 / count 0x00C0D78C,
+ *   SpellIcon records 0x00C0D7EC / count 0x00C0D7F0,
+ *   locale 0x00C0E080, SpellIconID +0x1D4, localized name +0x1E0,
+ *   SpellIcon path +0x04.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
 #error Requires WoW 1.12.1 build 5875 x86
@@ -36,6 +37,7 @@ typedef u32 TIMER32;
 typedef void (STDCALL *TimerProc)(HWND32,u32,TIMER32,u32);
 typedef TIMER32 (STDCALL *SetTimerFn)(HWND32,TIMER32,u32,TimerProc);
 typedef BOOL32 (STDCALL *KillTimerFn)(HWND32,TIMER32);
+typedef BOOL32 (STDCALL *IsBadReadPtrFn)(const void*,u32);
 typedef u32 (FASTCALL *GetObjectByGuidFn)(u64);
 typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 
@@ -47,18 +49,17 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 #define TARGET_GUID_HI     0x00B4E2DCu
 #define GET_OBJECT         0x00464870u
 #define FRAME_EXECUTE      0x00704CD0u
+#define IAT_ISBADREADPTR   0x007FF1E0u
 #define IAT_TIMER          0x007FF4F4u
 #define IAT_KILL           0x007FF4F8u
 
-#define SPELL_DB           0x00C0D780u
-#define SPELLICON_DB       0x00C0D7E4u
-#define LOCALE_INDEX       0x00C0E080u
-#define SPELL_ICON_OFF     0x000001D4u
-#define SPELL_NAME_OFF     0x000001E0u
-#define SPELL_ATTR_OFF     0x00000018u
-#define SPELL_ATTR_EX_OFF  0x0000001Cu
-#define SPELL_HIDDEN       0x00000080u
-#define SPELL_NO_AURA_ICON 0x10000000u
+#define SPELL_RECORDS_VAR      0x00C0D788u
+#define SPELL_COUNT_VAR        0x00C0D78Cu
+#define SPELLICON_RECORDS_VAR  0x00C0D7ECu
+#define SPELLICON_COUNT_VAR    0x00C0D7F0u
+#define LOCALE_INDEX           0x00C0E080u
+#define SPELL_ICON_OFF         0x000001D4u
+#define SPELL_NAME_OFF         0x000001E0u
 
 #define OBJ_TYPE           0x00000014u
 #define OBJ_GUID_LO        0x00000030u
@@ -83,12 +84,29 @@ static char g_lua[LUA_CAP];
 
 struct AuraRow { u32 spellId; u32 rawSlot; u32 applications; char name[NAME_CAP]; char icon[ICON_CAP]; };
 static struct AuraRow g_rows[POSITIVE_AURAS];
+static u32 g_diagSpell=0u,g_diagTable=0u,g_diagCount=0u,g_diagRow=0u,g_diagLocale=0u,g_diagNamePtr=0u;
+static u32 g_diagIconId=0u,g_diagIconTable=0u,g_diagIconCount=0u,g_diagIconRow=0u,g_diagIconPtr=0u;
 
 static u32 read32(u32 a){return *(volatile u32*)(u32)a;}
 static u8 read8(u32 a){return *(volatile u8*)(u32)a;}
 static void *iat(u32 a){return (void*)(u32)read32(a);}
-static int valid_ptr(u32 p){return p>=0x00010000u && p<=0x7FFE0000u && !(p&3u);}
-static int valid_byte_ptr(u32 p){return p>=0x00010000u && p<=0x7FFEFFFFu;}
+static int high_readable(u32 p,u32 n){
+    IsBadReadPtrFn bad;
+    if(p<0x00010000u||!n)return 0;
+    bad=(IsBadReadPtrFn)iat(IAT_ISBADREADPTR);
+    if(!bad)return 0;
+    return bad((const void*)(u32)p,n)==0;
+}
+static int valid_ptr(u32 p){
+    if(p<0x00010000u||(p&3u))return 0;
+    if(p<=0x7FFE0000u)return 1;
+    return high_readable(p,4u);
+}
+static int valid_byte_ptr(u32 p){
+    if(p<0x00010000u)return 0;
+    if(p<=0x7FFEFFFFu)return 1;
+    return high_readable(p,1u);
+}
 static int signature(u32 a,const u8 *s,u32 n){
     volatile const u8 *p=(volatile const u8*)(u32)a;u32 i;
     for(i=0u;i<n;i++)if(p[i]!=s[i])return 0;return 1;
@@ -96,7 +114,7 @@ static int signature(u32 a,const u8 *s,u32 n){
 static int safe_build(void){
     static const u8 getSig[]={0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x4D,0x0C,0x8B,0xD0,0x0B,0xD1};
     static const u8 scriptSig[]={0x56,0x6A,0x00,0x8B,0xF1,0x52,0x56,0xE8};
-    return signature(GET_OBJECT,getSig,sizeof(getSig)) && signature(FRAME_EXECUTE,scriptSig,sizeof(scriptSig));
+    return signature(GET_OBJECT,getSig,sizeof(getSig)) && signature(FRAME_EXECUTE,scriptSig,sizeof(scriptSig)) && iat(IAT_ISBADREADPTR)!=0;
 }
 static u32 object_by_guid(u32 lo,u32 hi){
     u64 guid;u32 obj;GetObjectByGuidFn f;
@@ -138,28 +156,45 @@ static char *lua_q(char *p,char *end,const char *s){
     }
     if(p+1<end)*p++='\'';return p;
 }
-static u32 dbc_row(u32 db,u32 id){
+static u32 dbc_row(u32 recordsVar,u32 countVar,u32 id){
     u32 table,count,row;
     if(!id)return 0u;
-    table=read32(db);count=read32(db+8u);
-    if(!valid_ptr(table)||id>(u32)count||count>1000000u)return 0u;
+    count=read32(countVar);
+    if(id>count||count>1000000u)return 0u;
+    table=read32(recordsVar);
+    if(!valid_ptr(table))return 0u;
     row=read32(table+id*4u);
     if(!valid_ptr(row))return 0u;
     return row;
 }
+static u32 localized_name_ptr(u32 rec,u32 locale){
+    u32 p,i;
+    if(locale>8u)locale=0u;
+    p=read32(rec+SPELL_NAME_OFF+locale*4u);
+    if(valid_byte_ptr(p)&&read8(p)!=0u)return p;
+    for(i=0u;i<9u;++i){
+        if(i==locale)continue;
+        p=read32(rec+SPELL_NAME_OFF+i*4u);
+        if(valid_byte_ptr(p)&&read8(p)!=0u)return p;
+    }
+    return 0u;
+}
 static int spell_visual(u32 spellId,char *name,char *icon){
     u32 rec,iconId,iconRec,namePtr,iconPtr,locale;
     name[0]=0;icon[0]=0;
-    rec=dbc_row(SPELL_DB,spellId);if(!rec)return 0;
-    locale=read32(LOCALE_INDEX);if(locale>8u)locale=0u;
-    namePtr=read32(rec+SPELL_NAME_OFF+locale*4u);
-    if(!valid_byte_ptr(namePtr))namePtr=read32(rec+SPELL_NAME_OFF);
+    g_diagSpell=spellId;
+    g_diagTable=read32(SPELL_RECORDS_VAR);g_diagCount=read32(SPELL_COUNT_VAR);
+    g_diagRow=0u;g_diagNamePtr=0u;g_diagIconId=0u;g_diagIconTable=read32(SPELLICON_RECORDS_VAR);
+    g_diagIconCount=read32(SPELLICON_COUNT_VAR);g_diagIconRow=0u;g_diagIconPtr=0u;
+    rec=dbc_row(SPELL_RECORDS_VAR,SPELL_COUNT_VAR,spellId);g_diagRow=rec;if(!rec)return 0;
+    locale=read32(LOCALE_INDEX);if(locale>8u)locale=0u;g_diagLocale=locale;
+    namePtr=localized_name_ptr(rec,locale);g_diagNamePtr=namePtr;
     copy_text(name,NAME_CAP,namePtr);
-    iconId=read32(rec+SPELL_ICON_OFF);
+    iconId=read32(rec+SPELL_ICON_OFF);g_diagIconId=iconId;
     if(iconId){
-        iconRec=dbc_row(SPELLICON_DB,iconId);
+        iconRec=dbc_row(SPELLICON_RECORDS_VAR,SPELLICON_COUNT_VAR,iconId);g_diagIconRow=iconRec;
         if(iconRec){
-            iconPtr=read32(iconRec+4u);
+            iconPtr=read32(iconRec+4u);g_diagIconPtr=iconPtr;
             if(valid_byte_ptr(iconPtr))copy_text(icon,ICON_CAP,iconPtr);
         }
     }
@@ -196,13 +231,19 @@ static u32 collect(u32 obj,u32 *hashOut){
 static char *append_setup(char *p,char *end){
     p=cat(p,end,"if not W112AuraReveal and TargetFrame and TargetFrameBuff1 then W112AuraReveal={};for i=1,32 do local b=CreateFrame('Button','W112AuraRevealBuff'..i,TargetFrame);b:SetWidth(21);b:SetHeight(21);local t=b:CreateTexture(nil,'ARTWORK');t:SetAllPoints(b);b.icon=t;");
     p=cat(p,end,"if i==1 then b:SetPoint('TOPLEFT',TargetFrameBuff1,'TOPLEFT',0,0);elseif math.mod(i-1,6)==0 then b:SetPoint('TOPLEFT',getglobal('W112AuraRevealBuff'..(i-6)),'BOTTOMLEFT',0,-2);else b:SetPoint('LEFT',getglobal('W112AuraRevealBuff'..(i-1)),'RIGHT',3,0);end;");
-    p=cat(p,end,"b:SetScript('OnEnter',function() GameTooltip:SetOwner(this,'ANCHOR_BOTTOMRIGHT',15,-25);GameTooltip:SetText(this.spellName or '');end);b:SetScript('OnLeave',function() GameTooltip:Hide();end);b:Hide();W112AuraReveal[i]=b;end;end;");
+    p=cat(p,end,"b:SetScript('OnEnter',function() GameTooltip:SetOwner(this,'ANCHOR_BOTTOMRIGHT',15,-25);GameTooltip:SetText(this.spellName or '');local d=W112AuraRevealDiag;if d and d.spellId==this.spellId and string.sub(this.spellName or '',1,6)=='Spell ' then GameTooltip:AddLine('DBC row='..tostring(d.row or 0)..' name='..tostring(d.namePtr or 0),1,0.82,0,1);GameTooltip:AddLine('table='..tostring(d.table or 0)..' count='..tostring(d.count or 0),0.8,0.8,0.8,1);end;GameTooltip:Show();end);b:SetScript('OnLeave',function() GameTooltip:Hide();end);b:Hide();W112AuraReveal[i]=b;end;end;");
     return p;
 }
 static void publish(u32 count,u32 targetLo,u32 targetHi){
     char *p=g_lua,*end=g_lua+LUA_CAP;u32 i;
     FrameScriptExecuteFn run=(FrameScriptExecuteFn)(u32)FRAME_EXECUTE;
     p=append_setup(p,end);
+    p=cat(p,end,"W112AuraRevealDiag={spellId=");p=num(p,end,g_diagSpell);
+    p=cat(p,end,",table=");p=num(p,end,g_diagTable);p=cat(p,end,",count=");p=num(p,end,g_diagCount);
+    p=cat(p,end,",row=");p=num(p,end,g_diagRow);p=cat(p,end,",locale=");p=num(p,end,g_diagLocale);
+    p=cat(p,end,",namePtr=");p=num(p,end,g_diagNamePtr);p=cat(p,end,",iconId=");p=num(p,end,g_diagIconId);
+    p=cat(p,end,",iconTable=");p=num(p,end,g_diagIconTable);p=cat(p,end,",iconCount=");p=num(p,end,g_diagIconCount);
+    p=cat(p,end,",iconRow=");p=num(p,end,g_diagIconRow);p=cat(p,end,",iconPtr=");p=num(p,end,g_diagIconPtr);p=cat(p,end,"};");
     p=cat(p,end,"W112NativeTargetBuffs={count=");p=num(p,end,count);
     p=cat(p,end,",targetLo=");p=num(p,end,targetLo);p=cat(p,end,",targetHi=");p=num(p,end,targetHi);
     p=cat(p,end,",hostile=(UnitExists('target') and UnitIsEnemy('player','target')) and 1 or 0,bySpell={},byName={}};");
