@@ -22,6 +22,7 @@ typedef int BOOL32;
 typedef void* HANDLE32;
 typedef void* HWND32;
 typedef u32 TIMER32;
+typedef union FloatBits { float f; u32 u; } FloatBits;
 typedef void (STDCALL *TimerProc)(HWND32,u32,TIMER32,u32);
 typedef TIMER32 (STDCALL *SetTimerFn)(HWND32,TIMER32,u32,TimerProc);
 typedef BOOL32 (STDCALL *KillTimerFn)(HWND32,TIMER32);
@@ -59,8 +60,6 @@ typedef BOOL32 (FASTCALL *FrameScriptExecuteFn)(const char*,const char*);
 #define OBJECT_PLAYER 4u
 #define BASE_MELEE_RANGE 5.0f
 #define BASE_MELEE_OFFSET 1.3333334f
-#define MAX_EXPOSED_RANGE_SQ 250000.0f
-#define MAX_EXPOSED_RANGE_SQ100 25000001u
 
 int _fltused=0;
 static volatile u32 g_installed=0u,g_busy=0u,g_inWorld=0u,g_readyAfter=0u;
@@ -179,8 +178,8 @@ static void observe_player_motion(u32 now){
  * Generic selected-target melee range for classes without a 5 yd spell probe.
  * The 1.12 client exposes combat reach in the unit descriptor. The classic
  * melee rule is both units' combat reach + ~1.333 yd, clamped to at least
- * 5 yd. We also publish squared 3D center distance for arbitrary-yard Lua
- * criteria. Squared distance avoids a CRT sqrt dependency.
+ * 5 yd. We also publish raw IEEE-754 bits for squared 3D center distance so
+ * Lua can evaluate arbitrary-yard criteria without introducing CRT helpers.
  */
 static void publish_melee(u32 state,u32 now){
     char lua[150],*p=lua;
@@ -195,11 +194,11 @@ static void clear_melee(u32 now){
     g_meleeKnown=0u;
     publish_melee(2u,now); /* any non-0/1 state clears Lua's sample */
 }
-static void publish_range(u32 squared100,u32 now){
+static void publish_range(u32 squaredBits,u32 now){
     char lua[170],*p=lua;
     FrameScriptExecuteFn run=(FrameScriptExecuteFn)(u32)FRAME_EXECUTE;
     p=cat(p,"if lazyScript and lazyScript.OnNativeTargetRangeSquared then lazyScript.OnNativeTargetRangeSquared(");
-    p=decimal(p,squared100);p=cat(p,") end");*p=0;
+    p=decimal(p,squaredBits);p=cat(p,") end");*p=0;
     run(lua,"WoWCastObserverTargetRange");
     g_rangeLastEmit=now;
 }
@@ -211,8 +210,9 @@ static void clear_range(u32 now){
     g_rangeLastEmit=now;
 }
 static void observe_target_melee(u32 now){
-    u32 pobj=player_object(),tlo,thi,tobj,pdesc,tdesc,typeId,state,scaled;
+    u32 pobj=player_object(),tlo,thi,tobj,pdesc,tdesc,typeId,state;
     float px,py,pz,tx,ty,tz,pr,tr,reach,dx,dy,dz,d2;
+    FloatBits rangeBits;
     if(!pobj){clear_melee(now);clear_range(now);return;}
     tlo=read32(TARGET_GUID_LO);thi=read32(TARGET_GUID_HI);
     tobj=object_by_guid(tlo,thi);
@@ -235,8 +235,8 @@ static void observe_target_melee(u32 now){
     if(reach<BASE_MELEE_RANGE)reach=BASE_MELEE_RANGE;
     dx=px-tx;dy=py-ty;dz=pz-tz;d2=dx*dx+dy*dy+dz*dz;
     if(!g_rangeKnown || (u32)(now-g_rangeLastEmit)>=100u){
-        scaled=(d2>MAX_EXPOSED_RANGE_SQ)?MAX_EXPOSED_RANGE_SQ100:(u32)(d2*100.0f+0.5f);
-        g_rangeKnown=1u;publish_range(scaled,now);
+        rangeBits.f=d2;
+        g_rangeKnown=1u;publish_range(rangeBits.u,now);
     }
     state=(d2<=reach*reach)?1u:0u;
     if(!g_meleeKnown || state!=g_meleeState || (u32)(now-g_meleeLastEmit)>=100u){
