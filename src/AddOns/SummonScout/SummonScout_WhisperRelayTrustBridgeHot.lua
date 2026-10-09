@@ -1,15 +1,19 @@
 -- SummonScout Whisper Relay trust bootstrap bridge for WoW 1.12.1 / Lua 5.0.
 --
--- Live failure fixed here:
---   summoner queues a real customer whisper -> sends [SSWR1] H to Master ->
---   Master rejects H because V1 requires the sender to be trusted before H can
---   establish that trust -> K never returns -> queued customer text never flushes.
+-- Live failures fixed here:
+--   * summoner queues a real customer whisper -> sends [SSWR1] H to Master ->
+--     Master rejects H because V1 requires the sender to be trusted before H can
+--     establish that trust -> K never returns -> queued customer text never flushes,
+--   * Master reload/hot-swap clears the runtime peer bridge while the summoner still
+--     has masterReady=true, so the next valid I/IB/IC/E packet is misclassified as an
+--     unauthorised customer control-like whisper and leaks raw [SSWR1] text to chat.
 --
--- This bridge breaks only that circular bootstrap. A syntactically valid H from a
--- valid non-self player opens a runtime-only relay peer. Subsequent summoner->Master
--- data packets from that exact peer are temporarily admitted to the canonical V1
--- handler. Master->summoner reply packets keep the original exact-master ACL and are
--- never authorised by this bridge. No SendChatMessage path is added here.
+-- This bridge breaks only those trust bootstrap/resync gaps. A syntactically valid H
+-- from a valid non-self player opens a runtime-only relay peer. After a Master-side
+-- reload, a sender that the canonical relay previously persisted as a trusted known
+-- summoner may rehydrate that runtime peer on the next summoner->Master data packet.
+-- Master->summoner reply packets keep the original exact-master ACL and are never
+-- authorised by this bridge. No SendChatMessage path is added here.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
@@ -21,7 +25,7 @@ if type(relay) ~= "table" or type(relay.OnEvent) ~= "function" then
     return
 end
 
-local VERSION = "2-runtime-h-bootstrap"
+local VERSION = "3-runtime-peer-resync"
 local PROTO = "[SSWR1]"
 local B = H.GetState("whisperrelaytrustbridge")
 B.peers = B.peers or {}
@@ -100,8 +104,17 @@ local function tbEnsureRelayDb()
         SummonScoutDB.whisperRelayV1 = {}
     end
     local D = SummonScoutDB.whisperRelayV1
+    if type(D.knownSummoners) ~= "table" then D.knownSummoners = {} end
     if type(D.trustedSummoners) ~= "table" then D.trustedSummoners = {} end
     return D
+end
+
+local function tbPersistedKnownPeer(sender)
+    local key = tbPeerKey(sender)
+    if not key then return false end
+    local D = tbEnsureRelayDb()
+    local x = D.knownSummoners[key]
+    return type(x) == "table" and x.trusted == true
 end
 
 local function tbCallTemporarilyTrusted(ev, a1, a2, a3)
@@ -156,8 +169,17 @@ local function tbWrappedOnEvent(ev, a1, a2, a3)
         return tbCallTemporarilyTrusted(ev, a1, a2, a3)
     end
 
-    if tbSummonerDataCode(code) and tbKnownPeer(sender) then
-        return tbCallTemporarilyTrusted(ev, a1, a2, a3)
+    if tbSummonerDataCode(code) then
+        if tbKnownPeer(sender) then
+            return tbCallTemporarilyTrusted(ev, a1, a2, a3)
+        end
+        -- Master reload/hot-swap may clear only B.peers while the summoner keeps
+        -- masterReady=true and therefore does not send a fresh H. Rehydrate only
+        -- from the canonical persisted record that was already marked trusted.
+        if tbPersistedKnownPeer(sender) then
+            tbRememberHello(sender)
+            return tbCallTemporarilyTrusted(ev, a1, a2, a3)
+        end
     end
 
     -- K/R/RB/RC and every unknown code remain entirely canonical. In particular,
