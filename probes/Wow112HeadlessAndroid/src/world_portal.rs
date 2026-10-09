@@ -1,12 +1,17 @@
 include!("world.rs");
 
+const CMSG_GROUP_INVITE_OPCODE: u32 = 0x006E;
+const SMSG_GROUP_INVITE_OPCODE: u16 = 0x006F;
+const CMSG_GROUP_ACCEPT_OPCODE: u32 = 0x0072;
 const CMSG_GROUP_SET_LEADER_OPCODE: u32 = 0x0078;
 const SMSG_GROUP_LIST_OPCODE: u16 = 0x007D;
+const SMSG_PARTY_COMMAND_RESULT_OPCODE: u16 = 0x007F;
 const CMSG_GAMEOBJ_USE_OPCODE: u32 = 0x00B1;
 const SUMMONING_PORTAL_ENTRY: i32 = 36727;
 const GAMEOBJECT_TYPE_RITUAL: i32 = 18;
 const PORTAL_RETRY_GAP_MS: u64 = 180;
 const PORTAL_DEFAULT_ATTEMPTS: u32 = 3;
+const PARTY_INVITE_RETRY_GAP_MS: u64 = 5000;
 const PARTY_LEADER_RETRY_GAP_MS: u64 = 5000;
 const DEFAULT_SUMMONER_NAMES: &str = "teletanaris,bolthyjal,feltaxi";
 
@@ -43,6 +48,96 @@ fn configured_summoner_names() -> Vec<String> {
         }
     }
     names
+}
+
+fn fixed_slave_master(player_name: &str) -> Option<&'static str> {
+    if player_name.eq_ignore_ascii_case("silione")
+        || player_name.eq_ignore_ascii_case("silitwo")
+    {
+        Some("Kalisum")
+    } else if player_name.eq_ignore_ascii_case("hyjaluno")
+        || player_name.eq_ignore_ascii_case("hyjalonee")
+    {
+        Some("Bolthyjal")
+    } else if player_name.eq_ignore_ascii_case("hydratwo")
+        || player_name.eq_ignore_ascii_case("hydraone")
+    {
+        Some("Feltaxi")
+    } else if player_name.eq_ignore_ascii_case("winterone")
+        || player_name.eq_ignore_ascii_case("wintertwoo")
+    {
+        Some("Taxiwinter")
+    } else {
+        None
+    }
+}
+
+fn write_group_invite(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    target: &str,
+) -> Result<(), String> {
+    println!("[PARTY] invite fixed master by name: {target} opcode=0x006E");
+    let mut payload = Vec::with_capacity(target.len() + 1);
+    payload.extend_from_slice(target.as_bytes());
+    payload.push(0);
+    write_encrypted_raw(
+        stream,
+        crypto.encrypter(),
+        CMSG_GROUP_INVITE_OPCODE,
+        &payload,
+    )
+    .map_err(|e| format!("write fixed-master raw group invite failed target={target}: {e}"))
+}
+
+fn accept_fixed_master_invite_once(
+    stream: &mut TcpStream,
+    crypto: &mut HeaderCrypto,
+    payload: &[u8],
+    fixed_master: &str,
+    accept_committed: &mut bool,
+) -> Result<(), String> {
+    let message = parse_raw_server_message(SMSG_GROUP_INVITE_OPCODE, payload)
+        .map_err(|error| format!("parse fixed-master group invite failed: {error}"))?;
+    let ServerOpcodeMessage::SMSG_GROUP_INVITE(invite) = message else {
+        return Ok(());
+    };
+
+    if !invite.name.eq_ignore_ascii_case(fixed_master) {
+        println!(
+            "[PARTY] ignore invite from untrusted inviter={} fixed_master={}",
+            invite.name, fixed_master
+        );
+        return Ok(());
+    }
+
+    if *accept_committed {
+        println!(
+            "[PARTY] trusted invite duplicate ignored inviter={} reason=accept_already_committed retry_allowed=false",
+            invite.name
+        );
+        return Ok(());
+    }
+
+    // Mutation rule: commit guard BEFORE socket I/O. If the write result is
+    // uncertain, the session hard-stops and never retries this accept.
+    *accept_committed = true;
+    println!(
+        "[PARTY] trusted master invite ACCEPT COMMITTED inviter={} opcode=0x0072 retry_allowed=false",
+        invite.name
+    );
+    write_encrypted_raw(stream, crypto.encrypter(), CMSG_GROUP_ACCEPT_OPCODE, &[])
+        .map_err(|error| {
+            format!(
+                "GROUP_ACCEPT_MUTATION_UNCERTAIN inviter={} retry_allowed=false cause={error}",
+                invite.name
+            )
+        })?;
+    println!(
+        "[PARTY] trusted master invite ACCEPT SENT inviter={} opcode=0x0072 retry_allowed=false",
+        invite.name
+    );
+    Ok(())
 }
 
 fn read_party_u8(payload: &[u8], offset: &mut usize) -> Result<u8, String> {
@@ -91,6 +186,8 @@ fn service_party_leader_handoff(
     crypto: &mut HeaderCrypto,
     payload: &[u8],
     summoner_names: &[String],
+    auto_invite_missing: bool,
+    last_invite: &mut Option<(String, Instant)>,
     last_transfer: &mut Option<(u64, Instant)>,
 ) -> Result<(), String> {
     let mut offset = 0usize;
@@ -118,6 +215,16 @@ fn service_party_leader_handoff(
     // SMSG_GROUP_LIST excludes this client from the member list. If the leader GUID
     // belongs to one of the listed members, somebody else already owns leadership.
     if members.iter().any(|member| member.guid == leader_guid) {
+        if auto_invite_missing {
+            let target_present = summoner_names.iter().any(|wanted| {
+                members
+                    .iter()
+                    .any(|member| member.name.eq_ignore_ascii_case(wanted))
+            });
+            if target_present {
+                *last_invite = None;
+            }
+        }
         return Ok(());
     }
 
@@ -132,9 +239,28 @@ fn service_party_leader_handoff(
         }
     }
 
-    let Some(target) = target else {
+    if target.is_none() {
+        if !auto_invite_missing {
+            return Ok(());
+        }
+        let Some(wanted) = summoner_names.first() else {
+            return Ok(());
+        };
+        if let Some((name, sent_at)) = last_invite.as_ref() {
+            if name.eq_ignore_ascii_case(wanted)
+                && sent_at.elapsed() < Duration::from_millis(PARTY_INVITE_RETRY_GAP_MS)
+            {
+                return Ok(());
+            }
+        }
+
+        write_group_invite(stream, crypto, wanted)?;
+        *last_invite = Some((wanted.to_string(), Instant::now()));
         return Ok(());
-    };
+    }
+
+    let target = target.unwrap();
+    *last_invite = None;
 
     if let Some((guid, sent_at)) = *last_transfer {
         if guid == target.guid && sent_at.elapsed() < Duration::from_millis(PARTY_LEADER_RETRY_GAP_MS) {
@@ -285,6 +411,7 @@ fn service_portal_clicks(
 fn portal_click_loop(
     stream: &mut TcpStream,
     crypto: &mut HeaderCrypto,
+    player_name: &str,
     soak_seconds: u64,
 ) -> Result<(), String> {
     let previous_timeout = stream.read_timeout().ok().flatten();
@@ -293,14 +420,21 @@ fn portal_click_loop(
         .map_err(|e| format!("set portal read timeout failed: {e}"))?;
 
     let max_attempts = portal_attempt_limit();
-    let summoner_names = configured_summoner_names();
+    let fixed_master = fixed_slave_master(player_name);
+    let summoner_names = match fixed_master {
+        Some(master) => vec![master.to_string()],
+        None => configured_summoner_names(),
+    };
+    let auto_invite_missing = fixed_master.is_some();
     let deadline = if soak_seconds == 0 {
         None
     } else {
         Some(Instant::now() + Duration::from_secs(soak_seconds))
     };
     let mut portals = std::collections::HashMap::<u64, PortalAttemptState>::new();
+    let mut last_summoner_invite: Option<(String, Instant)> = None;
     let mut last_leader_transfer: Option<(u64, Instant)> = None;
+    let mut trusted_accept_committed = false;
     let mut last_ping = Instant::now();
     let mut ping_sequence = 1u32;
     let mut awaiting_pong: Option<(u32, Instant)> = None;
@@ -314,9 +448,16 @@ fn portal_click_loop(
         if soak_seconds == 0 { "infinite".to_string() } else { format!("{soak_seconds}s") }
     );
     println!(
-        "[PARTY] auto leader handoff enabled summoners={}",
+        "[PARTY] auto leader handoff enabled player={} summoners={}",
+        player_name,
         summoner_names.join(",")
     );
+
+    if let Some(master) = fixed_master {
+        println!("[PARTY] fixed slave/master pair active slave={player_name} master={master}");
+        write_group_invite(stream, crypto, master)?;
+        last_summoner_invite = Some((master.to_string(), Instant::now()));
+    }
 
     loop {
         if deadline.is_some_and(|value| Instant::now() >= value) {
@@ -326,6 +467,17 @@ fn portal_click_loop(
         }
 
         service_portal_clicks(stream, crypto, &mut portals, max_attempts)?;
+
+        if auto_invite_missing {
+            if let (Some(master), Some((name, sent_at))) = (fixed_master, last_summoner_invite.as_ref()) {
+                if name.eq_ignore_ascii_case(master)
+                    && sent_at.elapsed() >= Duration::from_millis(PARTY_INVITE_RETRY_GAP_MS)
+                {
+                    write_group_invite(stream, crypto, master)?;
+                    last_summoner_invite = Some((master.to_string(), Instant::now()));
+                }
+            }
+        }
 
         if let Some((sequence, sent_at)) = awaiting_pong {
             if sent_at.elapsed() >= Duration::from_secs(PONG_TIMEOUT_SECONDS) {
@@ -356,15 +508,52 @@ fn portal_click_loop(
                     }
                     continue;
                 }
+                if opcode == SMSG_GROUP_INVITE_OPCODE {
+                    if let Some(master) = fixed_master {
+                        accept_fixed_master_invite_once(
+                            stream,
+                            crypto,
+                            &payload,
+                            master,
+                            &mut trusted_accept_committed,
+                        )?;
+                    }
+                    continue;
+                }
+                if opcode == SMSG_PARTY_COMMAND_RESULT_OPCODE {
+                    let mut offset = 0usize;
+                    let operation = read_party_u32(&payload, &mut offset);
+                    let member = read_party_cstring(&payload, &mut offset);
+                    let result = if offset + 4 <= payload.len() {
+                        Some(u32::from_le_bytes(
+                            payload[offset..offset + 4].try_into().unwrap(),
+                        ))
+                    } else {
+                        None
+                    };
+                    match (operation, member, result) {
+                        (Ok(operation), Ok(member), Some(result)) => println!(
+                            "[PARTY-RESULT] operation={} member={} result={} payload={}",
+                            operation,
+                            member,
+                            result,
+                            payload.len()
+                        ),
+                        _ => println!("[PARTY-RESULT] malformed payload={}", payload.len()),
+                    }
+                    continue;
+                }
                 if opcode == SMSG_GROUP_LIST_OPCODE {
                     if let Err(error) = service_party_leader_handoff(
                         stream,
                         crypto,
                         &payload,
                         &summoner_names,
+                        auto_invite_missing,
+                        &mut last_summoner_invite,
                         &mut last_leader_transfer,
                     ) {
-                        println!("[PARTY-DIAG] roster parse/handoff skipped: {error}");
+                        println!("[PARTY-DIAG] roster invite/handoff skipped: {error}");
                     }
                 }
                 inspect_portal_update_packet(opcode, &payload, &mut portals);
@@ -499,7 +688,7 @@ pub fn login_portal_clicker(
         return Err("world session did not reach SMSG_LOGIN_VERIFY_WORLD within 256 packets".to_string());
     }
 
-    portal_click_loop(stream, &mut crypto, soak_seconds)?;
+    portal_click_loop(stream, &mut crypto, &selected.name, soak_seconds)?;
     println!("[PORTAL] CLICKER PASS");
     Ok(())
 }
