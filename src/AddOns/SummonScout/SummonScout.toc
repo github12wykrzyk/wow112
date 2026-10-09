@@ -2,7 +2,7 @@
 ## Title: SummonScout
 ## Notes: Watches World chat for players asking for a summon and automatically invites them.
 ## Author: wow112
-## Version: 1.68
+## Version: 1.69
 ## SavedVariables: SummonScoutDB
 ## OptionalDeps: AuxVmangos, WIM
 
@@ -20,9 +20,11 @@ SummonScout_CombatFailureWhisperHot.lua
 SummonScout_SoldInviteHot.lua
 SummonScout_WorldBuyerRelationHot.lua
 SummonScout_RosterOwnershipHot.lua
+SummonScout_SlaveMasterPair.lua
 SummonScout_FallbackRouterHot.lua
-SummonScout_FallbackRouterHubAckHot.lua
+SummonScout_FallbackRouterHubAck.lua
 SummonScout_FleetCounterCoordinator.lua
+SummonScout_TanarisFullService.lua
 SummonScout_UnknownWhisperReportHot.lua
 SummonScout_DestinationInfoGuardHot.lua
 SummonScout_CompetitionSmart.lua
