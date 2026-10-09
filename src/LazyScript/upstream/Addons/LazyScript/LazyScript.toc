@@ -5,7 +5,7 @@
 ## X-Revision: $Revision: 800 $
 ## X-LazyScriptCompatibility: 3
 ## Notes: Programmable Class Attacks.
-## Notes-zhCN: 懒人神器主程序
+## Notes-zhCN: 懒人神器主程序，所有职业的个性脚本均需要加载。
 ## OptionalDeps: MobInfo-2, Tracer
 ## SavedVariables: lsConfGlobal, lsRearDiag
 ## SavedVariablesPerCharacter: lsConf
