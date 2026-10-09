@@ -47,6 +47,21 @@ fn parse_env_u32(name: &str, default_value: u32) -> Result<u32, String> {
     }
 }
 
+fn env_flag(name: &str, default_value: bool) -> bool {
+    match env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default_value,
+        },
+        Err(_) => default_value,
+    }
+}
+
+fn portal_direct_compat_enabled() -> bool {
+    env_flag("WOW112_TERMINAL_WIN_DIRECT_COMPAT", cfg!(windows))
+}
+
 fn is_transient_network_error(error: &str) -> bool {
     if error.contains("MAIL_MUTATION_") {
         return false;
@@ -135,6 +150,7 @@ fn run() -> Result<(), String> {
     let portal_mode = matches!(mode.as_str(), "portal" | "portal-clicker" | "clicker");
     let tele_mode = matches!(mode.as_str(), "tele" | "tele-sniffer" | "whisper-sniffer");
     let mode_label = if tele_mode { "tele-sniffer" } else if portal_mode { "portal-clicker" } else { "poc05" };
+    let direct_compat = portal_mode && portal_direct_compat_enabled();
 
     let realm_index = env::var("WOW112_REALM_INDEX")
         .ok()
@@ -177,8 +193,11 @@ fn run() -> Result<(), String> {
         );
     } else if portal_mode {
         println!(
-            "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled octologin_world_race=enabled",
-            soak_seconds, reconnect_limit, reconnect_delay_ms
+            "[PORTAL] soak_seconds={} reconnect_limit={} reconnect_delay_ms={} auto_gameobj_use=enabled direct_compat={}",
+            soak_seconds,
+            reconnect_limit,
+            reconnect_delay_ms,
+            if direct_compat { "yes" } else { "no" }
         );
     } else {
         println!(
@@ -191,6 +210,7 @@ fn run() -> Result<(), String> {
         println!("[RESILIENCE] session attempt={attempt}/{reconnect_limit}");
         match run_session(
             &mut auth_selector,
+            &auth_addr,
             realm_index,
             &username,
             &password,
@@ -221,6 +241,7 @@ fn run() -> Result<(), String> {
 
 fn run_session(
     auth_selector: &mut AuthEndpointSelector,
+    auth_addr: &str,
     realm_index: usize,
     username: &str,
     password: &str,
@@ -229,17 +250,32 @@ fn run_session(
     mode: &str,
     mail_mutation_committed: &mut bool,
 ) -> Result<(), String> {
-    let (mut auth_stream, selected_auth_addr) = auth_selector.connect()?;
-    println!("[AUTH] connecting selected endpoint {selected_auth_addr}");
+    let portal_mode = matches!(mode, "portal" | "portal-clicker" | "clicker");
+    let direct_compat = portal_mode && portal_direct_compat_enabled();
+
+    let (mut auth_stream, selected_auth_addr) = if direct_compat {
+        println!("[AUTH] direct-compat connecting to {auth_addr}");
+        let stream = TcpStream::connect(auth_addr)
+            .map_err(|e| format!("auth connect {auth_addr} failed: {e}"))?;
+        (stream, None)
+    } else {
+        let (stream, addr) = auth_selector.connect()?;
+        println!("[AUTH] connecting selected endpoint {addr}");
+        (stream, Some(addr))
+    };
 
     let (session_key, realms) = match auth::authenticate(&mut auth_stream, username, password) {
         Ok(result) => {
-            auth_selector.mark_good(selected_auth_addr);
+            if let Some(addr) = selected_auth_addr {
+                auth_selector.mark_good(addr);
+            }
             result
         }
         Err(error) => {
             if is_transient_network_error(&error) {
-                auth_selector.mark_failed(selected_auth_addr);
+                if let Some(addr) = selected_auth_addr {
+                    auth_selector.mark_failed(addr);
+                }
             }
             return Err(error);
         }
@@ -262,22 +298,37 @@ fn run_session(
         .get(realm_index)
         .ok_or_else(|| format!("WOW112_REALM_INDEX={realm_index} is out of range"))?;
 
-    // OctoLogin does not blindly trust the realm-list world address. It probes the
-    // offered and known same-realm world endpoints for a real SMSG_AUTH_CHALLENGE and
-    // uses the lowest-loss/best-latency route. Keep an explicit operator override intact.
-    let world_addr = match env::var("WOW112_WORLD_ADDR") {
-        Ok(explicit) => {
-            println!("[WORLD-RACE] explicit override; selection bypassed address={explicit}");
-            explicit
-        }
-        Err(_) => world_endpoint::select_world_endpoint(&realm.address),
+    let world_addr = if direct_compat {
+        let address = env::var("WOW112_WORLD_ADDR").unwrap_or_else(|_| realm.address.clone());
+        println!(
+            "[WORLD] direct-compat realm={} id={} address={}",
+            realm.name, realm.realm_id, address
+        );
+        address
+    } else {
+        // Optional endpoint selection remains available for non-recovery modes and
+        // explicit diagnostics, but TERMINAL WIN portal workers use the proven direct
+        // auth -> realm-list address path by default.
+        let address = match env::var("WOW112_WORLD_ADDR") {
+            Ok(explicit) => {
+                println!("[WORLD-RACE] explicit override; selection bypassed address={explicit}");
+                explicit
+            }
+            Err(_) => world_endpoint::select_world_endpoint(&realm.address),
+        };
+        println!(
+            "[WORLD] connecting realm={} id={} offered={} selected={}",
+            realm.name, realm.realm_id, realm.address, address
+        );
+        address
     };
-    println!(
-        "[WORLD] connecting realm={} id={} offered={} selected={}",
-        realm.name, realm.realm_id, realm.address, world_addr
-    );
 
-    let mut world_stream = connect_world(&world_addr)?;
+    let mut world_stream = if direct_compat {
+        TcpStream::connect(&world_addr)
+            .map_err(|e| format!("world connect {world_addr} failed: {e}"))?
+    } else {
+        connect_world(&world_addr)?
+    };
 
     if matches!(mode, "tele" | "tele-sniffer" | "whisper-sniffer") {
         world_tele::login_tele_sniffer(
@@ -288,7 +339,7 @@ fn run_session(
             character_name,
             soak_seconds,
         )?;
-    } else if matches!(mode, "portal" | "portal-clicker" | "clicker") {
+    } else if portal_mode {
         world_portal::login_portal_clicker(
             &mut world_stream,
             session_key,
