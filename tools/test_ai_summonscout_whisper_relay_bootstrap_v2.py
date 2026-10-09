@@ -40,10 +40,18 @@ class SummonScoutWhisperRelayBootstrapV2Contract(unittest.TestCase):
         self.assertIn("return tbCallTemporarilyTrusted(ev, a1, a2, a3)", self.bridge)
         self.assertIn('local PROTO = "[SSWR1]"', self.bridge)
 
-    def test_data_packets_require_runtime_peer_established_by_h(self):
+    def test_data_packets_accept_runtime_peer_or_persisted_trusted_resync(self):
         self.assertIn('return code == "I" or code == "IB" or code == "IC" or code == "E"', self.bridge)
-        self.assertIn("tbSummonerDataCode(code) and tbKnownPeer(sender)", self.bridge)
+        self.assertIn("if tbKnownPeer(sender) then", self.bridge)
+        self.assertIn("if tbPersistedKnownPeer(sender) then", self.bridge)
+        self.assertIn("tbRememberHello(sender)", self.bridge)
         self.assertIn("B.peers[key]", self.bridge)
+
+    def test_persisted_resync_is_fail_closed_to_trusted_known_summoners_only(self):
+        self.assertIn('if type(D.knownSummoners) ~= "table" then D.knownSummoners = {} end', self.bridge)
+        self.assertIn("local x = D.knownSummoners[key]", self.bridge)
+        self.assertIn('return type(x) == "table" and x.trusted == true', self.bridge)
+        self.assertNotIn('return type(x) == "table"\nend\n\nlocal function tbCallTemporarilyTrusted', self.bridge)
 
     def test_master_reply_acl_is_never_bridged(self):
         data_line = 'return code == "I" or code == "IB" or code == "IC" or code == "E"'
@@ -65,9 +73,10 @@ class SummonScoutWhisperRelayBootstrapV2Contract(unittest.TestCase):
         self.assertNotIn("CastSpell", self.bridge_code)
         self.assertNotIn("AcceptTrade", self.bridge_code)
 
-    def test_runtime_peers_reset_on_login(self):
+    def test_runtime_peers_reset_on_login_but_can_resync_from_persisted_trust(self):
         self.assertIn('if ev == "PLAYER_LOGIN" then', self.bridge)
         self.assertIn("B.peers = {}", self.bridge)
+        self.assertIn("tbPersistedKnownPeer(sender)", self.bridge)
 
     def test_vanilla_lua_compatibility(self):
         self.assertNotIn("string.match(", self.bridge_code)
