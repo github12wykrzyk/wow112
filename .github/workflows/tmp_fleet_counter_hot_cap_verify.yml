@@ -1,0 +1,38 @@
+name: TEMP fleet counter HOT cap verify
+
+on:
+  push:
+    branches:
+      - tmp/summonscout-fleet-counter-hot-cap-verify
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Measure exact SummonScout HOT payload
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('tools').resolve()))
+          import package_lazyrogue_addons as p
+          host = Path('src/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua')
+          data = p.package_bytes('SummonScout', host)
+          print(f'HOT_PAYLOAD_BYTES={len(data)} CAP={p.HOT_PAYLOAD_CAP} HEADROOM={p.HOT_PAYLOAD_CAP-len(data)}')
+          assert len(data) < p.HOT_PAYLOAD_CAP
+          assert 'SummonScout_FleetCounterCoordinator.lua' not in p.hot_fanout_modules()
+          PY
+
+      - name: Package full addon stack
+        run: python3 tools/package_lazyrogue_addons.py --output dist/fleet_counter_hot_cap_verify.zip
+
+      - name: Run HOT fanout regressions
+        run: python3 tools/test_ai_summonscout_hot_fanout.py
+
+      - name: Run SummonScout upvalue gate
+        run: python3 tools/verify_summonscout_lua_upvalues.py
