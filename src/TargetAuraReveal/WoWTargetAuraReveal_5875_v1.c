@@ -11,7 +11,8 @@
  *   target GUID globals / timer IAT / FrameScript_Execute: CastObserver
  *   object+descriptor / aura raw slots 0..47: PlayerESP / PickPocketSelective
  * Additional 5875 DBC layout evidence was cross-checked against ClassicAPI:
- *   Spell.dbc instance 0x00C0D780, SpellIcon.dbc instance 0x00C0D7E4,
+ *   Spell.dbc records 0x00C0D780 / count 0x00C0D788,
+ *   SpellIcon.dbc records 0x00C0D7E4 / count 0x00C0D7EC,
  *   SpellRec SpellIconID +0x1D4, localized name +0x1E0.
  */
 #if !defined(_M_IX86) && !defined(__i386__)
@@ -138,10 +139,10 @@ static char *lua_q(char *p,char *end,const char *s){
     if(p+1<end)*p++='\'';return p;
 }
 static u32 dbc_row(u32 db,u32 id){
-    u32 table,maxId,row;
+    u32 table,count,row;
     if(!id)return 0u;
-    table=read32(db+8u);maxId=read32(db+12u);
-    if(!valid_ptr(table)||id>maxId||maxId>1000000u)return 0u;
+    table=read32(db);count=read32(db+8u);
+    if(!valid_ptr(table)||id>(u32)count||count>1000000u)return 0u;
     row=read32(table+id*4u);
     if(!valid_ptr(row))return 0u;
     return row;
