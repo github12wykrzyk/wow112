@@ -210,6 +210,9 @@ fn service_party_leader_handoff(
     // SMSG_GROUP_LIST excludes this client from the member list. If the leader GUID
     // belongs to one of the listed members, somebody else already owns leadership.
     if members.iter().any(|member| member.guid == leader_guid) {
+        if auto_invite_missing {
+            *last_invite = None;
+        }
         return Ok(());
     }
 
