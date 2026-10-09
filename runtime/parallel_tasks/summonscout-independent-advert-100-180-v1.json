@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-independent-advert-100-180-v1",
+  "goal": "Use an independent per-client 100-180 second periodic summon advert cadence and remove cross-client peer-advert backoff/synchronization.",
+  "branch": "feature/summonscout-independent-advert-100-180-v1",
+  "base_parallel_sha": "34db611fa40d2526bbbabbb8d4d634f8946d708c",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [
+    "summonscout-random-spam-counter1-v1",
+    "summonscout-ad-collision-guard-v1"
+  ],
+  "shared_resources": [
+    "SummonScout-advert-scheduler",
+    "SummonScout-hot-timing-payload"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": true,
+  "delivery_profiles": [],
+  "lease": {
+    "owner": "chatgpt:summonscout-independent-advert-100-180-v1",
+    "acquired_at": "2026-10-09T13:31:00Z",
+    "heartbeat_at": "2026-10-09T13:39:00Z",
+    "ttl_seconds": 21600,
+    "scopes": [
+      "resource:SummonScout-advert-scheduler",
+      "resource:SummonScout-hot-timing-payload"
+    ]
+  },
+  "notes": "Timing-only hot Lua change. Cadence is 100-180s, independently derived per client/character. CHAT_MSG_CHANNEL peer advert observations no longer alter nextSpamAt; old live peer-guard state is ignored and diagnostics expose peer guard version 0. A profile-version bump rearms the new cadence immediately on hotload without changing the stable packager marker."
+}
