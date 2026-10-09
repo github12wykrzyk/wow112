@@ -12,7 +12,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "3-explicit-api-combat-wait-resume"
+local VERSION = "4-combat-error-authoritative-r-ready"
 local S = H.GetState("groupedresume")
 S.deferred = S.deferred or {}
 S.lastHoldAckAt = S.lastHoldAckAt or {}
@@ -108,6 +108,7 @@ local HOLD_PHRASES = {
 
 local RESUME_EXACT = {
     ["123"] = true,
+    ["r"] = true,
     ["summon"] = true,
     ["k summon"] = true,
     ["ok summon"] = true,
@@ -227,7 +228,7 @@ local function grSendHoldAck(sender)
     local last = tonumber(S.lastHoldAckAt[key]) or -100000
     if (t - last) < 15 then return end
     S.lastHoldAckAt[key] = t
-    SendChatMessage("Sure - whisper 123 when you're ready.", "WHISPER", nil, sender)
+    SendChatMessage("Sure - whisper r or 123 when you're ready.", "WHISPER", nil, sender)
 end
 
 local function grSendCombatAck(sender, still)
@@ -238,9 +239,9 @@ local function grSendCombatAck(sender, still)
     if (t - last) < 10 then return end
     S.lastCombatAckAt[key] = t
     if still then
-        SendChatMessage("Still in combat - I'll retry when you're out.", "WHISPER", nil, sender)
+        SendChatMessage("Still in combat - whisper r or 123 when you're out.", "WHISPER", nil, sender)
     else
-        SendChatMessage("You're in combat - I'll retry when you're out.", "WHISPER", nil, sender)
+        SendChatMessage("You're in combat - I'll auto-retry when detected out; r/123 also resumes.", "WHISPER", nil, sender)
     end
 end
 
@@ -260,10 +261,12 @@ local function grActiveSummonName(api)
     return name, state
 end
 
-local function grBeginCombatWait(api, name)
+local function grBeginCombatWait(api, name, confirmedByError)
     name = grTrim(name or "")
     if name == "" or not grInGroup(name) then return false end
-    if grTargetInCombat(name) ~= true then return false end
+
+    local telemetry = grTargetInCombat(name)
+    if telemetry ~= true and not confirmedByError then return false end
 
     local key = grKey(name)
     local t = grNow()
@@ -272,13 +275,17 @@ local function grBeginCombatWait(api, name)
         item = {
             name = name,
             since = t,
-            outSince = 0
+            outSince = 0,
+            seenCombatTelemetry = telemetry == true,
+            confirmedByError = confirmedByError and true or false
         }
         S.combatWait[key] = item
         grSendCombatAck(name, false)
     else
         item.name = name
         item.outSince = 0
+        if telemetry == true then item.seenCombatTelemetry = true end
+        if confirmedByError then item.confirmedByError = true end
     end
 
     S.deferred[key] = nil
@@ -294,7 +301,11 @@ local function grBeginCombatWait(api, name)
 end
 
 local function grCaptureCombatFailure(api, message)
-    if message and not grIsCombatError(message) then return false end
+    local confirmedByError = false
+    if message then
+        confirmedByError = grIsCombatError(message)
+        if not confirmedByError then return false end
+    end
 
     local name, state = grActiveSummonName(api)
     if not name or not state then return false end
@@ -303,9 +314,10 @@ local function grCaptureCombatFailure(api, message)
         if not grIsCombatError(state.lastSummonError or "") then return false end
         local lastRequest = tonumber(state.lastSummonRequestAt) or -100000
         if (grNow() - lastRequest) > 6 then return false end
+        confirmedByError = true
     end
 
-    return grBeginCombatWait(api, name)
+    return grBeginCombatWait(api, name, confirmedByError)
 end
 
 local function grQueueExplicit(api, name, source)
@@ -334,6 +346,7 @@ local function grResumeCombatWait(api, sender)
     local combat = grTargetInCombat(sender)
     if combat == true then
         S.deferred[key] = nil
+        item.seenCombatTelemetry = true
         item.outSince = 0
         grSendCombatAck(sender, true)
         return true
@@ -422,7 +435,10 @@ function M.OnUpdate()
             S.deferred[key] = nil
         elseif not S.deferred[key] then
             local combat = grTargetInCombat(name)
-            if combat == false then
+            if combat == true then
+                item.seenCombatTelemetry = true
+                item.outSince = 0
+            elseif combat == false and item.seenCombatTelemetry then
                 local outSince = tonumber(item.outSince) or 0
                 if outSince <= 0 then
                     item.outSince = t
@@ -435,6 +451,9 @@ function M.OnUpdate()
                     end
                 end
             else
+                -- If the server explicitly rejected the summon for combat but
+                -- remote combat telemetry never became visible, stay parked.
+                -- A direct r/123/ready whisper will resume safely.
                 item.outSince = 0
             end
         end
