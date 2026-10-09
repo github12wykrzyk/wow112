@@ -2,7 +2,7 @@
 -- WoWTargetAuraReveal publishes Spell.dbc DispelType for every positive aura.
 -- Spell.dbc DispelType: 1=Magic, 2=Curse, 3=Disease, 4=Poison.
 --
--- Script syntax:
+-- LazyScript syntax:
 --   devourMagic-ifTargetHasMagicBuff
 --   purge-ifTargetHasMagicBuff
 --   <action>-ifNotTargetHasMagicBuff
