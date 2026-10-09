@@ -15,5 +15,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Behavior-preserving payload repair only. Remove non-runtime comments from SummonScout_CompetitionSmartHot.lua so the generated SummonScout_WhisperConfirmSpam.lua fanout stays below the native 262144-byte watcher cap. Exact verification on equivalent fix content measured 260425 bytes (1719 bytes headroom), full addon package PASS, HOT fanout 5/5 PASS, SummonScout upvalue gate PASS. Fleet coordinator, heartbeat protocol, parser, election and customer paths are unchanged."
+  "notes": "Behavior-preserving payload repair only. Remove non-runtime comments from SummonScout_CompetitionSmartHot.lua so the generated SummonScout_WhisperConfirmSpam.lua fanout stays below the native 262144-byte watcher cap. Exact verification on equivalent fix content measured 260425 bytes (1719 bytes headroom), full addon package PASS, HOT fanout 5/5 PASS, SummonScout upvalue gate PASS. Rebased after canonical task-state recovery to ac878f43e44b538cf48f26ff46c66a5f4f058393. Fleet coordinator, heartbeat protocol, parser, election and customer paths are unchanged."
 }
