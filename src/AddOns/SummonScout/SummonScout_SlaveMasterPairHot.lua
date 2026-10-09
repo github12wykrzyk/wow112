@@ -20,7 +20,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "3-fixed-pairs-complete"
+local VERSION = "4-fixed-pairs-hyjalonee"
 local WATCH_INTERVAL = 2.00
 local INVITE_COOLDOWN = 5.00
 local PROMOTE_COOLDOWN = 2.00
@@ -30,7 +30,7 @@ local SLAVE_TO_MASTER = {
     silione   = "Kalisum",
     silitwo   = "Kalisum",
     hyjaluno  = "Bolthyjal",
-    hyjalone  = "Bolthyjal",
+    hyjalonee = "Bolthyjal",
     hydratwo  = "Feltaxi",
     hydraone  = "Feltaxi",
     winterone = "Taxiwinter",
@@ -44,7 +44,7 @@ local MASTER_TO_SLAVES = {
     },
     bolthyjal = {
         hyjaluno = true,
-        hyjalone = true,
+        hyjalonee = true,
     },
     feltaxi = {
         hydratwo = true,
@@ -58,7 +58,7 @@ local MASTER_TO_SLAVES = {
 
 local MASTER_SLAVE_LIST = {
     kalisum = { "Silione", "Silitwo" },
-    bolthyjal = { "Hyjaluno", "Hyjalone" },
+    bolthyjal = { "Hyjaluno", "Hyjalonee" },
     feltaxi = { "Hydratwo", "Hydraone" },
     taxiwinter = { "Winterone", "Wintertwoo" },
 }
@@ -296,7 +296,7 @@ W112_SUMMONSCOUT_SLAVE_MASTER_PAIRS_ACTIVE = {
     Silione = "Kalisum",
     Silitwo = "Kalisum",
     Hyjaluno = "Bolthyjal",
-    Hyjalone = "Bolthyjal",
+    Hyjalonee = "Bolthyjal",
     Hydratwo = "Feltaxi",
     Hydraone = "Feltaxi",
     Winterone = "Taxiwinter",
