@@ -12,11 +12,12 @@
     "SummonScout fixed master/slave party ownership",
     "SummonScout fallbackrouter directory",
     "SummonScout SSFR1 provider ownership",
-    "SummonScout fleet counter service coverage"
+    "SummonScout fleet counter service coverage",
+    "SummonScout HOT payload headroom"
   ],
-  "status": "preflight",
-  "auto_integrate": false,
+  "status": "ready_for_integration",
+  "auto_integrate": true,
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Core Tanaris location parsing already exists and is reused. Account credentials remain local in the updater DPAPI vault and are not committed to the public repository."
+  "notes": "Core Tanaris location parsing already exists and is reused. Account credentials remain local in the updater DPAPI vault and are not committed to the public repository. Exact feature preflight PASS on 45e28ec0c649c6a01eb2218b991d4905f4800f3b; HOT payload headroom was restored behavior-preservingly by cold-loading stable routing policy and removing non-runtime comments from WorldBuyerRelation while restoring its debug-tag test contract."
 }
