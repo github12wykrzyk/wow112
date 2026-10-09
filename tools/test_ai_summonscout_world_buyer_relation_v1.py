@@ -49,16 +49,18 @@ class WorldBuyerRelationHotfixTests(unittest.TestCase):
         self.assertIn('"travel-question"', self.hot)
 
     def test_destination_specific_buyer_shorthand_can_omit_summon(self):
-        self.assertIn("brServiceContains(locations[1].id)", self.hot)
+        self.assertIn("brSpecificServiceContains(locations[1].id)", self.hot)
         self.assertIn('"buyer+served-destination"', self.hot)
         self.assertIn('"need one"', self.hot)
         self.assertIn('"one pls"', self.hot)
 
     def test_false_positive_guards_remain_fail_closed(self):
-        self.assertIn("SELLER_CUES", self.hot)
+        self.assertIn("HARD_SELLER_CUES", self.hot)
+        self.assertIn("CONTACT_CUES", self.hot)
         self.assertIn("OWN_SUMMON_CUES", self.hot)
         self.assertIn("RECRUITMENT_CUES", self.hot)
-        self.assertIn("if brAny(normalized, SELLER_CUES)", self.hot)
+        self.assertIn("if brAny(normalized, HARD_SELLER_CUES)", self.hot)
+        self.assertIn("if brAny(normalized, CONTACT_CUES) and not buyer", self.hot)
         self.assertIn("if brRecruitment(normalized)", self.hot)
         self.assertIn('"multi-destination"', self.hot)
         self.assertIn("brHasPrice", self.hot)
@@ -68,6 +70,7 @@ class WorldBuyerRelationHotfixTests(unittest.TestCase):
         self.assertIn("brRelaxRecent", self.hot)
         self.assertIn("W112_SUMMONSCOUT_STATE", self.hot)
         self.assertIn("state.recent[key] = nil", self.hot)
+        self.assertIn("brServiceContains(locations[1].id)", self.hot)
         self.assertIn('"reinvite-dedupe-reset"', self.hot)
 
     def test_debug_state_explains_why_a_line_was_classified(self):
