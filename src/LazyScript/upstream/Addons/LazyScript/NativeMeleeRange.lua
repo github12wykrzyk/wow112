@@ -1,7 +1,8 @@
 -- Native fail-closed target melee range for WoW 1.12.1 / build 5875.
 -- WoWCastObserver publishes a fresh selected-target range sample derived from
 -- verified native world coordinates plus UNIT_FIELD_COMBATREACH. Pure Lua has
--- no reliable generic 5 yd range probe for Warlocks.
+-- no reliable generic 5 yd range probe for classes whose stock range-check
+-- action may be unavailable at the current level.
 
 lazyScript.nativeTargetMeleeRange = nil
 lazyScript.nativeTargetMeleeRangeAt = nil
@@ -32,7 +33,7 @@ function lazyScript.masks.NativeTargetMeleeRange(expected)
 	end
 end
 
--- Short aliases requested for Warlock forms:
+-- Short aliases:
 --   action-meleeRange     -> target IS in melee range
 --   action-notMeleeRange  -> target IS NOT in melee range
 -- ifMeleeRange / ifNotMeleeRange are accepted as equivalent spellings.
@@ -50,12 +51,15 @@ function lazyScript.bitParsers.meleeRange(bit, actions, masks)
 	return true
 end
 
--- Preserve the stock criterion for every class, but give WARLOCK the native
--- implementation instead of the upstream "not supported" syntax error.
+-- Preserve the stock criterion for classes with a reliable low-level range
+-- action. WARLOCK and SHAMAN use the native sample instead. In particular,
+-- upstream SHAMAN points getRangeCheckAction() at Stormstrike; below the level
+-- where that action exists this is nil and the stock parser dereferences
+-- rangeAction.name. Native range avoids both the crash and the level coupling.
 local baseIfTargetInMeleeRange = lazyScript.bitParsers.ifTargetInMeleeRange
 function lazyScript.bitParsers.ifTargetInMeleeRange(bit, actions, masks)
 	local _, class = UnitClass("player")
-	if class == "WARLOCK" and lazyScript.rebit(bit, "^if(Not)?TargetInMeleeRange$") then
+	if (class == "WARLOCK" or class == "SHAMAN") and lazyScript.rebit(bit, "^if(Not)?TargetInMeleeRange$") then
 		local negate = lazyScript.negate1()
 		table.insert(masks, lazyScript.masks.HaveTarget)
 		table.insert(masks, lazyScript.negWrapper(lazyScript.masks.TargetFriend, true))
