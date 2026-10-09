@@ -2,10 +2,10 @@
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "3-total-pool-compact"
+local VERSION = "4-total-pool-tanaris-parallel"
 local F = H.GetState("fallbackrouter")
 local PROTO = "[SSFR1]"
-local POOL = { "silithus", "winterspring", "hydraxian", "hyjal" }
+local POOL = { "silithus", "winterspring", "hydraxian", "hyjal", "tanaris" }
 F.totalPoolOwners = F.totalPoolOwners or {}
 
 local function trim(s)
@@ -16,7 +16,7 @@ end
 local function lower(s) return string.lower(trim(s)) end
 local function same(a,b) a=lower(a); b=lower(b); return a~="" and a==b end
 local function inPool(id)
-    return id=="silithus" or id=="winterspring" or id=="hydraxian" or id=="hyjal"
+    return id=="silithus" or id=="winterspring" or id=="hydraxian" or id=="hyjal" or id=="tanaris"
 end
 
 local function split(s)
@@ -97,7 +97,7 @@ local function seed()
             p.name=name; p.seen=t; p.totalPoolSticky=true
         end
     end
-    W112_SUMMONSCOUT_TOTAL_POOL_CSV="silithus,winterspring,hydraxian,hyjal"
+    W112_SUMMONSCOUT_TOTAL_POOL_CSV="silithus,winterspring,hydraxian,hyjal,tanaris"
 end
 
 local function send(name,text)
@@ -112,6 +112,7 @@ local function label(id)
     if id=="hydraxian" then return "Hydraxis" end
     if id=="winterspring" then return "Winterspring" end
     if id=="silithus" then return "Silithus" end
+    if id=="tanaris" then return "Tanaris" end
     return id
 end
 
