@@ -1,0 +1,46 @@
+name: TEMP fleet counter verify
+
+on:
+  push:
+    branches:
+      - tmp/summonscout-fleet-counter-verify
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact temp verification SHA
+        uses: actions/checkout@v5
+
+      - name: Package addon stack and enforce HOT payload cap
+        run: python3 tools/package_lazyrogue_addons.py --output dist/fleet_counter_verify.zip
+
+      - name: Run SummonScout HOT fanout regression tests
+        run: python3 tools/test_ai_summonscout_hot_fanout.py
+
+      - name: Install Lua 5.1 parser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.1
+
+      - name: Parse changed Lua sources
+        run: |
+          luac5.1 -p src/AddOns/SummonScout/SummonScout_FleetCounterCoordinator.lua
+          luac5.1 -p src/AddOns/SummonScout/SummonScout_CompetitionSmartHot.lua
+
+      - name: Assert coordinator stays outside HOT fanout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('tools').resolve()))
+          import package_lazyrogue_addons as p
+          name = 'SummonScout_FleetCounterCoordinator.lua'
+          modules = p.hot_fanout_modules()
+          assert name not in modules, modules
+          assert not name.endswith('Hot.lua')
+          print('FLEET_COUNTER_COLD_LOAD: PASS; hot modules=', len(modules))
+          PY
