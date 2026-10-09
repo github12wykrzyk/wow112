@@ -6,7 +6,7 @@ on:
     branches:
       - parallel
       - feature/native-windows-portal-clicker-v1
-      - cleanup/terminal-win-fixed-master-canonical-v1
+      - fix/terminal-win-canonical-ci-gate-v1
     paths:
       - 'probes/Wow112HeadlessAndroid/**'
       - '.github/workflows/build_windows_headless_probe.yml'
@@ -106,13 +106,13 @@ jobs:
           }
           Write-Host 'Canonical fixed-master source verified; no CI source rewrite required.'
 
-      - name: Terminal Windows direct-connect recovery defaults
+      - name: Terminal Windows auth direct-connect default
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Proven stable TERMINAL WIN startup path: direct auth/world endpoints by default.
-          # Selector probing remains available through explicit environment opt-in.
+          # Keep endpoint probing explicit opt-in on Windows. World connection now
+          # uses the selected realm address directly; there is no world_endpoint.rs selector.
           $authPath = 'probes/Wow112HeadlessAndroid/src/auth_endpoint.rs'
           $auth = Get-Content $authPath -Raw
           $authOld = '        Err(_) => cfg!(windows),'
@@ -121,19 +121,10 @@ jobs:
           $auth = $auth.Replace($authOld, $authNew)
           Set-Content -Path $authPath -Value $auth -Encoding UTF8
 
-          $worldPath = 'probes/Wow112HeadlessAndroid/src/world_endpoint.rs'
-          $world = Get-Content $worldPath -Raw
-          $worldOld = '        Err(_) => true,'
-          $worldNew = '        Err(_) => false,'
-          if (-not $world.Contains($worldOld)) { throw 'Expected world selector default anchor not found' }
-          $world = $world.Replace($worldOld, $worldNew)
-          Set-Content -Path $worldPath -Value $world -Encoding UTF8
-
-          if (($auth | Select-String -SimpleMatch 'Err(_) => cfg!(windows),') -or
-              ($world | Select-String -SimpleMatch 'Err(_) => true,')) {
-            throw 'Selector recovery patch did not fully apply'
+          if ($auth | Select-String -SimpleMatch 'Err(_) => cfg!(windows),') {
+            throw 'Auth selector recovery patch did not fully apply'
           }
-          Write-Host 'TERMINAL WIN recovery: auth selector default OFF; world selector default OFF; explicit env opt-in preserved.'
+          Write-Host 'TERMINAL WIN recovery: auth selector default OFF; world uses direct selected-realm address.'
 
       - name: Host compile check
         shell: pwsh
@@ -183,7 +174,7 @@ jobs:
           BINARY_SHA256=$binSha
           PORTAL_BACKEND=windows-native-v2-stop-safe
           AUTH_SELECTOR_DEFAULT=off
-          WORLD_SELECTOR_DEFAULT=off
+          WORLD_CONNECT_MODE=selected-realm-direct
           PARTY_INVITE_HARDENING=canonical-source-raw-006e-retry-preserve-v3
           "@ | Set-Content -Path (Join-Path $out 'BUILD_INFO.txt') -Encoding ascii
 
