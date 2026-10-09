@@ -139,7 +139,9 @@ def main():
     if not metadata_path.is_file():
         raise SystemExit(f"candidate metadata missing: {metadata_path}")
 
-    if args.finalize:
+    # Only test/work candidates carry a summary. Stable/pre-promote finalization
+    # intentionally remains exact-byte-only until this companion is gameplay accepted.
+    if args.finalize and summary_path is not None:
         try:
             octologin_evidence = finalize_pinned_octologin(package, metadata_path, summary_path)
         except Exception as exc:
