@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "updater-octologin-v1",
+  "goal": "Ship audited OctoLogin v1.1.0 as a SHA-pinned companion DLL inside the verified Parallel runtime candidate so the existing updater installs it, manages rollback/repair and generates its dlls.txt entry automatically.",
+  "branch": "feature/updater-octologin-v1",
+  "base_main_sha": "ef552e3bdffeadbdd662c2cd8e125165aeeed9fe",
+  "status": "implementation",
+  "auto_integrate": false,
+  "modules": [
+    "Updater",
+    "CandidateFinalizer",
+    "OctoLogin"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "tools/verify_candidate_package.py",
+    "tools/octologin_candidate_component.py"
+  ],
+  "delivery_profiles": [
+    "updater"
+  ],
+  "lease": null,
+  "notes": "Pinned external release: fmustafayaman/OctoLogin v1.1.0, OctoLogin.dll size 60928, SHA256 fed726cc910084ec4191d7c02763f094a43c30b6944194136af70823865dabd9. The upstream release ZIP supplied by the user matches the official GitHub release digest. Candidate placement is WoW root because the canonical runtime ZIP is deliberately flat; OctoLogin resolves config/log paths relative to its own module directory. Final candidate verification owns dlls.txt exactness and re-verifies PE32/x86 for every binary. Headless terminal clients do not load this DLL and require a native endpoint-selection port if desired."
+}

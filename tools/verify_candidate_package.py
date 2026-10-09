@@ -10,6 +10,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from octologin_candidate_component import finalize_pinned_octologin
+
 ROOT = Path(__file__).resolve().parents[1]
 DLL_LIST = "dlls.txt"
 
@@ -136,6 +138,15 @@ def main():
         raise SystemExit(f"candidate ZIP missing: {package}")
     if not metadata_path.is_file():
         raise SystemExit(f"candidate metadata missing: {metadata_path}")
+
+    # Only test/work candidates carry a summary. Stable/pre-promote finalization
+    # intentionally remains exact-byte-only until this companion is gameplay accepted.
+    if args.finalize and summary_path is not None:
+        try:
+            octologin_evidence = finalize_pinned_octologin(package, metadata_path, summary_path)
+        except Exception as exc:
+            raise SystemExit("OCTOLOGIN_COMPONENT: FAIL: " + str(exc))
+        print("OCTOLOGIN_COMPONENT: PASS " + json.dumps(octologin_evidence, sort_keys=True))
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     summary = load_optional(summary_path)
