@@ -1,0 +1,52 @@
+name: TEMP fleet final exact verify 54603
+
+on:
+  push:
+    branches:
+      - tmp/fleet-final-exact-verify-54603
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Assert canonical parent runtime SHA
+        run: |
+          test "$(git rev-parse HEAD^)" = "54603ead1a4038fc4f67b33f7d758b274572a81a"
+
+      - name: Measure exact HOT payload and cold modules
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('tools').resolve()))
+          import package_lazyrogue_addons as p
+          host=Path('src/AddOns/SummonScout/SummonScout_WhisperConfirmSpam.lua')
+          data=p.package_bytes('SummonScout',host)
+          mods=p.hot_fanout_modules()
+          print(f'HOT_PAYLOAD_BYTES={len(data)} CAP={p.HOT_PAYLOAD_CAP} HEADROOM={p.HOT_PAYLOAD_CAP-len(data)} HOT_MODULES={len(mods)}')
+          assert len(data)<p.HOT_PAYLOAD_CAP
+          assert 'SummonScout_FleetCounterCoordinator.lua' not in mods
+          assert 'SummonScout_CompetitionSmart.lua' not in mods
+          assert 'SummonScout_CompetitionSmartHot.lua' not in mods
+          PY
+
+      - name: Full addon package
+        run: python3 tools/package_lazyrogue_addons.py --output dist/fleet_final_exact_verify.zip
+
+      - name: HOT fanout regressions
+        run: python3 tools/test_ai_summonscout_hot_fanout.py
+
+      - name: Upvalue gate
+        run: python3 tools/verify_summonscout_lua_upvalues.py
+
+      - name: Verify Fleet Counter and CompetitionSmart presence
+        run: |
+          test -f src/AddOns/SummonScout/SummonScout_FleetCounterCoordinator.lua
+          test -f src/AddOns/SummonScout/SummonScout_CompetitionSmart.lua
+          grep -q '^SummonScout_FleetCounterCoordinator.lua$' src/AddOns/SummonScout/SummonScout.toc
+          grep -q '^SummonScout_CompetitionSmart.lua$' src/AddOns/SummonScout/SummonScout.toc
