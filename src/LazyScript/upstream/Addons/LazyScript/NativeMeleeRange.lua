@@ -5,7 +5,7 @@
 
 lazyScript.nativeTargetMeleeRange = nil
 lazyScript.nativeTargetMeleeRangeAt = nil
-lazyScript.nativeTargetRangeSquared100 = nil
+lazyScript.nativeTargetRangeSquared = nil
 lazyScript.nativeTargetRangeAt = nil
 
 function lazyScript.OnNativeTargetMeleeRange(state)
@@ -18,13 +18,26 @@ function lazyScript.OnNativeTargetMeleeRange(state)
 	lazyScript.nativeTargetMeleeRangeAt = GetTime()
 end
 
-function lazyScript.OnNativeTargetRangeSquared(value)
-	if type(value) ~= "number" or value < 0 then
-		lazyScript.nativeTargetRangeSquared100 = nil
+local function decodePositiveFloatBits(bits)
+	if type(bits) ~= "number" or bits < 0 or bits > 4294967295 then return nil end
+	if math.floor(bits / 2147483648) ~= 0 then return nil end
+	local exponent = math.floor(bits / 8388608) - math.floor(bits / 2147483648) * 256
+	local mantissa = bits - math.floor(bits / 8388608) * 8388608
+	if exponent >= 255 then return nil end
+	if exponent == 0 then
+		return (mantissa / 8388608) * (2 ^ -126)
+	end
+	return (1 + mantissa / 8388608) * (2 ^ (exponent - 127))
+end
+
+function lazyScript.OnNativeTargetRangeSquared(bits)
+	local value = decodePositiveFloatBits(bits)
+	if value == nil then
+		lazyScript.nativeTargetRangeSquared = nil
 		lazyScript.nativeTargetRangeAt = nil
 		return
 	end
-	lazyScript.nativeTargetRangeSquared100 = value
+	lazyScript.nativeTargetRangeSquared = value
 	lazyScript.nativeTargetRangeAt = GetTime()
 end
 
@@ -45,15 +58,15 @@ function lazyScript.masks.NativeTargetMeleeRange(expected)
 end
 
 function lazyScript.masks.NativeTargetInRangeYards(yards, expected)
-	local limit = yards * yards * 100
+	local limit = yards * yards
 	return function(sayNothing)
 		if not UnitExists("target") then return false end
 		local t = lazyScript.nativeTargetRangeAt
-		local value = lazyScript.nativeTargetRangeSquared100
+		local value = lazyScript.nativeTargetRangeSquared
 		if not t or value == nil then return false end
 		local age = GetTime() - t
 		-- Fail closed for positive AND negative checks when native telemetry is
-		-- absent/stale. Value is squared 3D center distance scaled by 100.
+		-- absent/stale. Value is squared 3D center-to-center distance in yards.
 		if age < 0 or age > 0.30 then return false end
 		if expected then return value <= limit end
 		return value > limit
