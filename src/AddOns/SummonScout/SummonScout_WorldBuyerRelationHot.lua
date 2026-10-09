@@ -1,21 +1,26 @@
--- Order-independent World buyer summon relation canonicalizer for WoW 1.12.1 / Lua 5.0.
+-- Relation-based World buyer summon canonicalizer for WoW 1.12.1 / Lua 5.0.
 --
--- A live miss exposed a lexical-order gap: messages such as
---   LF hydraxian summon
--- contain a valid buyer cue, a valid catalog destination and a summon token,
--- but some downstream hot classifiers only recognize adjacent forms such as
--- "lf summon".  This module is deliberately destination-agnostic: it uses the
--- canonical location catalog, fail-closes on multi-destination / seller /
--- recruitment traffic, and only adds an internal canonical buyer marker.
--- The player's original chat line is never rewritten or re-sent.
+-- Goal: stop chasing individual word-order corner cases. A World line is treated
+-- as summon demand from the relation between buyer intent, one known destination
+-- and travel intent, not from one exact phrase such as "lf summon".
+--
+-- The module remains fail-closed for seller/recruitment/multi-destination traffic.
+-- It also relaxes the legacy 120s World invite dedupe only for a confirmed buyer
+-- relation: the same player may be re-invited after 8s if they are still asking.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "1-catalog-order-independent"
+local VERSION = "2-relation-matrix-reinvite8"
 local S = H.GetState("worldbuyerrelation")
+local REINVITE_SECONDS = 8
+
+local function brNow()
+    if GetTime then return GetTime() end
+    return 0
+end
 
 local function brTrim(s)
     s = tostring(s or "")
@@ -41,10 +46,10 @@ local function brPhrase(s, p)
     return string.find(" " .. s .. " ", " " .. p .. " ", 1, true) ~= nil
 end
 
-local function brTokenRoot(s, root)
+local function brTokenStarts(s, root)
     s = brNormalize(s)
     root = brNormalize(root)
-    if string.len(root) < 5 then return false end
+    if root == "" then return false end
     local token
     for token in string.gfind(s, "%S+") do
         if string.len(token) >= string.len(root)
@@ -55,6 +60,12 @@ local function brTokenRoot(s, root)
     return false
 end
 
+local function brTokenRoot(s, root)
+    root = brNormalize(root)
+    if string.len(root) < 5 then return false end
+    return brTokenStarts(s, root)
+end
+
 local function brAny(s, cues)
     local i
     for i = 1, table.getn(cues) do
@@ -63,10 +74,20 @@ local function brAny(s, cues)
     return false
 end
 
+local function brTokenCount(s)
+    local count = 0
+    local token
+    for token in string.gfind(brNormalize(s), "%S+") do
+        count = count + 1
+    end
+    return count
+end
+
 local BUYER_LEADS = {
-    "lf", "need", "wtb", "buy", "want", "looking for",
+    "lf", "need", "needed", "wtb", "buy", "buying", "want", "looking for",
     "pls", "plz", "please", "can i", "could i", "anyone", "anybody",
-    "who can", "inv", "invite"
+    "someone", "somebody", "who can", "inv", "invite", "invite me",
+    "need one", "want one", "take one", "get one", "one pls", "one plz"
 }
 
 local DIRECT_BUYER_SUMMON = {
@@ -97,29 +118,42 @@ local RECRUITMENT_CUES = {
     "melee", "ranged", "caster", "farm", "run", "group", "grp"
 }
 
+local function brBuyerLead(s)
+    return brAny(s, BUYER_LEADS)
+        or brTokenStarts(s, "wtb")
+        or brTokenStarts(s, "inv")
+        or brTokenStarts(s, "need")
+        or brTokenStarts(s, "want")
+        or brTokenStarts(s, "look")
+end
+
 local function brHasTravel(s)
     if brPhrase(s, "summon") or brPhrase(s, "summons")
         or brPhrase(s, "summoning") or brPhrase(s, "summ")
         or brPhrase(s, "summs") or brPhrase(s, "sum")
         or brPhrase(s, "sumon") or brPhrase(s, "port")
         or brPhrase(s, "portal") or brPhrase(s, "taxi")
-        or brPhrase(s, "tp") then
+        or brPhrase(s, "tp") or brPhrase(s, "tele") then
         return true
     end
 
-    local token
-    for token in string.gfind(brNormalize(s), "%S+") do
-        if string.sub(token, 1, 4) == "summ"
-            or string.sub(token, 1, 4) == "port"
-            or string.sub(token, 1, 4) == "tele" then
-            return true
-        end
-    end
-    return false
+    return brTokenStarts(s, "summ")
+        or brTokenStarts(s, "sumon")
+        or brTokenStarts(s, "port")
+        or brTokenStarts(s, "tele")
+        or brTokenStarts(s, "taxi")
+end
+
+local function brHasPrice(s)
+    s = brNormalize(s)
+    return string.find(s, "%d+%s*g") ~= nil
+        or brPhrase(s, "gold")
+        or brPhrase(s, "fee")
+        or brPhrase(s, "price")
 end
 
 local function brRecruitment(s)
-    return brAny(s, BUYER_LEADS)
+    return brBuyerLead(s)
         and brAny(s, OWN_SUMMON_CUES)
         and brAny(s, RECRUITMENT_CUES)
         and not brAny(s, DIRECT_BUYER_SUMMON)
@@ -163,25 +197,73 @@ local function brFindLocations(api, message)
     return result
 end
 
-local function brCanonicalize(api, message)
-    local normalized = brNormalize(message)
-    if normalized == "" then return message, false, nil end
+local function brServiceContains(id)
+    local service = string.lower(brTrim(SummonScoutDB and SummonScoutDB.service or "all"))
+    id = string.lower(brTrim(id or ""))
+    if service == "" or service == "all" then return true end
+    if id == "" then return false end
+    return string.find("," .. service .. ",", "," .. id .. ",", 1, true) ~= nil
+end
 
-    local locations = brFindLocations(api, message)
-    if table.getn(locations) ~= 1 then return message, false, locations end
-    if not brAny(normalized, BUYER_LEADS) then return message, false, locations end
-    if brAny(normalized, SELLER_CUES) then return message, false, locations end
-    if brRecruitment(normalized) then return message, false, locations end
-    if not brHasTravel(normalized) then return message, false, locations end
+local function brRelation(api, message)
+    local raw = tostring(message or "")
+    local normalized = brNormalize(raw)
+    if normalized == "" then return false, nil, "empty" end
 
-    -- Already canonical enough for the legacy/direct phrase matchers.
-    if brAny(normalized, DIRECT_BUYER_SUMMON) then
-        return message, false, locations
+    local locations = brFindLocations(api, raw)
+    if table.getn(locations) ~= 1 then
+        return false, locations, table.getn(locations) > 1 and "multi-destination" or "no-destination"
     end
 
-    -- Internal-only lexical bridge.  Keeping the destination untouched means
-    -- FindLocation/ownership/blacklist/dedupe/queue semantics stay canonical.
-    return tostring(message or "") .. " lf summon", true, locations
+    if brAny(normalized, SELLER_CUES) then return false, locations, "seller" end
+    if brRecruitment(normalized) then return false, locations, "recruitment" end
+
+    local buyer = brBuyerLead(normalized)
+    local travel = brHasTravel(normalized)
+    local short = brTokenCount(normalized) <= 4
+    local question = string.find(raw, "?", 1, true) ~= nil
+    local price = brHasPrice(normalized)
+
+    -- Strong buyer wording + a known destination is enough on a configured
+    -- destination-specific summoner, even if the player omits "summon".
+    if buyer and (travel or brServiceContains(locations[1].id)) then
+        return true, locations, travel and "buyer+travel" or "buyer+served-destination"
+    end
+
+    -- Compact natural World shorthand such as "Hyjal summon", "summ Hyjal?",
+    -- "port hyjal" or typo variants. Price-only short lines stay fail-closed.
+    if travel and not price and (question or short) then
+        return true, locations, question and "travel-question" or "short-travel"
+    end
+
+    return false, locations, "weak-intent"
+end
+
+local function brCanonicalize(api, message)
+    local accepted, locations, reason = brRelation(api, message)
+    if not accepted then return message, false, locations, reason end
+
+    local normalized = brNormalize(message)
+    if brAny(normalized, DIRECT_BUYER_SUMMON) then
+        return message, false, locations, reason
+    end
+
+    -- Internal lexical bridge only; the original chat line is never re-sent.
+    return tostring(message or "") .. " lf summon", true, locations, reason
+end
+
+local function brRelaxRecent(sender)
+    local state = W112_SUMMONSCOUT_STATE
+    if type(state) ~= "table" or type(state.recent) ~= "table" then return false end
+    local key = string.lower(brTrim(sender or ""))
+    if key == "" then return false end
+
+    local last = tonumber(state.recent[key])
+    if not last then return false end
+    if (brNow() - last) < REINVITE_SECONDS then return false end
+
+    state.recent[key] = nil
+    return true
 end
 
 local function brInstall()
@@ -198,12 +280,32 @@ local function brInstall()
 
     local original = api.handleChannelMessage
     local wrapper = function(message, sender, channelBaseName, channelFullName)
-        local routed, changed, locations = brCanonicalize(api, message)
-        if changed and SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
-            local loc = locations and locations[1] or nil
-            DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r order-independent request -> "
-                .. tostring(sender or "?") .. " [" .. tostring(loc and (loc.label or loc.id) or "?") .. "]")
+        local routed, changed, locations, reason = brCanonicalize(api, message)
+        local accepted = locations and table.getn(locations) == 1
+            and (changed or brAny(brNormalize(message), DIRECT_BUYER_SUMMON)
+                or brBuyerLead(brNormalize(message)) or brHasTravel(brNormalize(message)))
+        local relaxed = false
+
+        if accepted then relaxed = brRelaxRecent(sender) end
+
+        S.lastRaw = tostring(message or "")
+        S.lastSender = tostring(sender or "")
+        S.lastReason = tostring(reason or "")
+        S.lastChanged = changed and true or false
+        S.lastRelaxedRecent = relaxed and true or false
+        S.lastLocation = locations and locations[1]
+            and tostring(locations[1].id or locations[1].label or "") or ""
+
+        if SummonScoutDB and SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+            if changed or relaxed then
+                local loc = locations and locations[1] or nil
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00SummonScout World buyer:|r relation="
+                    .. tostring(reason or "?") .. " -> " .. tostring(sender or "?")
+                    .. " [" .. tostring(loc and (loc.label or loc.id) or "?") .. "]"
+                    .. (relaxed and " reinvite-dedupe-reset" or ""))
+            end
         end
+
         return original(routed, sender, channelBaseName, channelFullName)
     end
 
@@ -220,9 +322,16 @@ function M.Init()
     brInstall()
 end
 
+function M.OnUpdate()
+    -- Other hot modules legitimately wrap the same API. If this wrapper gets
+    -- displaced entirely, reinstall it around the current canonical chain.
+    if not S.wrapper or W112_SUMMONSCOUT_API_V1.handleChannelMessage ~= S.wrapper then
+        brInstall()
+    end
+end
+
 function M.Shutdown()
-    -- RosterOwnership may legitimately wrap this handler after load.  Do not
-    -- peel an outer canonical guard during hot-host shutdown.
+    -- Do not peel outer canonical guards during hot-host shutdown.
 end
 
 H.Register("worldbuyerrelation", M, VERSION)
