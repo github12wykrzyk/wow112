@@ -85,6 +85,124 @@ jobs:
           $text = $text.Replace($old.Trim(), $new.Trim())
           Set-Content -Path $path -Value $text -Encoding UTF8
 
+      - name: Terminal Windows fixed-master invite hardening
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'probes/Wow112HeadlessAndroid/src/world_portal.rs'
+          $text = Get-Content $path -Raw
+
+          $constOld = @'
+          const SMSG_GROUP_INVITE_OPCODE: u16 = 0x006F;
+          const CMSG_GROUP_ACCEPT_OPCODE: u32 = 0x0072;
+          '@
+          $constNew = @'
+          const CMSG_GROUP_INVITE_OPCODE: u32 = 0x006E;
+          const SMSG_GROUP_INVITE_OPCODE: u16 = 0x006F;
+          const CMSG_GROUP_ACCEPT_OPCODE: u32 = 0x0072;
+          const SMSG_PARTY_COMMAND_RESULT_OPCODE: u16 = 0x007F;
+          '@
+          if (-not $text.Contains($constOld.Trim())) { throw 'Expected party opcode anchor not found' }
+          $text = $text.Replace($constOld.Trim(), $constNew.Trim())
+
+          $text = $text.Replace('Some("kalisum")', 'Some("Kalisum")')
+          $text = $text.Replace('Some("bolthyjal")', 'Some("Bolthyjal")')
+          $text = $text.Replace('Some("feltaxi")', 'Some("Feltaxi")')
+          $text = $text.Replace('Some("taxiwinter")', 'Some("Taxiwinter")')
+
+          $inviteOld = @'
+          fn write_group_invite(
+              stream: &mut TcpStream,
+              crypto: &mut HeaderCrypto,
+              target: &str,
+          ) -> Result<(), String> {
+              println!("[PARTY] invite fixed master by name: {target}");
+              CMSG_GROUP_INVITE {
+                  name: target.to_string(),
+              }
+              .write_encrypted_client(&mut *stream, crypto.encrypter())
+              .map_err(|e| format!("write fixed-master group invite failed target={target}: {e:?}"))
+          }
+          '@
+          $inviteNew = @'
+          fn write_group_invite(
+              stream: &mut TcpStream,
+              crypto: &mut HeaderCrypto,
+              target: &str,
+          ) -> Result<(), String> {
+              println!("[PARTY] invite fixed master by name: {target} opcode=0x006E");
+              let mut payload = Vec::with_capacity(target.len() + 1);
+              payload.extend_from_slice(target.as_bytes());
+              payload.push(0);
+              write_encrypted_raw(
+                  stream,
+                  crypto.encrypter(),
+                  CMSG_GROUP_INVITE_OPCODE,
+                  &payload,
+              )
+              .map_err(|e| format!("write fixed-master raw group invite failed target={target}: {e}"))
+          }
+          '@
+          if (-not $text.Contains($inviteOld.Trim())) { throw 'Expected typed group invite function not found' }
+          $text = $text.Replace($inviteOld.Trim(), $inviteNew.Trim())
+
+          $leaderOld = @'
+              if members.iter().any(|member| member.guid == leader_guid) {
+                  if auto_invite_missing {
+                      *last_invite = None;
+                  }
+                  return Ok(());
+              }
+          '@
+          $leaderNew = @'
+              if members.iter().any(|member| member.guid == leader_guid) {
+                  if auto_invite_missing {
+                      let target_present = summoner_names.iter().any(|wanted| {
+                          members.iter().any(|member| member.name.eq_ignore_ascii_case(wanted))
+                      });
+                      if target_present {
+                          *last_invite = None;
+                      }
+                  }
+                  return Ok(());
+              }
+          '@
+          if (-not $text.Contains($leaderOld.Trim())) { throw 'Expected leader retry guard not found' }
+          $text = $text.Replace($leaderOld.Trim(), $leaderNew.Trim())
+
+          $resultAnchor = @'
+                  if opcode == SMSG_GROUP_LIST_OPCODE {
+          '@
+          $resultInsert = @'
+                  if opcode == SMSG_PARTY_COMMAND_RESULT_OPCODE {
+                      let mut offset = 0usize;
+                      let operation = read_party_u32(&payload, &mut offset);
+                      let member = read_party_cstring(&payload, &mut offset);
+                      let result = if offset + 4 <= payload.len() {
+                          Some(u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()))
+                      } else {
+                          None
+                      };
+                      match (operation, member, result) {
+                          (Ok(operation), Ok(member), Some(result)) => println!(
+                              "[PARTY-RESULT] operation={} member={} result={} payload={}",
+                              operation,
+                              member,
+                              result,
+                              payload.len()
+                          ),
+                          _ => println!("[PARTY-RESULT] malformed payload={}", payload.len()),
+                      }
+                      continue;
+                  }
+                  if opcode == SMSG_GROUP_LIST_OPCODE {
+          '@
+          if (-not $text.Contains($resultAnchor.Trim())) { throw 'Expected SMSG_GROUP_LIST anchor not found' }
+          $text = $text.Replace($resultAnchor.Trim(), $resultInsert.Trim())
+
+          Set-Content -Path $path -Value $text -Encoding UTF8
+          Write-Host 'TERMINAL WIN party invite hardening applied: raw 0x006E + retry preservation + 0x007F diagnostics.'
+
       - name: Terminal Windows direct-connect recovery defaults
         shell: pwsh
         run: |
@@ -164,6 +282,7 @@ jobs:
           PORTAL_BACKEND=windows-native-v2-stop-safe
           AUTH_SELECTOR_DEFAULT=off
           WORLD_SELECTOR_DEFAULT=off
+          PARTY_INVITE_HARDENING=raw-006e-retry-preserve-v2
           "@ | Set-Content -Path (Join-Path $out 'BUILD_INFO.txt') -Encoding ascii
 
           Push-Location $out
@@ -185,4 +304,4 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-# fast-track publish trigger: terminal-win reconnect exhaustion fix
+# fast-track publish trigger: terminal-win fixed-master invite hardening v2
