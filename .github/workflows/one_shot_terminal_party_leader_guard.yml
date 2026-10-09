@@ -1,0 +1,77 @@
+name: One-shot terminal party leader invite guard
+
+on:
+  push:
+    branches:
+      - fix/terminal-party-leader-invite-guard-v1
+    paths:
+      - '.github/workflows/one_shot_terminal_party_leader_guard.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-check-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v5
+        with:
+          ref: fix/terminal-party-leader-invite-guard-v1
+          fetch-depth: 0
+
+      - name: Apply exact one-block patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('probes/Wow112HeadlessAndroid/src/world_portal.rs')
+          text = path.read_text(encoding='utf-8')
+          old = '''    if members.iter().any(|member| member.guid == leader_guid) {
+              return Ok(());
+          }
+          '''
+          new = '''    if members.iter().any(|member| member.guid == leader_guid) {
+              if auto_invite_missing {
+                  *last_invite = None;
+              }
+              return Ok(());
+          }
+          '''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exact nonleader block once, found {count}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          print('exact replacement PASS')
+          PY
+
+      - name: Diff safety gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "probes/Wow112HeadlessAndroid/src/world_portal.rs"
+          git diff -- probes/Wow112HeadlessAndroid/src/world_portal.rs
+
+      - name: Host cargo check
+        shell: bash
+        run: cargo check --manifest-path probes/Wow112HeadlessAndroid/Cargo.toml
+
+      - name: Remove one-shot workflow and commit only intended source change
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/one_shot_terminal_party_leader_guard.yml
+          mapfile -t changed < <(git status --short | sed 's/^...//')
+          printf 'changed: %s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | sort > /tmp/changed.txt
+          printf '%s\n' ".github/workflows/one_shot_terminal_party_leader_guard.yml" "probes/Wow112HeadlessAndroid/src/world_portal.rs" | sort > /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/changed.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add probes/Wow112HeadlessAndroid/src/world_portal.rs .github/workflows/one_shot_terminal_party_leader_guard.yml
+          git commit -m 'fix(terminal): suppress nonleader master invite retries'
+          git push origin HEAD:fix/terminal-party-leader-invite-guard-v1
