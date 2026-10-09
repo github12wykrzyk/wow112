@@ -1,8 +1,9 @@
--- Hub-origin ACK bridge + compact fixed-fleet routing hotfix.
+-- Hub-origin ACK bridge + compact fixed-fleet routing.
+-- Cold-loaded intentionally: stable routing control does not need HOT fanout delivery.
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "4-total-pool-tanaris"
+local VERSION = "5-total-pool-tanaris-cold"
 local F = H.GetState("fallbackrouter")
 local PROTO = "[SSFR1]"
 local POOL = { "silithus", "winterspring", "hydraxian", "hyjal", "tanaris" }

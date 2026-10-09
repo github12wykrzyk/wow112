@@ -12,7 +12,7 @@ class TanarisFullServiceTests(unittest.TestCase):
         cls.core=(ADDON/"SummonScout.lua").read_text(encoding="utf-8")
         cls.pairs=(ADDON/"SummonScout_SlaveMasterPair.lua").read_text(encoding="utf-8")
         cls.tanaris=(ADDON/"SummonScout_TanarisFullService.lua").read_text(encoding="utf-8")
-        cls.hub=(ADDON/"SummonScout_FallbackRouterHubAckHot.lua").read_text(encoding="utf-8")
+        cls.hub=(ADDON/"SummonScout_FallbackRouterHubAck.lua").read_text(encoding="utf-8")
         cls.toc=(ADDON/"SummonScout.toc").read_text(encoding="utf-8").splitlines()
 
     def test_core_catalog_already_recognizes_tanaris(self):
@@ -37,6 +37,8 @@ class TanarisFullServiceTests(unittest.TestCase):
         self.assertIn("local ok,relation=trusted", self.pairs)
 
     def test_tanaris_is_in_total_fallback_pool(self):
+        self.assertIn("SummonScout_FallbackRouterHubAck.lua", self.toc)
+        self.assertNotIn("SummonScout_FallbackRouterHubAckHot.lua", self.toc)
         self.assertIn('"tanaris" }', self.hub)
         self.assertIn('id=="tanaris"', self.hub)
         self.assertIn('silithus,winterspring,hydraxian,hyjal,tanaris', self.hub)
@@ -64,6 +66,7 @@ class TanarisFullServiceTests(unittest.TestCase):
         self.assertNotIn("SummonScout_TanarisFullServiceHot.lua", self.toc)
         self.assertIn("Cold-loaded intentionally", self.pairs)
         self.assertIn("Cold-loaded intentionally", self.tanaris)
+        self.assertIn("Cold-loaded intentionally", self.hub)
 
     def test_lua50_safety(self):
         for text in (self.pairs,self.tanaris,self.hub):

@@ -22,7 +22,7 @@ SummonScout_WorldBuyerRelationHot.lua
 SummonScout_RosterOwnershipHot.lua
 SummonScout_SlaveMasterPair.lua
 SummonScout_FallbackRouterHot.lua
-SummonScout_FallbackRouterHubAckHot.lua
+SummonScout_FallbackRouterHubAck.lua
 SummonScout_FleetCounterCoordinator.lua
 SummonScout_TanarisFullService.lua
 SummonScout_UnknownWhisperReportHot.lua
