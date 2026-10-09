@@ -3,7 +3,7 @@
   "id": "updater-octologin-v1",
   "goal": "Ship audited OctoLogin v1.1.0 as a SHA-pinned companion DLL inside the verified Parallel runtime candidate so the existing updater installs it, manages rollback/repair and generates its dlls.txt entry automatically.",
   "branch": "feature/updater-octologin-v1",
-  "base_main_sha": "ef552e3bdffeadbdd662c2cd8e125165aeeed9fe",
+  "base_parallel_sha": "ef552e3bdffeadbdd662c2cd8e125165aeeed9fe",
   "status": "implementation",
   "auto_integrate": false,
   "modules": [
