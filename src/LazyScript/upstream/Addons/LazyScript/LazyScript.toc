@@ -25,6 +25,7 @@ MinimapMenu.lua
 Minion.lua
 Parse.lua
 ParseGeneral.lua
+HotfixPlayerLevel.lua
 HotfixStopChannel.lua
 NativeMeleeRange.lua
 ParseBuffs.lua
