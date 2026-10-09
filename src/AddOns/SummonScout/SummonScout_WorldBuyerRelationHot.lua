@@ -99,11 +99,15 @@ local DIRECT_BUYER_SUMMON = {
     "anyone can summon", "anybody can summon", "who can summon", "who can summ"
 }
 
-local SELLER_CUES = {
+local HARD_SELLER_CUES = {
     "wts", "selling", "sell", "service", "available", "offering",
     "for sale", "summons available", "summon service", "summoning service",
     "selling summon", "sell summon", "summoning to", "summoning portals",
-    "portal service", "pst", "whisper me", "dm me", "msg me", "travel service"
+    "portal service", "travel service"
+}
+
+local CONTACT_CUES = {
+    "pst", "whisper me", "dm me", "msg me"
 }
 
 local OWN_SUMMON_CUES = {
@@ -205,6 +209,13 @@ local function brServiceContains(id)
     return string.find("," .. service .. ",", "," .. id .. ",", 1, true) ~= nil
 end
 
+local function brSpecificServiceContains(id)
+    local service = string.lower(brTrim(SummonScoutDB and SummonScoutDB.service or "all"))
+    id = string.lower(brTrim(id or ""))
+    if service == "" or service == "all" or id == "" then return false end
+    return string.find("," .. service .. ",", "," .. id .. ",", 1, true) ~= nil
+end
+
 local function brRelation(api, message)
     local raw = tostring(message or "")
     local normalized = brNormalize(raw)
@@ -215,10 +226,11 @@ local function brRelation(api, message)
         return false, locations, table.getn(locations) > 1 and "multi-destination" or "no-destination"
     end
 
-    if brAny(normalized, SELLER_CUES) then return false, locations, "seller" end
+    local buyer = brBuyerLead(normalized)
+    if brAny(normalized, HARD_SELLER_CUES) then return false, locations, "seller" end
+    if brAny(normalized, CONTACT_CUES) and not buyer then return false, locations, "seller-contact" end
     if brRecruitment(normalized) then return false, locations, "recruitment" end
 
-    local buyer = brBuyerLead(normalized)
     local travel = brHasTravel(normalized)
     local short = brTokenCount(normalized) <= 4
     local question = string.find(raw, "?", 1, true) ~= nil
@@ -226,7 +238,7 @@ local function brRelation(api, message)
 
     -- Strong buyer wording + a known destination is enough on a configured
     -- destination-specific summoner, even if the player omits "summon".
-    if buyer and (travel or brServiceContains(locations[1].id)) then
+    if buyer and (travel or brSpecificServiceContains(locations[1].id)) then
         return true, locations, travel and "buyer+travel" or "buyer+served-destination"
     end
 
@@ -252,7 +264,11 @@ local function brCanonicalize(api, message)
     return tostring(message or "") .. " lf summon", true, locations, reason, true
 end
 
-local function brRelaxRecent(sender)
+local function brRelaxRecent(sender, locations)
+    if not locations or table.getn(locations) ~= 1 or not brServiceContains(locations[1].id) then
+        return false
+    end
+
     local state = W112_SUMMONSCOUT_STATE
     if type(state) ~= "table" or type(state.recent) ~= "table" then return false end
     local key = string.lower(brTrim(sender or ""))
@@ -283,7 +299,7 @@ local function brInstall()
         local routed, changed, locations, reason, accepted = brCanonicalize(api, message)
         local relaxed = false
 
-        if accepted then relaxed = brRelaxRecent(sender) end
+        if accepted then relaxed = brRelaxRecent(sender, locations) end
 
         S.lastRaw = tostring(message or "")
         S.lastSender = tostring(sender or "")
