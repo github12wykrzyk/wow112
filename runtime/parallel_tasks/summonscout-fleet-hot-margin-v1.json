@@ -15,5 +15,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "CompetitionSmart code blob is unchanged; only filename/TOC placement moves it outside *Hot.lua fanout. This directly addresses the 262188/262144 standard packaging failure on Fleet Counter canonical SHA while preserving startup loading and runtime behavior."
+  "notes": "CompetitionSmart code blob is unchanged; only filename/TOC placement moves it outside *Hot.lua fanout. This directly addresses the 262188/262144 standard packaging failure on Fleet Counter canonical SHA while preserving startup loading and runtime behavior. Retry follows safe fast-forward convergence of canonical main to the one-commit-ahead parallel alias; no parallel work was discarded."
 }
