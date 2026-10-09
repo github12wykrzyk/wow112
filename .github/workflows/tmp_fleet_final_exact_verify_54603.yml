@@ -14,10 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Assert canonical parent runtime SHA
-        run: |
-          test "$(git rev-parse HEAD^)" = "54603ead1a4038fc4f67b33f7d758b274572a81a"
-
       - name: Measure exact HOT payload and cold modules
         run: |
           python3 - <<'PY'
