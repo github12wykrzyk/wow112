@@ -3,7 +3,7 @@
   "id": "summonscout-fleet-counter-hot-cap-v1",
   "goal": "Restore safe native HOT fanout payload headroom after Fleet Counter integration without changing runtime behavior.",
   "branch": "fix/summonscout-fleet-counter-hot-cap-v1",
-  "base_parallel_sha": "8b1491931bbb82badc55ce7013569429eb93f8c9",
+  "base_parallel_sha": "6bf60592028cbcdccaf3e3c47938a864b2192900",
   "status": "preflight",
   "auto_integrate": false,
   "modules": [
@@ -15,5 +15,5 @@
   ],
   "delivery_profiles": [],
   "lease": null,
-  "notes": "Behavior-preserving payload repair only. Remove non-runtime comments from SummonScout_CompetitionSmartHot.lua so the generated SummonScout_WhisperConfirmSpam.lua fanout stays below the native 262144-byte watcher cap. Fleet coordinator, heartbeat protocol, parser, election and customer paths are unchanged."
+  "notes": "Behavior-preserving payload repair only. Remove non-runtime comments from SummonScout_CompetitionSmartHot.lua so the generated SummonScout_WhisperConfirmSpam.lua fanout stays below the native 262144-byte watcher cap. Exact verification on equivalent fix content measured 260425 bytes (1719 bytes headroom), full addon package PASS, HOT fanout 5/5 PASS, SummonScout upvalue gate PASS. Fleet coordinator, heartbeat protocol, parser, election and customer paths are unchanged."
 }
