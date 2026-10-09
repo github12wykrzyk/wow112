@@ -1,15 +1,13 @@
 -- Smart competitor classifier + rate-limit GUI bridge for SummonScout.
--- WoW 1.12.1 / Lua 5.0 compatible. This module does not replace the core
--- counter scheduler; it only recognizes additional high-confidence seller ads
--- and hands them to the existing scheduleCounter path, preserving its scope,
--- delay, dedupe and counterCooldown authority.
+-- WoW 1.12.1 / Lua 5.0 compatible. Fleet coordination is attempted first;
+-- legacy local scheduling remains the fail-open fallback when no fleet lease exists.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then
     return
 end
 
-local VERSION = "1-smart-score-cooldown-gui"
+local VERSION = "2-smart-score-fleet-coordinator"
 local S = H.GetState("competitionsmart")
 local MAX_UPVALUES = 64
 local MAX_DEPTH = 12
@@ -293,6 +291,27 @@ function M.OnEvent(evt, message, sender)
     if not qualified then return end
 
     S.detections = (tonumber(S.detections) or 0) + 1
+
+    -- Cross-client arbitration owns only qualified competitor events. If a
+    -- fresh fleet lease exists, it cancels the already-scheduled core-local
+    -- counter for this same sender and returns true. Otherwise legacy behavior
+    -- below remains untouched.
+    local fleet = W112_SUMMONSCOUT_FLEET_COUNTER_V1
+    if fleet and type(fleet.Submit) == "function" then
+        local handled = false
+        if pcall then
+            local fleetOk, fleetHandled = pcall(fleet.Submit, sender, message, evt)
+            handled = fleetOk and fleetHandled and true or false
+        else
+            handled = fleet.Submit(sender, message, evt) and true or false
+        end
+        if handled then
+            S.lastStatus = "fleet-coordinated"
+            S.lastQualifiedAt = csNow()
+            return
+        end
+    end
+
     if type(S.scheduleCounter) ~= "function" and not csResolveCoreHelpers() then
         S.lastStatus = "scheduler-unavailable"
         return

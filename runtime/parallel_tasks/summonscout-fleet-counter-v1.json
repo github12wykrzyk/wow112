@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-fleet-counter-v1",
+  "goal": "Coordinate competitive World responses across SummonScout clients so one competitor event produces at most one fleet advert, using master heartbeats and fail-silent grant arbitration without changing customer summon flows.",
+  "branch": "feature/summonscout-fleet-counter-v1",
+  "base_parallel_sha": "ef552e3bdffeadbdd662c2cd8e125165aeeed9fe",
+  "status": "integrated",
+  "auto_integrate": false,
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summonscout-runtime"
+  ],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "Cold FleetCounterCoordinator.lua stays outside *Hot.lua fanout. FCV/FCE heartbeats establish fresh coordinator capability; FCC candidate collection is master-arbitrated; FCG is a single commit grant; FCA is observability only and never causes retry/reassignment. Initial activation requires 4/4 fresh service coverage and 4 distinct service-owning coordinator clients. Group price is master-owned. CompetitionSmart falls back to legacy local scheduling only when no fresh/recent fleet capability exists. Exact feature preflight run 37909940012 passed with SummonScout upvalue gate (OnEvent 3, OnUpdate 12). Independent temp verification run 37910185327 passed full addon packaging/HOT payload cap, 5/5 fanout regression tests, Lua parser checks for both changed Lua files, and explicit cold-load exclusion from HOT fanout. Integration retry requested after preserving divergent parallel head e9440b0789789a7717d2d5944dfb36d49803cdd0 on recovery/parallel-divergence-20261009-e9440b and restoring parallel to canonical main.",
+  "integrated_feature_sha": "77799b55937d5f090454394428071c2dc39fa41c"
+}
