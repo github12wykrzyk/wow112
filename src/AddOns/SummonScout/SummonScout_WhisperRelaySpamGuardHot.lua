@@ -3,8 +3,9 @@
 -- Keeps the V1 relay transport and session model intact while fixing live spam:
 --   * zero SSWR1 H/K traffic while there is no real relay queue,
 --   * bounded handshake retries only while customer/lifecycle data is queued,
---   * all reserved SummonScout control whispers stay on WHISPER but are filtered
+--   * transport-only SSWR1/SSFR1 whispers stay on WHISPER but are filtered
 --     by WIM's own filter path,
+--   * user-visible [SSI ...] master lifecycle reports are never hidden,
 --   * no ChatFrame_OnEvent replacement, so repeated hot/reload cycles cannot leave
 --     a dangling wrapper calling a nil base function.
 --
@@ -22,14 +23,14 @@ if type(relay) ~= "table" or type(relay.OnEvent) ~= "function"
     return
 end
 
-local VERSION = "4-demand-only-wim-all-control-filter"
+local VERSION = "5-demand-only-wim-transport-filter"
 local PROTO = "[SSWR1]"
 -- WIM_FilterResult uses Lua pattern matching, so [ and ] must be escaped.
--- Keep the original name for backwards contract compatibility, then add the
--- other SummonScout control-plane families observed live in WIM.
+-- Keep the transport families blocked, but repair the persisted v4 filter that
+-- accidentally hid the human-readable [SSI ...] lifecycle feed from the Master.
 local WIM_FILTER_PATTERN = "%[SSWR1%]"
 local WIM_FALLBACK_FILTER_PATTERN = "%[SSFR1%]"
-local WIM_MASTER_FILTER_PATTERN = "%[SSI "
+local LEGACY_WIM_MASTER_FILTER_PATTERN = "%[SSI "
 local HELLO_MAX_IDLE_ATTEMPTS = 3
 local HELLO_RETRY_1 = 10
 local HELLO_RETRY_2 = 30
@@ -107,8 +108,11 @@ local function sgInstallWimSuppression()
     if WIM_Filters[WIM_FALLBACK_FILTER_PATTERN] ~= "Block" then
         WIM_Filters[WIM_FALLBACK_FILTER_PATTERN] = "Block"
     end
-    if WIM_Filters[WIM_MASTER_FILTER_PATTERN] ~= "Block" then
-        WIM_Filters[WIM_MASTER_FILTER_PATTERN] = "Block"
+    -- v4 accidentally persisted this filter in WIM's SavedVariables. Removing
+    -- the code alone would not restore reports on upgraded clients, so actively
+    -- delete only the exact Block value that SummonScout previously installed.
+    if WIM_Filters[LEGACY_WIM_MASTER_FILTER_PATTERN] == "Block" then
+        WIM_Filters[LEGACY_WIM_MASTER_FILTER_PATTERN] = nil
     end
     G.wimFilterInstalled = true
     return true
@@ -130,7 +134,8 @@ local function sgWrappedOnUpdate()
     local master = sgMaster()
 
     -- Cheap idempotent repair in case WIM was loaded after us or the user reset
-    -- WIM filters during the session.
+    -- WIM filters during the session. This also clears the persisted v4 [SSI]
+    -- suppression for clients that upgrade without deleting SavedVariables.
     sgInstallWimSuppression()
 
     if sgLower(master) ~= sgLower(G.lastMasterName) then
@@ -223,9 +228,9 @@ function M.Shutdown()
     if relay and relay.OnUpdate == sgWrappedOnUpdate then
         relay.OnUpdate = OWN_RELAY_ON_UPDATE
     end
-    -- Intentionally do not remove the reserved WIM filters during hot swap.
-    -- Keeping them avoids a visible transport leak between Shutdown and Init,
-    -- and the prefixes are SummonScout-internal only.
+    -- Intentionally do not remove the reserved transport WIM filters during hot
+    -- swap. Keeping them avoids a visible SSWR1/SSFR1 leak between Shutdown and
+    -- Init. Human-readable [SSI ...] master reports remain visible.
 end
 
 H.Register("whisperrelayspamguard", M, VERSION)
