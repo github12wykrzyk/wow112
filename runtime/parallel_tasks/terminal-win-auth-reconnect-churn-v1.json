@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "terminal-win-auth-reconnect-churn-v1",
+  "status": "fast-track-ready",
+  "goal": "Prevent TERMINAL WIN portal workers from exhausting reconnects in seconds after transient auth endpoint failures.",
+  "validated_windows_run": 37919108365,
+  "changes": [
+    "Clear transient auth endpoint penalties on every full reconnect pass",
+    "Enforce portal-clicker minimum 600 reconnect attempts",
+    "Enforce portal-clicker minimum 1000 ms delay between transient reconnects"
+  ]
+}
