@@ -25,7 +25,7 @@ class SummonScoutWimNativeLua50SyntaxHotfixV1(unittest.TestCase):
 
     def test_source_uses_lua50_compatible_multi_local_declaration(self):
         self.assertIn(
-            'local V, P, W = "2-native-whisper-wim", "[SSWR1]", H.GetState("whisperrelaywim")',
+            'local V, P, W = "2-native-whisper-wim-lua50fix2", "[SSWR1]", H.GetState("whisperrelaywim")',
             self.source,
         )
         self.assertNotIn(
@@ -58,7 +58,7 @@ class SummonScoutWimNativeLua50SyntaxHotfixV1(unittest.TestCase):
         )
         block = self.packaged[start:end]
         self.assertIn(
-            'local V, P, W = "2-native-whisper-wim", "[SSWR1]", H.GetState("whisperrelaywim")',
+            'local V, P, W = "2-native-whisper-wim-lua50fix2", "[SSWR1]", H.GetState("whisperrelaywim")',
             block,
         )
         self.assertIn('local sid=trim(box.W112RelaySid or "")', block)

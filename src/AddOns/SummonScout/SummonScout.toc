@@ -18,6 +18,7 @@ SummonScout_WhisperConfirmStackFixHot.lua
 SummonScout_GroupedResumeHot.lua
 SummonScout_WorldBuyerRelationHot.lua
 SummonScout_RosterOwnershipHot.lua
+SummonScout_SlaveMasterPairHot.lua
 SummonScout_FallbackRouterHot.lua
 SummonScout_FallbackRouterHubAckHot.lua
 SummonScout_UnknownWhisperReportHot.lua
