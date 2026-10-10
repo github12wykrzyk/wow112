@@ -14,6 +14,12 @@ end
 local function fresh(x)
  return type(x)=="table" and (A.now()-(tonumber(x.seen) or -100000))<=(tonumber(A.PEER_TTL) or 38)
 end
+local function counterLiveServices()
+ local c=W112_SUMMONSCOUT_FLEET_COUNTER_V1
+ if type(c)~="table" or type(c.freshServices)~="function" then return nil end
+ if pcall then local ok,csv=pcall(c.freshServices); if ok then return tostring(csv or "") end; return nil end
+ return tostring(c.freshServices() or "")
+end
 local function normalizeCatalogLabels()
  local api=W112_SUMMONSCOUT_API_V1
  if type(api)~="table" or type(api.GetLocationCatalog)~="function" or api.__fleetCanonicalLabelsV3 then return end
@@ -50,15 +56,23 @@ function A.providers()
  addLocalProvider(out,seen); table.sort(out); return out
 end
 function A.destinations()
- local out,seen,f={},{},fallbackState(); local destination,providers,key,item
+ local out,seen={},{}
+ local live=counterLiveServices()
+ local x
+ if live~=nil then
+  for x in string.gfind(live,"[^,]+") do x=A.lower(x); if x~="" and LABELS[x] and not seen[x] then seen[x]=true; out[table.getn(out)+1]=x end end
+  table.sort(out)
+  return out
+ end
+ local f=fallbackState(); local destination,providers,key,item
  if f and type(f.providers)=="table" then
   for destination,providers in pairs(f.providers) do
-   if type(providers)=="table" then local live=false; for key,item in pairs(providers) do if fresh(item) then live=true; break end end
-    destination=A.lower(destination); if live and destination~="" and not seen[destination] then seen[destination]=true; out[table.getn(out)+1]=destination end
+   if type(providers)=="table" then local isLive=false; for key,item in pairs(providers) do if fresh(item) then isLive=true; break end end
+    destination=A.lower(destination); if isLive and destination~="" and not seen[destination] then seen[destination]=true; out[table.getn(out)+1]=destination end
    end
   end
  end
- local x; for x in string.gfind(A.serviceCsv(),"[^,]+") do x=A.lower(x); if x~="" and not seen[x] then seen[x]=true; out[table.getn(out)+1]=x end end
+ for x in string.gfind(A.serviceCsv(),"[^,]+") do x=A.lower(x); if x~="" and not seen[x] then seen[x]=true; out[table.getn(out)+1]=x end end
  table.sort(out); return out
 end
 function A.destinationCsv() return table.concat(A.destinations(),",") end
@@ -97,4 +111,4 @@ if frame then
 end
 A.fallbackState=fallbackState
 A.directoryTtl=DIRECTORY_TTL
-W112_SUMMONSCOUT_FLEET_ADVERT_CANONICAL_DISCOVERY_VERSION="3"
+W112_SUMMONSCOUT_FLEET_ADVERT_CANONICAL_DISCOVERY_VERSION="4-live-services"
