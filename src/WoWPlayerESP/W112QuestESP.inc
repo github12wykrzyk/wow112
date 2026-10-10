@@ -13,6 +13,8 @@
 #define W112_Q_UNIT_TYPE 3u
 #define W112_Q_NPC_NAME_PTR 0x00000B30u
 #define W112_Q_MARKER_COLOR 0x0000FF00u
+#define W112_ESP_PROFILE_POLL_FRAMES 30u
+#define W112_ESP_PROFILE_FILE "wow112_esp_characters.ini"
 
 struct QuestObjectiveName { char name[W112_Q_NAME_BYTES]; };
 static struct QuestObjectiveName g_quest_objectives[W112_Q_MAX_OBJECTIVES];
@@ -22,9 +24,192 @@ static volatile DWORD g_quest_snapshot_manager=0u;
 static volatile DWORD g_quest_snapshot_local_lo=0u;
 static volatile DWORD g_quest_snapshot_local_hi=0u;
 static volatile DWORD g_quest_snapshot_frame=0u;
-static volatile DWORD g_quest_enabled=1u;
+/* All visual ESP surfaces are fail-closed until the current character profile
+ * is known. A saved per-character value can opt them back in after login. */
+static volatile DWORD g_quest_enabled=0u;
 static DWORD g_quest_next_post_frame=0u;
 static HWND g_quest_windows[W112_Q_MAX_MARKERS];
+
+/* These objects are defined later in the aggregate PlayerESP translation unit.
+ * Tentative declarations here let the always-called quest_draw_tick guard the
+ * shared GUI bootstrap before it can restore the legacy global [esp] section. */
+static char g_ui_profile_path[512];
+static BOOL g_ui_profile_initialized;
+static DWORD g_ui_profile_esp_last[5];
+__declspec(dllimport) DWORD WINAPI GetPrivateProfileStringA(LPCSTR,LPCSTR,LPCSTR,char*,DWORD,LPCSTR);
+__declspec(dllimport) BOOL WINAPI WritePrivateProfileStringA(LPCSTR,LPCSTR,LPCSTR,LPCSTR);
+
+static char g_esp_character_profile_path[512];
+static char g_esp_character_section[96];
+static BOOL g_esp_character_guarded=FALSE;
+static BOOL g_esp_character_ready=FALSE;
+static DWORD g_esp_character_next_post_frame=0u;
+static DWORD g_esp_character_last[5]={0u,0u,0u,0u,0u};
+
+static volatile DWORD *const g_esp_character_flags[5]={
+    &g_esp_enabled,&g_parallel_show_horde,&g_parallel_show_alliance,
+    &g_parallel_show_hostile,&g_quest_enabled
+};
+
+static BOOL esp_profile_build_path(char out[512],const char* leaf) {
+    DWORD n,start,i;
+    if(!out||!leaf)return FALSE;
+    n=GetModuleFileNameA(NULL,out,512u);
+    if(!n||n>=512u){out[0]=0;return FALSE;}
+    start=n;
+    while(start&&out[start-1u]!='\\'&&out[start-1u]!='/')--start;
+    if(!start){out[0]=0;return FALSE;}
+    for(i=0u;leaf[i];++i) {
+        if(start+i+1u>=512u){out[0]=0;return FALSE;}
+        out[start+i]=leaf[i];
+    }
+    out[start+i]=0;
+    return TRUE;
+}
+static BOOL esp_profile_read_bool(const char* section,DWORD id,DWORD* out) {
+    static const char hex[]="0123456789ABCDEF";
+    char key[16],value[16];
+    char *end;
+    DWORD i,bits=0u;
+    if(!section||!section[0]||!out||!g_esp_character_profile_path[0])return FALSE;
+    end=app_u32(key,id);*end=0;
+    if(GetPrivateProfileStringA(section,key,"",value,sizeof(value),g_esp_character_profile_path)!=8u)
+        return FALSE;
+    for(i=0u;i<8u;++i) {
+        const char *p=hex;
+        while(*p&&*p!=value[i])++p;
+        if(!*p)return FALSE;
+        bits=(bits<<4u)|(DWORD)(p-hex);
+    }
+    if(bits>1u)return FALSE;
+    *out=bits;
+    return TRUE;
+}
+static BOOL esp_profile_write_bool(const char* section,DWORD id,DWORD bits) {
+    static const char hex[]="0123456789ABCDEF";
+    char key[16],text[9];
+    char *end;
+    DWORD i;
+    if(!section||!section[0]||!g_esp_character_profile_path[0]||bits>1u)return FALSE;
+    end=app_u32(key,id);*end=0;
+    for(i=0u;i<8u;++i)text[i]=hex[(bits>>(28u-i*4u))&15u];
+    text[8]=0;
+    return WritePrivateProfileStringA(section,key,text,g_esp_character_profile_path);
+}
+static void esp_profile_force_off(void) {
+    DWORD i;
+    for(i=0u;i<5u;++i) {
+        *g_esp_character_flags[i]=0u;
+        g_ui_profile_esp_last[i]=0u;
+    }
+    g_range_sweep_enabled=0u;
+    ++g_parallel_filter_revision;
+    g_next_bg_score_post_frame=0u;
+}
+static void esp_profile_guard_bootstrap(void) {
+    DWORD i;
+    if(g_esp_character_guarded)return;
+    g_esp_character_guarded=TRUE;
+    esp_profile_force_off();
+    for(i=0u;i<5u;++i)g_esp_character_last[i]=0u;
+
+    /* Keep the legacy shared file only for non-ESP modules. Mark the bootstrap
+     * initialized before parallel_gui_tick reaches ui_profile_bootstrap(), so
+     * the old global [esp] section is never restored into a new character. */
+    g_ui_profile_initialized=TRUE;
+    if(!esp_profile_build_path(g_ui_profile_path,"wow112_parallel_gui.ini"))
+        g_ui_profile_path[0]=0;
+    if(!esp_profile_build_path(g_esp_character_profile_path,W112_ESP_PROFILE_FILE))
+        g_esp_character_profile_path[0]=0;
+}
+static BOOL esp_profile_make_section(const char* raw,char out[96]) {
+    DWORD i=0u,j=0u;
+    static const char prefix[]="esp_";
+    if(!raw||!raw[0]||!out)return FALSE;
+    while(prefix[j]&&i+1u<96u)out[i++]=prefix[j++];
+    j=0u;
+    while(raw[j]&&i+1u<96u) {
+        char c=raw[j++];
+        if((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-'||c=='_')
+            out[i++]=c;
+        else if(c=='|')out[i++]='_';
+        else out[i++]='_';
+    }
+    out[i]=0;
+    return i>4u;
+}
+static void esp_profile_load_character(const char* section) {
+    DWORD i,bits;
+    if(!section||!section[0])return;
+    for(i=0u;i<5u;++i) {
+        bits=0u; /* missing/corrupt value = OFF */
+        esp_profile_read_bool(section,i+1u,&bits);
+        *g_esp_character_flags[i]=bits;
+        g_esp_character_last[i]=bits;
+        g_ui_profile_esp_last[i]=bits;
+    }
+    if(!g_esp_enabled)g_range_sweep_enabled=0u;
+    ++g_parallel_filter_revision;
+    g_next_bg_score_post_frame=0u;
+}
+static void esp_profile_poll_game_thread(void) {
+    static const char script[]=
+        "W112_ESP_PROFILE_ID='';"
+        "if type(UnitName)=='function' and type(GetRealmName)=='function' then "
+        "local n=UnitName('player');local r=GetRealmName();"
+        "if type(n)=='string' and type(r)=='string' and string.len(n)>0 and "
+        "string.len(n)<=31 and string.len(r)>0 and string.len(r)<=63 then "
+        "W112_ESP_PROFILE_ID=r..'|'..n end end";
+    FrameScriptExecuteFn exec=(FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
+    FrameScriptGetTextFn getText=(FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
+    const char* raw;
+    char section[96];
+    DWORD i;
+    if(!chal_world_identity_ready())return;
+    exec(script,script);
+    raw=getText("W112_ESP_PROFILE_ID",-1,0u);
+    if(!raw||!raw[0]||!esp_profile_make_section(raw,section))return;
+    if(g_esp_character_ready) {
+        for(i=0u;i<sizeof(g_esp_character_section)&&section[i]==g_esp_character_section[i];++i)
+            if(!section[i])return;
+    }
+    for(i=0u;i+1u<sizeof(g_esp_character_section)&&section[i];++i)
+        g_esp_character_section[i]=section[i];
+    g_esp_character_section[i]=0;
+    esp_profile_load_character(g_esp_character_section);
+    g_esp_character_ready=TRUE;
+}
+static void esp_profile_tick(void) {
+    DWORD i;
+    esp_profile_guard_bootstrap();
+    if(!chal_world_identity_ready()) {
+        if(g_esp_character_ready||g_esp_enabled||g_parallel_show_horde||
+           g_parallel_show_alliance||g_parallel_show_hostile||g_quest_enabled) {
+            g_esp_character_ready=FALSE;
+            g_esp_character_section[0]=0;
+            esp_profile_force_off();
+            for(i=0u;i<5u;++i)g_esp_character_last[i]=0u;
+        }
+        return;
+    }
+    if(g_challenge_hwnd&&IsWindow(g_challenge_hwnd)&&
+       g_render_frame>=g_esp_character_next_post_frame) {
+        if(PostMessageA(g_challenge_hwnd,WM_W112_QUEST_TICK,0u,0))
+            g_esp_character_next_post_frame=g_render_frame+W112_ESP_PROFILE_POLL_FRAMES;
+    }
+    if(!g_esp_character_ready) {
+        esp_profile_force_off();
+        return;
+    }
+    for(i=0u;i<5u;++i) {
+        DWORD live=*g_esp_character_flags[i]?1u:0u;
+        if(live!=g_esp_character_last[i]&&
+           esp_profile_write_bool(g_esp_character_section,i+1u,live)) {
+            g_esp_character_last[i]=live;
+            g_ui_profile_esp_last[i]=live;
+        }
+    }
+}
 
 static BOOL quest_same_name(const char* a,const char* b) {
     DWORD i;
@@ -85,6 +270,7 @@ static void quest_poll_game_thread(void) {
     FrameScriptGetTextFn getText=(FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
     const char* p;
     DWORD count=0u,i=0u;
+    esp_profile_poll_game_thread();
     if(!chal_world_identity_ready()||!g_quest_enabled)return;
     exec(script,script);
     p=getText("W112_QUEST_NPC_RESULT",-1,0u);
@@ -148,6 +334,9 @@ static void quest_draw_tick(void) {
     LONG screenLeft,screenTop;
     DWORD width,height;
     float x,y,z;
+    /* Called at the start of parallel_gui_tick(), before the base renderer
+     * evaluates g_esp_enabled. This guarantees no default-ON frame leaks. */
+    esp_profile_tick();
     if(!g_quest_enabled || !chal_world_identity_ready() ||
        !g_quest_snapshot_count || g_quest_snapshot_manager!=g_challenge_world_manager ||
        g_quest_snapshot_local_lo!=g_challenge_world_guid_lo ||
