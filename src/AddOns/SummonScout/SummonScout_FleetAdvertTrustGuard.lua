@@ -1,11 +1,13 @@
 -- Trust guard for FleetAdvertCoordinator.
 -- Only peers already known by the canonical FallbackRouter directory may register as advert providers.
 -- This prevents arbitrary players from spoofing FAH control whispers and becoming selected speakers.
+-- Fleet mode also fails closed when no valid masterName is configured, leaving legacy adverts untouched.
 
 local A=W112_SUMMONSCOUT_FLEET_ADVERT
 if type(A)~="table" or type(A.onHeartbeat)~="function" then return end
 
-local original=A.onHeartbeat
+local originalHeartbeat=A.onHeartbeat
+local originalEnabled=A.enabled
 
 local function fallbackState()
     local h=W112_SUMMONSCOUT_HOT
@@ -35,6 +37,11 @@ local function trusted(name)
     return false
 end
 
+A.enabled=function()
+    if not A.validName(A.master()) then return false end
+    return originalEnabled()
+end
+
 A.trustedPeer=trusted
 A.onHeartbeat=function(sender,fields)
     if not trusted(sender) then
@@ -42,7 +49,7 @@ A.onHeartbeat=function(sender,fields)
         A.debug("ignored untrusted FAH from "..tostring(sender or "?"))
         return
     end
-    return original(sender,fields)
+    return originalHeartbeat(sender,fields)
 end
 
-W112_SUMMONSCOUT_FLEET_ADVERT_TRUST_GUARD_VERSION="1"
+W112_SUMMONSCOUT_FLEET_ADVERT_TRUST_GUARD_VERSION="2"
