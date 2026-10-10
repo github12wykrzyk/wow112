@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-fleet-advert-v1",
+  "goal": "Publish fleet-wide rotating World adverts and cross-bot routed summon destinations through the parallel updater candidate.",
+  "status": "integrated",
+  "modules": ["SummonScout"],
+  "shared_resources": ["summonscout-runtime"],
+  "notes": "FleetAdvertCoordinator and trust guard are integrated on parallel. This marker intentionally triggers a fresh Build work candidate so the updater serves the exact integrated addon pack. Runtime semantics are unchanged by this marker."
+}
