@@ -9,7 +9,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "p0.3d-direct-location"
+local VERSION = "p0.3e-route-catalog"
 local S = H.GetState("enginev2foundation")
 S.lastFailure = S.lastFailure or ""
 S.api = nil
@@ -204,12 +204,12 @@ local function fInstall()
     W112_SUMMONSCOUT_API_V1 = api
     W112_SUMMONSCOUT_STATE = state
     W112_SUMMONSCOUT_API_VERSION = 1
-    W112_SUMMONSCOUT_COMPAT_VERSION = 5
+    W112_SUMMONSCOUT_COMPAT_VERSION = 6
     W112_SUMMON_ENGINE_V2_FOUNDATION = VERSION
 
     api.state = state
     api.apiVersion = 1
-    api.compatVersion = 5
+    api.compatVersion = 6
     api.GetState = function()
         return state
     end
@@ -267,8 +267,26 @@ local function fInstall()
     end
     api.GetLocationCatalog = function()
         local C = fResolveCompat(api)
-        if not C or type(C.locationCatalog) ~= "table" then return nil end
-        return C.locationCatalog
+        if C and type(C.locationCatalog) == "table" then
+            return C.locationCatalog
+        end
+
+        -- Route-critical fallback must not depend on debug upvalue layout. The
+        -- five fixed summon services are canonical and can be reconstructed via
+        -- the stable FindLocation surface. This is enough for provider presence,
+        -- local-service checks and cross-route assignment even when the private
+        -- full catalog is unavailable.
+        local ids = { "hyjal", "hydraxian", "winterspring", "silithus", "tanaris" }
+        local list = {}
+        local i
+        for i = 1, table.getn(ids) do
+            local loc, ambiguous = api.FindLocation(ids[i])
+            if not ambiguous and type(loc) == "table" and loc.id then
+                list[table.getn(list) + 1] = loc
+            end
+        end
+        if table.getn(list) > 0 then return list end
+        return nil
     end
     api.InstallLocationRootMatcher = function(fn)
         if type(fn) ~= "function" then return false, "invalid matcher" end
