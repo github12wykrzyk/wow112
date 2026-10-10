@@ -4,8 +4,10 @@
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "7-master-slave-readiness-gate"
+local VERSION = "8-master-slave-readiness-settle"
 local WATCH_INTERVAL = 2.00
+local SETTLE_INTERVAL = 0.20
+local SETTLE_WINDOW = 1.20
 local INVITE_COOLDOWN = 5.00
 local PROMOTE_COOLDOWN = 2.00
 local ACCEPT_COOLDOWN = 1.00
@@ -35,6 +37,7 @@ local MASTER_INITIATED = { teletanaris=true }
 
 local S=H.GetState("slavemasterpairs")
 S.nextWatchAt=tonumber(S.nextWatchAt) or 0
+S.readinessSettleUntil=tonumber(S.readinessSettleUntil) or 0
 S.nextInviteAt=tonumber(S.nextInviteAt) or 0
 S.nextPromoteAt=tonumber(S.nextPromoteAt) or 0
 S.nextAcceptAt=tonumber(S.nextAcceptAt) or 0
@@ -151,8 +154,7 @@ local function slaveReadiness(masterKey)
         if findGroup(key(slave)) then
             present=present+1
         else
-            missing[table.getn(missing)+1]=slave
-        end
+            missing[table.getn(missing)+1]=slave end
     end
     return present==table.getn(list),present,table.getn(list),missing
 end
@@ -165,6 +167,7 @@ local function applySlaveSafetyGate(masterKey)
     S.slaveSafetyPresent=present
     S.slaveSafetyTotal=total
     S.slaveSafetyMissing=table.concat(missing,",")
+    S.lastReadinessRefreshAt=now()
     W112_SUMMONSCOUT_SLAVE_SAFETY_READY=ready and true or false
     W112_SUMMONSCOUT_SLAVE_SAFETY_STATUS=(ready and "READY " or "BLOCKED ")..tostring(present).."/"..tostring(total)
 
@@ -215,19 +218,29 @@ end
 
 local M={}
 function M.Init()
-    seedPairBlacklist(); S.nextWatchAt=0; S.nextInviteAt=0; S.nextPromoteAt=0; S.nextAcceptAt=0
+    seedPairBlacklist(); S.nextWatchAt=0; S.readinessSettleUntil=0; S.nextInviteAt=0; S.nextPromoteAt=0; S.nextAcceptAt=0
     H.RegisterEvent("PARTY_INVITE_REQUEST"); H.RegisterEvent("PARTY_MEMBERS_CHANGED"); H.RegisterEvent("RAID_ROSTER_UPDATE")
     watchdog()
 end
 function M.OnEvent(ev,a1)
     if ev=="PARTY_INVITE_REQUEST" then acceptTrusted(a1); return end
     if ev=="PARTY_MEMBERS_CHANGED" or ev=="RAID_ROSTER_UPDATE" then
-        S.nextWatchAt=now()+WATCH_INTERVAL
+        -- On vanilla/private-server clients the roster event can precede the final
+        -- UnitName()/raid-roster view by a few frames. Re-check quickly for a short
+        -- bounded settle window so a newly complete 2/2 slave pair cannot remain
+        -- falsely BLOCKED until the normal 2 s watchdog tick.
+        local t=now()
+        S.readinessSettleUntil=t+SETTLE_WINDOW
+        S.nextWatchAt=t+SETTLE_INTERVAL
         watchdog()
     end
 end
 function M.OnUpdate()
-    local t=now(); if t<(S.nextWatchAt or 0) then return end; S.nextWatchAt=t+WATCH_INTERVAL; watchdog()
+    local t=now(); if t<(S.nextWatchAt or 0) then return end
+    local interval=WATCH_INTERVAL
+    if t<(tonumber(S.readinessSettleUntil) or 0) then interval=SETTLE_INTERVAL end
+    S.nextWatchAt=t+interval
+    watchdog()
 end
 function M.Shutdown() end
 H.Register("slavemasterpairs",M,VERSION)
