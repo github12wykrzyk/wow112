@@ -43,7 +43,6 @@ static char g_esp_character_profile_path[512];
 static char g_esp_character_section[96];
 static BOOL g_esp_character_guarded=FALSE;
 static BOOL g_esp_character_ready=FALSE;
-static DWORD g_esp_character_next_post_frame=0u;
 static DWORD g_esp_character_last[5]={0u,0u,0u,0u,0u};
 
 static volatile DWORD *const g_esp_character_flags[5]={
@@ -122,21 +121,36 @@ static void esp_profile_guard_bootstrap(void) {
     if(!esp_profile_build_path(g_esp_character_profile_path,W112_ESP_PROFILE_FILE))
         g_esp_character_profile_path[0]=0;
 }
-static BOOL esp_profile_make_section(const char* raw,char out[96]) {
-    DWORD i=0u,j=0u;
-    static const char prefix[]="esp_";
-    if(!raw||!raw[0]||!out)return FALSE;
-    while(prefix[j]&&i+1u<96u)out[i++]=prefix[j++];
-    j=0u;
-    while(raw[j]&&i+1u<96u) {
-        char c=raw[j++];
-        if((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-'||c=='_')
-            out[i++]=c;
-        else if(c=='|')out[i++]='_';
-        else out[i++]='_';
+static BOOL esp_profile_make_guid_section(char out[96],DWORD lo,DWORD hi) {
+    char *p;
+    if(!out||(lo==0u&&hi==0u))return FALSE;
+    p=out;
+    p=app_str(p,"esp_guid_");
+    p=app_hex8(p,hi);
+    p=app_hex8(p,lo);
+    *p=0;
+    return TRUE;
+}
+static BOOL esp_profile_probe_character(char section[96]) {
+    DWORD manager=0u,linkBase=0u,lo=0u,hi=0u;
+    HWND hwnd=((GetGameWindowFn)FN_GET_GAME_WINDOW)(0);
+    if(!section||!hwnd||!IsWindow(hwnd))return FALSE;
+    if(!rd_u32(OBJMGR_GLOBAL,&manager)||manager<0x00010000u||manager>0x7FFF0000u)return FALSE;
+    if(!readable4(manager+OM_LINK_BASE)||!readable4(manager+OM_LOCAL_GUID_LO)||
+       !readable4(manager+OM_LOCAL_GUID_HI))return FALSE;
+    if(!rd_u32(manager+OM_LINK_BASE,&linkBase)||linkBase!=0x38u)return FALSE;
+    if(!rd_u32(manager+OM_LOCAL_GUID_LO,&lo)||!rd_u32(manager+OM_LOCAL_GUID_HI,&hi)||
+       (lo==0u&&hi==0u))return FALSE;
+    return esp_profile_make_guid_section(section,lo,hi);
+}
+static BOOL esp_profile_same_section(const char* a,const char* b) {
+    DWORD i;
+    if(!a||!b)return FALSE;
+    for(i=0u;i<96u;++i) {
+        if(a[i]!=b[i])return FALSE;
+        if(!a[i])return TRUE;
     }
-    out[i]=0;
-    return i>4u;
+    return FALSE;
 }
 static void esp_profile_load_character(const char* section) {
     DWORD i,bits;
@@ -152,37 +166,20 @@ static void esp_profile_load_character(const char* section) {
     ++g_parallel_filter_revision;
     g_next_bg_score_post_frame=0u;
 }
+/* Profile identity must not depend on active ESP caches. The old realm/name
+ * game-thread path created a circular dependency: default OFF prevented the
+ * cache needed to reach the profile poll, so every user toggle was forced OFF.
+ * Character GUID from the validated Object Manager is stable per character and
+ * can be read without enabling ESP or calling Lua from the render worker. */
 static void esp_profile_poll_game_thread(void) {
-    static const char script[]=
-        "W112_ESP_PROFILE_ID='';"
-        "if type(UnitName)=='function' and type(GetRealmName)=='function' then "
-        "local n=UnitName('player');local r=GetRealmName();"
-        "if type(n)=='string' and type(r)=='string' and string.len(n)>0 and "
-        "string.len(n)<=31 and string.len(r)>0 and string.len(r)<=63 then "
-        "W112_ESP_PROFILE_ID=r..'|'..n end end";
-    FrameScriptExecuteFn exec=(FrameScriptExecuteFn)FN_FRAMESCRIPT_EXECUTE;
-    FrameScriptGetTextFn getText=(FrameScriptGetTextFn)FN_FRAMESCRIPT_GETTEXT;
-    const char* raw;
-    char section[96];
-    DWORD i;
-    if(!chal_world_identity_ready())return;
-    exec(script,script);
-    raw=getText("W112_ESP_PROFILE_ID",-1,0u);
-    if(!raw||!raw[0]||!esp_profile_make_section(raw,section))return;
-    if(g_esp_character_ready) {
-        for(i=0u;i<sizeof(g_esp_character_section)&&section[i]==g_esp_character_section[i];++i)
-            if(!section[i])return;
-    }
-    for(i=0u;i+1u<sizeof(g_esp_character_section)&&section[i];++i)
-        g_esp_character_section[i]=section[i];
-    g_esp_character_section[i]=0;
-    esp_profile_load_character(g_esp_character_section);
-    g_esp_character_ready=TRUE;
+    /* Kept as a no-op because quest polling already calls this hook. Profile
+     * selection now happens in esp_profile_tick() from Object Manager identity. */
 }
 static void esp_profile_tick(void) {
     DWORD i;
+    char section[96];
     esp_profile_guard_bootstrap();
-    if(!chal_world_identity_ready()) {
+    if(!esp_profile_probe_character(section)) {
         if(g_esp_character_ready||g_esp_enabled||g_parallel_show_horde||
            g_parallel_show_alliance||g_parallel_show_hostile||g_quest_enabled) {
             g_esp_character_ready=FALSE;
@@ -192,14 +189,12 @@ static void esp_profile_tick(void) {
         }
         return;
     }
-    if(g_challenge_hwnd&&IsWindow(g_challenge_hwnd)&&
-       g_render_frame>=g_esp_character_next_post_frame) {
-        if(PostMessageA(g_challenge_hwnd,WM_W112_QUEST_TICK,0u,0))
-            g_esp_character_next_post_frame=g_render_frame+W112_ESP_PROFILE_POLL_FRAMES;
-    }
-    if(!g_esp_character_ready) {
-        esp_profile_force_off();
-        return;
+    if(!g_esp_character_ready||!esp_profile_same_section(section,g_esp_character_section)) {
+        for(i=0u;i+1u<sizeof(g_esp_character_section)&&section[i];++i)
+            g_esp_character_section[i]=section[i];
+        g_esp_character_section[i]=0;
+        esp_profile_load_character(g_esp_character_section);
+        g_esp_character_ready=TRUE;
     }
     for(i=0u;i<5u;++i) {
         DWORD live=*g_esp_character_flags[i]?1u:0u;
