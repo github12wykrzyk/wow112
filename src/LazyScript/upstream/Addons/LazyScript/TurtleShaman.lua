@@ -1,6 +1,5 @@
 local baseLoadAddOnByClass = lazyScript.LoadAddOnByClass
 
-local GHOST_WOLF_TEXTURE_TOKEN = "spell_nature_spiritwolf"
 local ghostWolfFrame = nil
 local ghostWolfPollElapsed = 0
 local postKillTargetName = nil
@@ -12,39 +11,6 @@ local lastPlayerDamageAt = nil
 local POST_KILL_MIN_DELAY = 0.15
 local POST_KILL_MAX_WINDOW = 5.00
 local POST_KILL_NEW_DAMAGE_QUIET = 0.60
-
-local function findGhostWolfBuffIndex()
-	for slot = 0, 15 do
-		local index = GetPlayerBuff(slot, "HELPFUL")
-		if index and index >= 0 then
-			local texture = GetPlayerBuffTexture(index)
-			if texture and string.find(string.lower(texture), GHOST_WOLF_TEXTURE_TOKEN, 1, true) then
-				return index
-			end
-		end
-	end
-	return nil
-end
-
-local function freshNativeTargetMelee()
-	if not UnitExists("target") or not UnitCanAttack("player", "target") then return false end
-	local at = lazyScript.nativeTargetMeleeRangeAt
-	local state = lazyScript.nativeTargetMeleeRange
-	if not at or state == nil then return false end
-	local age = GetTime() - at
-	if age < 0 or age > 0.30 then return false end
-	return state == 1
-end
-
-local function freshNativeTargetWithin(yards)
-	if not UnitExists("target") or not UnitCanAttack("player", "target") then return false end
-	local at = lazyScript.nativeTargetRangeAt
-	local rangeSquared = lazyScript.nativeTargetRangeSquared
-	if not at or rangeSquared == nil then return false end
-	local age = GetTime() - at
-	if age < 0 or age > 0.30 then return false end
-	return rangeSquared <= yards * yards
-end
 
 local function updatePostKillWolfState(now)
 	local hp = UnitHealth("player")
@@ -121,20 +87,7 @@ local function ensureGhostWolfFrame()
 		ghostWolfPollElapsed = ghostWolfPollElapsed + (arg1 or 0)
 		if ghostWolfPollElapsed < 0.03 then return end
 		ghostWolfPollElapsed = 0
-
-		local now = GetTime()
-		updatePostKillWolfState(now)
-
-		local buffIndex = findGhostWolfBuffIndex()
-		if not buffIndex then return end
-
-		local shouldCancel = freshNativeTargetMelee()
-		if not shouldCancel and lazyScript.isInCombat then
-			shouldCancel = freshNativeTargetWithin(20)
-		end
-		if shouldCancel then
-			CancelPlayerBuff(buffIndex)
-		end
+		updatePostKillWolfState(GetTime())
 	end)
 end
 
