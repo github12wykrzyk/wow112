@@ -3,7 +3,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "2-relation-matrix-reinvite8"
+local VERSION = "3-wtb-location-invite-reinvite8"
 local S = H.GetState("worldbuyerrelation")
 local REINVITE_SECONDS = 8
 local REINVITE_DEBUG_TAG = "reinvite-dedupe-reset"
@@ -122,6 +122,10 @@ local function brBuyerLead(s)
         or brTokenStarts(s, "look")
 end
 
+local function brWtbLead(s)
+    return brPhrase(s, "wtb") or brTokenStarts(s, "wtb")
+end
+
 local function brHasTravel(s)
     if brPhrase(s, "summon") or brPhrase(s, "summons")
         or brPhrase(s, "summoning") or brPhrase(s, "summ")
@@ -221,6 +225,14 @@ local function brRelation(api, message)
     if brAny(normalized, HARD_SELLER_CUES) then return false, locations, "seller" end
     if brAny(normalized, CONTACT_CUES) and not buyer then return false, locations, "seller-contact" end
     if brRecruitment(normalized) then return false, locations, "recruitment" end
+
+    -- Operator rule: any World line with WTB + one recognized destination is
+    -- a buyer summon signal. We canonicalize it into the normal core request
+    -- path; the core still owns service matching, blacklist, dedupe and invite
+    -- cooldown, so another-location WTB cannot invite the wrong summoner.
+    if brWtbLead(normalized) then
+        return true, locations, "wtb+destination"
+    end
 
     local travel = brHasTravel(normalized)
     local short = brTokenCount(normalized) <= 4
