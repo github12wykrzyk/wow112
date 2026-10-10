@@ -63,19 +63,6 @@ local function updatePostKillWolfState(now)
 		return
 	end
 
-	if UnitCanAttack("player", "target") and not UnitIsDead("target") and not UnitIsPlayer("target") then
-		postKillTargetDeadAt = nil
-		postKillTargetName = nil
-		postKillTargetWasAlive = false
-		return
-	end
-
-	if not UnitIsPlayer("target") then
-		postKillTargetName = nil
-		postKillTargetWasAlive = false
-		return
-	end
-
 	local name = UnitName("target")
 	if name ~= postKillTargetName then
 		postKillTargetName = name
