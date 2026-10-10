@@ -1,11 +1,11 @@
 -- SummonScout customer-facing message policy for WoW 1.12.1 / Lua 5.0.
--- Keeps fleet control traffic immediate, suppresses human-readable SSI chatter
+-- Keeps fleet control traffic immediate, suppresses human-readable automation
 -- between fixed summoners, and serializes short lower-case customer messages.
 
 local H=W112_SUMMONSCOUT_HOT
 if not H or type(H.Register)~="function" or type(H.GetState)~="function" then return end
 
-local VERSION="1-human-customer-comms"
+local VERSION="2-silent-summoner-human-comms"
 local Q=H.GetState("customermessagepolicy")
 Q.pending=type(Q.pending)=="table" and Q.pending or {}
 Q.recent=type(Q.recent)=="table" and Q.recent or {}
@@ -137,10 +137,16 @@ local function install()
   if tostring(chatType or "")~="WHISPER" then return BASE(message,chatType,language,target) end
   local raw=tostring(message or "")
   if starts(raw,"[SSFR1]") then return BASE(message,chatType,language,target) end
-  if starts(raw,"[SSI ") and fixedSummoner(target) then return nil end
+
+  local isSummoner=fixedSummoner(target)
+  if starts(raw,"[SSI ") and isSummoner then return nil end
 
   local compact,category=compactCustomerMessage(raw)
-  if compact and validName(target) and not fixedSummoner(target) then
+  if compact and validName(target) then
+   -- Human-readable automation must never bounce around the fleet. Fixed
+   -- summoners exchange only SSFR1 control traffic; unknown/manual whispers
+   -- are left untouched so operators can still talk to each other manually.
+   if isSummoner then return nil end
    queueCustomer(target,compact,category)
    return nil
   end
