@@ -91,8 +91,11 @@ local function callerIsSummonScout()
         return false
     end
 
+    -- Frames 1-2 are this classifier + our SendChatMessage wrapper. Start at
+    -- the real caller so the wrapper itself cannot make every whisper appear
+    -- automatic. pcall adds a C frame, hence the wider scan window.
     local i
-    for i = 2, 9 do
+    for i = 3, 10 do
         local ok, info
         if pcall then
             ok, info = pcall(debug.getinfo, i, "S")
