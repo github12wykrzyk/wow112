@@ -9,7 +9,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "2-core-error-guard-trace1"
+local VERSION = "3-core-error-guard-chat-throttle-filter"
 local G = H.GetState("coreerrorguard")
 G.lastError = G.lastError or ""
 G.lastErrorAt = tonumber(G.lastErrorAt) or 0
@@ -37,6 +37,16 @@ local function cgChat(text)
     if DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage("|cffff6666SummonScout core error suppressed:|r " .. tostring(text or ""))
     end
+end
+
+local function cgIsChatThrottle(ev, message)
+    if ev ~= "UI_ERROR_MESSAGE" and ev ~= "CHAT_MSG_SPELL_FAILED_LOCALPLAYER" then
+        return false
+    end
+    local s = string.lower(tostring(message or ""))
+    if s == "" then return false end
+    return string.find(s, "must wait", 1, true) ~= nil
+        or string.find(s, "before speaking again", 1, true) ~= nil
 end
 
 local function cgCaptureTrace(err)
@@ -92,6 +102,8 @@ local function cgInstall()
 
     OWN_BASE = current
     OWN_WRAPPER = function()
+        if cgIsChatThrottle(event, arg1) then return end
+
         if not pcall then
             OWN_BASE()
             return
