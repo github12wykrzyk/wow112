@@ -12,16 +12,20 @@ class FleetAdvertTests(unittest.TestCase):
         cls.coord=(ADDON/"SummonScout_FleetAdvertCoordinator.lua").read_text(encoding="utf-8")
         cls.canon=(ADDON/"SummonScout_FleetAdvertCanonicalDiscoveryHot.lua").read_text(encoding="utf-8")
         cls.router=(ADDON/"SummonScout_FallbackRouterHot.lua").read_text(encoding="utf-8")
+        cls.huback=(ADDON/"SummonScout_FallbackRouterHubAckHot.lua").read_text(encoding="utf-8")
+        cls.tanaris=(ADDON/"SummonScout_TanarisFullService.lua").read_text(encoding="utf-8")
         cls.nowgui=(ADDON/"SummonScout_FleetAdvertNowGuiHot.lua").read_text(encoding="utf-8")
         cls.toc=(ADDON/"SummonScout.toc").read_text(encoding="utf-8").splitlines()
 
     def test_cold_load_order(self):
         router=self.toc.index("SummonScout_FallbackRouterHot.lua")
+        huback=self.toc.index("SummonScout_FallbackRouterHubAckHot.lua")
         counter=self.toc.index("SummonScout_FleetCounterCoordinator.lua")
         coord=self.toc.index("SummonScout_FleetAdvertCoordinator.lua")
         canon=self.toc.index("SummonScout_FleetAdvertCanonicalDiscoveryHot.lua")
         nowgui=self.toc.index("SummonScout_FleetAdvertNowGuiHot.lua")
-        self.assertLess(router,counter)
+        self.assertLess(router,huback)
+        self.assertLess(huback,counter)
         self.assertLess(counter,coord)
         self.assertLess(coord,canon)
         self.assertLess(canon,nowgui)
@@ -54,6 +58,17 @@ class FleetAdvertTests(unittest.TestCase):
         self.assertIn("DIRECTORY_TTL = 55",self.canon)
         self.assertIn('string.sub(raw, 1, 9) == "[SSFR1] D"',self.canon)
 
+    def test_fixed_pool_resurrection_is_removed(self):
+        self.assertNotIn("F.directory[id]=true",self.huback)
+        self.assertNotIn("F.directory[id] = true",self.huback)
+        self.assertNotIn("totalPoolSticky=true",self.huback)
+        self.assertNotIn("totalPoolSticky = true",self.huback)
+        self.assertNotIn("F.directory[TANARIS]",self.tanaris)
+        self.assertNotIn("totalPoolSticky",self.tanaris)
+        self.assertNotIn("C.rollout=function",self.tanaris)
+        self.assertNotIn("C.rollout = function",self.tanaris)
+        self.assertIn("freshProvider",self.huback)
+
     def test_destination_labels_are_canonical_and_title_cased(self):
         for expected in ('tanaris = "Tanaris"','hyjal = "Hyjal"','silithus = "Silithus"',
                          'winterspring = "Winterspring"','hydraxian = "Hydraxis"'):
@@ -85,7 +100,7 @@ class FleetAdvertTests(unittest.TestCase):
         self.assertIn("nextProbe",self.nowgui)
 
     def test_control_packet_and_lua50_safety(self):
-        for text in (self.coord,self.canon,self.nowgui):
+        for text in (self.coord,self.canon,self.huback,self.tanaris,self.nowgui):
             self.assertNotIn("table.unpack",text)
             self.assertNotIn("goto ",text)
             self.assertNotIn("continue",text)
