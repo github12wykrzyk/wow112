@@ -1,14 +1,11 @@
 -- Hard local-destination + slave-readiness invite guard for SummonScout / WoW 1.12.1 / Lua 5.0.
 -- Cold-load module by design: it is kept out of the 256 KiB WhisperConfirm HOT fanout carrier.
---
--- Core routing already rejects explicit requests for another destination, but
--- hot modules can bypass it by calling InviteByName() directly. This guard
--- protects the canonical API and those legacy direct-whisper modules.
+-- v3 also preserves the exact rejection reason for routed-invite diagnosis without weakening safety.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
 
-local VERSION = "2-destination-plus-slave-safety"
+local VERSION = "3-destination-slave-safety-route-reason"
 local G = H.GetState("localdestinationinviteguard")
 local TOKEN = {}
 local ENSURE_INTERVAL = 0.50
@@ -27,6 +24,24 @@ end
 
 local function gdLower(s)
     return string.lower(gdTrim(s or ""))
+end
+
+local function gdSame(a,b)
+    a=gdLower(a); b=gdLower(b); return a~="" and a==b
+end
+
+local function gdValidName(name)
+    name=gdTrim(name)
+    return name~="" and string.len(name)<=32 and not string.find(name,"[%c%s:;,=|]")
+end
+
+local function gdSafeReason(reason)
+    local s=gdLower(reason or "rejected")
+    s=string.gsub(s,"[^%w%-%_]","-")
+    s=string.gsub(s,"%-+","-")
+    if string.len(s)>32 then s=string.sub(s,1,32) end
+    if s=="" then s="rejected" end
+    return s
 end
 
 local function gdReserved(raw)
@@ -82,6 +97,24 @@ local function gdDebug(text)
     end
 end
 
+local function gdReportRouteFailure(name,loc,reason)
+    local me=gdTrim(UnitName and UnitName("player") or "")
+    local master=gdTrim(SummonScoutDB and SummonScoutDB.masterName or "")
+    local dest=type(loc)=="table" and gdLower(loc.id or "") or "unknown"
+    local safe=gdSafeReason(reason)
+    local ready=W112_SUMMONSCOUT_SLAVE_SAFETY_READY==false and "0" or "1"
+    local enabled=SummonScoutDB and SummonScoutDB.enabled==true and "1" or "0"
+    local service=gdLower(SummonScoutDB and SummonScoutDB.service or "")
+    local record={ts=gdNow(),provider=me,customer=gdTrim(name),destination=dest,reason=safe,ready=ready,enabled=enabled,service=service}
+    G.lastRouteFailure=record
+    W112_SUMMONSCOUT_ROUTE_LAST_FAILURE=record
+    gdDebug("ROUTEFAIL customer="..tostring(record.customer).." dest="..dest.." reason="..safe.." ready="..ready.." enabled="..enabled.." service="..service)
+    if not SendChatMessage or not gdValidName(master) or gdSame(master,me) then return end
+    local payload="[SSI ROUTEFAIL] "..me.." -> "..gdTrim(name).." / "..dest.." / "..safe.." / ready="..ready.." enabled="..enabled.." service="..service
+    if string.len(payload)>235 then payload=string.sub(payload,1,235) end
+    if pcall then pcall(SendChatMessage,payload,"WHISPER",nil,master) else SendChatMessage(payload,"WHISPER",nil,master) end
+end
+
 local function gdDetach()
     if type(G.apiOwner) == "table" and type(G.apiWrapper) == "function"
         and G.apiOwner.tryWhisperInvite == G.apiWrapper then
@@ -114,15 +147,19 @@ local function gdInstallApi()
     local wrapper = function(name, loc)
         if gdSafetyBlocked() then
             gdDebug("core invite blocked -> " .. tostring(name or "?") .. " [slave-safety/disabled]")
+            gdReportRouteFailure(name,loc,"slave-safety-blocked")
             return false, "slave-safety-blocked"
         end
         if type(loc) == "table" and loc.id and not gdServiceContains(loc.id) then
             gdDebug("core invite blocked -> " .. tostring(name or "?") .. " ["
                 .. tostring(loc.label or loc.id) .. "] serving="
                 .. tostring(SummonScoutDB and SummonScoutDB.service or "all"))
+            gdReportRouteFailure(name,loc,"wrong-service-hard-guard")
             return false, "wrong-service-hard-guard"
         end
-        return base(name, loc)
+        local ok,reason=base(name, loc)
+        if not ok and reason~="duplicate-event" then gdReportRouteFailure(name,loc,reason or "rejected") end
+        return ok,reason
     end
 
     api.tryWhisperInvite = wrapper
