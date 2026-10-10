@@ -9,7 +9,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "p0.3c-location-compat"
+local VERSION = "p0.3d-direct-location"
 local S = H.GetState("enginev2foundation")
 S.lastFailure = S.lastFailure or ""
 S.api = nil
@@ -108,9 +108,6 @@ local function fResolveCompat(api)
 
     C = {}
     C.api = api
-    -- After the EventAPI/upvalue-limit refactor handleChannelMessage no longer
-    -- captures findLocation directly. whisperInviteDecision still does, so use
-    -- it as the canonical compat anchor and keep the old path only as fallback.
     C.findLocation = fNamedFunction(api.whisperInviteDecision, "findLocation")
         or fNamedFunction(api.handleChannelMessage, "findLocation")
     if type(C.findLocation) == "function" then
@@ -189,10 +186,6 @@ local function fInstall()
         return false
     end
 
-    -- Preserve the real legacy queue privately. On same-generation re-init the
-    -- table already exposes our public wrapper; never accidentally wrap a
-    -- wrapper and create recursion. On a new core generation capture its fresh
-    -- raw queue before publishing the P0 API again.
     local rawQueue = nil
     if S.api == api and type(S.publicQueuePartySummon) == "function"
         and api.queuePartySummon == S.publicQueuePartySummon then
@@ -211,12 +204,12 @@ local function fInstall()
     W112_SUMMONSCOUT_API_V1 = api
     W112_SUMMONSCOUT_STATE = state
     W112_SUMMONSCOUT_API_VERSION = 1
-    W112_SUMMONSCOUT_COMPAT_VERSION = 4
+    W112_SUMMONSCOUT_COMPAT_VERSION = 5
     W112_SUMMON_ENGINE_V2_FOUNDATION = VERSION
 
     api.state = state
     api.apiVersion = 1
-    api.compatVersion = 4
+    api.compatVersion = 5
     api.GetState = function()
         return state
     end
@@ -256,10 +249,21 @@ local function fInstall()
     api.queuePartySummon = publicQueue
     api.QueuePartySummonExplicit = explicitQueue
 
+    -- Do not depend on Lua upvalue layout for destination lookup. The canonical
+    -- whisper classifier already resolves destinations before evaluating intent,
+    -- so reuse its returned location as the stable runtime surface. Exact
+    -- destination strings such as "hyjal" yield loc even when intent is weak.
     api.FindLocation = function(message)
+        if type(api.whisperInviteDecision) == "function" then
+            local _accept, loc, reason = api.whisperInviteDecision(message or "")
+            if type(loc) == "table" then return loc, nil end
+            if reason == "ambiguous-location" then return nil, true end
+        end
         local C = fResolveCompat(api)
-        if not C or type(C.findLocation) ~= "function" then return nil, true end
-        return C.findLocation(message or "")
+        if C and type(C.findLocation) == "function" then
+            return C.findLocation(message or "")
+        end
+        return nil, nil
     end
     api.GetLocationCatalog = function()
         local C = fResolveCompat(api)
@@ -291,7 +295,6 @@ local function fInstall()
         return ok, reason
     end
 
-    -- Resolve once here so all hot modules share the same legacy-core map.
     fResolveCompat(api)
 
     local current = frame:GetScript("OnEvent")
@@ -305,9 +308,6 @@ local function fInstall()
         frame:SetScript("OnEvent", current)
     end
 
-    -- Keep the P0.1 event-level ownership guard as defense in depth while the
-    -- canonical core still contains the legacy system-join queue call. P0.3a's
-    -- public queue guard independently fails closed if another caller reaches it.
     local wrapper = function()
         local restoreAutoSummon = nil
         local joined = nil
