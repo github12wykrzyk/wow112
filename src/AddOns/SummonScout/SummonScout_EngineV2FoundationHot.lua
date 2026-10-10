@@ -9,7 +9,7 @@ if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" the
     return
 end
 
-local VERSION = "p0.3b-core-api-state"
+local VERSION = "p0.3c-location-compat"
 local S = H.GetState("enginev2foundation")
 S.lastFailure = S.lastFailure or ""
 S.api = nil
@@ -108,7 +108,11 @@ local function fResolveCompat(api)
 
     C = {}
     C.api = api
-    C.findLocation = fNamedFunction(api.handleChannelMessage, "findLocation")
+    -- After the EventAPI/upvalue-limit refactor handleChannelMessage no longer
+    -- captures findLocation directly. whisperInviteDecision still does, so use
+    -- it as the canonical compat anchor and keep the old path only as fallback.
+    C.findLocation = fNamedFunction(api.whisperInviteDecision, "findLocation")
+        or fNamedFunction(api.handleChannelMessage, "findLocation")
     if type(C.findLocation) == "function" then
         C.findLocations = fNamedFunction(C.findLocation, "findLocationsInMessage")
     end
