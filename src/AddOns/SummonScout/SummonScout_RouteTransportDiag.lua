@@ -8,7 +8,7 @@
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.GetState) ~= "function" then return end
 
-local VERSION = "1"
+local VERSION = "2"
 local PROTO = "[SSFR1]"
 local MAX_EVENTS = 50
 local F = H.GetState("fallbackrouter")
@@ -209,7 +209,18 @@ local function observeInform(raw, target)
             local key = routeKey(fields)
             push("INFORM_" .. code, "to=" .. trim(target) .. " key=" .. key)
             if code == "X" and R.hub and R.hub.key == key then R.hub.xInform = true; R.hub.xInformAt = now() end
-            if code == "A" and R.provider and R.provider.key == key then R.provider.aInform = true; R.provider.aInformAt = now() end
+            if code == "A" and R.provider and R.provider.key == key then
+                R.provider.aInform = true
+                R.provider.aInformAt = now()
+                -- CHAT_MSG_WHISPER_INFORM proves that the A packet was submitted even
+                -- when another SendChatMessage wrapper was installed above this observer.
+                if not R.provider.aSubmit then
+                    R.provider.aSubmit = true
+                    R.provider.aSubmitAt = now()
+                    R.provider.aSubmitInferred = true
+                    push("TX_A_SUBMIT_INFERRED", "to=" .. trim(target) .. " key=" .. key)
+                end
+            end
         end
         return
     end
