@@ -1,6 +1,7 @@
 -- One-time fleet profile bootstrap for SummonScout / WoW 1.12.1 / Lua 5.0.
 -- Applies the canonical five-summoner topology once per character, then leaves
--- later manual user edits alone.
+-- later manual user edits alone, except for fail-safe repair of empty/all service
+-- on fixed fleet providers so routing/presence cannot disagree about ownership.
 
 local H = W112_SUMMONSCOUT_HOT
 if not H or type(H.Register) ~= "function" or type(H.GetState) ~= "function" then return end
@@ -49,6 +50,27 @@ local function announce(name, p)
             .. tostring(name) .. " | service " .. tostring(p.service)
             .. " | master " .. MASTER)
     end
+end
+
+local function repairFixedProviderService()
+    SummonScoutDB = SummonScoutDB or {}
+    local name = player()
+    local k = key(name)
+    local p = PROFILES[k]
+    if not p then return false end
+
+    local service = key(SummonScoutDB.service or "")
+    if service ~= "" and service ~= "all" then return false end
+
+    SummonScoutDB.service = p.service
+    S.lastServiceRepair = name
+    S.lastServiceRepairAt = now()
+    refreshGui()
+    if SummonScoutDB.debug and DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffSummonScout:|r fixed provider service repaired -> "
+            .. tostring(name) .. " = " .. tostring(p.service))
+    end
+    return true
 end
 
 local function applyOnce()
@@ -106,6 +128,7 @@ local M = {}
 
 function M.Init()
     S.nextAt = 0
+    repairFixedProviderService()
     applyOnce()
     W112_SUMMONSCOUT_FLEET_PROFILE_BOOTSTRAP_VERSION = tostring(VERSION)
 end
@@ -114,6 +137,7 @@ function M.OnUpdate()
     local t = now()
     if t < (S.nextAt or 0) then return end
     S.nextAt = t + 2
+    repairFixedProviderService()
     applyOnce()
 end
 
