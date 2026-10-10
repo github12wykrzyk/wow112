@@ -45,6 +45,7 @@ function A.providers()
   for destination,providers in pairs(f.providers) do if type(providers)=="table" then for key,item in pairs(providers) do
    if fresh(item) and A.validName(item.name) then local k=A.lower(item.name); if not seen[k] then seen[k]=true; out[table.getn(out)+1]=item.name end end
   end end
+  end
  end
  addLocalProvider(out,seen); table.sort(out); return out
 end
