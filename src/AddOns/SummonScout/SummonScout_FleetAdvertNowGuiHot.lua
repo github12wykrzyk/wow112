@@ -1,6 +1,5 @@
--- Fleet Advert NOW GUI hotfix for SummonScout / WoW 1.12.1 Lua 5.0.
--- Adds one manual test control to the existing Control Center without touching
--- the legacy Periodic World advert scheduler.
+-- Fleet Advert NOW GUI hotfix v2 for SummonScout / WoW 1.12.1 Lua 5.0.
+-- Persistent cold-load/reload-safe attach to the canonical Control Center.
 
 local A = W112_SUMMONSCOUT_FLEET_ADVERT
 if type(A) ~= "table" then return end
@@ -22,12 +21,8 @@ function A.forceNow()
     if type(A.enabled) ~= "function" or not A.enabled() then
         return false, "fleet advert disabled or master is not configured"
     end
-    if type(A.master) ~= "function" or type(A.validName) ~= "function" then
-        return false, "coordinator API unavailable"
-    end
-
-    local master = faTrim(A.master())
-    if not A.validName(master) then
+    local master = faTrim(type(A.master) == "function" and A.master() or "")
+    if type(A.validName) ~= "function" or not A.validName(master) then
         return false, "set a valid Master first"
     end
     if type(A.isMaster) ~= "function" or not A.isMaster() then
@@ -36,57 +31,58 @@ function A.forceNow()
     if A.pendingGrant then
         return false, "previous fleet advert grant is still pending"
     end
-    if type(A.destinationCsv) ~= "function" or A.destinationCsv() == "" then
-        return false, "no live summon destinations yet; wait for heartbeats"
+    local csv = type(A.destinationCsv) == "function" and A.destinationCsv() or ""
+    if csv == "" then
+        return false, "no live summon destinations yet; wait for canonical router discovery"
     end
-    if type(A.providers) ~= "function" or table.getn(A.providers()) == 0 then
+    local providers = type(A.providers) == "function" and A.providers() or {}
+    if table.getn(providers) == 0 then
         return false, "no live fleet speakers yet"
     end
     if type(A.grant) ~= "function" then
         return false, "coordinator grant API unavailable"
     end
-
-    -- One explicit manual trigger. A.grant() keeps the existing speaker rotation,
-    -- live-destination union and no-auto-retry semantics.
     A.grant()
-    return true, "triggered one fleet advert cycle"
+    return true, "triggered one fleet advert cycle | " .. csv
 end
 
-local created = false
 local nextProbe = 0
 
-local function createButton()
-    if created then return true end
-    local host = getglobal and getglobal("SummonScoutOptionsFrame") or SummonScoutOptionsFrame
+local function attachButton()
+    local host = getglobal and getglobal("SummonScoutOptionsFrame") or nil
     if not host then return false end
 
-    local b = CreateFrame("Button", "SummonScoutFleetAdvertNowButton", host, "UIPanelButtonTemplate")
-    b:SetWidth(150)
-    b:SetHeight(24)
+    local b = getglobal and getglobal("SummonScoutFleetAdvertNowButton") or nil
+    if not b then
+        b = CreateFrame("Button", "SummonScoutFleetAdvertNowButton", host, "UIPanelButtonTemplate")
+        b:SetWidth(150)
+        b:SetHeight(24)
+        b:SetText("Fleet Advert NOW")
+        b:SetScript("OnClick", function()
+            local ok, detail = A.forceNow()
+            if ok then faChat("NOW -> " .. tostring(detail or "triggered"))
+            else faChat("NOW blocked -> " .. tostring(detail or "unknown reason")) end
+        end)
+    else
+        if b.SetParent then b:SetParent(host) end
+    end
+
+    b:ClearAllPoints()
     b:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -18, 18)
-    b:SetText("Fleet Advert NOW")
-    b:SetScript("OnClick", function()
-        local ok, detail = A.forceNow()
-        if ok then
-            faChat("NOW -> " .. tostring(detail or "triggered"))
-        else
-            faChat("NOW blocked -> " .. tostring(detail or "unknown reason"))
-        end
-    end)
     b:Show()
-    created = true
     return true
 end
 
-local frame = CreateFrame and CreateFrame("Frame") or nil
+local frame = CreateFrame and CreateFrame("Frame", "SummonScoutFleetAdvertNowAttachFrame") or nil
 if frame then
+    frame:RegisterEvent("PLAYER_LOGIN")
+    frame:SetScript("OnEvent", function() nextProbe = 0; attachButton() end)
     frame:SetScript("OnUpdate", function()
-        if created then return end
         local t = GetTime and GetTime() or 0
         if t < nextProbe then return end
-        nextProbe = t + 0.5
-        createButton()
+        nextProbe = t + 0.50
+        attachButton()
     end)
 end
 
-W112_SUMMONSCOUT_FLEET_ADVERT_NOW_GUI_VERSION = "1"
+W112_SUMMONSCOUT_FLEET_ADVERT_NOW_GUI_VERSION = "2"
