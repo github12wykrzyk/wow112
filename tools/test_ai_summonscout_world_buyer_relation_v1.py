@@ -38,6 +38,14 @@ class WorldBuyerRelationHotfixTests(unittest.TestCase):
         self.assertIn("brTokenStarts", self.hot)
         self.assertIn('.. " lf summon"', self.hot)
 
+    def test_wtb_plus_one_recognized_destination_is_always_buyer_signal(self):
+        self.assertIn("local function brWtbLead(s)", self.hot)
+        self.assertIn('brPhrase(s, "wtb") or brTokenStarts(s, "wtb")', self.hot)
+        self.assertIn("if brWtbLead(normalized) then", self.hot)
+        self.assertIn('return true, locations, "wtb+destination"', self.hot)
+        self.assertIn("table.getn(locations) ~= 1", self.hot)
+        self.assertIn("core still owns service matching, blacklist, dedupe and invite", self.hot)
+
     def test_short_natural_shorthand_and_typo_roots_are_supported(self):
         self.assertIn('brTokenStarts(s, "summ")', self.hot)
         self.assertIn('brTokenStarts(s, "sumon")', self.hot)
@@ -80,8 +88,8 @@ class WorldBuyerRelationHotfixTests(unittest.TestCase):
         ):
             self.assertIn(field, self.hot)
 
-    def test_v2_contract_version(self):
-        self.assertIn('local VERSION = "2-relation-matrix-reinvite8"', self.hot)
+    def test_v3_contract_version(self):
+        self.assertIn('local VERSION = "3-wtb-location-invite-reinvite8"', self.hot)
         self.assertIn("W112_SUMMONSCOUT_WORLD_BUYER_RELATION_VERSION", self.hot)
 
 
