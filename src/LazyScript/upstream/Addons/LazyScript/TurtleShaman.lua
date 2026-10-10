@@ -3,6 +3,15 @@ local baseLoadAddOnByClass = lazyScript.LoadAddOnByClass
 local GHOST_WOLF_TEXTURE_TOKEN = "spell_nature_spiritwolf"
 local ghostWolfFrame = nil
 local ghostWolfPollElapsed = 0
+local postKillTargetName = nil
+local postKillTargetWasAlive = false
+local postKillTargetDeadAt = nil
+local lastPlayerHealth = nil
+local lastPlayerDamageAt = nil
+
+local POST_KILL_MIN_DELAY = 0.15
+local POST_KILL_MAX_WINDOW = 5.00
+local POST_KILL_NEW_DAMAGE_QUIET = 0.60
 
 local function findGhostWolfBuffIndex()
 	for slot = 0, 15 do
@@ -37,6 +46,87 @@ local function freshNativeTargetWithin(yards)
 	return rangeSquared <= yards * yards
 end
 
+local function updatePostKillWolfState(now)
+	local hp = UnitHealth("player")
+	if lastPlayerHealth and hp < lastPlayerHealth then
+		lastPlayerDamageAt = now
+	end
+	lastPlayerHealth = hp
+
+	if postKillTargetDeadAt and now - postKillTargetDeadAt > POST_KILL_MAX_WINDOW then
+		postKillTargetDeadAt = nil
+	end
+
+	if not UnitExists("target") then
+		postKillTargetName = nil
+		postKillTargetWasAlive = false
+		return
+	end
+
+	if UnitCanAttack("player", "target") and not UnitIsDead("target") and not UnitIsPlayer("target") then
+		postKillTargetDeadAt = nil
+		postKillTargetName = nil
+		postKillTargetWasAlive = false
+		return
+	end
+
+	if not UnitIsPlayer("target") then
+		postKillTargetName = nil
+		postKillTargetWasAlive = false
+		return
+	end
+
+	local name = UnitName("target")
+	if name ~= postKillTargetName then
+		postKillTargetName = name
+		postKillTargetWasAlive = UnitCanAttack("player", "target") and not UnitIsDead("target")
+		if postKillTargetWasAlive then
+			postKillTargetDeadAt = nil
+		end
+		return
+	end
+
+	if UnitCanAttack("player", "target") and not UnitIsDead("target") then
+		postKillTargetWasAlive = true
+		postKillTargetDeadAt = nil
+		return
+	end
+
+	if UnitIsDead("target") and postKillTargetWasAlive then
+		postKillTargetDeadAt = now
+		postKillTargetWasAlive = false
+	end
+end
+
+local function postKillWolfSafe()
+	local now = GetTime()
+	if not lazyScript.isInCombat then return false end
+	if not postKillTargetDeadAt then return false end
+	local age = now - postKillTargetDeadAt
+	if age < POST_KILL_MIN_DELAY or age > POST_KILL_MAX_WINDOW then return false end
+	if lastPlayerDamageAt and lastPlayerDamageAt > postKillTargetDeadAt and now - lastPlayerDamageAt < POST_KILL_NEW_DAMAGE_QUIET then
+		return false
+	end
+	if UnitExists("target") and UnitCanAttack("player", "target") and not UnitIsDead("target") then
+		return false
+	end
+	return true
+end
+
+function lazyScript.masks.PostKillWolfSafe()
+	return function(sayNothing)
+		return postKillWolfSafe()
+	end
+end
+
+function lazyScript.bitParsers.ifPostKillWolfSafe(bit, actions, masks)
+	if not lazyScript.rebit(bit, "^ifPostKillWolfSafe$") then
+		return false
+	end
+	table.insert(masks, lazyScript.masks.PostKillWolfSafe())
+	return true
+end
+
 local function ensureGhostWolfFrame()
 	if ghostWolfFrame then return end
 	ghostWolfFrame = CreateFrame("Frame")
@@ -44,6 +134,9 @@ local function ensureGhostWolfFrame()
 		ghostWolfPollElapsed = ghostWolfPollElapsed + (arg1 or 0)
 		if ghostWolfPollElapsed < 0.03 then return end
 		ghostWolfPollElapsed = 0
+
+		local now = GetTime()
+		updatePostKillWolfState(now)
 
 		local buffIndex = findGhostWolfBuffIndex()
 		if not buffIndex then return end
