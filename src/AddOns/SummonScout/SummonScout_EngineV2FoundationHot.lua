@@ -249,6 +249,10 @@ local function fInstall()
     api.queuePartySummon = publicQueue
     api.QueuePartySummonExplicit = explicitQueue
 
+    -- Do not depend on Lua upvalue layout for destination lookup. The canonical
+    -- whisper classifier already resolves destinations before evaluating intent,
+    -- so reuse its returned location as the stable runtime surface. Exact
+    -- destination strings such as "hyjal" yield loc even when intent is weak.
     api.FindLocation = function(message)
         if type(api.whisperInviteDecision) == "function" then
             local _accept, loc, reason = api.whisperInviteDecision(message or "")
@@ -266,6 +270,12 @@ local function fInstall()
         if C and type(C.locationCatalog) == "table" then
             return C.locationCatalog
         end
+
+        -- Route-critical fallback must not depend on debug upvalue layout. The
+        -- five fixed summon services are canonical and can be reconstructed via
+        -- the stable FindLocation surface. This is enough for provider presence,
+        -- local-service checks and cross-route assignment even when the private
+        -- full catalog is unavailable.
         local ids = { "hyjal", "hydraxian", "winterspring", "silithus", "tanaris" }
         local list = {}
         local i
