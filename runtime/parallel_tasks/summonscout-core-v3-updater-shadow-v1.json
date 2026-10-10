@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "summonscout-core-v3-updater-shadow-v1",
+  "goal": "Deliver the canonical 112summon Core V3 shadow Stage 2-6 modules through the existing wow112 addon updater path for live in-game shadow validation without changing legacy 1.84 behavior authority.",
+  "branch": "feature/summonscout-updater-external-source",
+  "base_parallel_sha": "9e5838765f74dc0b858418bd565c3128d8463a67",
+  "modules": [
+    "SummonScout"
+  ],
+  "dependencies": [],
+  "shared_resources": [
+    "summonscout-addon-package"
+  ],
+  "status": "ready_for_integration",
+  "auto_integrate": false,
+  "delivery_profiles": [],
+  "notes": "Bridge-only delivery task. Canonical source remains github12wykrzyk/112summon main at ec05a6f498948250dc3ac31f33125bc6dccf4e3a. Core V3 remains shadow-only; Stage 7 cutover is out of scope.",
+  "integrated_feature_sha": null
+}
