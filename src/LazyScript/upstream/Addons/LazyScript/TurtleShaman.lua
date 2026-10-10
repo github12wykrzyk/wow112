@@ -1,16 +1,8 @@
 local baseLoadAddOnByClass = lazyScript.LoadAddOnByClass
 
 local GHOST_WOLF_TEXTURE_TOKEN = "spell_nature_spiritwolf"
-local ghostWolfHoldUntil = nil
 local ghostWolfFrame = nil
 local ghostWolfPollElapsed = 0
-
-local function stopGhostWolfMovement()
-	if MoveForwardStop then MoveForwardStop() end
-	if MoveBackwardStop then MoveBackwardStop() end
-	if StrafeLeftStop then StrafeLeftStop() end
-	if StrafeRightStop then StrafeRightStop() end
-end
 
 local function findGhostWolfBuffIndex()
 	for slot = 0, 15 do
@@ -49,17 +41,6 @@ local function ensureGhostWolfFrame()
 	if ghostWolfFrame then return end
 	ghostWolfFrame = CreateFrame("Frame")
 	ghostWolfFrame:SetScript("OnUpdate", function()
-		local now = GetTime()
-		if ghostWolfHoldUntil then
-			if findGhostWolfBuffIndex() then
-				ghostWolfHoldUntil = nil
-			elseif now <= ghostWolfHoldUntil then
-				stopGhostWolfMovement()
-			else
-				ghostWolfHoldUntil = nil
-			end
-		end
-
 		ghostWolfPollElapsed = ghostWolfPollElapsed + (arg1 or 0)
 		if ghostWolfPollElapsed < 0.03 then return end
 		ghostWolfPollElapsed = 0
@@ -77,26 +58,13 @@ local function ensureGhostWolfFrame()
 	end)
 end
 
-local function installGhostWolfSmartAction()
-	local action = lazyScript.actions and lazyScript.actions.ghostWolf
-	if not action or action.w112GhostWolfSmartInstalled then return end
-	local baseUse = action.Use
-	function action:Use()
-		stopGhostWolfMovement()
-		ghostWolfHoldUntil = GetTime() + 1.35
-		baseUse(self)
-	end
-	action.w112GhostWolfSmartInstalled = true
-	ensureGhostWolfFrame()
-end
-
 function lazyScript.LoadAddOnByClass(class)
 	local result1, result2 = baseLoadAddOnByClass(class)
 	if class == "SHAMAN" and lazyScript.actions then
 		if not lazyScript.actions.lightningStrike then
 			lazyScript.actions.lightningStrike = lazyScript.Action:New("lightningStrike", nil, false, true, false, "Lightning Strike")
 		end
-		installGhostWolfSmartAction()
+		ensureGhostWolfFrame()
 	end
 	return result1, result2
 end
