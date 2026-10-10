@@ -58,4 +58,3 @@ SummonScout_CoreV3ShadowInviteService.lua
 SummonScout_CoreV3ShadowSummonService.lua
 SummonScout_CoreV3ShadowPaymentService.lua
 SummonScout_CoreV3ShadowLifecycleLinker.lua
-SummonScout_CustomerMessagePolicy.lua
