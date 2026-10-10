@@ -17,6 +17,7 @@ local LABELS = {
     azshara = "Azshara"
 }
 
+local originalEnabled = A.enabled
 local lastDirectoryAt = 0
 local nextSweepAt = 0
 
@@ -60,6 +61,14 @@ local function normalizeCatalogLabels()
         return list
     end
     api.__fleetCanonicalLabelsV3 = true
+end
+
+-- Preserve the old fail-closed invariant after removing the obsolete FAH TrustGuard.
+A.enabled = function()
+    if type(A.validName) ~= "function" or type(A.master) ~= "function" then return false end
+    if not A.validName(A.master()) then return false end
+    if type(originalEnabled) ~= "function" then return false end
+    return originalEnabled()
 end
 
 -- Fleet ads use the same canonical labels as the router/UI.
