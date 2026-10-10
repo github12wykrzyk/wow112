@@ -10,9 +10,10 @@ if not H or type(H.GetState)~="function" or type(C)~="table" then return end
 local VERSION="2"
 local SEND_GAP=4.50
 local KEEPALIVE=28.0
+local CAP_DEADLINE=34.0
 local STARTUP_GRACE=3.0
 local SUPPRESS_HELLO_FOR=3600
-local G={pending={},nextSend=0,nextTick=0,lastSent={},lastHash={},globalHash="",startupAt=0}
+local G={pending={},nextSend=0,nextTick=0,lastSent={},lastHash={},globalHash="",startupAt=0,dirty=true}
 
 local function trim(v)
     local s=tostring(v or "")
@@ -28,6 +29,7 @@ local function freshPeer(p)
     return type(p)=="table" and (now()-(tonumber(p.seen) or -100000))<=(tonumber(C.TTL) or 38)
 end
 local function payloadHash()
+    -- C.rosterCsv sorts names; C.freshServices follows fixed EXPECTED order.
     local active=(type(C.active)=="function" and C.active()) and "1" or "0"
     local price=type(C.price)=="function" and tostring(C.price()) or "0"
     local roster=type(C.rosterCsv)=="function" and tostring(C.rosterCsv() or "") or ""
@@ -50,6 +52,7 @@ local function enqueue(target,due,force)
         G.pending[key]={name=target,due=due,force=force and true or false}
     else
         old.name=target
+        -- Coalesce without postponing an already queued peer.
         if due<(old.due or due) then old.due=due end
         if force then old.force=true end
     end
@@ -70,23 +73,23 @@ if type(baseCapability)=="function" and not C.__fleetChatCadenceV2 then
     C.__fleetChatCadenceV2=true
 end
 
--- GUI/state changes are detected by payloadHash and fanned out with pacing.
+-- Broadcast becomes a state-dirty hint only. An unchanged payload never requeues peers.
 if type(C.broadcast)=="function" and not C.__fleetChatCadenceBroadcastV2 then
-    C.broadcast=function()
-        G.globalHash="" -- force state-change detection on next cadence tick
-        return true
-    end
+    C.broadcast=function() G.dirty=true; return true end
     C.__fleetChatCadenceBroadcastV2=true
 end
 
 local function queueStateChange()
     if type(C.isMaster)~="function" or not C.isMaster() then return end
     local hash=payloadHash()
-    if hash==G.globalHash then return end
-    G.globalHash=hash
-    local peers=livePeers(); local i; local base=math.max(now(),G.startupAt)
+    if hash==G.globalHash then G.dirty=false; return end
+    G.globalHash=hash; G.dirty=false
+    local peers=livePeers(); local i,name,key,due,last; local base=math.max(now(),G.startupAt)
     for i=1,table.getn(peers) do
-        enqueue(peers[i],base+(i-1)*SEND_GAP,true)
+        name=peers[i]; key=lower(name); due=base+(i-1)*SEND_GAP; last=tonumber(G.lastSent[key])
+        -- Preserve capability freshness even if a state change happens near TTL.
+        if last and due>(last+CAP_DEADLINE) then due=last+CAP_DEADLINE end
+        enqueue(name,due,true)
     end
 end
 
@@ -146,7 +149,7 @@ if frame then
     frame:RegisterEvent("PLAYER_LOGIN")
     frame:SetScript("OnEvent",function()
         if event=="PLAYER_LOGIN" then
-            G.startupAt=now()+STARTUP_GRACE; G.nextSend=G.startupAt; G.globalHash=""
+            G.startupAt=now()+STARTUP_GRACE; G.nextSend=G.startupAt; G.globalHash=""; G.dirty=true
             suppressLegacyFallbackChatter()
         end
     end)
