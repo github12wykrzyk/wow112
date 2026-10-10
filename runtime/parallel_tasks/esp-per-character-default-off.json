@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "esp-per-character-default-off",
+  "goal": "Make all visual ESP surfaces fail closed to OFF by default and persist ESP visual toggles independently per realm and character without changing non-ESP module persistence.",
+  "branch": "feature/esp-per-character-default-off",
+  "base_parallel_sha": "449b663809e8064a9a93b93d93fb10d1bf74d36b",
+  "status": "preflight",
+  "auto_integrate": false,
+  "modules": [
+    "WoWPlayerESP"
+  ],
+  "dependencies": [],
+  "shared_resources": [],
+  "delivery_profiles": [],
+  "lease": null,
+  "notes": "ESP-only persistence change. Non-ESP GUI/module settings remain in wow112_parallel_gui.ini; visual ESP settings use wow112_esp_characters.ini keyed by realm+character. Unknown/missing/corrupt character profile stays OFF."
+}
