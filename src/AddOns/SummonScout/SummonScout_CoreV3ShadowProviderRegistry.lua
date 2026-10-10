@@ -202,6 +202,8 @@ local function observeHeartbeat(envelope)
     if code == "FCV" then
         if table.getn(fields) < 2 or tostring(fields[1] or "") ~= "1" then return end
         csv = tostring(fields[2] or "")
+        -- Forward-compatible with the V2 heartbeat prototype where readiness
+        -- is carried in field 4 while preserving current 1.84 FCV behavior.
         if table.getn(fields) >= 6 then
             local candidate = string.upper(trim(fields[4] or ""))
             if candidate == "READY" or candidate == "BLOCKED" then readiness = candidate end
@@ -220,11 +222,15 @@ local function observeHeartbeat(envelope)
         if readiness then
             p.readiness = readiness
         elseif code == "FCV" then
+            -- In 1.84 RouteReadinessPresence, a non-empty FCV service set is
+            -- only emitted while the sender is route-ready. This is strong READY evidence.
             p.readiness = "READY"
         else
+            -- Legacy fallback HELLO proves liveness/services but not readiness.
             p.readiness = "UNKNOWN"
         end
     elseif code == "FCV" and p.servicesCsv and p.servicesCsv ~= "" then
+        -- 1.84 RouteReadinessPresence sends an empty service set while blocked.
         p.readiness = "BLOCKED"
         reason = reason ~= "" and reason or "legacy-empty-services"
     else
