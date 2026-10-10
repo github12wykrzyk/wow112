@@ -60,6 +60,10 @@ class FleetAdvertTests(unittest.TestCase):
         self.assertIn("f.peers[key]",self.guard)
         self.assertIn("providers[key]",self.guard)
 
+    def test_fleet_mode_fails_closed_without_master(self):
+        self.assertIn("if not A.validName(A.master()) then return false end",self.guard)
+        self.assertIn("return originalEnabled()",self.guard)
+
     def test_uncertain_or_failed_grant_never_auto_retries(self):
         self.assertIn("No automatic retry after an uncertain/failed send",self.coord)
         self.assertIn('A.schedule("grant-timeout")',self.coord)
