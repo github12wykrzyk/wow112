@@ -67,9 +67,13 @@ end
 
 local function audit(kind, tx, detail)
     local row = {
-        ts = wall(), mono = now(), kind = tostring(kind or "OBS"),
-        txId = tx and tx.id or "", customer = tx and tx.customer or "",
-        destinationId = tx and tx.destinationId or "", detail = tostring(detail or "")
+        ts = wall(),
+        mono = now(),
+        kind = tostring(kind or "OBS"),
+        txId = tx and tx.id or "",
+        customer = tx and tx.customer or "",
+        destinationId = tx and tx.destinationId or "",
+        detail = tostring(detail or "")
     }
     appendBounded(S.audit, row, MAX_AUDIT)
 end
@@ -87,10 +91,17 @@ local function newTransaction(customer, destinationId, source, rawMessage, sourc
     ensureSession()
     S.nextSeq = S.nextSeq + 1
     local tx = {
-        id = S.sessionId .. "-" .. tostring(S.nextSeq), customer = trim(customer), customerKey = key(customer),
-        destinationId = key(destinationId), source = tostring(source or "legacy-observer"),
-        rawMessage = tostring(rawMessage or ""), createdAt = tonumber(sourceTs) or wall(), phase = "CLASSIFIED",
-        legacyEvidence = {}, paymentCopper = 0, closed = false
+        id = S.sessionId .. "-" .. tostring(S.nextSeq),
+        customer = trim(customer),
+        customerKey = key(customer),
+        destinationId = key(destinationId),
+        source = tostring(source or "legacy-observer"),
+        rawMessage = tostring(rawMessage or ""),
+        createdAt = tonumber(sourceTs) or wall(),
+        phase = "CLASSIFIED",
+        legacyEvidence = {},
+        paymentCopper = 0,
+        closed = false
     }
     appendBounded(S.transactions, tx, MAX_TRANSACTIONS)
     rebuildIndex()
@@ -104,7 +115,9 @@ local function newestOpenForCustomer(name)
     local i, tx
     for i = table.getn(S.transactions), 1, -1 do
         tx = S.transactions[i]
-        if type(tx) == "table" and not tx.closed and tx.customerKey == wanted then return tx end
+        if type(tx) == "table" and not tx.closed and tx.customerKey == wanted then
+            return tx
+        end
     end
     return nil
 end
@@ -115,14 +128,19 @@ local function setPhase(tx, phase, evidence)
     if phase == "" then return end
     tx.phase = phase
     tx.updatedAt = wall()
-    if evidence and evidence ~= "" then appendBounded(tx.legacyEvidence, tostring(evidence), 20) end
+    if evidence and evidence ~= "" then
+        appendBounded(tx.legacyEvidence, tostring(evidence), 20)
+    end
     audit("PHASE", tx, phase .. (evidence and (":" .. tostring(evidence)) or ""))
 end
 
 local function seedSeenRows(log, seen)
     local i, row
     if type(log) ~= "table" or type(seen) ~= "table" then return end
-    for i = 1, table.getn(log) do row = log[i]; if type(row) == "table" then seen[row] = true end end
+    for i = 1, table.getn(log) do
+        row = log[i]
+        if type(row) == "table" then seen[row] = true end
+    end
 end
 
 local function observeRequestLog()
@@ -144,28 +162,53 @@ local function observeInvite(core)
     local at = tonumber(core.lastInvitedAt) or 0
     if name == "" or at <= 0 then return end
     if name == S.lastInviteName and at == S.lastInviteAt then return end
-    S.lastInviteName = name; S.lastInviteAt = at
+    S.lastInviteName = name
+    S.lastInviteAt = at
+
     local tx = newestOpenForCustomer(name)
-    if tx then tx.invitedAt = wall(); setPhase(tx, "INVITED", "legacy-lastInvitedName") else audit("ORPHAN_INVITE", nil, name) end
+    if tx then
+        tx.invitedAt = wall()
+        setPhase(tx, "INVITED", "legacy-lastInvitedName")
+    else
+        audit("ORPHAN_INVITE", nil, name)
+    end
 end
 
 local function observeSummon(core)
     if type(core) ~= "table" then return end
     local name = trim(core.summonActiveName or "")
     local started = core.summonActiveStarted and true or false
+
     if name ~= "" and name ~= S.lastSummonName then
         local tx = newestOpenForCustomer(name)
-        if tx then tx.summonObservedAt = wall(); setPhase(tx, "SUMMON_ACTIVE", "legacy-summonActiveName") else audit("ORPHAN_SUMMON_ACTIVE", nil, name) end
+        if tx then
+            tx.summonObservedAt = wall()
+            setPhase(tx, "SUMMON_ACTIVE", "legacy-summonActiveName")
+        else
+            audit("ORPHAN_SUMMON_ACTIVE", nil, name)
+        end
     end
+
     if name ~= "" and started and (name ~= S.lastSummonName or not S.lastSummonStarted) then
         local tx = newestOpenForCustomer(name)
-        if tx then tx.castStartedObservedAt = wall(); setPhase(tx, "CAST_STARTED_OBSERVED", "legacy-summonActiveStarted") else audit("ORPHAN_CAST_START", nil, name) end
+        if tx then
+            tx.castStartedObservedAt = wall()
+            setPhase(tx, "CAST_STARTED_OBSERVED", "legacy-summonActiveStarted")
+        else
+            audit("ORPHAN_CAST_START", nil, name)
+        end
     end
+
+    -- Deliberately do not mark SUMMON_COMPLETED when the legacy active slot clears.
+    -- The legacy implementation can clear on watchdog/retry paths, so completion
+    -- requires a stronger explicit signal in a later Core V3 stage.
     if S.lastSummonName ~= "" and name == "" then
         local tx = newestOpenForCustomer(S.lastSummonName)
         if tx then audit("LEGACY_SUMMON_SLOT_CLEARED", tx, S.lastSummonStarted and "after-start" or "without-start") end
     end
-    S.lastSummonName = name; S.lastSummonStarted = started
+
+    S.lastSummonName = name
+    S.lastSummonStarted = started
 end
 
 local function observePayments()
@@ -182,7 +225,9 @@ local function observePayments()
                 tx.paymentCopper = (tonumber(tx.paymentCopper) or 0) + copper
                 tx.paymentObservedAt = tonumber(row.ts) or wall()
                 setPhase(tx, "PAID_OBSERVED", "legacy-payment-log")
-                tx.closed = true; tx.closedAt = wall(); audit("TX_CLOSED", tx, "payment-observed")
+                tx.closed = true
+                tx.closedAt = wall()
+                audit("TX_CLOSED", tx, "payment-observed")
             else
                 audit("ORPHAN_PAYMENT", nil, trim(row.player or "") .. ":" .. tostring(copper))
             end
@@ -193,7 +238,9 @@ end
 local function poll()
     observeRequestLog()
     local core = W112_SUMMONSCOUT_STATE
-    observeInvite(core); observeSummon(core); observePayments()
+    observeInvite(core)
+    observeSummon(core)
+    observePayments()
 end
 
 local frame = CreateFrame and CreateFrame("Frame", "SummonScoutCoreV3ShadowFrame") or nil
@@ -202,15 +249,24 @@ if frame then
     frame:SetScript("OnEvent", function()
         if event ~= "PLAYER_LOGIN" then return end
         ensureSession()
-        S.seenRequestRows = {}; S.seenPaymentRows = {}
+        -- Mark pre-login bounded log rows as already seen. Tracking row identity,
+        -- rather than table length, remains correct after the legacy logs hit their
+        -- size cap and rotate one old row out for each new row.
+        S.seenRequestRows = {}
+        S.seenPaymentRows = {}
         seedSeenRows(SummonScoutDB and SummonScoutDB.requestLog, S.seenRequestRows)
         seedSeenRows(SummonScoutDB and SummonScoutDB.paymentLog, S.seenPaymentRows)
-        S.lastInviteName = ""; S.lastInviteAt = 0; S.lastSummonName = ""; S.lastSummonStarted = false
+        S.lastInviteName = ""
+        S.lastInviteAt = 0
+        S.lastSummonName = ""
+        S.lastSummonStarted = false
         audit("SESSION_START", nil, VERSION)
     end)
     frame:SetScript("OnUpdate", function()
-        local t = now(); if t < (S.nextPollAt or 0) then return end
-        S.nextPollAt = t + POLL_SECONDS; poll()
+        local t = now()
+        if t < (S.nextPollAt or 0) then return end
+        S.nextPollAt = t + POLL_SECONDS
+        poll()
     end)
 end
 
