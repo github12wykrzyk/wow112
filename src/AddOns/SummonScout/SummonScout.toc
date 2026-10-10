@@ -24,6 +24,8 @@ SummonScout_SlaveMasterPair.lua
 SummonScout_FallbackRouterHot.lua
 SummonScout_FallbackRouterHubAckHot.lua
 SummonScout_FleetCounterCoordinator.lua
+SummonScout_FleetAdvertCoordinator.lua
+SummonScout_FleetAdvertTrustGuard.lua
 SummonScout_TanarisFullService.lua
 SummonScout_UnknownWhisperReportHot.lua
 SummonScout_DestinationInfoGuardHot.lua
