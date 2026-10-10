@@ -9,7 +9,11 @@ local VERSION = "3-destination-slave-safety-route-reason"
 local G = H.GetState("localdestinationinviteguard")
 local TOKEN = {}
 local ENSURE_INTERVAL = 0.50
+local ROUTEFAIL_KEY_COOLDOWN = 30.0
+local ROUTEFAIL_GLOBAL_COOLDOWN = 5.0
 G.nextEnsureAt = tonumber(G.nextEnsureAt) or 0
+G.routeFailLast = type(G.routeFailLast)=="table" and G.routeFailLast or {}
+G.routeFailGlobalAt = tonumber(G.routeFailGlobalAt) or -100000
 
 local function gdNow()
     if GetTime then return GetTime() end
@@ -41,6 +45,17 @@ local function gdSafeReason(reason)
     s=string.gsub(s,"%-+","-")
     if string.len(s)>32 then s=string.sub(s,1,32) end
     if s=="" then s="rejected" end
+    return s
+end
+
+local function gdSafeField(value,maxLen)
+    local s=tostring(value or "")
+    s=string.gsub(s,"|","/")
+    s=string.gsub(s,"[\r\n%c]"," ")
+    s=string.gsub(s,"%s+"," ")
+    s=gdTrim(s)
+    maxLen=tonumber(maxLen) or 32
+    if string.len(s)>maxLen then s=string.sub(s,1,maxLen) end
     return s
 end
 
@@ -100,18 +115,29 @@ end
 local function gdReportRouteFailure(name,loc,reason)
     local me=gdTrim(UnitName and UnitName("player") or "")
     local master=gdTrim(SummonScoutDB and SummonScoutDB.masterName or "")
+    local customer=gdValidName(name) and gdTrim(name) or "?"
     local dest=type(loc)=="table" and gdLower(loc.id or "") or "unknown"
     local safe=gdSafeReason(reason)
     local ready=W112_SUMMONSCOUT_SLAVE_SAFETY_READY==false and "0" or "1"
     local enabled=SummonScoutDB and SummonScoutDB.enabled==true and "1" or "0"
     local service=gdLower(SummonScoutDB and SummonScoutDB.service or "")
-    local record={ts=gdNow(),provider=me,customer=gdTrim(name),destination=dest,reason=safe,ready=ready,enabled=enabled,service=service}
+    local t=gdNow()
+    local record={ts=t,provider=me,customer=customer,destination=dest,reason=safe,ready=ready,enabled=enabled,service=service}
     G.lastRouteFailure=record
     W112_SUMMONSCOUT_ROUTE_LAST_FAILURE=record
-    gdDebug("ROUTEFAIL customer="..tostring(record.customer).." dest="..dest.." reason="..safe.." ready="..ready.." enabled="..enabled.." service="..service)
+    gdDebug("ROUTEFAIL customer="..customer.." dest="..dest.." reason="..safe.." ready="..ready.." enabled="..enabled.." service="..service)
+
+    -- Always keep the local record, but bound diagnostic whisper traffic.
     if not SendChatMessage or not gdValidName(master) or gdSame(master,me) then return end
-    local payload="[SSI ROUTEFAIL] "..me.." -> "..gdTrim(name).." / "..dest.." / "..safe.." / ready="..ready.." enabled="..enabled.." service="..service
-    if string.len(payload)>235 then payload=string.sub(payload,1,235) end
+    local rateKey=gdLower(customer).."|"..safe
+    local last=tonumber(G.routeFailLast[rateKey]) or -100000
+    if (t-last)<ROUTEFAIL_KEY_COOLDOWN or (t-(tonumber(G.routeFailGlobalAt) or -100000))<ROUTEFAIL_GLOBAL_COOLDOWN then return end
+    G.routeFailLast[rateKey]=t; G.routeFailGlobalAt=t
+
+    local payload="[SSI ROUTEFAIL] "..gdSafeField(me,24).." -> "..gdSafeField(customer,24)
+        .." / "..gdSafeField(dest,24).." / "..safe.." / ready="..ready.." enabled="..enabled
+        .." service="..gdSafeField(service,32)
+    if string.len(payload)>200 then payload=string.sub(payload,1,200) end
     if pcall then pcall(SendChatMessage,payload,"WHISPER",nil,master) else SendChatMessage(payload,"WHISPER",nil,master) end
 end
 
