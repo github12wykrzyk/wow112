@@ -25,6 +25,7 @@ MinimapMenu.lua
 Minion.lua
 Parse.lua
 ParseGeneral.lua
+MeleeSwingWindow.lua
 TurtleShaman.lua
 HotfixStopChannel.lua
 NativeMeleeRange.lua
